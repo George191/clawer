@@ -1,0 +1,566 @@
+version: "3.9"
+
+# ====================================================================
+# Patent Spider — 4 App Services + N Infrastructure Services
+#
+#  App Services:
+#    1. crawler     — 采集：爬取数据，保存到 MongoDB
+#    2. downloader  — 下载：监听 MongoDB，下载资源到 MinIO
+#    3. syncer      — 同步：监听 MongoDB，推送已下载数据到 Kafka
+#    4. web         — Web 管理面板 (FastAPI)
+#
+#  Infrastructure:
+#    mongodb, redis, minio, zookeeper, kafka, postgres, pgadmin
+#
+#  ETL Pipeline:
+#    rds-worker  — 原始数据入库
+#    ods-worker  — 数据标准化
+#    ads-worker  — 算法分析
+# ====================================================================
+
+services:
+  # ════════════════════════════════════════════════════════════
+  # Infrastructure Services
+  # ════════════════════════════════════════════════════════════
+
+  mongodb:
+    image: mongo:7.0
+    container_name: patent-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    env_file:
+      - .env
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${SPIDER_MONGO_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${SPIDER_MONGO_PASS:-example}
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh --quiet mongodb://localhost:27017
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    networks:
+      - patent-net
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: patent-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 5
+    networks:
+      - patent-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: patent-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    env_file:
+      - .env
+    environment:
+      MINIO_ROOT_USER: ${SPIDER_MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${SPIDER_MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 5
+    networks:
+      - patent-net
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.7.0
+    container_name: patent-zookeeper
+    restart: unless-stopped
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: echo srvr | nc localhost 2181 || exit 1
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    networks:
+      - patent-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    container_name: patent-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+    healthcheck:
+      test: kafka-topics --bootstrap-server localhost:9092 --list || exit 1
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    networks:
+      - patent-net
+
+  # ════════════════════════════════════════════════════════════
+  # App Services
+  # ════════════════════════════════════════════════════════════
+
+  # ── 1. Crawler — 采集服务 ─────────────────────────────────
+  crawler:
+    build:
+      context: .
+      dockerfile: docker/crawler.Dockerfile
+    container_name: patent-crawler
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPIDER_DB_URL: "mongodb://${SPIDER_MONGO_USER:-root}:${SPIDER_MONGO_PASS:-example}@mongodb:27017"
+      SPIDER_DB_NAME: "${SPIDER_DB_NAME:-spider}"
+      SPIDER_REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - ./templates:/app/templates:ro
+    working_dir: /app
+    command:
+      [
+        "python",
+        "-m",
+        "app.crawler.main",
+        "google_patent:keyword=patent",
+      ]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    networks:
+      - patent-net
+
+  # ── 2. Downloader — 下载服务 ──────────────────────────────
+  downloader:
+    build:
+      context: .
+      dockerfile: docker/downloader.Dockerfile
+    container_name: patent-downloader
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPIDER_DB_URL: "mongodb://${SPIDER_MONGO_USER:-root}:${SPIDER_MONGO_PASS:-example}@mongodb:27017"
+      SPIDER_DB_NAME: "${SPIDER_DB_NAME:-spider}"
+      SPIDER_MINIO_ENDPOINT: "minio:9000"
+      SPIDER_MINIO_ACCESS_KEY: "${SPIDER_MINIO_ACCESS_KEY:-minioadmin}"
+      SPIDER_MINIO_SECRET_KEY: "${SPIDER_MINIO_SECRET_KEY:-minioadmin}"
+      SPIDER_MINIO_BUCKET: "${SPIDER_MINIO_BUCKET:-spider-files}"
+      SPIDER_MINIO_SECURE: "false"
+      SPIDER_REDIS_URL: "redis://redis:6379/0"
+    working_dir: /app
+    command: ["python", "-m", "app.downloader.main", "--poll", "10"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    networks:
+      - patent-net
+
+  # ── 3. Syncer — Kafka 同步服务 ────────────────────────────
+  syncer:
+    build:
+      context: .
+      dockerfile: docker/syncer.Dockerfile
+    container_name: patent-syncer
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPIDER_DB_URL: "mongodb://${SPIDER_MONGO_USER:-root}:${SPIDER_MONGO_PASS:-example}@mongodb:27017"
+      SPIDER_DB_NAME: "${SPIDER_DB_NAME:-spider}"
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_KAFKA_TOPIC: "${SPIDER_KAFKA_TOPIC:-spider-crawler}"
+      SPIDER_REDIS_URL: "redis://redis:6379/0"
+    working_dir: /app
+    command: ["python", "-m", "app.syncer.main", "--poll", "10", "--startup-delay", "15"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    networks:
+      - patent-net
+
+  # ── 4. Web — FastAPI 管理面板 ─────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    container_name: patent-web
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      SPIDER_DB_URL: "mongodb://${SPIDER_MONGO_USER:-root}:${SPIDER_MONGO_PASS:-example}@mongodb:27017"
+      SPIDER_DB_NAME: "${SPIDER_DB_NAME:-spider}"
+      SPIDER_MINIO_ENDPOINT: "minio:9000"
+      SPIDER_MINIO_ACCESS_KEY: "${SPIDER_MINIO_ACCESS_KEY:-minioadmin}"
+      SPIDER_MINIO_SECRET_KEY: "${SPIDER_MINIO_SECRET_KEY:-minioadmin}"
+      SPIDER_MINIO_BUCKET: "${SPIDER_MINIO_BUCKET:-spider-files}"
+      SPIDER_MINIO_SECURE: "false"
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_KAFKA_TOPIC: "${SPIDER_KAFKA_TOPIC:-spider-crawler}"
+      SPIDER_REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - ./output:/app/output
+    working_dir: /app
+    command: uvicorn app.web.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 20s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    networks:
+      - patent-net
+
+  # ════════════════════════════════════════════════════════════
+  # Web UI Services — 基础设施管理面板
+  # ════════════════════════════════════════════════════════════
+
+  # ── 5. RedisInsight — Redis 可视化管理 ────────────────────
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: patent-redis-ui
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "5540:5540"
+    environment:
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+    volumes:
+      - redisinsight-data:/data
+    networks:
+      - patent-net
+
+  # ── 6. Compass Web — MongoDB 可视化管理 ───────────────────
+  compass-web:
+    image: haohanyang/compass-web:latest
+    container_name: patent-compass-web
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    environment:
+      CW_MONGO_URI: "mongodb://mongodb:27017"
+      CW_HOST: "0.0.0.0"
+    networks:
+      - patent-net
+
+  # ════════════════════════════════════════════════════════════
+  # ETL Infrastructure — Postgres + ETL Pipeline
+  # ════════════════════════════════════════════════════════════
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: patent-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${SPIDER_PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${SPIDER_PG_PASS:-postgres}
+      POSTGRES_DB: ${SPIDER_PG_DB:-spider_etl}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SPIDER_PG_USER:-postgres} -d ${SPIDER_PG_DB:-spider_etl}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks:
+      - patent-net
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: patent-pgadmin
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${SPIDER_PGADMIN_EMAIL:-admin@spider.local}
+      PGADMIN_DEFAULT_PASSWORD: ${SPIDER_PGADMIN_PASS:-admin}
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    networks:
+      - patent-net
+
+  # ── RDS Worker — 原始数据存储层 ─────────────────────────────
+  rds-worker:
+    build:
+      context: .
+      dockerfile: docker/etl.Dockerfile
+    container_name: patent-rds-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_KAFKA_TOPIC: "${SPIDER_KAFKA_TOPIC:-spider-crawler}"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
+      SPIDER_ETL_RAW_TOPIC: "${SPIDER_KAFKA_TOPIC:-spider-crawler}"
+      SPIDER_ETL_RDS_TOPIC: "${SPIDER_ETL_RDS_TOPIC:-spider-rds-processed}"
+      SPIDER_ETL_RDS_CONSUMER_GROUP: "${SPIDER_ETL_RDS_CONSUMER_GROUP:-spider-rds-group}"
+    working_dir: /app
+    command: >
+      sh -c "python -m app.etl.main --init-schema &&
+             python -m app.etl.main --layer rds"
+    networks:
+      - patent-net
+
+  # ── ODS Worker — 操作数据存储层（标准化）──────────────────────
+  ods-worker:
+    build:
+      context: .
+      dockerfile: docker/etl.Dockerfile
+    container_name: patent-ods-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rds-worker:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
+      SPIDER_ETL_RDS_TOPIC: "${SPIDER_ETL_RDS_TOPIC:-spider-rds-processed}"
+      SPIDER_ETL_ODS_TOPIC: "${SPIDER_ETL_ODS_TOPIC:-spider-ods-processed}"
+      SPIDER_ETL_ODS_CONSUMER_GROUP: "${SPIDER_ETL_ODS_CONSUMER_GROUP:-spider-ods-group}"
+    working_dir: /app
+    command: python -m app.etl.main --layer ods
+    networks:
+      - patent-net
+
+  # ── TASK Worker — 任务调度层 ─────────────────────────────────
+  task-worker:
+    build:
+      context: .
+      dockerfile: docker/etl.Dockerfile
+    container_name: patent-task-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
+      SPIDER_ETL_ODS_TOPIC: "${SPIDER_ETL_ODS_TOPIC:-spider-ods-processed}"
+      SPIDER_ETL_TASK_TOPIC: "${SPIDER_ETL_TASK_TOPIC:-spider-task-processed}"
+      SPIDER_ETL_TASK_CONSUMER_GROUP: "${SPIDER_ETL_TASK_CONSUMER_GROUP:-spider-task-group}"
+    working_dir: /app
+    command: python -m app.etl.main --layer task
+    networks:
+      - patent-net
+
+  # ── DWD Worker — 明细数据层 ───────────────────────────────────
+  dwd-worker:
+    build:
+      context: .
+      dockerfile: docker/etl.Dockerfile
+    container_name: patent-dwd-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      task-worker:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
+      SPIDER_ETL_TASK_TOPIC: "${SPIDER_ETL_TASK_TOPIC:-spider-task-processed}"
+      SPIDER_ETL_DWD_TOPIC: "${SPIDER_ETL_DWD_TOPIC:-spider-dwd-processed}"
+      SPIDER_ETL_DWD_CONSUMER_GROUP: "${SPIDER_ETL_DWD_CONSUMER_GROUP:-spider-dwd-group}"
+    working_dir: /app
+    command: python -m app.etl.main --layer dwd
+    networks:
+      - patent-net
+
+  # ── DWS Worker — 汇总数据层 ───────────────────────────────────
+  dws-worker:
+    build:
+      context: .
+      dockerfile: docker/etl.Dockerfile
+    container_name: patent-dws-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      dwd-worker:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
+      SPIDER_ETL_DWD_TOPIC: "${SPIDER_ETL_DWD_TOPIC:-spider-dwd-processed}"
+      SPIDER_ETL_DWS_TOPIC: "${SPIDER_ETL_DWS_TOPIC:-spider-dws-processed}"
+      SPIDER_ETL_DWS_CONSUMER_GROUP: "${SPIDER_ETL_DWS_CONSUMER_GROUP:-spider-dws-group}"
+    working_dir: /app
+    command: python -m app.etl.main --layer dws
+    networks:
+      - patent-net
+
+  # ── DIM Worker — 维度数据层 ───────────────────────────────────
+  dim-worker:
+    build:
+      context: .
+      dockerfile: docker/etl.Dockerfile
+    container_name: patent-dim-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rds-worker:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
+      SPIDER_ETL_RDS_TOPIC: "${SPIDER_ETL_RDS_TOPIC:-spider-rds-processed}"
+      SPIDER_ETL_DIM_TOPIC: "${SPIDER_ETL_DIM_TOPIC:-spider-dim-processed}"
+      SPIDER_ETL_DIM_CONSUMER_GROUP: "${SPIDER_ETL_DIM_CONSUMER_GROUP:-spider-dim-group}"
+    working_dir: /app
+    command: python -m app.etl.main --layer dim
+    networks:
+      - patent-net
+
+  # ── ADS Worker — 应用数据存储层（算法分析）────────────────────
+  ads-worker:
+    build:
+      context: .
+      dockerfile: docker/etl.Dockerfile
+    container_name: patent-ads-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      rds-worker:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SPIDER_KAFKA_BROKERS: "kafka:9092"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
+      SPIDER_ETL_ODS_TOPIC: "${SPIDER_ETL_ODS_TOPIC:-spider-ods-processed}"
+      SPIDER_ETL_ADS_TOPIC: "${SPIDER_ETL_ADS_TOPIC:-spider-ads-processed}"
+      SPIDER_ETL_ADS_CONSUMER_GROUP: "${SPIDER_ETL_ADS_CONSUMER_GROUP:-spider-ads-group}"
+    working_dir: /app
+    command: python -m app.etl.main --layer ads
+    networks:
+      - patent-net
+
+networks:
+  patent-net:
+    driver: bridge
+
+volumes:
+  mongo-data:
+  minio-data:
+  redis-data:
+  redisinsight-data:
+  pg-data:
+  pgadmin-data:

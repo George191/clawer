@@ -1,0 +1,47 @@
+{
+  "test_time": "2026-06-05T18:00:43.290398",
+  "test_type": "mock",
+  "total_warnings": 3,
+  "parsed_count": 3,
+  "warnings": [
+    {
+      "id": "WARN-001",
+      "title": "Piracy Warning - Gulf of Aden",
+      "description": "Pirate activity reported in eastern Gulf of Aden",
+      "issueDate": "2024-06-01T10:00:00Z",
+      "severity": "high",
+      "location": "Gulf of Aden",
+      "type": "piracy"
+    },
+    {
+      "id": "WARN-002",
+      "title": "Severe Weather Alert - North Atlantic",
+      "description": "Storm expected with wind speeds up to 30 m/s",
+      "issueDate": "2024-06-02T08:00:00Z",
+      "severity": "medium",
+      "location": "North Atlantic",
+      "type": "weather"
+    },
+    {
+      "id": "WARN-003",
+      "title": "Navigation Notice - Strait of Malacca",
+      "description": "Temporary navigation restrictions in place",
+      "issueDate": "2024-06-03T12:00:00Z",
+      "severity": "low",
+      "location": "Strait of Malacca",
+      "type": "navigation"
+    }
+  ],
+  "analysis": {
+    "severity": {
+      "high": 1,
+      "medium": 1,
+      "low": 1
+    },
+    "type": {
+      "piracy": 1,
+      "weather": 1,
+      "navigation": 1
+    }
+  }
+}

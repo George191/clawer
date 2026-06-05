@@ -1,0 +1,96 @@
+name: google_patent
+display_name: "Google Patents - {assignee} 专利采集"
+base_url: "https://patents.google.com"
+data_type: patent
+adapter: google_patent
+description: >
+  采集指定公司在Google Patents上的专利信息及PDF文件(使用XHR API)。
+
+  Google Patents XHR API 查询参数 (放到 url= 内部):
+    q=         搜索关键词, 支持 assignee:XXX, inventor:XXX, AND/OR 语法
+    page=      页码 (1开始)
+    num=       每页结果数 (默认10, 最大100)
+    sort=      排序: new(最新优先) / old(最早优先), 默认按相关性
+    status=    专利状态: GRANT(已授权) / APPLICATION(申请中)
+    type=      专利类型: PATENT(发明专利) / DESIGN(外观设计)
+    after=     最早日期: priority:YYYYMMDD / filing:YYYYMMDD / publication:YYYYMMDD
+    before=    最晚日期: 同上格式
+    language=  语言: ENGLISH, CHINESE, JAPANESE, GERMAN 等
+    country=   国家代码: US, CN, WO 等
+    inventor=  发明人名称
+    litigation= 诉讼状态: YES / NO
+
+params:
+  - name: assignee
+    description: "公司/权利人名称, 用于assignee搜索参数"
+    required: true
+  - name: query_suffix
+    description: "附加搜索关键词, 拼接在assignee之后. 例如: Space, AI, drone"
+    default: ""
+    required: false
+
+response_type: json
+json_item_path: "results.cluster[0].result"
+json_total_path: "results.total_num_results"
+json_page_path: "results.num_page"
+json_total_num_pages: "results.total_num_pages"
+
+# peid={peid} 由引擎每页随机生成, _encode_url 自动编码冒号为 %3A
+list_page: "/xhr/query?url=assignee={assignee}&num={num}&oq=assignee:({assignee})&page={page}&exp=&tags=&peid={peid}" # &dups=language&sort=new
+list_request:
+  method: GET
+  headers:
+    Accept: "application/json, text/plain, */*"
+    Referer: "https://patents.google.com/?assignee={assignee}"
+  encoding: utf-8
+
+list_fields:
+  - name: id
+    selector: "id"
+    selector_type: json
+    field_type: text
+    required: true
+    transform: strip
+
+  - name: rank
+    selector: "rank"
+    selector_type: json
+    field_type: number
+    required: true
+
+  - name: patent
+    selector: "patent"
+    selector_type: json
+    field_type: json
+    required: true
+
+  - name: is_similar_document
+    selector: "is_similar_document"
+    selector_type: json
+    field_type: boolean
+    required: true
+
+  - name: entity_matches
+    selector: "entity_matches"
+    selector_type: json
+    field_type: json
+    required: true
+
+  - name: measure_matches
+    selector: "measure_matches"
+    selector_type: json
+    field_type: json
+    required: true
+
+list_pagination:
+  type: page_number
+  page_param: page
+  start_page: 1
+  max_pages: 0
+  results_per_page: 100
+
+download:
+  selector: "patent.pdf"
+  selector_type: json
+  link_type: href
+  file_extension: pdf

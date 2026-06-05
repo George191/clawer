@@ -1,0 +1,88 @@
+name: google_patent
+display_name: "Google Patents - 按专利ID搜索"
+base_url: "https://patents.google.com"
+data_type: patent
+adapter: google_patent
+description: >
+  按专利公开编号搜索并采集专利信息及PDF文件。
+  支持单个或批量（用 OR 拼接）查询。
+  
+  支持格式: US-2024144562-A1, US20240144562A1 等
+
+batch_params:
+  file_path: "data/publication_numbers.txt"
+  param_name: "publication_number"
+  batch_size: 5
+  start_line: 0
+  limit: null
+  delay: 0
+
+params:
+  - name: publication_number
+    description: "专利公开编号，例如: US-2024144562-A1 或 US2024144562A1 OR US2024144563A1"
+    required: true
+
+response_type: json
+json_item_path: "results.cluster[0].result"
+json_total_path: "results.total_num_results"
+json_page_path: "results.num_page"
+json_total_num_pages: "results.total_num_pages"
+
+list_page: "/xhr/query?url=q={publication_number}&num={num}&exp=&tags=&peid={peid}"
+list_request:
+  method: GET
+  headers:
+    Accept: "application/json, text/plain, */*"
+    Referer: "https://patents.google.com/"
+  encoding: utf-8
+
+list_fields:
+  - name: id
+    selector: "id"
+    selector_type: json
+    field_type: text
+    required: true
+    transform: strip
+
+  - name: rank
+    selector: "rank"
+    selector_type: json
+    field_type: number
+    required: true
+
+  - name: patent
+    selector: "patent"
+    selector_type: json
+    field_type: json
+    required: true
+
+  - name: is_similar_document
+    selector: "is_similar_document"
+    selector_type: json
+    field_type: boolean
+    required: true
+
+  - name: entity_matches
+    selector: "entity_matches"
+    selector_type: json
+    field_type: json
+    required: true
+
+  - name: measure_matches
+    selector: "measure_matches"
+    selector_type: json
+    field_type: json
+    required: true
+
+list_pagination:
+  type: page_number
+  page_param: page
+  start_page: 1
+  max_pages: 1
+  results_per_page: 100
+
+download:
+  selector: "patent.pdf"
+  selector_type: json
+  link_type: href
+  file_extension: pdf
