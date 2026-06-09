@@ -340,6 +340,10 @@ async def run_from_list_file_stream(
         semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
         tasks = []
         
+        # 错峰启动: 每个 task 依次延迟启动，避免 N 个协程同一瞬间打向服务器
+        stagger = max(delay, 1.0) if delay > 0 else 1.0
+        logger.info(f"错峰启动: 每批间隔 {stagger:.1f}s，全部启动预计 {stagger * (batch_count - 1):.1f}s")
+        
         async def _worker(batch_data: list[str], start_line_num: int, end_line_num: int, idx: int) -> int:
             """单个任务的 worker 函数。"""
             async with semaphore:
@@ -365,9 +369,18 @@ async def run_from_list_file_stream(
                     logger.exception(f"✗ 批次 {idx + 1} 异常: {e}")
                     return -len(batch_data)
         
-        # 创建所有任务
+        # 创建所有任务，带错峰启动避免并发洪峰
+        async def _staggered_worker(batch_data, start_line_num, end_line_num, idx, launch_delay):
+            """先等待错峰延迟，再执行实际采集。"""
+            if launch_delay > 0:
+                await asyncio.sleep(launch_delay)
+            return await _worker(batch_data, start_line_num, end_line_num, idx)
+        
         for idx, (batch_data, start_line_num, end_line_num) in enumerate(all_batches):
-            task = _worker(batch_data, start_line_num, end_line_num, idx)
+            task = _staggered_worker(
+                batch_data, start_line_num, end_line_num, idx,
+                launch_delay=idx * stagger,
+            )
             tasks.append(task)
         
         # 使用 asyncio.gather 并发执行所有任务

@@ -29,11 +29,13 @@ from app.downloader.http_client import HttpClient
 
 logger = logging.getLogger(__name__)
 
-# ── 可重试的 curl 错误码 ──────────────────────────────────────────────────
+# ── 可重试的网络错误特征 ───────────────────────────────────────────────────
 # curl: (28) = 连接/操作超时
 # curl: (7)  = 连接失败
 # curl: (6)  = DNS 解析失败
-_RETRYABLE_CURL_CODES = ("(28)", "(7)", "(6)")
+# HTTP Error 0   = curl_cffi 连接被重置/中断（状态码为 0）
+# HTTP Error 103 = Early Hints，curl_cffi 处理异常
+_RETRYABLE_PATTERNS = ("(28)", "(7)", "(6)", "HTTP Error 0", "HTTP Error 103")
 
 # 最大重试次数（超出后放弃当前页）
 _MAX_RETRIES = 5
@@ -57,32 +59,43 @@ class SealagomAdapter(BaseSiteAdapter):
         super().__init__(base_url, http_client, **kwargs)
         self._delay = kwargs.get("request_delay", self.DEFAULT_DELAY)
         self._current_navarea: int = 1
+        self._retry_count: int = 0   # 本次采集累计重试次数
+        self._error_count: int = 0   # 本次采集累计错误次数
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前：记录 NAVAREA 编号。"""
         navarea = getattr(template, "params", {})
         if hasattr(navarea, "get"):
             self._current_navarea = int(navarea.get("navarea_id", 1))
+        self._retry_count = 0
+        self._error_count = 0
         logger.info(
-            "[SealagomAdapter] Starting crawl for NAVAREA %d",
+            "[SealagomAdapter] ▶ Starting crawl for NAVAREA %d",
             self._current_navarea,
         )
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
-        """请求每页前：添加限速延迟。"""
-        if not is_first:
-            await asyncio.sleep(self._delay)
+        """请求每页前：限速延迟。重试时按指数退避让开并发洪峰。"""
+        if self._retry_count > 0:
+            # 重试场景：指数退避 + 随机抖动，打散 20 个协程的同步重试
+            base = min(30, 3 * (2 ** self._retry_count))
+            jitter = random.uniform(0, base * 0.5)
+            wait = base + jitter
             logger.debug(
-                "[SealagomAdapter] Delayed %.1fs before page %d",
-                self._delay,
-                page,
+                "[SealagomAdapter] Retry backoff: NAVAREA %d page %d, "
+                "waiting %.1fs (retry #%d)",
+                self._current_navarea, page, wait, self._retry_count,
             )
+            await asyncio.sleep(wait)
+        elif not is_first:
+            await asyncio.sleep(self._delay)
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """每页数据返回后：清洗和补充字段。
 
         - 为每条记录补充 navarea_id
         - 过滤空记录
+        - 重试成功后打印恢复日志
         """
         enriched = []
         for record in records:
@@ -97,6 +110,17 @@ class SealagomAdapter(BaseSiteAdapter):
                 len(records) - len(enriched),
                 page,
             )
+
+        # 如果之前有过重试，打印恢复成功日志
+        if self._retry_count > 0:
+            logger.info(
+                "[SealagomAdapter] ✓ NAVAREA %d page %d recovered after %d retries "
+                "(total errors: %d), got %d records",
+                self._current_navarea, page, self._retry_count,
+                self._error_count, len(enriched),
+            )
+            self._retry_count = 0  # 重置，为下一页准备
+
         return enriched
 
     def on_request_headers(self, page: int) -> dict[str, str]:
@@ -119,11 +143,16 @@ class SealagomAdapter(BaseSiteAdapter):
         - 404                → 该 NAVAREA 无数据，跳过
         - 超出最大重试次数    → 放弃当前页
         """
+        self._error_count += 1
+        navarea = self._current_navarea
+        err_short = str(error)[:100]
+
         # 超过最大重试次数，放弃当前页
         if attempt >= _MAX_RETRIES:
             logger.error(
-                "[SealagomAdapter] NAVAREA %d page %d gave up after %d attempts: %s",
-                self._current_navarea, page, attempt, error,
+                "[SealagomAdapter] ✗ NAVAREA %d page %d GAVE UP after %d attempts "
+                "(cumulative errors: %d). Last error: %s",
+                navarea, page, attempt, self._error_count, err_short,
             )
             return "skip"
 
@@ -132,59 +161,64 @@ class SealagomAdapter(BaseSiteAdapter):
         # ── 404: 该区域不存在，直接跳过 ──
         if "404" in error_str:
             logger.info(
-                "[SealagomAdapter] NAVAREA %d page %d returned 404, skipping",
-                self._current_navarea, page,
+                "[SealagomAdapter] NAVAREA %d returned 404, skipping",
+                navarea,
             )
             return "skip"
 
         # ── 429 / 503: 限流或临时不可用 ──
         if "429" in error_str or "503" in error_str:
             wait = min(60, 10 * (attempt + 1))
+            self._retry_count += 1
             logger.warning(
-                "[SealagomAdapter] Rate limited on page %d (attempt %d/%d), "
-                "waiting %ds",
-                page, attempt + 1, _MAX_RETRIES, wait,
+                "[SealagomAdapter] ⏳ NAVAREA %d page %d RATE LIMITED "
+                "[retry %d/%d, total errors: %d] — waiting %ds then retry",
+                navarea, page, attempt + 1, _MAX_RETRIES,
+                self._error_count, wait,
             )
             await asyncio.sleep(wait)
-            return None  # 继续重试
+            return None
 
-        # ── curl 连接超时 / 网络错误: 换代理 → 等待 → 重试 ──
-        is_curl_timeout = any(code in error_str for code in _RETRYABLE_CURL_CODES)
+        # ── curl 超时 / HTTP Error 0 / 连接重置: 换代理 → 等待 → 重试 ──
+        is_network_error = any(p in error_str for p in _RETRYABLE_PATTERNS)
 
-        if is_curl_timeout:
+        if is_network_error:
             # 1) 尝试释放失败代理并获取新代理
+            proxy_switched = False
             if self._client is not None:
                 try:
                     await self._client.mark_last_proxy_failed()
-                    logger.info(
-                        "[SealagomAdapter] Released failed proxy, will retry with new proxy "
-                        "on page %d (attempt %d/%d)",
-                        page, attempt + 1, _MAX_RETRIES,
-                    )
+                    proxy_switched = True
                 except Exception:
-                    pass  # 没有代理池时会静默失败
+                    pass
 
             # 2) 指数退避 + 随机抖动，避免雷群效应
             base_wait = min(60, 10 * (2 ** attempt))
             jitter = random.uniform(0, base_wait * 0.3)
             wait = base_wait + jitter
+            self._retry_count += 1
 
+            proxy_status = "proxy switched" if proxy_switched else "no proxy pool, direct retry"
             logger.warning(
-                "[SealagomAdapter] Connection error on page %d (attempt %d/%d): %s. "
-                "Waiting %.1fs before retry...",
-                page, attempt + 1, _MAX_RETRIES,
-                error_str[:120], wait,
+                "[SealagomAdapter] ⏳ NAVAREA %d page %d CONNECTION ERROR "
+                "[retry %d/%d, total errors: %d, %s] — wait %.1fs then retry\n"
+                "    └─ %s",
+                navarea, page, attempt + 1, _MAX_RETRIES,
+                self._error_count, proxy_status, wait,
+                err_short,
             )
             await asyncio.sleep(wait)
-            return None  # 继续重试
+            return None
 
         # ── 其他未知错误: 短暂等待后重试 ──
         wait = min(30, 5 * (attempt + 1))
+        self._retry_count += 1
         logger.warning(
-            "[SealagomAdapter] Unknown error on page %d (attempt %d/%d), "
-            "waiting %ds: %s",
-            page, attempt + 1, _MAX_RETRIES, wait,
-            error_str[:200],
+            "[SealagomAdapter] ⏳ NAVAREA %d page %d UNKNOWN ERROR "
+            "[retry %d/%d, total errors: %d] — wait %ds then retry\n"
+            "    └─ %s",
+            navarea, page, attempt + 1, _MAX_RETRIES,
+            self._error_count, wait, err_short,
         )
         await asyncio.sleep(wait)
-        return None  # 继续重试
+        return None

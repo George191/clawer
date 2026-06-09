@@ -453,6 +453,13 @@ class SpiderEngine:
 
             for attempt in self._retry_loop():
                 try:
+                    # 重试时打印提示
+                    if attempt > 0:
+                        logger.info(
+                            "[%s] ↻ Retry page %d (attempt #%d)",
+                            template.name, current_page, attempt + 1,
+                        )
+
                     await adapter.on_before_page(current_page, is_first)
 
                     url = template.get_full_list_url(current_page, results_per_page)
@@ -514,8 +521,9 @@ class SpiderEngine:
 
                 except Exception as e:
                     logger.warning(
-                        "Failed to crawl list page %d (attempt %d): %s",
-                        current_page, attempt, e,
+                        "[%s] ✗ Page %d failed (attempt %d): %s",
+                        template.name, current_page, attempt + 1,
+                        str(e)[:150],
                     )
 
                     adapter_action = await adapter.on_error(e, current_page, attempt)
@@ -535,6 +543,10 @@ class SpiderEngine:
                         await adapter.on_before_crawl(template)
                         continue
                     elif adapter_action == "skip":
+                        logger.info(
+                            "[%s] ⊘ Page %d skipped by adapter (attempt %d)",
+                            template.name, current_page, attempt + 1,
+                        )
                         page_succeeded = True  # 标记为已处理
                         page_skipped = True
                         break
@@ -542,8 +554,8 @@ class SpiderEngine:
 
             if not page_succeeded:
                 logger.error(
-                    "Page %d failed after many attempts, skipping",
-                    current_page,
+                    "[%s] ✗ Page %d FAILED after all retry attempts, moving on",
+                    template.name, current_page,
                 )
                 result.errors.append(f"List page {current_page}: exceeded retries")
                 break  # 超出重试次数，中断翻页
