@@ -352,7 +352,7 @@ class SpiderEngine:
 
         await adapter.on_before_crawl(template)
 
-        while current_page < start_page + effective_max_pages:
+        while 1:
             is_first = (current_page == start_page)
             page_succeeded = False
 
@@ -387,7 +387,7 @@ class SpiderEngine:
                                 try:
                                     total = int(total_val)
                                     dynamic_pages = (
-                                        total + results_per_page - 1
+                                        total + results_per_page
                                     ) // results_per_page
 
                                     if template.json_total_num_pages:
@@ -396,7 +396,7 @@ class SpiderEngine:
                                         )
                                         if api_pages_val is not None:
                                             try:
-                                                api_pages = int(api_pages_val) - 1
+                                                api_pages = int(api_pages_val)
                                                 if api_pages < dynamic_pages:
                                                     logger.info(
                                                         "API limits pages to %d (from %s=%d) "
@@ -440,8 +440,8 @@ class SpiderEngine:
 
                     logger.info(
                         "Page %d/%s: found %d records%s (cumulative: %d)",
-                        current_page,
-                        str(effective_max_pages) if effective_max_pages < 10000 else "?",
+                        current_page + 1,
+                        dynamic_pages,
                         len(records),
                         total_count,
                         len(all_records),
@@ -483,6 +483,9 @@ class SpiderEngine:
 
             adapter.on_page_advance()
             current_page += 1
+
+            if current_page >= start_page + dynamic_pages:
+                break
 
         await adapter.close()
         return all_records
