@@ -3,6 +3,7 @@ display_name: "Google Patents - {assignee} 专利采集"
 base_url: "https://patents.google.com"
 data_type: patent
 adapter: google_patent
+anti_crawl_enabled: true
 description: >
   采集指定公司在Google Patents上的专利信息及PDF文件(使用XHR API)。
 

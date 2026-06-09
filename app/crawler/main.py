@@ -398,11 +398,8 @@ async def run_from_list_file_stream(
 def _build_batch_patent_param(ids: list[str]) -> str:
     """构建批量专利查询参数值。
 
-    格式: (patent/ID1)+OR+patent/ID2+OR+patent/ID3。只有第一个 patent/ID 用括号包裹，后续直接 +OR+ 拼接。"""
-    parts = [f"patent%2f{i}" for i in ids]
-    if len(parts) == 1:
-        return f"({parts[0]})"
-    return f"({parts[0]})+OR+" + "+OR+".join(parts[1:])
+    格式: (ID1)+OR+ID2+OR+ID3。 ID 用 +OR+ 拼接。"""
+    return "+OR+".join(ids)
 
 
 async def run_from_command_line(

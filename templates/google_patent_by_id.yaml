@@ -3,6 +3,7 @@ display_name: "Google Patents - 按专利ID搜索"
 base_url: "https://patents.google.com"
 data_type: patent
 adapter: google_patent
+anti_crawl_enabled: true
 description: >
   按专利公开编号搜索并采集专利信息及PDF文件。
   支持单个或批量（用 OR 拼接）查询。
@@ -28,7 +29,7 @@ json_total_path: "results.total_num_results"
 json_page_path: "results.num_page"
 json_total_num_pages: "results.total_num_pages"
 
-list_page: "/xhr/query?url=q={publication_number}&num={num}&exp=&tags=&peid={peid}"
+list_page: "/xhr/query?url=q={publication_number}&page={page}&num={num}&exp=&tags=&peid={peid}"
 list_request:
   method: GET
   headers:
@@ -77,8 +78,8 @@ list_fields:
 list_pagination:
   type: page_number
   page_param: page
-  start_page: 1
-  max_pages: 1
+  start_page: 0
+  max_pages: 0
   results_per_page: 100
 
 download:
