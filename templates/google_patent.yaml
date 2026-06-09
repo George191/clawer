@@ -1,34 +1,48 @@
 name: google_patent
-display_name: "Google Patents - {assignee} 专利采集"
+display_name: "Google Patents - {query}"
 base_url: "https://patents.google.com"
 data_type: patent
 adapter: google_patent
 anti_crawl_enabled: true
 description: >
-  采集指定公司在Google Patents上的专利信息及PDF文件(使用XHR API)。
+  Google Patents 通用搜索，支持任意查询语法。
 
-  Google Patents XHR API 查询参数 (放到 url= 内部):
+  查询示例:
+    按专利号:    US-2024144562-A1
+    按权利人:    assignee:Google
+    按发明人:    inventor:Smith
+    组合搜索:    assignee:Google AND AI
+    带过滤条件:  assignee:Tesla AND status:GRANT AND after:priority:20200101
+    批量专利号:  US-123-A1+OR+US-456-B2  (由 build_batch_patent_param 自动拼接)
+
+  Google Patents XHR API 查询参数 (url= 内部):
     q=         搜索关键词, 支持 assignee:XXX, inventor:XXX, AND/OR 语法
-    page=      页码 (1开始)
+    page=      页码 (0 开始)
     num=       每页结果数 (默认10, 最大100)
-    sort=      排序: new(最新优先) / old(最早优先), 默认按相关性
+    sort=      排序: new(最新优先) / old(最早优先)
     status=    专利状态: GRANT(已授权) / APPLICATION(申请中)
     type=      专利类型: PATENT(发明专利) / DESIGN(外观设计)
     after=     最早日期: priority:YYYYMMDD / filing:YYYYMMDD / publication:YYYYMMDD
     before=    最晚日期: 同上格式
-    language=  语言: ENGLISH, CHINESE, JAPANESE, GERMAN 等
+    language=  语言: ENGLISH, CHINESE 等
     country=   国家代码: US, CN, WO 等
-    inventor=  发明人名称
-    litigation= 诉讼状态: YES / NO
+
+batch_params:
+  file_path: "data/publication_numbers.txt"
+  param_name: "query"
+  batch_size: 5
+  start_line: 0
+  limit: null
+  delay: 0
 
 params:
-  - name: assignee
-    description: "公司/权利人名称, 用于assignee搜索参数"
+  - name: query
+    description: >
+      搜索查询, 支持所有 Google Patents 查询语法:
+      专利号 US-2024144562-A1 / 权利人 assignee:Google /
+      发明人 inventor:Smith / 组合 assignee:X AND AI /
+      批量 ID1+OR+ID2 (由 batch 自动拼接)
     required: true
-  - name: query_suffix
-    description: "附加搜索关键词, 拼接在assignee之后. 例如: Space, AI, drone"
-    default: ""
-    required: false
 
 response_type: json
 json_item_path: "results.cluster[0].result"
@@ -36,13 +50,12 @@ json_total_path: "results.total_num_results"
 json_page_path: "results.num_page"
 json_total_num_pages: "results.total_num_pages"
 
-# peid={peid} 由引擎每页随机生成, _encode_url 自动编码冒号为 %3A
-list_page: "/xhr/query?url=assignee={assignee}&num={num}&oq=assignee:({assignee})&page={page}&exp=&tags=&peid={peid}" # &dups=language&sort=new
+list_page: "/xhr/query?url=q={query}&page={page}&num={num}&exp=&tags=&peid={peid}"
 list_request:
   method: GET
   headers:
     Accept: "application/json, text/plain, */*"
-    Referer: "https://patents.google.com/?assignee={assignee}"
+    Referer: "https://patents.google.com/"
   encoding: utf-8
 
 list_fields:
@@ -86,7 +99,7 @@ list_fields:
 list_pagination:
   type: page_number
   page_param: page
-  start_page: 1
+  start_page: 0
   max_pages: 0
   results_per_page: 100
 
@@ -95,3 +108,22 @@ download:
   selector_type: json
   link_type: href
   file_extension: pdf
+
+
+# # 按专利号查
+# --template google_patent:query=US-2024144562-A1
+
+# # 按权利人查
+# --template google_patent:query=assignee:Google
+
+# # 按发明人查
+# --template google_patent:query=inventor:Smith
+
+# # 组合条件
+# --template google_patent:query="assignee:Tesla AND status:GRANT AND after:priority:20200101"
+
+# # 批量专利号 (用 list-file)
+# --list-file data/publication_numbers.txt --list-param query --batch-size 5
+
+# # 批量权利人 (batch-size=1，每行一个权利人)
+# --list-file data/assignees.txt --list-param query --batch-size 1

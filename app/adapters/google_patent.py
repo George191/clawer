@@ -45,10 +45,10 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前：发送初始化事件。"""
-        logger.info(
-            "[GooglePatentAdapter] Initializing session for %s",
-            template.display_name or template.name,
-        )
+        # logger.info(
+        #     "[GooglePatentAdapter] Initializing session for %s",
+        #     template.display_name or template.name,
+        # )
         # # 1. 告知服务器「每页条数设定」
         # await self._emitter.emit_num_per_page(self._session)
         # # 2. 模拟首次搜索
@@ -58,6 +58,7 @@ class GooglePatentAdapter(BaseSiteAdapter):
         #     self._session.peid[:20],
         #     self._session.eid[:20],
         # )
+        ...
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前：发送翻页信令。
@@ -66,8 +67,8 @@ class GooglePatentAdapter(BaseSiteAdapter):
         - 首页：已在 on_before_crawl 发送
         - 翻页：URL_CHANGE → PAGE_CHANGE
         """
-        if is_first:
-            return
+        # if is_first:
+        #     return
 
         # # 1. SPA pushState → URL 变化事件
         # await self._emitter.emit_url_change(self._session)
@@ -79,30 +80,33 @@ class GooglePatentAdapter(BaseSiteAdapter):
         #     self._session.peid[:20],
         #     self._session.eid[:20],
         # )
+        ...
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """每页数据返回后：过滤相似文档。"""
         # Google Patents 返回的 is_similar_document=True 记录通常是噪音
-        filtered = [
-            r for r in records
-            if not r.get("is_similar_document", False)
-        ]
-        if len(filtered) < len(records):
-            logger.info(
-                "[GooglePatentAdapter] Filtered %d similar documents on page %d",
-                len(records) - len(filtered),
-                page,
-            )
-        return filtered
+        # filtered = [
+        #     r for r in records
+        #     if not r.get("is_similar_document", False)
+        # ]
+        # if len(filtered) < len(records):
+        #     logger.info(
+        #         "[GooglePatentAdapter] Filtered %d similar documents on page %d",
+        #         len(records) - len(filtered),
+        #         page,
+        #     )
+        # return filtered
+        ...
 
     def on_page_advance(self) -> None:
         """翻页状态推进：peid 继承 eid，生成新 eid。"""
-        self._session.advance_page()
-        logger.debug(
-            "[GooglePatentAdapter] Page advanced: new peid=%s, new eid=%s",
-            self._session.peid[:20],
-            self._session.eid[:20],
-        )
+        # self._session.advance_page()
+        # logger.debug(
+        #     "[GooglePatentAdapter] Page advanced: new peid=%s, new eid=%s",
+        #     self._session.peid[:20],
+        #     self._session.eid[:20],
+        # )
+        ...
 
     def on_request_headers(self, page: int) -> dict[str, str]:
         """注入 Google Patents 特有请求头。"""
