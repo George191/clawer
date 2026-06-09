@@ -26,6 +26,7 @@ from app.web.routes.etl import router as etl_router
 from app.web.routes.monitor import router as monitor_router
 from app.web.routes.tasks import router as tasks_router
 from app.web.routes.templates import router as templates_router
+from app.web.routes.ai_collect import router as ai_collect_router
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     appy.include_router(tasks_router, prefix="/api")
     appy.include_router(templates_router, prefix="/api")
     appy.include_router(monitor_router, prefix="/api")
+    appy.include_router(ai_collect_router, prefix="/api")
 
     # ── 健康检查 ─────────────────────────────────────────────────────────
     @appy.get("/api/health")
@@ -216,5 +218,4 @@ def create_app() -> FastAPI:
 # ── 应用实例 ─────────────────────────────────────────────────────────────────
 
 app = create_app()
-print(app)
 

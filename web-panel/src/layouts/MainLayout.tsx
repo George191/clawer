@@ -19,6 +19,7 @@ import {
   MonitorOutlined,
   ApartmentOutlined,
   FileProtectOutlined,
+  ThunderboltOutlined,
   MenuUnfoldOutlined,
   SunOutlined,
   MoonOutlined,
@@ -47,6 +48,7 @@ const menuItems = [
   { key: '/monitor', icon: <MonitorOutlined />, label: '采集监控' },
   { key: '/pipeline', icon: <ApartmentOutlined />, label: '管道管理' },
   { key: '/templates', icon: <FileProtectOutlined />, label: '模板管理' },
+  { key: '/ai-collect', icon: <ThunderboltOutlined />, label: 'AI 采集' },
 ];
 
 const breadcrumbNameMap: Record<string, string> = {
@@ -56,6 +58,7 @@ const breadcrumbNameMap: Record<string, string> = {
   '/monitor': '采集监控',
   '/pipeline': '管道管理',
   '/templates': '模板管理',
+  '/ai-collect': 'AI 智能采集',
 };
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {

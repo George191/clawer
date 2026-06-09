@@ -13,6 +13,7 @@ import TaskCenter from '@/pages/TaskCenter';
 import Monitoring from '@/pages/Monitoring';
 import Pipeline from '@/pages/Pipeline';
 import Templates from '@/pages/Templates';
+import AICollect from '@/pages/AICollect';
 
 const App: React.FC = () => {
   const { mode } = useThemeStore();
@@ -40,6 +41,7 @@ const App: React.FC = () => {
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/templates" element={<Templates />} />
+            <Route path="/ai-collect" element={<AICollect />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </MainLayout>
