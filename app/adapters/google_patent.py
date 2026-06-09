@@ -44,21 +44,12 @@ class GooglePatentAdapter(BaseSiteAdapter):
         super().__init__(base_url, http_client, **kwargs)
 
     async def on_before_crawl(self, template: Any) -> None:
-        """采集开始前：发送初始化事件。"""
-        # logger.info(
-        #     "[GooglePatentAdapter] Initializing session for %s",
-        #     template.display_name or template.name,
-        # )
-        # # 1. 告知服务器「每页条数设定」
-        # await self._emitter.emit_num_per_page(self._session)
-        # # 2. 模拟首次搜索
-        # await self._emitter.emit_search(self._session)
-        # logger.info(
-        #     "[GooglePatentAdapter] Session initialized: peid=%s, eid=%s",
-        #     self._session.peid[:20],
-        #     self._session.eid[:20],
-        # )
-        ...
+        """采集开始前：由基类处理 _batch_data 拼接。
+
+        BaseSiteAdapter._resolve_batch_param 已实现 "+OR+" 拼接，
+        与 Google Patents API 的 OR 查询语法一致。
+        """
+        await super().on_before_crawl(template)
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前：发送翻页信令。

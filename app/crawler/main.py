@@ -346,8 +346,8 @@ async def run_from_list_file_stream(
         async def _worker(batch_data: list[str], start_line_num: int, end_line_num: int, idx: int) -> int:
             """单个任务的 worker 函数。"""
             async with semaphore:
-                joined = GooglePatentAdapter.build_batch_patent_param(batch_data)
-                params = {param_name: joined}
+                # 传空字符串占位, 原始 batch_data 挂到 template 上由 adapter 拼接
+                params = {param_name: ""}
                 logger.info(
                     f"[批次 {idx + 1}/{batch_count}] 行 {start_line_num}-{end_line_num}, "
                     f"共 {len(batch_data)} 条: {batch_data[0]}...{batch_data[-1]}"
@@ -355,6 +355,7 @@ async def run_from_list_file_stream(
                 
                 try:
                     tmpl = loader.load(template_name, param_values=params)
+                    tmpl._batch_data = batch_data  # 原始数据，adapter 在 on_before_crawl 中处理
                     result = await engine.crawl(tmpl)
                     
                     if result.success:

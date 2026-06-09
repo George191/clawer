@@ -83,7 +83,38 @@ class BaseSiteAdapter:
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。子类覆盖。"""
-        pass
+        self._resolve_batch_param(template)
+
+    def _resolve_batch_param(self, template: Any) -> None:
+        """通用批量参数解析 — 将 _batch_data 填入模板 URL。
+
+        处理 main.py 传入的 _batch_data 列表：
+        - 单条 (batch_size=1): 直接取值，替换空占位
+        - 多条: 子类应覆盖此方法实现自定义拼接
+
+        工作原理：从 _param_values 找到空字符串的参数名，
+        用 _batch_data 中的值替换 list_page 中的空占位。
+        """
+        batch_data = getattr(template, "_batch_data", None)
+        if not batch_data or not isinstance(batch_data, list) or len(batch_data) == 0:
+            return
+
+        param_values = getattr(template, "_param_values", {}) or {}
+        for param_name, param_val in param_values.items():
+            if param_val == "":
+                # 单条直接取值，多条由子类 adapter 处理
+                value = batch_data[0] if len(batch_data) == 1 else "+OR+".join(batch_data)
+                # 替换 URL 中的空占位: param_name=& 或 param_name=}
+                if hasattr(template, "list_page") and template.list_page:
+                    template.list_page = template.list_page.replace(
+                        f"{param_name}=&", f"{param_name}={value}&"
+                    ).replace(
+                        f"{param_name}=}}", f"{param_name}={value}}}"
+                    ).replace(
+                        f"{param_name}=/", f"{param_name}={value}/"
+                    )
+                template._param_values[param_name] = value
+                break
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前。子类覆盖。"""

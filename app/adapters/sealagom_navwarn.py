@@ -63,10 +63,17 @@ class SealagomAdapter(BaseSiteAdapter):
         self._error_count: int = 0   # 本次采集累计错误次数
 
     async def on_before_crawl(self, template: Any) -> None:
-        """采集开始前：记录 NAVAREA 编号。"""
-        navarea = getattr(template, "params", {})
-        if hasattr(navarea, "get"):
-            self._current_navarea = int(navarea.get("navarea_id", 1))
+        """采集开始前：解析 batch_data 并记录 NAVAREA 编号。"""
+        # 基类处理 _batch_data → 填入 navarea_id
+        await super().on_before_crawl(template)
+
+        # 从解析后的 param_values 读取 navarea_id
+        param_values = getattr(template, "_param_values", {}) or {}
+        navarea_id = param_values.get("navarea_id", "1")
+        try:
+            self._current_navarea = int(navarea_id)
+        except (ValueError, TypeError):
+            self._current_navarea = 1
         self._retry_count = 0
         self._error_count = 0
         logger.info(
