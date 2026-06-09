@@ -28,7 +28,6 @@ from typing import Any, Generator, Optional
 from app.config.settings import settings
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
-from app.adapters.google_patent import GooglePatentAdapter
 from app.models.template import SiteTemplate
 
 logger = logging.getLogger(__name__)
