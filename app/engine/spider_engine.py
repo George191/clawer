@@ -336,14 +336,14 @@ class SpiderEngine:
     ) -> list[dict[str, Any]]:
         all_records: list[dict[str, Any]] = []
         start_page = resume_page if resume_page is not None else (
-            template.list_pagination.start_page if template.list_pagination else 1
+            template.list_pagination.start_page if template.list_pagination else 0
         )
-        config_max_pages = template.list_pagination.max_pages if template.list_pagination else 1000
+        config_max_pages = template.list_pagination.max_pages if template.list_pagination else 0
         results_per_page = template.list_pagination.results_per_page if template.list_pagination else 100
 
         item_path = template.json_item_path or ""
 
-        effective_max_pages = config_max_pages or 10000
+        effective_max_pages = config_max_pages
         current_page = start_page
 
         adapter_name = template.adapter
@@ -361,10 +361,8 @@ class SpiderEngine:
                     await adapter.on_before_page(current_page, is_first)
 
                     url = template.get_full_list_url(current_page, num=results_per_page, peid=adapter.session.eid)
-                    # url = template.get_full_list_url(current_page, num=results_per_page)
 
                     extra_headers = adapter.on_request_headers(current_page)
-                    # extra_headers = {}
                     list_request = template.list_request.model_copy(update={
                         "headers": {**template.list_request.headers, **extra_headers}
                     }) if extra_headers else template.list_request
@@ -413,7 +411,7 @@ class SpiderEngine:
                                                 pass
 
                                     effective_max_pages = min(
-                                        config_max_pages or 10000, dynamic_pages
+                                        config_max_pages, dynamic_pages
                                     )
                                     logger.info(
                                         "Dynamic pagination: total=%d, per_page=%d, "
