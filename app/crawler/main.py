@@ -28,6 +28,7 @@ from typing import Any, Generator, Optional
 from app.config.settings import settings
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
+from app.adapters.google_patent import GooglePatentAdapter
 from app.models.template import SiteTemplate
 
 logger = logging.getLogger(__name__)
@@ -342,7 +343,7 @@ async def run_from_list_file_stream(
         async def _worker(batch_data: list[str], start_line_num: int, end_line_num: int, idx: int) -> int:
             """单个任务的 worker 函数。"""
             async with semaphore:
-                joined = _build_batch_patent_param(batch_data)
+                joined = GooglePatentAdapter.build_batch_patent_param(batch_data)
                 params = {param_name: joined}
                 logger.info(
                     f"[批次 {idx + 1}/{batch_count}] 行 {start_line_num}-{end_line_num}, "
@@ -393,13 +394,6 @@ async def run_from_list_file_stream(
     
     finally:
         await engine.close()
-
-
-def _build_batch_patent_param(ids: list[str]) -> str:
-    """构建批量专利查询参数值。
-
-    格式: (ID1)+OR+ID2+OR+ID3。 ID 用 +OR+ 拼接。"""
-    return "+OR+".join(ids)
 
 
 async def run_from_command_line(

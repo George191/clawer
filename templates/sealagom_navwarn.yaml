@@ -1,0 +1,84 @@
+name: sealagom_navwarn
+display_name: "Sealagom - NAVAREA {navarea_id} 航行警告采集"
+base_url: "https://www.sealagom.com"
+data_type: navwarn
+adapter: sealagom
+anti_crawl_enabled: false
+description: >
+  采集 Sealagom 指定 NAVAREA 区域的航行警告消息 (Navigational Warnings)。
+
+  页面为 Next.js SSR, 消息内容内联在列表页。
+  核心选择器均返回 N 个元素(每条消息1个), 保证行对齐。
+
+batch_params:
+  file_path: "data/navarea_ids.txt"
+  param_name: "navarea_id"
+  batch_size: 1
+  start_line: 0
+  limit: null
+  delay: 3
+
+params:
+  - name: navarea_id
+    description: "NAVAREA 区域编号 (1-20)"
+    required: true
+
+response_type: html
+
+list_page: "/navarea/{navarea_id}/messages/"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+# 所有字段返回相同数量元素 (每条消息恰好1个)
+list_fields:
+  - name: message_id
+    selector: "div.message-content"
+    selector_type: css
+    field_type: attr
+    attr_name: data-message-id
+    required: true
+    transform: strip
+    description: "消息数字ID"
+
+  - name: warning_no
+    selector: "ul.divide-y a.font-semibold:not(.inline-flex)"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "警告编号, 如 NAVAREA X 040/26"
+
+  - name: sea_name
+    selector: "h1"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "海域名称, 如 NAVAREA X (页面级，每页相同)"
+
+  - name: issue_time
+    selector: "time.text-muted-foreground"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "发布时间, 如 08/06/2026, 04:41"
+
+  - name: message_text
+    selector: "div.message-content"
+    selector_type: css
+    field_type: text
+    required: true
+    description: "消息正文纯文本"
+
+list_pagination:
+  type: page_number
+  page_param: page
+  start_page: 1
+  max_pages: 1
+  results_per_page: 50

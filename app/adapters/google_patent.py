@@ -49,15 +49,15 @@ class GooglePatentAdapter(BaseSiteAdapter):
             "[GooglePatentAdapter] Initializing session for %s",
             template.display_name or template.name,
         )
-        # 1. 告知服务器「每页条数设定」
-        await self._emitter.emit_num_per_page(self._session)
-        # 2. 模拟首次搜索
-        await self._emitter.emit_search(self._session)
-        logger.info(
-            "[GooglePatentAdapter] Session initialized: peid=%s, eid=%s",
-            self._session.peid[:20],
-            self._session.eid[:20],
-        )
+        # # 1. 告知服务器「每页条数设定」
+        # await self._emitter.emit_num_per_page(self._session)
+        # # 2. 模拟首次搜索
+        # await self._emitter.emit_search(self._session)
+        # logger.info(
+        #     "[GooglePatentAdapter] Session initialized: peid=%s, eid=%s",
+        #     self._session.peid[:20],
+        #     self._session.eid[:20],
+        # )
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前：发送翻页信令。
@@ -69,16 +69,16 @@ class GooglePatentAdapter(BaseSiteAdapter):
         if is_first:
             return
 
-        # 1. SPA pushState → URL 变化事件
-        await self._emitter.emit_url_change(self._session)
-        # 2. 翻页操作信令
-        await self._emitter.emit_page_change(self._session)
-        logger.debug(
-            "[GooglePatentAdapter] Page %d events sent: peid=%s, eid=%s",
-            page,
-            self._session.peid[:20],
-            self._session.eid[:20],
-        )
+        # # 1. SPA pushState → URL 变化事件
+        # await self._emitter.emit_url_change(self._session)
+        # # 2. 翻页操作信令
+        # await self._emitter.emit_page_change(self._session)
+        # logger.debug(
+        #     "[GooglePatentAdapter] Page %d events sent: peid=%s, eid=%s",
+        #     page,
+        #     self._session.peid[:20],
+        #     self._session.eid[:20],
+        # )
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """每页数据返回后：过滤相似文档。"""
@@ -135,3 +135,34 @@ class GooglePatentAdapter(BaseSiteAdapter):
             )
             return "abort"
         return None
+
+    @staticmethod
+    def build_batch_patent_param(ids: list[str]) -> str:
+        """构建批量专利查询参数值。
+
+        格式: (ID1)+OR+ID2+OR+ID3。多个 ID 用 +OR+ 拼接，
+        用于 Google Patents 的 q= 参数中实现 OR 批量查询。
+
+        示例::
+
+            >>> GooglePatentAdapter.build_batch_patent_param(['US-123-A1', 'US-456-B2'])
+            'US-123-A1+OR+US-456-B2'
+
+        Args:
+            ids: 专利公开编号列表。
+
+        Returns:
+            OR 拼接的参数字符串。
+        """
+        return "+OR+".join(ids)
+
+    @staticmethod
+    def get_batch_size() -> int:
+        """返回 Google Patents 推荐的批量查询大小。
+
+        Google Patents API 对单次查询 URL 长度有限制，一般建议 5 个 ID 为一批。
+
+        Returns:
+            推荐的批量查询数量。
+        """
+        return 5

@@ -138,6 +138,15 @@ class SiteTemplate(BaseModel):
         description="站点适配器名称, 如 google_patent, generic。留空则自动检测",
     )
 
+    anti_crawl_enabled: bool | None = Field(
+        default=None,
+        description=(
+            "是否为此模板启用反爬功能（代理池、请求延迟、身份轮换等）。"
+            "None 表示回退到全局配置 SPIDER_ANTI_CRAWL_ENABLED，"
+            "布尔值则覆盖全局配置。优先级：模板 > 全局 > False"
+        ),
+    )
+
     pre_hooks: list[PreHookConfig] = Field(
         default_factory=list,
         description="预处理钩子列表，在请求列表页之前按顺序执行",
@@ -194,6 +203,20 @@ class SiteTemplate(BaseModel):
     )
 
     _param_values: dict[str, str] = {}
+
+    @property
+    def effective_anti_crawl_enabled(self) -> bool:
+        """解析反爬功能的最终启用状态。
+
+        优先级：模板字段 > 全局配置 SPIDER_ANTI_CRAWL_ENABLED > False。
+
+        Returns:
+            True 如果反爬功能应启用，否则 False。
+        """
+        if self.anti_crawl_enabled is not None:
+            return self.anti_crawl_enabled
+        from app.config.settings import settings
+        return settings.anti_crawl_enabled
 
     @staticmethod
     def _replace_params(text: str, params: dict[str, str]) -> str:

@@ -18,9 +18,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import itertools
 import json
 import logging
+import time
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +58,91 @@ def _init_enhancements():
     if settings.pre_hooks_enabled and _hook_mgr is None:
         from app.engine.jinja2_renderer import get_prehook_manager
         _hook_mgr = get_prehook_manager()
+
+
+@dataclass
+class CheckpointState:
+    """完整采集任务断点状态，支持完整恢复采集进度。
+
+    Attributes:
+        status: 当前状态 (running / failed / completed)
+        template_name: 模板名称
+        template_hash: 模板配置的哈希值，用于检测模板变更
+        param_values: 应用到模板的参数值字典
+        start_timestamp: 采集开始时间戳
+        last_update: 最后更新时间戳
+        current_page: 当前处理到的页码
+        records_saved: 已保存记录总数
+        error_count: 累计错误次数
+        last_error: 最后一次错误信息
+        effective_max_pages: 根据计算得到的实际最大页数（用于JSON API分页）
+        dynamic_total: 从JSON响应中得到的总记录数
+        version: 断点格式版本，用于兼容未来变更
+    """
+    status: str  # running / failed / completed
+    template_name: str
+    template_hash: str
+    param_values: dict[str, str] = field(default_factory=dict)
+    start_timestamp: float = field(default_factory=time.time)
+    last_update: float = field(default_factory=time.time)
+    current_page: int = 0
+    records_saved: int = 0
+    error_count: int = 0
+    last_error: str = ""
+    effective_max_pages: int | None = None
+    dynamic_total: int | None = None
+    version: int = 1
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化为字典用于JSON存储。"""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CheckpointState:
+        """从字典反序列化，处理版本兼容性。"""
+        # 向后兼容: 旧版本没有 version 字段，默认是 1
+        if "version" not in data:
+            data["version"] = 1
+        if "template_hash" not in data:
+            data["template_hash"] = ""
+        if "effective_max_pages" not in data:
+            data["effective_max_pages"] = None
+        if "dynamic_total" not in data:
+            data["dynamic_total"] = None
+        if "start_timestamp" not in data:
+            data["start_timestamp"] = data.get("last_update", time.time())
+        return cls(**data)
+
+    def validate(self, template: SiteTemplate) -> tuple[bool, str]:
+        """验证断点状态的完整性和一致性。
+
+        Args:
+            template: 当前的模板实例。
+
+        Returns:
+            (valid: bool, message: str) 元组。
+            - valid: True 如果断点有效可以恢复，False 如果不匹配需要重新开始。
+            - message: 诊断信息。
+        """
+        if self.status != "running":
+            return False, f"Checkpoint status is '{self.status}', expected 'running'"
+
+        if self.template_name != template.name:
+            return False, f"Checkpoint template mismatch: expected {template.name}, got {self.template_name}"
+
+        # 验证模板内容没有改变（如果有哈希）
+        if self.template_hash:
+            current_hash = self._compute_template_hash(template)
+            if self.template_hash != current_hash:
+                return False, f"Template configuration changed (hash mismatch), cannot resume. Starting fresh."
+
+        return True, "Checkpoint validated successfully"
+
+    @staticmethod
+    def _compute_template_hash(template: SiteTemplate) -> str:
+        """计算模板配置的哈希值，用于检测变更。"""
+        template_json = json.dumps(template.model_dump(exclude={"_param_values"}), sort_keys=True)
+        return hashlib.sha256(template_json.encode("utf-8")).hexdigest()[:16]
 
 
 def _create_storage() -> StorageBackend:
@@ -105,6 +193,10 @@ class SpiderEngine:
         self._storage = storage or _create_storage()
         self._checkpoint_redis = None
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
+        # 断点续采过期时间（默认7天）
+        self._checkpoint_ttl: int = 86400 * 7
+        # 断点最大有效时间（超过此时间的断点视为过期，不恢复）
+        self._checkpoint_max_age: int = 86400 * 3
 
     async def _ensure_checkpoint_redis(self) -> None:
         if self._checkpoint_redis is not None:
@@ -126,25 +218,84 @@ class SpiderEngine:
             self._checkpoint_redis = None
 
     def _checkpoint_key(self, template_name: str) -> str:
+        """生成断点 Redis key，包含参数值以支持同一模板的不同参数分别断点。"""
         return f"spider:checkpoint:{template_name}"
 
-    async def _load_checkpoint(self, template_name: str) -> dict[str, Any] | None:
+    async def _load_checkpoint(
+        self, template_name: str, template: SiteTemplate | None = None
+    ) -> CheckpointState | None:
+        """加载并验证断点状态。
+
+        Args:
+            template_name: 模板名称。
+            template: 可选的模板实例，用于验证断点有效性。
+
+        Returns:
+            CheckpointState 如果有效，None 如果不存在或无效。
+        """
         if self._checkpoint_redis is None:
             return None
         try:
-            data = await self._checkpoint_redis.get(self._checkpoint_key(template_name))
-            if data:
-                return json.loads(data)
+            key = self._checkpoint_key(template_name)
+            data = await self._checkpoint_redis.get(key)
+            if not data:
+                return None
+
+            checkpoint = CheckpointState.from_dict(json.loads(data))
+
+            # 检查过期
+            age = time.time() - checkpoint.last_update
+            if age > self._checkpoint_max_age:
+                logger.info(
+                    "Checkpoint for '%s' is too old (%.1f hours), clearing",
+                    template_name, age / 3600,
+                )
+                await self._clear_checkpoint(template_name)
+                return None
+
+            # 验证断点完整性
+            if template is not None:
+                valid, msg = checkpoint.validate(template)
+                if not valid:
+                    logger.warning("Checkpoint validation failed: %s", msg)
+                    await self._clear_checkpoint(template_name)
+                    return None
+
+            logger.info(
+                "Loaded valid checkpoint: template=%s, page=%d, records=%d, "
+                "age=%.1f min, status=%s",
+                template_name, checkpoint.current_page, checkpoint.records_saved,
+                age / 60, checkpoint.status,
+            )
+            return checkpoint
+
+        except (json.JSONDecodeError, TypeError, KeyError) as e:
+            logger.warning("Checkpoint data corrupted for '%s': %s. Clearing.", template_name, e)
+            await self._clear_checkpoint(template_name)
+            return None
         except Exception as e:
             logger.warning("Failed to load checkpoint: %s", e)
         return None
 
-    async def _save_checkpoint(self, template_name: str, checkpoint: dict[str, Any]) -> None:
+    async def _save_checkpoint(
+        self, template_name: str, state: CheckpointState,
+    ) -> None:
+        """保存断点状态到 Redis。
+
+        Args:
+            template_name: 模板名称。
+            state: 完整的断点状态对象。
+        """
         if self._checkpoint_redis is None:
             return
         try:
+            state.last_update = time.time()
             key = self._checkpoint_key(template_name)
-            await self._checkpoint_redis.set(key, json.dumps(checkpoint, default=str), ex=86400 * 7)
+            await self._checkpoint_redis.set(
+                key,
+                json.dumps(state.to_dict(), default=str),
+                ex=self._checkpoint_ttl,
+            )
         except Exception as e:
             logger.warning("Failed to save checkpoint: %s", e)
 
@@ -152,7 +303,9 @@ class SpiderEngine:
         if self._checkpoint_redis is None:
             return
         try:
-            await self._checkpoint_redis.delete(self._checkpoint_key(template_name))
+            key = self._checkpoint_key(template_name)
+            await self._checkpoint_redis.delete(key)
+            logger.info("Cleared checkpoint for template: %s", template_name)
         except Exception as e:
             logger.warning("Failed to clear checkpoint: %s", e)
 
@@ -174,15 +327,35 @@ class SpiderEngine:
         result = CrawlResult(template.name, template.data_type)
 
         await self._ensure_checkpoint_redis()
-        checkpoint = await self._load_checkpoint(template.name)
+        checkpoint = await self._load_checkpoint(template.name, template)
 
         resume_page: int | None = None
-        if checkpoint and checkpoint.get("status") == "running":
-            resume_page = checkpoint.get("page", 0) + 1
+        checkpoint_state: CheckpointState | None = None
+
+        if checkpoint is not None:
+            resume_page = checkpoint.current_page + 1
+            checkpoint_state = checkpoint
             logger.info(
-                "Resuming from checkpoint: template=%s, page=%d, records_saved=%d",
-                template.name, checkpoint.get("page"), checkpoint.get("records_saved", 0),
+                "Resuming from checkpoint: template=%s, page=%d, records_saved=%d, "
+                "errors=%d, age=%.1f min",
+                template.name, checkpoint.current_page, checkpoint.records_saved,
+                checkpoint.error_count,
+                (time.time() - checkpoint.start_timestamp) / 60,
             )
+
+        # 初始化新的断点状态（如果没有恢复）
+        if checkpoint_state is None:
+            template_hash = CheckpointState._compute_template_hash(template)
+            param_values = getattr(template, "_param_values", None) or {}
+            checkpoint_state = CheckpointState(
+                status="running",
+                template_name=template.name,
+                template_hash=template_hash,
+                param_values=param_values,
+            )
+
+        # 保存初始状态
+        await self._save_checkpoint(template.name, checkpoint_state)
 
         logger.info(
             "Starting crawl: template=%s, data_type=%s, response_type=%s, priority=%d%s",
@@ -203,7 +376,9 @@ class SpiderEngine:
                 hook_context = await _hook_mgr.execute(hook_names, hook_context)
                 logger.info("Pre-hooks completed, context: %s", list(hook_context.keys()))
 
-            list_records = await self._crawl_list_pages(template, result, resume_page)
+            list_records = await self._crawl_list_pages(
+                template, result, resume_page, checkpoint_state,
+            )
 
             if template.detail_fields and list_records:
                 detail_records = await self._crawl_detail_pages(
@@ -213,11 +388,17 @@ class SpiderEngine:
             else:
                 result.records = list_records
 
+            checkpoint_state.status = "completed"
+            await self._save_checkpoint(template.name, checkpoint_state)
             await self._clear_checkpoint(template.name)
 
         except Exception as e:
             logger.error("Crawl failed for template %s: %s", template.name, e)
             result.errors.append(str(e))
+            checkpoint_state.status = "failed"
+            checkpoint_state.last_error = str(e)
+            checkpoint_state.error_count += 1
+            await self._save_checkpoint(template.name, checkpoint_state)
 
         logger.info(
             "Crawl complete: template=%s, records=%d, errors=%d",
@@ -230,10 +411,11 @@ class SpiderEngine:
     async def _crawl_list_pages(
         self, template: SiteTemplate, result: CrawlResult,
         resume_page: int | None = None,
+        state: CheckpointState | None = None,
     ) -> list[dict[str, Any]]:
         if template.response_type == ResponseType.JSON:
-            return await self._crawl_list_pages_json(template, result, resume_page)
-        return await self._crawl_list_pages_html(template, result, resume_page)
+            return await self._crawl_list_pages_json(template, result, resume_page, state)
+        return await self._crawl_list_pages_html(template, result, resume_page, state)
 
     def _get_record_id(self, record: dict[str, Any], template: SiteTemplate) -> str:
         """获取记录的唯一 ID（用于去重）。"""
@@ -248,6 +430,7 @@ class SpiderEngine:
     async def _crawl_list_pages_html(
         self, template: SiteTemplate, result: CrawlResult,
         resume_page: int | None = None,
+        state: CheckpointState | None = None,
     ) -> list[dict[str, Any]]:
         all_records: list[dict[str, Any]] = []
         page = resume_page if resume_page is not None else (
@@ -256,83 +439,140 @@ class SpiderEngine:
         max_pages = template.list_pagination.max_pages if template.list_pagination else 1
         results_per_page = template.list_pagination.results_per_page if template.list_pagination else 100
 
+        # 初始化适配器（与 JSON 路径一致，支持站点特定行为和重试逻辑）
+        adapter = get_adapter(
+            template.adapter, template.base_url, self._client
+        )
+        await adapter.on_before_crawl(template)
+
         for current_page in range(page, page + max_pages):
-            try:
-                url = template.get_full_list_url(current_page, results_per_page)
-                html = await self._client.request_page(url, template.list_request)
-                records = self._parser.parse_list(html, template.list_fields)
+            is_first = (current_page == page)
+            page_succeeded = False
+            page_skipped = False
+            records: list[dict[str, Any]] = []  # 防止 skip 路径下未定义
 
-                if not records:
-                    logger.info(
-                        "No more records at page %d, stopping pagination",
-                        current_page,
-                    )
-                    break
+            for attempt in self._retry_loop():
+                try:
+                    await adapter.on_before_page(current_page, is_first)
 
-                _init_enhancements()
-                if _dedup is not None and _dedup.enabled:
-                    new_records = []
-                    for record in records:
-                        rid = self._get_record_id(record, template)
-                        if await _dedup.exists(template.name, rid):
-                            logger.debug("Skipping duplicate record: %s", rid)
-                            continue
-                        await _dedup.mark_seen(template.name, rid)
-                        if settings.incremental_mode:
-                            content_hash = _dedup.make_content_hash(record)
-                            change_status = await _dedup.record_digest(
-                                template.name, rid, content_hash
-                            )
-                            if change_status and change_status != "changed":
-                                logger.debug("Skipping unchanged record: %s", rid)
+                    url = template.get_full_list_url(current_page, results_per_page)
+                    html = await self._client.request_page(url, template.list_request, anti_crawl_enabled=template.effective_anti_crawl_enabled)
+                    records = self._parser.parse_list(html, template.list_fields)
+
+                    records = await adapter.on_after_page(current_page, records)
+
+                    if not records:
+                        logger.info(
+                            "No more records at page %d, stopping pagination",
+                            current_page,
+                        )
+                        page_succeeded = True  # 正常结束，非错误
+                        break  # 跳出重试循环
+
+                    _init_enhancements()
+                    if _dedup is not None and _dedup.enabled:
+                        new_records = []
+                        for record in records:
+                            rid = self._get_record_id(record, template)
+                            if await _dedup.exists(template.name, rid):
+                                logger.debug("Skipping duplicate record: %s", rid)
                                 continue
-                        new_records.append(record)
-                    skipped = len(records) - len(new_records)
-                    if skipped > 0:
-                        logger.info("Dedup: skipped %d of %d records", skipped, len(records))
-                    records = new_records
+                            await _dedup.mark_seen(template.name, rid)
+                            if settings.incremental_mode:
+                                content_hash = _dedup.make_content_hash(record)
+                                change_status = await _dedup.record_digest(
+                                    template.name, rid, content_hash
+                                )
+                                if change_status and change_status != "changed":
+                                    logger.debug("Skipping unchanged record: %s", rid)
+                                    continue
+                            new_records.append(record)
+                        skipped = len(records) - len(new_records)
+                        if skipped > 0:
+                            logger.info("Dedup: skipped %d of %d records", skipped, len(records))
+                        records = new_records
 
-                if records:
-                    await self._save_page_records(template, records, result)
+                    if records:
+                        await self._save_page_records(template, records, result)
 
-                all_records.extend(records)
+                    all_records.extend(records)
 
-                await self._save_checkpoint(template.name, {
-                    "status": "running",
-                    "page": current_page,
-                    "records_saved": len(result.records),
-                    "template": template.name,
-                })
+                    if state is not None:
+                        state.current_page = current_page
+                        state.records_saved = len(result.records)
+                        await self._save_checkpoint(template.name, state)
 
-                logger.info(
-                    "Page %d: found %d records (total: %d)",
-                    current_page,
-                    len(records),
-                    len(all_records),
-                )
-
-                if not template.list_pagination:
-                    break
-
-                if template.list_pagination.type == PaginationType.NEXT_PAGE:
-                    has_next = self._parser.extract_links(
-                        html,
-                        template.list_pagination.next_selector or "",
-                        template.detail_url_selector_type,
+                    logger.info(
+                        "Page %d: found %d records (total: %d)",
+                        current_page,
+                        len(records),
+                        len(all_records),
                     )
-                    if not has_next:
-                        break
 
-            except Exception as e:
-                logger.error("Failed to crawl list page %d: %s", current_page, e)
-                result.errors.append(f"List page {current_page}: {e}")
+                    page_succeeded = True
+                    break  # 页面成功，跳出重试循环
+
+                except Exception as e:
+                    logger.warning(
+                        "Failed to crawl list page %d (attempt %d): %s",
+                        current_page, attempt, e,
+                    )
+
+                    adapter_action = await adapter.on_error(e, current_page, attempt)
+
+                    if adapter_action == "abort":
+                        result.errors.append(f"List page {current_page}: {e}")
+                        if state is not None:
+                            state.status = "failed"
+                            state.current_page = current_page
+                            state.records_saved = len(result.records)
+                            state.last_error = str(e)
+                            state.error_count += 1
+                            await self._save_checkpoint(template.name, state)
+                        await adapter.close()
+                        return all_records
+                    elif adapter_action == "reset_session":
+                        await adapter.on_before_crawl(template)
+                        continue
+                    elif adapter_action == "skip":
+                        page_succeeded = True  # 标记为已处理
+                        page_skipped = True
+                        break
+                    # None → 继续下一次重试
+
+            if not page_succeeded:
+                logger.error(
+                    "Page %d failed after many attempts, skipping",
+                    current_page,
+                )
+                result.errors.append(f"List page {current_page}: exceeded retries")
+                break  # 超出重试次数，中断翻页
+
+            # 空页面 = 自然翻页结束；"skip" 也应继续下一页
+            if page_succeeded and "records" in dir() and not records:
                 break
 
+            if not template.list_pagination:
+                break
+
+            if template.list_pagination.type == PaginationType.NEXT_PAGE:
+                has_next = self._parser.extract_links(
+                    html,
+                    template.list_pagination.next_selector or "",
+                    template.detail_url_selector_type,
+                )
+                if not has_next:
+                    break
+
+            adapter.on_page_advance()
+
+        await adapter.close()
         return all_records
 
     async def _crawl_list_pages_json(
         self, template: SiteTemplate, result: CrawlResult,
         resume_page: int | None = None,
+        state: CheckpointState | None = None,
     ) -> list[dict[str, Any]]:
         all_records: list[dict[str, Any]] = []
         start_page = resume_page if resume_page is not None else (
@@ -344,6 +584,11 @@ class SpiderEngine:
         item_path = template.json_item_path or ""
 
         effective_max_pages = config_max_pages
+        dynamic_pages = config_max_pages
+        # 如果从断点恢复且状态中有保存的分页信息，直接使用
+        if state is not None and state.effective_max_pages is not None:
+            effective_max_pages = state.effective_max_pages
+            dynamic_pages = state.effective_max_pages  # 确保后续终止条件一致
         current_page = start_page
 
         adapter_name = template.adapter
@@ -367,7 +612,7 @@ class SpiderEngine:
                         "headers": {**template.list_request.headers, **extra_headers}
                     }) if extra_headers else template.list_request
 
-                    text = await self._client.request_page(url, list_request)
+                    text = await self._client.request_page(url, list_request, anti_crawl_enabled=template.effective_anti_crawl_enabled)
                     json_data = json.loads(text)
 
                     records = self._parser.parse_list_json(
@@ -424,17 +669,20 @@ class SpiderEngine:
                                 except (ValueError, TypeError):
                                     pass
 
+                    # 保存分页参数到断点状态（用于恢复时跳过重复计算）
+                    if state is not None and current_page == start_page and 'effective_max_pages' in locals():
+                        state.effective_max_pages = effective_max_pages
+                        state.dynamic_total = total if 'total' in locals() else None
+
                     all_records.extend(records)
 
                     if records:
                         await self._save_page_records(template, records, result)
 
-                    await self._save_checkpoint(template.name, {
-                        "status": "running",
-                        "page": current_page,
-                        "records_saved": len(result.records),
-                        "template": template.name,
-                    })
+                    if state is not None:
+                        state.current_page = current_page
+                        state.records_saved = len(result.records)
+                        await self._save_checkpoint(template.name, state)
 
                     logger.info(
                         "Page %d/%s: found %d records%s (cumulative: %d)",
@@ -455,13 +703,13 @@ class SpiderEngine:
                     adapter_action = await adapter.on_error(e, current_page, attempt)
                     if adapter_action == "abort":
                         result.errors.append(f"List page {current_page}: {e}")
-                        await self._save_checkpoint(template.name, {
-                            "status": "failed",
-                            "page": current_page,
-                            "records_saved": len(result.records),
-                            "template": template.name,
-                            "error": str(e),
-                        })
+                        if state is not None:
+                            state.status = "failed"
+                            state.current_page = current_page
+                            state.records_saved = len(result.records)
+                            state.last_error = str(e)
+                            state.error_count += 1
+                            await self._save_checkpoint(template.name, state)
                         return all_records
                     elif adapter_action == "reset_session":
                         await adapter.on_before_crawl(template)
@@ -482,7 +730,8 @@ class SpiderEngine:
             adapter.on_page_advance()
             current_page += 1
 
-            if current_page >= start_page + dynamic_pages:
+            # 终止条件：达到计算出的最大页数
+            if current_page >= dynamic_pages:
                 break
 
         await adapter.close()
@@ -609,7 +858,7 @@ class SpiderEngine:
                 if not url:
                     return base_record
 
-                html = await self._client.request_page(url, template.detail_request)
+                html = await self._client.request_page(url, template.detail_request, anti_crawl_enabled=template.effective_anti_crawl_enabled)
                 detail = self._parser.parse_detail(html, template.detail_fields)
                 merged = {**base_record, **detail, "_source_url": url}
                 return merged
@@ -629,7 +878,7 @@ class SpiderEngine:
                 if not url:
                     return base_record
 
-                text = await self._client.request_page(url, template.detail_request)
+                text = await self._client.request_page(url, template.detail_request, anti_crawl_enabled=template.effective_anti_crawl_enabled)
                 json_data = json.loads(text)
                 detail = self._parser.parse_detail_json(json_data, template.detail_fields)
                 merged = {**base_record, **detail, "_source_url": url}

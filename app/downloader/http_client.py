@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -60,6 +61,15 @@ class HttpClient:
     def __init__(self) -> None:
         self._client: curl_requests.AsyncSession | None = None
         self._last_proxy_url: str | None = None
+        # 协程级代理分配：每个协程独立租用一个代理 IP
+        self._leased_proxies: dict[int, str] = {}
+        self._lease_lock: asyncio.Lock | None = None
+
+    async def _get_lease_lock(self) -> asyncio.Lock:
+        if self._lease_lock is None:
+            import asyncio
+            self._lease_lock = asyncio.Lock()
+        return self._lease_lock
 
     async def _get_client(self) -> curl_requests.AsyncSession:
         if self._client is None or self._client.acurl is None:
@@ -78,16 +88,32 @@ class HttpClient:
         self,
         url: str,
         config: RequestConfig | None = None,
+        anti_crawl_enabled: bool | None = None,
     ) -> str:
+        """请求页面并返回文本内容。
+
+        Args:
+            url: 请求 URL。
+            config: 请求配置。
+            anti_crawl_enabled: 模板级反爬开关。None=使用全局配置, True/False=覆盖全局。
+
+        Returns:
+            响应文本。
+        """
         config = config or RequestConfig()
         client = await self._get_client()
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)
 
-        _init_anti_crawl()
+        # 解析最终反爬开关：模板 > 全局
+        use_anti_crawl = (anti_crawl_enabled if anti_crawl_enabled is not None
+                          else settings.anti_crawl_enabled)
 
-        if _rotator is not None and _rotator.enabled:
+        if use_anti_crawl:
+            _init_anti_crawl()
+
+        if _rotator is not None and _rotator.enabled and use_anti_crawl:
             anti_headers = _rotator.get_headers(target_url=url)
             for k, v in anti_headers.items():
                 headers.setdefault(k, v)
@@ -96,15 +122,25 @@ class HttpClient:
                 for k, v in anti_cookies.items():
                     cookies.setdefault(k, v)
 
-        if _delayer is not None and _delayer.enabled:
+        if _delayer is not None and _delayer.enabled and use_anti_crawl:
             await _delayer.delay(url)
 
+        # ── 代理选择：隧道代理 > 协程独立代理 > 代理池 ──────────
         proxy_url = None
+        task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
+
         if settings.tunnel_proxy_url:
             proxy_url = settings.tunnel_proxy_url
-
-        elif _proxy_pool is not None and _proxy_pool.enabled:
-            proxy_url = await _proxy_pool.get_proxy()
+        elif _proxy_pool is not None and _proxy_pool.enabled and use_anti_crawl:
+            # 协程级代理分配：每个协程独立租用一个代理 IP
+            lock = await self._get_lease_lock()
+            async with lock:
+                if task_id in self._leased_proxies:
+                    proxy_url = self._leased_proxies[task_id]
+                else:
+                    proxy_url = await _proxy_pool.lease_proxy(task_id)
+                    if proxy_url:
+                        self._leased_proxies[task_id] = proxy_url
 
         self._last_proxy_url = proxy_url
 
@@ -127,8 +163,6 @@ class HttpClient:
             if use_proxy and proxy_url:
                 request_kwargs["proxy"] = proxy_url
 
-            logger.info("Requesting page: %s [%s], Proxy: %s, Length Of Proxy: %d", url, config.method, proxy_url, len(_proxy_pool._proxies))
-            
             response = await client.request(**request_kwargs)
 
             if response.status_code in settings.http_retry_on_statuses:
@@ -149,15 +183,29 @@ class HttpClient:
         except curl_requests.errors.RequestsError as e:
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_failure(proxy_url)
+                await self._release_failed_proxy(task_id, proxy_url)
             if _fallback is not None:
                 await _fallback.record_failure(url, "proxy" if use_proxy else "direct")
             raise
         except Exception as e:
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_failure(proxy_url)
+                await self._release_failed_proxy(task_id, proxy_url)
             if _fallback is not None:
                 await _fallback.record_failure(url, "proxy" if use_proxy else "direct")
             raise
+
+    async def _release_failed_proxy(self, task_id: int, proxy_url: str) -> None:
+        """释放失效的协程代理并尝试获取新代理。"""
+        lock = await self._get_lease_lock()
+        async with lock:
+            if self._leased_proxies.get(task_id) == proxy_url:
+                del self._leased_proxies[task_id]
+                # 尝试为该协程分配新代理
+                if _proxy_pool is not None and _proxy_pool.enabled:
+                    new_proxy = await _proxy_pool.lease_proxy(task_id)
+                    if new_proxy:
+                        self._leased_proxies[task_id] = new_proxy
 
     async def download_file(
         self,
@@ -348,6 +396,8 @@ class HttpClient:
             self._client = None
     
     async def mark_last_proxy_failed(self) -> None:
-        """标记最后使用的代理为失败，这样下次请求会使用新代理。"""
+        """标记最后使用的代理为失败并释放协程租约，这样下次请求会使用新代理。"""
         if self._last_proxy_url and _proxy_pool is not None and _proxy_pool.enabled:
             await _proxy_pool.mark_failure(self._last_proxy_url)
+            task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
+            await self._release_failed_proxy(task_id, self._last_proxy_url)

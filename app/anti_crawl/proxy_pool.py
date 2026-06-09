@@ -60,6 +60,13 @@ class ProxyPool:
         # 适配器注册表
         self._adapters: list[ProxySourceAdapter] = []
 
+        # 协程级代理租约：task_id -> ProxyInfo
+        self._leases: dict[int, ProxyInfo] = {}
+        self._lease_lock: asyncio.Lock = asyncio.Lock()
+
+        # 代理指标统计
+        self._metrics: dict[str, dict] = {}  # proxy_url -> {success, failure, last_used, last_check}
+
     # ── 适配器管理 ──────────────────────────────────────────────────────────
 
     def register_adapter(self, adapter: ProxySourceAdapter) -> None:
@@ -266,6 +273,103 @@ class ProxyPool:
             logger.debug("New sticky proxy: %s", proxy.url)
             return proxy.url
 
+    # ── 协程级代理分配 ──────────────────────────────────────────────────────
+
+    async def lease_proxy(self, task_id: int) -> str | None:
+        """为指定协程分配独立代理 IP。
+
+        同一 task_id 在整个生命周期内保持相同代理（除非代理失效）。
+        不同 task_id 获得不同的代理 IP，实现隔离。
+
+        Args:
+            task_id: 协程标识（asyncio.Task id）。
+
+        Returns:
+            代理 URL 字符串，如果无可用代理则返回 None。
+        """
+        if not self.enabled:
+            return None
+
+        await self.ensure_loaded()
+
+        async with self._lease_lock:
+            # 如果该协程已有租约且代理健康，直接返回
+            if task_id in self._leases:
+                leased = self._leases[task_id]
+                if leased in self._healthy:
+                    logger.debug("Task %d reusing leased proxy: %s", task_id, leased.url)
+                    return leased.url
+                else:
+                    # 代理失效，清除租约
+                    del self._leases[task_id]
+
+            # 分配新的独立代理
+            proxy = await self._allocate_unique_proxy(task_id)
+            if proxy:
+                self._leases[task_id] = proxy
+                proxy.last_used = time.time()
+                logger.debug("Task %d leased new proxy: %s", task_id, proxy.url)
+                return proxy.url
+
+            return None
+
+    async def release_proxy(self, task_id: int) -> None:
+        """释放协程的代理租约。
+
+        Args:
+            task_id: 协程标识。
+        """
+        async with self._lease_lock:
+            if task_id in self._leases:
+                proxy = self._leases.pop(task_id)
+                logger.debug("Task %d released proxy: %s", task_id, proxy.url)
+
+    async def _allocate_unique_proxy(self, task_id: int) -> ProxyInfo | None:
+        """为协程分配一个未被其他协程使用的代理。
+
+        策略：
+        1. 优先从健康代理中选择未被其他协程持有者
+        2. 如果所有代理都被持有，回退到轮询（共享）
+
+        Args:
+            task_id: 协程标识。
+
+        Returns:
+            分配的 ProxyInfo，无可用代理返回 None。
+        """
+        if not self._healthy:
+            logger.warning("No healthy proxies available for task %d, reloading...", task_id)
+            self._loaded = False
+            await self.ensure_loaded()
+            if not self._healthy:
+                return None
+
+        # 收集已被其他协程持有的代理 URL
+        in_use: set[str] = {
+            p.url for tid, p in self._leases.items() if tid != task_id
+        }
+
+        # 优先选择未被其他协程使用的健康代理
+        available = [p for p in self._healthy if p.url not in in_use]
+        if available:
+            strategy = settings.proxy_rotation.lower()
+            if strategy == "random":
+                chosen = random.choice(available)
+            else:
+                chosen = available[self._index % len(available)]
+                self._index = (self._index + 1) % len(available)
+            return chosen
+
+        # 所有代理都在使用中，回退到轮询（同一代理可能被多协程共享）
+        logger.debug("All proxies are leased, falling back to shared allocation for task %d", task_id)
+        strategy = settings.proxy_rotation.lower()
+        if strategy == "random":
+            return random.choice(self._healthy)
+        else:
+            proxy = self._healthy[self._index % len(self._healthy)]
+            self._index = (self._index + 1) % len(self._healthy)
+            return proxy
+
     # ── 故障管理 ────────────────────────────────────────────────────────────
 
     async def mark_failure(self, proxy_url: str) -> None:
@@ -284,16 +388,21 @@ class ProxyPool:
                 self._current_proxy = None
             
             # 从所有列表中移除该代理
-            removed = False
+            # removed = False
             for proxy_list in [self._proxies, self._healthy, self._unhealthy]:
                 to_remove = [p for p in proxy_list if p.url == proxy_url]
                 if to_remove:
                     for p in to_remove:
                         proxy_list.remove(p)
-                    removed = True
+                    # removed = True
             
-            if removed:
-                logger.warning("Proxy removed from pool after failure: %s", proxy_url)
+            # if removed:
+            #     logger.warning("Proxy removed from pool after failure: %s", proxy_url)
+                
+            # 更新指标
+            m = self._metrics.setdefault(proxy_url, {"success": 0, "failure": 0, "last_used": 0, "last_check": 0})
+            m["failure"] += 1
+            m["last_used"] = time.time()
 
     async def mark_success(self, proxy_url: str) -> None:
         """标记代理请求成功，重置失败计数。
@@ -309,6 +418,11 @@ class ProxyPool:
                 if proxy.url == proxy_url:
                     proxy.failures = 0
                     break
+        
+        # 更新指标
+        m = self._metrics.setdefault(proxy_url, {"success": 0, "failure": 0, "last_used": 0, "last_check": 0})
+        m["success"] += 1
+        m["last_used"] = time.time()
 
     # ── 恢复检查 ────────────────────────────────────────────────────────────
 
@@ -348,6 +462,47 @@ class ProxyPool:
             "enabled": self.enabled,
             "adapters": [a.name for a in self._adapters],
             "healthy_proxies": [p.url for p in self._healthy],
+            "leases": {str(k): v.url for k, v in self._leases.items()},
+            "metrics": self.get_metrics(),
+        }
+
+    def get_metrics(self) -> dict:
+        """返回代理性能指标汇总。
+
+        Returns:
+            {
+                "total_requests": int,
+                "total_success": int,
+                "total_failure": int,
+                "success_rate": float,
+                "proxies": {url: {success, failure, error_rate, last_used}, ...},
+                "replacement_count": int,
+            }
+        """
+        total_success = sum(m["success"] for m in self._metrics.values())
+        total_failure = sum(m["failure"] for m in self._metrics.values())
+        total = total_success + total_failure
+
+        proxy_details = {}
+        for url, m in self._metrics.items():
+            proxy_total = m["success"] + m["failure"]
+            proxy_details[url] = {
+                "success": m["success"],
+                "failure": m["failure"],
+                "error_rate": round(m["failure"] / proxy_total, 4) if proxy_total > 0 else 0,
+                "last_used": m["last_used"],
+            }
+
+        # 统计被移除的代理数量（从 _unhealthy 中推断）
+        removed = len([p for p in self._unhealthy if p.url in self._metrics])
+
+        return {
+            "total_requests": total,
+            "total_success": total_success,
+            "total_failure": total_failure,
+            "success_rate": round(total_success / total, 4) if total > 0 else 0,
+            "proxies": proxy_details,
+            "replacement_count": removed,
         }
 
 

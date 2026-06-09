@@ -103,7 +103,7 @@ class RedisDedup:
         # 精确检查
         try:
             result = await self._redis.sismember(
-                f"{settings.dedup_key_prefix or spider:dedup}:{template_name}:set",
+                f"{(settings.dedup_key_prefix or "spider:dedup")}:{template_name}:set",
                 unique_id,
             )
             return bool(result)
@@ -130,7 +130,7 @@ class RedisDedup:
             return True  # 连接失败时允许继续采集
 
         try:
-            set_key = f"{settings.dedup_key_prefix or spider:dedup}:{template_name}:set"
+            set_key = f"{(settings.dedup_key_prefix or "spider:dedup")}:{template_name}:set"
             added = await self._redis.sadd(set_key, unique_id)
 
             if ttl and added:
@@ -156,7 +156,7 @@ class RedisDedup:
             return 0
 
         try:
-            set_key = f"{settings.dedup_key_prefix or spider:dedup}:{template_name}:set"
+            set_key = f"{(settings.dedup_key_prefix or "spider:dedup")}:{template_name}:set"
             return await self._redis.scard(set_key) or 0
         except Exception as e:
             logger.error("Redis scard failed: %s", e)
@@ -172,7 +172,7 @@ class RedisDedup:
             return False
 
         try:
-            set_key = f"{settings.dedup_key_prefix or spider:dedup}:{template_name}:set"
+            set_key = f"{(settings.dedup_key_prefix or "spider:dedup")}:{template_name}:set"
             await self._redis.delete(set_key)
             logger.info("Cleared dedup set for template: %s", template_name)
             return True
@@ -206,7 +206,7 @@ class RedisDedup:
             return None
 
         try:
-            hash_key = f"{settings.dedup_key_prefix or spider:dedup}:{template_name}:hash:{unique_id}"
+            hash_key = f"{(settings.dedup_key_prefix or "spider:dedup")}:{template_name}:hash:{unique_id}"
             old_hash = await self._redis.get(hash_key)
 
             if old_hash is None:
