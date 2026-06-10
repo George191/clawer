@@ -347,15 +347,37 @@ const AICollect: React.FC = () => {
   // ── 渲染 ──
   return (
     <div style={{ maxWidth: 960, margin: '0 auto' }}>
-      {/* 标题 */}
-      <div style={{ marginBottom: 24 }}>
-        <Title level={3} style={{ marginBottom: 4 }}>
-          <ThunderboltOutlined style={{ marginRight: 8, color: '#3B82F6' }} />
-          AI 智能采集
-        </Title>
-        <Text type="secondary">
-          输入目标网址，AI 自动分析页面结构，一键生成采集模板
-        </Text>
+      {/* Hero */}
+      <div className="hero-section" style={{ padding: '40px 24px 32px', marginBottom: 8 }}>
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <div
+              style={{
+                width: 36, height: 36,
+                borderRadius: 10,
+                background: 'linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 4px 16px rgba(139, 92, 246, 0.4)',
+              }}
+            >
+              <ThunderboltOutlined style={{ fontSize: 18, color: '#fff' }} />
+            </div>
+            <span style={{
+              fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+              color: '#C4B5FD', textTransform: 'uppercase',
+              padding: '2px 10px', borderRadius: 4,
+              background: 'rgba(139, 92, 246, 0.12)',
+            }}>
+              AI Powered
+            </span>
+          </div>
+          <Title level={3} style={{ marginBottom: 6, fontSize: 22, letterSpacing: '-0.02em' }}>
+            AI 智能采集
+          </Title>
+          <Text style={{ color: '#94A3B8' }}>
+            输入目标网址，AI 自动分析页面结构，一键生成采集模板
+          </Text>
+        </div>
       </div>
 
       {/* 步骤条 */}
@@ -375,7 +397,7 @@ const AICollect: React.FC = () => {
 
       {/* ── Step 1: 输入 URL ── */}
       {flowStep === 'input' && (
-        <Card>
+        <Card className="mission-card" styles={{ body: { padding: '24px' } }}>
           <Space.Compact style={{ width: '100%' }}>
             <Input
               size="large"

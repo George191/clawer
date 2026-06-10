@@ -106,10 +106,10 @@ const TaskCenter: React.FC = () => {
 
       {/* Filter Bar */}
       <div
+        className="glass-card"
         style={{
-          marginBottom: 16, padding: '12px 16px',
-          background: 'var(--ant-color-fill-alter, rgba(0,0,0,0.02))',
-          borderRadius: 8, display: 'flex', justifyContent: 'space-between',
+          marginBottom: 16, padding: '12px 18px',
+          display: 'flex', justifyContent: 'space-between',
           alignItems: 'center', flexWrap: 'wrap', gap: 12,
         }}
       >

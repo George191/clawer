@@ -27,67 +27,62 @@ interface StatusBadgeProps {
 
 const statusConfig: Record<
   StatusType,
-  { color: string; icon: React.ReactNode; label: string; pulse?: boolean }
+  { color: string; bg: string; border: string; icon: React.ReactNode; label: string; pulse?: boolean }
 > = {
-  running: { color: '#1677ff', icon: <PlayCircleOutlined />, label: '运行中', pulse: true },
-  completed: { color: '#52c41a', icon: <CheckCircleOutlined />, label: '已完成' },
-  failed: { color: '#ff4d4f', icon: <CloseCircleOutlined />, label: '失败' },
-  queued: { color: '#faad14', icon: <ClockCircleOutlined />, label: '排队中' },
-  paused: { color: '#8c8c8c', icon: <PauseCircleOutlined />, label: '已暂停' },
-  stopped: { color: '#8c8c8c', icon: <StopOutlined />, label: '已停止' },
-  error: { color: '#ff4d4f', icon: <ExclamationCircleOutlined />, label: '异常' },
-  active: { color: '#52c41a', icon: <CheckCircleOutlined />, label: '活跃' },
-  inactive: { color: '#8c8c8c', icon: <PauseCircleOutlined />, label: '已停用' },
+  running: { color: '#34D399', bg: 'rgba(16, 185, 129, 0.12)', border: 'rgba(16, 185, 129, 0.25)', icon: <PlayCircleOutlined />, label: '运行中', pulse: true },
+  completed: { color: '#60A5FA', bg: 'rgba(59, 130, 246, 0.12)', border: 'rgba(59, 130, 246, 0.25)', icon: <CheckCircleOutlined />, label: '已完成' },
+  failed: { color: '#F87171', bg: 'rgba(239, 68, 68, 0.12)', border: 'rgba(239, 68, 68, 0.25)', icon: <CloseCircleOutlined />, label: '失败' },
+  queued: { color: '#FBBF24', bg: 'rgba(245, 158, 11, 0.12)', border: 'rgba(245, 158, 11, 0.25)', icon: <ClockCircleOutlined />, label: '排队中' },
+  paused: { color: '#94A3B8', bg: 'rgba(100, 116, 139, 0.12)', border: 'rgba(100, 116, 139, 0.25)', icon: <PauseCircleOutlined />, label: '已暂停' },
+  stopped: { color: '#94A3B8', bg: 'rgba(100, 116, 139, 0.12)', border: 'rgba(100, 116, 139, 0.25)', icon: <StopOutlined />, label: '已停止' },
+  error: { color: '#F87171', bg: 'rgba(239, 68, 68, 0.12)', border: 'rgba(239, 68, 68, 0.25)', icon: <ExclamationCircleOutlined />, label: '异常' },
+  active: { color: '#34D399', bg: 'rgba(16, 185, 129, 0.12)', border: 'rgba(16, 185, 129, 0.25)', icon: <CheckCircleOutlined />, label: '活跃' },
+  inactive: { color: '#94A3B8', bg: 'rgba(100, 116, 139, 0.12)', border: 'rgba(100, 116, 139, 0.25)', icon: <PauseCircleOutlined />, label: '已停用' },
 };
 
 const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
-  const { token } = theme.useToken();
   const config = statusConfig[status] ?? statusConfig.inactive;
 
-  const dotStyle: React.CSSProperties = {
-    display: 'inline-block',
-    width: 6,
-    height: 6,
-    borderRadius: '50%',
-    backgroundColor: config.color,
-    marginRight: 4,
-    verticalAlign: 'middle',
-  };
-
   const pulseKeyframes = `
-    @keyframes status-pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
+    @keyframes status-pulse-badge {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
     }
   `;
 
   return (
     <>
       {config.pulse && <style>{pulseKeyframes}</style>}
-      <Tag
+      <span
+        className="status-pill"
         style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 4,
-          padding: '2px 10px',
-          borderRadius: token.borderRadiusSM,
-          border: `1px solid ${config.color}20`,
-          background: `${config.color}08`,
+          background: config.bg,
+          borderColor: config.border,
           color: config.color,
           fontSize: 12,
           fontWeight: 500,
-          lineHeight: '20px',
+          padding: '3px 12px',
+          borderRadius: 20,
+          border: `1px solid ${config.border}`,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          letterSpacing: '0.02em',
         }}
       >
         <span
           style={{
-            ...dotStyle,
-            animation: config.pulse ? 'status-pulse 1.5s ease-in-out infinite' : undefined,
+            display: 'inline-block',
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            backgroundColor: config.color,
+            animation: config.pulse ? 'status-pulse-badge 2s ease-in-out infinite' : undefined,
           }}
         />
-        <span style={{ fontSize: 13, marginLeft: 2 }}>{config.icon}</span>
+        <span style={{ fontSize: 11 }}>{config.icon}</span>
         {config.label}
-      </Tag>
+      </span>
     </>
   );
 };

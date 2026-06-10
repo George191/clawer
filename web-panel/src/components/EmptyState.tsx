@@ -50,21 +50,27 @@ const EmptyState: React.FC<EmptyStateProps> = ({
     >
       <div
         style={{
-          fontSize: 56,
-          color: 'var(--ant-color-text-quaternary, #bfbfbf)',
+          width: 80,
+          height: 80,
+          borderRadius: 20,
+          background: 'rgba(59, 130, 246, 0.08)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
           marginBottom: 24,
-          lineHeight: 1,
         }}
       >
-        {displayIcon}
+        <span style={{ fontSize: 32, color: '#93C5FD', lineHeight: 1 }}>
+          {displayIcon}
+        </span>
       </div>
 
       <div
         style={{
-          fontSize: 16,
+          fontSize: 15,
           fontWeight: 600,
-          color: 'var(--ant-color-text, #1d1d1d)',
-          marginBottom: 8,
+          color: '#E2E8F0',
+          marginBottom: 6,
         }}
       >
         {title}
@@ -74,7 +80,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({
         <div
           style={{
             fontSize: 13,
-            color: 'var(--ant-color-text-secondary, #8b949e)',
+            color: '#64748B',
             maxWidth: 320,
             lineHeight: 1.6,
             marginBottom: 24,

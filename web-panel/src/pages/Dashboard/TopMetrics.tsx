@@ -16,12 +16,35 @@ interface TopMetricsProps {
   loading: boolean;
 }
 
-// ── Color config per card ──
 const cardConfigs = [
-  { key: 'tasks', color: '#1677ff', icon: <ThunderboltOutlined /> },
-  { key: 'throughput', color: '#52c41a', icon: <CloudUploadOutlined /> },
-  { key: 'kafkaLag', color: '#fa8c16', icon: <HourglassOutlined /> },
-  { key: 'dataVolume', color: '#722ed1', icon: <DatabaseOutlined /> },
+  {
+    key: 'tasks',
+    icon: <ThunderboltOutlined />,
+    label: '采集任务',
+    gradient: 'linear-gradient(135deg, #3B82F6, #2563EB)',
+    glow: 'rgba(59, 130, 246, 0.3)',
+  },
+  {
+    key: 'throughput',
+    icon: <CloudUploadOutlined />,
+    label: 'ETL 吞吐',
+    gradient: 'linear-gradient(135deg, #10B981, #059669)',
+    glow: 'rgba(16, 185, 129, 0.3)',
+  },
+  {
+    key: 'kafkaLag',
+    icon: <HourglassOutlined />,
+    label: 'Kafka Lag',
+    gradient: 'linear-gradient(135deg, #F59E0B, #D97706)',
+    glow: 'rgba(245, 158, 11, 0.3)',
+  },
+  {
+    key: 'dataVolume',
+    icon: <DatabaseOutlined />,
+    label: '数据总量',
+    gradient: 'linear-gradient(135deg, #8B5CF6, #6D28D9)',
+    glow: 'rgba(139, 92, 246, 0.3)',
+  },
 ] as const;
 
 const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
@@ -32,7 +55,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       <Row gutter={[16, 16]}>
         {cardConfigs.map((c) => (
           <Col xs={24} md={12} xl={6} key={c.key}>
-            <Card loading style={{ height: 160 }} />
+            <Card loading style={{ height: 170, borderRadius: 12 }} />
           </Col>
         ))}
       </Row>
@@ -49,28 +72,18 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
     );
   }
 
-  // ── value & sparkline extractors per card ──
-  const cards: {
-    key: string;
-    title: string;
-    value: number;
-    unit: string;
-    subtitle?: string;
-    trend: number;
-    sparklineData: number[];
-    color: string;
-    icon: React.ReactNode;
-  }[] = [
+  const cards = [
     {
       key: 'tasks',
       title: '采集任务',
       value: metrics.tasks.total,
       unit: '个',
       subtitle: `运行 ${metrics.tasks.running}  |  完成 ${metrics.tasks.completed}  |  失败 ${metrics.tasks.failed}`,
-      trend: metrics.tasks.failed > 0 ? -(metrics.tasks.failed / metrics.tasks.total * 100) : 8.5,
+      trend: metrics.tasks.failed > 0 ? -(metrics.tasks.failed / Math.max(1, metrics.tasks.total) * 100) : 8.5,
       sparklineData: metrics.layer_throughput_history.map((p) => p.Crawl),
-      color: '#1677ff',
       icon: <ThunderboltOutlined />,
+      gradient: 'linear-gradient(135deg, #3B82F6, #2563EB)',
+      glow: 'rgba(59, 130, 246, 0.3)',
     },
     {
       key: 'throughput',
@@ -79,8 +92,9 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       unit: 'msg/s',
       trend: metrics.etl_throughput.current > 400 ? 5.2 : -2.8,
       sparklineData: metrics.etl_throughput.history.map((p) => p.v),
-      color: '#52c41a',
       icon: <CloudUploadOutlined />,
+      gradient: 'linear-gradient(135deg, #10B981, #059669)',
+      glow: 'rgba(16, 185, 129, 0.3)',
     },
     {
       key: 'kafkaLag',
@@ -89,8 +103,9 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       unit: '',
       trend: metrics.kafka_lag.total > 500 ? 7.3 : -12.5,
       sparklineData: metrics.kafka_lag_history.map((p) => p.v),
-      color: '#fa8c16',
       icon: <HourglassOutlined />,
+      gradient: 'linear-gradient(135deg, #F59E0B, #D97706)',
+      glow: 'rgba(245, 158, 11, 0.3)',
     },
     {
       key: 'dataVolume',
@@ -99,8 +114,9 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       unit: 'TB',
       trend: metrics.data_volume.daily_increment > 0.2 ? 6.8 : -1.5,
       sparklineData: metrics.etl_throughput.history.map((p) => p.v),
-      color: '#722ed1',
       icon: <DatabaseOutlined />,
+      gradient: 'linear-gradient(135deg, #8B5CF6, #6D28D9)',
+      glow: 'rgba(139, 92, 246, 0.3)',
     },
   ];
 
@@ -108,21 +124,16 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
     <Row gutter={[16, 16]}>
       {cards.map((c) => {
         const trendDir = c.trend >= 0 ? 1 : -1;
-        const trendColor = trendDir > 0 ? '#52c41a' : '#ff4d4f';
+        const trendColor = trendDir > 0 ? '#34D399' : '#F87171';
 
         return (
           <Col xs={24} md={12} xl={6} key={c.key}>
             <Card
-              hoverable
-              style={{
-                borderRadius: token.borderRadiusLG,
-                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                cursor: 'default',
-                height: '100%',
-              }}
+              className="premium-card"
+              style={{ height: '100%', cursor: 'default' }}
               styles={{ body: { padding: '20px 24px' } }}
             >
-              {/* Top row: icon + sparkline */}
+              {/* Top: icon + sparkline */}
               <div
                 style={{
                   display: 'flex',
@@ -131,54 +142,57 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
                   marginBottom: 16,
                 }}
               >
-                {/* Colored icon block */}
                 <div
                   style={{
-                    width: 42,
-                    height: 42,
+                    width: 40,
+                    height: 40,
                     borderRadius: 10,
-                    background: `linear-gradient(135deg, ${c.color}20, ${c.color}35)`,
+                    background: c.gradient,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    fontSize: 20,
-                    color: c.color,
+                    fontSize: 18,
+                    color: '#fff',
+                    boxShadow: `0 4px 12px ${c.glow}`,
                   }}
                 >
                   {c.icon}
                 </div>
-                {/* Mini sparkline */}
-                <Sparkline data={c.sparklineData} color={c.color} width={90} height={40} />
+                {c.sparklineData && c.sparklineData.length > 1 && (
+                  <Sparkline data={c.sparklineData} color={trendColor} width={90} height={40} />
+                )}
               </div>
 
-              {/* Title */}
+              {/* Label */}
               <div
                 style={{
-                  fontSize: 12,
-                  color: token.colorTextSecondary,
+                  fontSize: 11,
+                  color: '#64748B',
                   marginBottom: 4,
-                  fontWeight: 500,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
                 }}
               >
                 {c.title}
               </div>
 
               {/* Value */}
-              <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.3, marginBottom: 8 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, lineHeight: 1.3, marginBottom: 6, color: '#F1F5F9', letterSpacing: '-0.02em' }}>
                 {c.value.toLocaleString()}
                 {c.unit && (
-                  <span style={{ fontSize: 14, fontWeight: 500, color: token.colorTextSecondary, marginLeft: 4 }}>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: '#94A3B8', marginLeft: 4 }}>
                     {c.unit}
                   </span>
                 )}
               </div>
 
-              {/* Subtitle (task breakdown) */}
+              {/* Subtitle */}
               {c.subtitle && (
                 <div
                   style={{
                     fontSize: 11,
-                    color: token.colorTextQuaternary,
+                    color: '#475569',
                     marginBottom: 6,
                     lineHeight: 1.4,
                   }}
@@ -190,13 +204,14 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
               {/* Trend */}
               <div style={{ display: 'flex', alignItems: 'center' }}>
                 {trendDir > 0 ? (
-                  <ArrowUpOutlined style={{ color: trendColor, fontSize: 12 }} />
+                  <ArrowUpOutlined style={{ color: trendColor, fontSize: 11 }} />
                 ) : (
-                  <ArrowDownOutlined style={{ color: trendColor, fontSize: 12 }} />
+                  <ArrowDownOutlined style={{ color: trendColor, fontSize: 11 }} />
                 )}
-                <span style={{ color: trendColor, fontSize: 13, fontWeight: 500, marginLeft: 4 }}>
-                  同比 {c.trend >= 0 ? '+' : ''}{Math.abs(c.trend).toFixed(1)}%
+                <span style={{ color: trendColor, fontSize: 12, fontWeight: 600, marginLeft: 4 }}>
+                  {c.trend >= 0 ? '+' : ''}{Math.abs(c.trend).toFixed(1)}%
                 </span>
+                <span style={{ color: '#475569', fontSize: 11, marginLeft: 4 }}>同比</span>
               </div>
             </Card>
           </Col>

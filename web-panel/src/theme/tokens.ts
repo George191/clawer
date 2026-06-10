@@ -1,9 +1,11 @@
 import type { AliasToken } from 'antd/es/theme/interface';
 
-/** 扩展自定义 Design Token */
+/** 扩展自定义 Design Token — Tellius 风格 */
 export interface CustomToken {
-  /** 深色/浅色渐变背景 */
+  /** 页面渐变背景 */
   colorBgGradient: string;
+  /** Hero 区域渐变 */
+  colorHeroGradient: string;
   /** 侧边栏背景色 */
   colorSiderBg: string;
   /** 顶栏背景色 */
@@ -18,71 +20,95 @@ export interface CustomToken {
   boxShadowCard: string;
   /** 浮层卡片阴影 */
   boxShadowElevated: string;
+  /** 模态框阴影 */
+  boxShadowModal: string;
+  /** 发光主色 — 用于按钮/选中态光晕 */
+  colorPrimaryGlow: string;
+  /** 强调渐变 1: blue→indigo */
+  gradientAccent: string;
+  /** 强调渐变 2: indigo→purple */
+  gradientSecondary: string;
 }
 
-/** 完整 Token 类型 = antd AliasToken + 自定义扩展 */
 export type FullToken = AliasToken & CustomToken;
 
-/** 共享基础 Token（不依赖主题色） */
+/** 共享基础 Token */
 export const themeTokens: Partial<FullToken> = {
   // ── 字体 ──
-  fontFamily: `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif`,
+  fontFamily: `'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif`,
   fontSize: 14,
-  lineHeight: 1.5715,
+  fontSizeLG: 16,
+  fontSizeXL: 20,
+  fontSizeHeading1: 36,
+  fontSizeHeading2: 28,
+  fontSizeHeading3: 22,
+  fontSizeHeading4: 18,
+  lineHeight: 1.6,
+  lineHeightHeading1: 1.2,
+  lineHeightHeading2: 1.25,
+  lineHeightHeading3: 1.3,
 
   // ── 圆角 ──
-  borderRadius: 6,
-  borderRadiusLG: 8,
-  borderRadiusSM: 4,
+  borderRadius: 8,
+  borderRadiusLG: 12,
+  borderRadiusSM: 6,
+  borderRadiusXS: 4,
 
   // ── 间距 ──
   paddingLG: 24,
   paddingMD: 16,
   paddingSM: 12,
   paddingXS: 8,
+  marginLG: 24,
+  marginMD: 16,
+  marginSM: 12,
+  marginXS: 8,
 
   // ── 控件 ──
-  controlHeight: 36,
-  controlHeightLG: 44,
-  controlHeightSM: 28,
+  controlHeight: 38,
+  controlHeightLG: 46,
+  controlHeightSM: 30,
 
   wireframe: false,
 
   // ── 尺寸 ──
   headerHeight: 64,
-  siderWidth: 240,
+  siderWidth: 248,
   siderCollapsedWidth: 80,
 };
 
-/** 状态色（亮/暗通用） */
+/** 状态色 — 统一亮/暗 */
 export const statusColors = {
-  success: '#52c41a',
-  warning: '#faad14',
-  error: '#ff4d4f',
-  info: '#1677ff',
-  processing: '#1677ff',
-  default: '#d9d9d9',
+  success: '#10B981',
+  warning: '#F59E0B',
+  error: '#EF4444',
+  info: '#3B82F6',
+  processing: '#6366F1',
+  default: '#94A3B8',
+  pending: '#F59E0B',
 };
 
-/** 层级色 — 用于 ETL 拓扑图各节点 */
+/** 层级色 — 用于 ETL 拓扑图 */
 export const layerColors: Record<string, string> = {
-  Crawl: '#1677ff',
-  RDS: '#722ed1',
-  ODS: '#13c2c2',
-  TASK: '#52c41a',
-  DWD: '#fa8c16',
-  DWS: '#eb2f96',
-  ADS: '#f5222d',
+  Crawl: '#3B82F6',
+  RDS: '#8B5CF6',
+  ODS: '#06B6D4',
+  TASK: '#10B981',
+  DWD: '#F59E0B',
+  DWS: '#EC4899',
+  ADS: '#EF4444',
 };
 
 /** 图表调色板 */
 export const chartPalette = [
-  '#1677ff',
-  '#52c41a',
-  '#fa8c16',
-  '#722ed1',
-  '#eb2f96',
-  '#13c2c2',
-  '#faad14',
-  '#f5222d',
+  '#3B82F6',
+  '#10B981',
+  '#F59E0B',
+  '#8B5CF6',
+  '#EC4899',
+  '#06B6D4',
+  '#F97316',
+  '#EF4444',
+  '#6366F1',
+  '#14B8A6',
 ];

@@ -8,7 +8,6 @@ import {
   DeleteOutlined,
   PlayCircleOutlined,
   CloseOutlined,
-  ClockCircleOutlined,
   GlobalOutlined,
   ApiOutlined,
   FileSearchOutlined,
@@ -38,28 +37,29 @@ const TEMPLATE_ICON: Record<string, React.ReactNode> = {
 };
 
 const TEMPLATE_COLOR: Record<string, string> = {
-  '网页采集': '#1677ff',
-  'API采集': '#52c41a',
-  '日志采集': '#fa8c16',
-  '数据清洗': '#722ed1',
-  '质量校验': '#13c2c2',
-  '消息采集': '#eb2f96',
+  '网页采集': '#3B82F6',
+  'API采集': '#10B981',
+  '日志采集': '#F59E0B',
+  '数据清洗': '#8B5CF6',
+  '质量校验': '#06B6D4',
+  '消息采集': '#EC4899',
 };
 
-const STATUS_COLOR: Record<string, string> = {
-  running: '#1677ff',
-  completed: '#52c41a',
-  failed: '#ff4d4f',
-  paused: '#faad14',
-  queued: '#d9d9d9',
+const TEMPLATE_GRADIENT: Record<string, string> = {
+  '网页采集': 'linear-gradient(135deg, #3B82F6, #2563EB)',
+  'API采集': 'linear-gradient(135deg, #10B981, #059669)',
+  '日志采集': 'linear-gradient(135deg, #F59E0B, #D97706)',
+  '数据清洗': 'linear-gradient(135deg, #8B5CF6, #6D28D9)',
+  '质量校验': 'linear-gradient(135deg, #06B6D4, #0891B2)',
+  '消息采集': 'linear-gradient(135deg, #EC4899, #DB2777)',
 };
 
 const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry }) => {
   const [logVisible, setLogVisible] = useState(false);
   const { token } = theme.useToken();
 
-  const statusColor = STATUS_COLOR[task.status] || '#d9d9d9';
-  const iconColor = TEMPLATE_COLOR[task.template] || '#1677ff';
+  const iconColor = TEMPLATE_COLOR[task.template] || '#3B82F6';
+  const iconGradient = TEMPLATE_GRADIENT[task.template] || 'linear-gradient(135deg, #3B82F6, #2563EB)';
   const templateIcon = TEMPLATE_ICON[task.template] || <BarChartOutlined />;
 
   const progressStatus =
@@ -84,18 +84,38 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry })
       width={720}
     >
       <div
-        style={{
-          background: '#0d1117', color: '#e6edf3', padding: 16, borderRadius: 6,
-          fontSize: 12, fontFamily: '"Fira Code", "Cascadia Code", monospace',
-          maxHeight: 400, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: 1.7,
-        }}
-      >
-        <div style={{ color: '#58a6ff' }}>[2026-06-01 23:00:00] [INFO] 任务启动: {task.template}</div>
-        <div style={{ color: '#58a6ff' }}>[2026-06-01 23:00:01] [INFO] 连接数据源...</div>
-        <div style={{ color: '#58a6ff' }}>[2026-06-01 23:00:03] [INFO] 数据源连接成功</div>
-        <div style={{ color: '#58a6ff' }}>[2026-06-01 23:00:05] [INFO] 开始处理记录...</div>
-        <div style={{ color: '#58a6ff' }}>[2026-06-01 23:00:15] [INFO] 处理完成, 共 {formatRecords(task.records)} 条</div>
-        <div style={{ color: '#58a6ff' }}>[2026-06-01 23:00:18] [INFO] 写入目标完成</div>
+        className="console-card"
+        style={{ maxHeight: 400 }}>
+        <div className="console-line">
+          <span className="badge success">✓</span>
+          <span className="time">23:00:00</span>
+          <span>[INFO] 任务启动: {task.template}</span>
+        </div>
+        <div className="console-line" style={{ animationDelay: '0.1s' }}>
+          <span className="badge success">✓</span>
+          <span className="time">23:00:01</span>
+          <span>[INFO] 连接数据源...</span>
+        </div>
+        <div className="console-line" style={{ animationDelay: '0.2s' }}>
+          <span className="badge success">✓</span>
+          <span className="time">23:00:03</span>
+          <span>[INFO] 数据源连接成功</span>
+        </div>
+        <div className="console-line" style={{ animationDelay: '0.3s' }}>
+          <span className="badge success">✓</span>
+          <span className="time">23:00:05</span>
+          <span>[INFO] 开始处理记录...</span>
+        </div>
+        <div className="console-line" style={{ animationDelay: '0.4s' }}>
+          <span className="badge success">✓</span>
+          <span className="time">23:00:15</span>
+          <span>[INFO] 处理完成, 共 {formatRecords(task.records)} 条</span>
+        </div>
+        <div className="console-line" style={{ animationDelay: '0.5s' }}>
+          <span className="badge success">✓</span>
+          <span className="time">23:00:18</span>
+          <span>[INFO] 写入目标完成</span>
+        </div>
       </div>
     </Modal>
   );
@@ -104,33 +124,38 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry })
     return (
       <>
         <Card
+          className="premium-card"
           size="small"
-          style={{
-            borderLeft: `3px solid ${statusColor}`,
-            transition: 'box-shadow 0.3s, transform 0.2s',
-          }}
-          bodyStyle={{ padding: '12px 16px' }}
-          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = token.boxShadowTertiary; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.transform = ''; }}
+          styles={{ body: { padding: '14px 18px' } }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div
               style={{
-                width: 36, height: 36, borderRadius: '50%', background: `${iconColor}15`,
+                width: 38, height: 38, borderRadius: 8,
+                background: iconGradient,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: iconColor, fontSize: 18, flexShrink: 0,
+                color: '#fff', fontSize: 16, flexShrink: 0,
               }}
             >
               {templateIcon}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text strong ellipsis style={{ maxWidth: 200 }}>{task.template}</Text>
+                <Text strong ellipsis style={{ maxWidth: 200, color: '#F1F5F9', fontSize: 14 }}>{task.template}</Text>
                 <StatusBadge status={task.status} />
               </div>
-              <Progress percent={task.progress} size="small" status={progressStatus} style={{ marginBottom: 0 }} />
+              <Progress
+                percent={task.progress}
+                size="small"
+                status={progressStatus}
+                style={{ marginBottom: 0 }}
+                strokeColor={{
+                  '0%': '#3B82F6',
+                  '100%': '#6366F1',
+                }}
+              />
             </div>
-            <Space size={4}>
+            <Space size={2}>
               <Tooltip title={task.status === 'running' ? '暂停' : '重试'}>
                 <Button type="text" size="small"
                   icon={task.status === 'running' ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
@@ -146,12 +171,12 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry })
               </Popconfirm>
             </Space>
           </div>
-          <Row justify="space-between" style={{ marginTop: 8 }}>
+          <Row justify="space-between" style={{ marginTop: 10 }}>
             <Space size={16}>
-              <Text type="secondary" style={{ fontSize: 11 }}>📊 {formatRecords(task.records)} 条</Text>
-              <Text type="secondary" style={{ fontSize: 11 }}>⏱ {task.duration}</Text>
+              <Text style={{ fontSize: 11, color: '#94A3B8' }}>{formatRecords(task.records)} 条</Text>
+              <Text style={{ fontSize: 11, color: '#94A3B8' }}>{task.duration}</Text>
             </Space>
-            <Text type="secondary" style={{ fontSize: 11 }}>开始: {task.startedAt}</Text>
+            <Text style={{ fontSize: 11, color: '#64748B' }}>开始: {task.startedAt}</Text>
           </Row>
         </Card>
         {logModal}
@@ -162,8 +187,9 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry })
   return (
     <>
       <Card
+        className="premium-card"
         size="small"
-        hoverable
+        styles={{ body: { padding: '18px' } }}
         actions={[
           <Tooltip title={task.status === 'running' ? '暂停' : '重试'} key="toggle">
             <Button type="text" size="small"
@@ -181,49 +207,57 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry })
             <Button type="text" size="small" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>,
         ]}
-        style={{
-          borderLeft: `3px solid ${statusColor}`,
-          transition: 'box-shadow 0.3s ease, transform 0.2s ease',
-        }}
-        bodyStyle={{ padding: '16px' }}
       >
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <Space size={8}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <Space size={10}>
             <div
               style={{
-                width: 32, height: 32, borderRadius: '50%', background: `${iconColor}15`,
+                width: 36, height: 36, borderRadius: 8,
+                background: iconGradient,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: iconColor, fontSize: 16,
+                color: '#fff', fontSize: 16,
               }}
             >
               {templateIcon}
             </div>
-            <Text strong style={{ fontSize: 14 }}>{task.template}</Text>
+            <Text strong style={{ fontSize: 14, color: '#F1F5F9' }}>{task.template}</Text>
           </Space>
           <StatusBadge status={task.status} />
         </div>
 
-        {/* Stats */}
-        <Row gutter={12} style={{ marginBottom: 8 }}>
-          <Col span={12}>
-            <Text type="secondary" style={{ fontSize: 11 }}>📊 记录数：{formatRecords(task.records)}</Text>
-          </Col>
-          <Col span={12} style={{ textAlign: 'right' }}>
-            <Text type="secondary" style={{ fontSize: 11 }}>⏱ 耗时：{task.duration}</Text>
-          </Col>
-        </Row>
-
         {/* Progress */}
-        <Progress percent={task.progress} size="small" status={progressStatus} style={{ marginBottom: 8 }} />
+        <Progress
+          percent={task.progress}
+          size="small"
+          status={progressStatus}
+          strokeColor={{
+            '0%': '#3B82F6',
+            '100%': '#6366F1',
+          }}
+          style={{ marginBottom: 14 }}
+        />
 
-        {/* Bottom */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Text type="secondary" style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}>
-            <ClockCircleOutlined />{task.startedAt}
+        {/* Footer stats */}
+        <Row justify="space-between">
+          <Space size={20}>
+            <div>
+              <Text style={{ fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>记录数</Text>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#F1F5F9', marginTop: 2 }}>
+                {formatRecords(task.records)}
+              </div>
+            </div>
+            <div>
+              <Text style={{ fontSize: 10, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>耗时</Text>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#F1F5F9', marginTop: 2 }}>
+                {task.duration}
+              </div>
+            </div>
+          </Space>
+          <Text style={{ fontSize: 11, color: '#475569', alignSelf: 'flex-end' }}>
+            {task.startedAt}
           </Text>
-          <Text type="secondary" style={{ fontSize: 11 }}>ID: {task.id}</Text>
-        </div>
+        </Row>
       </Card>
       {logModal}
     </>

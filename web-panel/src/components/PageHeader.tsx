@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Breadcrumb, Divider } from 'antd';
+import { Typography, Breadcrumb, Divider, Space } from 'antd';
 import { useLocation } from 'react-router-dom';
 import { HomeOutlined } from '@ant-design/icons';
 
@@ -22,6 +22,7 @@ const routeLabels: Record<string, string> = {
   '/pipeline': '管道管理',
   '/templates': '模板管理',
   '/settings': '系统设置',
+  '/ai-collect': 'AI 采集',
 };
 
 function toBreadcrumbItems(pathname: string) {
@@ -29,11 +30,9 @@ function toBreadcrumbItems(pathname: string) {
   if (segments.length === 0) {
     return [{ title: <><HomeOutlined /> 仪表盘</> }];
   }
-
   const items: { title: React.ReactNode; href?: string }[] = [
     { title: <><HomeOutlined /> 首页</> },
   ];
-
   let accumulated = '';
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
@@ -56,15 +55,15 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, extra }) => {
     <div style={{ marginBottom: 24 }}>
       <Breadcrumb
         items={breadcrumbItems}
-        style={{ fontSize: 13, marginBottom: 4 }}
+        style={{ fontSize: 12, marginBottom: 6, color: '#94A3B8' }}
       />
 
       <div
         style={{
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          paddingTop: 4,
+          alignItems: 'center',
+          paddingTop: 2,
         }}
       >
         <div>
@@ -72,8 +71,9 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, extra }) => {
             level={3}
             style={{
               margin: 0,
-              fontSize: 20,
+              fontSize: 22,
               fontWeight: 700,
+              letterSpacing: '-0.02em',
             }}
           >
             {title}
@@ -94,7 +94,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, extra }) => {
         {extra && <div style={{ flexShrink: 0 }}>{extra}</div>}
       </div>
 
-      <Divider style={{ marginTop: 16, marginBottom: 0 }} />
+      <Divider style={{ marginTop: 14, marginBottom: 0, borderColor: 'rgba(255, 255, 255, 0.06)' }} />
     </div>
   );
 };

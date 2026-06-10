@@ -6,7 +6,7 @@ interface DataCardProps {
   icon?: React.ReactNode;
   title: string;
   value: number | string;
-  change?: number; // percentage, e.g. 12.5 or -8.3
+  change?: number;
   sparklineData?: number[];
   color?: string;
   loading?: boolean;
@@ -23,28 +23,25 @@ const DataCard: React.FC<DataCardProps> = ({
 }) => {
   const trendDir = !change ? 0 : change > 0 ? 1 : -1;
   const trendColor =
-    trendDir > 0 ? '#52c41a' : trendDir < 0 ? '#ff4d4f' : 'var(--color-text-tertiary, #8c8c8c)';
+    trendDir > 0 ? '#34D399' : trendDir < 0 ? '#F87171' : '#94A3B8';
 
   if (loading) {
     return (
-      <Card bodyStyle={{ padding: '20px 24px' }}>
+      <Card className="premium-card" styles={{ body: { padding: '20px 24px' } }}>
         <Skeleton active paragraph={{ rows: 2 }} title={{ width: '40%' }} />
       </Card>
     );
   }
 
   return (
-    <Card
-      bodyStyle={{ padding: '20px 24px' }}
-      style={{ height: '100%' }}
-    >
-      {/* Header row: icon + title */}
+    <Card className="premium-card" style={{ height: '100%' }} styles={{ body: { padding: '20px 24px' } }}>
+      {/* Header row */}
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16 }}>
         {icon && (
           <span
             style={{
-              fontSize: 18,
-              color: color ?? 'var(--ant-color-primary, #1677ff)',
+              fontSize: 16,
+              color: color ?? 'var(--ant-color-primary, #3B82F6)',
               marginRight: 10,
               display: 'flex',
               alignItems: 'center',
@@ -55,9 +52,11 @@ const DataCard: React.FC<DataCardProps> = ({
         )}
         <span
           style={{
-            fontSize: 13,
-            color: 'var(--ant-color-text-secondary, #8b949e)',
-            fontWeight: 500,
+            fontSize: 12,
+            color: '#64748B',
+            fontWeight: 600,
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
           }}
         >
           {title}
@@ -67,11 +66,12 @@ const DataCard: React.FC<DataCardProps> = ({
       {/* Value */}
       <div
         style={{
-          fontSize: 32,
+          fontSize: 30,
           fontWeight: 700,
           lineHeight: 1.2,
           marginBottom: 8,
-          color: 'var(--ant-color-text, #1d1d1d)',
+          color: '#F1F5F9',
+          letterSpacing: '-0.02em',
         }}
       >
         {value}
@@ -83,24 +83,22 @@ const DataCard: React.FC<DataCardProps> = ({
           <Tooltip title={`较上周期 ${trendDir > 0 ? '上升' : '下降'} ${Math.abs(change!)}%`}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
               {trendDir > 0 ? (
-                <ArrowUpOutlined style={{ color: trendColor, fontSize: 12 }} />
+                <ArrowUpOutlined style={{ color: trendColor, fontSize: 11 }} />
               ) : (
-                <ArrowDownOutlined style={{ color: trendColor, fontSize: 12 }} />
+                <ArrowDownOutlined style={{ color: trendColor, fontSize: 11 }} />
               )}
-              <span style={{ color: trendColor, fontSize: 13, fontWeight: 500 }}>
+              <span style={{ color: trendColor, fontSize: 12, fontWeight: 600 }}>
                 {Math.abs(change!)}%
               </span>
             </span>
           </Tooltip>
         )}
         {trendDir === 0 && change !== undefined && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: trendColor, fontSize: 13 }}>
-            <MinusOutlined style={{ fontSize: 12 }} />
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: trendColor, fontSize: 12 }}>
+            <MinusOutlined style={{ fontSize: 11 }} />
             持平
           </span>
         )}
-
-        {/* Mini sparkline */}
         {sparklineData && sparklineData.length > 1 && (
           <div style={{ marginLeft: 'auto', width: 80, height: 22 }}>
             <Sparkline
@@ -117,7 +115,6 @@ const DataCard: React.FC<DataCardProps> = ({
 };
 
 // ── Inline Sparkline (SVG) ──
-
 interface SparklineProps {
   data: number[];
   color: string;
@@ -130,7 +127,6 @@ const Sparkline: React.FC<SparklineProps> = ({ data, color, width, height }) => 
   const max = Math.max(...data);
   const range = max - min || 1;
   const padding = 2;
-
   const points = data
     .map((v, i) => {
       const x = padding + (i / (data.length - 1)) * (width - padding * 2);

@@ -107,16 +107,14 @@ const Templates: React.FC = () => {
 
       {/* 工具栏 */}
       <div
+          className="glass-card"
           style={{
             display: 'flex',
             flexWrap: 'wrap',
             alignItems: 'center',
             gap: 12,
             marginBottom: 24,
-            padding: '12px 16px',
-            background: token.colorBgContainer,
-            borderRadius: token.borderRadius,
-            border: `1px solid ${token.colorBorderSecondary}`,
+            padding: '14px 20px',
           }}
         >
           <Search
