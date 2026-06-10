@@ -340,7 +340,7 @@ const HandlerEditor: React.FC<HandlerEditorProps> = ({ selectedNode }) => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: '#1e1e1e',
+              background: 'var(--theme-color-neutral-bg-default)',
             }}
           >
             <Space direction="vertical" align="center">
@@ -376,7 +376,7 @@ const HandlerEditor: React.FC<HandlerEditorProps> = ({ selectedNode }) => {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  background: '#1e1e1e',
+                  background: 'var(--theme-color-neutral-bg-default)',
                 }}
               >
                 <Space direction="vertical" align="center">

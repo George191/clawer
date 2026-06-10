@@ -1,0 +1,297 @@
+/* ═══════════════════════════════════════════════
+ * Bloom 风格菜单 — V2 精确复刻
+ * - 粗体组标题，无分割线
+ * - 左侧 pill 指示条（圆角朝右）
+ * - 选中色偏淡
+ * - 折叠态图标居中
+ * - 平滑过渡动画
+ * ═══════════════════════════════════════════════ */
+
+/* ── Logo 区域 ── */
+.bloom-logo-area {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+/* 折叠态 Logo：图标居中 + 文本平滑淡出 */
+.ant-layout-sider-collapsed .bloom-logo-area {
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+}
+.ant-layout-sider-collapsed .bloom-logo-text {
+  opacity: 0;
+  width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.bloom-logo-icon-wrapper {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #0a6190, #5bc5cb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(10, 97, 144, 0.35);
+  flex-shrink: 0;
+  transition: margin 0.28s cubic-bezier(0.42, 0, 0.58, 1);
+}
+.bloom-logo-icon {
+  font-size: 20px;
+  color: #fff;
+}
+.bloom-logo-text {
+  overflow: hidden;
+  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  gap: -2px;
+}
+.bloom-logo-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e6edf3;
+  letter-spacing: -0.2px;
+  line-height: 1.2;
+}
+.bloom-logo-sub {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.28);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* ── Sider 底部用户区（已移除，保留空白占位） ── */
+
+/* ── 头像渐变 ── */
+.bloom-avatar {
+  background: linear-gradient(135deg, #0a6190, #5bc5cb) !important;
+  flex-shrink: 0;
+}
+.bloom-header-avatar {
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+.bloom-header-avatar:hover {
+  box-shadow: 0 0 0 2px var(--theme-color-primary-border-weak);
+}
+
+/* ═══════════════════════════════════════════════
+ * ANTD MENU OVERRIDES
+ * ═══════════════════════════════════════════════ */
+
+/* ── 菜单容器 ── */
+.bloom-menu-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 0;
+}
+.bloom-menu-wrapper::-webkit-scrollbar {
+  width: 3px;
+}
+.bloom-menu-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+.bloom-menu-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+}
+
+/* ── 组标题 — 粗体，与 Bloom 一致 ── */
+.ant-menu-dark .ant-menu-item-group-title {
+  color: rgba(255, 255, 255, 0.35) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;  /* BOLD */
+  letter-spacing: 0.6px !important;
+  padding: 14px 20px 6px 20px !important;
+  line-height: 1 !important;
+  cursor: default !important;
+  user-select: none;
+  pointer-events: none;
+  text-transform: none !important;
+}
+
+/* 第一个分组减小上间距 */
+.ant-menu-dark .ant-menu-item-group:first-child .ant-menu-item-group-title {
+  padding-top: 8px !important;
+}
+
+/* ── 菜单项基础 ── */
+.ant-menu-dark.ant-menu-root > .ant-menu-item-group > .ant-menu-item-group-list > .ant-menu-item,
+.ant-menu-dark.ant-menu-root > .ant-menu-item {
+  margin: 1px 10px !important;
+  border-radius: 6px !important;
+  width: auto !important;
+  padding-left: 16px !important;
+  height: 34px !important;
+  line-height: 34px !important;
+  color: rgba(255, 255, 255, 0.52) !important;
+  font-size: 13px;
+  font-weight: 400;
+  position: relative;
+  overflow: visible;
+  transition: color 0.18s ease, background 0.18s ease !important;
+}
+
+/* ── Hover ── */
+.ant-menu-dark .ant-menu-item:hover {
+  color: rgba(255, 255, 255, 0.8) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* ── 选中态 — 偏淡 + 左侧 pill 指示条 ── */
+.ant-menu-dark .ant-menu-item-selected {
+  color: #73d1d6 !important;                    /* 比 #8fe3e8 稍淡 */
+  background: rgba(143, 227, 232, 0.06) !important;  /* 更透明 */
+  font-weight: 500;
+  border-left: none !important;                 /* 清除 global.css 的旧 border-left */
+}
+
+/* 左侧 pill 指示条 — 复刻 Bloom：4px 宽、较高、双侧圆角 */
+.ant-menu-dark .ant-menu-item-selected::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 24px;
+  border-radius: 2px;
+  background: #8fe3e8;
+}
+
+/* 选中 hover 加深 */
+.ant-menu-dark .ant-menu-item-selected:hover {
+  background: rgba(143, 227, 232, 0.1) !important;
+}
+
+/* ── 图标 ── */
+.ant-menu-dark .ant-menu-item .anticon {
+  font-size: 18px !important;
+  transition: color 0.18s;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* ── 移除默认 right border ── */
+.ant-menu-dark .ant-menu-item::after {
+  display: none !important;
+}
+
+/* ═══════════════════════════════════════════════
+ * COLLAPSED STATE — Bloom 式收起
+ * ═══════════════════════════════════════════════ */
+
+/* 容器：固定宽度，防止 Ant Design 默认宽度变化 */
+.ant-menu-dark.ant-menu-inline-collapsed {
+  width: 100% !important;
+}
+
+/* 菜单项：flexbox 绝对居中 */
+.ant-menu-dark.ant-menu-inline-collapsed .ant-menu-item {
+  width: 100% !important;
+  padding: 0 !important;
+  margin: 1px 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 40px !important;
+  line-height: 1 !important;
+  border-radius: 8px !important;
+}
+
+/* 图标：移除所有 margin，纯居中 */
+.ant-menu-dark.ant-menu-inline-collapsed .ant-menu-item .ant-menu-item-icon {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  font-size: 20px !important;
+  width: auto !important;
+  min-width: auto !important;
+}
+
+/* 标题文本隐藏 */
+.ant-menu-dark.ant-menu-inline-collapsed .ant-menu-title-content {
+  display: none !important;
+}
+
+/* 选中态 pill 隐藏 */
+.ant-menu-dark.ant-menu-inline-collapsed .ant-menu-item-selected::before {
+  display: none !important;
+}
+
+/* 折叠态选中高亮 */
+.ant-menu-dark.ant-menu-inline-collapsed .ant-menu-item-selected {
+  background: rgba(143, 227, 232, 0.12) !important;
+  border-left: none !important;
+}
+
+/* 折叠态隐藏组标题 */
+.ant-menu-inline-collapsed .ant-menu-item-group-title,
+.ant-menu-inline-collapsed .ant-menu-item-divider {
+  display: none;
+}
+
+/* ═══════════════════════════════════════════════
+ * HEADER & CONTENT
+ * ═══════════════════════════════════════════════ */
+
+.bloom-header {
+  padding: 0 16px !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--theme-color-neutral-bg-default) !important;
+  border-bottom: 1px solid var(--theme-color-neutral-border-weak);
+  height: 56px !important;
+  line-height: 56px !important;
+  position: sticky;
+  top: 0;
+  z-index: 99;
+  backdrop-filter: blur(12px);
+}
+
+.bloom-content {
+  margin: 16px;
+  padding: 16px;
+  flex: 1;
+  overflow: auto;
+  background: var(--theme-color-neutral-bg-weak);
+  border-radius: var(--theme-radius-lg);
+  box-shadow: var(--theme-shadow-raised);
+}
+
+.bloom-footer {
+  height: 36px !important;
+  padding: 0 16px !important;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--theme-color-neutral-bg-default) !important;
+  border-top: 1px solid var(--theme-color-neutral-border-weak);
+  font-size: 11px;
+  color: var(--theme-color-neutral-text-weaker);
+  flex-shrink: 0;
+}
+
+/* ── Sider 展开/折叠过渡 ── */
+.ant-layout-sider {
+  transition: all 0.28s cubic-bezier(0.42, 0, 0.58, 1) !important;
+}
+
+/* ── 面包屑链接 ── */
+.bloom-header .ant-breadcrumb a {
+  color: var(--theme-color-primary-text);
+  transition: opacity 0.15s;
+}
+.bloom-header .ant-breadcrumb a:hover {
+  opacity: 0.75;
+}

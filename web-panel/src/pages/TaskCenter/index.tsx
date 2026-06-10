@@ -108,7 +108,7 @@ const TaskCenter: React.FC = () => {
       <div
         style={{
           marginBottom: 16, padding: '12px 16px',
-          background: 'var(--ant-color-fill-alter, rgba(0,0,0,0.02))',
+          background: 'var(--theme-color-neutral-bg-default)',
           borderRadius: 8, display: 'flex', justifyContent: 'space-between',
           alignItems: 'center', flexWrap: 'wrap', gap: 12,
         }}

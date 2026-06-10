@@ -83,8 +83,8 @@ const LogStream: React.FC = () => {
           <span
             style={{
               width: 8, height: 8, borderRadius: '50%',
-              background: connected ? '#52c41a' : '#ff4d4f', display: 'inline-block',
-              boxShadow: connected ? '0 0 6px rgba(82,196,26,0.5)' : '0 0 6px rgba(255,77,79,0.5)',
+              background: connected ? 'var(--theme-color-success-bg-status)' : 'var(--theme-color-danger-bg-status)', display: 'inline-block',
+              boxShadow: connected ? '0 0 6px var(--theme-color-success-bg-strong)' : '0 0 6px var(--theme-color-danger-bg-status)',
               animation: connected ? 'pulse 2s infinite' : 'none',
             }}
           />
@@ -163,7 +163,7 @@ const LogStream: React.FC = () => {
       </div>
 
       {/* Status bar */}
-      <div style={{ padding: '6px 16px', background: '#161B22', borderTop: '1px solid #21262D', borderRadius: '0 0 6px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ padding: '6px 16px', background: 'var(--theme-color-neutral-bg-default)', borderTop: '1px solid var(--theme-color-neutral-border-weak)', borderRadius: '0 0 6px 6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Space size={12}>
           <Text style={{ color: '#8b949e', fontSize: 11 }}>总计 {logs.length} 条</Text>
           <Text style={{ color: LEVEL_COLORS.INFO, fontSize: 11 }}>I:{levelCounts.INFO}</Text>

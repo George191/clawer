@@ -1,70 +1,38 @@
-import type { AliasToken } from 'antd/es/theme/interface';
+/**
+ * 非主题 Token — 图表调色板 / 层级色 / 状态色
+ *
+ * Design Token V2 语义色（亮/暗自适应）已全部迁移至 tokens.css，
+ * 此处仅保留需要程序化操作（alpha 合成 / ECharts）的 hex 常量。
+ *
+ * ⚠️ 所有组件 inline styles 应优先使用 CSS 变量 var(--theme-*)，
+ *    仅在 ECharts 配置 / alpha 合成 / gradient 等 JS 场景使用以下 hex。
+ */
 
-/** 扩展自定义 Design Token */
-export interface CustomToken {
-  /** 深色/浅色渐变背景 */
-  colorBgGradient: string;
-  /** 侧边栏背景色 */
-  colorSiderBg: string;
-  /** 顶栏背景色 */
-  colorHeaderBg: string;
-  /** 顶栏高度 */
-  headerHeight: number;
-  /** 侧边栏展开宽度 */
-  siderWidth: number;
-  /** 侧边栏收起宽度 */
-  siderCollapsedWidth: number;
-  /** 卡片阴影 */
-  boxShadowCard: string;
-  /** 浮层卡片阴影 */
-  boxShadowElevated: string;
-}
-
-/** 完整 Token 类型 = antd AliasToken + 自定义扩展 */
-export type FullToken = AliasToken & CustomToken;
-
-/** 共享基础 Token（不依赖主题色） */
-export const themeTokens: Partial<FullToken> = {
-  // ── 字体 ──
-  fontFamily: `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei', sans-serif`,
-  fontSize: 14,
-  lineHeight: 1.5715,
-
-  // ── 圆角 ──
-  borderRadius: 6,
-  borderRadiusLG: 8,
-  borderRadiusSM: 4,
-
-  // ── 间距 ──
-  paddingLG: 24,
-  paddingMD: 16,
-  paddingSM: 12,
-  paddingXS: 8,
-
-  // ── 控件 ──
-  controlHeight: 36,
-  controlHeightLG: 44,
-  controlHeightSM: 28,
-
-  wireframe: false,
-
-  // ── 尺寸 ──
-  headerHeight: 64,
-  siderWidth: 240,
-  siderCollapsedWidth: 80,
-};
-
-/** 状态色（亮/暗通用） */
+/** 状态枚举色标签（供 StatusBadge 等组件使用） */
 export const statusColors = {
-  success: '#52c41a',
-  warning: '#faad14',
-  error: '#ff4d4f',
-  info: '#1677ff',
-  processing: '#1677ff',
-  default: '#d9d9d9',
+  success: 'var(--theme-color-success-text)',
+  warning: 'var(--theme-color-warning-text)',
+  error: 'var(--theme-color-danger-text)',
+  info: 'var(--theme-color-discovery-text)',
+  processing: 'var(--theme-color-primary-text)',
+  default: 'var(--theme-color-neutral-text-weaker)',
 };
 
-/** 层级色 — 用于 ETL 拓扑图各节点 */
+/**
+ * 语义色 Hex 值（仅用于 ECharts / alpha合成 / gradient 等 JS 场景）
+ * - primary: Baltic 青色系（浅色主题 #0a6190）
+ * - success/danger/warning/discovery: 对应 NDL 语义色
+ */
+export const semanticHex = {
+  primary: '#0a6190',
+  success: '#3f7824',
+  danger: '#bb2d00',
+  warning: '#765500',
+  discovery: '#5a34aa',
+  neutral: '#6f757e',
+};
+
+/** 层级色 — 用于 ETL 拓扑图各节点（视觉区分色，非语义化） */
 export const layerColors: Record<string, string> = {
   Crawl: '#1677ff',
   RDS: '#722ed1',
@@ -75,7 +43,7 @@ export const layerColors: Record<string, string> = {
   ADS: '#f5222d',
 };
 
-/** 图表调色板 */
+/** 图表调色板（用于 ECharts series 颜色分配） */
 export const chartPalette = [
   '#1677ff',
   '#52c41a',
@@ -86,3 +54,22 @@ export const chartPalette = [
   '#faad14',
   '#f5222d',
 ];
+
+/**
+ * 任务/管道状态色（用于 ECharts 节点 / 状态指示线）
+ * - running → primary
+ * - done/completed → success
+ * - error/failed → danger
+ * - paused → warning
+ * - stopped/idle → neutral
+ */
+export const statusHexMap = {
+  running: semanticHex.primary,
+  done: semanticHex.success,
+  completed: semanticHex.success,
+  error: semanticHex.danger,
+  failed: semanticHex.danger,
+  paused: semanticHex.warning,
+  stopped: semanticHex.neutral,
+  idle: semanticHex.neutral,
+};

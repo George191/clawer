@@ -17,6 +17,7 @@ import {
   BarChartOutlined,
 } from '@ant-design/icons';
 import StatusBadge from '@/components/StatusBadge';
+import { semanticHex } from '@/theme/tokens';
 import type { TaskInfo } from '@/services/types';
 
 const { Text } = Typography;
@@ -38,28 +39,39 @@ const TEMPLATE_ICON: Record<string, React.ReactNode> = {
 };
 
 const TEMPLATE_COLOR: Record<string, string> = {
-  '网页采集': '#1677ff',
-  'API采集': '#52c41a',
-  '日志采集': '#fa8c16',
-  '数据清洗': '#722ed1',
-  '质量校验': '#13c2c2',
-  '消息采集': '#eb2f96',
+  '网页采集': 'var(--theme-color-primary-text)',
+  'API采集': 'var(--theme-color-success-text)',
+  '日志采集': 'var(--theme-color-warning-text)',
+  '数据清洗': 'var(--theme-color-discovery-text)',
+  '质量校验': 'var(--theme-color-discovery-text)',
+  '消息采集': 'var(--theme-color-danger-text)',
 };
 
 const STATUS_COLOR: Record<string, string> = {
-  running: '#1677ff',
-  completed: '#52c41a',
-  failed: '#ff4d4f',
-  paused: '#faad14',
-  queued: '#d9d9d9',
+  running: 'var(--theme-color-primary-text)',
+  completed: 'var(--theme-color-success-text)',
+  failed: 'var(--theme-color-danger-text)',
+  paused: 'var(--theme-color-warning-text)',
+  queued: 'var(--theme-color-neutral-text-weakest)',
+};
+
+// Template type → hex for gradient background (CSS var doesn't support alpha composition)
+const TEMPLATE_HEX: Record<string, string> = {
+  '网页采集': semanticHex.primary,
+  'API采集': semanticHex.success,
+  '日志采集': semanticHex.warning,
+  '数据清洗': semanticHex.discovery,
+  '质量校验': semanticHex.discovery,
+  '消息采集': semanticHex.danger,
 };
 
 const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry }) => {
   const [logVisible, setLogVisible] = useState(false);
   const { token } = theme.useToken();
 
-  const statusColor = STATUS_COLOR[task.status] || '#d9d9d9';
-  const iconColor = TEMPLATE_COLOR[task.template] || '#1677ff';
+  const statusColor = STATUS_COLOR[task.status] || 'var(--theme-color-neutral-text-weakest)';
+  const iconColor = TEMPLATE_COLOR[task.template] || 'var(--theme-color-primary-text)';
+  const iconHex = TEMPLATE_HEX[task.template] || semanticHex.primary;
   const templateIcon = TEMPLATE_ICON[task.template] || <BarChartOutlined />;
 
   const progressStatus =
@@ -85,8 +97,8 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry })
     >
       <div
         style={{
-          background: '#0d1117', color: '#e6edf3', padding: 16, borderRadius: 6,
-          fontSize: 12, fontFamily: '"Fira Code", "Cascadia Code", monospace',
+          background: 'var(--theme-color-neutral-bg-default)', color: 'var(--theme-color-neutral-text-default)', padding: 16, borderRadius: 6,
+          fontSize: 12, fontFamily: 'var(--theme-font-code)',
           maxHeight: 400, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', lineHeight: 1.7,
         }}
       >
@@ -116,7 +128,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry })
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <div
               style={{
-                width: 36, height: 36, borderRadius: '50%', background: `${iconColor}15`,
+                width: 36, height: 36, borderRadius: '50%', background: `${iconHex}15`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: iconColor, fontSize: 18, flexShrink: 0,
               }}
@@ -192,7 +204,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, compact, onDelete, onRetry })
           <Space size={8}>
             <div
               style={{
-                width: 32, height: 32, borderRadius: '50%', background: `${iconColor}15`,
+                width: 32, height: 32, borderRadius: '50%', background: `${iconHex}15`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: iconColor, fontSize: 16,
               }}

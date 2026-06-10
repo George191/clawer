@@ -1,0 +1,301 @@
+/* ============================================
+ * Design Token 体系 V2 — Neo4j NDL 1:1 复刻
+ * 双主题：:root（亮色默认）+ html[data-theme="dark"]（暗色）
+ * ============================================ */
+
+/* ─────────────────────────────────────────────
+ * 共享 Token（字体/间距/圆角/动效/Z-Index）
+ * ───────────────────────────────────────────── */
+:root {
+  /* === 字体族 === */
+  --theme-font-display: 'Public Sans', system-ui, -apple-system, sans-serif;
+  --theme-font-heading: 'Public Sans', system-ui, -apple-system, sans-serif;
+  --theme-font-body: 'Public Sans', system-ui, -apple-system, sans-serif;
+  --theme-font-code: 'Fira Code', 'JetBrains Mono', monospace;
+
+  /* === Display（大标题） === */
+  --theme-font-size-display: 2.5rem;
+  --theme-font-weight-display: 500;
+  --theme-line-height-display: 1.2;
+
+  /* === Title 1-4 === */
+  --theme-font-size-title-1: 1.875rem;
+  --theme-font-weight-title-1: 700;
+  --theme-line-height-title-1: 1.333;
+
+  --theme-font-size-title-2: 1.5rem;
+  --theme-font-weight-title-2: 700;
+  --theme-line-height-title-2: 1.333;
+
+  --theme-font-size-title-3: 1.25rem;
+  --theme-font-weight-title-3: 700;
+  --theme-line-height-title-3: 1.4;
+
+  --theme-font-size-title-4: 1rem;
+  --theme-font-weight-title-4: 700;
+  --theme-line-height-title-4: 1.5;
+
+  /* === Subheading === */
+  --theme-font-size-subheading-lg: 1.25rem;
+  --theme-font-weight-subheading-lg: 600;
+  --theme-line-height-subheading-lg: 1.4;
+
+  --theme-font-size-subheading-md: 1rem;
+  --theme-font-weight-subheading-md: 600;
+  --theme-line-height-subheading-md: 1.5;
+
+  --theme-font-size-subheading-sm: 0.875rem;
+  --theme-font-weight-subheading-sm: 600;
+  --theme-line-height-subheading-sm: 1.429;
+
+  /* === Body === */
+  --theme-font-size-body-lg: 1rem;
+  --theme-font-weight-body-lg: 400;
+  --theme-line-height-body-lg: 1.5;
+
+  --theme-font-size-body-md: 0.875rem;
+  --theme-font-weight-body-md: 400;
+  --theme-line-height-body-md: 1.429;
+
+  --theme-font-size-body-sm: 0.75rem;
+  --theme-font-weight-body-sm: 400;
+  --theme-line-height-body-sm: 1.667;
+
+  /* === Label === */
+  --theme-font-size-label: 0.875rem;
+  --theme-font-weight-label: 700;
+  --theme-line-height-label: 1.429;
+
+  /* === Code === */
+  --theme-font-size-code: 0.875rem;
+  --theme-font-weight-code: 400;
+  --theme-line-height-code: 1.429;
+
+  /* === 间距（8px 软网格） === */
+  --theme-space-2: 2px;
+  --theme-space-4: 4px;
+  --theme-space-6: 6px;
+  --theme-space-8: 8px;
+  --theme-space-12: 12px;
+  --theme-space-16: 16px;
+  --theme-space-20: 20px;
+  --theme-space-24: 24px;
+  --theme-space-32: 32px;
+  --theme-space-48: 48px;
+  --theme-space-64: 64px;
+
+  /* === 圆角 === */
+  --theme-radius-none: 0;
+  --theme-radius-sm: 4px;
+  --theme-radius-md: 6px;
+  --theme-radius-lg: 8px;
+  --theme-radius-xl: 12px;
+  --theme-radius-2xl: 16px;
+  --theme-radius-3xl: 24px;
+  --theme-radius-full: 9999px;
+
+  /* === 动效 === */
+  --theme-motion-duration-quick: 0.1s;
+  --theme-motion-duration-slow: 0.25s;
+  --theme-motion-easing-standard: cubic-bezier(0.42, 0, 0.58, 1);
+  --theme-motion-transition-quick: 0.1s cubic-bezier(0.42, 0, 0.58, 1);
+  --theme-motion-transition-slow: 0.25s cubic-bezier(0.42, 0, 0.58, 1);
+  --theme-motion-transition-delayed: 0.1s cubic-bezier(0.42, 0, 0.58, 1) 0.1s;
+
+  /* === Z-Index 层级 === */
+  --theme-z-deep: -999999;
+  --theme-z-base: 0;
+  --theme-z-overlay: 10;
+  --theme-z-banner: 20;
+  --theme-z-blanket: 30;
+  --theme-z-popover: 40;
+  --theme-z-tooltip: 50;
+  --theme-z-modal: 60;
+}
+
+/* ─────────────────────────────────────────────
+ * 语义 Token — 亮色主题（默认 / :root）
+ * ───────────────────────────────────────────── */
+:root,
+html[data-theme="light"] {
+  /* === Neutral === */
+  --theme-color-neutral-text-weakest: #a8acb2;
+  --theme-color-neutral-text-weaker: #5e636a;
+  --theme-color-neutral-text-weak: #4d5157;
+  --theme-color-neutral-text-default: #1a1b1d;
+  --theme-color-neutral-text-inverse: #ffffff;
+  --theme-color-neutral-icon: #4d5157;
+  --theme-color-neutral-bg-weak: #ffffff;
+  --theme-color-neutral-bg-default: #f5f6f6;
+  --theme-color-neutral-bg-on-bg-weak: #f5f6f6;
+  --theme-color-neutral-bg-strong: #e2e3e5;
+  --theme-color-neutral-bg-stronger: #a8acb2;
+  --theme-color-neutral-bg-strongest: #3c3f44;
+  --theme-color-neutral-bg-status: #a8acb2;
+  --theme-color-neutral-border-weak: #e2e3e5;
+  --theme-color-neutral-border-strong: #bbbec3;
+  --theme-color-neutral-border-strongest: #6f757e;
+  --theme-color-neutral-hover: rgba(111, 117, 126, 0.1);
+  --theme-color-neutral-pressed: rgba(111, 117, 126, 0.2);
+
+  /* === Primary（Baltic blue） === */
+  --theme-color-primary-text: #0a6190;
+  --theme-color-primary-icon: #0a6190;
+  --theme-color-primary-bg-weak: #e7fafb;
+  --theme-color-primary-bg-strong: #0a6190;
+  --theme-color-primary-bg-status: #4c99a4;
+  --theme-color-primary-bg-selected: #e7fafb;
+  --theme-color-primary-border-strong: #0a6190;
+  --theme-color-primary-border-weak: #8fe3e8;
+  --theme-color-primary-focus: #30839d;
+  --theme-color-primary-hover-weak: rgba(48, 131, 157, 0.1);
+  --theme-color-primary-hover-strong: #02507b;
+  --theme-color-primary-pressed-weak: rgba(48, 131, 157, 0.12);
+  --theme-color-primary-pressed-strong: #014063;
+
+  /* === Danger === */
+  --theme-color-danger-text: #bb2d00;
+  --theme-color-danger-icon: #bb2d00;
+  --theme-color-danger-bg-strong: #bb2d00;
+  --theme-color-danger-bg-weak: #ffe9e7;
+  --theme-color-danger-bg-status: #e84e2c;
+  --theme-color-danger-border-strong: #bb2d00;
+  --theme-color-danger-border-weak: #ffaa97;
+  --theme-color-danger-hover-weak: rgba(212, 51, 0, 0.08);
+  --theme-color-danger-hover-strong: #961200;
+  --theme-color-danger-pressed-weak: rgba(212, 51, 0, 0.12);
+  --theme-color-danger-pressed-strong: #730e00;
+
+  /* === Warning === */
+  --theme-color-warning-text: #765500;
+  --theme-color-warning-icon: #765500;
+  --theme-color-warning-bg-strong: #765500;
+  --theme-color-warning-bg-weak: #fffad1;
+  --theme-color-warning-bg-status: #d7aa0a;
+  --theme-color-warning-border-strong: #996e00;
+  --theme-color-warning-border-weak: #ffd600;
+
+  /* === Success === */
+  --theme-color-success-text: #3f7824;
+  --theme-color-success-icon: #3f7824;
+  --theme-color-success-bg-strong: #3f7824;
+  --theme-color-success-bg-weak: #e7fcd7;
+  --theme-color-success-bg-status: #5b992b;
+  --theme-color-success-border-strong: #3f7824;
+  --theme-color-success-border-weak: #90cb62;
+
+  /* === Discovery（Info） === */
+  --theme-color-discovery-text: #5a34aa;
+  --theme-color-discovery-icon: #5a34aa;
+  --theme-color-discovery-bg-strong: #5a34aa;
+  --theme-color-discovery-bg-weak: #e9deff;
+  --theme-color-discovery-bg-status: #754ec8;
+  --theme-color-discovery-border-strong: #5a34aa;
+  --theme-color-discovery-border-weak: #b38eff;
+
+  /* === Shadows（亮色用浅阴影） === */
+  --theme-shadow-raised: 0px 1px 2px 0px rgba(26, 27, 29, 0.18);
+  --theme-shadow-overlay: 0px 4px 8px 0px rgba(26, 27, 29, 0.12);
+
+  color-scheme: light;
+}
+
+/* ─────────────────────────────────────────────
+ * 语义 Token — 暗色主题
+ * ───────────────────────────────────────────── */
+html[data-theme="dark"] {
+  /* === Neutral === */
+  --theme-color-neutral-text-weakest: #818790;
+  --theme-color-neutral-text-weaker: #a8acb2;
+  --theme-color-neutral-text-weak: #cfd1d4;
+  --theme-color-neutral-text-default: #f5f6f6;
+  --theme-color-neutral-text-inverse: #1a1b1d;
+  --theme-color-neutral-icon: #cfd1d4;
+  --theme-color-neutral-bg-weak: #212325;
+  --theme-color-neutral-bg-default: #1a1b1d;
+  --theme-color-neutral-bg-strong: #3c3f44;
+  --theme-color-neutral-bg-stronger: #6f757e;
+  --theme-color-neutral-bg-strongest: #f5f6f6;
+  --theme-color-neutral-bg-status: #a8acb2;
+  --theme-color-neutral-bg-on-bg-weak: rgba(129, 135, 144, 0.08);
+  --theme-color-neutral-border-weak: #3c3f44;
+  --theme-color-neutral-border-strong: #5e636a;
+  --theme-color-neutral-border-strongest: #bbbec3;
+  --theme-color-neutral-hover: rgba(149, 154, 161, 0.1);
+  --theme-color-neutral-pressed: rgba(149, 154, 161, 0.2);
+
+  /* === Primary（Baltic cyan） === */
+  --theme-color-primary-text: #8fe3e8;
+  --theme-color-primary-icon: #8fe3e8;
+  --theme-color-primary-bg-weak: #262f31;
+  --theme-color-primary-bg-strong: #8fe3e8;
+  --theme-color-primary-bg-status: #5db3bf;
+  --theme-color-primary-bg-selected: #262f31;
+  --theme-color-primary-border-strong: #8fe3e8;
+  --theme-color-primary-border-weak: #02507b;
+  --theme-color-primary-focus: #5db3bf;
+  --theme-color-primary-hover-weak: rgba(143, 227, 232, 0.08);
+  --theme-color-primary-hover-strong: #5db3bf;
+  --theme-color-primary-pressed-weak: rgba(143, 227, 232, 0.12);
+  --theme-color-primary-pressed-strong: #4c99a4;
+
+  /* === Danger === */
+  --theme-color-danger-text: #ffaa97;
+  --theme-color-danger-icon: #ffaa97;
+  --theme-color-danger-bg-strong: #ffaa97;
+  --theme-color-danger-bg-weak: #432520;
+  --theme-color-danger-bg-status: #f96746;
+  --theme-color-danger-border-strong: #ffaa97;
+  --theme-color-danger-border-weak: #730e00;
+  --theme-color-danger-hover-weak: rgba(255, 170, 151, 0.08);
+  --theme-color-danger-hover-strong: #f96746;
+  --theme-color-danger-pressed-weak: rgba(255, 170, 151, 0.12);
+  --theme-color-danger-pressed-strong: #e84e2c;
+
+  /* === Warning === */
+  --theme-color-warning-text: #ffd600;
+  --theme-color-warning-icon: #ffd600;
+  --theme-color-warning-bg-strong: #ffd600;
+  --theme-color-warning-bg-weak: #312e1a;
+  --theme-color-warning-bg-status: #d7aa0a;
+  --theme-color-warning-border-strong: #ffd600;
+  --theme-color-warning-border-weak: #765500;
+
+  /* === Success === */
+  --theme-color-success-text: #90cb62;
+  --theme-color-success-icon: #90cb62;
+  --theme-color-success-bg-strong: #90cb62;
+  --theme-color-success-bg-weak: #262d24;
+  --theme-color-success-bg-status: #6fa646;
+  --theme-color-success-border-strong: #90cb62;
+  --theme-color-success-border-weak: #296127;
+
+  /* === Discovery（Info） === */
+  --theme-color-discovery-text: #ccb4ff;
+  --theme-color-discovery-icon: #ccb4ff;
+  --theme-color-discovery-bg-strong: #ccb4ff;
+  --theme-color-discovery-bg-weak: #2c2a34;
+  --theme-color-discovery-bg-status: #a07bec;
+  --theme-color-discovery-border-strong: #ccb4ff;
+  --theme-color-discovery-border-weak: #4b2894;
+
+  /* === Shadows（暗色用深阴影） === */
+  --theme-shadow-raised: 0px 1px 2px 0px rgba(9, 10, 10, 0.5);
+  --theme-shadow-overlay: 0px 8px 20px 0px rgba(9, 10, 10, 0.5);
+
+  color-scheme: dark;
+}
+
+/* ─────────────────────────────────────────────
+ * 主题过渡（平滑切换）
+ * ───────────────────────────────────────────── */
+html {
+  transition: background-color var(--theme-motion-transition-slow),
+              color var(--theme-motion-transition-slow);
+}
+
+html * {
+  transition: background-color var(--theme-motion-transition-quick),
+              border-color var(--theme-motion-transition-quick),
+              box-shadow var(--theme-motion-transition-quick);
+}

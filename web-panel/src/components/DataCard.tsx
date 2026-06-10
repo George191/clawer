@@ -6,7 +6,7 @@ interface DataCardProps {
   icon?: React.ReactNode;
   title: string;
   value: number | string;
-  change?: number; // percentage, e.g. 12.5 or -8.3
+  change?: number;
   sparklineData?: number[];
   color?: string;
   loading?: boolean;
@@ -23,7 +23,11 @@ const DataCard: React.FC<DataCardProps> = ({
 }) => {
   const trendDir = !change ? 0 : change > 0 ? 1 : -1;
   const trendColor =
-    trendDir > 0 ? '#52c41a' : trendDir < 0 ? '#ff4d4f' : 'var(--color-text-tertiary, #8c8c8c)';
+    trendDir > 0
+      ? 'var(--theme-color-success-text)'
+      : trendDir < 0
+        ? 'var(--theme-color-danger-text)'
+        : 'var(--theme-color-neutral-text-weaker)';
 
   if (loading) {
     return (
@@ -44,7 +48,7 @@ const DataCard: React.FC<DataCardProps> = ({
           <span
             style={{
               fontSize: 18,
-              color: color ?? 'var(--ant-color-primary, #1677ff)',
+              color: color ?? 'var(--theme-color-primary-text)',
               marginRight: 10,
               display: 'flex',
               alignItems: 'center',
@@ -56,7 +60,7 @@ const DataCard: React.FC<DataCardProps> = ({
         <span
           style={{
             fontSize: 13,
-            color: 'var(--ant-color-text-secondary, #8b949e)',
+            color: 'var(--theme-color-neutral-text-weak)',
             fontWeight: 500,
           }}
         >
@@ -71,7 +75,9 @@ const DataCard: React.FC<DataCardProps> = ({
           fontWeight: 700,
           lineHeight: 1.2,
           marginBottom: 8,
-          color: 'var(--ant-color-text, #1d1d1d)',
+          fontFamily: 'var(--theme-font-code)',
+          fontVariantNumeric: 'tabular-nums',
+          color: 'var(--theme-color-neutral-text-default)',
         }}
       >
         {value}
@@ -100,7 +106,6 @@ const DataCard: React.FC<DataCardProps> = ({
           </span>
         )}
 
-        {/* Mini sparkline */}
         {sparklineData && sparklineData.length > 1 && (
           <div style={{ marginLeft: 'auto', width: 80, height: 22 }}>
             <Sparkline

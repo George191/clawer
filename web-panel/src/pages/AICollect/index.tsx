@@ -302,7 +302,7 @@ const AICollect: React.FC = () => {
             <Text>{fieldNames[name] || name}</Text>
             <Tooltip title="改名">
               <EditOutlined
-                style={{ fontSize: 12, color: '#8b949e', cursor: 'pointer' }}
+                style={{ fontSize: 12, color: 'var(--theme-color-neutral-text-weakest)', cursor: 'pointer' }}
                 onClick={() => startRename(name)}
               />
             </Tooltip>
@@ -337,9 +337,9 @@ const AICollect: React.FC = () => {
       width: 60,
       render: (v: boolean) =>
         v ? (
-          <CheckCircleOutlined style={{ color: '#52c41a' }} />
+          <CheckCircleOutlined style={{ color: 'var(--theme-color-success-text)' }} />
         ) : (
-          <CloseCircleOutlined style={{ color: '#8b949e' }} />
+          <CloseCircleOutlined style={{ color: 'var(--theme-color-neutral-text-weakest)' }} />
         ),
     },
   ];
@@ -350,7 +350,7 @@ const AICollect: React.FC = () => {
       {/* 标题 */}
       <div style={{ marginBottom: 24 }}>
         <Title level={3} style={{ marginBottom: 4 }}>
-          <ThunderboltOutlined style={{ marginRight: 8, color: '#3B82F6' }} />
+          <ThunderboltOutlined style={{ marginRight: 8, color: 'var(--theme-color-primary-text)' }} />
           AI 智能采集
         </Title>
         <Text type="secondary">
@@ -367,7 +367,7 @@ const AICollect: React.FC = () => {
             s.key === 'analyzing' && flowStep === 'analyzing' ? (
               <LoadingOutlined />
             ) : stepIndex(flowStep) > stepIndex(s.key) ? (
-              <CheckCircleOutlined style={{ color: '#52c41a' }} />
+              <CheckCircleOutlined style={{ color: 'var(--theme-color-success-text)' }} />
             ) : undefined,
         }))}
         style={{ marginBottom: 32 }}
@@ -445,14 +445,14 @@ const AICollect: React.FC = () => {
                     alignItems: 'center',
                     gap: 8,
                     padding: '6px 0',
-                    borderBottom: '1px solid rgba(255,255,255,0.04)',
+                  borderBottom: '1px solid var(--theme-color-neutral-border-weak)',
                   }}
                 >
-                  {s.status === 'running' && <LoadingOutlined style={{ color: '#3B82F6' }} />}
-                  {s.status === 'done' && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
-                  {s.status === 'error' && <CloseCircleOutlined style={{ color: '#ff4d4f' }} />}
+                  {s.status === 'running' && <LoadingOutlined style={{ color: 'var(--theme-color-primary-text)' }} />}
+                  {s.status === 'done' && <CheckCircleOutlined style={{ color: 'var(--theme-color-success-text)' }} />}
+                  {s.status === 'error' && <CloseCircleOutlined style={{ color: 'var(--theme-color-danger-text)' }} />}
                   {s.status === 'pending' && (
-                    <span style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid #8b949e' }} />
+                    <span style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid var(--theme-color-neutral-border-weak)' }} />
                   )}
                   <Text>{s.label}</Text>
                   {s.status === 'error' && s.error && (
@@ -469,22 +469,23 @@ const AICollect: React.FC = () => {
           <div
             ref={thinkingRef}
             style={{
-              background: 'rgba(0,0,0,0.2)',
+              background: 'var(--theme-color-neutral-bg-default)',
               borderRadius: 8,
               padding: 12,
               maxHeight: 200,
               overflow: 'auto',
-              fontFamily: 'JetBrains Mono, monospace',
+              fontFamily: 'var(--theme-font-code)',
               fontSize: 12,
+              border: '1px solid var(--theme-color-neutral-border-weak)',
             }}
           >
             {thinking.map((t, i) => (
               <div
                 key={i}
                 style={{
-                  color: '#8b949e',
+                  color: 'var(--theme-color-neutral-text-weaker)',
                   padding: '2px 0',
-                  borderLeft: '2px solid rgba(59,130,246,0.3)',
+                  borderLeft: '2px solid var(--theme-color-primary-border-weak)',
                   paddingLeft: 8,
                   marginBottom: 4,
                 }}
@@ -544,13 +545,14 @@ const AICollect: React.FC = () => {
           <Card title="生成的 YAML 模板" style={{ marginBottom: 16 }}>
             <pre
               style={{
-                background: 'rgba(0,0,0,0.2)',
+                background: 'var(--theme-color-neutral-bg-default)',
                 borderRadius: 8,
                 padding: 12,
                 maxHeight: 200,
                 overflow: 'auto',
                 fontSize: 12,
-                fontFamily: 'JetBrains Mono, monospace',
+                fontFamily: 'var(--theme-font-code)',
+                border: '1px solid var(--theme-color-neutral-border-weak)',
               }}
             >
               {templateYaml}

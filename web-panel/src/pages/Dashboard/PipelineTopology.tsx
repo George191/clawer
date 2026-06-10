@@ -5,7 +5,7 @@ import { GraphChart } from 'echarts/charts';
 import { TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { Card, theme } from 'antd';
-import { layerColors } from '@/theme/tokens';
+import { layerColors, semanticHex } from '@/theme/tokens';
 import type { PipelineNodeData } from '@/services/types';
 
 echarts.use([GraphChart, TooltipComponent, CanvasRenderer]);
@@ -51,7 +51,7 @@ const PipelineTopology: React.FC<PipelineTopologyProps> = ({ nodes }) => {
         backgroundColor: token.colorBgElevated,
         borderColor: token.colorBorder,
         textStyle: { color: token.colorText },
-        extraCssText: 'border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,0.12);padding:12px 16px;',
+        extraCssText: 'border-radius:8px;box-shadow:var(--theme-shadow-overlay);padding:12px 16px;',
         formatter: (params: any) => {
           if (params.dataType === 'edge') return '';
           const n = nodeMap.get(params.name);
@@ -75,7 +75,7 @@ const PipelineTopology: React.FC<PipelineTopologyProps> = ({ nodes }) => {
         draggable: false,
         data: ALL_LAYERS.map((name, i) => {
           const node = nodeMap.get(name);
-          const color = layerColors[name] || '#1677ff';
+          const color = layerColors[name] || semanticHex.primary;
           const isError = node?.status === 'error';
           const isStopped = !node || node.status === 'stopped';
 
@@ -87,14 +87,14 @@ const PipelineTopology: React.FC<PipelineTopologyProps> = ({ nodes }) => {
             symbolSize: [88, 46],
             itemStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: isStopped ? '#555' : isError ? '#ff4d4f' : lighten(color, 0.18) },
-                { offset: 1, color: isStopped ? '#333' : isError ? '#cf1322' : darken(color, 0.12) },
+                { offset: 0, color: isStopped ? semanticHex.neutral : isError ? semanticHex.danger : lighten(color, 0.18) },
+                { offset: 1, color: isStopped ? '#2a2c2f' : isError ? lighten(semanticHex.danger, -0.2) : darken(color, 0.12) },
               ]),
-              borderColor: isStopped ? '#444' : isError ? '#ff7875' : color + '99',
+              borderColor: isStopped ? semanticHex.neutral : isError ? semanticHex.danger + '88' : color + '99',
               borderWidth: 2,
               borderRadius: 8,
               shadowBlur: isStopped ? 4 : isError ? 20 : 16,
-              shadowColor: isStopped ? 'transparent' : isError ? '#ff4d4f60' : color + '60',
+              shadowColor: isStopped ? 'transparent' : isError ? semanticHex.danger + '60' : color + '60',
             },
             label: {
               show: true,
@@ -121,7 +121,7 @@ const PipelineTopology: React.FC<PipelineTopologyProps> = ({ nodes }) => {
             emphasis: {
               itemStyle: {
                 shadowBlur: isStopped ? 8 : isError ? 30 : 24,
-                shadowColor: isStopped ? '#666' : isError ? '#ff4d4f90' : color + '90',
+                shadowColor: isStopped ? semanticHex.neutral : isError ? semanticHex.danger + '90' : color + '90',
                 borderWidth: 3,
               },
             },
@@ -134,7 +134,7 @@ const PipelineTopology: React.FC<PipelineTopologyProps> = ({ nodes }) => {
             source: l.source,
             target: l.target,
             lineStyle: {
-              color: token.colorBorderSecondary || '#30363d',
+              color: token.colorBorderSecondary,
               width: lineWidth,
               curveness: 0,
               type: [6, 4] as any,
@@ -142,7 +142,7 @@ const PipelineTopology: React.FC<PipelineTopologyProps> = ({ nodes }) => {
             },
             emphasis: {
               lineStyle: {
-                color: '#58a6ff',
+                color: token.colorPrimary,
                 width: lineWidth + 1,
                 type: [4, 2] as any,
               },

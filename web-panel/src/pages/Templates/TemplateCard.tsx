@@ -261,7 +261,7 @@ const TemplateCard: React.FC<TemplateCardProps> = ({ template, onEdit }) => {
               maxHeight: 400,
               overflow: 'auto',
               padding: 12,
-              background: '#1e1e1e',
+              background: 'var(--theme-color-neutral-bg-default)',
               fontSize: 12,
               fontFamily: "'Fira Code', 'Cascadia Code', monospace",
             }}
@@ -274,7 +274,7 @@ const TemplateCard: React.FC<TemplateCardProps> = ({ template, onEdit }) => {
               <pre
                 style={{
                   margin: 0,
-                  color: '#d4d4d4',
+                  color: 'var(--theme-color-neutral-text-default)',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
                 }}

@@ -9,6 +9,7 @@ import {
 import { usePolling } from '@/hooks/usePolling';
 import { fetchMonitorStats } from '@/services/api';
 import type { MonitorStats } from '@/services/types';
+import { semanticHex } from '@/theme/tokens';
 
 const { Text } = Typography;
 
@@ -114,7 +115,7 @@ const StatsPanel: React.FC = () => {
       )}
 
       {/* Request Rate */}
-      <Card size="small" bodyStyle={{ padding: '16px' }} style={{ borderLeft: '3px solid #52c41a' }}>
+      <Card size="small" bodyStyle={{ padding: '16px' }} style={{ borderLeft: '3px solid var(--theme-color-success-bg-strong)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
           <div>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -126,14 +127,14 @@ const StatsPanel: React.FC = () => {
             </div>
           </div>
         </div>
-        <MiniSparkline data={history} color="#52c41a" height={32} />
+        <MiniSparkline data={history} color="var(--theme-color-success-bg-strong)" height={32} />
       </Card>
 
       {/* Success Rate */}
       <Card
         size="small" bodyStyle={{ padding: '16px' }}
         style={{
-          borderLeft: `3px solid ${stats.successRate >= 95 ? '#52c41a' : stats.successRate >= 80 ? '#faad14' : '#ff4d4f'}`,
+          borderLeft: `3px solid ${stats.successRate >= 95 ? 'var(--theme-color-success-bg-strong)' : stats.successRate >= 80 ? 'var(--theme-color-warning-bg-strong)' : 'var(--theme-color-danger-bg-strong)'}`,
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
@@ -152,8 +153,8 @@ const StatsPanel: React.FC = () => {
             size={52}
             strokeWidth={6}
             strokeColor={
-              stats.successRate >= 95 ? '#52c41a' :
-              stats.successRate >= 80 ? '#faad14' : '#ff4d4f'
+              stats.successRate >= 95 ? 'var(--theme-color-success-bg-strong)' :
+              stats.successRate >= 80 ? 'var(--theme-color-warning-bg-strong)' : 'var(--theme-color-danger-bg-strong)'
             }
             trailColor={token.colorFillSecondary}
             format={() => ''}
@@ -162,13 +163,13 @@ const StatsPanel: React.FC = () => {
       </Card>
 
       {/* Anti-Crawl Triggers */}
-      <Card size="small" bodyStyle={{ padding: '16px' }} style={{ borderLeft: '3px solid #fa8c16' }}>
+      <Card size="small" bodyStyle={{ padding: '16px' }} style={{ borderLeft: '3px solid var(--theme-color-warning-bg-status)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <Text type="secondary" style={{ fontSize: 12 }}>
               <SafetyOutlined style={{ marginRight: 4 }} />Anti-Crawl 触发
             </Text>
-            <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.2, color: '#fa8c16' }}>
+            <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.2, color: 'var(--theme-color-warning-text)' }}>
               {stats.antiCrawlTriggers}
               <Text style={{ fontSize: 13, fontWeight: 400, marginLeft: 4, color: token.colorTextSecondary }}>次/h</Text>
             </div>
@@ -179,7 +180,7 @@ const StatsPanel: React.FC = () => {
             style={{
               height: '100%',
               width: `${Math.min(100, (stats.antiCrawlTriggers / 50) * 100)}%`,
-              background: 'linear-gradient(90deg, #fa8c16, #ff4d4f)',
+              background: 'linear-gradient(90deg, var(--theme-color-warning-bg-status), var(--theme-color-danger-bg-strong))',
               borderRadius: 4, transition: 'width 0.6s ease',
             }}
           />
@@ -187,14 +188,14 @@ const StatsPanel: React.FC = () => {
       </Card>
 
       {/* Proxy Pool */}
-      <Card size="small" bodyStyle={{ padding: '16px' }} style={{ borderLeft: '3px solid #1677ff' }}>
+      <Card size="small" bodyStyle={{ padding: '16px' }} style={{ borderLeft: '3px solid var(--theme-color-primary-bg-strong)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <Text type="secondary" style={{ fontSize: 12 }}>
               <ClusterOutlined style={{ marginRight: 4 }} />代理池状态
             </Text>
             <div style={{ fontSize: 24, fontWeight: 700, lineHeight: 1.2 }}>
-              <span style={{ color: '#1677ff' }}>{stats.proxyAvailable}</span>
+              <span style={{ color: 'var(--theme-color-primary-text)' }}>{stats.proxyAvailable}</span>
               <Text style={{ fontSize: 18, fontWeight: 400, margin: '0 4px', color: token.colorTextQuaternary }}>/</Text>
               <Text style={{ fontSize: 18, fontWeight: 400, color: token.colorTextSecondary }}>{stats.proxyTotal}</Text>
               <Text style={{ fontSize: 13, fontWeight: 400, marginLeft: 6, color: token.colorTextSecondary }}>可用</Text>
@@ -205,7 +206,7 @@ const StatsPanel: React.FC = () => {
             percent={proxyPercent}
             size={52}
             strokeWidth={6}
-            strokeColor={proxyPercent >= 80 ? '#52c41a' : proxyPercent >= 50 ? '#1677ff' : '#fa8c16'}
+            strokeColor={proxyPercent >= 80 ? 'var(--theme-color-success-bg-strong)' : proxyPercent >= 50 ? 'var(--theme-color-primary-bg-strong)' : 'var(--theme-color-warning-bg-status)'}
             trailColor={token.colorFillSecondary}
             format={() => `${proxyPercent}%`}
           />

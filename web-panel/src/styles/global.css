@@ -1,5 +1,6 @@
 /* ============================================
  *   AI Collector Platform — 全局样式
+ *   颜色全部通过 --theme-* 变量引用
  * ============================================ */
 
 /* ── Reset ── */
@@ -24,14 +25,14 @@ body {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, 'Noto Sans', 'PingFang SC', 'Microsoft YaHei',
-    sans-serif;
+  font-family: var(--theme-font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--theme-color-neutral-bg-default);
+  color: var(--theme-color-neutral-text-default);
 }
 
-/* ── 自定义滚动条 — 暗色（默认，侧边栏/暗色区域使用） ── */
+/* ── 自定义滚动条 ── */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -42,32 +43,24 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--theme-color-neutral-hover);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--theme-color-neutral-pressed);
 }
 
-/* 亮色滚动条 */
-.light-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-}
-
-.light-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
-}
-
-/* ── 卡片悬浮效果 ── */
+/* ── 卡片悬浮 ── */
 .metric-card {
-  transition: all 0.3s ease;
+  transition: transform var(--theme-motion-transition-slow),
+              box-shadow var(--theme-motion-transition-slow);
   cursor: pointer;
 }
 
 .metric-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--theme-shadow-overlay);
 }
 
 /* ── 脉动动画 ── */
@@ -113,23 +106,20 @@ body {
   animation: fadeInUp 0.4s ease-out;
 }
 
-/* ── Sider 菜单激活样式：蓝色左边框 ── */
-.ant-menu-dark .ant-menu-item-selected,
-.ant-menu-dark .ant-menu-submenu-selected > .ant-menu-submenu-title {
-  border-left: 3px solid #3b82f6 !important;
-  background: rgba(59, 130, 246, 0.12) !important;
-  border-radius: 0 4px 4px 0;
-}
+/* ── Sider 菜单激活样式已迁移至 bloom-menu.css ── */
 
-/* ── 全局 Loading Bar ── */
+/* ── Loading Bar ── */
 .global-loading-bar {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   height: 3px;
-  z-index: 9999;
-  background: linear-gradient(90deg, #3b82f6, #60a5fa, #93c5fd);
+  z-index: calc(var(--theme-z-modal) + 1);
+  background: linear-gradient(90deg,
+    var(--theme-color-primary-text),
+    var(--theme-color-primary-hover-strong),
+    var(--theme-color-primary-bg-status));
   background-size: 200% 100%;
   animation: loadingBar 1.5s ease-in-out infinite;
 }

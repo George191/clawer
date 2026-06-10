@@ -1,5 +1,5 @@
 import React from 'react';
-import { Empty, Button } from 'antd';
+import { Button } from 'antd';
 import {
   InboxOutlined,
   FileTextOutlined,
@@ -51,7 +51,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({
       <div
         style={{
           fontSize: 56,
-          color: 'var(--ant-color-text-quaternary, #bfbfbf)',
+          color: 'var(--theme-color-neutral-text-weakest)',
           marginBottom: 24,
           lineHeight: 1,
         }}
@@ -63,7 +63,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({
         style={{
           fontSize: 16,
           fontWeight: 600,
-          color: 'var(--ant-color-text, #1d1d1d)',
+          color: 'var(--theme-color-neutral-text-default)',
           marginBottom: 8,
         }}
       >
@@ -74,7 +74,7 @@ const EmptyState: React.FC<EmptyStateProps> = ({
         <div
           style={{
             fontSize: 13,
-            color: 'var(--ant-color-text-secondary, #8b949e)',
+            color: 'var(--theme-color-neutral-text-weak)',
             maxWidth: 320,
             lineHeight: 1.6,
             marginBottom: 24,
@@ -89,7 +89,6 @@ const EmptyState: React.FC<EmptyStateProps> = ({
   );
 };
 
-/** Convenience presets with appropriate defaults */
 export function EmptyStateNoData(props?: { description?: string; action?: React.ReactNode }) {
   return (
     <EmptyState

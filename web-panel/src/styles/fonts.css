@@ -1,0 +1,36 @@
+/* ============================================
+ * 字体加载 — Public Sans + Fira Code
+ * woff2 优先，font-display: swap 避免 FOIT
+ * ============================================ */
+
+/* Public Sans — 正文字体（300-700 weight, one variable file or multi-file） */
+@font-face {
+  font-family: 'Public Sans';
+  src: url('/fonts/PublicSans.woff2') format('woff2');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Fira Code — 代码/数据字体 */
+@font-face {
+  font-family: 'Fira Code';
+  src: url('/fonts/FiraCode.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * ── 字体文件说明 ──
+ * 将以下文件放入 web-panel/public/fonts/ 目录：
+ *   - PublicSans.woff2 （variable weight 300-700）
+ *   - FiraCode.woff2
+ *
+ * 下载地址：
+ *   Public Sans: https://fonts.google.com/specimen/Public+Sans
+ *   Fira Code:   https://github.com/tonsky/FiraCode/releases
+ *
+ * Fallback 已内置于 tokens.css 的 --theme-font-* 变量中：
+ *   system-ui, -apple-system, sans-serif
+ */

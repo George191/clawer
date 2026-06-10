@@ -10,7 +10,7 @@ import {
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { Row, Col, Card, theme } from 'antd';
-import { chartPalette } from '@/theme/tokens';
+import { chartPalette, semanticHex } from '@/theme/tokens';
 import type { DashboardMetrics, LayerThroughputPoint } from '@/services/types';
 
 echarts.use([
@@ -20,7 +20,7 @@ echarts.use([
 ]);
 
 // ── Task status colors ──
-const taskStatusColors = ['#1677ff', '#52c41a', '#ff4d4f', '#faad14'];
+const taskStatusColors = [semanticHex.primary, semanticHex.success, semanticHex.danger, semanticHex.warning];
 
 const gridBase = { top: 24, right: 16, bottom: 40, left: 48 };
 
@@ -143,10 +143,10 @@ const KafkaLagTrendChart: React.FC<{
       markLine: {
         silent: true,
         symbol: 'none' as const,
-        lineStyle: { color: '#faad14', type: 'dashed' as const, width: 1.5 },
+        lineStyle: { color: semanticHex.warning, type: 'dashed' as const, width: 1.5 },
         label: {
           formatter: `阈值 ${threshold}`,
-          color: '#faad14',
+          color: semanticHex.warning,
           fontSize: 10,
           position: 'end' as const,
         },
@@ -251,9 +251,9 @@ const ErrorRateTrendChart: React.FC<{
         const v = p?.value;
         const overThreshold = typeof v === 'number' && v > threshold;
         return `<span>${p?.axisValue}</span><br/>
-          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4d4f;margin-right:6px"></span>
-          错误率: <b style="color:${overThreshold ? '#ff4d4f' : token.colorText}">${v}%</b>
-          ${overThreshold ? '<br/><span style="color:#ff4d4f;font-size:11px">⚠️ 超过阈值</span>' : ''}`;
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${semanticHex.danger};margin-right:6px"></span>
+          错误率: <b style="color:${overThreshold ? semanticHex.danger : token.colorText}">${v}%</b>
+          ${overThreshold ? '<br/><span style="color:${semanticHex.danger};font-size:11px">⚠️ 超过阈值</span>' : ''}`;
       },
     },
     legend: {
@@ -282,21 +282,21 @@ const ErrorRateTrendChart: React.FC<{
       smooth: true,
       symbol: 'circle' as const,
       symbolSize: 4,
-      lineStyle: { color: '#ff4d4f', width: 2 },
-      itemStyle: { color: '#ff4d4f' },
+      lineStyle: { color: semanticHex.danger, width: 2 },
+      itemStyle: { color: semanticHex.danger },
       areaStyle: {
         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-          { offset: 0, color: '#ff4d4f20' },
-          { offset: 1, color: '#ff4d4f02' },
+          { offset: 0, color: semanticHex.danger + '20' },
+          { offset: 1, color: semanticHex.danger + '02' },
         ]),
       },
       markLine: {
         silent: true,
         symbol: 'none' as const,
-        lineStyle: { color: '#ff4d4f', type: 'dashed' as const, width: 1.5 },
+        lineStyle: { color: semanticHex.danger, type: 'dashed' as const, width: 1.5 },
         label: {
           formatter: `阈值 ${threshold}%`,
-          color: '#ff4d4f',
+          color: semanticHex.danger,
           fontSize: 10,
           position: 'end' as const,
         },

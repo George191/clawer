@@ -58,7 +58,7 @@ class ErrorBoundary extends Component<Props, State> {
           <ExclamationCircleOutlined
             style={{
               fontSize: 64,
-              color: 'var(--ant-color-error, #ff4d4f)',
+              color: 'var(--theme-color-danger-text)',
               marginBottom: 24,
             }}
           />
@@ -68,7 +68,7 @@ class ErrorBoundary extends Component<Props, State> {
               fontSize: 20,
               fontWeight: 600,
               margin: '0 0 8px',
-              color: 'var(--ant-color-text, #1d1d1d)',
+              color: 'var(--theme-color-neutral-text-default)',
             }}
           >
             页面出错了
@@ -95,7 +95,6 @@ class ErrorBoundary extends Component<Props, State> {
             </Button>
           </div>
 
-          {/* Error details (collapsible) */}
           <Collapse
             ghost
             size="small"
@@ -104,7 +103,7 @@ class ErrorBoundary extends Component<Props, State> {
               {
                 key: 'error-detail',
                 label: (
-                  <span style={{ fontSize: 13, color: 'var(--ant-color-text-secondary, #8b949e)' }}>
+                  <span style={{ fontSize: 13, color: 'var(--theme-color-neutral-text-weaker)' }}>
                     <BugOutlined style={{ marginRight: 6 }} />
                     错误详情
                   </span>

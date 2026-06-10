@@ -7,7 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { Card, theme, Spin, Empty, Button, Result } from 'antd';
 import { fetchLayers } from '@/services/api';
 import type { LayerNode as ApiLayerNode } from '@/services/types';
-import { layerColors } from '@/theme/tokens';
+import { layerColors, semanticHex } from '@/theme/tokens';
 
 echarts.use([GraphChart, TooltipComponent, LegendComponent, CanvasRenderer]);
 
@@ -55,9 +55,9 @@ const PIPELINE_LINKS: LayerLink[] = [
 
 // ── 状态色映射 ──
 const statusColorMap: Record<NodeStatus, string> = {
-  running: '#1677ff',
-  error: '#ff4d4f',
-  stopped: '#8c8c8c',
+  running: semanticHex.primary,
+  error: semanticHex.danger,
+  stopped: semanticHex.neutral,
 };
 
 const statusLabelMap: Record<NodeStatus, string> = {

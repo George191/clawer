@@ -25,31 +25,75 @@ interface StatusBadgeProps {
   status: StatusType;
 }
 
+type StatusVariant = 'primary' | 'success' | 'danger' | 'warning' | 'neutral';
+
+const statusVariant: Record<StatusType, StatusVariant> = {
+  running: 'primary',
+  completed: 'success',
+  failed: 'danger',
+  queued: 'warning',
+  paused: 'neutral',
+  stopped: 'neutral',
+  error: 'danger',
+  active: 'success',
+  inactive: 'neutral',
+};
+
 const statusConfig: Record<
   StatusType,
-  { color: string; icon: React.ReactNode; label: string; pulse?: boolean }
+  { icon: React.ReactNode; label: string; pulse?: boolean }
 > = {
-  running: { color: '#1677ff', icon: <PlayCircleOutlined />, label: '运行中', pulse: true },
-  completed: { color: '#52c41a', icon: <CheckCircleOutlined />, label: '已完成' },
-  failed: { color: '#ff4d4f', icon: <CloseCircleOutlined />, label: '失败' },
-  queued: { color: '#faad14', icon: <ClockCircleOutlined />, label: '排队中' },
-  paused: { color: '#8c8c8c', icon: <PauseCircleOutlined />, label: '已暂停' },
-  stopped: { color: '#8c8c8c', icon: <StopOutlined />, label: '已停止' },
-  error: { color: '#ff4d4f', icon: <ExclamationCircleOutlined />, label: '异常' },
-  active: { color: '#52c41a', icon: <CheckCircleOutlined />, label: '活跃' },
-  inactive: { color: '#8c8c8c', icon: <PauseCircleOutlined />, label: '已停用' },
+  running: { icon: <PlayCircleOutlined />, label: '运行中', pulse: true },
+  completed: { icon: <CheckCircleOutlined />, label: '已完成' },
+  failed: { icon: <CloseCircleOutlined />, label: '失败' },
+  queued: { icon: <ClockCircleOutlined />, label: '排队中' },
+  paused: { icon: <PauseCircleOutlined />, label: '已暂停' },
+  stopped: { icon: <StopOutlined />, label: '已停止' },
+  error: { icon: <ExclamationCircleOutlined />, label: '异常' },
+  active: { icon: <CheckCircleOutlined />, label: '活跃' },
+  inactive: { icon: <PauseCircleOutlined />, label: '已停用' },
+};
+
+const variantTokens: Record<StatusVariant, { text: string; bg: string; border: string }> = {
+  primary: {
+    text: 'var(--theme-color-primary-text)',
+    bg: 'var(--theme-color-primary-bg-weak)',
+    border: 'var(--theme-color-primary-border-weak)',
+  },
+  success: {
+    text: 'var(--theme-color-success-text)',
+    bg: 'var(--theme-color-success-bg-weak)',
+    border: 'var(--theme-color-success-border-weak)',
+  },
+  danger: {
+    text: 'var(--theme-color-danger-text)',
+    bg: 'var(--theme-color-danger-bg-weak)',
+    border: 'var(--theme-color-danger-border-weak)',
+  },
+  warning: {
+    text: 'var(--theme-color-warning-text)',
+    bg: 'var(--theme-color-warning-bg-weak)',
+    border: 'var(--theme-color-warning-border-weak)',
+  },
+  neutral: {
+    text: 'var(--theme-color-neutral-text-weaker)',
+    bg: 'var(--theme-color-neutral-hover)',
+    border: 'var(--theme-color-neutral-border-weak)',
+  },
 };
 
 const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
   const { token } = theme.useToken();
   const config = statusConfig[status] ?? statusConfig.inactive;
+  const variant = statusVariant[status] ?? 'neutral';
+  const v = variantTokens[variant];
 
   const dotStyle: React.CSSProperties = {
     display: 'inline-block',
     width: 6,
     height: 6,
     borderRadius: '50%',
-    backgroundColor: config.color,
+    backgroundColor: v.text,
     marginRight: 4,
     verticalAlign: 'middle',
   };
@@ -71,9 +115,9 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
           gap: 4,
           padding: '2px 10px',
           borderRadius: token.borderRadiusSM,
-          border: `1px solid ${config.color}20`,
-          background: `${config.color}08`,
-          color: config.color,
+          border: `1px solid ${v.border}`,
+          background: v.bg,
+          color: v.text,
           fontSize: 12,
           fontWeight: 500,
           lineHeight: '20px',

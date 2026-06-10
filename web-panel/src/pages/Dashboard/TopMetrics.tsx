@@ -9,6 +9,7 @@ import {
   ArrowDownOutlined,
 } from '@ant-design/icons';
 import Sparkline from './Sparkline';
+import { semanticHex } from '@/theme/tokens';
 import type { DashboardMetrics } from '@/services/types';
 
 interface TopMetricsProps {
@@ -16,12 +17,12 @@ interface TopMetricsProps {
   loading: boolean;
 }
 
-// ── Color config per card ──
+// ── Color config per card (CSS var for icon, semantic hex for gradient alpha) ──
 const cardConfigs = [
-  { key: 'tasks', color: '#1677ff', icon: <ThunderboltOutlined /> },
-  { key: 'throughput', color: '#52c41a', icon: <CloudUploadOutlined /> },
-  { key: 'kafkaLag', color: '#fa8c16', icon: <HourglassOutlined /> },
-  { key: 'dataVolume', color: '#722ed1', icon: <DatabaseOutlined /> },
+  { key: 'tasks', hex: semanticHex.primary, icon: <ThunderboltOutlined /> },
+  { key: 'throughput', hex: semanticHex.success, icon: <CloudUploadOutlined /> },
+  { key: 'kafkaLag', hex: semanticHex.warning, icon: <HourglassOutlined /> },
+  { key: 'dataVolume', hex: semanticHex.discovery, icon: <DatabaseOutlined /> },
 ] as const;
 
 const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
@@ -69,7 +70,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       subtitle: `运行 ${metrics.tasks.running}  |  完成 ${metrics.tasks.completed}  |  失败 ${metrics.tasks.failed}`,
       trend: metrics.tasks.failed > 0 ? -(metrics.tasks.failed / metrics.tasks.total * 100) : 8.5,
       sparklineData: metrics.layer_throughput_history.map((p) => p.Crawl),
-      color: '#1677ff',
+      color: 'var(--theme-color-primary-text)',
       icon: <ThunderboltOutlined />,
     },
     {
@@ -79,7 +80,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       unit: 'msg/s',
       trend: metrics.etl_throughput.current > 400 ? 5.2 : -2.8,
       sparklineData: metrics.etl_throughput.history.map((p) => p.v),
-      color: '#52c41a',
+      color: 'var(--theme-color-success-text)',
       icon: <CloudUploadOutlined />,
     },
     {
@@ -89,7 +90,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       unit: '',
       trend: metrics.kafka_lag.total > 500 ? 7.3 : -12.5,
       sparklineData: metrics.kafka_lag_history.map((p) => p.v),
-      color: '#fa8c16',
+      color: 'var(--theme-color-warning-text)',
       icon: <HourglassOutlined />,
     },
     {
@@ -99,7 +100,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       unit: 'TB',
       trend: metrics.data_volume.daily_increment > 0.2 ? 6.8 : -1.5,
       sparklineData: metrics.etl_throughput.history.map((p) => p.v),
-      color: '#722ed1',
+      color: 'var(--theme-color-discovery-text)',
       icon: <DatabaseOutlined />,
     },
   ];
@@ -108,7 +109,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
     <Row gutter={[16, 16]}>
       {cards.map((c) => {
         const trendDir = c.trend >= 0 ? 1 : -1;
-        const trendColor = trendDir > 0 ? '#52c41a' : '#ff4d4f';
+        const trendColor = trendDir > 0 ? 'var(--theme-color-success-text)' : 'var(--theme-color-danger-text)';
 
         return (
           <Col xs={24} md={12} xl={6} key={c.key}>
@@ -137,7 +138,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
                     width: 42,
                     height: 42,
                     borderRadius: 10,
-                    background: `linear-gradient(135deg, ${c.color}20, ${c.color}35)`,
+                    background: `linear-gradient(135deg, ${c.hex}20, ${c.hex}35)`,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -148,7 +149,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
                   {c.icon}
                 </div>
                 {/* Mini sparkline */}
-                <Sparkline data={c.sparklineData} color={c.color} width={90} height={40} />
+                <Sparkline data={c.sparklineData} color={c.hex} width={90} height={40} />
               </div>
 
               {/* Title */}
@@ -164,7 +165,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
               </div>
 
               {/* Value */}
-              <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.3, marginBottom: 8 }}>
+              <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1.3, marginBottom: 8, fontFamily: 'var(--theme-font-code)', fontVariantNumeric: 'tabular-nums' }}>
                 {c.value.toLocaleString()}
                 {c.unit && (
                   <span style={{ fontSize: 14, fontWeight: 500, color: token.colorTextSecondary, marginLeft: 4 }}>
