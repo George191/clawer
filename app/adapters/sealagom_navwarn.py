@@ -63,11 +63,10 @@ class SealagomAdapter(BaseSiteAdapter):
         self._error_count: int = 0   # 本次采集累计错误次数
 
     async def on_before_crawl(self, template: Any) -> None:
-        """采集开始前：解析 batch_data 并记录 NAVAREA 编号。"""
-        # 基类处理 _batch_data → 填入 navarea_id
+        """采集开始前：记录 NAVAREA 编号。"""
         await super().on_before_crawl(template)
 
-        # 从解析后的 param_values 读取 navarea_id
+        # 参数值已在 main.py 组装后经 apply_params 填入 _param_values
         param_values = getattr(template, "_param_values", {}) or {}
         navarea_id = param_values.get("navarea_id", "1")
         try:
@@ -229,3 +228,24 @@ class SealagomAdapter(BaseSiteAdapter):
         )
         await asyncio.sleep(wait)
         return None
+
+    # ── 批次参数拼接 ──────────────────────────────────────────────────
+
+    @classmethod
+    def build_batch_param_value(cls, batch_data: list[str], param_name: str) -> str:
+        """Sealagom 批次参数拼接：每个 NAVAREA 独立采集，取第一条。
+
+        Sealagom 的 batch_size=1，每行是一个独立的 NAVAREA 编号。
+        如果意外收到多条，仅取第一条（每个 NAVAREA 应单独采集）。
+
+        示例: ['7'] → '7'
+        """
+        if not batch_data:
+            return ""
+        if len(batch_data) > 1:
+            logger.warning(
+                "[SealagomAdapter] batch_data has %d items but batch_size should be 1, "
+                "only using first item: %s",
+                len(batch_data), batch_data[0],
+            )
+        return batch_data[0]

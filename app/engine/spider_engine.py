@@ -24,13 +24,11 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
 from typing import Any
 
 from app.config.settings import settings
 from app.downloader.http_client import HttpClient
-from app.engine.browser_events import BrowserEventEmitter, PageSession
-from app.adapters import get_adapter, BaseSiteAdapter, GenericAdapter
+from app.adapters import get_adapter
 from app.models.template import (
     PaginationType,
     ResponseType,
@@ -595,8 +593,10 @@ class SpiderEngine:
 
         item_path = template.json_item_path or ""
 
-        effective_max_pages = config_max_pages
-        dynamic_pages = config_max_pages
+        # max_pages=0 表示"不限"（由 API 返回值或空页决定终止）
+        has_page_cap = config_max_pages > 0
+        effective_max_pages = config_max_pages if has_page_cap else float("inf")
+        dynamic_pages = config_max_pages if has_page_cap else float("inf")
         # 如果从断点恢复且状态中有保存的分页信息，直接使用
         if state is not None and state.effective_max_pages is not None:
             effective_max_pages = state.effective_max_pages
@@ -617,8 +617,8 @@ class SpiderEngine:
                 try:
                     await adapter.on_before_page(current_page, is_first)
 
-                    url = template.get_full_list_url(current_page, num=results_per_page, peid=adapter.session.eid)
-
+                    _session = getattr(adapter, "_session", None)
+                    url = template.get_full_list_url(current_page, num=results_per_page, peid=_session.eid if _session else None)
                     extra_headers = adapter.on_request_headers(current_page)
                     list_request = template.list_request.model_copy(update={
                         "headers": {**template.list_request.headers, **extra_headers}
@@ -667,23 +667,28 @@ class SpiderEngine:
                                             except (ValueError, TypeError):
                                                 pass
 
-                                    effective_max_pages = min(
-                                        config_max_pages, dynamic_pages
+                                    effective_max_pages = (
+                                        min(config_max_pages, dynamic_pages)
+                                        if has_page_cap else dynamic_pages
                                     )
                                     logger.info(
                                         "Dynamic pagination: total=%d, per_page=%d, "
-                                        "need %d pages (capped at %d)",
+                                        "need %d pages%s",
                                         total,
                                         results_per_page,
                                         dynamic_pages,
-                                        effective_max_pages,
+                                        f" (capped at {effective_max_pages})" if has_page_cap else "",
                                     )
                                 except (ValueError, TypeError):
                                     pass
 
                     # 保存分页参数到断点状态（用于恢复时跳过重复计算）
                     if state is not None and current_page == start_page and 'effective_max_pages' in locals():
-                        state.effective_max_pages = effective_max_pages
+                        # float('inf') 无法 JSON 序列化，存 None 表示"不限"
+                        state.effective_max_pages = (
+                            effective_max_pages
+                            if isinstance(effective_max_pages, int) else None
+                        )
                         state.dynamic_total = total if 'total' in locals() else None
 
                     all_records.extend(records)

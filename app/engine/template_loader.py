@@ -28,7 +28,7 @@ class TemplateLoader:
         file_path = self._resolve_template_file(name)
         raw = self._read_yaml(file_path)
         template = SiteTemplate(**raw)
-        if template.params or param_values:
+        if template.params and param_values:
             template.apply_params(param_values)
         return template
 

@@ -150,7 +150,6 @@ class HttpClient:
             use_proxy = use_proxy and (mode == "proxy")
 
         try:
-            print(f"Requesting {url} with headers {headers}")
             request_kwargs = dict(
                 method=config.method,
                 url=url,

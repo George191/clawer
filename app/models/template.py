@@ -63,7 +63,7 @@ class PaginationConfig(BaseModel):
     type: PaginationType = Field(description="分页类型")
     next_selector: str | None = Field(default=None, description="下一页链接选择器")
     page_param: str | None = Field(default=None, description="页码参数名, 如 page")
-    start_page: int = Field(default=1, description="起始页码")
+    start_page: int = Field(default=0, description="起始页码")
     max_pages: int = Field(default=1000, description="最大翻页数(安全上限), 0=不限")
     results_per_page: int = Field(default=10, description="每页结果数, 用于从 total 动态计算页数")
 
@@ -219,9 +219,10 @@ class SiteTemplate(BaseModel):
         return settings.anti_crawl_enabled
 
     @staticmethod
-    def _replace_params(text: str, params: dict[str, str]) -> str:
+    def _replace_params(text: str, params: dict[str, str | None]) -> str:
         for key, value in params.items():
-            text = text.replace("{" + key + "}", value)
+            if value is not None:
+                text = text.replace("{" + key + "}", value)
         return text
 
     def apply_params(self, param_values: dict[str, str] | None = None) -> SiteTemplate:

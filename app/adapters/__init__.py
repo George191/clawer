@@ -11,14 +11,33 @@ USPTO 的 CAPTCHA 处理等），使 SpiderEngine 保持通用性。
 
 from __future__ import annotations
 
+import importlib
+import logging
+import pkgutil
 from typing import Any
 
-from app.engine.browser_events import BrowserEventEmitter, PageSession
 from app.downloader.http_client import HttpClient
+
+logger = logging.getLogger(__name__)
 
 # ── 全局注册表 ──────────────────────────────────────────────────────────
 
 _ADAPTER_REGISTRY: dict[str, type[BaseSiteAdapter]] = {}
+_adapters_loaded: bool = False
+
+
+def _ensure_adapters_loaded() -> None:
+    """扫描 app/adapters/ 目录，导入所有子模块以触发 @register_adapter 注册。"""
+    global _adapters_loaded
+    if _adapters_loaded:
+        return
+    _adapters_loaded = True
+    package_path = __path__  # type: ignore[name-defined]
+    for _, module_name, _ in pkgutil.iter_modules(package_path):
+        try:
+            importlib.import_module(f"app.adapters.{module_name}")
+        except Exception as e:
+            logger.debug("Skip adapter module '%s': %s", module_name, e)
 
 
 def register_adapter(name: str):
@@ -36,10 +55,18 @@ def get_adapter(
     **kwargs: Any,
 ) -> BaseSiteAdapter:
     """根据名称获取适配器实例。"""
+    _ensure_adapters_loaded()
     cls = _ADAPTER_REGISTRY.get(name)
     if cls is None:
         return GenericAdapter(base_url, http_client, **kwargs)
     return cls(base_url, http_client, **kwargs)
+
+
+def get_adapter_class(name: str | None) -> type[BaseSiteAdapter]:
+    """根据名称获取适配器类（不实例化）。"""
+    _ensure_adapters_loaded()
+    cls = _ADAPTER_REGISTRY.get(name)
+    return cls if cls is not None else GenericAdapter
 
 
 # ── 基类 ────────────────────────────────────────────────────────────────
@@ -66,55 +93,10 @@ class BaseSiteAdapter:
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._client = http_client or HttpClient()
-        self._emitter = BrowserEventEmitter(
-            base_url=self._base_url,
-            http_client=self._client,
-            site=self.adapter_name,
-        )
-        self._session = PageSession()
-
-    @property
-    def emitter(self) -> BrowserEventEmitter:
-        return self._emitter
-
-    @property
-    def session(self) -> PageSession:
-        return self._session
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。子类覆盖。"""
-        self._resolve_batch_param(template)
-
-    def _resolve_batch_param(self, template: Any) -> None:
-        """通用批量参数解析 — 将 _batch_data 填入模板 URL。
-
-        处理 main.py 传入的 _batch_data 列表：
-        - 单条 (batch_size=1): 直接取值，替换空占位
-        - 多条: 子类应覆盖此方法实现自定义拼接
-
-        工作原理：从 _param_values 找到空字符串的参数名，
-        用 _batch_data 中的值替换 list_page 中的空占位。
-        """
-        batch_data = getattr(template, "_batch_data", None)
-        if not batch_data or not isinstance(batch_data, list) or len(batch_data) == 0:
-            return
-
-        param_values = getattr(template, "_param_values", {}) or {}
-        for param_name, param_val in param_values.items():
-            if param_val == "":
-                # 单条直接取值，多条由子类 adapter 处理
-                value = batch_data[0] if len(batch_data) == 1 else "+OR+".join(batch_data)
-                # 替换 URL 中的空占位: param_name=& 或 param_name=}
-                if hasattr(template, "list_page") and template.list_page:
-                    template.list_page = template.list_page.replace(
-                        f"{param_name}=&", f"{param_name}={value}&"
-                    ).replace(
-                        f"{param_name}=}}", f"{param_name}={value}}}"
-                    ).replace(
-                        f"{param_name}=/", f"{param_name}={value}/"
-                    )
-                template._param_values[param_name] = value
-                break
+        pass
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前。子类覆盖。"""
@@ -126,7 +108,7 @@ class BaseSiteAdapter:
 
     def on_page_advance(self) -> None:
         """翻页状态推进。子类覆盖。"""
-        self._session.advance_page()
+        pass
 
     def on_request_headers(self, page: int) -> dict[str, str]:
         """注入额外请求头。子类覆盖。"""
@@ -144,11 +126,34 @@ class BaseSiteAdapter:
         return None
 
     async def close(self) -> None:
-        await self._emitter.close()
+        pass
+
+    # ── 静态工具方法 ────────────────────────────────────────────────────
+
+    @classmethod
+    def build_batch_param_value(cls, batch_data: list[str], param_name: str) -> str:
+        """将批次数据组装为最终参数值。子类可覆盖以适配站点特定拼接格式。
+
+        基类默认行为：返回第一条数据（适用于 batch_size=1 的通用场景）。
+        子类可覆盖实现自定义拼接，如 Google Patents 的 +OR+ 语法。
+
+        Args:
+            batch_data: 批次数据列表（至少 1 条）
+            param_name: 参数名称
+
+        Returns:
+            拼接后的参数值
+
+        示例:
+            基类默认:       batch_data[0]             → "10"
+            Google Patents:  "+OR+".join(batch_data)  → "US-123+OR+US-456"
+        """
+        if not batch_data:
+            return ""
+        return batch_data[0]
 
 
 # ── 通用适配器（默认） ──────────────────────────────────────────────────
-
 class GenericAdapter(BaseSiteAdapter):
     """通用适配器：无特殊行为，直接使用默认逻辑。"""
 

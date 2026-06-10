@@ -82,3 +82,6 @@ list_pagination:
   start_page: 1
   max_pages: 1
   results_per_page: 50
+
+
+# --list-file data/navarea_ids.txt --list-param navarea_id --batch-size 1 --template sealagom_navwarn --delay 3

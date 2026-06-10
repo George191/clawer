@@ -1,8 +1,11 @@
 """浏览器事件发射器 — 封装 gen_204 及页面行为事件。
 
-适配 Google Patents 等需要模拟浏览器行为（发送无状态信令事件）
-的反爬场景。将事件发送和 peid/eid 生命周期管理从 SpiderEngine
-中解耦，便于后续扩展到其他站点。
+Google Patents 专用适配模块，模拟浏览器行为（发送无状态信令事件）
+以绕过反爬检测。将事件发送和 peid/eid 生命周期管理与 SpiderEngine
+解耦。
+
+注意：此模块仅由 GooglePatentAdapter 引入，不应出现在 BaseSiteAdapter 或
+其他通用组件中。
 """
 
 from __future__ import annotations

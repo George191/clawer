@@ -24,7 +24,7 @@ from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
-from app.engine.browser_events import PageSession
+from app.adapters.utils.google_patent.browser_events import BrowserEventEmitter, PageSession
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +42,24 @@ class GooglePatentAdapter(BaseSiteAdapter):
         **kwargs: Any,
     ) -> None:
         super().__init__(base_url, http_client, **kwargs)
+        self._emitter = BrowserEventEmitter(
+            base_url=self._base_url,
+            http_client=self._client,
+            site=self.adapter_name,
+        )
+        self._session = PageSession()
+
+    @property
+    def emitter(self) -> BrowserEventEmitter:
+        return self._emitter
+
+    @property
+    def session(self) -> PageSession:
+        return self._session
 
     async def on_before_crawl(self, template: Any) -> None:
-        """采集开始前：由基类处理 _batch_data 拼接。
-
-        BaseSiteAdapter._resolve_batch_param 已实现 "+OR+" 拼接，
-        与 Google Patents API 的 OR 查询语法一致。
-        """
-        await super().on_before_crawl(template)
+        """采集开始前。参数值已在 main.py 中组装完毕（+OR+ 拼接），无需额外处理。"""
+        pass
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前：发送翻页信令。
@@ -76,18 +86,17 @@ class GooglePatentAdapter(BaseSiteAdapter):
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """每页数据返回后：过滤相似文档。"""
         # Google Patents 返回的 is_similar_document=True 记录通常是噪音
-        # filtered = [
-        #     r for r in records
-        #     if not r.get("is_similar_document", False)
-        # ]
-        # if len(filtered) < len(records):
-        #     logger.info(
-        #         "[GooglePatentAdapter] Filtered %d similar documents on page %d",
-        #         len(records) - len(filtered),
-        #         page,
-        #     )
-        # return filtered
-        ...
+        filtered = [
+            r for r in records
+            if not r.get("is_similar_document", False)
+        ]
+        if len(filtered) < len(records):
+            logger.info(
+                "[GooglePatentAdapter] Filtered %d similar documents on page %d",
+                len(records) - len(filtered),
+                page,
+            )
+        return filtered
 
     def on_page_advance(self) -> None:
         """翻页状态推进：peid 继承 eid，生成新 eid。"""
@@ -131,33 +140,14 @@ class GooglePatentAdapter(BaseSiteAdapter):
             return "abort"
         return None
 
-    @staticmethod
-    def build_batch_patent_param(ids: list[str]) -> str:
-        """构建批量专利查询参数值。
+    async def close(self) -> None:
+        """释放 emitter 资源。"""
+        await self._emitter.close()
 
-        格式: (ID1)+OR+ID2+OR+ID3。多个 ID 用 +OR+ 拼接，
-        用于 Google Patents 的 q= 参数中实现 OR 批量查询。
+    @classmethod
+    def build_batch_param_value(cls, batch_data: list[str], param_name: str = "") -> str:
+        """Google Patents 批量子查询：多个 ID 用 +OR+ 拼接。
 
-        示例::
-
-            >>> GooglePatentAdapter.build_batch_patent_param(['US-123-A1', 'US-456-B2'])
-            'US-123-A1+OR+US-456-B2'
-
-        Args:
-            ids: 专利公开编号列表。
-
-        Returns:
-            OR 拼接的参数字符串。
+        示例: ['US-123-A1', 'US-456-B2'] → 'US-123-A1+OR+US-456-B2'
         """
-        return "+OR+".join(ids)
-
-    @staticmethod
-    def get_batch_size() -> int:
-        """返回 Google Patents 推荐的批量查询大小。
-
-        Google Patents API 对单次查询 URL 长度有限制，一般建议 5 个 ID 为一批。
-
-        Returns:
-            推荐的批量查询数量。
-        """
-        return 5
+        return "+OR+".join(batch_data)

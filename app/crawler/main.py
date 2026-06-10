@@ -29,6 +29,8 @@ from app.config.settings import settings
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
 from app.models.template import SiteTemplate
+from app.adapters import get_adapter_class
+from app.adapters import GenericAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +303,17 @@ async def run_from_list_file_stream(
     success_count = 0
     fail_count = 0
     batch_count = 0
+
+    # 预加载模板以获取适配器类（用于批次参数拼接）
+    adapter_cls = GenericAdapter
+    try:
+        tmpl_meta = loader.load(template_name)
+        adapter_cls = get_adapter_class(tmpl_meta.adapter)
+        logger.info(f"预加载模板 '{template_name}'，适配器: {adapter_cls.__name__}")
+    except FileNotFoundError:
+        logger.warning(f"模板 '{template_name}' 未找到，回退到 GenericAdapter")
+    except Exception as e:
+        logger.warning(f"预加载模板元信息失败 ({e})，回退到 GenericAdapter")
     
     try:
         reader = BatchParamReader(
@@ -346,8 +359,9 @@ async def run_from_list_file_stream(
         async def _worker(batch_data: list[str], start_line_num: int, end_line_num: int, idx: int) -> int:
             """单个任务的 worker 函数。"""
             async with semaphore:
-                # 传空字符串占位, 原始 batch_data 挂到 template 上由 adapter 拼接
-                params = {param_name: ""}
+                # 由适配器负责批次参数拼接（Google Patents: +OR+ 连接）
+                param_value = adapter_cls.build_batch_param_value(batch_data, param_name)
+                params = {param_name: param_value}
                 logger.info(
                     f"[批次 {idx + 1}/{batch_count}] 行 {start_line_num}-{end_line_num}, "
                     f"共 {len(batch_data)} 条: {batch_data[0]}...{batch_data[-1]}"
@@ -355,15 +369,13 @@ async def run_from_list_file_stream(
                 
                 try:
                     tmpl = loader.load(template_name, param_values=params)
-                    tmpl._batch_data = batch_data  # 原始数据，adapter 在 on_before_crawl 中处理
                     result = await engine.crawl(tmpl)
                     
                     if result.success:
                         logger.info(f"✓ 批次 {idx + 1} 成功")
                         return len(batch_data)
-                    else:
-                        logger.warning(f"✗ 批次 {idx + 1} 失败: {result.errors}")
-                        return -len(batch_data)
+                    logger.warning(f"✗ 批次 {idx + 1} 失败: {result.errors}")
+                    return -len(batch_data)
                 
                 except Exception as e:
                     logger.exception(f"✗ 批次 {idx + 1} 异常: {e}")
