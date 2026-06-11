@@ -129,8 +129,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   // ── 项目选项 ──
   const projectOptions = [
     { key: 'etl', label: 'ETL Pipeline' },
-    { key: 'data-lake', label: '数据湖' },
-    { key: 'big-collect', label: '大采集' },
+    { key: 'data-lake', label: 'Data Lake' },
+    { key: 'ai-collect', label: 'AI Collect' },
   ];
 
   // ── 响应式检测 ──

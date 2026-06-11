@@ -1,0 +1,27 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Astral Helio Favicon</title>
+  <desc id="desc">Small-size browser tab icon for Astral Helio: a clear white circle, solar orbit, and bold Astral A.</desc>
+  <defs>
+    <linearGradient id="orbit-a" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#30E0AE"/>
+      <stop offset="1" stop-color="#2F7DF6"/>
+    </linearGradient>
+    <linearGradient id="orbit-b" x1="48" y1="10" x2="14" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4364F5"/>
+      <stop offset="1" stop-color="#61D7C8"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="32" cy="32" r="29" fill="#FFFFFF"/>
+  <circle cx="32" cy="32" r="28.5" stroke="#DDE5EF"/>
+
+  <path d="M14.2 49.2C7.7 38.7 8.6 24.9 16.4 15.2" stroke="url(#orbit-a)" stroke-width="6.5" stroke-linecap="round"/>
+  <path d="M17.5 13.9C27.5 5.9 42.2 7.1 51 16.1" stroke="#4364F5" stroke-width="6.5" stroke-linecap="round"/>
+  <path d="M53.2 19.8C59.4 31.5 56.2 46.2 45.3 54" stroke="url(#orbit-b)" stroke-width="6.5" stroke-linecap="round"/>
+
+  <path d="M20.5 45L32 18L43.5 45" stroke="#102033" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M25.7 35.8H38.3" stroke="#102033" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="32" cy="24.4" r="4.2" fill="#FFE56E"/>
+  <circle cx="20.5" cy="45" r="3.6" fill="#7DF6FF"/>
+  <circle cx="43.5" cy="45" r="3.6" fill="#66E6A6"/>
+</svg>
