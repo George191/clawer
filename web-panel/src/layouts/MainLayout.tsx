@@ -25,8 +25,7 @@ import {
   MoonOutlined,
   BellOutlined,
   LogoutOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
+  PushpinOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
@@ -119,11 +118,20 @@ interface MainLayoutProps {
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [manualCollapsed, setManualCollapsed] = useState(false);
+  const [pinned, setPinned] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
+  const [currentProject, setCurrentProject] = useState('etl');
 
   const location = useLocation();
   const navigate = useNavigate();
   const { mode, toggle } = useThemeStore();
+
+  // ── 项目选项 ──
+  const projectOptions = [
+    { key: 'etl', label: 'ETL Pipeline' },
+    { key: 'data-lake', label: '数据湖' },
+    { key: 'big-collect', label: '大采集' },
+  ];
 
   // ── 响应式检测 ──
   const handleResize = useCallback(() => {
@@ -138,7 +146,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return () => window.removeEventListener('resize', handleResize);
   }, [handleResize]);
 
-  const collapsed = isMobile || manualCollapsed;
+  // 收起规则: 不pinned + 鼠标不在侧边栏上 → 收起
+  const shouldCollapse = !pinned;
+  const collapsed = isMobile || (shouldCollapse && manualCollapsed);
   const siderWidth = isMobile ? 0 : collapsed ? SIDER_COLLAPSED : SIDER_EXPANDED;
   const contentMarginLeft = isMobile ? 0 : collapsed ? SIDER_COLLAPSED : SIDER_EXPANDED;
 
@@ -173,7 +183,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           right: 0,
           height: HEADER_H,
           padding: '0 20px',
-          background: mode === 'dark' ? '#12141A' : '#FFFFFF',
+          background: mode === 'dark' ? '#3C3F44' : '#F8FAFC',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -182,16 +192,67 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           zIndex: 101,
         }}
       >
-        {/* Logo */}
-        <div
-          style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}
-          onClick={() => navigate('/')}
-        >
-          <img
-            src={mode === 'dark' ? '/astral-helio-logo-white.svg' : '/astral-helio-logo.svg'}
-            alt="Astral Helio"
-            style={{ height: 28, width: 'auto' }}
-          />
+        {/* 左侧: Logo + 组织/项目选择器 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* Logo */}
+          <div
+            style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}
+            onClick={() => navigate('/')}
+          >
+            <img
+              src={mode === 'dark' ? '/astral-helio-logo-white.svg' : '/astral-helio-logo.svg'}
+              alt="Astral Helio"
+              style={{ height: 28, width: 'auto' }}
+            />
+          </div>
+
+          {/* 组织/项目 选择器 */}
+          {!isMobile && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span
+                style={{
+                  fontSize: 13,
+                  color: mode === 'dark' ? '#B0B5BE' : '#64748B',
+                  cursor: 'pointer',
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  transition: 'color 0.15s',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = mode === 'dark' ? '#E4E7EB' : '#334155'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = mode === 'dark' ? '#B0B5BE' : '#64748B'; }}
+              >
+                Spider Organization
+              </span>
+              <span style={{ color: mode === 'dark' ? '#6B7280' : '#94A3B8', fontSize: 12 }}>/</span>
+              <Dropdown
+                menu={{
+                  items: projectOptions.map((p) => ({
+                    key: p.key,
+                    label: p.label,
+                  })),
+                  onClick: ({ key }) => setCurrentProject(key),
+                }}
+                trigger={['click']}
+              >
+                <span
+                  style={{
+                    fontSize: 13,
+                    color: mode === 'dark' ? '#E4E7EB' : '#334155',
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
+                  {projectOptions.find((p) => p.key === currentProject)?.label}
+                  <span style={{ fontSize: 10, color: mode === 'dark' ? '#9CA3AF' : '#64748B' }}>&#9660;</span>
+                </span>
+              </Dropdown>
+            </div>
+          )}
         </div>
 
         {/* 右侧: 操作区 */}
@@ -201,12 +262,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               type="text"
               icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
               onClick={toggle}
-              style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', color: mode === 'dark' ? '#9CA3AF' : '#64748B', border: 'none', fontSize: 15 }}
+              style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', color: mode === 'dark' ? '#B0B5BE' : '#64748B', border: 'none', fontSize: 15 }}
             />
           </Tooltip>
           <Tooltip title="通知">
             <Badge dot offset={[-2, 2]}>
-              <Button type="text" icon={<BellOutlined />} style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', color: mode === 'dark' ? '#9CA3AF' : '#64748B', border: 'none', fontSize: 15 }} />
+              <Button type="text" icon={<BellOutlined />} style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', color: mode === 'dark' ? '#B0B5BE' : '#64748B', border: 'none', fontSize: 15 }} />
             </Badge>
           </Tooltip>
           <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
@@ -237,6 +298,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             display: isMobile && collapsed ? 'none' : 'flex',
             flexDirection: 'column',
           }}
+          onMouseEnter={() => { if (!pinned) setManualCollapsed(false); }}
+          onMouseLeave={() => { if (!pinned) setManualCollapsed(true); }}
         >
           {/* Organization 切换 */}
           <div
@@ -332,8 +395,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     const darkHoverBg = 'rgba(255, 255, 255, 0.04)';
                     const lightHoverBg = 'rgba(0, 0, 0, 0.04)';
                     const hoverBg = mode === 'dark' ? darkHoverBg : lightHoverBg;
+                    const selectedColor = mode === 'dark' ? '#8FE3E8' : '#0A6190';
+                    const selectedBg = mode === 'dark' ? 'rgba(143, 227, 232, 0.12)' : 'rgba(10, 97, 144, 0.12)';
 
-                    const menuItem = (
+                    return (
                       <div
                         key={item.key}
                         onClick={() => !isDisabled && navigate(item.key)}
@@ -344,8 +409,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                           margin: '1px 0',
                           cursor: isDisabled ? 'not-allowed' : 'pointer',
                           opacity: isDisabled ? 0.4 : 1,
-                          color: isActive ? '#8FE3E8' : inactiveColor,
-                          background: isActive ? 'rgba(143, 227, 232, 0.12)' : 'transparent',
+                          color: isActive ? selectedColor : inactiveColor,
+                          background: isActive ? selectedBg : 'transparent',
                           transition: 'all 0.15s ease',
                           fontSize: 13,
                           fontWeight: isActive ? 500 : 400,
@@ -376,7 +441,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                             bottom: 6,
                             width: 3,
                             borderRadius: '0 2px 2px 0',
-                            background: isActive ? '#8FE3E8' : 'transparent',
+                            background: isActive ? selectedColor : 'transparent',
                             transition: 'background 0.15s ease',
                           }}
                         />
@@ -401,22 +466,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                         )}
                       </div>
                     );
-
-                    if (collapsed) {
-                      return (
-                        <Tooltip key={item.key} title={item.labelZh} placement="right">
-                          {menuItem}
-                        </Tooltip>
-                      );
-                    }
-                    return menuItem;
                   })}
                 </div>
               ))}
             </div>
           </div>
 
-          {/* 折叠按钮 - 侧边栏底部 */}
+          {/* 置顶按钮 - 侧边栏底部 */}
           {!isMobile && (
             <div
               style={{
@@ -428,21 +484,23 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 paddingRight: collapsed ? 0 : 12,
               }}
             >
-              <Button
-                type="text"
-                icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                onClick={() => setManualCollapsed(!collapsed)}
-                style={{
-                  width: 32,
-                  height: 32,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: mode === 'dark' ? '#B0B5BE' : '#64748B',
-                  border: 'none',
-                  fontSize: 14,
-                }}
-              />
+              <Tooltip title={pinned ? '取消置顶' : '置顶侧边栏'} placement="right">
+                <Button
+                  type="text"
+                  icon={<PushpinOutlined />}
+                  onClick={() => setPinned(!pinned)}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: pinned ? (mode === 'dark' ? '#8FE3E8' : '#0A6190') : (mode === 'dark' ? '#B0B5BE' : '#64748B'),
+                    border: 'none',
+                    fontSize: 14,
+                  }}
+                />
+              </Tooltip>
             </div>
           )}
         </div>
