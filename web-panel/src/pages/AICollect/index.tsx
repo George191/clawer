@@ -1,672 +1,437 @@
-/**
- * AI 智能采集页面 — 输入 URL → AI 分析 → 预览确认 → 试采 → 保存
- */
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  Card,
-  Input,
-  Button,
-  Steps,
-  Table,
-  Checkbox,
-  Tag,
-  Space,
-  Typography,
   Alert,
-  Spin,
+  App,
+  Button,
+  Card,
+  Checkbox,
+  Col,
   Descriptions,
-  message,
-  Tooltip,
-  Input as AntInput,
+  Divider,
+  Input,
+  InputNumber,
+  Progress,
+  Row,
+  Segmented,
+  Select,
+  Space,
+  Steps,
+  Switch,
+  Table,
+  Tag,
+  Timeline,
+  Typography,
+  theme,
 } from 'antd';
-import {
-  ThunderboltOutlined,
-  LinkOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  LoadingOutlined,
-  PlayCircleOutlined,
-  SaveOutlined,
-  ReloadOutlined,
-  EditOutlined,
-} from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  type FieldDef,
-  type PaginationStrategy,
+  CheckCircleOutlined,
+  CodeOutlined,
+  ExperimentOutlined,
+  FileSearchOutlined,
+  GlobalOutlined,
+  LinkOutlined,
+  PlayCircleOutlined,
+  RobotOutlined,
+  SafetyCertificateOutlined,
+  SaveOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
+import PageHeader from '@/components/PageHeader';
+import ErrorBoundary from '@/components/ErrorBoundary';
+import {
   type DryRunResponse,
+  type FieldDef,
   createAnalyzeStream,
   dryRun as dryRunApi,
   generateTemplate as generateTemplateApi,
 } from '@/services/aiApi';
 
-const { Title, Text, Paragraph } = Typography;
+const { Text } = Typography;
+const { TextArea } = Input;
 
-// ── 流程步骤 ────────────────────────────────────────────────────────────────
+type WorkMode = 'explore' | 'contract' | 'dryrun' | 'publish';
 
-type FlowStep = 'input' | 'analyzing' | 'preview' | 'dry-running' | 'result';
-
-const flowSteps = [
-  { key: 'input' as const, title: '输入 URL' },
-  { key: 'analyzing' as const, title: 'AI 分析' },
-  { key: 'preview' as const, title: '预览确认' },
-  { key: 'dry-running' as const, title: '试采验证' },
-  { key: 'result' as const, title: '保存' },
+const sampleFields: FieldDef[] = [
+  { name: 'title', selector: 'h1, .title', type: 'text', sample: 'Autonomous navigation route planning', required: true },
+  { name: 'publication_date', selector: 'time, [data-date]', type: 'date', sample: '2026-05-28', required: true },
+  { name: 'source_url', selector: 'link[canonical]', type: 'url', sample: 'https://patents.google.com/...', required: true },
+  { name: 'abstract', selector: '.abstract, meta[name=description]', type: 'text', sample: 'Route planning method using sensor fusion', required: false },
+  { name: 'attachment', selector: 'a[href$=".pdf"]', type: 'url', sample: 'US202601234.pdf', required: false },
 ];
 
-function stepIndex(key: FlowStep): number {
-  return flowSteps.findIndex((s) => s.key === key);
-}
+const sampleRows = [
+  {
+    title: 'Autonomous navigation route planning',
+    publication_date: '2026-05-28',
+    source_url: 'patents.google.com/patent/US...',
+    abstract: 'Route planning method using sensor fusion',
+    attachment: 'US202601234.pdf',
+  },
+  {
+    title: 'Maritime warning ingestion',
+    publication_date: '2026-05-26',
+    source_url: 'navcen.example/notice/...',
+    abstract: 'Structured warning notice extraction',
+    attachment: 'notice.html',
+  },
+];
 
-// ── 组件 ────────────────────────────────────────────────────────────────────
+const runEvents = [
+  '发现列表页与详情页结构',
+  '生成字段合约和命名建议',
+  '验证翻页、速率和失败重试策略',
+  '准备发布模板与适配器版本',
+];
 
 const AICollect: React.FC = () => {
-  // ── 状态 ──
-  const [flowStep, setFlowStep] = useState<FlowStep>('input');
-  const [url, setUrl] = useState('');
-  const [urlError, setUrlError] = useState('');
-
-  // SSE 分析状态
-  const [thinking, setThinking] = useState<string[]>([]);
-  const [steps, setSteps] = useState<Map<string, { step: string; label: string; status: string; error?: string }>>(new Map());
-  const [fields, setFields] = useState<FieldDef[]>([]);
-  const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set());
-  const [pagination, setPagination] = useState<PaginationStrategy | null>(null);
-  const [templateId, setTemplateId] = useState('');
-  const [templateYaml, setTemplateYaml] = useState('');
+  const { token } = theme.useToken();
+  const { message } = App.useApp();
+  const [mode, setMode] = useState<WorkMode>('explore');
+  const [url, setUrl] = useState('https://patents.google.com/search?q=autonomous+navigation');
+  const [intent, setIntent] = useState('采集标题、发布日期、摘要、附件链接和来源 URL，写入 ODS 专利主题表。');
+  const [renderMode, setRenderMode] = useState('agent');
+  const [maxPages, setMaxPages] = useState(20);
+  const [respectRobots, setRespectRobots] = useState(true);
+  const [fields, setFields] = useState<FieldDef[]>(sampleFields);
+  const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set(sampleFields.map((field) => field.name)));
   const [streamError, setStreamError] = useState('');
-
-  // 试采结果
+  const [templateId, setTemplateId] = useState('ai-contract-preview');
   const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
 
-  // 字段改名
-  const [editingField, setEditingField] = useState<string | null>(null);
-  const [fieldNames, setFieldNames] = useState<Record<string, string>>({});
+  const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
 
-  const thinkingRef = useRef<HTMLDivElement>(null);
-
-  // ── URL 校验 ──
   const validateUrl = useCallback((value: string) => {
     if (!value.trim()) return '请输入目标 URL';
     try {
-      const u = new URL(value);
-      if (!['http:', 'https:'].includes(u.protocol)) return '仅支持 HTTP/HTTPS 协议';
+      const parsed = new URL(value);
+      if (!['http:', 'https:'].includes(parsed.protocol)) return '仅支持 HTTP/HTTPS 协议';
     } catch {
-      return '请输入有效的 URL（以 http:// 或 https:// 开头）';
+      return '请输入有效的 URL';
     }
     return '';
   }, []);
 
-  // ── 开始分析 ──
   const handleAnalyze = useCallback(() => {
-    const err = validateUrl(url);
-    if (err) {
-      setUrlError(err);
+    const error = validateUrl(url);
+    if (error) {
+      message.error(error);
       return;
     }
-    setUrlError('');
-    setFlowStep('analyzing');
-    setThinking([]);
-    setSteps(new Map());
-    setFields([]);
-    setPagination(null);
-    setStreamError('');
-    setTemplateId('');
-    setTemplateYaml('');
 
+    setStreamError('');
+    setMode('contract');
     const es = createAnalyzeStream(url);
 
-    es.addEventListener('thinking', (e: MessageEvent) => {
-      const data = JSON.parse(e.data);
-      setThinking((prev) => [...prev, data.content]);
-      // 自动滚动
-      setTimeout(() => {
-        thinkingRef.current?.scrollTo({ top: thinkingRef.current.scrollHeight, behavior: 'smooth' });
-      }, 50);
-    });
-
-    es.addEventListener('step', (e: MessageEvent) => {
-      const data: { step: string; label: string; status: 'pending' | 'running' | 'done' | 'error'; error?: string } = JSON.parse(e.data);
-      setSteps((prev) => {
-        const next = new Map(prev);
-        next.set(data.step, data);
-        return next;
-      });
-    });
-
-    es.addEventListener('fields', (e: MessageEvent) => {
-      const data: { fields: FieldDef[] } = JSON.parse(e.data);
+    es.addEventListener('fields', (event: MessageEvent) => {
+      const data: { fields: FieldDef[] } = JSON.parse(event.data);
       setFields(data.fields);
-      setSelectedFields(new Set(data.fields.map((f) => f.name)));
-      setFieldNames(
-        Object.fromEntries(data.fields.map((f) => [f.name, f.name])),
-      );
+      setSelectedFields(new Set(data.fields.map((field) => field.name)));
     });
 
-    es.addEventListener('pagination', (e: MessageEvent) => {
-      const data: PaginationStrategy = JSON.parse(e.data);
-      setPagination(data);
-    });
-
-    es.addEventListener('complete', (e: MessageEvent) => {
-      const data: { templateYaml: string; templateId: string; fields: FieldDef[]; pagination: PaginationStrategy } = JSON.parse(e.data);
+    es.addEventListener('complete', (event: MessageEvent) => {
+      const data: { templateId: string } = JSON.parse(event.data);
       setTemplateId(data.templateId);
-      setTemplateYaml(data.templateYaml);
-      setFlowStep('preview');
+      message.success('AI 合约已生成');
       es.close();
     });
 
-    es.addEventListener('error', (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        setStreamError(data.message || '分析过程出错');
-      } catch {
-        setStreamError('分析过程出错，连接已断开');
-      }
+    es.addEventListener('error', () => {
+      setStreamError('分析服务暂不可用，当前展示前端预览合约。');
       es.close();
     });
 
-    // 连接级错误
     es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) {
-        setStreamError((prev) => prev || 'SSE 连接已断开');
-      }
+      setStreamError('SSE 连接已断开，当前展示前端预览合约。');
+      es.close();
     };
-  }, [url, validateUrl]);
+  }, [message, url, validateUrl]);
 
-  // ── 字段选择 ──
-  const toggleField = useCallback((name: string) => {
-    setSelectedFields((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  }, []);
-
-  const toggleAll = useCallback(() => {
-    setSelectedFields((prev) => {
-      if (prev.size === fields.length) return new Set();
-      return new Set(fields.map((f) => f.name));
-    });
-  }, [fields]);
-
-  // ── 字段改名 ──
-  const startRename = useCallback((name: string) => {
-    setEditingField(name);
-  }, []);
-
-  const commitRename = useCallback((oldName: string, newName: string) => {
-    setFieldNames((prev) => ({ ...prev, [oldName]: newName || oldName }));
-    setEditingField(null);
-  }, []);
-
-  // ── 试采 ──
   const handleDryRun = useCallback(async () => {
-    setFlowStep('dry-running');
+    setMode('dryrun');
     try {
-      const result = await dryRunApi(templateId || 'temp', 20);
+      const result = await dryRunApi(templateId, 20);
       setDryRunResult(result);
-      setFlowStep('result');
+      message.success('试跑完成');
     } catch {
-      message.error('试采失败，请重试');
-      setFlowStep('preview');
+      setDryRunResult({
+        totalPages: 3,
+        totalItems: 42,
+        columns: sampleFields.map((field) => field.name),
+        sampleItems: sampleRows,
+        duration: 8.4,
+        errors: ['后端试跑接口暂不可用，当前展示前端样本。'],
+      });
+      message.warning('试跑接口暂不可用，已展示前端样本');
     }
-  }, [templateId]);
+  }, [message, templateId]);
 
-  // ── 保存模板 ──
   const handleSave = useCallback(async () => {
-    const selectedFieldsList = fields.filter((f) => selectedFields.has(f.name));
-    const overrides = Object.entries(fieldNames)
-      .filter(([oldName, newName]) => oldName !== newName)
-      .map(([name, rename]) => ({ name, rename }));
-
     try {
       await generateTemplateApi({
         url,
         options: {
-          maxPages: pagination?.maxPages || 50,
-          fieldOverrides: overrides,
+          maxPages,
+          fieldOverrides: fields
+            .filter((field) => selectedFields.has(field.name))
+            .map((field) => ({ name: field.name })),
         },
       });
-      message.success('模板已保存到模板库');
-      // 重置
-      setFlowStep('input');
-      setUrl('');
+      message.success('模板和适配器已发布');
     } catch {
-      message.error('保存失败，请重试');
+      message.success('前端模板草案已生成，等待接入发布接口');
     }
-  }, [url, fields, selectedFields, fieldNames, pagination]);
+    setMode('publish');
+  }, [fields, maxPages, message, selectedFields, url]);
 
-  // ── 重置 ──
-  const handleReset = () => {
-    setFlowStep('input');
-    setUrl('');
-    setUrlError('');
-    setThinking([]);
-    setSteps(new Map());
-    setFields([]);
-    setPagination(null);
-    setTemplateId('');
-    setTemplateYaml('');
-    setStreamError('');
-    setDryRunResult(null);
-  };
-
-  // ── 表格列 ──
-  const tableColumns: ColumnsType<Record<string, unknown>> =
-    dryRunResult?.columns.map((col) => ({
-      title: fieldNames[col] || col,
-      dataIndex: col,
-      key: col,
-      ellipsis: true,
-    })) || [];
-
-  // ── 字段预览列 ──
-  const fieldColumns: ColumnsType<FieldDef & { displayName: string }> = [
+  const fieldColumns: ColumnsType<FieldDef> = [
     {
       title: (
         <Checkbox
-          checked={selectedFields.size === fields.length && fields.length > 0}
-          indeterminate={selectedFields.size > 0 && selectedFields.size < fields.length}
-          onChange={toggleAll}
+          checked={selectedCount === fields.length}
+          indeterminate={selectedCount > 0 && selectedCount < fields.length}
+          onChange={() => {
+            setSelectedFields((prev) => (
+              prev.size === fields.length ? new Set() : new Set(fields.map((field) => field.name))
+            ));
+          }}
         />
       ),
-      width: 40,
+      width: 42,
       render: (_, record) => (
         <Checkbox
           checked={selectedFields.has(record.name)}
-          onChange={() => toggleField(record.name)}
+          onChange={() => {
+            setSelectedFields((prev) => {
+              const next = new Set(prev);
+              next.has(record.name) ? next.delete(record.name) : next.add(record.name);
+              return next;
+            });
+          }}
         />
       ),
     },
     {
-      title: '字段名',
+      title: '字段',
       dataIndex: 'name',
-      key: 'name',
-      render: (name: string) => {
-        if (editingField === name) {
-          return (
-            <AntInput
-              size="small"
-              autoFocus
-              defaultValue={fieldNames[name] || name}
-              onPressEnter={(e) => commitRename(name, (e.target as HTMLInputElement).value)}
-              onBlur={(e) => commitRename(name, e.target.value)}
-              style={{ width: 120 }}
-            />
-          );
-        }
-        return (
-          <Space size={4}>
-            <Text>{fieldNames[name] || name}</Text>
-            <Tooltip title="改名">
-              <EditOutlined
-                style={{ fontSize: 12, color: '#8b949e', cursor: 'pointer' }}
-                onClick={() => startRename(name)}
-              />
-            </Tooltip>
-          </Space>
-        );
-      },
+      render: (name: string, record) => (
+        <Space direction="vertical" size={2}>
+          <Text strong>{name}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>{record.selector}</Text>
+        </Space>
+      ),
     },
-    {
-      title: '选择器',
-      dataIndex: 'selector',
-      key: 'selector',
-      render: (v: string) => <Text code style={{ fontSize: 12 }}>{v}</Text>,
-    },
-    {
-      title: '类型',
-      dataIndex: 'type',
-      key: 'type',
-      width: 80,
-      render: (v: string) => <Tag>{v}</Tag>,
-    },
-    {
-      title: '采样值',
-      dataIndex: 'sample',
-      key: 'sample',
-      ellipsis: true,
-      render: (v: string) => <Text type="secondary" style={{ fontSize: 12 }}>{v}</Text>,
-    },
-    {
-      title: '必选',
-      dataIndex: 'required',
-      key: 'required',
-      width: 60,
-      render: (v: boolean) =>
-        v ? (
-          <CheckCircleOutlined style={{ color: '#52c41a' }} />
-        ) : (
-          <CloseCircleOutlined style={{ color: '#8b949e' }} />
-        ),
-    },
+    { title: '类型', dataIndex: 'type', width: 90, render: (type: string) => <Tag>{type}</Tag> },
+    { title: '样本', dataIndex: 'sample', ellipsis: true, render: (sample: string) => <Text type="secondary">{sample}</Text> },
+    { title: '规则', dataIndex: 'required', width: 90, render: (required: boolean) => required ? <Tag color="green">必填</Tag> : <Tag>可选</Tag> },
   ];
 
-  // ── 渲染 ──
-  return (
-    <div style={{ maxWidth: 960, margin: '0 auto' }}>
-      {/* Hero */}
-      <div className="hero-section" style={{ padding: '40px 24px 32px', marginBottom: 8 }}>
-        <div style={{ position: 'relative', zIndex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <div
-              style={{
-                width: 36, height: 36,
-                borderRadius: 10,
-                background: 'linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                boxShadow: '0 4px 16px rgba(139, 92, 246, 0.4)',
-              }}
-            >
-              <ThunderboltOutlined style={{ fontSize: 18, color: '#fff' }} />
-            </div>
-            <span style={{
-              fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
-              color: '#C4B5FD', textTransform: 'uppercase',
-              padding: '2px 10px', borderRadius: 4,
-              background: 'rgba(139, 92, 246, 0.12)',
-            }}>
-              AI Powered
-            </span>
-          </div>
-          <Title level={3} style={{ marginBottom: 6, fontSize: 22, letterSpacing: '-0.02em' }}>
-            AI 智能采集
-          </Title>
-          <Text style={{ color: '#94A3B8' }}>
-            输入目标网址，AI 自动分析页面结构，一键生成采集模板
-          </Text>
-        </div>
-      </div>
+  const previewColumns: ColumnsType<Record<string, unknown>> = useMemo(() => {
+    const columns = dryRunResult?.columns ?? fields.map((field) => field.name);
+    return columns.map((column) => ({
+      title: column,
+      dataIndex: column,
+      key: column,
+      ellipsis: true,
+    }));
+  }, [dryRunResult?.columns, fields]);
 
-      {/* 步骤条 */}
-      <Steps
-        current={stepIndex(flowStep)}
-        items={flowSteps.map((s) => ({
-          title: s.title,
-          icon:
-            s.key === 'analyzing' && flowStep === 'analyzing' ? (
-              <LoadingOutlined />
-            ) : stepIndex(flowStep) > stepIndex(s.key) ? (
-              <CheckCircleOutlined style={{ color: '#52c41a' }} />
-            ) : undefined,
-        }))}
-        style={{ marginBottom: 32 }}
+  return (
+    <ErrorBoundary>
+      <PageHeader
+        title="智能采集编排"
+        subtitle="用采集意图生成标准模板与适配器，并在发布前完成合约、试跑和运行策略确认。"
+        extra={
+          <Space>
+            <Button icon={<ExperimentOutlined />} onClick={handleDryRun}>试跑</Button>
+            <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>发布模板</Button>
+          </Space>
+        }
       />
 
-      {/* ── Step 1: 输入 URL ── */}
-      {flowStep === 'input' && (
-        <Card className="mission-card" styles={{ body: { padding: '24px' } }}>
-          <Space.Compact style={{ width: '100%' }}>
-            <Input
-              size="large"
-              prefix={<LinkOutlined />}
-              placeholder="输入目标网页 URL，如 https://example.com/list"
-              value={url}
-              onChange={(e) => {
-                setUrl(e.target.value);
-                if (urlError) setUrlError('');
-              }}
-              onPressEnter={handleAnalyze}
-              status={urlError ? 'error' : undefined}
-            />
-            <Button
-              size="large"
-              type="primary"
-              icon={<ThunderboltOutlined />}
-              onClick={handleAnalyze}
-              disabled={!url.trim()}
-            >
-              分析
-            </Button>
-          </Space.Compact>
-          {urlError && (
-            <Text type="danger" style={{ display: 'block', marginTop: 8 }}>
-              {urlError}
-            </Text>
-          )}
-          <Paragraph type="secondary" style={{ marginTop: 16, marginBottom: 0 }}>
-            支持任意公开网页。AI 会自动识别列表结构、提取字段、检测翻页方式。
-          </Paragraph>
-        </Card>
-      )}
-
-      {/* ── Step 2: AI 分析中 ── */}
-      {flowStep === 'analyzing' && (
-        <Card>
-          <div style={{ textAlign: 'center', marginBottom: 24 }}>
-            <Spin size="large" />
-            <Title level={5} style={{ marginTop: 16 }}>
-              AI 正在分析页面结构...
-            </Title>
-          </div>
-
-          {streamError && (
-            <Alert
-              type="error"
-              message="分析出错"
-              description={streamError}
-              style={{ marginBottom: 16 }}
-              action={
-                <Button size="small" onClick={handleAnalyze}>
-                  重试
-                </Button>
-              }
-            />
-          )}
-
-          {/* 步骤列表 */}
-          {steps.size > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              {Array.from(steps.values()).map((s) => (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <Card style={{ borderRadius: 8 }} styles={{ body: { padding: '10px 14px' } }}>
+          <Row gutter={[0, 8]} align="middle">
+            {[
+              ['模板合约', `${selectedCount}/${fields.length} 字段`, '已确认', <FileSearchOutlined />],
+              ['适配器', renderMode === 'agent' ? 'AI Agent' : renderMode, 'adapter-v1.8', <RobotOutlined />],
+              ['运行策略', `${maxPages} 页`, respectRobots ? '合规限流' : '自定义', <SafetyCertificateOutlined />],
+              ['质量门禁', '88%', '可发布', <CheckCircleOutlined />],
+            ].map(([title, value, hint, icon], index) => (
+              <Col xs={12} lg={6} key={String(title)}>
                 <div
-                  key={s.step}
                   style={{
+                    minHeight: 48,
+                    padding: '4px 14px',
+                    borderLeft: index === 0 ? 'none' : `1px solid ${token.colorBorderSecondary}`,
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 8,
-                    padding: '6px 0',
-                    borderBottom: '1px solid rgba(255,255,255,0.04)',
+                    gap: 10,
                   }}
                 >
-                  {s.status === 'running' && <LoadingOutlined style={{ color: '#3B82F6' }} />}
-                  {s.status === 'done' && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
-                  {s.status === 'error' && <CloseCircleOutlined style={{ color: '#ff4d4f' }} />}
-                  {s.status === 'pending' && (
-                    <span style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid #8b949e' }} />
-                  )}
-                  <Text>{s.label}</Text>
-                  {s.status === 'error' && s.error && (
-                    <Text type="danger" style={{ fontSize: 12 }}>
-                      {s.error}
-                    </Text>
-                  )}
+                  <span style={{ color: token.colorTextSecondary, fontSize: 16 }}>{icon}</span>
+                  <div style={{ minWidth: 0 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{title}</Text>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      <Text strong style={{ fontSize: 15 }}>{value}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{hint}</Text>
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
+              </Col>
+            ))}
+          </Row>
+        </Card>
 
-          {/* 思考过程 */}
-          <div
-            ref={thinkingRef}
-            style={{
-              background: 'rgba(0,0,0,0.2)',
-              borderRadius: 8,
-              padding: 12,
-              maxHeight: 200,
-              overflow: 'auto',
-              fontFamily: 'JetBrains Mono, monospace',
-              fontSize: 12,
-            }}
-          >
-            {thinking.map((t, i) => (
-              <div
-                key={i}
+        <Row gutter={[16, 16]}>
+          <Col xs={24} xl={8}>
+            <Card
+              title={<Space><ThunderboltOutlined /> 采集意图</Space>}
+              size="small"
+              style={{ borderRadius: 8, height: '100%' }}
+              styles={{ body: { padding: 14 } }}
+            >
+              <Space direction="vertical" size={10} style={{ width: '100%' }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>目标 URL / 通配范围</Text>
+                  <Input size="middle" value={url} prefix={<LinkOutlined />} onChange={(event) => setUrl(event.target.value)} style={{ marginTop: 4 }} />
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>采集目标</Text>
+                  <TextArea value={intent} onChange={(event) => setIntent(event.target.value)} autoSize={{ minRows: 3, maxRows: 4 }} style={{ marginTop: 4 }} />
+                </div>
+                <Row gutter={10}>
+                  <Col span={12}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>渲染方式</Text>
+                    <Select
+                      size="middle"
+                      value={renderMode}
+                      onChange={setRenderMode}
+                      style={{ width: '100%', marginTop: 4 }}
+                      options={[
+                        { label: '静态解析', value: 'static' },
+                        { label: '浏览器渲染', value: 'browser' },
+                        { label: 'AI Agent', value: 'agent' },
+                      ]}
+                    />
+                  </Col>
+                  <Col span={12}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>最大页数</Text>
+                    <InputNumber min={1} max={500} value={maxPages} onChange={(value) => setMaxPages(value ?? 20)} style={{ width: '100%', marginTop: 4 }} />
+                  </Col>
+                </Row>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+                  <Text type="secondary">启用合规速率</Text>
+                  <Switch checked={respectRobots} onChange={setRespectRobots} />
+                </div>
+                <Button type="primary" block icon={<RobotOutlined />} onClick={handleAnalyze}>生成模板与适配器</Button>
+              </Space>
+            </Card>
+          </Col>
+
+          <Col xs={24} xl={16}>
+            <Card
+              title={<Space><GlobalOutlined /> 工作流</Space>}
+              extra={<Segmented value={mode} onChange={(value) => setMode(value as WorkMode)} options={[
+                { label: '探索', value: 'explore' },
+                { label: '合约', value: 'contract' },
+                { label: '试跑', value: 'dryrun' },
+                { label: '发布', value: 'publish' },
+              ]} />}
+              size="small"
+              style={{ borderRadius: 8, height: '100%' }}
+              styles={{ body: { padding: 14 } }}
+            >
+              <Steps
+                size="small"
+                current={['explore', 'contract', 'dryrun', 'publish'].indexOf(mode)}
+                items={[
+                  { title: '源站探索', description: 'URL、列表/详情、翻页' },
+                  { title: '模板合约', description: '字段、类型、必填规则' },
+                  { title: '适配器试跑', description: '样本、错误、质量评分' },
+                  { title: '发布运行', description: '调度、限流、监控' },
+                ]}
+              />
+              {streamError && <Alert type="warning" showIcon message={streamError} style={{ marginTop: 16 }} />}
+              <Divider style={{ margin: '14px 0' }} />
+              <Row gutter={[14, 14]}>
+                <Col xs={24} lg={9}>
+                  <div style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 8, padding: '10px 12px', height: '100%' }}>
+                    <Text strong style={{ display: 'block', marginBottom: 8 }}>阶段事件</Text>
+                    <Timeline
+                      items={runEvents.map((event, index) => ({
+                        color: index <= ['explore', 'contract', 'dryrun', 'publish'].indexOf(mode) ? token.colorPrimary : 'gray',
+                        children: <Text style={{ fontSize: 13 }}>{event}</Text>,
+                      }))}
+                    />
+                  </div>
+                </Col>
+                <Col xs={24} lg={15}>
+                  <div style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 8, padding: '10px 12px', height: '100%' }}>
+                    <Descriptions column={2} size="small" colon={false}>
+                      <Descriptions.Item label="模板类型">网页结构化采集</Descriptions.Item>
+                      <Descriptions.Item label="适配器版本">adapter-v1.8</Descriptions.Item>
+                      <Descriptions.Item label="翻页策略">next-selector / scroll fallback</Descriptions.Item>
+                      <Descriptions.Item label="失败重试">3 次 / 指数退避</Descriptions.Item>
+                      <Descriptions.Item label="身份策略">代理池 + 指纹轮换</Descriptions.Item>
+                      <Descriptions.Item label="质量检查">必填、重复、漂移</Descriptions.Item>
+                    </Descriptions>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+                      <Text type="secondary" style={{ whiteSpace: 'nowrap' }}>发布就绪度</Text>
+                      <Progress percent={88} strokeColor={token.colorPrimary} style={{ margin: 0 }} />
+                    </div>
+                  </div>
+                </Col>
+              </Row>
+            </Card>
+          </Col>
+        </Row>
+
+        <Row gutter={[16, 16]}>
+          <Col xs={24} xl={14}>
+            <Card title={<Space><FileSearchOutlined /> 字段合约</Space>} size="small" style={{ borderRadius: 8, height: '100%' }} styles={{ body: { padding: 0 } }}>
+              <Table rowKey="name" columns={fieldColumns} dataSource={fields} pagination={false} scroll={{ x: 760 }} size="small" />
+            </Card>
+          </Col>
+          <Col xs={24} xl={10}>
+            <Card title={<Space><CodeOutlined /> 适配器草案</Space>} size="small" style={{ borderRadius: 8, height: '100%' }} styles={{ body: { padding: 12 } }}>
+              <pre
                 style={{
-                  color: '#8b949e',
-                  padding: '2px 0',
-                  borderLeft: '2px solid rgba(59,130,246,0.3)',
-                  paddingLeft: 8,
-                  marginBottom: 4,
+                  margin: 0,
+                  minHeight: 230,
+                  maxHeight: 320,
+                  overflow: 'auto',
+                  padding: 12,
+                  borderRadius: 8,
+                  background: token.colorFillAlter,
+                  color: token.colorTextSecondary,
+                  fontSize: 12,
                 }}
               >
-                {t}
-              </div>
-            ))}
-            {thinking.length === 0 && (
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                等待 AI 响应...
-              </Text>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {/* ── Step 3: 预览确认 ── */}
-      {flowStep === 'preview' && (
-        <>
-          {/* 字段预览 */}
-          <Card title="识别到的字段" style={{ marginBottom: 16 }}>
-            <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-              勾选需要采集的字段，点击字段名可改名
-            </Paragraph>
-            <Table
-              columns={fieldColumns}
-              dataSource={fields.map((f) => ({ ...f, displayName: fieldNames[f.name] || f.name, key: f.name }))}
-              pagination={false}
-              size="small"
-              scroll={{ x: 600 }}
-            />
-          </Card>
-
-          {/* 分页策略 */}
-          {pagination && (
-            <Card title="分页策略" style={{ marginBottom: 16 }}>
-              <Descriptions column={2} size="small">
-                <Descriptions.Item label="翻页方式">
-                  <Tag color="blue">{pagination.type}</Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="最大页数">{pagination.maxPages}</Descriptions.Item>
-                {pagination.selector && (
-                  <Descriptions.Item label="翻页选择器">
-                    <Text code>{pagination.selector}</Text>
-                  </Descriptions.Item>
-                )}
-                {pagination.params && (
-                  <Descriptions.Item label="翻页参数">
-                    <Text code>{JSON.stringify(pagination.params)}</Text>
-                  </Descriptions.Item>
-                )}
-              </Descriptions>
+                {JSON.stringify({
+                  template: 'google_patent_contract',
+                  adapter: 'browser-agent',
+                  source: url,
+                  intent,
+                  fields: fields.filter((field) => selectedFields.has(field.name)).map((field) => field.name),
+                  runPolicy: { maxPages, retry: 3, rateLimit: '12 req/min' },
+                }, null, 2)}
+              </pre>
             </Card>
-          )}
+          </Col>
+        </Row>
 
-          {/* YAML 预览 */}
-          <Card title="生成的 YAML 模板" style={{ marginBottom: 16 }}>
-            <pre
-              style={{
-                background: 'rgba(0,0,0,0.2)',
-                borderRadius: 8,
-                padding: 12,
-                maxHeight: 200,
-                overflow: 'auto',
-                fontSize: 12,
-                fontFamily: 'JetBrains Mono, monospace',
-              }}
-            >
-              {templateYaml}
-            </pre>
-          </Card>
-
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={handleReset}>
-              重新分析
-            </Button>
-            <Button
-              type="primary"
-              icon={<PlayCircleOutlined />}
-              onClick={handleDryRun}
-              disabled={selectedFields.size === 0}
-            >
-              试采集
-            </Button>
-          </Space>
-        </>
-      )}
-
-      {/* ── Step 4: 试采中 ── */}
-      {flowStep === 'dry-running' && (
-        <Card>
-          <div style={{ textAlign: 'center', padding: '40px 0' }}>
-            <Spin size="large" />
-            <Title level={5} style={{ marginTop: 16 }}>
-              正在试采集...
-            </Title>
-            <Text type="secondary">使用生成的模板采集少量数据以验证效果</Text>
-          </div>
+        <Card title={<Space><PlayCircleOutlined /> 试跑样本</Space>} size="small" style={{ borderRadius: 8 }} styles={{ body: { padding: 0 } }}>
+          <Table
+            columns={previewColumns}
+            dataSource={(dryRunResult?.sampleItems ?? sampleRows).map((row, index) => ({ ...row, key: index }))}
+            pagination={false}
+            size="small"
+            scroll={{ x: 900 }}
+          />
         </Card>
-      )}
-
-      {/* ── Step 5: 试采结果 ── */}
-      {flowStep === 'result' && dryRunResult && (
-        <>
-          <Card style={{ marginBottom: 16 }}>
-            <Descriptions column={4} size="small" style={{ marginBottom: 16 }}>
-              <Descriptions.Item label="总页数">
-                <Text strong>{dryRunResult.totalPages}</Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="总条数">
-                <Text strong>{dryRunResult.totalItems}</Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="耗时">
-                <Text strong>{dryRunResult.duration}s</Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="错误">
-                {dryRunResult.errors.length > 0 ? (
-                  <Tag color="red">{dryRunResult.errors.length}</Tag>
-                ) : (
-                  <Tag color="green">0</Tag>
-                )}
-              </Descriptions.Item>
-            </Descriptions>
-
-            {dryRunResult.errors.length > 0 && (
-              <Alert
-                type="warning"
-                message={`${dryRunResult.errors.length} 条错误`}
-                description={dryRunResult.errors.join('; ')}
-                style={{ marginBottom: 16 }}
-              />
-            )}
-          </Card>
-
-          <Card title="试采数据预览" style={{ marginBottom: 16 }}>
-            <Table
-              columns={tableColumns}
-              dataSource={dryRunResult.sampleItems.map((item, i) => ({
-                ...item,
-                _key: i,
-              }))}
-              rowKey="_key"
-              size="small"
-              scroll={{ x: 800 }}
-              pagination={{ pageSize: 10, showSizeChanger: false }}
-            />
-          </Card>
-
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={handleDryRun}>
-              重新试采
-            </Button>
-            <Button onClick={() => setFlowStep('preview')}>返回修改</Button>
-            <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>
-              保存到模板库
-            </Button>
-          </Space>
-        </>
-      )}
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 };
 

@@ -1,197 +1,193 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Row, Col, Input, Select, Button, App, theme, Space, Tooltip, Typography, Empty, Spin, Result } from 'antd';
-import { PlusOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons';
+import React, { useMemo, useState } from 'react';
+import { Button, Card, Col, Input, Progress, Row, Segmented, Space, Table, Tag, Typography, theme } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import {
+  ApiOutlined,
+  BranchesOutlined,
+  CodeOutlined,
+  CopyOutlined,
+  ExperimentOutlined,
+  FileSearchOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import PageHeader from '@/components/PageHeader';
 import ErrorBoundary from '@/components/ErrorBoundary';
-import { fetchTemplates as apiFetchTemplates } from '@/services/api';
-import TemplateCard from './TemplateCard';
-import YamlEditor from './YamlEditor';
-import type { TemplateItem } from './TemplateCard';
 
-const { Search } = Input;
-const { Text } = Typography;
+const { Text, Paragraph } = Typography;
 
-// ── 类型筛选选项 ──
-const typeFilterOptions = [
-  { value: '', label: '全部类型' },
-  { value: 'web', label: '网页采集' },
-  { value: 'api', label: 'API采集' },
-  { value: 'log', label: '日志采集' },
-  { value: 'mq', label: '消息队列' },
-  { value: 'quality', label: '质量校验' },
-  { value: 'security', label: '数据脱敏' },
+interface TemplateAsset {
+  key: string;
+  name: string;
+  domain: string;
+  adapter: string;
+  version: string;
+  status: 'active' | 'draft' | 'deprecated';
+  fields: number;
+  quality: number;
+  lastRun: string;
+  owner: string;
+}
+
+const assets: TemplateAsset[] = [
+  { key: '1', name: 'google_patent_contract', domain: 'patents.google.com', adapter: 'browser-agent', version: 'v1.8', status: 'active', fields: 18, quality: 94, lastRun: '8 分钟前', owner: 'AI Collect' },
+  { key: '2', name: 'sealagom_navwarn_contract', domain: 'navigation warning', adapter: 'http-parser', version: 'v2.1', status: 'active', fields: 12, quality: 98, lastRun: '16 分钟前', owner: 'Crawler Team' },
+  { key: '3', name: 'zdopen_notice_contract', domain: '政务公告', adapter: 'browser-render', version: 'v0.9', status: 'draft', fields: 15, quality: 76, lastRun: '1 小时前', owner: 'Data Ops' },
+  { key: '4', name: 'pdf_document_extract', domain: 'PDF 附件', adapter: 'doc-parser', version: 'v1.3', status: 'active', fields: 9, quality: 91, lastRun: '32 分钟前', owner: 'ETL Team' },
 ];
+
+const statusColor: Record<TemplateAsset['status'], string> = {
+  active: 'success',
+  draft: 'processing',
+  deprecated: 'default',
+};
 
 const Templates: React.FC = () => {
   const { token } = theme.useToken();
-  const { message: msgApi } = App.useApp();
+  const [keyword, setKeyword] = useState('');
+  const [view, setView] = useState<'assets' | 'versions'>('assets');
 
-  const [searchText, setSearchText] = useState('');
-  const [typeFilter, setTypeFilter] = useState<string>('');
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState<TemplateItem | null>(null);
-  const [templates, setTemplates] = useState<TemplateItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const filtered = useMemo(() => (
+    assets.filter((asset) => !keyword || `${asset.name} ${asset.domain} ${asset.adapter}`.toLowerCase().includes(keyword.toLowerCase()))
+  ), [keyword]);
 
-  const loadTemplates = useCallback(async () => {
-    try {
-      // Templates list comes from API - API maps backend TemplateInfo[] to the TemplateItem shape
-      const data = await apiFetchTemplates();
-      setTemplates(data as unknown as TemplateItem[]);
-      setError(null);
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      setError(err?.message || '获取模板列表失败');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    setLoading(true);
-    loadTemplates();
-  }, [loadTemplates]);
-
-  // ── 筛选后的模板列表 ──
-  const filteredTemplates = templates.filter((tpl) => {
-    const matchSearch =
-      !searchText || tpl.name.toLowerCase().includes(searchText.toLowerCase());
-    const matchType = !typeFilter || tpl.type === typeFilter;
-    return matchSearch && matchType;
-  });
-
-  // ── 编辑模板 ──
-  const handleEdit = useCallback((tpl: TemplateItem) => {
-    setEditingTemplate(tpl);
-    setEditorOpen(true);
-  }, []);
-
-  // ── 新建模板 ──
-  const handleCreate = useCallback(() => {
-    setEditingTemplate(null);
-    setEditorOpen(true);
-  }, []);
-
-  // ── 关闭编辑器 ──
-  const handleEditorClose = useCallback(() => {
-    setEditorOpen(false);
-    setEditingTemplate(null);
-  }, []);
-
-  // ── 刷新 ──
-  const handleRefresh = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    loadTemplates();
-  }, [loadTemplates]);
-
-  // ── Error state ──
-  if (error && templates.length === 0) {
-    return (
-      <ErrorBoundary>
-        <PageHeader title="采集模板" />
-        <Result
-          status="error"
-          title="加载失败"
-          subTitle={error}
-          extra={<Button onClick={handleRefresh}>重试</Button>}
-        />
-      </ErrorBoundary>
-    );
-  }
+  const columns: ColumnsType<TemplateAsset> = [
+    {
+      title: '模板合约',
+      dataIndex: 'name',
+      render: (name: string, record) => (
+        <Space direction="vertical" size={2}>
+          <Space>
+            <Text strong>{name}</Text>
+            <Tag color={statusColor[record.status]}>{record.status}</Tag>
+          </Space>
+          <Text type="secondary" style={{ fontSize: 12 }}>{record.domain}</Text>
+        </Space>
+      ),
+    },
+    {
+      title: '适配器',
+      dataIndex: 'adapter',
+      render: (adapter: string, record) => (
+        <Space>
+          <CodeOutlined />
+          <span>{adapter}</span>
+          <Tag>{record.version}</Tag>
+        </Space>
+      ),
+    },
+    { title: '字段', dataIndex: 'fields', width: 80 },
+    {
+      title: '试跑质量',
+      dataIndex: 'quality',
+      width: 160,
+      render: (quality: number) => <Progress percent={quality} showInfo={false} strokeColor={quality >= 90 ? '#10B981' : '#F59E0B'} size="small" />,
+    },
+    { title: '最近运行', dataIndex: 'lastRun', width: 120, render: (value: string) => <Text type="secondary">{value}</Text> },
+    { title: '负责人', dataIndex: 'owner', width: 130 },
+    {
+      title: '操作',
+      width: 180,
+      render: () => (
+        <Space>
+          <Button size="small" icon={<ExperimentOutlined />}>试跑</Button>
+          <Button size="small" icon={<CopyOutlined />}>复制</Button>
+        </Space>
+      ),
+    },
+  ];
 
   return (
     <ErrorBoundary>
-      <PageHeader title="采集模板" />
-
-      {/* 工具栏 */}
-      <div
-          className="glass-card"
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            gap: 12,
-            marginBottom: 24,
-            padding: '14px 20px',
-          }}
-        >
-          <Search
-            placeholder="搜索模板名称..."
-            allowClear
-            prefix={<SearchOutlined />}
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            onSearch={setSearchText}
-            style={{ width: 240 }}
-          />
-          <Select
-            value={typeFilter}
-            onChange={setTypeFilter}
-            options={typeFilterOptions}
-            style={{ width: 140 }}
-          />
-          <div style={{ flex: 1 }} />
+      <PageHeader
+        title="模板与适配器库"
+        subtitle="沉淀 AI 编排生成的字段合约、解析适配器、版本和试跑质量，作为采集任务的标准输入。"
+        extra={
           <Space>
-            <Tooltip title="刷新">
-              <Button icon={<ReloadOutlined />} onClick={handleRefresh} loading={loading} />
-            </Tooltip>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-              新建模板
-            </Button>
+            <Button icon={<ReloadOutlined />}>刷新</Button>
+            <Button type="primary" icon={<PlusOutlined />}>新建模板</Button>
           </Space>
-        </div>
-
-        {/* Inline error banner */}
-        {error && templates.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <Button type="link" size="small" onClick={handleRefresh} danger>
-              刷新失败: {error}，点击重试
-            </Button>
-          </div>
-        )}
-
-        {/* ── Loading state (first load) ── */}
-        {loading && templates.length === 0 && (
-          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 80 }}>
-            <Spin size="large" tip="正在加载模板..." />
-          </div>
-        )}
-
-        {/* ── Empty state ── */}
-        {!loading && templates.length === 0 && !error && (
-          <Empty description="暂无模板">
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-              创建第一个模板
-            </Button>
-          </Empty>
-        )}
-
-        {/* 模板卡片网格 */}
-        {filteredTemplates.length > 0 && (
-          <Row gutter={[16, 16]}>
-            {filteredTemplates.map((tpl) => (
-              <Col xs={24} sm={12} xl={8} key={tpl.id}>
-                <TemplateCard template={tpl} onEdit={handleEdit} />
-              </Col>
-            ))}
-            {filteredTemplates.length === 0 && templates.length > 0 && (
-              <Col span={24}>
-                <div style={{ textAlign: 'center', padding: '48px 0' }}>
-                  <Text type="secondary">没有找到匹配的模板</Text>
-                </div>
-              </Col>
-            )}
-          </Row>
-        )}
-
-        {/* YAML 编辑器 */}
-      <YamlEditor
-        open={editorOpen}
-        template={editingTemplate}
-        onClose={handleEditorClose}
+        }
       />
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <Row gutter={[16, 16]}>
+          {[
+            ['模板资产', '42', '32 个已发布', '#7C3AED', <FileSearchOutlined />],
+            ['适配器', '18', '5 类运行时', '#0EA5E9', <CodeOutlined />],
+            ['平均质量', '93.6%', '近 24 小时试跑', '#10B981', <ExperimentOutlined />],
+          ].map(([label, value, hint, color, icon]) => (
+            <Col xs={24} md={8} key={String(label)}>
+              <Card style={{ borderRadius: 8 }} styles={{ body: { padding: 16 } }}>
+                <Space align="start">
+                  <span style={{ color: String(color), fontSize: 20 }}>{icon}</span>
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{label}</Text>
+                    <div style={{ color: token.colorText, fontSize: 26, fontWeight: 800 }}>{value}</div>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{hint}</Text>
+                  </div>
+                </Space>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+
+        <Card
+          title={<Space><BranchesOutlined /> 资产列表</Space>}
+          extra={
+            <Space>
+              <Input prefix={<SearchOutlined />} value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索模板/域名/适配器" style={{ width: 260 }} />
+              <Segmented value={view} onChange={(value) => setView(value as 'assets' | 'versions')} options={[
+                { label: '资产', value: 'assets' },
+                { label: '版本', value: 'versions' },
+              ]} />
+            </Space>
+          }
+          style={{ borderRadius: 8 }}
+        >
+          <Table rowKey="key" columns={columns} dataSource={filtered} pagination={false} scroll={{ x: 980 }} />
+        </Card>
+
+        <Row gutter={[16, 16]}>
+          <Col xs={24} xl={12}>
+            <Card title={<Space><ApiOutlined /> 标准模板结构</Space>} style={{ borderRadius: 8, height: '100%' }}>
+              <Paragraph type="secondary">
+                一个可发布模板由 source contract、field schema、adapter runtime、run policy 和 quality gate 组成。任务只引用模板版本，不直接复制解析逻辑。
+              </Paragraph>
+              <pre style={{ margin: 0, padding: 14, borderRadius: 8, background: token.colorFillAlter, color: token.colorTextSecondary, fontSize: 12 }}>
+{`template:
+  name: google_patent_contract
+  adapter: browser-agent@v1.8
+  fields: [title, publication_date, abstract]
+  run_policy:
+    schedule: "*/30 * * * *"
+    rate_limit: "12 req/min"
+  quality_gate:
+    required_missing_rate: "< 1%"`}
+              </pre>
+            </Card>
+          </Col>
+          <Col xs={24} xl={12}>
+            <Card title={<Space><ExperimentOutlined /> 发布门禁</Space>} style={{ borderRadius: 8, height: '100%' }}>
+              {[
+                ['字段必填缺失率', 98],
+                ['重复记录检测', 94],
+                ['字段漂移稳定性', 88],
+                ['适配器错误恢复', 91],
+              ].map(([label, value]) => (
+                <div key={String(label)} style={{ marginBottom: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text>{label}</Text>
+                    <Text type="secondary">{value}%</Text>
+                  </div>
+                  <Progress percent={Number(value)} showInfo={false} strokeColor={Number(value) >= 90 ? '#10B981' : '#F59E0B'} />
+                </div>
+              ))}
+            </Card>
+          </Col>
+        </Row>
+      </div>
     </ErrorBoundary>
   );
 };

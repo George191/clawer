@@ -843,6 +843,14 @@ h4.ant-typography { letter-spacing: -0.01em; }
 
 @media (max-width: 768px) {
   .hide-on-mobile { display: none !important; }
+  .command-center-hero {
+    grid-template-columns: 1fr !important;
+    padding: 20px !important;
+  }
+  .command-center-queue-row {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
   .hero-section {
     padding: 32px 16px 24px;
     margin: -16px -16px 16px;
