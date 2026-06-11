@@ -72,9 +72,9 @@ export const themeTokens: Partial<FullToken> = {
   wireframe: false,
 
   // ── 尺寸 ──
-  headerHeight: 64,
-  siderWidth: 248,
-  siderCollapsedWidth: 80,
+  headerHeight: 48,
+  siderWidth: 250,
+  siderCollapsedWidth: 48,
 };
 
 /** 状态色 — 统一亮/暗 */

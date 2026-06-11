@@ -42,6 +42,20 @@ const App: React.FC = () => {
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/templates" element={<Templates />} />
             <Route path="/ai-collect" element={<AICollect />} />
+            {/* Neo4j-style 侧边栏路由映射 */}
+            <Route path="/instances" element={<Dashboard />} />
+            <Route path="/import" element={<Dashboard />} />
+            <Route path="/graph-analytics" element={<Dashboard />} />
+            <Route path="/data-api" element={<Dashboard />} />
+            <Route path="/explore" element={<DataExplorer />} />
+            <Route path="/dashboards" element={<Dashboard />} />
+            <Route path="/query" element={<DataExplorer />} />
+            <Route path="/metrics" element={<Monitoring />} />
+            <Route path="/logs" element={<Monitoring />} />
+            <Route path="/project-users" element={<Dashboard />} />
+            <Route path="/billing" element={<Dashboard />} />
+            <Route path="/project-settings" element={<Dashboard />} />
+            <Route path="/learning" element={<Dashboard />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </MainLayout>

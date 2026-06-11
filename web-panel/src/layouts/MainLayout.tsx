@@ -1,81 +1,134 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Layout,
-  Menu,
   Button,
-  Dropdown,
-  Breadcrumb,
-  theme as antTheme,
-  Typography,
   Space,
   Tooltip,
-  Divider,
+  Dropdown,
   Badge,
 } from 'antd';
 import {
-  DashboardOutlined,
   DatabaseOutlined,
-  ScheduleOutlined,
-  MonitorOutlined,
-  ApartmentOutlined,
-  FileProtectOutlined,
-  ThunderboltOutlined,
+  ImportOutlined,
+  BarChartOutlined,
+  ApiOutlined,
+  SearchOutlined,
+  DashboardOutlined,
+  CodeOutlined,
+  LineChartOutlined,
+  FileTextOutlined,
+  TeamOutlined,
+  DollarOutlined,
+  SettingOutlined,
+  BookOutlined,
   SunOutlined,
   MoonOutlined,
   BellOutlined,
-  SettingOutlined,
   LogoutOutlined,
-  HomeOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
-import type { FullToken } from '@/theme/tokens';
 
-const { Header, Sider, Content } = Layout;
-const { Text } = Typography;
+const { Header, Content } = Layout;
+
+// ── 常量 ──
+const HEADER_H = 48;
+const SIDER_EXPANDED = 250;
+const SIDER_COLLAPSED = 52;
+
+// ── Neo4j Aura Console 侧边栏结构 ──
+
+interface SidebarSection {
+  key: string;
+  label: string;
+  children: SidebarItem[];
+}
+
+interface SidebarItem {
+  key: string;
+  icon: React.ReactNode;
+  label: string;
+  labelZh: string;
+  badge?: number;
+  disabled?: boolean;
+}
+
+const sidebarSections: SidebarSection[] = [
+  {
+    key: 'data-services',
+    label: 'Data Services',
+    children: [
+      { key: '/instances', icon: <DatabaseOutlined />, label: 'Instances', labelZh: '实例' },
+      { key: '/import', icon: <ImportOutlined />, label: 'Import', labelZh: '导入' },
+      { key: '/graph-analytics', icon: <BarChartOutlined />, label: 'Graph Analytics', labelZh: '图分析' },
+      { key: '/data-api', icon: <ApiOutlined />, label: 'Data APIs', labelZh: '数据API' },
+    ],
+  },
+  {
+    key: 'tools',
+    label: 'Tools',
+    children: [
+      { key: '/explore', icon: <SearchOutlined />, label: 'Explore', labelZh: '探索' },
+      { key: '/dashboards', icon: <DashboardOutlined />, label: 'Dashboards', labelZh: '仪表盘' },
+      { key: '/query', icon: <CodeOutlined />, label: 'Query', labelZh: '查询' },
+    ],
+  },
+  {
+    key: 'operations',
+    label: 'Operations',
+    children: [
+      { key: '/metrics', icon: <LineChartOutlined />, label: 'Metrics', labelZh: '指标' },
+      { key: '/logs', icon: <FileTextOutlined />, label: 'Logs', labelZh: '日志' },
+    ],
+  },
+  {
+    key: 'project',
+    label: 'Project',
+    children: [
+      { key: '/project-users', icon: <TeamOutlined />, label: 'Users', labelZh: '用户管理' },
+      { key: '/billing', icon: <DollarOutlined />, label: 'Billing', labelZh: '计费' },
+      { key: '/project-settings', icon: <SettingOutlined />, label: 'Settings', labelZh: '设置' },
+    ],
+  },
+  {
+    key: 'learning',
+    label: 'Learning',
+    children: [
+      { key: '/learning', icon: <BookOutlined />, label: 'Guides & Resources', labelZh: '指南与资源' },
+    ],
+  },
+];
+
+// ── 路由到侧边栏 key 的映射 ──
+const routeToSidebarKey: Record<string, string> = {
+  '/': '/',
+  '/explorer': '/explore',
+  '/tasks': '/tasks',
+  '/monitor': '/metrics',
+  '/pipeline': '/pipeline',
+  '/templates': '/templates',
+  '/ai-collect': '/ai-collect',
+  '/data-api': '/data-api',
+};
 
 interface MainLayoutProps {
   children: React.ReactNode;
 }
 
-const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: '仪表盘' },
-  { key: '/explorer', icon: <DatabaseOutlined />, label: '数据探索' },
-  { key: '/tasks', icon: <ScheduleOutlined />, label: '任务中心' },
-  { key: '/monitor', icon: <MonitorOutlined />, label: '采集监控' },
-  { key: '/pipeline', icon: <ApartmentOutlined />, label: '管道管理' },
-  { key: '/templates', icon: <FileProtectOutlined />, label: '模板管理' },
-  { key: '/ai-collect', icon: <ThunderboltOutlined />, label: 'AI 采集' },
-];
-
-const breadcrumbNameMap: Record<string, string> = {
-  '/': '仪表盘',
-  '/explorer': '数据探索',
-  '/tasks': '任务中心',
-  '/monitor': '采集监控',
-  '/pipeline': '管道管理',
-  '/templates': '模板管理',
-  '/ai-collect': 'AI 智能采集',
-};
-
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [manualCollapsed, setManualCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [isTablet, setIsTablet] = useState(false);
 
   const location = useLocation();
   const navigate = useNavigate();
   const { mode, toggle } = useThemeStore();
-  const { token: rawToken } = antTheme.useToken();
-  const token = rawToken as unknown as FullToken;
 
   // ── 响应式检测 ──
   const handleResize = useCallback(() => {
     const w = window.innerWidth;
     setIsMobile(w < 768);
-    setIsTablet(w >= 768 && w < 1200);
     if (w < 768) setManualCollapsed(true);
   }, []);
 
@@ -86,300 +139,332 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }, [handleResize]);
 
   const collapsed = isMobile || manualCollapsed;
+  const siderWidth = isMobile ? 0 : collapsed ? SIDER_COLLAPSED : SIDER_EXPANDED;
+  const contentMarginLeft = isMobile ? 0 : collapsed ? SIDER_COLLAPSED : SIDER_EXPANDED;
 
-  // ── 当前选中菜单 & 面包屑 ──
-  const selectedKey = '/' + (location.pathname.split('/')[1] || '');
+  // ── 当前选中菜单 ──
   const pathSnippets = location.pathname.split('/').filter(Boolean);
-
-  const breadcrumbItems = [
-    {
-      title: <HomeOutlined style={{ fontSize: 14 }} />,
-      onClick: () => navigate('/'),
-    },
-    ...pathSnippets.map((_, i) => {
-      const path = '/' + pathSnippets.slice(0, i + 1).join('/');
-      return {
-        title: breadcrumbNameMap[path] || pathSnippets[i],
-        onClick: () => navigate(path),
-      };
-    }),
-  ];
+  const selectedKey = routeToSidebarKey[location.pathname] || '/' + (pathSnippets[0] || '');
 
   // ── 用户下拉菜单 ──
   const userMenuItems = [
     {
-      key: 'profile',
+      key: 'org',
+      label: 'Organization Settings',
       icon: <SettingOutlined />,
-      label: '系统设置',
     },
     { type: 'divider' as const },
     {
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: '退出登录',
+      label: 'Sign Out',
       danger: true,
     },
   ];
 
   return (
-    <Layout style={{ minHeight: '100vh', background: token.colorBgLayout }}>
-      {/* ── 侧边栏 ── */}
-      <Sider
-        trigger={null}
-        collapsible
-        collapsed={collapsed}
-        width={token.siderWidth}
-        collapsedWidth={token.siderCollapsedWidth}
+    <div style={{ minHeight: '100vh', background: mode === 'dark' ? '#1A1D27' : '#F8FAFC' }}>
+      {/* ── 顶栏 (全宽，固定顶部) ── */}
+      <Header
         style={{
-          overflow: 'auto',
-          height: '100vh',
           position: 'fixed',
-          left: 0,
           top: 0,
-          bottom: 0,
-          zIndex: 100,
-          background: token.colorSiderBg,
-          borderRight: `1px solid ${token.colorBorder}`,
+          left: 0,
+          right: 0,
+          height: HEADER_H,
+          padding: '0 20px',
+          background: mode === 'dark' ? '#12141A' : '#FFFFFF',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          lineHeight: `${HEADER_H}px`,
+          borderBottom: mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid #E2E8F0',
+          zIndex: 101,
         }}
       >
         {/* Logo */}
         <div
+          style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'pointer' }}
+          onClick={() => navigate('/')}
+        >
+          <img
+            src={mode === 'dark' ? '/astral-helio-logo-white.svg' : '/astral-helio-logo.svg'}
+            alt="Astral Helio"
+            style={{ height: 28, width: 'auto' }}
+          />
+        </div>
+
+        {/* 右侧: 操作区 */}
+        <Space size={4} align="center">
+          <Tooltip title={mode === 'dark' ? '切换到亮色模式' : '切换到暗色模式'}>
+            <Button
+              type="text"
+              icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
+              onClick={toggle}
+              style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', color: mode === 'dark' ? '#9CA3AF' : '#64748B', border: 'none', fontSize: 15 }}
+            />
+          </Tooltip>
+          <Tooltip title="通知">
+            <Badge dot offset={[-2, 2]}>
+              <Button type="text" icon={<BellOutlined />} style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', color: mode === 'dark' ? '#9CA3AF' : '#64748B', border: 'none', fontSize: 15 }} />
+            </Badge>
+          </Tooltip>
+          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+            <Button type="text" style={{ height: 32, display: 'flex', alignItems: 'center', gap: 6, padding: '0 6px', border: 'none' }}>
+              <div style={{ width: 24, height: 24, borderRadius: 6, background: 'linear-gradient(135deg, #018BFF, #0060CC)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 600 }}>
+                A
+              </div>
+            </Button>
+          </Dropdown>
+        </Space>
+      </Header>
+
+      {/* ── 下方区域：侧边栏 + 内容 ── */}
+      <div style={{ display: 'flex', paddingTop: HEADER_H }}>
+        {/* ── 侧边栏 ── */}
+        <div
           style={{
-            height: token.headerHeight,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: collapsed ? 'center' : 'flex-start',
-            padding: collapsed ? 0 : '0 24px',
-            borderBottom: `1px solid ${token.colorBorder}`,
+            position: 'fixed',
+            left: 0,
+            top: HEADER_H,
+            bottom: 0,
+            width: siderWidth,
+            background: mode === 'dark' ? '#3C3F44' : '#F8FAFC',
+            borderRight: mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid #E2E8F0',
+            zIndex: 100,
+            overflow: 'hidden',
+            transition: 'width 0.2s ease',
+            display: isMobile && collapsed ? 'none' : 'flex',
+            flexDirection: 'column',
           }}
         >
-          {!collapsed ? (
-            <Space size={10} align="center">
-              <div
+          {/* Organization 切换 */}
+          <div
+            style={{
+              padding: '12px 16px',
+              borderBottom: mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid #E2E8F0',
+              flexShrink: 0,
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <div style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: mode === 'dark' ? '#9CA3AF' : '#64748B', marginBottom: 6, visibility: collapsed ? 'hidden' : 'visible' }}>
+              Organization
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '6px 10px',
+                background: collapsed ? 'transparent' : mode === 'dark' ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+                borderRadius: 6,
+                cursor: 'pointer',
+                transition: 'background 0.15s ease',
+                height: 32,
+              }}
+              onMouseEnter={(e) => {
+                if (!collapsed) (e.currentTarget as HTMLElement).style.background = mode === 'dark' ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)';
+              }}
+              onMouseLeave={(e) => {
+                if (!collapsed) (e.currentTarget as HTMLElement).style.background = mode === 'dark' ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)';
+              }}
+            >
+              <div style={{ width: 20, height: 20, borderRadius: 4, background: 'linear-gradient(135deg, #018BFF, #0060CC)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#fff', fontWeight: 700, flexShrink: 0, transform: collapsed ? 'translateX(-10px)' : 'translateX(0)', transition: 'transform 0.2s ease' }}>
+                S
+              </div>
+              {!collapsed && (
+                <>
+                  <span style={{ fontSize: 12, color: mode === 'dark' ? '#E4E7EB' : '#334155', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, marginLeft: 8 }}>
+                    Spider Organization
+                  </span>
+                  <span style={{ color: mode === 'dark' ? '#9CA3AF' : '#64748B', fontSize: 10, flexShrink: 0 }}>&#9660;</span>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* 导航区域 */}
+          <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '8px 0' }} className="neo4j-sidebar-scroll">
+            <div style={{ minWidth: SIDER_EXPANDED }}>
+              {sidebarSections.map((section) => (
+                <div key={section.key} style={{ marginBottom: 4 }}>
+                  {!collapsed && (
+                    <div
+                      style={{
+                        height: 30,
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '0 16px',
+                        color: mode === 'dark' ? '#9CA3AF' : '#64748B',
+                        fontSize: 10,
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                        userSelect: 'none',
+                      }}
+                    >
+                      {section.label}
+                    </div>
+                  )}
+                  {collapsed && (
+                    <div
+                      style={{
+                        height: 30,
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '0 16px',
+                        visibility: 'hidden',
+                      }}
+                    >
+                      {section.label}
+                    </div>
+                  )}
+                  {section.children.map((item) => {
+                    const isActive = selectedKey === item.key;
+                    const isDisabled = item.disabled;
+                    const darkInactiveColor = '#B0B5BE';
+                    const lightInactiveColor = '#64748B';
+                    const inactiveColor = mode === 'dark' ? darkInactiveColor : lightInactiveColor;
+                    const darkHoverColor = '#E4E7EB';
+                    const lightHoverColor = '#334155';
+                    const hoverColor = mode === 'dark' ? darkHoverColor : lightHoverColor;
+                    const darkHoverBg = 'rgba(255, 255, 255, 0.04)';
+                    const lightHoverBg = 'rgba(0, 0, 0, 0.04)';
+                    const hoverBg = mode === 'dark' ? darkHoverBg : lightHoverBg;
+
+                    const menuItem = (
+                      <div
+                        key={item.key}
+                        onClick={() => !isDisabled && navigate(item.key)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          height: 36,
+                          margin: '1px 0',
+                          cursor: isDisabled ? 'not-allowed' : 'pointer',
+                          opacity: isDisabled ? 0.4 : 1,
+                          color: isActive ? '#8FE3E8' : inactiveColor,
+                          background: isActive ? 'rgba(143, 227, 232, 0.12)' : 'transparent',
+                          transition: 'all 0.15s ease',
+                          fontSize: 13,
+                          fontWeight: isActive ? 500 : 400,
+                          position: 'relative',
+                          borderRadius: '0 6px 6px 0',
+                          marginRight: 12,
+                          paddingLeft: 16,
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isDisabled && !isActive) {
+                            (e.currentTarget as HTMLElement).style.background = hoverBg;
+                            (e.currentTarget as HTMLElement).style.color = hoverColor;
+                          }
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isDisabled && !isActive) {
+                            (e.currentTarget as HTMLElement).style.background = 'transparent';
+                            (e.currentTarget as HTMLElement).style.color = inactiveColor;
+                          }
+                        }}
+                      >
+                        {/* 左侧指示条 */}
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: 0,
+                            top: 6,
+                            bottom: 6,
+                            width: 3,
+                            borderRadius: '0 2px 2px 0',
+                            background: isActive ? '#8FE3E8' : 'transparent',
+                            transition: 'background 0.15s ease',
+                          }}
+                        />
+                        <span
+                          style={{
+                            marginRight: 10,
+                            fontSize: 16,
+                            display: 'flex',
+                            alignItems: 'center',
+                            width: 20,
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {item.icon}
+                        </span>
+                        <span style={{ flex: 1, lineHeight: '36px', whiteSpace: 'nowrap', visibility: collapsed ? 'hidden' : 'visible' }}>
+                          {item.label}
+                        </span>
+                        {item.badge !== undefined && (
+                          <span style={{ fontSize: 11, color: inactiveColor, marginRight: 8 }}>{item.badge}</span>
+                        )}
+                      </div>
+                    );
+
+                    if (collapsed) {
+                      return (
+                        <Tooltip key={item.key} title={item.labelZh} placement="right">
+                          {menuItem}
+                        </Tooltip>
+                      );
+                    }
+                    return menuItem;
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 折叠按钮 - 侧边栏底部 */}
+          {!isMobile && (
+            <div
+              style={{
+                flexShrink: 0,
+                borderTop: mode === 'dark' ? '1px solid rgba(255, 255, 255, 0.06)' : '1px solid #E2E8F0',
+                padding: '8px 0',
+                display: 'flex',
+                justifyContent: collapsed ? 'center' : 'flex-end',
+                paddingRight: collapsed ? 0 : 12,
+              }}
+            >
+              <Button
+                type="text"
+                icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+                onClick={() => setManualCollapsed(!collapsed)}
                 style={{
                   width: 32,
                   height: 32,
-                  borderRadius: 8,
-                  background: 'linear-gradient(135deg, #3B82F6 0%, #6366F1 100%)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)',
+                  color: mode === 'dark' ? '#B0B5BE' : '#64748B',
+                  border: 'none',
+                  fontSize: 14,
                 }}
-              >
-                <ThunderboltOutlined style={{ fontSize: 18, color: '#fff' }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: token.colorText, lineHeight: 1.2, letterSpacing: '-0.01em' }}>
-                  Spider AI
-                </div>
-                <div style={{ fontSize: 10, color: token.colorTextTertiary, letterSpacing: '0.05em' }}>
-                  INTELLIGENCE PLATFORM
-                </div>
-              </div>
-            </Space>
-          ) : (
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                background: 'linear-gradient(135deg, #3B82F6 0%, #6366F1 100%)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)',
-              }}
-            >
-              <ThunderboltOutlined style={{ fontSize: 18, color: '#fff' }} />
+              />
             </div>
           )}
         </div>
 
-        {/* 导航菜单 */}
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[selectedKey]}
-          onClick={({ key }) => navigate(key)}
-          items={menuItems}
-          style={{
-            background: 'transparent',
-            borderInlineEnd: 'none',
-            padding: '8px 0',
-            fontSize: 14,
-          }}
-        />
-
-        {/* 底部版本信息 */}
-        {!collapsed && (
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 16,
-              left: 24,
-              right: 24,
-              textAlign: 'center',
-            }}
-          >
-            <Divider style={{ margin: '0 0 12px', borderColor: token.colorBorder }} />
-            <Text style={{ fontSize: 11, color: token.colorTextQuaternary }}>
-              v1.0 · Spider Platform
-            </Text>
-          </div>
-        )}
-      </Sider>
-
-      {/* ── 主内容区 ── */}
-      <Layout
-        style={{
-          marginLeft: collapsed ? token.siderCollapsedWidth : token.siderWidth,
-          transition: 'margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-          minHeight: '100vh',
-          background: token.colorBgLayout,
-        }}
-      >
-        {/* ── 顶栏 ── */}
-        <Header
-          style={{
-            padding: '0 24px',
-            background: token.colorHeaderBg,
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            height: token.headerHeight,
-            lineHeight: `${token.headerHeight}px`,
-            borderBottom: `1px solid ${token.colorBorder}`,
-            position: 'sticky',
-            top: 0,
-            zIndex: 99,
-          }}
-        >
-          {/* 左侧: 折叠按钮 + 面包屑 */}
-          <Space size={16} align="center">
-            <Button
-              type="text"
-              icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-              onClick={() => setManualCollapsed(!manualCollapsed)}
-              style={{
-                fontSize: 16,
-                width: 36,
-                height: 36,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: token.colorTextSecondary,
-              }}
-            />
-
-            {!isMobile && (
-              <Breadcrumb
-                items={breadcrumbItems}
-                style={{ fontSize: 13 }}
-              />
-            )}
-          </Space>
-
-          {/* 右侧: 操作区 */}
-          <Space size={8} align="center">
-            {/* 暗色/亮色切换 */}
-            <Tooltip title={mode === 'dark' ? '切换亮色模式' : '切换暗色模式'}>
-              <Button
-                type="text"
-                icon={mode === 'dark' ? <SunOutlined /> : <MoonOutlined />}
-                onClick={toggle}
-                style={{
-                  width: 36,
-                  height: 36,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: token.colorTextSecondary,
-                  fontSize: 16,
-                }}
-              />
-            </Tooltip>
-
-            {/* 通知 */}
-            <Tooltip title="通知">
-              <Badge dot offset={[-2, 2]}>
-                <Button
-                  type="text"
-                  icon={<BellOutlined />}
-                  style={{
-                    width: 36,
-                    height: 36,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: token.colorTextSecondary,
-                    fontSize: 16,
-                  }}
-                />
-              </Badge>
-            </Tooltip>
-
-            {/* 用户 */}
-            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-              <Button
-                type="text"
-                style={{
-                  height: 36,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '0 8px',
-                }}
-              >
-                <div
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 8,
-                    background: 'linear-gradient(135deg, #3B82F6 0%, #6366F1 100%)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#fff',
-                    fontSize: 13,
-                    fontWeight: 600,
-                  }}
-                >
-                  A
-                </div>
-                {!isMobile && (
-                  <Text style={{ fontSize: 13, color: token.colorTextSecondary }}>
-                    Admin
-                  </Text>
-                )}
-              </Button>
-            </Dropdown>
-          </Space>
-        </Header>
-
         {/* ── 内容区 ── */}
-        <Content style={{ padding: 24, minHeight: 280 }}>
-          <div className={mode === 'light' ? 'light-mode' : ''}>
-            {children}
-          </div>
-        </Content>
-
-        {/* ── 底部 ── */}
         <div
           style={{
-            textAlign: 'center',
-            padding: '12px 24px',
-            fontSize: 12,
-            color: token.colorTextQuaternary,
-            borderTop: `1px solid ${token.colorBorder}`,
+            marginLeft: contentMarginLeft,
+            transition: 'margin-left 0.2s ease',
+            width: '100%',
+            minHeight: `calc(100vh - ${HEADER_H}px)`,
+            background: mode === 'dark' ? '#1A1D27' : '#F8FAFC',
           }}
         >
-          Spider AI Intelligence Platform &copy; {new Date().getFullYear()}
+          <Content style={{ padding: 24, minHeight: 280 }}>
+            <div className={mode === 'light' ? 'light-mode' : ''}>
+              {children}
+            </div>
+          </Content>
         </div>
-      </Layout>
-    </Layout>
+      </div>
+    </div>
   );
 };
 

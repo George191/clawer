@@ -1,6 +1,6 @@
 /* ============================================
- *   Spider AI Platform — Tellius-Inspired Design System
- *   Reference: https://www.tellius.com/demo
+ *   Spider AI Platform — Neo4j Aura Console Design System
+ *   Reference: https://console.neo4j.io
  * ============================================ */
 
 /* ── Google Fonts: Inter ── */
@@ -39,19 +39,18 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* ── Scrollbar ── */
+/* ── Scrollbar (Neo4j Console Style) ── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.2);
-  border-radius: 3px;
-  transition: background 0.2s;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.35);
+  background: rgba(255, 255, 255, 0.12);
 }
 .light-scrollbar::-webkit-scrollbar-thumb {
   background: rgba(71, 85, 105, 0.15);
@@ -60,23 +59,35 @@ body {
   background: rgba(71, 85, 105, 0.3);
 }
 
+/* Neo4j sidebar scrollbar */
+.neo4j-sidebar-scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.neo4j-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 1.5px;
+}
+.neo4j-sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 /* ============================================
  *   Glass Morphism (玻璃拟态)
  * ============================================ */
 
 .glass-card {
-  background: rgba(15, 23, 42, 0.65) !important;
+  background: rgba(36, 40, 54, 0.8) !important;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.06) !important;
-  border-radius: 12px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 8px;
+  transition: all 0.2s ease;
 }
 .glass-card:hover {
-  background: rgba(15, 23, 42, 0.8) !important;
+  background: rgba(36, 40, 54, 0.95) !important;
   border-color: rgba(255, 255, 255, 0.1) !important;
   transform: translateY(-1px);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 .glass-card-light {
   background: rgba(255, 255, 255, 0.8) !important;
@@ -91,10 +102,10 @@ body {
  * ============================================ */
 
 .gradient-accent {
-  background: linear-gradient(135deg, #3B82F6 0%, #6366F1 100%);
+  background: linear-gradient(135deg, #018BFF 0%, #0060CC 100%);
 }
 .gradient-secondary {
-  background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+  background: linear-gradient(135deg, #0060CC 0%, #003D99 100%);
 }
 .gradient-amber {
   background: linear-gradient(135deg, #F59E0B 0%, #F97316 100%);
@@ -115,7 +126,7 @@ body {
   inset: 0;
   border-radius: inherit;
   padding: 1px;
-  background: linear-gradient(135deg, #3B82F6, #6366F1, #8B5CF6);
+  background: linear-gradient(135deg, #018BFF, #0060CC, #003D99);
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
@@ -144,7 +155,7 @@ body {
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 2px;
-  background: linear-gradient(90deg, #3B82F6, #6366F1, transparent);
+  background: linear-gradient(90deg, #018BFF, #0060CC, transparent);
   opacity: 0;
   transition: opacity 0.3s ease;
 }
