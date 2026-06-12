@@ -238,6 +238,7 @@ class SiteTemplate(BaseModel):
         self._param_values = merged
 
         if merged:
+            self.base_url = self._replace_params(self.base_url, merged)
             self.list_page = self._replace_params(self.list_page, merged)
             if self.detail_page:
                 self.detail_page = self._replace_params(self.detail_page, merged)

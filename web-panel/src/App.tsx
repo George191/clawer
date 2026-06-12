@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { ConfigProvider, App as AntApp, theme as antTheme } from 'antd';
+import { ConfigProvider, App as AntApp, theme as antTheme, message } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import MainLayout from '@/layouts/MainLayout';
 import { useThemeStore } from '@/stores/settings';
@@ -27,6 +27,13 @@ const App: React.FC = () => {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mergedToken = { ...themeTokens, ...currentToken } as any;
+
+  message.config({
+    top: 84,
+    duration: 2.2,
+    maxCount: 3,
+    rtl: false,
+  });
 
   return (
     <ConfigProvider

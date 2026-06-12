@@ -236,7 +236,18 @@ class MongoStorage(StorageBackend):
         self,
         template_name: str | None = None,
         limit: int = 50,
+        balanced: bool = True,
     ) -> list[dict[str, Any]]:
+        """获取待下载记录。
+
+        Args:
+            template_name: 指定模板名，None 表示扫描所有模板
+            limit: 最大返回记录数
+            balanced: 是否均衡分配（轮询各集合，避免单集合独占批次）
+
+        Returns:
+            待下载记录列表，每条记录包含 _meta 字段（含 template）
+        """
         await self._ensure_connection()
 
         filter_query: dict[str, Any] = {
@@ -245,13 +256,27 @@ class MongoStorage(StorageBackend):
 
         if template_name:
             collection = await self._get_collection(template_name)
-        else:
-            collections = []
-            for coll_name in await self._db.list_collection_names():
-                collections.append(self._db[coll_name])
+            cursor = collection.find(filter_query).limit(limit)
+            results = []
+            async for doc in cursor:
+                doc.pop("_id", None)
+                results.append(doc)
+            return results
 
-            results: list[dict[str, Any]] = []
-            for collection in collections:
+        # 全库扫描
+        coll_names = await self._db.list_collection_names()
+        if not coll_names:
+            return []
+
+        if balanced:
+            return await self._balanced_pending_downloads(
+                coll_names, filter_query, limit,
+            )
+        else:
+            # 贪婪模式：第一个集合填充整个批次
+            results = []
+            for coll_name in coll_names:
+                collection = self._db[coll_name]
                 cursor = collection.find(filter_query).limit(limit)
                 async for doc in cursor:
                     doc.pop("_id", None)
@@ -260,12 +285,63 @@ class MongoStorage(StorageBackend):
                         return results
             return results
 
-        cursor = collection.find(filter_query).limit(limit)
+    async def _balanced_pending_downloads(
+        self,
+        coll_names: list[str],
+        filter_query: dict[str, Any],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """均衡轮询各集合，避免某个集合的挂起记录独占整个批次。"""
         results = []
-        async for doc in cursor:
-            doc.pop("_id", None)
-            results.append(doc)
+        # 每轮从每个集合取若干条（按集合数均分 + 至少 1 条）
+        per_coll = max(1, limit // len(coll_names))
+
+        # 记录每个集合的游标，按需取
+        for coll_name in coll_names:
+            if len(results) >= limit:
+                break
+            collection = self._db[coll_name]
+            cursor = collection.find(filter_query).limit(per_coll)
+            async for doc in cursor:
+                doc.pop("_id", None)
+                results.append(doc)
+                if len(results) >= limit:
+                    break
+
         return results
+
+    async def get_collection_stats(self) -> list[dict[str, Any]]:
+        """获取所有集合的概览统计。
+
+        Returns:
+            [{"name": "planet", "total": 100, "pending_download": 5, "downloaded": 80, ...}, ...]
+        """
+        await self._ensure_connection()
+        stats = []
+        for coll_name in await self._db.list_collection_names():
+            collection = self._db[coll_name]
+            total = await collection.count_documents({})
+            pending = await collection.count_documents({
+                "_meta.download_status": {"$in": ["pending", "downloading"]},
+            })
+            downloaded = await collection.count_documents({
+                "_meta.download_status": "downloaded",
+            })
+            no_assets = await collection.count_documents({
+                "_meta.download_status": "no_assets",
+            })
+            failed = await collection.count_documents({
+                "_meta.download_status": "failed",
+            })
+            stats.append({
+                "name": coll_name,
+                "total": total,
+                "pending_download": pending,
+                "downloaded": downloaded,
+                "no_assets": no_assets,
+                "failed": failed,
+            })
+        return stats
 
     async def close(self) -> None:
         if self._client:

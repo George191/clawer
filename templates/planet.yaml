@@ -1,0 +1,109 @@
+name: planet
+display_name: "Planet - Space Papers"
+base_url: "https://planet{domain}.org"
+data_type: intelligence
+adapter: planet
+anti_crawl_enabled: false
+description: >
+  采集 Jonathan McDowell 的 Planet4589 太空研究论文列表。
+
+  网站为静态文件列表页 (nginx autoindex), 包含 PDF 论文文件。
+  URL 参数:
+    sort: 排序字段 (time / name / size)
+    order: 排序方向 (asc / desc)
+
+  参数说明:
+    domain: 域名中的数字部分, 默认 4589, 可调整为其他值
+    sort: 列表排序方式, 默认 time(按修改时间)
+    order: 排序方向, 默认 desc(降序)
+
+params:
+  - name: domain
+    description: "域名中的数字部分, 如 4589 → planet4589.org"
+    default: "4589"
+    required: false
+
+  - name: sort
+    description: "排序字段: time(修改时间), name(文件名), size(文件大小)"
+    default: "time"
+    required: false
+
+  - name: order
+    description: "排序方向: desc(降序), asc(升序)"
+    default: "desc"
+    required: false
+
+response_type: html
+
+list_page: "/space/papers/?sort={sort}&order={order}"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+list_fields:
+  # 文件名 (tr.file > 第 2 个 td > a 链接的文本)
+  - name: name
+    selector: "table tbody tr.file td:nth-child(2) a"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "文件名, 如 space18.pdf"
+
+  # 文件大小 (tr.file > 第 3 个 td)
+  - name: size
+    selector: "table tbody tr.file td:nth-child(3)"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "文件大小, 如 160 KiB"
+
+  # 修改时间 (tr.file > 第 4 个 td)
+  - name: modified
+    selector: "table tbody tr.file td:nth-child(4)"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "最后修改时间, 如 06/19/2014 02:23:36 PM"
+
+  # 文件 URL (tr.file > 第 2 个 td > a 链接的 href)
+  - name: url
+    selector: "table tbody tr.file td:nth-child(2) a"
+    selector_type: css
+    field_type: href
+    required: true
+    transform: strip
+    description: "文件相对路径, 如 ./china2014.pdf"
+
+list_pagination:
+  type: next_page
+  next_selector: "a:contains('Next')"
+  start_page: 0
+  max_pages: 1
+  results_per_page: 100
+
+# 下载配置: 从记录的 url 字段获取下载链接
+download:
+  selector: "url"
+  selector_type: json
+  link_type: href
+  file_extension: pdf
+  url_prefix: ""
+  description: "从 url 字段获取 PDF 链接, 拼接 base_url 后下载"
+
+
+# 使用示例:
+# 默认采集:
+#   --template planet
+#
+# 按文件名排序:
+#   --template planet:sort=name
+#
+# 调整域名后缀:
+#   --template planet:domain=4589

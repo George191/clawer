@@ -77,7 +77,6 @@ interface ProjectConfig {
   key: ProjectKey;
   label: string;
   shortLabel: string;
-  description: string;
   defaultPath: string;
   accent: string;
   sections: SidebarSection[];
@@ -90,7 +89,6 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     key: 'ai-collect',
     label: 'AI 智能采集',
     shortLabel: 'AI Collect',
-    description: '从目标识别、模板生成到采集运行的智能入口',
     defaultPath: '/ai-collect',
     accent: '#7C3AED',
     sections: [
@@ -126,7 +124,6 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     key: 'data-lake',
     label: '数据湖',
     shortLabel: 'Data Lake',
-    description: '沉淀原始数据、湖仓分层、质量治理与服务输出',
     defaultPath: '/lake/catalog',
     accent: '#059669',
     sections: [
@@ -162,7 +159,6 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     key: 'etl-pipeline',
     label: 'ETL 管道',
     shortLabel: 'ETL Pipeline',
-    description: '开发、调度、监控和发布端到端数据管道',
     defaultPath: '/pipeline',
     accent: '#0EA5E9',
     sections: [
@@ -264,7 +260,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const projectMenuItems: MenuProps['items'] = projectOrder.map((key) => ({
     key,
     label: (
-      <div style={{ minWidth: 220 }}>
+      <div style={{ minWidth: 180 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span
             style={{
@@ -276,9 +272,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             }}
           />
           <span style={{ fontWeight: 600 }}>{projectConfigs[key].label}</span>
-        </div>
-        <div style={{ marginTop: 4, fontSize: 12, color: palette.secondary }}>
-          {projectConfigs[key].description}
         </div>
       </div>
     ),
@@ -412,17 +405,18 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const renderAccountPanel = () => {
     const rowStyle: React.CSSProperties = {
       width: '100%',
-      height: 46,
+      height: 36,
       border: 'none',
       background: 'transparent',
       color: palette.text,
       display: 'flex',
       alignItems: 'center',
-      gap: 12,
-      padding: '0 10px',
+      gap: 8,
+      padding: '0 8px',
       borderRadius: 6,
       cursor: 'pointer',
-      fontSize: 15,
+      fontSize: 13,
+      fontWeight: 500,
       textAlign: 'left',
     };
 
@@ -436,21 +430,21 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return (
       <div
         style={{
-          width: 306,
-          padding: 8,
-          borderRadius: 8,
+          width: 276,
+          padding: '6px 0',
+          borderRadius: 18,
           background: isDark ? '#202326' : '#FFFFFF',
           border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.12)' : '#E2E8F0'}`,
           boxShadow: isDark ? '0 18px 44px rgba(0, 0, 0, 0.45)' : '0 18px 38px rgba(15, 23, 42, 0.14)',
         }}
       >
-        <div style={{ padding: '14px 4px 12px 4px' }}>
-          <div style={{ color: palette.text, fontSize: 16, fontWeight: 700 }}>Blank George</div>
-          <div style={{ color: palette.secondary, fontSize: 14, marginTop: 4 }}>zhouy674896488@gmail.com</div>
+        <div style={{ padding: '8px 14px 9px' }}>
+          <div style={{ color: palette.text, fontSize: 13, fontWeight: 600 }}>Blank George</div>
+          <div style={{ color: palette.secondary, fontSize: 12, marginTop: 3 }}>zhouy674896488@gmail.com</div>
         </div>
         {accountRows.map((item, index) => (
           <React.Fragment key={item.key}>
-            {index === 1 || index === 3 ? <div style={{ height: 1, background: palette.border, margin: '4px 0' }} /> : null}
+            {index === 1 || index === 3 ? <div style={{ height: 1, background: palette.border, margin: '6px 14px' }} /> : null}
             <button
               type="button"
               onClick={item.onClick}
@@ -471,10 +465,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 event.currentTarget.style.boxShadow = 'none';
               }}
             >
-              <span style={{ width: 22, display: 'inline-flex', justifyContent: 'center', color: palette.secondary }}>
+              <span style={{ width: 26, display: 'inline-flex', justifyContent: 'center', color: palette.secondary, fontSize: 15 }}>
                 {item.icon}
               </span>
-              <span style={{ flex: 1, fontWeight: 600 }}>{item.label}</span>
+              <span style={{ flex: 1 }}>{item.label}</span>
               {item.key === 'theme' || item.key === 'legal' ? (
                 <span style={{ display: 'inline-flex', alignItems: 'center', color: palette.secondary, fontSize: 12 }}>
                   <RightOutlined style={{ fontSize: 12 }} />
@@ -754,7 +748,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                         position: 'absolute',
                         left: 64,
                         right: 28,
-                        top: 8,
+                        top: 17,
                         opacity: projectTextVisible ? 1 : 0,
                         transform: projectTextVisible ? 'translateX(0)' : 'translateX(-6px)',
                         transition: 'opacity 0.12s ease, transform 0.12s ease',
@@ -763,19 +757,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     >
                       <span style={{ display: 'block', fontSize: 13, fontWeight: 700 }}>
                         {activeProject.label}
-                      </span>
-                      <span
-                        style={{
-                          display: 'block',
-                          marginTop: 2,
-                          color: palette.secondary,
-                          fontSize: 12,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {activeProject.description}
                       </span>
                     </span>
                     <DownOutlined
