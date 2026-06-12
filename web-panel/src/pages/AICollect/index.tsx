@@ -1082,6 +1082,7 @@ const AICollect: React.FC = () => {
                 setActiveProcessStep(step);
                 setMode(processStepMode[step]);
                 setExpandedStep(processStepMode[step]);
+                setSelectedLogStep(step);
               }}
             >
               <span className="ai-step-index">{status === 'done' ? <CheckCircleOutlined /> : index + 1}</span>
@@ -1150,7 +1151,7 @@ const AICollect: React.FC = () => {
                   <span>{processStepMeta[step].title}</span>
                   <em>{status === 'done' ? 'done' : status === 'active' ? 'running' : 'queued'}</em>
                 </button>
-                <div className="ai-terminal-lines" key={`${step}-${isOpen ? scanPulse : 'closed'}`}>
+                <div className="ai-terminal-lines">
                   {runtimeLogs.map((log, logIndex) => (
                     <p className="ai-terminal-line is-live" key={`live-${log}`}>
                       <span>{`00:0${logIndex}.now`}</span>
@@ -2605,16 +2606,6 @@ const AICollect: React.FC = () => {
               transform: translate(-50%, 0) scale(1);
             }
           }
-          @keyframes aiTerminalSwitch {
-            from {
-              opacity: 0;
-              transform: translateY(8px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
           @keyframes aiTerminalFocus {
             0% {
               box-shadow: inset 0 0 0 1px rgba(143, 227, 232, 0), 0 0 0 rgba(143, 227, 232, 0);
@@ -2634,14 +2625,6 @@ const AICollect: React.FC = () => {
             to {
               opacity: 1;
               transform: translateX(0);
-            }
-          }
-          @keyframes aiStepSweep {
-            from {
-              transform: translateX(-100%);
-            }
-            to {
-              transform: translateX(100%);
             }
           }
           @keyframes aiScanSweep {
@@ -2667,7 +2650,7 @@ const AICollect: React.FC = () => {
           }
           @media (max-width: 1280px) {
             .ai-collect-body {
-              grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+              grid-template-columns: minmax(204px, 232px) minmax(0, 1fr);
             }
             .ai-collect-body.is-idle {
               display: flex;
