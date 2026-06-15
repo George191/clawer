@@ -72,13 +72,15 @@ class DownloadConfig(BaseModel):
     selector: str = Field(description="下载链接选择器或JSON路径")
     selector_type: SelectorType = Field(default=SelectorType.CSS)
     link_type: FieldType = Field(default=FieldType.HREF, description="链接所在属性")
-    file_extension: str | None = Field(default=None, description="强制文件扩展名, 如 pdf, docx")
+    file_extension: str | None = Field(default=None, description="强制文件扩展名, 如 pdf, png")
     filename_selector: str | None = Field(default=None, description="文件名选择器, 留空则从URL推断")
     filename_selector_type: SelectorType = Field(default=SelectorType.CSS)
     url_prefix: str | None = Field(
         default=None,
         description="下载URL前缀, 如 https://patentimages.storage.googleapis.com/",
     )
+    description: str = Field(default="", description="下载配置描述, 如 PDF文档 / 专利插图")
+    asset_type: str = Field(default="asset", description="资源类型标签, 如 pdf / figure / thumbnail")
 
 
 class RequestConfig(BaseModel):
@@ -196,7 +198,7 @@ class SiteTemplate(BaseModel):
     detail_request: RequestConfig = Field(default_factory=RequestConfig, description="详情页请求配置")
     detail_fields: list[FieldMapping] = Field(default_factory=list, description="详情页字段映射")
 
-    download: DownloadConfig | None = Field(default=None, description="文件下载配置")
+    download: list[DownloadConfig] = Field(default_factory=list, description="文件下载配置列表，支持多资源类型（如 PDF + 插图 + 缩略图）")
 
     batch_params: BatchParamConfig | None = Field(
         default=None, description="批量参数配置，用于从本地文件读取参数"

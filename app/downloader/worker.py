@@ -55,9 +55,11 @@ class DownloadWorker:
         self,
         poll_interval: int = 10,
         batch_size: int = 50,
+        template_name: str | None = None,
     ) -> None:
         self._poll_interval = poll_interval
         self._batch_size = batch_size
+        self._template_name = template_name
         self._http: HttpClient | None = None
         self._minio: MinioClient | None = None
         self._mongo = MongoClient()
@@ -76,10 +78,11 @@ class DownloadWorker:
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
 
         logger.info(
-            "DownloadWorker started (poll=%ds, batch=%d, concurrency=%d)",
+            "DownloadWorker started (poll=%ds, batch=%d, concurrency=%d, template=%s)",
             self._poll_interval,
             self._batch_size,
             settings.max_concurrent_tasks,
+            self._template_name or "ALL",
         )
 
         # 启动诊断：输出所有集合的下载状态概览
@@ -95,7 +98,10 @@ class DownloadWorker:
                 await asyncio.sleep(self._poll_interval)
 
     async def _process_batch(self) -> int:
-        pending = await self._mongo.get_pending_downloads(limit=self._batch_size)
+        pending = await self._mongo.get_pending_downloads(
+            template_name=self._template_name,
+            limit=self._batch_size,
+        )
         if not pending:
             return 0
 
@@ -139,8 +145,8 @@ class DownloadWorker:
                     )
                     return True
 
-                download_config = template.download
-                if download_config is None:
+                download_configs = template.download
+                if not download_configs:
                     # 缓存该模板，后续扫描跳过
                     self._no_assets_templates.add(template_name)
                     logger.info(
@@ -153,10 +159,13 @@ class DownloadWorker:
                     )
                     return True
 
-                # 提取下载 URL
-                download_urls = self._extract_download_urls(
-                    record, download_config, template_name,
-                )
+                # 提取所有下载 URL（支持多资源配置：PDF + 插图 + 缩略图）
+                download_urls = []
+                for dc in download_configs:
+                    urls = self._extract_download_urls(
+                        record, dc, template_name,
+                    )
+                    download_urls.extend(urls)
 
                 if not download_urls:
                     await self._mongo.update_file_status(
@@ -301,6 +310,7 @@ class DownloadWorker:
         selector = download_config.selector
         url_prefix = getattr(download_config, 'url_prefix', None) or ""
         file_ext = getattr(download_config, 'file_extension', None)
+        asset_type = getattr(download_config, 'asset_type', 'asset')
 
         # 提取原始值
         raw_value = resolve_json_path(record, selector)
@@ -325,7 +335,7 @@ class DownloadWorker:
                         urls.append({
                             "url": sub_url,
                             "filename": filename,
-                            "asset_key": f"{selector}.{i}",
+                            "asset_key": f"{asset_type}.{i}",
                         })
                 elif isinstance(item, str):
                     full_url = url_prefix + item
@@ -335,7 +345,7 @@ class DownloadWorker:
                     urls.append({
                         "url": full_url,
                         "filename": filename,
-                        "asset_key": f"{selector}.{i}",
+                        "asset_key": f"{asset_type}.{i}",
                     })
             return urls
 
@@ -349,7 +359,7 @@ class DownloadWorker:
                 return [{
                     "url": sub_url,
                     "filename": self._make_filename(sub_url, file_ext),
-                    "asset_key": selector,
+                    "asset_key": asset_type,
                 }]
             return []
 
@@ -358,7 +368,7 @@ class DownloadWorker:
         return [{
             "url": full_url,
             "filename": self._make_filename(full_url, file_ext),
-            "asset_key": selector,
+            "asset_key": asset_type,
         }]
 
     def _extract_css_urls(
@@ -376,9 +386,8 @@ class DownloadWorker:
         link_type: str,
         url_prefix: str,
     ) -> str | None:
-        """从字典中提取 URL。"""
-        # 尝试常见字段名
-        for key in ("href", "src", "url", "link", "thumbnail", "full", "pdf"):
+        """从字典中提取 URL。按优先级尝试常见字段名。"""
+        for key in ("href", "src", "url", "link", "full", "thumbnail", "pdf"):
             if key in data and data[key]:
                 val = str(data[key])
                 return url_prefix + val if not val.startswith("http") else val

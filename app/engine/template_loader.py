@@ -27,6 +27,7 @@ class TemplateLoader:
     def load(self, name: str, param_values: dict[str, str] | None = None) -> SiteTemplate:
         file_path = self._resolve_template_file(name)
         raw = self._read_yaml(file_path)
+        raw = self._normalize_download_config(raw)
         template = SiteTemplate(**raw)
         if template.params and param_values:
             template.apply_params(param_values)
@@ -74,3 +75,15 @@ class TemplateLoader:
         if not isinstance(data, dict):
             raise ValueError(f"Template file must contain a YAML mapping: {file_path}")
         return data
+
+    @staticmethod
+    def _normalize_download_config(raw: dict[str, Any]) -> dict[str, Any]:
+        """向后兼容: 将单个 download 对象自动包装为列表。"""
+        download = raw.get("download")
+        if download is None:
+            return raw
+        if isinstance(download, list):
+            return raw
+        if isinstance(download, dict):
+            raw["download"] = [download]
+        return raw

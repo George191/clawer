@@ -61,30 +61,30 @@ class PlanetAdapter(BaseSiteAdapter):
         )
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
-        """每页数据返回后：过滤记录，递归进入子目录采集 PDF。
-
-        规则:
-        - 空文件名 / "Up" → 跳过
-        - 文件名以 / 结尾 → 子目录, 递归采集
-        - 非 PDF 文件 → 跳过
-        - PDF 文件 → 规范化 URL 后保留
-        """
+        """每页数据返回后：过滤记录，递归进入子目录采集 PDF。"""
         if not records:
             return records
 
-        filtered = await self._process_records(records, depth=0)
+        # 首页的基 URL 从模板 list_page 推导
+        list_page = self._template.list_page
+        base_dir = list_page.split("?")[0].rstrip("/") + "/"
+        base_dir_url = urljoin(self._base_url, base_dir)
+
+        filtered = await self._process_records(records, depth=0, current_dir_url=base_dir_url)
         return filtered
 
     async def _process_records(
         self,
         records: list[dict],
         depth: int,
+        current_dir_url: str,
     ) -> list[dict]:
         """递归处理记录列表，遇到目录则深入采集。
 
         Args:
             records: 当前页面的解析记录。
             depth: 当前递归深度，超过 _MAX_CRAWL_DEPTH 则停止。
+            current_dir_url: 当前目录的完整 URL，用于 URL 规范化。
         """
         if depth >= _MAX_CRAWL_DEPTH:
             logger.warning(
@@ -110,7 +110,7 @@ class PlanetAdapter(BaseSiteAdapter):
             # 子目录 → 递归采集
             if name.endswith("/"):
                 sub_records = await self._crawl_subdirectory(
-                    record, depth + 1,
+                    record, depth + 1, current_dir_url,
                 )
                 result.extend(sub_records)
                 continue
@@ -122,12 +122,9 @@ class PlanetAdapter(BaseSiteAdapter):
                 )
                 continue
 
-            # 规范化 URL
+            # 规范化 URL：相对路径 → 基于当前目录拼接
             raw_url = record.get("url", "")
-            if raw_url.startswith(".") or raw_url.startswith("/"):
-                record["url"] = urljoin(
-                    self._resolve_dir_base(raw_url), raw_url,
-                )
+            record["url"] = urljoin(current_dir_url, raw_url)
 
             result.append(record)
             self._total_pdfs += 1
@@ -138,34 +135,35 @@ class PlanetAdapter(BaseSiteAdapter):
         self,
         dir_record: dict,
         depth: int,
+        current_dir_url: str,
     ) -> list[dict]:
         """递归采集子目录中的 PDF 文件。
 
         Args:
             dir_record: 目录条目记录，包含 name 和 url 字段。
             depth: 当前递归深度。
+            current_dir_url: 父目录的完整 URL。
         """
         dir_name = dir_record.get("name", "unknown").strip().rstrip("/")
-        dir_url = urljoin(
-            self._resolve_dir_base(dir_record.get("url", "")),
-            dir_record.get("url", ""),
-        )
+        raw_url = dir_record.get("url", "")
+        # 子目录 URL = 基于当前目录拼接相对路径
+        sub_dir_url = urljoin(current_dir_url, raw_url)
 
         logger.info(
             "[PlanetAdapter] ▶ Entering subdirectory depth=%d: %s → %s",
-            depth, dir_name, dir_url,
+            depth, dir_name, sub_dir_url,
         )
 
         try:
             html = await self._client.request_page(
-                dir_url,
+                sub_dir_url,
                 self._template.list_request,
                 anti_crawl_enabled=self._template.effective_anti_crawl_enabled,
             )
         except Exception as e:
             logger.warning(
                 "[PlanetAdapter] Failed to fetch subdirectory '%s': %s",
-                dir_url, e,
+                sub_dir_url, e,
             )
             return []
 
@@ -175,20 +173,7 @@ class PlanetAdapter(BaseSiteAdapter):
             dir_name, len(records),
         )
 
-        return await self._process_records(records, depth)
-
-    def _resolve_dir_base(self, raw_url: str) -> str:
-        """根据 URL 类型解析当前目录的基地址。
-
-        如果 URL 以 / 开头（绝对路径），用 base_url 拼接；
-        如果 URL 以 ./ 开头（相对路径），用当前已知的 list_page 目录拼接。
-        """
-        if raw_url.startswith("/"):
-            return self._base_url.rstrip("/")
-        # 从模板 list_page 推导目录: /space/papers/?... → /space/papers/
-        list_page = self._template.list_page
-        dir_path = list_page.split("?")[0].rstrip("/") + "/"
-        return urljoin(self._base_url, dir_path)
+        return await self._process_records(records, depth, sub_dir_url)
 
     def on_request_headers(self, page: int) -> dict[str, str]:
         """注入请求头 — 模拟普通浏览器。"""

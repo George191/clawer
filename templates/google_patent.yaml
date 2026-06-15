@@ -104,10 +104,25 @@ list_pagination:
   results_per_page: 100
 
 download:
-  selector: "patent.pdf"
-  selector_type: json
-  link_type: href
-  file_extension: pdf
+  - selector: "patent.pdf"
+    selector_type: json
+    link_type: href
+    file_extension: pdf
+    asset_type: pdf
+    description: "PDF 专利全文"
+  - selector: "patent.figures"
+    selector_type: json
+    link_type: href
+    file_extension: png
+    url_prefix: "https://patentimages.storage.googleapis.com/"
+    asset_type: figure
+    description: "专利插图"
+  - selector: "patent.thumbnail"
+    selector_type: json
+    link_type: href
+    file_extension: png
+    asset_type: thumbnail
+    description: "封面缩略图"
 
 
 # # 按专利号查
