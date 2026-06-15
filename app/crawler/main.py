@@ -569,7 +569,6 @@ def main() -> None:
     )
     parser.add_argument(
         "--template-name",
-        default="google_patent",
         help="Template name for --list-file mode (default: google_patent)",
     )
     

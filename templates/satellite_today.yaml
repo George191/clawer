@@ -1,0 +1,92 @@
+name: satellite_today
+display_name: "Satellite Today - 航天/卫星行业新闻"
+base_url: "https://www.satellitetoday.com"
+data_type: news
+adapter: satellite_today
+anti_crawl_enabled: true
+description: >
+  采集 SatelliteToday 航天/卫星行业新闻。
+  列表页提取标题、分类、详情页链接；
+  详情页提取正文和外链。
+
+  页面结构:
+    h3 a → 标题 + 链接（44 条）
+    .category / .tag → 分类标签
+    注意: 站点有反爬，需开启 anti_crawl_enabled
+
+response_type: html
+
+list_page: "/"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+list_fields:
+  - name: title
+    selector: "h3 a"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "新闻标题"
+
+  - name: url
+    selector: "h3 a"
+    selector_type: css
+    field_type: href
+    required: true
+    description: "详情页链接"
+
+  - name: category
+    selector: ".category a, .tag a, .kicker a"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "新闻分类, 如 Finance / Connectivity"
+
+  - name: date
+    selector: "time, .date, .timestamp"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "发布日期"
+
+list_pagination:
+  type: next_page
+  next_selector: "a.next, .pagination .next a, li.next a, a[rel='next']"
+  start_page: 0
+  max_pages: 5
+  results_per_page: 20
+
+# 详情页：用列表记录中的 url 字段进入详情页
+detail_page: "{url}"
+detail_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+  encoding: utf-8
+
+detail_fields:
+  - name: content
+    selector: ".article-body, .entry-content, .post-content, article .content"
+    selector_type: css
+    field_type: text
+    required: false
+    description: "正文内容"
+
+  - name: image_url
+    selector: ".article-body img, .entry-content img, article img"
+    selector_type: css
+    field_type: src
+    required: false
+    description: "文章配图"
+
+
+# python -m app.crawler.main --template satellite_today

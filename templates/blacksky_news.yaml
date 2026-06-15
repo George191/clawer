@@ -1,0 +1,97 @@
+name: blacksky_news
+display_name: "BlackSky - 公司新闻与媒体报道"
+base_url: "https://blacksky.com"
+data_type: news
+adapter: blacksky_news
+anti_crawl_enabled: false
+description: >
+  采集 BlackSky 公司新闻和媒体报道。
+  列表页提取标题、来源、日期、链接；
+  详情页提取正文和外链。
+
+  BlackSky 的新闻列表包含两类:
+  - Press release: 链接到 blacksky.com/press-releases/... (站内详情)
+  - 媒体报道: 链接到外部站点 (如 satellitetoday.com, spacenews.com)
+
+  页面结构:
+    article.article-summary.news
+      .article-summary-text
+        p.kicker → 日期 + 来源链接
+        h3 a     → 标题 + 链接（含外链）
+
+response_type: html
+
+list_page: "/company/news/"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+list_fields:
+  - name: title
+    selector: "article.article-summary h3 a"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "新闻标题"
+
+  - name: url
+    selector: "article.article-summary h3 a"
+    selector_type: css
+    field_type: href
+    required: true
+    description: "链接（可能是站内 press release 或外部媒体报道）"
+
+  - name: source
+    selector: "article.article-summary .kicker a"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "来源, 如 Via Satellite / Press release / Space News"
+
+  - name: date
+    selector: "article.article-summary .kicker"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "发布日期（kicker 文本中包含日期和来源）"
+
+list_pagination:
+  type: next_page
+  next_selector: "a.next, .pagination .next a, li.next a, a[rel='next']"
+  start_page: 0
+  max_pages: 5
+  results_per_page: 20
+
+# 详情页：用列表记录中的 url 字段进入详情页
+detail_page: "{url}"
+detail_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+  encoding: utf-8
+
+detail_fields:
+  - name: content
+    selector: ".press-release-body, article .content, .entry-content, .news-body"
+    selector_type: css
+    field_type: text
+    required: false
+    description: "正文内容"
+
+  - name: image_url
+    selector: ".press-release-body img, article img, .entry-content img"
+    selector_type: css
+    field_type: src
+    required: false
+    description: "文章配图"
+
+
+# python -m app.crawler.main --template blacksky_news

@@ -304,13 +304,16 @@ class DownloadWorker:
 
         支持嵌套路径，如 'patent.pdf' → record['patent']['pdf']
         支持列表展开，如 'patent.figures' → 遍历列表中的每项
+
+        asset_key 规则：
+        - 单值: assets.{selector}，如 assets.patent.pdf
+        - 列表: assets.{selector}.{index}，如 assets.patent.figures.0
         """
         from app.parser.template_parser import resolve_json_path
 
         selector = download_config.selector
         url_prefix = getattr(download_config, 'url_prefix', None) or ""
         file_ext = getattr(download_config, 'file_extension', None)
-        asset_type = getattr(download_config, 'asset_type', 'asset')
 
         # 提取原始值
         raw_value = resolve_json_path(record, selector)
@@ -335,17 +338,17 @@ class DownloadWorker:
                         urls.append({
                             "url": sub_url,
                             "filename": filename,
-                            "asset_key": f"{asset_type}.{i}",
+                            "asset_key": f"assets.{selector}.{i}",
                         })
                 elif isinstance(item, str):
-                    full_url = url_prefix + item
+                    full_url = url_prefix + item if not item.startswith("http") else item
                     filename = self._make_filename(
                         full_url, file_ext, suffix=f"_{i:05d}",
                     )
                     urls.append({
                         "url": full_url,
                         "filename": filename,
-                        "asset_key": f"{asset_type}.{i}",
+                        "asset_key": f"assets.{selector}.{i}",
                     })
             return urls
 
@@ -359,16 +362,17 @@ class DownloadWorker:
                 return [{
                     "url": sub_url,
                     "filename": self._make_filename(sub_url, file_ext),
-                    "asset_key": asset_type,
+                    "asset_key": f"assets.{selector}",
                 }]
             return []
 
         # 字符串值
-        full_url = url_prefix + str(raw_value)
+        val = str(raw_value)
+        full_url = url_prefix + val if not val.startswith("http") else val
         return [{
             "url": full_url,
             "filename": self._make_filename(full_url, file_ext),
-            "asset_key": asset_type,
+            "asset_key": f"assets.{selector}",
         }]
 
     def _extract_css_urls(

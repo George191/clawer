@@ -25,7 +25,7 @@ params:
 
 response_type: html
 
-list_page: "/navarea/{navarea_id}/messages/"
+list_page: "/navarea/{navarea_id}/messages/?page={page}"
 list_request:
   method: GET
   headers:
@@ -80,8 +80,8 @@ list_pagination:
   type: page_number
   page_param: page
   start_page: 1
-  max_pages: 1
+  max_pages: 0
   results_per_page: 50
 
 
-# --list-file data/navarea_ids.txt --list-param navarea_id --batch-size 1 --template sealagom_navwarn --delay 3
+# python -m app.crawler.main --list-file data/navarea_ids.txt --list-param navarea_id --batch-size 1 --template sealagom_navwarn --delay 3
