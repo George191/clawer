@@ -36,36 +36,13 @@ from urllib.parse import urljoin, urlparse
 from lxml import etree
 from lxml import html as lxml_html
 
-from app.adapters.news_base import NewsBaseAdapter
+from app.adapters.utils.news import (
+    NewsBaseAdapter,
+    _ATTACHMENT_EXTENSIONS,
+    _CONTENT_SELECTORS,
+)
 
 logger = logging.getLogger(__name__)
-
-_CONTENT_SELECTORS = [
-    ".article-view [itemprop='articleBody']",
-    ".article-view .article-detail-content",
-    ".article-view .article-content",
-    ".article-view .article-body",
-    ".article-view .body-copy",
-    ".article-view .news-story",
-    ".article-view .story-body",
-    ".article-view .entry-content",
-    ".article-view .body",
-    "[itemprop='articleBody']",
-    "section.article-detail-content",
-    ".article-content",
-    ".article-body",
-    ".body-copy",
-    ".news-story",
-    ".story-body",
-    ".entry-content",
-    "#article-content",
-]
-
-_ATTACHMENT_EXTENSIONS = (
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".csv", ".txt", ".zip", ".rar", ".7z", ".json", ".xml",
-    ".kml", ".kmz", ".geojson", ".gdb", ".gpkg",
-)
 
 
 class SscBaseAdapter(NewsBaseAdapter):
@@ -334,7 +311,7 @@ class SscBaseAdapter(NewsBaseAdapter):
             record["tags"] = tags
 
     @staticmethod
-    def _extract_external_links(html: str, record: dict, detail_url: str) -> None:
+    def _extract_external_links(_html: str, record: dict, detail_url: str) -> None:
         """从正文 HTML 提取外链。"""
         content_html = record.get("content_html", "")
         if not content_html:

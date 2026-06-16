@@ -21,8 +21,8 @@ from urllib.parse import urljoin
 
 from lxml import html as lxml_html
 
-from app.adapters.ssc_base import SscBaseAdapter
-from app.adapters.news_base import register_adapter
+from app.adapters import register_adapter
+from app.adapters.utils.news.sse import SscBaseAdapter
 from app.downloader.http_client import HttpClient
 from app.models.template import RequestConfig
 

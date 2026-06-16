@@ -47,4 +47,29 @@ list_pagination:
   max_pages: 0
   results_per_page: 100
 
+download:
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    description: "新闻稿附件或直接链接的 PDF 文件"
+    asset_type: attachment
+
+  - selector: "slides"
+    selector_type: json
+    link_type: src
+    description: "详情页轮播图资源"
+    asset_type: slide
+
+  - selector: "figures"
+    selector_type: json
+    link_type: src
+    description: "正文 figure/img 资源"
+    asset_type: figure
+
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    description: "正文中提取出的图片资源"
+    asset_type: image
+
 # python -m app.crawler.main --template ssc_press

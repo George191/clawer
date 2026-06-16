@@ -14,11 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
-from urllib.parse import urljoin
 
-from app.adapters.news_base import NewsBaseAdapter, register_adapter
+from app.adapters import register_adapter
+from app.adapters.utils.news import NewsBaseAdapter
 from app.downloader.http_client import HttpClient
 from app.models.template import RequestConfig
 
@@ -70,48 +69,6 @@ class BlackSkyPressAdapter(NewsBaseAdapter):
             logger.debug("[BlackSkyPress] Media %d fetch failed: %s", media_id, str(e)[:60])
             return ""
 
-    def _extract_images_from_html(self, html: str, base_url: str) -> tuple[list[dict], str]:
-        """从 HTML 中提取图片信息，并用占位符替换 src。
-
-        返回:
-            images: [{"url": "原始URL", "placeholder": "{{img_0}}", "alt": "..."}, ...]
-            new_html: 替换后的 HTML
-        """
-        images: list[dict] = []
-        img_pattern = re.compile(r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
-
-        def replace_img(match: re.Match) -> str:
-            full_tag = match.group(0)
-            src = match.group(1)
-
-            # 跳过 data URI 和极小图标
-            if src.startswith("data:"):
-                return full_tag
-            if "/emoji/" in src or "emoji" in src.lower():
-                return full_tag
-
-            # 补全相对路径
-            if not src.startswith(("http://", "https://")):
-                src = urljoin(base_url, src)
-
-            idx = len(images)
-            placeholder = f"{{{{img_{idx}}}}}"
-            alt_match = re.search(r'alt=["\']([^"\']*)["\']', full_tag, re.IGNORECASE)
-            alt_text = alt_match.group(1) if alt_match else ""
-
-            images.append({
-                "url": src,
-                "placeholder": placeholder,
-                "alt": alt_text,
-            })
-
-            # 替换 src 为占位符
-            new_tag = full_tag.replace(match.group(1), placeholder)
-            return new_tag
-
-        new_html = img_pattern.sub(replace_img, html)
-        return images, new_html
-
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """列表页后处理：提取外链、正文图片、封面图。"""
         records = await super().on_after_page(page, records)
@@ -119,20 +76,28 @@ class BlackSkyPressAdapter(NewsBaseAdapter):
         for record in records:
             record["link_type"] = "press_release"
 
+            excerpt_html = str(record.get("excerpt") or "").strip()
+            if excerpt_html:
+                record["summary"] = self.html_to_text(excerpt_html)
+
             # 从 content_html 提取外链
-            content_html = record.get("content_html", "")
+            content_html = str(record.get("content_html") or "").strip()
             url = record.get("url", "")
             if content_html:
+                images, new_html = self.extract_images_from_html(content_html, url)
+                if images:
+                    record["images"] = images
+                    content_html = new_html
+                    record["content_html"] = new_html
+
+                attachments = self.extract_attachment_links(content_html, url)
+                if attachments:
+                    record["attachments"] = attachments
+
+                record["content"] = self.html_to_text(content_html)
                 ext_links = self.extract_external_links(content_html, url)
                 if ext_links:
                     record["external_links"] = ext_links
-
-            # 从 content_html 提取正文图片，替换为占位符
-            if content_html:
-                images, new_html = self._extract_images_from_html(content_html, url)
-                if images:
-                    record["images"] = images
-                    record["content_html"] = new_html
 
             # 删除 external_url（已有 external_links）
             record.pop("external_url", None)
@@ -143,6 +108,7 @@ class BlackSkyPressAdapter(NewsBaseAdapter):
                 cover_url = await self._fetch_media_url(media_id)
                 if cover_url:
                     record["cover_image"] = cover_url
+                    record.setdefault("thumbnail", cover_url)
 
         return records
 

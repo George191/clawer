@@ -43,6 +43,13 @@ list_fields:
     transform: strip
     description: "新闻标题"
 
+  - name: url
+    selector: "link"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "站内详情页链接 (/media-coverage/...)"
+
   - name: date
     selector: "date"
     selector_type: json
@@ -91,4 +98,22 @@ list_pagination:
   max_pages: 0
   results_per_page: 20
 
+download:
+  - selector: "cover_image"
+    selector_type: json
+    link_type: src
+    description: "媒体报道封面图，adapter 通过 WP Media API 回填"
+    asset_type: cover_image
+
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    description: "外部来源文章中的附件资源"
+    asset_type: attachment
+
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    description: "外部来源文章中的图片资源"
+    asset_type: image
 # python -m app.crawler.main --template blacksky_news

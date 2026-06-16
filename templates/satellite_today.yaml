@@ -3,90 +3,144 @@ display_name: "Satellite Today - 航天/卫星行业新闻"
 base_url: "https://www.satellitetoday.com"
 data_type: news
 adapter: satellite_today
-anti_crawl_enabled: false
+anti_crawl_enabled: true
 description: >
-  采集 SatelliteToday 航天/卫星行业新闻。
-  列表页提取标题、分类、详情页链接；
-  详情页提取正文和外链。
+  采集 SatelliteToday / Via Satellite 全站 WordPress 新闻内容。
+  使用 `/wp-json/wp/v2/posts` + `_envelope=1` 走 JSON API，
+  覆盖站内全部 topic/category，而不是只抓首页可见内容。
 
-  页面结构:
-    h3 a → 标题 + 链接（44 条）
-    .category / .tag → 分类标签
-    注意: 站点有反爬，需开启 anti_crawl_enabled
+  已确认：
+    - 分类/topic 列表来自 `/wp-json/wp/v2/categories`
+    - 列表翻页由 `headers.X-WP-TotalPages` 提供
+    - 正文/摘要/分类 ID/标签 ID/封面媒体 ID 都可在 posts API 中直接返回
+    - `_embed=1` 可直接返回封面图与 taxonomy 嵌入数据
 
-response_type: html
+response_type: json
+json_item_path: "body"
+json_total_path: "headers.X-WP-Total"
+json_total_num_pages: "headers.X-WP-TotalPages"
 
-list_page: "/"
+list_page: "/wp-json/wp/v2/posts?_envelope=1&_embed=1&per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,categories,tags,excerpt,content,featured_media,_embedded"
 list_request:
   method: GET
   headers:
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept: "application/json"
     Accept-Language: "en-US,en;q=0.9"
     User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
   encoding: utf-8
 
 list_fields:
+  - name: id
+    selector: "id"
+    selector_type: json
+    field_type: number
+    required: true
+    description: "WordPress post ID"
+
   - name: title
-    selector: "h3 a"
-    selector_type: css
+    selector: "title.rendered"
+    selector_type: json
     field_type: text
     required: true
     transform: strip
     description: "新闻标题"
 
   - name: url
-    selector: "h3 a"
-    selector_type: css
-    field_type: href
-    required: true
-    description: "详情页链接"
-
-  - name: category
-    selector: ".category a, .tag a, .kicker a"
-    selector_type: css
+    selector: "link"
+    selector_type: json
     field_type: text
-    required: false
-    transform: strip
-    description: "新闻分类, 如 Finance / Connectivity"
+    required: true
+    description: "文章详情页链接"
 
   - name: date
-    selector: "time, .date, .timestamp"
-    selector_type: css
+    selector: "date"
+    selector_type: json
     field_type: text
     required: false
     transform: strip
     description: "发布日期"
 
-list_pagination:
-  type: next_page
-  next_selector: "a.next, .pagination .next a, li.next a, a[rel='next']"
-  start_page: 0
-  max_pages: 5
-  results_per_page: 20
-
-# 详情页：用列表记录中的 url 字段进入详情页
-detail_page: "{url}"
-detail_request:
-  method: GET
-  headers:
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    Accept-Language: "en-US,en;q=0.9"
-  encoding: utf-8
-
-detail_fields:
-  - name: content
-    selector: ".article-body, .entry-content, .post-content, article .content"
-    selector_type: css
+  - name: modified
+    selector: "modified"
+    selector_type: json
     field_type: text
     required: false
-    description: "正文内容"
+    transform: strip
+    description: "最后修改时间"
+
+  - name: slug
+    selector: "slug"
+    selector_type: json
+    field_type: text
+    required: false
+    transform: strip
+    description: "URL slug"
+
+  - name: category_ids
+    selector: "categories"
+    selector_type: json
+    field_type: json
+    required: false
+    description: "topic/category ID 列表，adapter 中补充名称和 slug"
+
+  - name: tag_ids
+    selector: "tags"
+    selector_type: json
+    field_type: json
+    required: false
+    description: "标签 ID 列表，adapter 中补充名称和 slug"
+
+  - name: excerpt_html
+    selector: "excerpt.rendered"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "摘要 HTML"
+
+  - name: content_html
+    selector: "content.rendered"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "正文 HTML，adapter 中清洗为 content 并提取 external_links"
+
+  - name: featured_media
+    selector: "featured_media"
+    selector_type: json
+    field_type: number
+    required: false
+    description: "封面媒体 ID"
 
   - name: image_url
-    selector: ".article-body img, .entry-content img, article img"
-    selector_type: css
-    field_type: src
+    selector: "_embedded.wp:featuredmedia[0].source_url"
+    selector_type: json
+    field_type: text
     required: false
-    description: "文章配图"
+    description: "封面图 URL，缺失时 adapter 通过 media API 回填"
 
+list_pagination:
+  type: page_number
+  start_page: 1
+  max_pages: 0
+  results_per_page: 20
+
+download:
+  - selector: "image_url"
+    selector_type: json
+    link_type: src
+    description: "文章封面图，由 _embedded 或 adapter 回填"
+    asset_type: image
+
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    description: "正文中的附件资源"
+    asset_type: attachment
+
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    description: "正文中的图片资源"
+    asset_type: image
 
 # python -m app.crawler.main --template satellite_today

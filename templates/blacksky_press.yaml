@@ -98,4 +98,23 @@ list_pagination:
   max_pages: 0
   results_per_page: 20
 
+download:
+  - selector: "cover_image"
+    selector_type: json
+    link_type: src
+    description: "新闻稿封面图，adapter 通过 WP Media API 回填"
+    asset_type: cover_image
+
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    description: "新闻稿正文中的附件资源"
+    asset_type: attachment
+
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    description: "正文中的图片资源，adapter 已提取为 images 列表"
+    asset_type: image
+
 # python -m app.crawler.main --template blacksky_press

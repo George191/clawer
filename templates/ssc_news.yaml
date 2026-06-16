@@ -92,4 +92,35 @@ detail_fields:
     required: false
     description: "正文内容"
 
+download:
+  - selector: "thumbnail"
+    selector_type: json
+    link_type: src
+    description: "列表页缩略图"
+    asset_type: thumbnail
+
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    description: "详情页附件，如 PDF / DOC / XLS"
+    asset_type: attachment
+
+  - selector: "slides"
+    selector_type: json
+    link_type: src
+    description: "详情页轮播图资源"
+    asset_type: slide
+
+  - selector: "figures"
+    selector_type: json
+    link_type: src
+    description: "正文 figure/img 资源"
+    asset_type: figure
+
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    description: "正文中提取出的图片资源"
+    asset_type: image
+
 # python -m app.crawler.main --template ssc_news

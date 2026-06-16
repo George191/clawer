@@ -24,7 +24,7 @@ from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
-from app.adapters.utils.google_patent.browser_events import BrowserEventEmitter, PageSession
+from app.adapters.utils.browser_events import BrowserEventEmitter, PageSession
 
 logger = logging.getLogger(__name__)
 
@@ -47,15 +47,15 @@ class GooglePatentAdapter(BaseSiteAdapter):
             http_client=self._client,
             site=self.adapter_name,
         )
-        self._session = PageSession()
+        # self._session = PageSession()
 
-    @property
-    def emitter(self) -> BrowserEventEmitter:
-        return self._emitter
+    # @property
+    # def emitter(self) -> BrowserEventEmitter:
+    #     return self._emitter
 
-    @property
-    def session(self) -> PageSession:
-        return self._session
+    # @property
+    # def session(self) -> PageSession:
+    #     return self._session
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。参数值已在 main.py 中组装完毕（+OR+ 拼接），无需额外处理。"""
@@ -130,7 +130,7 @@ class GooglePatentAdapter(BaseSiteAdapter):
                 "[GooglePatentAdapter] Rate limited on page %d, resetting session",
                 page,
             )
-            self._session = PageSession()
+            # self._session = PageSession()
             return "reset_session"
         if "captcha" in error_str.lower():
             logger.error(
@@ -142,7 +142,8 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     async def close(self) -> None:
         """释放 emitter 资源。"""
-        await self._emitter.close()
+        # await self._emitter.close()
+        ...
 
     @classmethod
     def build_batch_param_value(cls, batch_data: list[str], param_name: str = "") -> str:
