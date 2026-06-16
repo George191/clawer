@@ -1,32 +1,51 @@
-"""BlackSky 新闻适配器。
+"""BlackSky 媒体报道适配器 (Media Coverage / news CPT)。
 
 核心逻辑
 --------
-1. 列表页提取新闻条目（标题、来源、日期、链接）
-2. 区分两类链接:
-   - Press release → 站内详情页，进入详情提取正文 + 外链
-   - 媒体报道 → 外部链接（直接作为外链记录）
-3. 详情页提取正文 + 外链
+1. 通过 WordPress REST API /wp-json/wp/v2/news 翻页采集媒体报道列表
+2. news 类型的 content.rendered 为空，实际内容在外部站点
+3. API 返回的 link 指向站内 /media-coverage/ 页面，不含外链
+4. 外链在 HTML 列表页 /company/news/ 的 article.article-summary.news h3 a 中
+5. 在 on_before_crawl 中请求 HTML 列表页，通过标题匹配提取外链
+6. sources 分类 ID 映射为来源名称
+7. featured_media 通过 WP Media API 获取封面图 URL
+8. 删除 source_ids（已有 source_names）和 external_url（已有 external_links）
 """
 
 from __future__ import annotations
 
 import logging
-from urllib.parse import urlparse
+import re
 from typing import Any
+from urllib.parse import urlparse
 
-from app.adapters.news_base import NewsBaseAdapter, register_adapter
+from app.adapters.news_base import NewsBaseAdapter, _SOCIAL_DOMAINS, register_adapter
 from app.downloader.http_client import HttpClient
+from app.models.template import RequestConfig
 
 logger = logging.getLogger(__name__)
 
 
+def _normalize_title(title: str) -> str:
+    """标准化标题用于匹配：去空白、转小写、去标点。"""
+    t = re.sub(r"\s+", " ", title).strip().lower()
+    t = re.sub(r"[^\w\s]", "", t)
+    return t
+
+
 @register_adapter("blacksky_news")
 class BlackSkyNewsAdapter(NewsBaseAdapter):
-    """BlackSky 新闻适配器。"""
+    """BlackSky 媒体报道适配器（WP REST API /news CPT）。"""
 
     adapter_name = "blacksky_news"
     site_domain = "blacksky.com"
+
+    # HTML 列表页外链缓存 {normalized_title: external_url}
+    _html_link_map: dict[str, str]
+    # 封面图缓存 {media_id: source_url}
+    _media_cache: dict[int, str]
+    # sources 分类映射 {id: name}
+    _source_map: dict[int, str]
 
     def __init__(
         self,
@@ -35,39 +54,190 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
         **kwargs: Any,
     ) -> None:
         super().__init__(base_url, http_client, **kwargs)
+        self._html_link_map: dict[str, str] = {}
+        self._media_cache: dict[int, str] = {}
+        self._source_map: dict[int, str] = {}
+
+    async def on_before_crawl(self, template: Any) -> None:
+        """爬取开始前：获取 sources 映射，请求 HTML 列表页。"""
+        await super().on_before_crawl(template)
+
+        if not self._client:
+            return
+
+        # 动态获取 sources 分类映射
+        await self._fetch_source_map()
+
+        try:
+            await self._build_html_link_map(page=1)
+            for p in range(2, 50):
+                if len(self._html_link_map) >= 500:
+                    break
+                await self._build_html_link_map(page=p)
+
+            logger.info(
+                "[BlackSkyNews] Built HTML link map with %d entries",
+                len(self._html_link_map),
+            )
+        except Exception as e:
+            logger.warning(
+                "[BlackSkyNews] Failed to build HTML link map: %s",
+                str(e)[:100],
+            )
+
+    async def _build_html_link_map(self, page: int = 1) -> None:
+        """请求 HTML 列表页，提取 news 类型文章的标题和外链。"""
+        from lxml import html as lxml_html
+
+        url = f"https://blacksky.com/company/news/page/{page}/"
+        cfg = RequestConfig(
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
+        )
+
+        try:
+            html_content = await self._client.request_page(
+                url, cfg, anti_crawl_enabled=False,
+            )
+        except Exception as e:
+            logger.debug("[BlackSkyNews] HTML page %d fetch failed: %s", page, str(e)[:80])
+            return
+
+        try:
+            tree = lxml_html.fromstring(html_content)
+        except Exception:
+            return
+
+        for article in tree.cssselect("article.article-summary.news"):
+            links = article.cssselect("h3 a")
+            if not links:
+                continue
+            a_tag = links[0]
+            title = a_tag.text_content().strip()
+            href = a_tag.get("href", "").strip()
+
+            if not title or not href:
+                continue
+
+            try:
+                parsed = urlparse(href)
+                domain = parsed.netloc.lower().replace("www.", "")
+            except Exception:
+                continue
+
+            if not domain or domain == self.site_domain:
+                continue
+            if domain in _SOCIAL_DOMAINS:
+                continue
+
+            normalized = _normalize_title(title)
+            self._html_link_map[normalized] = href
+
+    async def _fetch_source_map(self) -> None:
+        """通过 WP REST API 动态获取 sources 分类的 ID→名称映射。"""
+        try:
+            url = "https://blacksky.com/wp-json/wp/v2/sources?per_page=100&_fields=id,name"
+            cfg = RequestConfig(
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                }
+            )
+            import json
+            resp = await self._client.request_page(url, cfg, anti_crawl_enabled=False)
+            items = json.loads(resp)
+            for item in items:
+                self._source_map[item["id"]] = item["name"]
+            logger.info(
+                "[BlackSkyNews] Fetched %d sources from API",
+                len(self._source_map),
+            )
+        except Exception as e:
+            logger.warning(
+                "[BlackSkyNews] Failed to fetch sources: %s",
+                str(e)[:100],
+            )
+
+    async def _fetch_media_url(self, media_id: int) -> str:
+        """通过 WP Media API 获取封面图 URL。"""
+        if not media_id or not self._client:
+            return ""
+
+        if media_id in self._media_cache:
+            return self._media_cache[media_id]
+
+        try:
+            url = f"https://blacksky.com/wp-json/wp/v2/media/{media_id}?_fields=source_url,alt_text,title"
+            cfg = RequestConfig(
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                }
+            )
+            import json
+            resp = await self._client.request_page(url, cfg, anti_crawl_enabled=False)
+            data = json.loads(resp)
+            source_url = data.get("source_url", "")
+            if source_url:
+                self._media_cache[media_id] = source_url
+            return source_url
+        except Exception as e:
+            logger.debug("[BlackSkyNews] Media %d fetch failed: %s", media_id, str(e)[:60])
+            return ""
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
-        """列表页后处理：区分站内/外链，标记外链类型。"""
+        """列表页后处理：映射来源名称，匹配 HTML 外链，获取封面图。"""
         records = await super().on_after_page(page, records)
 
         for record in records:
-            url = record.get("url", "")
-            if not url:
-                continue
+            # sources ID → 名称，然后删除 source_ids
+            source_ids = record.pop("source_ids", [])
+            if isinstance(source_ids, list):
+                record["source_names"] = [
+                    self._source_map.get(sid, f"source_{sid}") for sid in source_ids
+                ]
 
-            parsed = urlparse(url)
-            domain = parsed.netloc.lower().replace("www.", "")
+            # 标记类型
+            record["link_type"] = "media_coverage"
 
-            # 外部媒体报道 → 直接标记为外链
-            if domain and domain != self.site_domain and not domain.endswith(f".{self.site_domain}"):
-                record["external_url"] = url
-                record["link_type"] = "external_media"
-                logger.debug(
-                    "[BlackSkyNewsAdapter] External media link: %s → %s",
-                    record.get("title", "")[:50], url,
-                )
-            else:
-                record["link_type"] = "press_release"
+            # 通过标题匹配 HTML 列表页中的外链
+            title = record.get("title", "")
+            if title and self._html_link_map:
+                normalized = _normalize_title(title)
+                ext_url = self._html_link_map.get(normalized)
+                if ext_url:
+                    record["external_links"] = [ext_url]
+                else:
+                    best_match = self._fuzzy_match_title(normalized)
+                    if best_match:
+                        record["external_links"] = [best_match]
+
+            # 删除 external_url（已有 external_links）
+            record.pop("external_url", None)
+
+            # 获取封面图 URL
+            media_id = record.get("featured_media", 0)
+            if media_id:
+                cover_url = await self._fetch_media_url(media_id)
+                if cover_url:
+                    record["cover_image"] = cover_url
 
         return records
 
+    def _fuzzy_match_title(self, normalized: str) -> str | None:
+        """模糊匹配标题：检查是否有包含关系。"""
+        for key, url in self._html_link_map.items():
+            if normalized in key or key in normalized:
+                return url
+        return None
+
     def on_request_headers(self, page: int) -> dict[str, str]:
-        """BlackSky 请求头。"""
+        """JSON API 请求头。"""
         return {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://blacksky.com/",
-            "Cache-Control": "no-cache",
+            "Accept": "application/json",
+            "Referer": "https://blacksky.com/company/news/",
         }
 
     async def on_error(

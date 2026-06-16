@@ -1,0 +1,50 @@
+name: ssc_press
+display_name: "SSC Space Force Press Releases"
+base_url: "https://www.ssc.spaceforce.mil"
+data_type: news
+adapter: ssc_press
+anti_crawl_enabled: false
+description: >
+  采集 SSC Media Room 新闻稿 (Press Releases)。
+  列表页 /Connect-With-Us/Media-Room 是单页 HTML，无分页，
+  新闻稿以手工 HTML 排列（日期 + 链接），结构不规则。
+  adapter 在 on_before_crawl 中手动解析列表页，提取所有链接，
+  然后逐条请求详情页。
+
+  详情页与 Newsroom 共用同一套模板（DNN ArticleCS），
+  通过 article-detail-tag: Press Release 区分类型。
+
+response_type: html
+
+list_page: "/Connect-With-Us/Media-Room"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+list_fields:
+  - name: title
+    selector: "a"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "新闻标题 (adapter 中覆盖)"
+
+  - name: url
+    selector: "a"
+    selector_type: css
+    field_type: href
+    required: true
+    description: "详情页链接 (adapter 中覆盖)"
+
+list_pagination:
+  type: page_number
+  start_page: 1
+  max_pages: 0
+  results_per_page: 100
+
+# python -m app.crawler.main --template ssc_press

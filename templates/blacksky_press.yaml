@@ -1,25 +1,25 @@
-name: blacksky_news
-display_name: "BlackSky - 媒体报道 (Media Coverage)"
+name: blacksky_press
+display_name: "BlackSky - 新闻稿 (Press Releases)"
 base_url: "https://blacksky.com"
 data_type: news
-adapter: blacksky_news
+adapter: blacksky_press
 anti_crawl_enabled: false
 description: >
-  采集 BlackSky 媒体报道（外部新闻源对 BlackSky 的报道）。
-  使用 WordPress REST API 翻页，自定义文章类型: news (rest_base=news)。
+  采集 BlackSky 官方新闻稿。
+  使用 WordPress REST API 翻页，自定义文章类型: releases (rest_base=releases)。
 
   特点:
-  - content.rendered 为空，实际内容在外部站点
-  - 有 sources 分类（如 Via Satellite, Space News 等）
-  - link 指向站内 /media-coverage/ 页面
-  - 外链在 HTML 列表页 /company/news/ 的 article.article-summary.news h3 a 中
-  - adapter 中通过 HTML 列表页匹配外链 + WP Media API 获取封面图
+  - content.rendered 有完整 HTML 正文
+  - 有 featured_media 配图（adapter 中通过 WP Media API 获取 URL）
+  - link 指向站内 /press-releases/ 页面
+  - excerpt.rendered 有摘要
+  - adapter 中从 content_html 提取外链和正文图片
 
 response_type: json
 json_item_path: ""
 json_total_path: ""
 
-list_page: "/wp-json/wp/v2/news?per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,sources,excerpt,featured_media"
+list_page: "/wp-json/wp/v2/releases?per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,content,excerpt,featured_media"
 list_request:
   method: GET
   headers:
@@ -43,6 +43,13 @@ list_fields:
     transform: strip
     description: "新闻标题"
 
+  - name: url
+    selector: "link"
+    selector_type: json
+    field_type: text
+    required: true
+    description: "站内详情页链接 (/press-releases/...)"
+
   - name: date
     selector: "date"
     selector_type: json
@@ -64,12 +71,12 @@ list_fields:
     required: false
     description: "URL slug"
 
-  - name: source_ids
-    selector: "sources"
+  - name: content_html
+    selector: "content.rendered"
     selector_type: json
-    field_type: json
+    field_type: text
     required: false
-    description: "来源分类 ID 列表（adapter 中转换为 source_names）"
+    description: "正文 HTML"
 
   - name: excerpt
     selector: "excerpt.rendered"
@@ -83,7 +90,7 @@ list_fields:
     selector_type: json
     field_type: number
     required: false
-    description: "封面图 media ID（0 表示无封面图，adapter 中通过 WP Media API 获取 URL）"
+    description: "封面图 media ID（adapter 中通过 WP Media API 获取 URL）"
 
 list_pagination:
   type: page_number
@@ -91,4 +98,4 @@ list_pagination:
   max_pages: 0
   results_per_page: 20
 
-# python -m app.crawler.main --template blacksky_news
+# python -m app.crawler.main --template blacksky_press

@@ -741,6 +741,10 @@ class SpiderEngine:
                 )
                 result.errors.append(f"List page {current_page}: exceeded retries")
 
+            # 空页终止：当前页无记录，说明已到末尾
+            if page_succeeded and not records:
+                break
+
             if not template.list_pagination:
                 break
 

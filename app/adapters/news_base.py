@@ -101,10 +101,11 @@ class NewsBaseAdapter(BaseSiteAdapter):
             except Exception:
                 continue
 
-            # 排除站内链接
+            # 排除站内链接（仅排除主域名本身和 www 子域名，其他子域名视为外链）
+            # 例如 blacksky.com 和 www.blacksky.com 是站内，ir.blacksky.com 是外链
             if not domain:
                 continue
-            if domain == self.site_domain or domain.endswith(f".{self.site_domain}"):
+            if domain == self.site_domain or domain == f"www.{self.site_domain}":
                 continue
 
             # 排除社交媒体

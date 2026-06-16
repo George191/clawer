@@ -1,0 +1,237 @@
+"""SSC (Space Systems Command) Press Releases adapter.
+
+Media Room 列表页 (/Connect-With-Us/Media-Room) 是手工编排的 HTML，
+结构不规则（日期和链接混在 <p>/<span> 中），无法用模板选择器提取。
+adapter 在 on_before_crawl 中手动解析列表页，提取所有 press release 链接。
+
+详情页与 Newsroom 共用同一套模板（DNN ArticleCS），
+详情页解析逻辑复用 SscNewsAdapter 的静态方法。
+
+部分老 press release 直接链接到 PDF 文件（无详情页），
+这类记录直接保存 PDF 链接作为附件。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from typing import Any
+from urllib.parse import urljoin
+
+from lxml import html as lxml_html
+
+from app.adapters.news_base import NewsBaseAdapter, register_adapter
+from app.adapters.ssc_news import SscNewsAdapter
+from app.downloader.http_client import HttpClient
+from app.models.template import RequestConfig
+
+logger = logging.getLogger(__name__)
+
+_DETAIL_CONCURRENCY = 4
+
+
+@register_adapter("ssc_press")
+class SscPressAdapter(NewsBaseAdapter):
+    """SSC Press Releases adapter — 手动解析 Media Room 列表页。"""
+
+    adapter_name = "ssc_press"
+    site_domain = "ssc.spaceforce.mil"
+
+    def __init__(
+        self,
+        base_url: str,
+        http_client: HttpClient | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(base_url, http_client, **kwargs)
+        self._template: Any = None
+        self._press_links: list[dict] = []
+
+    async def on_before_crawl(self, template: Any) -> None:
+        """爬取开始前：手动解析 Media Room 列表页。"""
+        await super().on_before_crawl(template)
+        self._template = template
+
+        if not self._client:
+            return
+
+        try:
+            url = f"{self._base_url}/Connect-With-Us/Media-Room"
+            cfg = RequestConfig(
+                headers={
+                    "Accept": "text/html,application/xhtml+xml",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                }
+            )
+            html_content = await self._client.request_page(
+                url, cfg, anti_crawl_enabled=False,
+            )
+            self._press_links = self._parse_media_room(html_content)
+            logger.info(
+                "[SscPress] Parsed %d press links from Media Room",
+                len(self._press_links),
+            )
+        except Exception as e:
+            logger.warning(
+                "[SscPress] Failed to parse Media Room: %s",
+                str(e)[:100],
+            )
+
+    def _parse_media_room(self, html: str) -> list[dict]:
+        """解析 Media Room 页面，提取所有新闻稿链接。"""
+        try:
+            tree = lxml_html.fromstring(html)
+        except Exception:
+            return []
+
+        links: list[dict] = []
+        seen: set[str] = set()
+
+        for a_tag in tree.cssselect("a[href]"):
+            href = (a_tag.get("href") or "").strip()
+            title = a_tag.text_content().strip()
+
+            if not href or not title:
+                continue
+
+            # 只匹配 Newsroom/Article 链接或 PDF 链接
+            is_article = "/Newsroom/Article/" in href
+            is_pdf = href.lower().endswith(".pdf") or "/Portals/3/" in href or "LinkClick.aspx" in href
+
+            if not (is_article or is_pdf):
+                continue
+
+            # 补全 URL
+            full_url = urljoin(f"{self._base_url}/", href)
+
+            # 去重
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+
+            # 提取日期（从链接前的文本中）
+            date = self._extract_date_from_context(a_tag)
+
+            record = {
+                "title": title,
+                "url": full_url,
+                "link_type": "press_release",
+            }
+            if date:
+                record["date"] = date
+
+            # PDF 链接标记
+            if is_pdf and not is_article:
+                record["is_pdf"] = True
+                ext = full_url.rsplit(".", 1)[-1].lower() if "." in full_url else "pdf"
+                record["attachments"] = [{
+                    "url": full_url,
+                    "type": ext,
+                    "label": title,
+                }]
+
+            links.append(record)
+
+        return links
+
+    @staticmethod
+    def _extract_date_from_context(a_tag: Any) -> str:
+        """从链接周围的文本中提取日期（如 '09 JUN 2026 -'）。"""
+        # 向上查找 <p> 标签
+        current = a_tag.getparent()
+        for _ in range(3):
+            if current is None:
+                break
+            text = current.text_content().strip()
+            # 匹配 "09 JUN 2026" 或 "June 9, 2026" 格式
+            match = re.search(
+                r"(\d{1,2}\s+[A-Z]{3}\s+\d{4}|\w+\s+\d{1,2},?\s+\d{4})",
+                text,
+            )
+            if match:
+                return match.group(1)
+            current = current.getparent()
+        return ""
+
+    async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
+        """覆盖默认行为：用 _press_links 替换模板解析的记录，逐条请求详情页。"""
+        records = await super().on_after_page(page, records)
+
+        # 如果 on_before_crawl 成功解析了列表页，使用手动解析的结果
+        if self._press_links:
+            records = self._press_links
+        else:
+            # fallback: 使用模板解析的记录
+            for r in records:
+                r["link_type"] = "press_release"
+
+        # 逐条请求详情页（非 PDF 记录）
+        semaphore = asyncio.Semaphore(_DETAIL_CONCURRENCY)
+
+        async def enrich(record: dict) -> dict:
+            async with semaphore:
+                return await self._enrich_detail(record)
+
+        return await asyncio.gather(*(enrich(record) for record in records))
+
+    async def _enrich_detail(self, record: dict) -> dict:
+        """请求详情页并提取字段。PDF 记录跳过。"""
+        if record.get("is_pdf"):
+            return record
+
+        detail_url = record.get("url", "")
+        if not detail_url or "/Newsroom/Article/" not in detail_url:
+            return record
+
+        try:
+            cfg = RequestConfig(
+                headers={
+                    "Accept": "text/html,application/xhtml+xml",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                }
+            )
+            html = await self._client.request_page(
+                detail_url, cfg, anti_crawl_enabled=False,
+            )
+        except Exception as e:
+            logger.warning(
+                "[SscPress] Failed to fetch detail '%s': %s",
+                detail_url, str(e)[:80],
+            )
+            return record
+
+        # 复用 SscNewsAdapter 的详情页解析逻辑
+        SscNewsAdapter._extract_meta_fields(html, record)
+        SscNewsAdapter._extract_content(html, record, detail_url)
+        SscNewsAdapter._extract_slides(html, record, detail_url)
+        SscNewsAdapter._extract_figures(html, record, detail_url)
+        SscNewsAdapter._extract_attachments(html, record, detail_url)
+        SscNewsAdapter._extract_tags(html, record)
+        SscNewsAdapter._extract_external_links(html, record, detail_url)
+
+        # 确保 link_type
+        record["link_type"] = "press_release"
+
+        return record
+
+    def on_request_headers(self, page: int) -> dict[str, str]:
+        return {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Cache-Control": "no-cache",
+        }
+
+    async def on_error(
+        self, error: Exception, page: int, attempt: int,
+    ) -> str | None:
+        error_str = str(error)
+        if "404" in error_str:
+            return "skip"
+        if "403" in error_str:
+            return "skip"
+        return None
