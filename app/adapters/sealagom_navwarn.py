@@ -61,6 +61,7 @@ class SealagomAdapter(BaseSiteAdapter):
         self._current_navarea: int = 1
         self._retry_count: int = 0   # 本次采集累计重试次数
         self._error_count: int = 0   # 本次采集累计错误次数
+        self._seen_message_ids: set[str] = set()
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前：记录 NAVAREA 编号。"""
@@ -75,6 +76,7 @@ class SealagomAdapter(BaseSiteAdapter):
             self._current_navarea = 1
         self._retry_count = 0
         self._error_count = 0
+        self._seen_message_ids.clear()
         logger.info(
             "[SealagomAdapter] ▶ Starting crawl for NAVAREA %d",
             self._current_navarea,
@@ -104,16 +106,43 @@ class SealagomAdapter(BaseSiteAdapter):
         - 重试成功后打印恢复日志
         """
         enriched = []
+        empty_records = 0
+        duplicate_records = 0
         for record in records:
             if not record.get("message_id") and not record.get("title"):
+                empty_records += 1
                 continue
+
+            message_key = self._record_key(record)
+            if message_key:
+                if message_key in self._seen_message_ids:
+                    duplicate_records += 1
+                    continue
+                self._seen_message_ids.add(message_key)
+
             record["navarea_id"] = self._current_navarea
             enriched.append(record)
 
-        if len(enriched) < len(records):
+        if empty_records:
             logger.info(
                 "[SealagomAdapter] Filtered %d empty records on page %d",
-                len(records) - len(enriched),
+                empty_records,
+                page,
+            )
+
+        if duplicate_records:
+            logger.info(
+                "[SealagomAdapter] Filtered %d duplicate records on NAVAREA %d page %d",
+                duplicate_records,
+                self._current_navarea,
+                page,
+            )
+
+        if records and not enriched:
+            logger.info(
+                "[SealagomAdapter] No new messages on NAVAREA %d page %d; "
+                "stopping pagination",
+                self._current_navarea,
                 page,
             )
 
@@ -128,6 +157,18 @@ class SealagomAdapter(BaseSiteAdapter):
             self._retry_count = 0  # 重置，为下一页准备
 
         return enriched
+
+    @staticmethod
+    def _record_key(record: dict) -> str:
+        message_id = str(record.get("message_id") or "").strip()
+        if message_id:
+            return message_id
+
+        warning_no = str(record.get("warning_no") or "").strip()
+        message_text = " ".join(str(record.get("message_text") or "").split())
+        if warning_no or message_text:
+            return f"{warning_no}:{message_text[:160]}"
+        return ""
 
     def on_request_headers(self, page: int) -> dict[str, str]:
         """注入请求头 — 模拟普通浏览器。"""

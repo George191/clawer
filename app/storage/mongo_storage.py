@@ -55,11 +55,6 @@ class MongoStorage(StorageBackend):
         return collection
 
     def _resolve_record_id(self, record: dict[str, Any]) -> str:
-        for key in ("id", "uid", "contract_no", "patent_id", "title"):
-            if key in record and record[key]:
-                value = str(record[key]).strip()
-                safe_value = "".join(c if c.isalnum() or c in "-_" else "_" for c in value)
-                return safe_value[:200]
         content = json.dumps(record, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(content.encode()).hexdigest()
 

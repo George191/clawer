@@ -20,7 +20,7 @@ description: >
 
 response_type: html
 
-list_page: "/Newsroom/"
+list_page: "/Newsroom?Page={page}"
 list_request:
   method: GET
   headers:
@@ -71,8 +71,8 @@ list_fields:
 list_pagination:
   type: next_page
   next_selector: "a:contains('Next'), .pagination .next a, li.next a"
-  start_page: 0
-  max_pages: 5
+  start_page: 1
+  max_pages: 50
   results_per_page: 10
 
 # 详情页：用列表记录中的 url 字段进入详情页

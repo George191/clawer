@@ -378,13 +378,7 @@ class SpiderEngine:
                 template, result, resume_page, checkpoint_state,
             )
 
-            if template.detail_fields and list_records:
-                detail_records = await self._crawl_detail_pages(
-                    template, list_records, result
-                )
-                result.records = detail_records
-            else:
-                result.records = list_records
+            result.records = list_records
 
             checkpoint_state.status = "completed"
             await self._save_checkpoint(template.name, checkpoint_state)
@@ -443,7 +437,12 @@ class SpiderEngine:
         )
         await adapter.on_before_crawl(template)
 
-        for current_page in range(page, page + max_pages):
+        # max_pages=0 表示不限制页数，使用大数代替无限循环
+        has_page_cap = max_pages > 0
+        pages_crawled = 0
+        current_page = page
+
+        while not has_page_cap or pages_crawled < max_pages:
             is_first = (current_page == page)
             page_succeeded = False
             page_skipped = False
@@ -558,8 +557,7 @@ class SpiderEngine:
                 result.errors.append(f"List page {current_page}: exceeded retries")
                 break  # 超出重试次数，中断翻页
 
-            # 空页面 = 自然翻页结束；"skip" 也应继续下一页
-            if page_succeeded and "records" in dir() and not records:
+            if page_succeeded and not page_skipped and not records:
                 break
 
             if not template.list_pagination:
@@ -575,6 +573,8 @@ class SpiderEngine:
                     break
 
             adapter.on_page_advance()
+            pages_crawled += 1
+            current_page += 1
 
         await adapter.close()
         return all_records
@@ -757,153 +757,6 @@ class SpiderEngine:
     @staticmethod
     def _retry_loop():
         return itertools.count()
-
-    async def _crawl_detail_pages(
-        self,
-        template: SiteTemplate,
-        list_records: list[dict[str, Any]],
-        result: CrawlResult,
-    ) -> list[dict[str, Any]]:
-        if template.response_type == ResponseType.JSON:
-            return await self._crawl_detail_pages_json(template, list_records, result)
-        return await self._crawl_detail_pages_html(template, list_records, result)
-
-    async def _crawl_detail_pages_html(
-        self,
-        template: SiteTemplate,
-        list_records: list[dict[str, Any]],
-        result: CrawlResult,
-    ) -> list[dict[str, Any]]:
-        detail_urls = await self._resolve_detail_urls(template, list_records, result)
-
-        tasks = [
-            self._crawl_single_detail(template, url, base_record)
-            for url, base_record in detail_urls
-        ]
-
-        detail_records: list[dict[str, Any]] = []
-        batch_size = settings.max_concurrent_tasks
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i : i + batch_size]
-            batch_results = await asyncio.gather(*batch, return_exceptions=True)
-            batch_saved: list[dict[str, Any]] = []
-            for item in batch_results:
-                if isinstance(item, Exception):
-                    logger.error("Detail page error: %s", item)
-                    result.errors.append(str(item))
-                elif item is not None:
-                    detail_records.append(item)
-                    batch_saved.append(item)
-            if batch_saved:
-                await self._save_page_records(template, batch_saved, result)
-
-        return detail_records
-
-    async def _crawl_detail_pages_json(
-        self,
-        template: SiteTemplate,
-        list_records: list[dict[str, Any]],
-        result: CrawlResult,
-    ) -> list[dict[str, Any]]:
-        detail_urls = await self._resolve_detail_urls(template, list_records, result)
-
-        tasks = [
-            self._crawl_single_detail_json(template, url, base_record)
-            for url, base_record in detail_urls
-        ]
-
-        detail_records: list[dict[str, Any]] = []
-        batch_size = settings.max_concurrent_tasks
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i : i + batch_size]
-            batch_results = await asyncio.gather(*batch, return_exceptions=True)
-            batch_saved: list[dict[str, Any]] = []
-            for item in batch_results:
-                if isinstance(item, Exception):
-                    logger.error("Detail page JSON error: %s", item)
-                    result.errors.append(str(item))
-                elif item is not None:
-                    detail_records.append(item)
-                    batch_saved.append(item)
-            if batch_saved:
-                await self._save_page_records(template, batch_saved, result)
-
-        return detail_records
-
-    async def _resolve_detail_urls(
-        self,
-        template: SiteTemplate,
-        list_records: list[dict[str, Any]],
-        result: CrawlResult,
-    ) -> list[tuple[str, dict[str, Any]]]:
-        urls: list[tuple[str, dict[str, Any]]] = []
-
-        if template.detail_url_selector:
-            first_list_url = template.get_full_list_url(1)
-            html = await self._client.request_page(first_list_url, template.list_request)
-            links = self._parser.extract_links(
-                html,
-                template.detail_url_selector,
-                template.detail_url_selector_type,
-            )
-            for link in links:
-                full_url = template.get_full_detail_url(link)
-                urls.append((full_url, {}))
-        elif template.detail_page:
-            for record in list_records:
-                detail_path = template.detail_page
-                for key, value in record.items():
-                    placeholder = "{" + key + "}"
-                    if placeholder in detail_path:
-                        detail_path = detail_path.replace(placeholder, str(value))
-                full_url = template.get_full_detail_url(detail_path)
-                urls.append((full_url, record))
-        else:
-            for record in list_records:
-                urls.append(("", record))
-
-        return urls
-
-    async def _crawl_single_detail(
-        self,
-        template: SiteTemplate,
-        url: str,
-        base_record: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        async with self._semaphore:
-            try:
-                if not url:
-                    return base_record
-
-                html = await self._client.request_page(url, template.detail_request, anti_crawl_enabled=template.effective_anti_crawl_enabled)
-                detail = self._parser.parse_detail(html, template.detail_fields)
-                merged = {**base_record, **detail, "_source_url": url}
-                return merged
-
-            except Exception as e:
-                logger.error("Failed to crawl detail page %s: %s", url, e)
-                raise
-
-    async def _crawl_single_detail_json(
-        self,
-        template: SiteTemplate,
-        url: str,
-        base_record: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        async with self._semaphore:
-            try:
-                if not url:
-                    return base_record
-
-                text = await self._client.request_page(url, template.detail_request, anti_crawl_enabled=template.effective_anti_crawl_enabled)
-                json_data = json.loads(text)
-                detail = self._parser.parse_detail_json(json_data, template.detail_fields)
-                merged = {**base_record, **detail, "_source_url": url}
-                return merged
-
-            except Exception as e:
-                logger.error("Failed to crawl detail JSON %s: %s", url, e)
-                raise
 
     async def close(self) -> None:
         await self._client.close()

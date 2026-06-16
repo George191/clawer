@@ -84,4 +84,4 @@ list_pagination:
   results_per_page: 50
 
 
-# python -m app.crawler.main --list-file data/navarea_ids.txt --list-param navarea_id --batch-size 1 --template sealagom_navwarn --delay 3
+# python -m app.crawler.main --list-file data/navarea_ids.txt --list-param navarea_id --batch-size 1 --template-name sealagom_navwarn --delay 0

@@ -608,8 +608,18 @@ def main() -> None:
             logger.error("错误: 使用 --list-file 时必须同时指定 --list-param")
             sys.exit(1)
         
+        # --template-name 优先，否则从 --template 参数中提取模板名
+        tmpl_name = args.template_name
+        if not tmpl_name and args.template_args:
+            first_arg = args.template_args[0]
+            name, _ = parse_template_arg(first_arg)
+            tmpl_name = name
+        if not tmpl_name:
+            logger.error("错误: 使用 --list-file 时必须指定 --template-name 或 --template")
+            sys.exit(1)
+        
         asyncio.run(run_from_list_file_stream(
-            template_name=args.template_name,
+            template_name=tmpl_name,
             file_path=args.list_file,
             param_name=args.list_param,
             start_line=args.start,
