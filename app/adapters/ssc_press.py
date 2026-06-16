@@ -79,7 +79,14 @@ class SscPressAdapter(NewsBaseAdapter):
             )
 
     def _parse_media_room(self, html: str) -> list[dict]:
-        """解析 Media Room 页面，提取所有新闻稿链接。"""
+        """解析 Media Room 页面，提取所有新闻稿链接。
+
+        页面结构：
+        - 年份 Tab（2026, 2025, 2024, ...）不改变 URL，纯前端切换
+        - 所有年份内容在同一页面中，通过 h3/h4/p 标记月份分组
+        - 月份标题格式如 "JUNE 2026"、"DECEMBER 2025"，已包含年份
+        - 部分老新闻直接链接到 PDF 文件
+        """
         try:
             tree = lxml_html.fromstring(html)
         except Exception:
@@ -87,51 +94,74 @@ class SscPressAdapter(NewsBaseAdapter):
 
         links: list[dict] = []
         seen: set[str] = set()
+        current_month = ""
 
-        for a_tag in tree.cssselect("a[href]"):
-            href = (a_tag.get("href") or "").strip()
-            title = a_tag.text_content().strip()
+        # 找到内容区域（Tab 容器内的所有内容）
+        tab_container = tree.cssselect("#dnn_ctr2345_ViewTabs_pnlContainter")
+        container = tab_container[0] if tab_container else tree
 
-            if not href or not title:
-                continue
+        # 遍历所有元素，跟踪月份分组
+        for elem in container.iter():
+            # 检测月份标题
+            if elem.tag in ("h3", "h4", "p"):
+                text = elem.text_content().strip().upper()
+                month_match = re.match(
+                    r"^(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+(\d{4})",
+                    text,
+                )
+                if month_match:
+                    current_month = f"{month_match.group(1)} {month_match.group(2)}"
 
-            # 只匹配 Newsroom/Article 链接或 PDF 链接
-            is_article = "/Newsroom/Article/" in href
-            is_pdf = href.lower().endswith(".pdf") or "/Portals/3/" in href or "LinkClick.aspx" in href
+            # 提取链接
+            if elem.tag == "a" and elem.get("href"):
+                href = (elem.get("href") or "").strip()
+                title = elem.text_content().strip()
 
-            if not (is_article or is_pdf):
-                continue
+                if not href or not title:
+                    continue
 
-            # 补全 URL
-            full_url = urljoin(f"{self._base_url}/", href)
+                is_article = "/Newsroom/Article/" in href
+                is_pdf = href.lower().endswith(".pdf") or "/Portals/3/" in href or "LinkClick.aspx" in href
 
-            # 去重
-            if full_url in seen:
-                continue
-            seen.add(full_url)
+                if not (is_article or is_pdf):
+                    continue
 
-            # 提取日期（从链接前的文本中）
-            date = self._extract_date_from_context(a_tag)
+                full_url = urljoin(f"{self._base_url}/", href)
 
-            record = {
-                "title": title,
-                "url": full_url,
-                "link_type": "press_release",
-            }
-            if date:
-                record["date"] = date
+                if full_url in seen:
+                    continue
+                seen.add(full_url)
 
-            # PDF 链接标记
-            if is_pdf and not is_article:
-                record["is_pdf"] = True
-                ext = full_url.rsplit(".", 1)[-1].lower() if "." in full_url else "pdf"
-                record["attachments"] = [{
+                date = self._extract_date_from_context(elem)
+
+                record: dict[str, Any] = {
+                    "title": title,
                     "url": full_url,
-                    "type": ext,
-                    "label": title,
-                }]
+                    "link_type": "press_release",
+                }
 
-            links.append(record)
+                # 时间分组信息（从月份标题提取）
+                if current_month:
+                    record["month_group"] = current_month
+                    # 从 month_group 中提取年份
+                    year = current_month.split()[-1] if current_month else ""
+                    if year:
+                        record["year_group"] = year
+
+                if date:
+                    record["date"] = date
+
+                # PDF 链接标记
+                if is_pdf and not is_article:
+                    record["is_pdf"] = True
+                    ext = full_url.rsplit(".", 1)[-1].lower() if "." in full_url else "pdf"
+                    record["attachments"] = [{
+                        "url": full_url,
+                        "type": ext,
+                        "label": title,
+                    }]
+
+                links.append(record)
 
         return links
 
@@ -155,16 +185,28 @@ class SscPressAdapter(NewsBaseAdapter):
         return ""
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
-        """覆盖默认行为：用 _press_links 替换模板解析的记录，逐条请求详情页。"""
+        """覆盖默认行为：用 _press_links 替换模板解析的记录，逐条请求详情页。
+
+        Media Room 是单页 HTML（年份 Tab 不改变 URL），
+        所有数据在 on_before_crawl 中已解析完毕。
+        只在第 1 页返回数据，第 2 页起返回空列表以停止翻页。
+        """
         records = await super().on_after_page(page, records)
+
+        # 只在第 1 页处理；第 2 页起返回空列表停止翻页
+        if page > 1:
+            return []
 
         # 如果 on_before_crawl 成功解析了列表页，使用手动解析的结果
         if self._press_links:
-            records = self._press_links
+            records = list(self._press_links)
         else:
             # fallback: 使用模板解析的记录
             for r in records:
                 r["link_type"] = "press_release"
+
+        if not records:
+            return []
 
         # 逐条请求详情页（非 PDF 记录）
         semaphore = asyncio.Semaphore(_DETAIL_CONCURRENCY)
@@ -173,7 +215,7 @@ class SscPressAdapter(NewsBaseAdapter):
             async with semaphore:
                 return await self._enrich_detail(record)
 
-        return await asyncio.gather(*(enrich(record) for record in records))
+        return list(await asyncio.gather(*(enrich(record) for record in records)))
 
     async def _enrich_detail(self, record: dict) -> dict:
         """请求详情页并提取字段。PDF 记录跳过。"""

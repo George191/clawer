@@ -168,16 +168,24 @@ class SscNewsAdapter(NewsBaseAdapter):
             if dt:
                 record["date"] = dt
 
-        # 机构: div.meta ul li (第二个 li)
+        # 机构/作者: div.meta ul li
+        # 结构: li[0]="Published ...", li[1]="By ..."(作者), li[2]=机构
         meta_lis = tree.cssselect("section.article-detail-content .meta ul li")
+        organization = []
+        author = ""
         for li in meta_lis:
             text = li.text_content().strip()
-            # 跳过 "Published ..." 的 li
             if text.startswith("Published"):
                 continue
+            if text.startswith("By "):
+                author = text[3:].strip()
+                continue
             if text:
-                record["organization"] = text
-                break
+                organization.append(text)
+
+        record["organization"] = organization
+        if author:
+            record["author"] = author
 
         # 电头: strong.article-detail-dateline
         dateline_nodes = tree.cssselect("strong.article-detail-dateline")
