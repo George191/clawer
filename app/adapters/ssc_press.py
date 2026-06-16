@@ -5,7 +5,7 @@ Media Room 列表页 (/Connect-With-Us/Media-Room) 是手工编排的 HTML，
 adapter 在 on_before_crawl 中手动解析列表页，提取所有 press release 链接。
 
 详情页与 Newsroom 共用同一套模板（DNN ArticleCS），
-详情页解析逻辑复用 SscNewsAdapter 的静态方法。
+解析逻辑继承自 SscBaseAdapter。
 
 部分老 press release 直接链接到 PDF 文件（无详情页），
 这类记录直接保存 PDF 链接作为附件。
@@ -21,8 +21,8 @@ from urllib.parse import urljoin
 
 from lxml import html as lxml_html
 
-from app.adapters.news_base import NewsBaseAdapter, register_adapter
-from app.adapters.ssc_news import SscNewsAdapter
+from app.adapters.ssc_base import SscBaseAdapter
+from app.adapters.news_base import register_adapter
 from app.downloader.http_client import HttpClient
 from app.models.template import RequestConfig
 
@@ -32,7 +32,7 @@ _DETAIL_CONCURRENCY = 4
 
 
 @register_adapter("ssc_press")
-class SscPressAdapter(NewsBaseAdapter):
+class SscPressAdapter(SscBaseAdapter):
     """SSC Press Releases adapter — 手动解析 Media Room 列表页。"""
 
     adapter_name = "ssc_press"
@@ -143,8 +143,7 @@ class SscPressAdapter(NewsBaseAdapter):
                 # 时间分组信息（从月份标题提取）
                 if current_month:
                     record["month_group"] = current_month
-                    # 从 month_group 中提取年份
-                    year = current_month.split()[-1] if current_month else ""
+                    year = current_month.split()[-1]
                     if year:
                         record["year_group"] = year
 
@@ -168,13 +167,11 @@ class SscPressAdapter(NewsBaseAdapter):
     @staticmethod
     def _extract_date_from_context(a_tag: Any) -> str:
         """从链接周围的文本中提取日期（如 '09 JUN 2026 -'）。"""
-        # 向上查找 <p> 标签
         current = a_tag.getparent()
         for _ in range(3):
             if current is None:
                 break
             text = current.text_content().strip()
-            # 匹配 "09 JUN 2026" 或 "June 9, 2026" 格式
             match = re.search(
                 r"(\d{1,2}\s+[A-Z]{3}\s+\d{4}|\w+\s+\d{1,2},?\s+\d{4})",
                 text,
@@ -244,14 +241,14 @@ class SscPressAdapter(NewsBaseAdapter):
             )
             return record
 
-        # 复用 SscNewsAdapter 的详情页解析逻辑
-        SscNewsAdapter._extract_meta_fields(html, record)
-        SscNewsAdapter._extract_content(html, record, detail_url)
-        SscNewsAdapter._extract_slides(html, record, detail_url)
-        SscNewsAdapter._extract_figures(html, record, detail_url)
-        SscNewsAdapter._extract_attachments(html, record, detail_url)
-        SscNewsAdapter._extract_tags(html, record)
-        SscNewsAdapter._extract_external_links(html, record, detail_url)
+        # 解析详情页（基类方法）
+        self._extract_meta_fields(html, record)
+        self._extract_content(html, record, detail_url)
+        self._extract_slides(html, record, detail_url)
+        self._extract_figures(html, record, detail_url)
+        self._extract_attachments(html, record, detail_url)
+        self._extract_tags(html, record)
+        self._extract_external_links(html, record, detail_url)
 
         # 确保 link_type
         record["link_type"] = "press_release"
