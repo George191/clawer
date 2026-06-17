@@ -3,13 +3,11 @@
 from app.adapters.utils.news.news_base import (
     NewsBaseAdapter,
     _ATTACHMENT_EXTENSIONS,
-    _CONTENT_SELECTORS,
     _SOCIAL_DOMAINS,
 )
 
 __all__ = [
     "NewsBaseAdapter",
     "_ATTACHMENT_EXTENSIONS",
-    "_CONTENT_SELECTORS",
     "_SOCIAL_DOMAINS",
 ]

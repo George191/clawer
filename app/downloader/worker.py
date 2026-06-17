@@ -85,13 +85,11 @@ class DownloadWorker:
             self._template_name or "ALL",
         )
 
-        # 启动诊断：输出所有集合的下载状态概览
-        await self._log_startup_stats()
-
         while self._running:
             try:
                 count = await self._process_batch()
                 if count == 0:
+                    await self._log_startup_stats()
                     await asyncio.sleep(self._poll_interval)
             except Exception:
                 logger.exception("DownloadWorker loop error")
@@ -241,7 +239,7 @@ class DownloadWorker:
     async def _log_startup_stats(self) -> None:
         """启动时输出所有集合的下载状态概览。"""
         try:
-            stats = await self._mongo.get_collection_stats()
+            stats = await self._mongo.get_collection_stats(self._template_name)
             if not stats:
                 return
 

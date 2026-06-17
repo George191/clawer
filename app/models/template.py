@@ -66,6 +66,10 @@ class PaginationConfig(BaseModel):
     start_page: int = Field(default=0, description="起始页码")
     max_pages: int = Field(default=1000, description="最大翻页数(安全上限), 0=不限")
     results_per_page: int = Field(default=10, description="每页结果数, 用于从 total 动态计算页数")
+    page_concurrency: int | None = Field(
+        default=None,
+        description="单模板翻页并发数（页面级）。None 表示回退到全局 SPIDER_PAGE_CONCURRENCY",
+    )
 
 
 class DownloadConfig(BaseModel):
@@ -197,6 +201,11 @@ class SiteTemplate(BaseModel):
     detail_url_selector_type: SelectorType = Field(default=SelectorType.CSS)
     detail_request: RequestConfig = Field(default_factory=RequestConfig, description="详情页请求配置")
     detail_fields: list[FieldMapping] = Field(default_factory=list, description="详情页字段映射")
+    content_selector: str | None = Field(
+        default=None,
+        description="正文容器 CSS 选择器（逗号分隔多个备选），如 'section.article-detail-content'。"
+        "适配器从模板读取此配置，避免 hardcode。",
+    )
 
     download: list[DownloadConfig] = Field(default_factory=list, description="文件下载配置列表，支持多资源类型（如 PDF + 插图 + 缩略图）")
 

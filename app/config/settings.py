@@ -25,7 +25,8 @@ class AppSettings(BaseSettings):
     log_level: str = Field(default="INFO", description="日志级别")
     template_dir: str = Field(default="templates", description="网站模板配置目录")
     output_dir: str = Field(default="output", description="采集结果输出目录")
-    max_concurrent_tasks: int = Field(default=5, description="最大并发任务数")
+    max_concurrent_tasks: int = Field(default=5, description="最大并发任务数（模板级）")
+    page_concurrency: int = Field(default=3, description="单模板翻页并发数（页面级全局默认）")
 
     http_request_timeout: float = Field(default=30.0, description="HTTP请求超时(秒)")
     http_download_timeout: float = Field(default=300.0, description="文件下载超时(秒), 大文件需要更长")

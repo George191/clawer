@@ -4,22 +4,22 @@
 --------
 1. 通过 WordPress REST API 抓取全站 post 列表，覆盖全部 topic/category
 2. 利用 categories/tags API 将 taxonomy ID 映射为名称和 slug
-3. 将 content/excerpt HTML 清洗为文本，并从正文中提取外链
-4. 通过 WP Media API 回填封面图 URL
+3. 正文处理（图片/附件/外链/纯文本）由基类 _process_content_html 统一完成
+4. 通过基类 _enrich_cover_images_batch 并行获取封面图 URL
+5. 清理所有 WP API 中间字段，删除冗余的 topic_* 字段
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
 from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter
 from app.downloader.http_client import HttpClient
-from app.models.template import RequestConfig
 
 logger = logging.getLogger(__name__)
+
 
 @register_adapter("satellite_today")
 class SatelliteTodayAdapter(NewsBaseAdapter):
@@ -44,21 +44,32 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
         await self._fetch_category_map()
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
-        """列表页后处理：补全分类/标签/正文/外链/封面图。"""
+        """列表页后处理：分类/标签映射、正文提取、封面图、字段清理。"""
         records = await super().on_after_page(page, records)
         if not records:
             return records
 
+        # 按需补全缺失的标签映射
         missing_tag_ids: set[int] = set()
         for record in records:
             for tag_id in record.get("tag_ids") or []:
                 if isinstance(tag_id, int) and tag_id not in self._tag_map:
                     missing_tag_ids.add(tag_id)
-
         if missing_tag_ids:
             await self._fetch_tag_map(missing_tag_ids)
 
+        # 并行获取封面图（仅对 _embed 未返回 image_url 的记录）
+        pending_media = [
+            record for record in records
+            if not record.get("image_url")
+            and isinstance(record.get("featured_media"), int)
+            and record["featured_media"] > 0
+        ]
+        if pending_media:
+            await self._enrich_cover_images_batch(pending_media, self._media_cache)
+
         for record in records:
+            # 分类 ID → 名称/slug
             category_ids = record.get("category_ids") or []
             if isinstance(category_ids, list):
                 category_meta = [
@@ -71,11 +82,9 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                     slugs = [item["slug"] for item in category_meta]
                     record["category_names"] = names
                     record["category_slugs"] = slugs
-                    record["topic_names"] = names
-                    record["topic_slugs"] = slugs
                     record["primary_category"] = names[0]
-                    record["primary_topic"] = names[0]
 
+            # 标签 ID → 名称/slug
             tag_ids = record.get("tag_ids") or []
             if isinstance(tag_ids, list):
                 tag_meta = [
@@ -87,41 +96,25 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                     record["tag_names"] = [item["name"] for item in tag_meta]
                     record["tag_slugs"] = [item["slug"] for item in tag_meta]
 
+            # excerpt_html → summary
             excerpt_html = str(record.get("excerpt_html") or "").strip()
             if excerpt_html:
                 record["summary"] = self.html_to_text(excerpt_html)
 
-            content_html = str(record.get("content_html") or "").strip()
-            if content_html:
-                images, normalized_html = self.extract_images_from_html(
-                    content_html, str(record.get("url") or self._base_url),
-                )
-                if images:
-                    record["images"] = images
-                    content_html = normalized_html
-                    record["content_html"] = normalized_html
+            # 正文处理：图片/附件/外链/纯文本
+            url = str(record.get("url") or self._base_url)
+            await self._process_content_html(record, url)
 
-                attachments = self.extract_attachment_links(
-                    content_html, str(record.get("url") or self._base_url),
-                )
-                if attachments:
-                    record["attachments"] = attachments
-
-                record["content"] = self.html_to_text(content_html)
-                external_links = self.extract_external_links(
-                    content_html, str(record.get("url") or self._base_url),
-                )
-                if external_links:
-                    record["external_links"] = external_links
-
+            # 统一封面图字段：image_url → cover_image + thumbnail
             image_url = str(record.get("image_url") or "").strip()
-            featured_media = record.get("featured_media")
-            if not image_url and isinstance(featured_media, int) and featured_media > 0:
-                image_url = await self._fetch_media_url(featured_media)
             if image_url:
-                record["image_url"] = image_url
                 record.setdefault("cover_image", image_url)
                 record.setdefault("thumbnail", image_url)
+            elif record.get("cover_image"):
+                record["image_url"] = record["cover_image"]
+
+            # 清理 WP API 中间字段
+            self._cleanup_wp_fields(record)
 
         return records
 
@@ -131,8 +124,8 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
             return
 
         try:
-            data = await self._request_json(
-                "https://www.satellitetoday.com/wp-json/wp/v2/categories"
+            data = await self._wp_request_json(
+                f"{self._base_url}/wp-json/wp/v2/categories"
                 "?per_page=100&page=1&_fields=id,name,slug",
             )
         except Exception as e:
@@ -165,8 +158,8 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
         for start in range(0, len(unresolved), 100):
             batch = unresolved[start:start + 100]
             try:
-                data = await self._request_json(
-                    "https://www.satellitetoday.com/wp-json/wp/v2/tags"
+                data = await self._wp_request_json(
+                    f"{self._base_url}/wp-json/wp/v2/tags"
                     f"?include={','.join(str(tid) for tid in batch)}"
                     f"&per_page={len(batch)}&_fields=id,name,slug",
                 )
@@ -189,60 +182,12 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                 if isinstance(tid, int) and isinstance(slug, str) and isinstance(name, str):
                     self._tag_map[tid] = {"name": name, "slug": slug}
 
-    async def _fetch_media_url(self, media_id: int) -> str:
-        """按需通过 WP Media API 获取封面图 URL。"""
-        if media_id in self._media_cache:
-            return self._media_cache[media_id]
-
-        try:
-            data = await self._request_json(
-                "https://www.satellitetoday.com/wp-json/wp/v2/media/"
-                f"{media_id}?_fields=source_url,media_details.sizes.full.source_url",
-            )
-        except Exception as e:
-            logger.debug(
-                "[SatelliteToday] Failed to fetch media %d: %s",
-                media_id, str(e)[:100],
-            )
-            return ""
-
-        if not isinstance(data, dict):
-            return ""
-
-        media_details = data.get("media_details") or {}
-        sizes = media_details.get("sizes") or {}
-        full = sizes.get("full") or {}
-        source_url = str(
-            full.get("source_url") or data.get("source_url") or "",
-        ).strip()
-        if source_url:
-            self._media_cache[media_id] = source_url
-        return source_url
-
-    async def _request_json(self, url: str) -> Any:
-        config = RequestConfig(
-            headers={
-                "Accept": "application/json",
-                "Accept-Language": "en-US,en;q=0.9",
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/125.0.0.0 Safari/537.36"
-                ),
-                "Referer": "https://www.satellitetoday.com/",
-                "Cache-Control": "no-cache",
-            },
-            encoding="utf-8",
-        )
-        text = await self._client.request_page(url, config, anti_crawl_enabled=False)
-        return json.loads(text)
-
     def on_request_headers(self, page: int) -> dict[str, str]:
         """SatelliteToday JSON API 请求头。"""
         return {
             "Accept": "application/json",
             "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.satellitetoday.com/",
+            "Referer": f"{self._base_url}/",
             "Cache-Control": "no-cache",
         }
 
@@ -260,6 +205,12 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
             return "abort"
         if "404" in error_str:
             return "abort"
+        if "403" in error_str:
+            if attempt >= 2:
+                return "abort"
+            import asyncio
+            await asyncio.sleep(3 * (attempt + 1))
+            return None
         if "429" in error_str or "503" in error_str:
             import asyncio
             await asyncio.sleep(5 * (attempt + 1))

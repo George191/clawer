@@ -11,13 +11,11 @@ from typing import Any
 from urllib.parse import urljoin
 
 from app.adapters import register_adapter
-from app.adapters.utils.news.sse import SscBaseAdapter
+from app.adapters.utils.news.ssc_base import SscBaseAdapter
 from app.downloader.http_client import HttpClient
 from app.parser.template_parser import TemplateParser
 
 logger = logging.getLogger(__name__)
-
-_DETAIL_CONCURRENCY = 4
 
 
 @register_adapter("ssc_news")
@@ -51,11 +49,9 @@ class SscNewsAdapter(SscBaseAdapter):
         if not records or not self._template or not self._template.detail_fields:
             return records
 
-        semaphore = asyncio.Semaphore(_DETAIL_CONCURRENCY)
 
         async def enrich(record: dict) -> dict:
-            async with semaphore:
-                return await self._enrich_detail(record)
+            return await self._enrich_detail(record)
 
         return await asyncio.gather(*(enrich(record) for record in records))
 
@@ -81,11 +77,12 @@ class SscNewsAdapter(SscBaseAdapter):
             return record
 
         # 解析详情页（基类方法）
+        content_selector = self._template.content_selector if self._template else None
         self._extract_meta_fields(html, record)
-        self._extract_content(html, record, detail_url)
-        self._extract_slides(html, record, detail_url)
-        self._extract_figures(html, record, detail_url)
-        self._extract_attachments(html, record, detail_url)
+        self._extract_content(html, record, detail_url, content_selector)
+        self._extract_slides(html, record, detail_url, content_selector)
+        self._extract_figures(html, record, detail_url, content_selector)
+        self._extract_attachments(html, record, detail_url, content_selector)
         self._extract_tags(html, record)
         self._extract_external_links(html, record, detail_url)
 

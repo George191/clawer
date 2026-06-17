@@ -47,6 +47,9 @@ list_pagination:
   max_pages: 0
   results_per_page: 100
 
+# 正文容器选择器 — 适配器从模板读取，避免 hardcode
+content_selector: "section.article-detail-content"
+
 download:
   - selector: "attachments"
     selector_type: json

@@ -39,7 +39,6 @@ from lxml import html as lxml_html
 from app.adapters.utils.news import (
     NewsBaseAdapter,
     _ATTACHMENT_EXTENSIONS,
-    _CONTENT_SELECTORS,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,19 +95,21 @@ class SscBaseAdapter(NewsBaseAdapter):
                 record["dateline"] = dateline
 
     @staticmethod
-    def _extract_content(html: str, record: dict, detail_url: str) -> None:
-        """提取正文 HTML，从中分离 meta/dateline，提取图片并映射占位符。"""
+    def _extract_content(html: str, record: dict, detail_url: str, content_selector: str | None = None) -> None:
+        """提取正文 HTML，从中分离 meta/dateline，提取图片并映射占位符。
+
+        content_selector: 从模板配置传入的正文容器选择器，替代硬编码。
+        """
         try:
             tree = lxml_html.fromstring(html)
         except Exception:
             return
 
         content_node = None
-        for selector in _CONTENT_SELECTORS:
-            nodes = tree.cssselect(selector)
+        if content_selector:
+            nodes = tree.cssselect(content_selector)
             if nodes:
                 content_node = nodes[0]
-                break
 
         if content_node is None:
             fallback = SscBaseAdapter._extract_content_fallback(html)
@@ -150,30 +151,16 @@ class SscBaseAdapter(NewsBaseAdapter):
         if images:
             record["images"] = images
 
-    @staticmethod
-    def _extract_content_fallback(html: str) -> str:
-        """Fallback extraction for small SSC markup changes."""
-        try:
-            tree = lxml_html.fromstring(html)
-        except Exception:
-            return ""
-
-        for selector in _CONTENT_SELECTORS:
-            for node in tree.cssselect(selector):
-                text = " ".join(node.text_content().split())
-                if len(text) >= 80:
-                    return text
-        return ""
 
     @staticmethod
-    def _extract_slides(html: str, record: dict, detail_url: str) -> None:
+    def _extract_slides(html: str, record: dict, detail_url: str, content_selector: str | None = None) -> None:
         """提取轮播图，caption 只取 p（跳过重复的 h1）。"""
         try:
             tree = lxml_html.fromstring(html)
         except Exception:
             return
 
-        content_nodes = SscBaseAdapter._find_content_nodes(tree)
+        content_nodes = SscBaseAdapter._find_content_nodes(tree, content_selector)
         slides: list[dict] = []
         seen: set[str] = set()
 
@@ -221,7 +208,7 @@ class SscBaseAdapter(NewsBaseAdapter):
             record["slides"] = slides
 
     @staticmethod
-    def _extract_figures(html: str, record: dict, detail_url: str) -> None:
+    def _extract_figures(html: str, record: dict, detail_url: str, content_selector: str | None = None) -> None:
         """提取正文内的 figure/img（不与 slides 重复）。"""
         if record.get("images"):
             return
@@ -234,7 +221,7 @@ class SscBaseAdapter(NewsBaseAdapter):
         figures: list[dict] = []
         seen: set[str] = set()
 
-        for content_node in SscBaseAdapter._find_content_nodes(tree):
+        for content_node in SscBaseAdapter._find_content_nodes(tree, content_selector):
             for img in content_node.cssselect("img"):
                 raw_src = (
                     img.get("src")
@@ -259,7 +246,7 @@ class SscBaseAdapter(NewsBaseAdapter):
             record["figures"] = figures
 
     @staticmethod
-    def _extract_attachments(html: str, record: dict, detail_url: str) -> None:
+    def _extract_attachments(html: str, record: dict, detail_url: str, content_selector: str | None = None) -> None:
         """提取 PDF 等附件链接。"""
         try:
             tree = lxml_html.fromstring(html)
@@ -269,7 +256,7 @@ class SscBaseAdapter(NewsBaseAdapter):
         attachments: list[dict] = []
         seen: set[str] = set()
 
-        for content_node in SscBaseAdapter._find_content_nodes(tree):
+        for content_node in SscBaseAdapter._find_content_nodes(tree, content_selector):
             for link in content_node.cssselect("a[href]"):
                 raw_url = (link.get("href") or "").strip()
                 if not raw_url:
@@ -330,9 +317,9 @@ class SscBaseAdapter(NewsBaseAdapter):
     # ── 工具方法 ────────────────────────────────────────────────
 
     @staticmethod
-    def _find_content_nodes(tree: Any) -> list[Any]:
-        for selector in _CONTENT_SELECTORS:
-            nodes = tree.cssselect(selector)
+    def _find_content_nodes(tree: Any, content_selector: str | None = None) -> list[Any]:
+        if content_selector:
+            nodes = tree.cssselect(content_selector)
             if nodes:
                 return nodes
         return []

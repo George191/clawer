@@ -1,22 +1,29 @@
-"""新闻站点适配器基类 — 提供通用的外链提取和日期标准化逻辑。
+"""新闻站点适配器基类 — 提供可复用的 HTML 处理和日期标准化工具。
 
-子类只需关注站点特定的选择器和请求头，通用逻辑由基类处理：
-1. 详情页外链提取（排除站内链接、导航、社交媒体等）
-2. 日期格式标准化
-3. 正文清洗
+设计原则
+--------
+- 只放真正可复用的通用工具方法（HTML 清洗、外链提取、日期标准化）
+- 不放任何站点特定的选择器或内容提取逻辑
+- 每个站点的选择器由各自的 base adapter 负责（如 ssc_base, blacksky_base）
+
+子类应覆盖:
+- site_domain: 站点主域名（用于区分内外链）
+- on_request_headers(): 站点特定请求头
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import re
-from copy import deepcopy
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
+from app.models.template import RequestConfig
 from lxml import etree
 
 logger = logging.getLogger(__name__)
@@ -40,25 +47,6 @@ _ATTACHMENT_EXTENSIONS = (
     ".csv", ".txt", ".zip", ".rar", ".7z", ".json", ".xml",
     ".kml", ".kmz", ".geojson", ".gdb", ".gpkg",
 )
-
-_CONTENT_SELECTORS = [
-    "article [itemprop='articleBody']",
-    "article .entry-content",
-    "article .post-content",
-    "article .article-body",
-    "article .article-content",
-    "article .story-body",
-    "article .body-copy",
-    ".entry-content",
-    ".post-content",
-    ".article-body",
-    ".article-content",
-    ".story-body",
-    ".body-copy",
-    ".main-content article",
-    "main article",
-    "article",
-]
 
 
 @register_adapter("news_base")
@@ -118,10 +106,6 @@ class NewsBaseAdapter(BaseSiteAdapter):
 
         for a_tag in tree.iter("a"):
             href = a_tag.get("href", "").strip()
-            if not href or _NAV_PATTERNS.match(href):
-                continue
-
-            # 解析 URL
             try:
                 parsed = urlparse(href)
                 domain = parsed.netloc.lower().replace("www.", "")
@@ -257,49 +241,6 @@ class NewsBaseAdapter(BaseSiteAdapter):
         return attachments
 
     @staticmethod
-    def extract_main_content_html(page_html: str) -> str:
-        """从完整页面中按通用新闻正文选择器提取主内容 HTML。"""
-        from lxml import html as lxml_html
-
-        if not page_html:
-            return ""
-
-        try:
-            tree = lxml_html.fromstring(page_html)
-        except Exception:
-            return ""
-
-        best_node = None
-        best_score = 0
-
-        for selector in _CONTENT_SELECTORS:
-            try:
-                nodes = tree.cssselect(selector)
-            except Exception:
-                continue
-            for node in nodes:
-                text = re.sub(r"\s+", " ", node.text_content()).strip()
-                if len(text) > best_score:
-                    best_score = len(text)
-                    best_node = node
-
-        if best_node is None or best_score < 80:
-            return ""
-
-        clone = deepcopy(best_node)
-        for selector in (
-            "script", "style", "noscript", "iframe", "svg", "form",
-            "button", "nav", "aside", "footer", "header",
-            ".share", ".sharing", ".social", ".social-share",
-            ".newsletter", ".subscribe", ".advertisement", ".ads",
-            ".related", ".recommended", ".author-box", ".post-meta",
-        ):
-            for node in clone.cssselect(selector):
-                node.drop_tree()
-
-        return etree.tostring(clone, encoding="unicode", method="html").strip()
-
-    @staticmethod
     def _attachment_extension(url: str) -> str:
         path = urlparse(url).path.lower()
         for extension in _ATTACHMENT_EXTENSIONS:
@@ -362,3 +303,171 @@ class NewsBaseAdapter(BaseSiteAdapter):
             "Accept-Language": "en-US,en;q=0.9",
             "Cache-Control": "no-cache",
         }
+
+    # ── WordPress REST API 共享方法 ────────────────────────────
+
+    async def _wp_request_json(self, url: str) -> Any:
+        """发起 WP REST API JSON 请求并返回解析后的数据。"""
+        config = RequestConfig(
+            headers={
+                "Accept": "application/json",
+                "Accept-Language": "en-US,en;q=0.9",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/125.0.0.0 Safari/537.36"
+                ),
+                "Referer": f"{self._base_url}/",
+                "Cache-Control": "no-cache",
+            },
+            encoding="utf-8",
+        )
+        text = await self._client.request_page(url, config, anti_crawl_enabled=False)
+        return json.loads(text)
+
+    async def _fetch_wp_media_url(self, media_id: int, cache: dict[int, str]) -> str:
+        """通过 WP Media API 获取封面图 URL（带缓存）。
+
+        Args:
+            media_id: WordPress media ID
+            cache: 子类维护的缓存字典
+
+        Returns:
+            封面图 URL 或空字符串
+        """
+        if not media_id or not self._client:
+            return ""
+        if media_id in cache:
+            return cache[media_id]
+
+        try:
+            url = (
+                f"{self._base_url}/wp-json/wp/v2/media/{media_id}"
+                f"?_fields=source_url,media_details.sizes.full.source_url"
+            )
+            data = await self._wp_request_json(url)
+        except Exception as e:
+            logger.debug(
+                "[%s] Media %d fetch failed: %s",
+                self.adapter_name, media_id, str(e)[:80],
+            )
+            return ""
+
+        if not isinstance(data, dict):
+            return ""
+
+        media_details = data.get("media_details") or {}
+        sizes = media_details.get("sizes") or {}
+        full = sizes.get("full") or {}
+        source_url = str(
+            full.get("source_url") or data.get("source_url") or "",
+        ).strip()
+        if source_url:
+            cache[media_id] = source_url
+        return source_url
+
+    async def _process_content_html(
+        self, record: dict, base_url: str,
+    ) -> None:
+        """从 content_html 中提取图片、附件、外链，并生成 content 纯文本。
+
+        处理后 record 中会新增/更新以下字段：
+        - images: 正文图片列表
+        - attachments: 附件列表
+        - external_links: 外链列表
+        - content: 纯文本正文
+
+        Args:
+            record: 包含 content_html 的记录
+            base_url: 用于解析相对 URL 的基础地址
+        """
+        content_html = str(record.get("content_html") or "").strip()
+        if not content_html:
+            return
+
+        # 提取图片并替换占位符
+        images, normalized_html = self.extract_images_from_html(content_html, base_url)
+        if images:
+            record["images"] = images
+            content_html = normalized_html
+            record["content_html"] = normalized_html
+
+        # 提取附件
+        attachments = self.extract_attachment_links(content_html, base_url)
+        if attachments:
+            record["attachments"] = attachments
+
+        # 生成纯文本
+        record["content"] = self.html_to_text(content_html)
+
+        # 提取外链
+        external_links = self.extract_external_links(content_html, base_url)
+        if external_links:
+            record["external_links"] = external_links
+
+    async def _enrich_cover_image(
+        self,
+        record: dict,
+        media_id: int,
+        cache: dict[int, str],
+    ) -> None:
+        """获取封面图 URL 并设置 cover_image/thumbnail 字段。
+
+        Args:
+            record: 待补充的记录
+            media_id: WordPress featured_media ID
+            cache: 子类维护的缓存字典
+        """
+        if not media_id:
+            return
+
+        cover_url = await self._fetch_wp_media_url(media_id, cache)
+        if cover_url:
+            record["cover_image"] = cover_url
+            record.setdefault("thumbnail", cover_url)
+
+    async def _enrich_cover_images_batch(
+        self,
+        records: list[dict],
+        cache: dict[int, str],
+    ) -> None:
+        """批量并行获取封面图 URL。
+
+        Args:
+            records: 待补充的记录列表（需含 featured_media 字段）
+            cache: 子类维护的缓存字典
+        """
+        pending = [
+            (record, int(record.get("featured_media") or 0))
+            for record in records
+            if record.get("featured_media")
+        ]
+        if not pending:
+            return
+
+        async def _fetch_one(record: dict, mid: int) -> None:
+            await self._enrich_cover_image(record, mid, cache)
+
+        await asyncio.gather(
+            *(_fetch_one(rec, mid) for rec, mid in pending)
+        )
+
+    @staticmethod
+    def _cleanup_wp_fields(record: dict) -> None:
+        """清理 WordPress API 中间字段。
+
+        删除已转换完成的冗余字段：
+        - excerpt / excerpt_html → 已转为 summary
+        - featured_media → 已获取 cover_image
+        - category_ids / tag_ids → 已转为 names/slugs
+        - source_ids → 已转为 source_names
+        - external_url → 已有 external_links
+        """
+        for key in (
+            "excerpt", "excerpt_html",
+            "featured_media",
+            "category_ids", "tag_ids",
+            "source_ids",
+            "external_url",
+        ):
+            record.pop(key, None)

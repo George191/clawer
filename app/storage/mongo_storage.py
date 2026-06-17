@@ -137,6 +137,7 @@ class MongoStorage(StorageBackend):
     ) -> None:
         collection = await self._get_collection(template_name)
         updates["_meta.updated_at"] = datetime.now(timezone.utc)
+
         await collection.update_one(
             {"_meta.record_id": record_id},
             {"$set": updates},
@@ -305,7 +306,7 @@ class MongoStorage(StorageBackend):
 
         return results
 
-    async def get_collection_stats(self) -> list[dict[str, Any]]:
+    async def get_collection_stats(self, template_name: str | None = None) -> list[dict[str, Any]]:
         """获取所有集合的概览统计。
 
         Returns:
@@ -313,7 +314,11 @@ class MongoStorage(StorageBackend):
         """
         await self._ensure_connection()
         stats = []
-        for coll_name in await self._db.list_collection_names():
+        coll_names = (
+            [template_name] if template_name
+            else await self._db.list_collection_names()
+        )
+        for coll_name in coll_names:
             collection = self._db[coll_name]
             total = await collection.count_documents({})
             pending = await collection.count_documents({

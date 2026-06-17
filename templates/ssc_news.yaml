@@ -86,7 +86,7 @@ detail_request:
 
 detail_fields:
   - name: content
-    selector: "section.article-detail-content, .article-content, .article-body"
+    selector: "section.article-detail-content p"
     selector_type: css
     field_type: text
     required: false

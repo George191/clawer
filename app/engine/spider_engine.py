@@ -590,177 +590,304 @@ class SpiderEngine:
         )
         config_max_pages = template.list_pagination.max_pages if template.list_pagination else 0
         results_per_page = template.list_pagination.results_per_page if template.list_pagination else 100
-
         item_path = template.json_item_path or ""
+        page_concurrency = (
+            template.list_pagination.page_concurrency
+            if template.list_pagination and template.list_pagination.page_concurrency
+            else settings.page_concurrency
+        )
 
         # max_pages=0 表示"不限"（由 API 返回值或空页决定终止）
         has_page_cap = config_max_pages > 0
-        effective_max_pages = config_max_pages if has_page_cap else float("inf")
-        dynamic_pages = config_max_pages if has_page_cap else float("inf")
-        # 如果从断点恢复且状态中有保存的分页信息，直接使用
+        dynamic_pages: int | float = config_max_pages if has_page_cap else float("inf")
         if state is not None and state.effective_max_pages is not None:
-            effective_max_pages = state.effective_max_pages
-            dynamic_pages = state.effective_max_pages  # 确保后续终止条件一致
-        current_page = start_page
+            dynamic_pages = state.effective_max_pages
 
-        adapter_name = template.adapter
-
-        adapter = get_adapter(adapter_name, template.base_url, self._client)
-
+        adapter = get_adapter(template.adapter, template.base_url, self._client)
         await adapter.on_before_crawl(template)
 
-        while 1:
-            is_first = (current_page == start_page)
-            page_succeeded = False
+        # ── Phase 1: 获取第一页，确定总页数 ─────────────────────────
+        page1, records1, total_records, total_pages_from_api, abort = await self._fetch_page_json(
+            template, start_page, adapter, results_per_page, item_path,
+            is_first=True, result=result,
+        )
+        if abort:
+            await adapter.close()
+            return all_records
 
-            for attempt in self._retry_loop():
-                try:
-                    await adapter.on_before_page(current_page, is_first)
+        # 从第一页响应计算总页数
+        total_for_log = ""
+        if total_records is not None:
+            total_for_log = f" / total={total_records}"
+            dynamic_pages = (total_records + results_per_page - 1) // results_per_page
+            if total_pages_from_api is not None:
+                dynamic_pages = min(dynamic_pages, total_pages_from_api)
+            if has_page_cap:
+                dynamic_pages = min(config_max_pages, dynamic_pages)
+            logger.info(
+                "Dynamic pagination: total=%d, per_page=%d, need %d pages%s",
+                total_records, results_per_page, dynamic_pages,
+                f" (capped at {config_max_pages})" if has_page_cap else "",
+            )
+        elif total_pages_from_api is not None:
+            dynamic_pages = total_pages_from_api
+            if has_page_cap:
+                dynamic_pages = min(config_max_pages, dynamic_pages)
+            logger.info(
+                "API reports %d total pages%s",
+                dynamic_pages,
+                f" (capped at {config_max_pages})" if has_page_cap else "",
+            )
 
-                    _session = getattr(adapter, "_session", None)
-                    url = template.get_full_list_url(current_page, num=results_per_page, peid=_session.eid if _session else None)
-                    extra_headers = adapter.on_request_headers(current_page)
-                    list_request = template.list_request.model_copy(update={
-                        "headers": {**template.list_request.headers, **extra_headers}
-                    }) if extra_headers else template.list_request
+        if state is not None:
+            state.effective_max_pages = (
+                dynamic_pages if isinstance(dynamic_pages, int) else None
+            )
+            state.dynamic_total = total_records
 
-                    text = await self._client.request_page(url, list_request, anti_crawl_enabled=template.effective_anti_crawl_enabled)
-                    json_data = json.loads(text)
+        # 处理第一页记录
+        _init_enhancements()
+        records1 = await self._dedup_records(template, records1)
+        all_records.extend(records1)
+        if records1:
+            await self._save_page_records(template, records1, result)
 
-                    records = self._parser.parse_list_json(
-                        json_data, item_path, template.list_fields
-                    )
+        if state is not None:
+            state.current_page = start_page
+            state.records_saved = len(result.records)
+            await self._save_checkpoint(template.name, state)
 
-                    records = await adapter.on_after_page(current_page, records)
+        logger.info(
+            "Page %d/%s: found %d records%s (cumulative: %d)",
+            start_page + 1, dynamic_pages,
+            len(records1), total_for_log, len(all_records),
+        )
 
-                    total_count = ""
-                    if template.json_total_path:
-                        total_val = resolve_json_path(json_data, template.json_total_path)
-                        if total_val is not None:
-                            total_count = f" / total={total_val}"
-                            if current_page == start_page:
-                                try:
-                                    total = int(total_val)
-                                    dynamic_pages = (
-                                        total + results_per_page
-                                    ) // results_per_page
+        # 第一页终止条件
+        if not records1:
+            await adapter.close()
+            return all_records
+        if len(records1) < results_per_page:
+            await adapter.close()
+            return all_records
 
-                                    if template.json_total_num_pages:
-                                        api_pages_val = resolve_json_path(
-                                            json_data, template.json_total_num_pages
-                                        )
-                                        if api_pages_val is not None:
-                                            try:
-                                                api_pages = int(api_pages_val)
-                                                if api_pages < dynamic_pages:
-                                                    logger.info(
-                                                        "API limits pages to %d (from %s=%d) "
-                                                        "instead of calculated %d (total=%d / per_page=%d)",
-                                                        api_pages,
-                                                        template.json_total_num_pages,
-                                                        api_pages,
-                                                        dynamic_pages,
-                                                        total,
-                                                        results_per_page,
-                                                    )
-                                                    dynamic_pages = api_pages
-                                            except (ValueError, TypeError):
-                                                pass
+        # ── Phase 2: 并行获取剩余页面 ───────────────────────────────
+        known_total = isinstance(dynamic_pages, int) and dynamic_pages > start_page + 1
 
-                                    effective_max_pages = (
-                                        min(config_max_pages, dynamic_pages)
-                                        if has_page_cap else dynamic_pages
-                                    )
-                                    logger.info(
-                                        "Dynamic pagination: total=%d, per_page=%d, "
-                                        "need %d pages%s",
-                                        total,
-                                        results_per_page,
-                                        dynamic_pages,
-                                        f" (capped at {effective_max_pages})" if has_page_cap else "",
-                                    )
-                                except (ValueError, TypeError):
-                                    pass
-
-                    # 保存分页参数到断点状态（用于恢复时跳过重复计算）
-                    if state is not None and current_page == start_page and 'effective_max_pages' in locals():
-                        # float('inf') 无法 JSON 序列化，存 None 表示"不限"
-                        state.effective_max_pages = (
-                            effective_max_pages
-                            if isinstance(effective_max_pages, int) else None
-                        )
-                        state.dynamic_total = total if 'total' in locals() else None
-
-                    all_records.extend(records)
-
-                    if records:
-                        await self._save_page_records(template, records, result)
-
-                    if state is not None:
-                        state.current_page = current_page
-                        state.records_saved = len(result.records)
-                        await self._save_checkpoint(template.name, state)
-
-                    logger.info(
-                        "Page %d/%s: found %d records%s (cumulative: %d)",
-                        current_page + 1,
-                        dynamic_pages,
-                        len(records),
-                        total_count,
-                        len(all_records),
-                    )
-
-                    page_succeeded = True
-                    break
-
-                except json.JSONDecodeError as e:
-                    await self._client.mark_last_proxy_failed()
-
-                except Exception as e:
-                    adapter_action = await adapter.on_error(e, current_page, attempt)
-                    if adapter_action == "abort":
-                        result.errors.append(f"List page {current_page}: {e}")
-                        if state is not None:
-                            state.status = "failed"
-                            state.current_page = current_page
-                            state.records_saved = len(result.records)
-                            state.last_error = str(e)
-                            state.error_count += 1
-                            await self._save_checkpoint(template.name, state)
-                        return all_records
-                    elif adapter_action == "reset_session":
-                        await adapter.on_before_crawl(template)
-                        continue
-                    elif adapter_action == "skip":
-                        break
-
-            if not page_succeeded:
-                logger.error(
-                    "Page %d failed after many attempts, skipping",
-                    current_page,
+        if known_total:
+            # 已知总页数：一次性计算所有剩余页面并分批并行获取
+            remaining_pages = list(range(start_page + 1, int(dynamic_pages) + 1))
+            for batch_start in range(0, len(remaining_pages), page_concurrency):
+                batch = remaining_pages[batch_start:batch_start + page_concurrency]
+                await self._fetch_and_process_batch(
+                    template, batch, adapter, results_per_page, item_path,
+                    dynamic_pages, result, all_records, state,
                 )
-                result.errors.append(f"List page {current_page}: exceeded retries")
-
-            # 空页终止：当前页无记录，说明已到末尾
-            if page_succeeded and not records:
-                break
-
-            # 不足一页终止：当前页记录数少于每页数量，说明是最后一页
-            if page_succeeded and len(records) < results_per_page:
-                break
-
-            if not template.list_pagination:
-                break
-
-            adapter.on_page_advance()
-            current_page += 1
-
-            # 终止条件：达到计算出的最大页数
-            if current_page >= dynamic_pages:
-                break
+        else:
+            # 未知总页数：逐批并行获取，遇空页或不足一页时终止
+            current = start_page + 1
+            while True:
+                batch = list(range(current, current + page_concurrency))
+                should_stop = await self._fetch_and_process_batch(
+                    template, batch, adapter, results_per_page, item_path,
+                    dynamic_pages, result, all_records, state,
+                )
+                if should_stop:
+                    break
+                current += page_concurrency
 
         await adapter.close()
         return all_records
+
+    async def _fetch_page_json(
+        self,
+        template: SiteTemplate,
+        page: int,
+        adapter: Any,
+        results_per_page: int,
+        item_path: str,
+        is_first: bool,
+        result: CrawlResult,
+    ) -> tuple[int, list[dict[str, Any]], int | None, int | None, bool]:
+        """获取单个 JSON 列表页，带重试。
+
+        Returns:
+            (page, records, total_records, total_pages_from_api, abort)
+        """
+        page_succeeded = False
+        page_skipped = False
+        records: list[dict[str, Any]] = []
+        total_records: int | None = None
+        total_pages_from_api: int | None = None
+
+        for attempt in self._retry_loop():
+            try:
+                if attempt > 0:
+                    logger.info(
+                        "[%s] ↻ Retry page %d (attempt #%d)",
+                        template.name, page, attempt + 1,
+                    )
+
+                await adapter.on_before_page(page, is_first)
+
+                _session = getattr(adapter, "_session", None)
+                url = template.get_full_list_url(
+                    page, num=results_per_page,
+                    peid=_session.eid if _session else None,
+                )
+                extra_headers = adapter.on_request_headers(page)
+                list_request = template.list_request.model_copy(update={
+                    "headers": {**template.list_request.headers, **extra_headers}
+                }) if extra_headers else template.list_request
+
+                text = await self._client.request_page(
+                    url, list_request,
+                    anti_crawl_enabled=template.effective_anti_crawl_enabled,
+                )
+                json_data = json.loads(text)
+
+                records = self._parser.parse_list_json(
+                    json_data, item_path, template.list_fields
+                )
+                records = await adapter.on_after_page(page, records)
+
+                # 仅第一页提取分页元数据
+                if is_first and template.json_total_path:
+                    total_val = resolve_json_path(json_data, template.json_total_path)
+                    if total_val is not None:
+                        try:
+                            total_records = int(total_val)
+                        except (ValueError, TypeError):
+                            pass
+
+                if is_first and template.json_total_num_pages:
+                    api_pages_val = resolve_json_path(
+                        json_data, template.json_total_num_pages
+                    )
+                    if api_pages_val is not None:
+                        try:
+                            total_pages_from_api = int(api_pages_val)
+                        except (ValueError, TypeError):
+                            pass
+
+                page_succeeded = True
+                break
+
+            except json.JSONDecodeError:
+                await self._client.mark_last_proxy_failed()
+
+            except Exception as e:
+                logger.warning(
+                    "[%s] ✗ Page %d failed (attempt %d): %s",
+                    template.name, page, attempt + 1,
+                    str(e)[:150],
+                )
+
+                adapter_action = await adapter.on_error(e, page, attempt)
+                if adapter_action == "abort":
+                    result.errors.append(f"List page {page}: {e}")
+                    return page, [], None, None, True
+                elif adapter_action == "reset_session":
+                    await adapter.on_before_crawl(template)
+                    continue
+                elif adapter_action == "skip":
+                    page_skipped = True
+                    page_succeeded = True
+                    break
+                # None → 继续下一次重试
+
+        if not page_succeeded:
+            logger.error(
+                "Page %d failed after %d attempts, skipping",
+                page, settings.http_max_retries,
+            )
+            result.errors.append(f"List page {page}: exceeded retries")
+
+        if page_skipped:
+            records = []
+
+        return page, records, total_records, total_pages_from_api, False
+
+    async def _dedup_records(
+        self, template: SiteTemplate, records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """对记录进行去重。"""
+        _init_enhancements()
+        if _dedup is None or not _dedup.enabled or not records:
+            return records
+
+        new_records = []
+        for record in records:
+            rid = self._get_record_id(record, template)
+            if await _dedup.exists(template.name, rid):
+                logger.debug("Skipping duplicate record: %s", rid)
+                continue
+            await _dedup.mark_seen(template.name, rid)
+            if settings.incremental_mode:
+                content_hash = _dedup.make_content_hash(record)
+                change_status = await _dedup.record_digest(
+                    template.name, rid, content_hash
+                )
+                if change_status and change_status != "changed":
+                    logger.debug("Skipping unchanged record: %s", rid)
+                    continue
+            new_records.append(record)
+
+        skipped = len(records) - len(new_records)
+        if skipped > 0:
+            logger.info("Dedup: skipped %d of %d records", skipped, len(records))
+        return new_records
+
+    async def _fetch_and_process_batch(
+        self,
+        template: SiteTemplate,
+        batch: list[int],
+        adapter: Any,
+        results_per_page: int,
+        item_path: str,
+        dynamic_pages: int | float,
+        result: CrawlResult,
+        all_records: list[dict],
+        state: CheckpointState | None,
+    ) -> bool:
+        """并行获取一批页面，处理去重和保存。
+
+        Returns:
+            True 如果应该停止翻页（空页或不足一页），否则 False。
+        """
+        tasks = [
+            self._fetch_page_json(
+                template, p, adapter, results_per_page, item_path,
+                is_first=False, result=result,
+            )
+            for p in batch
+        ]
+        batch_results = await asyncio.gather(*tasks)
+
+        should_stop = False
+        for p, records, _, _, abort in batch_results:
+            if abort:
+                continue
+
+            records = await self._dedup_records(template, records)
+            all_records.extend(records)
+            if records:
+                await self._save_page_records(template, records, result)
+
+            logger.info(
+                "Page %d/%s: found %d records (cumulative: %d)",
+                p + 1, dynamic_pages, len(records), len(all_records),
+            )
+
+            if not records or len(records) < results_per_page:
+                should_stop = True
+
+        if state is not None:
+            state.current_page = batch[-1]
+            state.records_saved = len(result.records)
+            await self._save_checkpoint(template.name, state)
+
+        return should_stop
 
     @staticmethod
     def _retry_loop():
