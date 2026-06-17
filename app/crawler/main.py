@@ -647,7 +647,6 @@ def main() -> None:
         
         # 运行
         if template_args:
-            log_infra_status()
             asyncio.run(run_from_command_line(template_args, delay=args.delay))
 
 if __name__ == "__main__":

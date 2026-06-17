@@ -745,6 +745,10 @@ class SpiderEngine:
             if page_succeeded and not records:
                 break
 
+            # 不足一页终止：当前页记录数少于每页数量，说明是最后一页
+            if page_succeeded and len(records) < results_per_page:
+                break
+
             if not template.list_pagination:
                 break
 

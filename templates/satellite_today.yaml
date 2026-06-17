@@ -3,7 +3,7 @@ display_name: "Satellite Today - 航天/卫星行业新闻"
 base_url: "https://www.satellitetoday.com"
 data_type: news
 adapter: satellite_today
-anti_crawl_enabled: true
+anti_crawl_enabled: false
 description: >
   采集 SatelliteToday / Via Satellite 全站 WordPress 新闻内容。
   使用 `/wp-json/wp/v2/posts` + `_envelope=1` 走 JSON API，
