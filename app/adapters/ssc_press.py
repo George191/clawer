@@ -5,7 +5,7 @@ Media Room 列表页 (/Connect-With-Us/Media-Room) 是手工编排的 HTML，
 adapter 在 on_before_crawl 中手动解析列表页，提取所有 press release 链接。
 
 详情页与 Newsroom 共用同一套模板（DNN ArticleCS），
-解析逻辑继承自 SscBaseAdapter。
+SSC 页面结构处理放在 app.adapters.utils.news.ssc.common 中。
 
 部分老 press release 直接链接到 PDF 文件（无详情页），
 这类记录直接保存 PDF 链接作为附件。
@@ -22,7 +22,8 @@ from urllib.parse import urljoin
 from lxml import html as lxml_html
 
 from app.adapters import register_adapter
-from app.adapters.utils.news.ssc_base import SscBaseAdapter
+from app.adapters.utils.news import NewsBaseAdapter
+from app.adapters.utils.news.ssc import common as ssc_common
 from app.downloader.http_client import HttpClient
 from app.models.template import RequestConfig
 
@@ -32,7 +33,7 @@ _DETAIL_CONCURRENCY = 4
 
 
 @register_adapter("ssc_press")
-class SscPressAdapter(SscBaseAdapter):
+class SscPressAdapter(NewsBaseAdapter):
     """SSC Press Releases adapter — 手动解析 Media Room 列表页。"""
 
     adapter_name = "ssc_press"
@@ -241,15 +242,14 @@ class SscPressAdapter(SscBaseAdapter):
             )
             return record
 
-        # 解析详情页（基类方法）
-        content_selector = self._template.content_selector if self._template else None
-        self._extract_meta_fields(html, record)
-        self._extract_content(html, record, detail_url, content_selector)
-        self._extract_slides(html, record, detail_url, content_selector)
-        self._extract_figures(html, record, detail_url, content_selector)
-        self._extract_attachments(html, record, detail_url, content_selector)
-        self._extract_tags(html, record)
-        self._extract_external_links(html, record, detail_url)
+        content_field_selector = self.detail_field_selector(self._template, "content")
+        ssc_common.extract_meta_fields(html, record)
+        ssc_common.extract_content(html, record, detail_url, content_field_selector)
+        ssc_common.extract_slides(html, record, detail_url, content_field_selector)
+        ssc_common.extract_figures(html, record, detail_url, content_field_selector)
+        ssc_common.extract_attachments(html, record, detail_url, content_field_selector)
+        ssc_common.extract_tags(html, record)
+        ssc_common.extract_external_links(self, record, detail_url)
 
         # 确保 link_type
         record["link_type"] = "press_release"

@@ -88,9 +88,9 @@ detail_fields:
   - name: content
     selector: "section.article-detail-content p"
     selector_type: css
-    field_type: text
+    field_type: html
     required: false
-    description: "正文内容"
+    description: "详情页正文容器，adapter 会移除 meta/dateline 后生成 content_html/content"
 
 download:
   - selector: "thumbnail"

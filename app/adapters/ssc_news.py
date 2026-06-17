@@ -1,7 +1,4 @@
-"""SSC (Space Systems Command) news adapter.
-
-采集 SSC Newsroom 文章列表页，详情页解析逻辑继承自 SscBaseAdapter。
-"""
+"""SSC (Space Systems Command) news adapter."""
 
 from __future__ import annotations
 
@@ -11,7 +8,8 @@ from typing import Any
 from urllib.parse import urljoin
 
 from app.adapters import register_adapter
-from app.adapters.utils.news.ssc_base import SscBaseAdapter
+from app.adapters.utils.news import NewsBaseAdapter
+from app.adapters.utils.news.ssc import common as ssc_common
 from app.downloader.http_client import HttpClient
 from app.parser.template_parser import TemplateParser
 
@@ -19,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @register_adapter("ssc_news")
-class SscNewsAdapter(SscBaseAdapter):
+class SscNewsAdapter(NewsBaseAdapter):
     """SSC Space Force news adapter."""
 
     adapter_name = "ssc_news"
@@ -76,15 +74,14 @@ class SscNewsAdapter(SscBaseAdapter):
             )
             return record
 
-        # 解析详情页（基类方法）
-        content_selector = self._template.content_selector if self._template else None
-        self._extract_meta_fields(html, record)
-        self._extract_content(html, record, detail_url, content_selector)
-        self._extract_slides(html, record, detail_url, content_selector)
-        self._extract_figures(html, record, detail_url, content_selector)
-        self._extract_attachments(html, record, detail_url, content_selector)
-        self._extract_tags(html, record)
-        self._extract_external_links(html, record, detail_url)
+        content_field_selector = self.detail_field_selector(self._template, "content")
+        ssc_common.extract_meta_fields(html, record)
+        ssc_common.extract_content(html, record, detail_url, content_field_selector)
+        ssc_common.extract_slides(html, record, detail_url, content_field_selector)
+        ssc_common.extract_figures(html, record, detail_url, content_field_selector)
+        ssc_common.extract_attachments(html, record, detail_url, content_field_selector)
+        ssc_common.extract_tags(html, record)
+        ssc_common.extract_external_links(self, record, detail_url)
 
         return record
 

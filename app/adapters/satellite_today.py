@@ -4,8 +4,8 @@
 --------
 1. 通过 WordPress REST API 抓取全站 post 列表，覆盖全部 topic/category
 2. 利用 categories/tags API 将 taxonomy ID 映射为名称和 slug
-3. 正文处理（图片/附件/外链/纯文本）由基类 _process_content_html 统一完成
-4. 通过基类 _enrich_cover_images_batch 并行获取封面图 URL
+3. 正文处理（图片/附件/外链）由 WordPress 新闻工具统一完成
+4. 通过新闻通用层并行获取封面图 URL
 5. 清理所有 WP API 中间字段，删除冗余的 topic_* 字段
 """
 
@@ -16,6 +16,7 @@ from typing import Any
 
 from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter
+from app.adapters.utils.news.wp import assets as wp_assets
 from app.downloader.http_client import HttpClient
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,12 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
             and record["featured_media"] > 0
         ]
         if pending_media:
-            await self._enrich_cover_images_batch(pending_media, self._media_cache)
+            await wp_assets.enrich_cover_images_batch(
+                self._client,
+                self._base_url,
+                pending_media,
+                self._media_cache,
+            )
 
         for record in records:
             # 分类 ID → 名称/slug
@@ -96,14 +102,9 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                     record["tag_names"] = [item["name"] for item in tag_meta]
                     record["tag_slugs"] = [item["slug"] for item in tag_meta]
 
-            # excerpt_html → summary
-            excerpt_html = str(record.get("excerpt_html") or "").strip()
-            if excerpt_html:
-                record["summary"] = self.html_to_text(excerpt_html)
-
-            # 正文处理：图片/附件/外链/纯文本
+            # 正文处理：图片/附件/外链
             url = str(record.get("url") or self._base_url)
-            await self._process_content_html(record, url)
+            await wp_assets.process_content_html(self, record, url)
 
             # 统一封面图字段：image_url → cover_image + thumbnail
             image_url = str(record.get("image_url") or "").strip()
@@ -114,7 +115,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                 record["image_url"] = record["cover_image"]
 
             # 清理 WP API 中间字段
-            self._cleanup_wp_fields(record)
+            wp_assets.cleanup_wp_fields(record)
 
         return records
 
@@ -124,7 +125,9 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
             return
 
         try:
-            data = await self._wp_request_json(
+            data = await wp_assets.wp_request_json(
+                self._client,
+                self._base_url,
                 f"{self._base_url}/wp-json/wp/v2/categories"
                 "?per_page=100&page=1&_fields=id,name,slug",
             )
@@ -158,7 +161,9 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
         for start in range(0, len(unresolved), 100):
             batch = unresolved[start:start + 100]
             try:
-                data = await self._wp_request_json(
+                data = await wp_assets.wp_request_json(
+                    self._client,
+                    self._base_url,
                     f"{self._base_url}/wp-json/wp/v2/tags"
                     f"?include={','.join(str(tid) for tid in batch)}"
                     f"&per_page={len(batch)}&_fields=id,name,slug",

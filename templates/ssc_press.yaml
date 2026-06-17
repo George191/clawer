@@ -47,8 +47,13 @@ list_pagination:
   max_pages: 0
   results_per_page: 100
 
-# 正文容器选择器 — 适配器从模板读取，避免 hardcode
-content_selector: "section.article-detail-content"
+detail_fields:
+  - name: content
+    selector: "section.article-detail-content p"
+    selector_type: css
+    field_type: html
+    required: false
+    description: "详情页正文容器，adapter 会移除 meta/dateline 后生成 content_html/content"
 
 download:
   - selector: "attachments"

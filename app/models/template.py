@@ -201,11 +201,6 @@ class SiteTemplate(BaseModel):
     detail_url_selector_type: SelectorType = Field(default=SelectorType.CSS)
     detail_request: RequestConfig = Field(default_factory=RequestConfig, description="详情页请求配置")
     detail_fields: list[FieldMapping] = Field(default_factory=list, description="详情页字段映射")
-    content_selector: str | None = Field(
-        default=None,
-        description="正文容器 CSS 选择器（逗号分隔多个备选），如 'section.article-detail-content'。"
-        "适配器从模板读取此配置，避免 hardcode。",
-    )
 
     download: list[DownloadConfig] = Field(default_factory=list, description="文件下载配置列表，支持多资源类型（如 PDF + 插图 + 缩略图）")
 

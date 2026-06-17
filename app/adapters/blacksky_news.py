@@ -8,9 +8,8 @@
 4. 外链在 HTML 列表页 /company/news/ 的 article.article-summary.news h3 a 中
 5. 在 on_before_crawl 中请求 HTML 列表页，通过标题匹配提取外链
 6. sources 分类 ID 映射为来源名称
-7. featured_media 通过基类 _enrich_cover_images_batch 并行获取封面图
-8. 有外链时抓取外部文章，用基类方法提取正文/图片/附件
-9. 清理所有 WP API 中间字段
+7. featured_media 通过新闻通用层并行获取封面图
+8. 清理所有 WP API 中间字段
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ from typing import Any
 from urllib.parse import urlparse
 
 from app.adapters import register_adapter
-from app.adapters.utils.news import _SOCIAL_DOMAINS
-from app.adapters.utils.news.blacksky_base import BlackSkyBaseAdapter
+from app.adapters.utils.news import NewsBaseAdapter, _SOCIAL_DOMAINS
+from app.adapters.utils.news.wp import assets as wp_assets
 from app.downloader.http_client import HttpClient
 from app.models.template import RequestConfig
 
@@ -37,10 +36,11 @@ def _normalize_title(title: str) -> str:
 
 
 @register_adapter("blacksky_news")
-class BlackSkyNewsAdapter(BlackSkyBaseAdapter):
+class BlackSkyNewsAdapter(NewsBaseAdapter):
     """BlackSky 媒体报道适配器（WP REST API /news CPT）。"""
 
     adapter_name = "blacksky_news"
+    site_domain = "blacksky.com"
 
     def __init__(
         self,
@@ -51,6 +51,7 @@ class BlackSkyNewsAdapter(BlackSkyBaseAdapter):
         super().__init__(base_url, http_client, **kwargs)
         self._html_link_map: dict[str, str] = {}
         self._source_map: dict[int, str] = {}
+        self._media_cache: dict[int, str] = {}
 
     async def on_before_crawl(self, template: Any) -> None:
         """爬取开始前：获取 sources 映射，请求 HTML 列表页。"""
@@ -134,7 +135,7 @@ class BlackSkyNewsAdapter(BlackSkyBaseAdapter):
         """通过 WP REST API 动态获取 sources 分类的 ID→名称映射。"""
         try:
             url = f"{self._base_url}/wp-json/wp/v2/sources?per_page=100&_fields=id,name"
-            items = await self._wp_request_json(url)
+            items = await wp_assets.wp_request_json(self._client, self._base_url, url)
             for item in items:
                 self._source_map[item["id"]] = item["name"]
             logger.info(
@@ -148,13 +149,18 @@ class BlackSkyNewsAdapter(BlackSkyBaseAdapter):
             )
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
-        """列表页后处理：映射来源、匹配外链、并行封面图、外部文章提取。"""
+        """列表页后处理：映射来源、匹配外链、并行封面图。"""
         records = await super().on_after_page(page, records)
         if not records:
             return records
 
         # 并行获取封面图
-        await self._enrich_cover_images_batch(records)
+        await wp_assets.enrich_cover_images_batch(
+            self._client,
+            self._base_url,
+            records,
+            self._media_cache,
+        )
 
         for record in records:
             record["link_type"] = "media_coverage"
@@ -165,11 +171,6 @@ class BlackSkyNewsAdapter(BlackSkyBaseAdapter):
                 record["source_names"] = [
                     self._source_map.get(sid, f"source_{sid}") for sid in source_ids
                 ]
-
-            # excerpt → summary
-            excerpt_html = str(record.get("excerpt") or "").strip()
-            if excerpt_html:
-                record["summary"] = self.html_to_text(excerpt_html)
 
             # 通过标题匹配 HTML 列表页中的外链
             title = record.get("title", "")
@@ -182,64 +183,47 @@ class BlackSkyNewsAdapter(BlackSkyBaseAdapter):
                     record["external_links"] = [ext_url]
                     record["source_url"] = ext_url
 
-            # 有外链时抓取外部文章补充正文
-            source_url = str(record.get("source_url") or "").strip()
-            if source_url:
-                await self._enrich_external_article(record, source_url)
-
             # 清理 WP API 中间字段
-            self._cleanup_wp_fields(record)
+            wp_assets.cleanup_wp_fields(record)
 
         return records
-
-    async def _enrich_external_article(self, record: dict[str, Any], source_url: str) -> None:
-        """抓取外部来源文章，用基类方法补充正文、图片和附件。"""
-        if not self._client:
-            return
-
-        try:
-            cfg = RequestConfig(
-                headers={
-                    "Accept": "text/html,application/xhtml+xml",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer": f"{self._base_url}/company/news/",
-                }
-            )
-            page_html = await self._client.request_page(
-                source_url, cfg, anti_crawl_enabled=False,
-            )
-        except Exception as e:
-            logger.debug(
-                "[BlackSkyNews] Failed to fetch source article '%s': %s",
-                source_url, str(e)[:100],
-            )
-            return
-
-        # 使用模板配置的正文选择器提取正文
-        content_selector = getattr(self._template, "content_selector", None) if self._template else None
-        content_selectors = [s.strip() for s in content_selector.split(",") if s.strip()] if content_selector else None
-        content_html = self.extract_main_content_html(page_html, content_selectors)
-        if not content_html:
-            return
-
-        record["content_html"] = content_html
-        # 用基类方法统一处理正文
-        await self._process_content_html(record, source_url)
-
-        # 合并外链（source_url + 正文中的外链）
-        external_refs = record.get("external_links") or []
-        merged: list[str] = []
-        seen: set[str] = set()
-        for url in [source_url, *external_refs]:
-            if url not in seen:
-                merged.append(url)
-                seen.add(url)
-        record["external_links"] = merged
 
     def _fuzzy_match_title(self, normalized: str) -> str | None:
         """模糊匹配标题：检查是否有包含关系。"""
         for key, url in self._html_link_map.items():
             if normalized in key or key in normalized:
                 return url
+        return None
+
+    def on_request_headers(self, page: int) -> dict[str, str]:
+        """BlackSky JSON API 请求头。"""
+        return {
+            "Accept": "application/json",
+            "Referer": "https://blacksky.com/company/news/",
+        }
+
+    async def on_error(
+        self, error: Exception, page: int, attempt: int,
+    ) -> str | None:
+        """BlackSky 站点错误处理。"""
+        error_str = str(error)
+        lowered = error_str.lower()
+        if "400" in error_str and (
+            "invalid page" in lowered
+            or "rest_post_invalid_page_number" in lowered
+            or "larger than the number of pages available" in lowered
+        ):
+            return "abort"
+        if "404" in error_str:
+            return "abort"
+        if "403" in error_str:
+            if attempt >= 2:
+                return "abort"
+            import asyncio
+            await asyncio.sleep(3 * (attempt + 1))
+            return None
+        if "429" in error_str or "503" in error_str:
+            import asyncio
+            await asyncio.sleep(5 * (attempt + 1))
+            return None
         return None
