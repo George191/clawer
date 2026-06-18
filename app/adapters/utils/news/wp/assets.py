@@ -166,7 +166,7 @@ async def process_content_html(
     if images:
         record["images"] = images
 
-    record["content_html"] = content_html
+    record["content_html"] = _wrapper_html(wrapper)
 
     attachments = extract_attachment_links(content_html, base_url)
     if attachments:

@@ -1,0 +1,120 @@
+name: blacksky_posts
+display_name: "BlackSky - 博客文章 (Posts)"
+base_url: "https://blacksky.com"
+data_type: news
+adapter: blacksky_posts
+anti_crawl_enabled: false
+description: >
+  采集 BlackSky 官方博客文章。
+  使用 WordPress REST API 翻页，默认文章类型: posts (rest_base=posts)。
+
+  特点:
+  - content.rendered 有完整 HTML 正文
+  - 有 featured_media 配图（adapter 中通过 WP Media API 获取 URL）
+  - link 指向站内 /blog/ 或 /{slug}/ 页面
+  - excerpt.rendered 有摘要
+  - adapter 中从 content_html 提取外链和正文图片
+
+response_type: json
+json_item_path: ""
+json_total_path: ""
+
+list_page: "/wp-json/wp/v2/posts?per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,content,excerpt,featured_media"
+list_request:
+  method: GET
+  headers:
+    Accept: "application/json"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+list_fields:
+  - name: id
+    selector: "id"
+    selector_type: json
+    field_type: number
+    required: true
+    description: "WordPress post ID"
+
+  - name: title
+    selector: "title.rendered"
+    selector_type: json
+    field_type: text
+    required: true
+    transform: strip
+    description: "文章标题"
+
+  - name: url
+    selector: "link"
+    selector_type: json
+    field_type: text
+    required: true
+    description: "站内详情页链接"
+
+  - name: date
+    selector: "date"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "发布日期 (ISO 8601)"
+
+  - name: modified
+    selector: "modified"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "最后修改日期 (ISO 8601)"
+
+  - name: slug
+    selector: "slug"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "URL slug"
+
+  - name: content_html
+    selector: "content.rendered"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "正文 HTML"
+
+  - name: excerpt_html
+    selector: "excerpt.rendered"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "摘要 HTML"
+
+  - name: featured_media
+    selector: "featured_media"
+    selector_type: json
+    field_type: number
+    required: false
+    description: "封面图 media ID（adapter 中通过 WP Media API 获取 URL）"
+
+list_pagination:
+  type: page_number
+  start_page: 1
+  max_pages: 0
+  results_per_page: 20
+
+download:
+  - selector: "featured_media.source_url"
+    selector_type: json
+    link_type: src
+    description: "文章封面图，adapter 通过 WP Media API 回填"
+    asset_type: thumbnail
+
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    description: "文章正文中的附件资源"
+    asset_type: attachment
+
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    description: "正文中的图片资源，adapter 已提取为 images 列表"
+    asset_type: image
+
+# python -m app.crawler.main --template blacksky_posts

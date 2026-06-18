@@ -394,10 +394,6 @@ class ProxyPool:
                 if to_remove:
                     for p in to_remove:
                         proxy_list.remove(p)
-                    # removed = True
-            
-            # if removed:
-            #     logger.warning("Proxy removed from pool after failure: %s", proxy_url)
                 
             # 更新指标
             m = self._metrics.setdefault(proxy_url, {"success": 0, "failure": 0, "last_used": 0, "last_check": 0})
