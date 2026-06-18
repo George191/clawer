@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -62,8 +63,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
         # 并行获取封面图（仅对 _embed 未返回 image_url 的记录）
         pending_media = [
             record for record in records
-            if not record.get("image_url")
-            and isinstance(record.get("featured_media"), int)
+            if isinstance(record.get("featured_media"), int)
             and record["featured_media"] > 0
         ]
         if pending_media:
@@ -88,7 +88,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                     slugs = [item["slug"] for item in category_meta]
                     record["category_names"] = names
                     record["category_slugs"] = slugs
-                    record["primary_category"] = names[0]
+                    record["primary_category"] = names
 
             # 标签 ID → 名称/slug
             tag_ids = record.get("tag_ids") or []
@@ -105,15 +105,6 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
             # 正文处理：图片/附件/外链
             url = str(record.get("url") or self._base_url)
             await wp_assets.process_content_html(self, record, url)
-
-            # 统一封面图字段：image_url → cover_image + thumbnail
-            image_url = str(record.get("image_url") or "").strip()
-            if image_url:
-                record.setdefault("cover_image", image_url)
-                record.setdefault("thumbnail", image_url)
-            elif record.get("cover_image"):
-                record["image_url"] = record["cover_image"]
-
             # 清理 WP API 中间字段
             wp_assets.cleanup_wp_fields(record)
 
@@ -210,14 +201,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
             return "abort"
         if "404" in error_str:
             return "abort"
-        if "403" in error_str:
-            if attempt >= 2:
-                return "abort"
-            import asyncio
-            await asyncio.sleep(3 * (attempt + 1))
-            return None
-        if "429" in error_str or "503" in error_str:
-            import asyncio
+        if "429" in error_str or "503" in error_str or "403" in error_str:
             await asyncio.sleep(5 * (attempt + 1))
             return None
         return None

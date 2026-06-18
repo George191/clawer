@@ -20,7 +20,7 @@ json_item_path: "body"
 json_total_path: "headers.X-WP-Total"
 json_total_num_pages: "headers.X-WP-TotalPages"
 
-list_page: "/wp-json/wp/v2/posts?_envelope=1&_embed=1&per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,categories,tags,excerpt,content,featured_media,_embedded"
+list_page: "/wp-json/wp/v2/posts?_envelope=1&_embed=1&per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,categories,tags,excerpt,content,featured_media"
 list_request:
   method: GET
   headers:
@@ -111,13 +111,6 @@ list_fields:
     required: false
     description: "封面媒体 ID"
 
-  - name: image_url
-    selector: "_embedded.wp:featuredmedia[0].source_url"
-    selector_type: json
-    field_type: text
-    required: false
-    description: "封面图 URL，缺失时 adapter 通过 media API 回填"
-
 list_pagination:
   type: page_number
   start_page: 1
@@ -125,11 +118,11 @@ list_pagination:
   results_per_page: 20
 
 download:
-  - selector: "image_url"
+  - selector: "featured_media.source_url"
     selector_type: json
     link_type: src
     description: "文章封面图，由 _embedded 或 adapter 回填"
-    asset_type: image
+    asset_type: thumbnail
 
   - selector: "attachments"
     selector_type: json

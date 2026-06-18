@@ -154,7 +154,6 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
         if not records:
             return records
 
-        # 并行获取封面图
         await wp_assets.enrich_cover_images_batch(
             self._client,
             self._base_url,
@@ -172,7 +171,7 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
                     self._source_map.get(sid, f"source_{sid}") for sid in source_ids
                 ]
 
-            # 通过标题匹配 HTML 列表页中的外链
+            # 通过标题匹配 HTML 列表页中的原始链接（当前页面直接跳转的外部文章）
             title = record.get("title", "")
             if title and self._html_link_map:
                 normalized = _normalize_title(title)
@@ -180,7 +179,6 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
                 if not ext_url:
                     ext_url = self._fuzzy_match_title(normalized)
                 if ext_url:
-                    record["external_links"] = [ext_url]
                     record["source_url"] = ext_url
 
             # 清理 WP API 中间字段

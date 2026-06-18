@@ -1,4 +1,4 @@
-"""WordPress 新闻站正文和媒体资源工具。"""
+"""WordPress news media helpers."""
 
 from __future__ import annotations
 
@@ -18,8 +18,82 @@ from app.models.template import RequestConfig
 logger = logging.getLogger(__name__)
 
 
+def _image_src(img: Any) -> str:
+    return (
+        img.get("src")
+        or img.get("data-src")
+        or first_srcset_url(img.get("srcset", ""))
+        or ""
+    ).strip()
+
+
+def _is_ignored_image(src: str) -> bool:
+    return not src or src.startswith("data:") or "/emoji/" in src or "emoji" in src.lower()
+
+
+def _caption_for_image(img: Any) -> str:
+    node = img
+    while node is not None and getattr(node, "tag", "").lower() != "figure":
+        node = node.getparent()
+    if node is not None:
+        captions = node.cssselect("figcaption")
+        if captions:
+            return re.sub(r"\s+", " ", captions[0].text_content()).strip()
+    return ""
+
+
+def _has_slide_ancestor(img: Any) -> bool:
+    node = img
+    while node is not None:
+        if node.get("data-spider-slide") == "1":
+            return True
+        node = node.getparent()
+    return False
+
+
+def _wrapper_html(wrapper: Any) -> str:
+    html = "".join(
+        etree.tostring(child, encoding="unicode", method="html")
+        for child in wrapper
+    )
+    if not html:
+        html = etree.tostring(wrapper, encoding="unicode", method="html")
+    return html.strip()
+
+
+def extract_images_from_wrapper(wrapper: Any, base_url: str) -> list[dict[str, str]]:
+    """Extract non-slide body images from a parsed HTML wrapper."""
+    images: list[dict[str, str]] = []
+
+    for img in wrapper.cssselect("img"):
+        if _has_slide_ancestor(img):
+            continue
+
+        raw_src = _image_src(img)
+        if _is_ignored_image(raw_src):
+            continue
+
+        image = {
+            "url": urljoin(base_url, raw_src),
+            "placeholder": f"{{{{img_{len(images)}}}}}",
+            "alt": (img.get("alt") or "").strip(),
+        }
+        caption = _caption_for_image(img)
+        if caption:
+            image["caption"] = caption
+        images.append(image)
+
+        img.set("src", image["placeholder"])
+        if "srcset" in img.attrib:
+            del img.attrib["srcset"]
+        if "data-src" in img.attrib:
+            del img.attrib["data-src"]
+
+    return images
+
+
 def extract_images_from_html(html: str, base_url: str) -> tuple[list[dict[str, str]], str]:
-    """从 HTML 中提取图片资源，并将 src 替换为占位符。"""
+    """Extract body images from HTML and replace src values with placeholders."""
     from lxml import html as lxml_html
 
     if not html:
@@ -30,45 +104,12 @@ def extract_images_from_html(html: str, base_url: str) -> tuple[list[dict[str, s
     except Exception:
         return [], html
 
-    images: list[dict[str, str]] = []
-
-    for img in wrapper.cssselect("img"):
-        raw_src = (
-            img.get("src")
-            or img.get("data-src")
-            or first_srcset_url(img.get("srcset", ""))
-        )
-        if not raw_src or raw_src.startswith("data:"):
-            continue
-        if "/emoji/" in raw_src or "emoji" in raw_src.lower():
-            continue
-
-        full_url = urljoin(base_url, raw_src.strip())
-        placeholder = f"{{{{img_{len(images)}}}}}"
-        alt = (img.get("alt") or "").strip()
-        images.append({
-            "url": full_url,
-            "placeholder": placeholder,
-            "alt": alt,
-        })
-
-        img.set("src", placeholder)
-        if "srcset" in img.attrib:
-            del img.attrib["srcset"]
-        if "data-src" in img.attrib:
-            del img.attrib["data-src"]
-
-    new_html = "".join(
-        etree.tostring(child, encoding="unicode", method="html")
-        for child in wrapper
-    )
-    if not new_html:
-        new_html = etree.tostring(wrapper, encoding="unicode", method="html")
-    return images, new_html.strip()
+    images = extract_images_from_wrapper(wrapper, base_url)
+    return images, _wrapper_html(wrapper)
 
 
 def extract_attachment_links(html: str, base_url: str) -> list[dict[str, str]]:
-    """从 HTML 中提取附件链接。"""
+    """Extract attachment links from HTML."""
     from lxml import html as lxml_html
 
     if not html:
@@ -109,16 +150,23 @@ async def process_content_html(
     record: dict[str, Any],
     base_url: str,
 ) -> None:
-    """处理 content_html：图片、附件和外链。"""
+    """Process content_html into slides, body images, attachments, and links."""
+    from lxml import html as lxml_html
+
     content_html = str(record.get("content_html") or "").strip()
     if not content_html:
         return
 
-    images, normalized_html = extract_images_from_html(content_html, base_url)
+    try:
+        wrapper = lxml_html.fragment_fromstring(content_html, create_parent="div")
+    except Exception:
+        return
+
+    images = extract_images_from_wrapper(wrapper, base_url)
     if images:
         record["images"] = images
-        content_html = normalized_html
-        record["content_html"] = normalized_html
+
+    record["content_html"] = content_html
 
     attachments = extract_attachment_links(content_html, base_url)
     if attachments:
@@ -132,7 +180,7 @@ async def wp_request_json(
     base_url: str,
     url: str,
 ) -> Any:
-    """发起 WordPress REST API JSON 请求。"""
+    """Request JSON from a WordPress REST endpoint."""
     config = RequestConfig(
         headers={
             "Accept": "application/json",
@@ -157,7 +205,7 @@ async def fetch_wp_media_url(
     media_id: int,
     cache: dict[int, str],
 ) -> str:
-    """通过 WP Media API 获取封面图 URL。"""
+    """Fetch a WordPress media URL by ID."""
     if not media_id:
         return ""
     if media_id in cache:
@@ -176,15 +224,7 @@ async def fetch_wp_media_url(
     if not isinstance(data, dict):
         return ""
 
-    media_details = data.get("media_details") or {}
-    sizes = media_details.get("sizes") or {}
-    full = sizes.get("full") or {}
-    source_url = str(
-        full.get("source_url") or data.get("source_url") or "",
-    ).strip()
-    if source_url:
-        cache[media_id] = source_url
-    return source_url
+    return data
 
 
 async def enrich_cover_images_batch(
@@ -193,7 +233,7 @@ async def enrich_cover_images_batch(
     records: list[dict[str, Any]],
     cache: dict[int, str],
 ) -> None:
-    """批量并行获取封面图 URL。"""
+    """Fetch cover image URLs and write the configured cover aliases."""
     pending = [
         (record, int(record.get("featured_media") or 0))
         for record in records
@@ -204,21 +244,14 @@ async def enrich_cover_images_batch(
 
     async def _fetch_one(record: dict[str, Any], media_id: int) -> None:
         cover_url = await fetch_wp_media_url(client, base_url, media_id, cache)
-        if cover_url:
-            record["cover_image"] = cover_url
-            record.setdefault("thumbnail", cover_url)
+        record.update({"featured_media": cover_url})
 
     await asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending))
 
-
 def cleanup_wp_fields(record: dict[str, Any]) -> None:
-    """清理 WordPress API 中间字段。"""
+    """Remove WordPress API intermediate fields."""
     for key in (
-        "excerpt", "excerpt_html",
-        "featured_media",
-        "category_ids", "tag_ids",
-        "source_ids",
-        "external_url",
+        "category_ids", "tag_ids", "source_ids",
     ):
         record.pop(key, None)
 

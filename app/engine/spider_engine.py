@@ -410,11 +410,8 @@ class SpiderEngine:
         return await self._crawl_list_pages_html(template, result, resume_page, state)
 
     def _get_record_id(self, record: dict[str, Any], template: SiteTemplate) -> str:
-        """获取记录的唯一 ID（用于去重）。"""
-        # 优先使用 id 
-        for key in ("id", ):
-            if key in record and record[key]:
-                return str(record[key])
+        if key := record.get("id"):
+            return str(record[key])
         # 回退：用内容 hash
         from app.dedup.redis_dedup import RedisDedup
         return RedisDedup.make_content_hash(record)

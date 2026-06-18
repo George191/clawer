@@ -86,7 +86,7 @@ detail_request:
 
 detail_fields:
   - name: content
-    selector: "section.article-detail-content p"
+    selector: "section.article-detail-content"
     selector_type: css
     field_type: html
     required: false
@@ -110,12 +110,6 @@ download:
     link_type: src
     description: "详情页轮播图资源"
     asset_type: slide
-
-  - selector: "figures"
-    selector_type: json
-    link_type: src
-    description: "正文 figure/img 资源"
-    asset_type: figure
 
   - selector: "images"
     selector_type: json

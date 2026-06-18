@@ -156,44 +156,6 @@ def extract_slides(html: str, record: dict, detail_url: str, content_field_selec
         record["slides"] = slides
 
 
-def extract_figures(html: str, record: dict, detail_url: str, content_field_selector: str) -> None:
-    """提取正文内的 figure/img（不与 slides 重复）。"""
-    if record.get("images"):
-        return
-
-    try:
-        tree = lxml_html.fromstring(html)
-    except Exception:
-        return
-
-    figures: list[dict] = []
-    seen: set[str] = set()
-
-    for content_node in _find_content_nodes(tree, content_field_selector):
-        for img in content_node.cssselect("img"):
-            raw_src = (
-                img.get("src")
-                or img.get("data-src")
-                or _first_srcset_url(img.get("srcset", ""))
-            )
-            if not raw_src or raw_src.startswith("data:"):
-                continue
-
-            media_url = urljoin(detail_url, raw_src.strip())
-            if media_url in seen:
-                continue
-            seen.add(media_url)
-
-            fig: dict[str, str] = {"url": media_url, "type": "image"}
-            alt = (img.get("alt") or "").strip()
-            if alt:
-                fig["alt"] = alt
-            figures.append(fig)
-
-    if figures:
-        record["figures"] = figures
-
-
 def extract_attachments(html: str, record: dict, detail_url: str, content_field_selector: str) -> None:
     """提取 PDF 等附件链接。"""
     try:

@@ -19,7 +19,7 @@ response_type: json
 json_item_path: ""
 json_total_path: ""
 
-list_page: "/wp-json/wp/v2/news?per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,sources,excerpt,featured_media"
+list_page: "/wp-json/wp/v2/news?per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,sources,featured_media"
 list_request:
   method: GET
   headers:
@@ -78,13 +78,6 @@ list_fields:
     required: false
     description: "来源分类 ID 列表（adapter 中转换为 source_names）"
 
-  - name: excerpt
-    selector: "excerpt.rendered"
-    selector_type: json
-    field_type: text
-    required: false
-    description: "摘要 HTML"
-
   - name: featured_media
     selector: "featured_media"
     selector_type: json
@@ -99,11 +92,11 @@ list_pagination:
   results_per_page: 20
 
 download:
-  - selector: "cover_image"
+  - selector: "featured_media.source_url"
     selector_type: json
     link_type: src
     description: "媒体报道封面图，adapter 通过 WP Media API 回填"
-    asset_type: cover_image
+    asset_type: image
 
   - selector: "attachments"
     selector_type: json

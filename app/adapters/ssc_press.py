@@ -246,13 +246,9 @@ class SscPressAdapter(NewsBaseAdapter):
         ssc_common.extract_meta_fields(html, record)
         ssc_common.extract_content(html, record, detail_url, content_field_selector)
         ssc_common.extract_slides(html, record, detail_url, content_field_selector)
-        ssc_common.extract_figures(html, record, detail_url, content_field_selector)
         ssc_common.extract_attachments(html, record, detail_url, content_field_selector)
         ssc_common.extract_tags(html, record)
         ssc_common.extract_external_links(self, record, detail_url)
-
-        # 确保 link_type
-        record["link_type"] = "press_release"
 
         return record
 
