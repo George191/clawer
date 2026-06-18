@@ -114,17 +114,11 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
         if self._category_map:
             return
 
-        try:
-            data = await wp_assets.wp_request_json(
-                self._client,
-                self._base_url,
-                f"{self._base_url}/wp-json/wp/v2/categories"
-                "?per_page=100&page=1&_fields=id,name,slug",
-            )
-        except Exception:
-            await asyncio.sleep(5)
-            await self._fetch_category_map()
-            return
+        data = await wp_assets.wp_request_json(
+            self._client,
+            f"{self._base_url}/wp-json/wp/v2/categories"
+            "?per_page=100&page=1&_fields=id,name,slug",
+        )
 
         if not isinstance(data, list):
             return
@@ -151,20 +145,13 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
 
         for start in range(0, len(unresolved), 100):
             batch = unresolved[start:start + 100]
-            try:
-                data = await wp_assets.wp_request_json(
-                    self._client,
-                    self._base_url,
-                    f"{self._base_url}/wp-json/wp/v2/tags"
-                    f"?include={','.join(str(tid) for tid in batch)}"
-                    f"&per_page={len(batch)}&_fields=id,name,slug",
-                )
-            except Exception as e:
-                logger.debug(
-                    "[SatelliteToday] Failed to fetch tags batch %s: %s",
-                    batch[:5], str(e)[:100],
-                )
-                continue
+
+            data = await wp_assets.wp_request_json(
+                self._client,
+                f"{self._base_url}/wp-json/wp/v2/tags"
+                f"?include={','.join(str(tid) for tid in batch)}"
+                f"&per_page={len(batch)}&_fields=id,name,slug",
+            )
 
             if not isinstance(data, list):
                 continue

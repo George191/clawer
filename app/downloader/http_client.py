@@ -162,6 +162,7 @@ class HttpClient:
 
             if use_proxy and proxy_url:
                 request_kwargs["proxy"] = proxy_url
+            
             response = await client.request(**request_kwargs)
 
             if response.status_code in settings.http_retry_on_statuses:

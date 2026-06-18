@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from lxml import etree
+from tenacity import retry, stop_after_attempt, wait_exponential, stop_never
 
 from app.adapters.utils.news import NewsBaseAdapter
 from app.downloader.http_client import HttpClient
@@ -174,23 +175,16 @@ async def process_content_html(
 
     adapter.merge_external_links_from_content(record, base_url)
 
-
+@retry(
+    stop=stop_never,
+    wait=wait_exponential(multiplier=1, min=1, max=10),
+)
 async def wp_request_json(
     client: HttpClient,
-    base_url: str,
     url: str,
 ) -> Any:
     """Request JSON from a WordPress REST endpoint."""
-    config = RequestConfig(
-        headers={
-            "Accept": "application/json",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": f"{base_url}/",
-            "Cache-Control": "no-cache",
-        },
-        encoding="utf-8",
-    )
-    text = await client.request_page(url, config, anti_crawl_enabled=True)
+    text = await client.request_page(url, anti_crawl_enabled=True)
     return json.loads(text)
 
 
@@ -206,20 +200,11 @@ async def fetch_wp_media_url(
     if media_id in cache:
         return cache[media_id]
 
-    try:
-        url = (
-            f"{base_url}/wp-json/wp/v2/media/{media_id}"
-            f"?_fields=source_url,media_details.sizes.full.source_url"
-        )
-        data = await wp_request_json(client, base_url, url)
-    except Exception as e:
-        logger.debug("[wp.assets] Media %d fetch failed: %s", media_id, str(e)[:80])
-        return ""
-
-    if not isinstance(data, dict):
-        return ""
-
-    return data
+    url = (
+        f"{base_url}/wp-json/wp/v2/media/{media_id}"
+        f"?_fields=source_url,media_details.sizes.full.source_url"
+    )
+    return await wp_request_json(client, url)
 
 
 async def enrich_cover_images_batch(
@@ -239,7 +224,8 @@ async def enrich_cover_images_batch(
 
     async def _fetch_one(record: dict[str, Any], media_id: int) -> None:
         cover_url = await fetch_wp_media_url(client, base_url, media_id, cache)
-        record.update({"featured_media": cover_url})
+        if cover_url:
+            record["featured_media"] = cover_url
 
     await asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending))
 

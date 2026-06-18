@@ -133,20 +133,15 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
 
     async def _fetch_source_map(self) -> None:
         """通过 WP REST API 动态获取 sources 分类的 ID→名称映射。"""
-        try:
-            url = f"{self._base_url}/wp-json/wp/v2/sources?per_page=100&_fields=id,name"
-            items = await wp_assets.wp_request_json(self._client, self._base_url, url)
-            for item in items:
-                self._source_map[item["id"]] = item["name"]
-            logger.info(
-                "[BlackSkyNews] Fetched %d sources from API",
-                len(self._source_map),
-            )
-        except Exception as e:
-            logger.warning(
-                "[BlackSkyNews] Failed to fetch sources: %s",
-                str(e)[:100],
-            )
+        url = f"{self._base_url}/wp-json/wp/v2/sources?per_page=100&_fields=id,name"
+        items = await wp_assets.wp_request_json(self._client, url)
+        for item in items:
+            self._source_map[item["id"]] = item["name"]
+        logger.info(
+            "[BlackSkyNews] Fetched %d sources from API",
+            len(self._source_map),
+        )
+
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """列表页后处理：映射来源、匹配外链、并行封面图。"""
