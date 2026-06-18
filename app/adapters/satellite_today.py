@@ -88,7 +88,6 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                     slugs = [item["slug"] for item in category_meta]
                     record["category_names"] = names
                     record["category_slugs"] = slugs
-                    record["primary_category"] = names
 
             # 标签 ID → 名称/slug
             tag_ids = record.get("tag_ids") or []
@@ -122,9 +121,9 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                 f"{self._base_url}/wp-json/wp/v2/categories"
                 "?per_page=100&page=1&_fields=id,name,slug",
             )
-        except Exception as e:
-            logger.warning("[SatelliteToday] Failed to fetch categories: %s", str(e)[:120])
-            return
+        except Exception:
+            await asyncio.sleep(5)
+            await self._fetch_category_map()
 
         if not isinstance(data, list):
             return

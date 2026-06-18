@@ -195,7 +195,7 @@ async def wp_request_json(
         },
         encoding="utf-8",
     )
-    text = await client.request_page(url, config, anti_crawl_enabled=False)
+    text = await client.request_page(url, config, anti_crawl_enabled=True)
     return json.loads(text)
 
 

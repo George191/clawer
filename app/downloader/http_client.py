@@ -112,7 +112,7 @@ class HttpClient:
 
         if use_anti_crawl:
             _init_anti_crawl()
-
+        
         if _rotator is not None and _rotator.enabled and use_anti_crawl:
             anti_headers = _rotator.get_headers(target_url=url)
             for k, v in anti_headers.items():
@@ -121,7 +121,6 @@ class HttpClient:
             if anti_cookies:
                 for k, v in anti_cookies.items():
                     cookies.setdefault(k, v)
-
         if _delayer is not None and _delayer.enabled and use_anti_crawl:
             await _delayer.delay(url)
 
@@ -162,7 +161,7 @@ class HttpClient:
 
             if use_proxy and proxy_url:
                 request_kwargs["proxy"] = proxy_url
-
+            print(f"Request kwargs: {request_kwargs}")
             response = await client.request(**request_kwargs)
 
             if response.status_code in settings.http_retry_on_statuses:

@@ -170,7 +170,6 @@ class IdentityRotator:
         if target_url:
             parsed = urlparse(target_url)
             return f"{parsed.scheme}://{parsed.netloc}/"
-        return "https://www.google.com/"
 
     def get_cookies(self) -> Optional[dict[str, str]]:
         """获取一组 Cookie。"""
