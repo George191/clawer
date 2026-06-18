@@ -31,13 +31,14 @@ _fallback = None
 def _init_anti_crawl():
     """延迟初始化反爬各组件。"""
     global _proxy_pool, _delayer, _rotator, _fallback
-    if settings.anti_crawl_enabled and _proxy_pool is None:
-        from app.anti_crawl.proxy_pool import get_proxy_pool
+    if _rotator is None:
         from app.anti_crawl.request_delayer import get_delayer
         from app.anti_crawl.identity_rotator import get_identity_rotator
-        _proxy_pool = get_proxy_pool()
         _delayer = get_delayer()
         _rotator = get_identity_rotator()
+    if settings.anti_crawl_enabled and _proxy_pool is None:
+        from app.anti_crawl.proxy_pool import get_proxy_pool
+        _proxy_pool = get_proxy_pool()
     if settings.fallback_enabled and _fallback is None:
         from app.scheduler.request_fallback import get_request_fallback
         _fallback = get_request_fallback()
@@ -113,7 +114,7 @@ class HttpClient:
         if use_anti_crawl:
             _init_anti_crawl()
         
-        if _rotator is not None and _rotator.enabled and use_anti_crawl:
+        if _rotator is not None and use_anti_crawl:
             anti_headers = _rotator.get_headers(target_url=url)
             for k, v in anti_headers.items():
                 headers.setdefault(k, v)
@@ -161,7 +162,6 @@ class HttpClient:
 
             if use_proxy and proxy_url:
                 request_kwargs["proxy"] = proxy_url
-            print(f"Request kwargs: {request_kwargs}")
             response = await client.request(**request_kwargs)
 
             if response.status_code in settings.http_retry_on_statuses:

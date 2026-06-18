@@ -124,6 +124,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
         except Exception:
             await asyncio.sleep(5)
             await self._fetch_category_map()
+            return
 
         if not isinstance(data, list):
             return
