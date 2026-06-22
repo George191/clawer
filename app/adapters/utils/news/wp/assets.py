@@ -223,12 +223,12 @@ async def enrich_cover_images_batch(
     if not pending:
         return
 
-    # async def _fetch_one(record: dict[str, Any], media_id: int) -> None:
-    #     # cover_url = await fetch_wp_media_url(client, base_url, media_id, cache)
-    #     # if cover_url:
-    #     #     record["featured_media"] = cover_url
+    async def _fetch_one(record: dict[str, Any], media_id: int) -> None:
+        cover_url = await fetch_wp_media_url(client, base_url, media_id, cache)
+        if cover_url:
+            record["featured_media"] = cover_url
 
-    # await asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending))
+    await asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending))
 
 def cleanup_wp_fields(record: dict[str, Any]) -> None:
     """Remove WordPress API intermediate fields."""

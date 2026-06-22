@@ -673,7 +673,7 @@ class SpiderEngine:
 
         if known_total:
             # 已知总页数：一次性计算所有剩余页面并分批并行获取
-            remaining_pages = list(range(start_page + 1, int(dynamic_pages) + 1))
+            remaining_pages = list(range(start_page + 1, int(dynamic_pages)))
             for batch_start in range(0, len(remaining_pages), page_concurrency):
                 batch = remaining_pages[batch_start:batch_start + page_concurrency]
                 await self._fetch_and_process_batch(
