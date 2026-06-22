@@ -16,6 +16,7 @@ import Pipeline from '@/pages/Pipeline';
 import Templates from '@/pages/Templates';
 import AICollect from '@/pages/AICollect';
 import AICollectGovernance from '@/pages/AICollectGovernance';
+import CollectConsole from '@/pages/CollectConsole';
 import LogExplorer from '@/pages/LogExplorer';
 import WorkspacePage from '@/pages/WorkspacePage';
 
@@ -49,15 +50,15 @@ const App: React.FC = () => {
             <Route path="/" element={<CommandCenter />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/explorer" element={<DataExplorer />} />
-            <Route path="/tasks" element={<TaskCenter />} />
+            <Route path="/tasks" element={<CollectConsole />} />
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/logs" element={<LogExplorer />} />
             <Route path="/pipeline" element={<Pipeline />} />
             <Route path="/pipeline/schedule" element={<WorkspacePage />} />
             <Route path="/pipeline/releases" element={<WorkspacePage />} />
             <Route path="/pipeline/alerts" element={<WorkspacePage />} />
-            <Route path="/templates" element={<Templates />} />
-            <Route path="/ai-collect" element={<AICollect />} />
+            <Route path="/templates" element={<CollectConsole />} />
+            <Route path="/ai-collect" element={<CollectConsole />} />
             <Route path="/source-strategy" element={<AICollectGovernance />} />
             <Route path="/anti-crawl" element={<AICollectGovernance />} />
             <Route path="/field-mapping" element={<AICollectGovernance />} />
