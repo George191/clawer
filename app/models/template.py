@@ -188,6 +188,8 @@ class SiteTemplate(BaseModel):
     list_page: str = Field(description="列表页URL路径, 支持 {page} 和 {param_name} 占位符")
     list_request: RequestConfig = Field(default_factory=RequestConfig, description="列表页请求配置")
     list_fields: list[FieldMapping] = Field(description="列表页字段映射")
+    dedup_fields: list[str] = Field(description="去重用字段名列表")
+
     list_pagination: PaginationConfig | None = Field(default=None, description="分页配置")
 
     detail_page: str | None = Field(

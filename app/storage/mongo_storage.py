@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from functools import reduce
 import hashlib
 import json
 import logging
@@ -58,11 +59,17 @@ class MongoStorage(StorageBackend):
         content = json.dumps(record, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(content.encode()).hexdigest()
 
-    async def save_record(self, template_name: str, data_type: str, record: dict[str, Any]) -> str:
+    async def save_record(self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any]) -> str:
         collection = await self._get_collection(template_name)
-        record_id = self._resolve_record_id(record)
-
         search_params = record.pop("_meta_search_params", None) or {}
+
+        def get_nested_value(d, path: str, default=None):
+            try:
+                return reduce(lambda c, k: c[k], path.split('.'), d)
+            except (KeyError, TypeError):
+                return default
+
+        record_id = self._resolve_record_id({f: get_nested_value(record, f) for f in dedup_fields})
 
         record_with_meta = {
             **record,
@@ -97,19 +104,14 @@ class MongoStorage(StorageBackend):
         return record_id
 
     async def save_records(
-        self, template_name: str, data_type: str, records: list[dict[str, Any]]
+        self, template_name: str, data_type: str, dedup_fields: list[str], records: list[dict[str, Any]]
     ) -> list[str]:
         ids: list[str] = []
         for record in records:
-            record_id = await self.save_record(template_name, data_type, record)
+            record_id = await self.save_record(template_name, data_type, dedup_fields, record)
             ids.append(record_id)
         logger.info("Saved %d records to MongoDB for %s/%s", len(ids), template_name, data_type)
         return ids
-
-    async def exists(self, template_name: str, record_id: str) -> bool:
-        collection = await self._get_collection(template_name)
-        doc = await collection.find_one({"_meta.record_id": record_id})
-        return doc is not None
 
     async def update_file_status(
         self,

@@ -535,7 +535,6 @@ def log_infra_status() -> None:
     logging.info("-" * 60)
     logging.info("Enhanced Modules:")
     logging.info("  Anti-Crawl:   %s", "ON" if settings.anti_crawl_enabled else "OFF (default)")
-    logging.info("  Dedup/Bloom:  %s", "ON" if settings.dedup_enabled else "OFF (default)")
     logging.info("  Scheduler:    %s", "ON" if settings.scheduler_enabled else "OFF (default)")
     logging.info("  Jinja2 Tpl:   %s", "ON" if settings.jinja2_enabled else "OFF (default)")
     logging.info("=" * 60)

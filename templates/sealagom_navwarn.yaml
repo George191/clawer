@@ -34,6 +34,9 @@ list_request:
     User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
   encoding: utf-8
 
+dedup_fields:
+  - message_id
+
 # 所有字段返回相同数量元素 (每条消息恰好1个)
 list_fields:
   - name: message_id

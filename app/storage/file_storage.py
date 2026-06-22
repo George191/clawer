@@ -20,15 +20,11 @@ logger = logging.getLogger(__name__)
 
 class StorageBackend(abc.ABC):
     @abc.abstractmethod
-    async def save_record(self, template_name: str, data_type: str, record: dict[str, Any]) -> str:
+    async def save_record(self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any]) -> str:
         ...
 
     @abc.abstractmethod
-    async def save_records(self, template_name: str, data_type: str, records: list[dict[str, Any]]) -> list[str]:
-        ...
-
-    @abc.abstractmethod
-    async def exists(self, template_name: str, data_type: str, record_id: str) -> bool:
+    async def save_records(self, template_name: str, data_type: str, dedup_fields: list[str], records: list[dict[str, Any]]) -> list[str]:
         ...
 
     @abc.abstractmethod
@@ -36,7 +32,7 @@ class StorageBackend(abc.ABC):
         self,
         template_name: str,
         data_type: str,
-        record_id: str,
+        dedup_fields: list[str],
         file_url: str,
         download_status: str,
     ) -> None:
@@ -47,7 +43,7 @@ class StorageBackend(abc.ABC):
         self,
         template_name: str,
         data_type: str,
-        record_id: str,
+        dedup_fields: list[str],
         sync_status: str,
     ) -> None:
         ...
@@ -57,7 +53,7 @@ class StorageBackend(abc.ABC):
         self,
         template_name: str,
         data_type: str,
-        record_id: str,
+        dedup_fields: list[str],
         updates: dict[str, Any],
     ) -> None:
         ...

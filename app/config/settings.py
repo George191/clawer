@@ -95,15 +95,6 @@ class AppSettings(BaseSettings):
     cookie_pool_file: str = Field(default="", description="Cookie池文件路径")
     identity_rotation_interval: int = Field(default=0, description="多少次请求后轮换身份, 0表示每次请求")
 
-    # ── Redis Dedup & Bloom Filter (Redis 去重 & 布隆过滤器) ────────────────────
-    dedup_enabled: bool = Field(default=False, description="是否启用Redis去重")
-    dedup_key_prefix: str = Field(default="spider:dedup", description="去重Redis key前缀")
-    bloom_filter_enabled: bool = Field(default=False, description="是否启用布隆过滤器")
-    bloom_filter_capacity: int = Field(default=1000000, description="布隆过滤器预期元素数")
-    bloom_filter_error_rate: float = Field(default=0.001, description="布隆过滤器误判率")
-    bloom_filter_key_prefix: str = Field(default="spider:bloom", description="布隆过滤器key前缀")
-    incremental_mode: bool = Field(default=False, description="增量采集模式: 只采新增数据")
-
     # ── Scheduler Enhancement (调度器增强) ────────────────────────────────────
     scheduler_enabled: bool = Field(default=False, description="是否启用增强调度器")
     rate_limit_enabled: bool = Field(default=False, description="是否启用域名级速率控制")

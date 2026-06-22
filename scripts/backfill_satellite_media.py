@@ -52,32 +52,49 @@ async def fetch_media_url(
     client: HttpClient,
     media_id: int,
     semaphore: asyncio.Semaphore,
+    cache: dict[int, dict[str, Any] | None],
 ) -> dict[str, Any] | None:
-    """调用 WP media API 获取媒体对象。
+    """调用 WP media API 获取媒体对象（带缓存去重）。
 
-    与 assets.py:fetch_wp_media_url 逻辑一致：
-    - 请求 /wp-json/wp/v2/media/{id}
-    - 返回完整媒体对象（含 source_url）
-    - 失败返回 None
+    404 → 永久失败，直接跳过
     """
+    import json
+
+    # 缓存命中：多个 record 共享同一 media_id 时避免重复请求
+    if media_id in cache:
+        return cache[media_id]
+
     async with semaphore:
-        try:
-            url = MEDIA_API_TPL.format(media_id=media_id)
-            text = await client.request_page(url, anti_crawl_enabled=False)
-            import json
-            data = json.loads(text)
-            if isinstance(data, dict):
-                return data
-            return None
-        except Exception:
-            logger.debug("Media %d fetch failed", media_id)
-            return None
+        attempt = 1
+        while attempt:
+            try:
+                url = MEDIA_API_TPL.format(media_id=media_id)
+                text = await client.request_page(url, anti_crawl_enabled=True)
+                data = json.loads(text)
+                if isinstance(data, dict):
+                    cache[media_id] = data
+                    return data
+                logger.warning("Media %d: unexpected response type=%s", media_id, data)
+            except Exception as e:
+                err_str = str(e)
+                if "404" in err_str:
+                    cache[media_id] = None  # 缓存失败结果，避免重复请求
+                    return None
+                sleep_s = min(30, 1 * attempt)
+                logger.warning(
+                    "Media %d fetch failed (attempt %d), retry in %ds: %s",
+                    media_id, attempt, sleep_s, err_str,
+                )
+                await asyncio.sleep(sleep_s)
+                attempt += 1
+
+    return None
 
 
 async def backfill(
     dry_run: bool = False,
     batch_size: int = 50,
-    concurrency: int = 5,
+    concurrency: int = 30,
 ) -> dict[str, int]:
     """扫描并回填 satellite_today 的 featured_media 字段。
 
@@ -90,6 +107,8 @@ async def backfill(
 
     http_client = HttpClient()
     semaphore = asyncio.Semaphore(concurrency)
+    media_cache: dict[int, dict[str, Any] | None] = {}
+    stats_lock = asyncio.Lock()
 
     stats = {"total": 0, "updated": 0, "skipped": 0, "failed": 0}
 
@@ -113,13 +132,13 @@ async def backfill(
         batch.append(doc)
         if len(batch) >= batch_size:
             await _process_batch(
-                collection, http_client, semaphore, batch, dry_run, stats,
+                collection, http_client, semaphore, media_cache, batch, dry_run, stats, stats_lock
             )
             batch = []
 
     if batch:
         await _process_batch(
-            collection, http_client, semaphore, batch, dry_run, stats,
+            collection, http_client, semaphore, media_cache, batch, dry_run, stats, stats_lock
         )
 
     await http_client.close()
@@ -132,18 +151,21 @@ async def _process_batch(
     collection: Any,
     client: HttpClient,
     semaphore: asyncio.Semaphore,
+    cache: dict[int, dict[str, Any] | None],
     batch: list[dict[str, Any]],
     dry_run: bool,
     stats: dict[str, int],
+    stats_lock: asyncio.Lock,
 ) -> None:
     """处理一批记录：获取媒体对象 + 更新 MongoDB。"""
     tasks = []
     for doc in batch:
         media_id = doc.get("featured_media")
         if not isinstance(media_id, int) or media_id <= 0:
-            stats["skipped"] += 1
+            async with stats_lock:
+                stats["skipped"] += 1
             continue
-        tasks.append(_process_one(collection, client, semaphore, doc, media_id, dry_run, stats))
+        tasks.append(_process_one(collection, client, semaphore, cache, doc, media_id, dry_run, stats, stats_lock))
 
     await asyncio.gather(*tasks)
 
@@ -152,40 +174,57 @@ async def _process_one(
     collection: Any,
     client: HttpClient,
     semaphore: asyncio.Semaphore,
+    cache: dict[int, dict[str, Any] | None],
     doc: dict[str, Any],
     media_id: int,
     dry_run: bool,
     stats: dict[str, int],
+    stats_lock: asyncio.Lock,
 ) -> None:
     """处理单条记录。"""
-    stats["total"] += 1
-    record_id = doc.get("_meta", {}).get("record_id", "")
+    async with stats_lock:
+        stats["total"] += 1
+    doc_id = doc.get("_id")
 
-    media_obj = await fetch_media_url(client, media_id, semaphore)
+    media_obj = await fetch_media_url(client, media_id, semaphore, cache)
 
     if media_obj is None:
-        stats["failed"] += 1
-        logger.warning("Failed to fetch media for record %s (media_id=%d)", record_id, media_id)
+        async with stats_lock:
+            stats["failed"] += 1
         return
 
     if dry_run:
-        stats["updated"] += 1
+        async with stats_lock:
+            stats["updated"] += 1
         logger.info(
             "[DRY-RUN] Would update %s: featured_media %d → %s",
-            record_id, media_id, media_obj.get("source_url", "?"),
+            doc_id, media_id, media_obj.get("source_url", "?"),
         )
         return
 
     try:
-        await collection.update_one(
-            {"_meta.record_id": record_id},
+        result = await collection.update_one(
+            {"_id": doc_id},
             {"$set": {"featured_media": media_obj}},
         )
-        stats["updated"] += 1
-        logger.debug("Updated %s: featured_media %d → object", record_id, media_id)
+        if result.matched_count == 1 and result.modified_count == 1:
+            async with stats_lock:
+                stats["updated"] += 1
+            logger.debug(
+                "Updated %s: featured_media %d → object (%s)",
+                doc_id, media_id, media_obj.get("source_url", "?"),
+            )
+        else:
+            async with stats_lock:
+                stats["failed"] += 1
+            logger.warning(
+                "Update failed for %s: matched=%d modified=%d (media_id=%d)",
+                doc_id, result.matched_count, result.modified_count, media_id,
+            )
     except Exception:
-        stats["failed"] += 1
-        logger.exception("Failed to update %s", record_id)
+        async with stats_lock:
+            stats["failed"] += 1
+        logger.exception("Failed to update %s", doc_id)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

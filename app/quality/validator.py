@@ -6,7 +6,6 @@ Field-level validation rules including:
 - Patent number format validation
 - Date format validation
 - URL format validation
-- Deduplication by record_id
 - Custom validation rules via decorator
 """
 

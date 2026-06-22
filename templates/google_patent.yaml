@@ -58,6 +58,9 @@ list_request:
     Referer: "https://patents.google.com/"
   encoding: utf-8
 
+dedup_fields:
+  - patent.publication_number
+
 list_fields:
   - name: id
     selector: "id"
