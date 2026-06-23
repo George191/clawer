@@ -457,12 +457,14 @@ class DownloadWorker:
         """判断异常是否可重试。
 
         - FileTooLargeError: 文件超限，重试无意义 → 不重试
+        - 403: Access Denied / 无权限 → 不重试（重试也是无权限）
         - 404: 资源不存在 → 不重试（维持现有逻辑）
         - 其他（5xx、网络超时、连接重置等）→ 可重试
         """
         if isinstance(exc, FileTooLargeError):
             return False
-        if DownloadWorker._extract_status_code(exc) == 404:
+        status = DownloadWorker._extract_status_code(exc)
+        if status in (403, 404):
             return False
         return True
 
@@ -489,10 +491,15 @@ class DownloadWorker:
                     )
                 return data
             except Exception as exc:
-                # 不可重试错误：404 或文件过大
+                # 不可重试错误：403 / 404 / 文件过大
                 if not self._is_retryable(exc):
                     status = self._extract_status_code(exc)
-                    if status == 404:
+                    if status == 403:
+                        logger.warning(
+                            "DownloadWorker: 403 access denied, skipping: %s",
+                            url,
+                        )
+                    elif status == 404:
                         logger.warning(
                             "DownloadWorker: 404 not found, skipping: %s",
                             url,
