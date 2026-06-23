@@ -20,17 +20,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from app.base.http import HttpClient
 from app.base.minio import MinioClient
 from app.base.mongo import MongoClient
 from app.config.settings import settings
+from app.downloader.http_client import FileTooLargeError
 from app.engine.template_loader import TemplateLoader
 from app.models.template import SiteTemplate
 from app.utils.path import get_nested_value
 
 logger = logging.getLogger(__name__)
+
+# ══════════════════════════════════════════════════════════════════════
+#  重试配置
+# ══════════════════════════════════════════════════════════════════════
+# 初始重试延迟（秒），指数退避起始值
+RETRY_INITIAL_DELAY: float = 1.0
+# 最大重试延迟（秒），退避上限以避免请求风暴
+RETRY_MAX_DELAY: float = 60.0
+# 告警阈值：每 N 次连续重试输出 WARNING 日志
+RETRY_ALERT_THRESHOLD: int = 10
+# 严重告警阈值：每 N 次连续重试输出 ERROR 日志，提示持续故障
+RETRY_CRITICAL_THRESHOLD: int = 50
 
 
 class DownloadWorker:
@@ -188,6 +202,14 @@ class DownloadWorker:
                         key = dl_info.get("asset_key", f"assets.{idx}")
                         updates[key] = asset_path
 
+                # worker 停止时不清算状态，保留 pending 以便下次继续
+                if not self._running:
+                    logger.info(
+                        "DownloadWorker: worker stopping, leaving %s pending",
+                        record_id,
+                    )
+                    return False
+
                 if updates:
                     await self._mongo.update_record_fields(
                         template_name, record_id, updates,
@@ -322,18 +344,18 @@ class DownloadWorker:
             urls = []
             for i, item in enumerate(raw_value):
                 if isinstance(item, dict):
-                    # 复合对象：尝试提取 href/src 等字段
-                    sub_urls = self._extract_url_from_dict(
+                    # 复合对象：提取各字段 URL，保留字段名以区分
+                    field_urls = self._extract_url_from_dict(
                         item, url_prefix,
                     )
-                    for sub_url in sub_urls:
+                    for field_name, sub_url in field_urls:
                         filename = self._make_filename(
                             sub_url, file_ext, suffix=f"_{i:05d}",
                         )
                         urls.append({
                             "url": sub_url,
                             "filename": filename,
-                            "asset_key": f"assets.{selector}.{i}",
+                            "asset_key": f"assets.{selector}.{i}.{field_name}",
                         })
                 elif isinstance(item, str):
                     full_url = url_prefix + item if url_prefix else item
@@ -349,17 +371,18 @@ class DownloadWorker:
 
         # 单值处理
         if isinstance(raw_value, dict):
-            # 复合对象：尝试提取 href/src 等字段
-            sub_urls = self._extract_url_from_dict(
+            # 复合对象：提取各字段 URL，保留字段名以区分
+            field_urls = self._extract_url_from_dict(
                 raw_value, url_prefix,
             )
-            for sub_url in sub_urls:
-                return [{
+            urls: list[dict[str, Any]] = []
+            for field_name, sub_url in field_urls:
+                urls.append({
                     "url": sub_url,
                     "filename": self._make_filename(sub_url, file_ext),
-                    "asset_key": f"assets.{selector}",
-                }]
-            return []
+                    "asset_key": f"assets.{selector}.{field_name}",
+                })
+            return urls
 
         # 字符串值
         val = str(raw_value)
@@ -374,14 +397,19 @@ class DownloadWorker:
         self,
         data: dict[str, Any],
         url_prefix: str,
-    ) -> list[str] | None:
-        """从字典中提取 URL。按优先级尝试常见字段名。"""
-        urls = []
+    ) -> list[tuple[str, str]]:
+        """从字典中提取 URL。按优先级尝试常见字段名。
+
+        Returns:
+            (field_name, url) 元组列表，保留字段名用于 asset_key 区分。
+        """
+        results: list[tuple[str, str]] = []
         for key in ("href", "src", "url", "link", "full", "thumbnail", "pdf"):
             if key in data and data[key]:
                 val = str(data[key])
-                urls.append(url_prefix + val if url_prefix else val)
-        return urls
+                url = url_prefix + val if url_prefix else val
+                results.append((key, url))
+        return results
 
     @staticmethod
     def _make_filename(
@@ -409,6 +437,109 @@ class DownloadWorker:
 
         return f"{name_part}{suffix}.{ext}"
 
+    @staticmethod
+    def _extract_status_code(exc: Exception) -> int | None:
+        """从异常中提取 HTTP 状态码。
+
+        DownloadError 携带 status_code；curl_cffi 的 HTTPError 携带 response。
+        网络异常（RequestsError 等）无状态码，返回 None。
+        """
+        status = getattr(exc, "status_code", None)
+        if status is not None:
+            return status
+        response = getattr(exc, "response", None)
+        if response is not None:
+            return getattr(response, "status_code", None)
+        return None
+
+    @staticmethod
+    def _is_retryable(exc: Exception) -> bool:
+        """判断异常是否可重试。
+
+        - FileTooLargeError: 文件超限，重试无意义 → 不重试
+        - 404: 资源不存在 → 不重试（维持现有逻辑）
+        - 其他（5xx、网络超时、连接重置等）→ 可重试
+        """
+        if isinstance(exc, FileTooLargeError):
+            return False
+        if DownloadWorker._extract_status_code(exc) == 404:
+            return False
+        return True
+
+    async def _download_with_retry(self, url: str) -> bytes | None:
+        """带无限重试的资源下载。
+
+        策略：
+        - 404 / 文件过大 → 立即返回 None，不重试
+        - 其他错误（5xx、网络超时等）→ 无限重试，指数退避
+        - worker 停止时退出循环，返回 None
+
+        每次重试独立下载，失败后字节即被回收，无内存泄漏。
+        """
+        retry_count = 0
+        delay = RETRY_INITIAL_DELAY
+
+        while self._running:
+            try:
+                data = await self._http.download_bytes(url)
+                if retry_count > 0:
+                    logger.info(
+                        "DownloadWorker: succeeded after %d retries: %s",
+                        retry_count, url,
+                    )
+                return data
+            except Exception as exc:
+                # 不可重试错误：404 或文件过大
+                if not self._is_retryable(exc):
+                    status = self._extract_status_code(exc)
+                    if status == 404:
+                        logger.warning(
+                            "DownloadWorker: 404 not found, skipping: %s",
+                            url,
+                        )
+                    else:
+                        logger.warning(
+                            "DownloadWorker: non-retryable error, skipping: %s (%s)",
+                            url, exc,
+                        )
+                    return None
+
+                # 可重试错误：记录并退避
+                retry_count += 1
+                error_type = type(exc).__name__
+                status = self._extract_status_code(exc)
+                timestamp = datetime.now(timezone.utc).isoformat()
+                logger.warning(
+                    "DownloadWorker: retry %d for %s | error=%s | status=%s | time=%s",
+                    retry_count, url, error_type, status, timestamp,
+                )
+
+                # 阈值告警：连续重试达到预设阈值时触发通知
+                if retry_count % RETRY_CRITICAL_THRESHOLD == 0:
+                    logger.error(
+                        "DownloadWorker: CRITICAL alert - %d consecutive retries "
+                        "for %s (error=%s), possible persistent failure",
+                        retry_count, url, error_type,
+                    )
+                elif retry_count % RETRY_ALERT_THRESHOLD == 0:
+                    logger.warning(
+                        "DownloadWorker: alert - %d consecutive retries for %s "
+                        "(error=%s)",
+                        retry_count, url, error_type,
+                    )
+
+                # 指数退避，上限 RETRY_MAX_DELAY 以避免请求风暴
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RETRY_MAX_DELAY)
+
+        # worker 已停止，退出重试循环
+        logger.info(
+            "DownloadWorker: worker stopping, aborting retries for %s "
+            "(attempted %d retries)",
+            url, retry_count,
+        )
+        return None
+
     async def _download_asset_to_minio(
         self,
         url: str,
@@ -417,13 +548,15 @@ class DownloadWorker:
         record_id: str,
         filename: str,
     ) -> str | None:
-        """下载单个资源文件并上传到 MinIO。"""
+        """下载单个资源文件并上传到 MinIO。
+
+        下载阶段使用 _download_with_retry 实现无限重试；
+        上传阶段失败不重试（MinIO 故障属基础设施问题，由上层处理）。
+        """
         content_type = MinioClient._guess_content_type(filename)
 
-        try:
-            data = await self._http.download_bytes(url)
-        except Exception:
-            logger.error("DownloadWorker: failed to download asset %s", url)
+        data = await self._download_with_retry(url)
+        if data is None:
             return None
 
         try:
