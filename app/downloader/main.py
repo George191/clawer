@@ -12,7 +12,6 @@ import asyncio
 import logging
 import sys
 
-from app.base.mongo import MongoClient
 from app.config.settings import settings
 from app.downloader.worker import DownloadWorker
 

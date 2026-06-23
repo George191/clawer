@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from app.utils.path import get_nested_value
+
 import json
 import logging
 import re
@@ -63,26 +65,6 @@ def apply_transform(value: Any, transform_name: str) -> Any:
     return func(value)
 
 
-def resolve_json_path(data: Any, path: str) -> Any:
-    parts = re.split(r'\.|\[|\]', path)
-    parts = [p for p in parts if p]
-    value = data
-    for part in parts:
-        if value is None:
-            return None
-        if isinstance(value, dict):
-            value = value.get(part)
-        elif isinstance(value, list):
-            if part.isdigit():
-                idx = int(part)
-                value = value[idx] if idx < len(value) else None
-            else:
-                return None
-        else:
-            return None
-    return value
-
-
 class TemplateParser:
     def parse_list(self, html_content: str, fields: list[FieldMapping]) -> list[dict[str, Any]]:
         tree = lxml_html.fromstring(html_content)
@@ -104,7 +86,7 @@ class TemplateParser:
         item_path: str,
         fields: list[FieldMapping],
     ) -> list[dict[str, Any]]:
-        items = resolve_json_path(json_data, item_path)
+        items = get_nested_value(json_data, item_path)
         if items is None:
             logger.warning("JSON item path '%s' returned None", item_path)
             return []
@@ -165,7 +147,7 @@ class TemplateParser:
         json_data: dict[str, Any],
         json_path: str,
     ) -> str | None:
-        value = resolve_json_path(json_data, json_path)
+        value = get_nested_value(json_data, json_path)
         if value is None:
             return None
         return str(value)
@@ -236,7 +218,7 @@ class TemplateParser:
 
         for field in fields:
             try:
-                value = resolve_json_path(item, field.selector)
+                value = get_nested_value(item, field.selector)
                 if value is not None and field.field_type in _TEXT_TYPES:
                     value = str(value)
             except Exception as e:
@@ -317,7 +299,7 @@ class TemplateParser:
             for script in script_elements:
                 try:
                     data = json.loads(script.text_content())
-                    value = resolve_json_path(data, field.selector)
+                    value = get_nested_value(data, field.selector)
                     if value is not None:
                         return str(value)
                 except (json.JSONDecodeError, IndexError, KeyError):

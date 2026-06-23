@@ -28,6 +28,7 @@ from app.base.mongo import MongoClient
 from app.config.settings import settings
 from app.engine.template_loader import TemplateLoader
 from app.models.template import SiteTemplate
+from app.utils.path import get_nested_value
 
 logger = logging.getLogger(__name__)
 
@@ -283,8 +284,6 @@ class DownloadWorker:
 
         if selector_type == "json":
             urls = self._extract_json_urls(record, download_config)
-        elif selector_type == "css":
-            urls = self._extract_css_urls(record, download_config)
         else:
             logger.warning(
                 "DownloadWorker: unsupported selector_type '%s' for '%s'",
@@ -307,14 +306,12 @@ class DownloadWorker:
         - 单值: assets.{selector}，如 assets.patent.pdf
         - 列表: assets.{selector}.{index}，如 assets.patent.figures.0
         """
-        from app.parser.template_parser import resolve_json_path
-
         selector = download_config.selector
         url_prefix = getattr(download_config, 'url_prefix', None) or ""
         file_ext = getattr(download_config, 'file_extension', None)
 
         # 提取原始值
-        raw_value = resolve_json_path(record, selector)
+        raw_value = get_nested_value(record, selector)
 
         if raw_value is None:
             logger.debug("DownloadWorker: no value at path '%s'", selector)
@@ -326,10 +323,10 @@ class DownloadWorker:
             for i, item in enumerate(raw_value):
                 if isinstance(item, dict):
                     # 复合对象：尝试提取 href/src 等字段
-                    sub_url = self._extract_url_from_dict(
-                        item, download_config.link_type, url_prefix,
+                    sub_urls = self._extract_url_from_dict(
+                        item, url_prefix,
                     )
-                    if sub_url:
+                    for sub_url in sub_urls:
                         filename = self._make_filename(
                             sub_url, file_ext, suffix=f"_{i:05d}",
                         )
@@ -339,7 +336,7 @@ class DownloadWorker:
                             "asset_key": f"assets.{selector}.{i}",
                         })
                 elif isinstance(item, str):
-                    full_url = url_prefix + item if not item.startswith("http") else item
+                    full_url = url_prefix + item if url_prefix else item
                     filename = self._make_filename(
                         full_url, file_ext, suffix=f"_{i:05d}",
                     )
@@ -353,10 +350,10 @@ class DownloadWorker:
         # 单值处理
         if isinstance(raw_value, dict):
             # 复合对象：尝试提取 href/src 等字段
-            sub_url = self._extract_url_from_dict(
-                raw_value, download_config.link_type, url_prefix,
+            sub_urls = self._extract_url_from_dict(
+                raw_value, url_prefix,
             )
-            if sub_url:
+            for sub_url in sub_urls:
                 return [{
                     "url": sub_url,
                     "filename": self._make_filename(sub_url, file_ext),
@@ -373,27 +370,18 @@ class DownloadWorker:
             "asset_key": f"assets.{selector}",
         }]
 
-    def _extract_css_urls(
-        self,
-        record: dict[str, Any],
-        download_config: Any,
-    ) -> list[dict[str, Any]]:
-        """CSS 选择器模式（未来扩展：重新请求页面解析）。"""
-        logger.warning("DownloadWorker: CSS selector extraction not yet implemented")
-        return []
-
     def _extract_url_from_dict(
         self,
         data: dict[str, Any],
-        link_type: str,
         url_prefix: str,
-    ) -> str | None:
+    ) -> list[str] | None:
         """从字典中提取 URL。按优先级尝试常见字段名。"""
+        urls = []
         for key in ("href", "src", "url", "link", "full", "thumbnail", "pdf"):
             if key in data and data[key]:
                 val = str(data[key])
-                return url_prefix + val if not val.startswith("http") else val
-        return None
+                urls.append(url_prefix + val if url_prefix else val)
+        return urls
 
     @staticmethod
     def _make_filename(

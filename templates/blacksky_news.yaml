@@ -113,4 +113,5 @@ download:
     link_type: src
     description: "外部来源文章中的图片资源"
     asset_type: image
+    
 # python -m app.crawler.main --template blacksky_news

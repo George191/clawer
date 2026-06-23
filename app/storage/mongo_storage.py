@@ -20,6 +20,7 @@ from typing import Any
 
 from app.config.settings import settings
 from app.storage.file_storage import StorageBackend
+from app.utils.path import get_nested_value
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +63,6 @@ class MongoStorage(StorageBackend):
     async def save_record(self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any]) -> str:
         collection = await self._get_collection(template_name)
         search_params = record.pop("_meta_search_params", None) or {}
-
-        def get_nested_value(d, path: str, default=None):
-            try:
-                return reduce(lambda c, k: c[k], path.split('.'), d)
-            except (KeyError, TypeError):
-                return default
 
         record_id = self._resolve_record_id({f: get_nested_value(record, f) for f in dedup_fields})
 
