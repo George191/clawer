@@ -244,8 +244,8 @@ def main() -> None:
         help="Records per MongoDB batch (default: 50)",
     )
     parser.add_argument(
-        "--concurrency", type=int, default=5,
-        help="Max concurrent media API requests (default: 5)",
+        "--concurrency", type=int, default=30,
+        help="Max concurrent media API requests (default: 30)",
     )
 
     args = parser.parse_args()

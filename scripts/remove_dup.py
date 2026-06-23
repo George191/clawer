@@ -5,7 +5,7 @@ def delete_duplicates():
     db = client["raw_data"]
     collection = db["google_patent"]
     
-    target_field = "id"  # 您的业务去重字段
+    target_field = "patent.publication_number"  # 您的业务去重字段
     
     # 聚合管道：找出重复数据
     pipeline = [

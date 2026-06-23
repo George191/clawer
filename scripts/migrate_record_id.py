@@ -58,6 +58,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from bson import ObjectId
 from pymongo import MongoClient, UpdateOne
 from pymongo.errors import BulkWriteError
 
@@ -166,6 +167,15 @@ def get_template_from_doc(doc: dict[str, Any]) -> str | None:
 #  Rollback 脚本生成
 # ══════════════════════════════════════════════════════════════════════
 
+class MongoJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles MongoDB-specific types."""
+
+    def default(self, o):
+        if isinstance(o, ObjectId):
+            return str(o)
+        return super().default(o)
+
+
 class RollbackRecorder:
     """记录迁移变更，并生成可执行的回滚脚本。"""
 
@@ -188,6 +198,7 @@ class RollbackRecorder:
 
     def generate_rollback_script(self, output_path: str) -> str:
         """生成 Python 回滚脚本，返回脚本路径。"""
+        rollback_data = json.dumps(self._changes, indent=2, ensure_ascii=False, cls=MongoJSONEncoder)
         script = f'''#!/usr/bin/env python3
 """回滚脚本 — 由 migrate_record_id.py 自动生成于 {datetime.now(timezone.utc).isoformat()}
 
@@ -199,12 +210,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from bson import ObjectId
 from pymongo import MongoClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("rollback")
 
-ROLLBACK_DATA = {json.dumps(self._changes, indent=2, ensure_ascii=False)}
+ROLLBACK_DATA = json.loads({rollback_data})
 
 
 def main():
@@ -217,8 +229,17 @@ def main():
     client = MongoClient(args.db_url)
     db = client[args.db_name]
 
+    def _to_object_id(value):
+        if isinstance(value, str) and len(value) == 24:
+            try:
+                return ObjectId(value)
+            except Exception:
+                pass
+        return value
+
     by_collection: dict[str, list] = {{}}
     for change in ROLLBACK_DATA:
+        change["_id"] = _to_object_id(change["_id"])
         coll = change["collection"]
         if coll not in by_collection:
             by_collection[coll] = []
@@ -591,8 +612,8 @@ def main():
             ROLLBACK_DIR,
             f"rollback_record_id_{timestamp}.py",
         )
-        rollback.generate_rollback_script(rollback_path)
-        logger.info("如需回滚，请执行: python3 %s", rollback_path)
+        # rollback.generate_rollback_script(rollback_path)
+        # logger.info("如需回滚，请执行: python3 %s", rollback_path)
 
     # ── 步骤 7: 验证 —— 随机抽查已迁移文档 ──
     if not args.dry_run and grand["updated"] > 0:
