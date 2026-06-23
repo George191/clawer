@@ -16,7 +16,6 @@ import {
   Tag,
   Timeline,
   Typography,
-  theme,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -39,6 +38,7 @@ import {
   StopOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import {
   type DryRunResponse,
@@ -47,6 +47,8 @@ import {
   dryRun as dryRunApi,
   generateTemplate as generateTemplateApi,
 } from '@/services/aiApi';
+import WorkspaceDock, { type WorkspacePanel } from './WorkspaceDock';
+import workspacePalette from './palette';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -231,22 +233,11 @@ const runStatusMeta: Record<RunStatus, { label: string; color: string }> = {
   completed: { label: '待确认', color: 'success' },
 };
 
-const aura = {
-  bg: '#171A1A',
-  surface: '#1F2323',
-  surfaceSoft: '#202525',
-  border: '#3A4242',
-  borderSoft: '#2B3131',
-  text: '#F5F7F7',
-  muted: '#BEC7C7',
-  subtle: '#8F9999',
-  accent: '#8FE3E8',
-  accentSoft: 'rgba(143, 227, 232, 0.12)',
-};
+const aura = workspacePalette;
 
 const AICollect: React.FC = () => {
-  const { token } = theme.useToken();
   const { message } = App.useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
   const analyzeStreamRef = useRef<EventSource | null>(null);
   const simulationTimerRef = useRef<number | null>(null);
   const referenceEditCanceledRef = useRef(false);
@@ -284,6 +275,10 @@ const AICollect: React.FC = () => {
   const hasSession = runStatus !== 'idle';
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
   const qualityScore = mode === 'publish' ? 94 : mode === 'dryrun' ? 86 : mode === 'contract' ? 88 : 92;
+  const activeWorkspacePanel = useMemo<WorkspacePanel | null>(() => {
+    const panel = searchParams.get('panel');
+    return panel === 'templates' || panel === 'tasks' ? panel : null;
+  }, [searchParams]);
 
   useEffect(() => () => {
     analyzeStreamRef.current?.close();
@@ -568,6 +563,8 @@ const AICollect: React.FC = () => {
     background: aura.surface,
     borderRadius: 8,
     minHeight: 0,
+    backdropFilter: aura.backdrop,
+    boxShadow: aura.shadow,
   };
 
   const handleGuideSubmit = useCallback(() => {
@@ -618,12 +615,29 @@ const AICollect: React.FC = () => {
     }
   }, [commitReferenceEdit]);
 
+  const handleWorkspacePanelToggle = useCallback((panel: WorkspacePanel) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (activeWorkspacePanel === panel) {
+      nextParams.delete('panel');
+    } else {
+      nextParams.set('panel', panel);
+    }
+    setSearchParams(nextParams);
+  }, [activeWorkspacePanel, searchParams, setSearchParams]);
+
+  const handleWorkspacePanelClose = useCallback(() => {
+    if (!activeWorkspacePanel) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('panel');
+    setSearchParams(nextParams);
+  }, [activeWorkspacePanel, searchParams, setSearchParams]);
+
   const renderMissionPanel = (variant: 'hero' | 'compact') => {
     if (variant === 'hero') {
       return (
         <section className="ai-prompt-landing">
           <div className="ai-prompt-copy">
-            <h1 className="ai-prompt-title">嗨，{currentUserName}，又有新灵感了吗？</h1>
+            <h1 className="ai-prompt-title">嗨，<span className="ai-prompt-name">{currentUserName}</span>，又有新灵感了吗？</h1>
           </div>
 
           <div className="ai-prompt-shell">
@@ -634,7 +648,7 @@ const AICollect: React.FC = () => {
               onChange={(event) => setIntent(event.target.value)}
               onKeyDown={handlePromptKeyDown}
               autoSize={{ minRows: 1, maxRows: 3 }}
-              placeholder="贴个网址，问问 Helio"
+              placeholder="输入目标网址、采集意图或数据范围"
             />
             <Button className="ai-prompt-icon" shape="circle" icon={<AudioOutlined />} aria-label="语音输入" disabled />
           </div>
@@ -787,8 +801,7 @@ const AICollect: React.FC = () => {
         <div className="ai-projection-head">
           <div>
             <Text className="ai-aura-kicker">Source Projection</Text>
-            <Text strong className="ai-aura-title">源站页面投射中</Text>
-            <Text className="ai-aura-copy">AI 正在把目标页面转换为可采集结构，识别入口、列表、详情和字段证据。</Text>
+            <Text strong className="ai-aura-title">源站结构识别</Text>
           </div>
           <Tag className="ai-aura-tag">{processStepMeta[activeProcessStep].title}</Tag>
         </div>
@@ -878,9 +891,6 @@ const AICollect: React.FC = () => {
       <div className="ai-stage-toolbar">
         <div>
           <Text strong>{selectedCount}/{fields.length} 个字段进入模板</Text>
-          <Text type="secondary" style={{ display: 'block', fontSize: 12, marginTop: 2 }}>
-            AI 已附带选择器、样本证据和必填规则，取消勾选即可排除字段。
-          </Text>
         </div>
         <Button icon={<ExperimentOutlined />} onClick={handleDryRun}>试跑</Button>
       </div>
@@ -930,9 +940,6 @@ const AICollect: React.FC = () => {
         <div>
           <Tag color="green">Ready</Tag>
           <Text strong style={{ display: 'block', marginTop: 10, fontSize: 18 }}>模板资产可发布</Text>
-          <Text type="secondary" style={{ display: 'block', marginTop: 6, lineHeight: 1.7 }}>
-            发布后进入模板库维护，采集任务基于模板调度，实时监控通过 Socket 订阅任务和模板事件。
-          </Text>
         </div>
         <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>发布模板</Button>
       </div>
@@ -1052,7 +1059,7 @@ const AICollect: React.FC = () => {
             onChange={(event) => setTaskDraft(event.target.value)}
             onKeyDown={handlePromptKeyDown}
             autoSize={{ minRows: 1, maxRows: 2 }}
-            placeholder="随时引导 Helio 的采集方向"
+            placeholder="补充字段规则、调度要求或数据边界"
           />
           <Button
             className="ai-session-icon-btn ai-session-sparkle-btn"
@@ -1067,17 +1074,16 @@ const AICollect: React.FC = () => {
   };
 
   const renderStepNavigator = () => (
-    <aside className="ai-step-rail">
-      {visibleProcessSteps.map((step, index) => {
-        const status = getStepStatus(step);
-        const expanded = activeProcessStep === step;
-        const meta = processStepMeta[step];
-        const statusText = status === 'done' ? '完成' : status === 'active' ? '分析中' : '等待';
-        return (
-          <section className={`ai-step-item is-${status} ${expanded ? 'is-expanded' : ''}`} key={step}>
+    <div className="ai-step-strip">
+      <div className="ai-step-strip-track">
+        {visibleProcessSteps.map((step, index) => {
+          const status = getStepStatus(step);
+          const meta = processStepMeta[step];
+          return (
             <button
               type="button"
-              className="ai-step-summary"
+              key={step}
+              className={`ai-step-chip is-${status}`}
               onClick={() => {
                 setActiveProcessStep(step);
                 setMode(processStepMode[step]);
@@ -1085,94 +1091,74 @@ const AICollect: React.FC = () => {
                 setSelectedLogStep(step);
               }}
             >
-              <span className="ai-step-index">{status === 'done' ? <CheckCircleOutlined /> : index + 1}</span>
-              <span className="ai-step-title">
-                <strong>{meta.title}</strong>
+              <span className="ai-step-chip-index">
+                {status === 'done' ? <CheckCircleOutlined /> : index + 1}
               </span>
-              <small>{statusText}</small>
+              <span className="ai-step-chip-title">{meta.title}</span>
             </button>
-            {expanded ? (
-              <div className="ai-step-detail">
-                <span className="ai-step-pill">{statusText}</span>
-                <div className="ai-step-actions">
-                  <Button
-                    size="small"
-                    className="ai-step-log-icon"
-                    icon={<FileTextOutlined />}
-                    aria-label="查看阶段日志"
-                    onClick={() => {
-                      setSelectedLogStep(step);
-                      pushLiveLog(`focus trace group: ${meta.title}`);
-                    }}
-                  />
-                  {meta.needConfirm ? (
-                    <Button size="small" className="ai-step-confirm" onClick={() => handleConfirmProcessStep(step)}>
-                      确认
-                    </Button>
-                  ) : (
-                    <span className="ai-step-auto">自动</span>
-                  )}
-                </div>
-              </div>
-            ) : null}
-          </section>
-        );
-      })}
-    </aside>
+          );
+        })}
+      </div>
+      <div className="ai-step-strip-meta">
+        {processStepMeta[activeProcessStep].needConfirm ? (
+          <Button size="small" className="ai-step-confirm" onClick={() => handleConfirmProcessStep(activeProcessStep)}>
+            确认当前阶段
+          </Button>
+        ) : (
+          <Tag className="ai-aura-tag">自动推进</Tag>
+        )}
+      </div>
+    </div>
   );
 
   const renderGuidancePanel = () => (
-    <aside className="ai-guidance-panel">
-      <div className="ai-terminal-window">
-        <div className="ai-terminal-bar">
-          <span className="is-red" />
-          <span className="is-yellow" />
-          <span className="is-green" />
-        </div>
-        <div className="ai-terminal-body">
-          {processStepOrder.map((step) => {
-            const isActive = step === activeProcessStep;
-            const isSelected = step === selectedLogStep;
-            const isOpen = isActive || isSelected;
-            const status = getStepStatus(step);
-            const runtimeLogs = isActive ? liveLogs.slice(0, 3) : [];
-
-            return (
-              <section
-                className={`ai-terminal-group is-${status} ${isActive ? 'is-active' : ''} ${isSelected ? 'is-selected' : ''} ${isOpen ? 'is-open' : ''}`}
-                key={step}
-              >
-                <button
-                  type="button"
-                  className="ai-terminal-group-head"
-                  onClick={() => setSelectedLogStep(step)}
-                >
-                  <span className="ai-terminal-caret">$</span>
-                  <span>{processStepMeta[step].title}</span>
-                  <em>{status === 'done' ? 'done' : status === 'active' ? 'running' : 'queued'}</em>
-                </button>
-                <div className="ai-terminal-lines">
-                  {runtimeLogs.map((log, logIndex) => (
-                    <p className="ai-terminal-line is-live" key={`live-${log}`}>
-                      <span>{`00:0${logIndex}.now`}</span>
-                      <b>live</b>
-                      <code>{log}</code>
-                    </p>
-                  ))}
-                  {stepLogs[step].map((log) => (
-                    <p className={`ai-terminal-line is-${log.level}`} key={`${step}-${log.time}-${log.message}`}>
-                      <span>{log.time}</span>
-                      <b>{log.level}</b>
-                      <code>{log.message}</code>
-                    </p>
-                  ))}
-                </div>
-              </section>
-            );
-          })}
-        </div>
+    <section className="ai-runtime-dock">
+      <div className="ai-runtime-head">
+        <Space size={8}>
+          <FileTextOutlined style={{ color: aura.accent }} />
+          <Text strong className="ai-panel-title">运行动态</Text>
+        </Space>
+        <Button
+          size="small"
+          className="ai-step-log-icon"
+          icon={<FileTextOutlined />}
+          onClick={() => {
+            setSelectedLogStep(activeProcessStep);
+            pushLiveLog(`focus trace group: ${processStepMeta[activeProcessStep].title}`);
+          }}
+        />
       </div>
-    </aside>
+      <div className="ai-runtime-list">
+        {liveLogs.slice(0, 2).map((log) => (
+          <div className="ai-runtime-item is-live" key={log}>
+            <span>live</span>
+            <strong>{log}</strong>
+          </div>
+        ))}
+        {stepLogs[selectedLogStep].slice(0, 3).map((log) => (
+          <div className={`ai-runtime-item is-${log.level}`} key={`${selectedLogStep}-${log.time}-${log.message}`}>
+            <span>{log.time}</span>
+            <strong>{log.message}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
+  const renderStageOverview = () => (
+    <div className="ai-stage-overview">
+      {[
+        ['字段', `${selectedCount}/${fields.length}`],
+        ['渲染', renderModeLabel[renderMode]],
+        ['调度', scheduleModeLabel[scheduleMode]],
+        ['输出', outputTargetLabel[outputTarget]],
+      ].map(([label, value]) => (
+        <div className="ai-overview-card" key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
   );
 
   const renderContextRail = () => (
@@ -1288,7 +1274,7 @@ const AICollect: React.FC = () => {
             border-radius: 0;
             padding: 14px;
             color: ${aura.text};
-            font-family: "Google Sans", "Product Sans", Roboto, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+            font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
           }
           .ai-collect-workbench,
           .ai-collect-workbench * {
@@ -1340,7 +1326,8 @@ const AICollect: React.FC = () => {
             overflow: hidden;
           }
           .ai-collect-body.is-session {
-            padding-bottom: 112px;
+            display: block;
+            padding-bottom: 132px;
           }
           .ai-collect-panel {
             padding: 14px;
@@ -1360,43 +1347,46 @@ const AICollect: React.FC = () => {
           .ai-collect-workbench .ant-input-affix-wrapper,
           .ai-collect-workbench .ant-input-number,
           .ai-collect-workbench .ant-select-selector {
-            background: #151818 !important;
+            background: rgba(255, 255, 255, 0.035) !important;
             border-color: ${aura.border} !important;
             color: ${aura.text} !important;
-            border-radius: 6px !important;
+            border-radius: 8px !important;
+            backdrop-filter: ${aura.backdrop};
           }
           .ai-collect-workbench .ant-input::placeholder {
             color: ${aura.subtle};
           }
           .ai-collect-workbench .ant-segmented {
-            background: transparent;
-            border-bottom: 1px solid ${aura.border};
-            border-radius: 0;
-            padding: 0;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid ${aura.border};
+            border-radius: 8px;
+            padding: 2px;
           }
           .ai-collect-workbench .ant-segmented-item {
             color: ${aura.muted};
-            border-radius: 0;
+            border-radius: 6px;
           }
           .ai-collect-workbench .ant-segmented-item-selected {
-            background: transparent;
-            color: ${aura.accent};
-            box-shadow: inset 0 -3px 0 ${aura.accent};
+            background: ${aura.accentSoft};
+            color: ${aura.text};
+            box-shadow: inset 0 0 0 1px rgba(138, 180, 255, 0.18);
           }
           .ai-collect-workbench .ant-btn {
-            background: transparent;
+            background: rgba(255, 255, 255, 0.03);
             border-color: ${aura.border};
             color: ${aura.text};
             box-shadow: none;
+            border-radius: 8px;
           }
           .ai-collect-workbench .ant-btn-link {
             border: none;
             color: ${aura.accent};
+            background: transparent;
           }
           .ai-collect-workbench .ant-btn-primary,
           .ai-collect-workbench .ai-aura-primary {
-            border-color: ${aura.accent} !important;
-            background: transparent !important;
+            border-color: rgba(138, 180, 255, 0.18) !important;
+            background: ${aura.accentSoft} !important;
             color: ${aura.text} !important;
           }
           .ai-collect-workbench .ant-tag {
@@ -1449,14 +1439,15 @@ const AICollect: React.FC = () => {
             align-self: flex-start;
             padding: 0 8px 0 10px;
             border-radius: 14px 14px 0 0;
-            background: rgba(31, 35, 35, 0.86);
-            border: 1px solid rgba(143, 227, 232, 0.14);
+            background: rgba(29, 33, 41, 0.92);
+            border: 1px solid ${aura.border};
             border-bottom: none;
-            color: rgba(245, 247, 247, 0.86);
+            color: ${aura.text};
             font-size: 12px;
             font-weight: 400;
             max-width: min(100%, 560px);
             position: relative;
+            backdrop-filter: ${aura.backdrop};
           }
           .ai-session-reference-icon {
             width: 17px;
@@ -1506,7 +1497,7 @@ const AICollect: React.FC = () => {
           }
           .ai-reference-edit:hover {
             color: ${aura.accent} !important;
-            background: rgba(143, 227, 232, 0.1) !important;
+            background: ${aura.accentSoft} !important;
           }
           .ai-collect-workbench .ai-reference-input.ant-input {
             width: min(420px, 52vw);
@@ -1521,6 +1512,7 @@ const AICollect: React.FC = () => {
             line-height: 24px;
           }
           .ai-session-prompt-main {
+            --prompt-surface: rgba(29, 33, 41, 0.9);
             display: grid;
             grid-template-columns: 22px minmax(0, 1fr) 30px 30px;
             align-items: center;
@@ -1528,10 +1520,11 @@ const AICollect: React.FC = () => {
             min-height: 56px;
             padding: 0 12px 0 15px;
             border-radius: 0 14px 14px 14px;
-            background: #202124;
-            border: 1px solid rgba(143, 227, 232, 0.14);
-            box-shadow: 0 18px 54px rgba(0, 0, 0, 0.38);
+            background: rgba(29, 33, 41, 0.9);
+            border: 1px solid ${aura.border};
+            box-shadow: ${aura.shadow};
             position: relative;
+            backdrop-filter: ${aura.backdrop};
           }
           .ai-session-leading-icon {
             display: inline-flex;
@@ -1564,7 +1557,7 @@ const AICollect: React.FC = () => {
           }
           .ai-session-icon-btn:hover {
             color: ${aura.accent} !important;
-            background: rgba(143, 227, 232, 0.12) !important;
+            background: ${aura.accentSoft} !important;
           }
           .ai-session-icon-btn.ant-btn[disabled],
           .ai-session-icon-btn.ant-btn[disabled]:hover {
@@ -1600,6 +1593,8 @@ const AICollect: React.FC = () => {
             padding: 12px;
             background: ${aura.surface};
             border: 1px solid ${aura.border};
+            backdrop-filter: ${aura.backdrop};
+            box-shadow: ${aura.shadow};
           }
           .ai-step-rail {
             border-radius: 8px 0 0 8px;
@@ -1615,7 +1610,7 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             gap: 6px;
-            background: rgba(18, 20, 21, 0.82);
+            background: rgba(29, 33, 41, 0.72);
           }
           .ai-step-item {
             position: relative;
@@ -1638,8 +1633,8 @@ const AICollect: React.FC = () => {
             display: none;
           }
           .ai-step-item.is-active {
-            border-color: rgba(143, 227, 232, 0.16);
-            background: rgba(143, 227, 232, 0.06);
+            border-color: rgba(138, 180, 255, 0.18);
+            background: ${aura.accentSoft};
           }
           .ai-step-item.is-done {
             opacity: 0.82;
@@ -1671,20 +1666,20 @@ const AICollect: React.FC = () => {
             align-items: center;
             justify-content: center;
             color: ${aura.subtle};
-            background: #202124;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid ${aura.border};
             font-size: 11px;
             font-weight: 600;
           }
           .ai-step-item.is-active .ai-step-index {
             color: ${aura.accent};
-            background: rgba(143, 227, 232, 0.12);
-            border-color: rgba(143, 227, 232, 0.32);
+            background: ${aura.accentSoft};
+            border-color: rgba(138, 180, 255, 0.24);
           }
           .ai-step-item.is-done .ai-step-index {
-            color: #9FE7D7;
-            background: rgba(159, 231, 215, 0.1);
-            border-color: rgba(159, 231, 215, 0.2);
+            color: ${aura.success};
+            background: rgba(101, 213, 163, 0.12);
+            border-color: rgba(101, 213, 163, 0.24);
           }
           .ai-step-title {
             min-width: 0;
@@ -1712,11 +1707,11 @@ const AICollect: React.FC = () => {
           }
           .ai-step-item.is-active .ai-step-summary small {
             color: ${aura.accent};
-            background: rgba(143, 227, 232, 0.1);
+            background: ${aura.accentSoft};
           }
           .ai-step-item.is-done .ai-step-summary small {
-            color: #9FE7D7;
-            background: rgba(159, 231, 215, 0.08);
+            color: ${aura.success};
+            background: rgba(101, 213, 163, 0.08);
           }
           .ai-step-detail {
             position: relative;
@@ -1751,20 +1746,20 @@ const AICollect: React.FC = () => {
           }
           .ai-step-log-icon:hover {
             color: ${aura.accent} !important;
-            background: rgba(143, 227, 232, 0.1) !important;
+            background: ${aura.accentSoft} !important;
           }
           .ai-step-confirm {
             height: 24px !important;
             padding: 0 10px !important;
             border-radius: 12px !important;
-            border: 1px solid rgba(143, 227, 232, 0.24) !important;
+            border: 1px solid rgba(138, 180, 255, 0.24) !important;
             color: ${aura.text} !important;
-            background: rgba(143, 227, 232, 0.1) !important;
+            background: ${aura.accentSoft} !important;
             font-size: 12px !important;
           }
           .ai-step-confirm:hover {
             color: ${aura.accent} !important;
-            border-color: rgba(143, 227, 232, 0.42) !important;
+            border-color: rgba(138, 180, 255, 0.42) !important;
           }
           .ai-guidance-panel {
             display: flex;
@@ -1772,8 +1767,8 @@ const AICollect: React.FC = () => {
             padding: 0;
             border-radius: 8px;
             overflow: hidden;
-            background: #111314;
-            border-color: rgba(255, 255, 255, 0.08);
+            background: rgba(29, 33, 41, 0.84);
+            border-color: ${aura.border};
           }
           .ai-terminal-window {
             height: 100%;
@@ -1781,8 +1776,8 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             background:
-              linear-gradient(180deg, rgba(31, 35, 35, 0.92), rgba(14, 16, 17, 0.96)),
-              #111314;
+              linear-gradient(180deg, rgba(38, 43, 54, 0.96), rgba(23, 27, 35, 0.96)),
+              ${aura.bg};
           }
           .ai-terminal-bar {
             height: 36px;
@@ -1829,8 +1824,8 @@ const AICollect: React.FC = () => {
           .ai-terminal-group.is-active,
           .ai-terminal-group.is-selected {
             opacity: 1;
-            border-color: rgba(143, 227, 232, 0.2);
-            background: rgba(143, 227, 232, 0.055);
+            border-color: rgba(138, 180, 255, 0.2);
+            background: rgba(138, 180, 255, 0.08);
           }
           .ai-terminal-group.is-active {
             animation: aiTerminalFocus 900ms ease both;
@@ -1851,7 +1846,7 @@ const AICollect: React.FC = () => {
             cursor: pointer;
           }
           .ai-terminal-caret {
-            color: #74D6DB;
+            color: ${aura.accent};
           }
           .ai-terminal-group-head span:nth-child(2) {
             overflow: hidden;
@@ -1891,7 +1886,7 @@ const AICollect: React.FC = () => {
             color: rgba(245, 247, 247, 0.36);
           }
           .ai-terminal-line b {
-            color: #7DD3FC;
+            color: ${aura.accent};
             font-weight: 500;
           }
           .ai-terminal-line code {
@@ -1901,17 +1896,17 @@ const AICollect: React.FC = () => {
             font-family: inherit;
           }
           .ai-terminal-line.is-ok b {
-            color: #86EFAC;
+            color: ${aura.success};
           }
           .ai-terminal-line.is-warn b {
-            color: #FDE68A;
+            color: ${aura.warning};
           }
           .ai-terminal-line.is-live {
             color: rgba(245, 247, 247, 0.86);
             animation: aiTerminalLineIn 260ms ease both;
           }
           .ai-terminal-line.is-live b {
-            color: #8FE3E8;
+            color: ${aura.accent};
           }
           .ai-mission-hero {
             width: min(720px, 100%);
@@ -1937,7 +1932,7 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             align-items: stretch;
-            gap: 54px;
+            gap: 30px;
             animation: aiPromptIn 460ms ease both;
           }
           .ai-prompt-copy {
@@ -1946,13 +1941,19 @@ const AICollect: React.FC = () => {
           }
           .ai-prompt-title {
             margin: 0;
-            color: rgba(245, 247, 247, 0.84);
-            font-size: clamp(26px, 2.45vw, 34px);
-            line-height: 1.2;
-            font-weight: 300;
+            color: ${aura.text};
+            font-size: clamp(30px, 2.8vw, 40px);
+            line-height: 1.14;
+            font-weight: 600;
             letter-spacing: 0;
           }
+          .ai-prompt-name {
+            color: ${aura.accent};
+            font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+            font-weight: 600;
+          }
           .ai-prompt-shell {
+            --prompt-surface-base: rgba(29, 33, 41, 0.88);
             position: relative;
             display: grid;
             grid-template-columns: 24px minmax(0, 1fr) 36px;
@@ -1960,18 +1961,29 @@ const AICollect: React.FC = () => {
             gap: 14px;
             min-height: 80px;
             padding: 0 30px 0 24px;
-            border-radius: 40px;
-            background: #202124;
-            border: 1px solid rgba(255, 255, 255, 0.02);
-            box-shadow: 0 18px 64px rgba(0, 0, 0, 0.28);
-            overflow: visible;
+            border-radius: 999px;
+            background: var(--prompt-surface-base);
+            border: 1px solid ${aura.border};
+            box-shadow: ${aura.shadow};
+            backdrop-filter: ${aura.backdrop};
+            overflow: hidden;
+          }
+          .ai-prompt-shell::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            background: linear-gradient(180deg, rgba(30, 40, 67, 0.68), rgba(23, 28, 40, 0.26));
+            pointer-events: none;
           }
           .ai-prompt-leading-icon {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: rgba(245, 247, 247, 0.72);
+            color: ${aura.accent};
             font-size: 18px;
+            position: relative;
+            z-index: 1;
           }
           .ai-prompt-icon {
             width: 34px !important;
@@ -1984,6 +1996,8 @@ const AICollect: React.FC = () => {
             background: transparent !important;
             color: rgba(245, 247, 247, 0.84) !important;
             font-size: 20px;
+            position: relative;
+            z-index: 1;
           }
           .ai-prompt-icon.ant-btn[disabled],
           .ai-prompt-icon.ant-btn[disabled]:hover {
@@ -2000,12 +2014,20 @@ const AICollect: React.FC = () => {
             resize: none;
             font-size: 15px;
             line-height: 34px;
-            color: rgba(245, 247, 247, 0.92) !important;
+            color: ${aura.text} !important;
             font-family: inherit;
             font-weight: 400;
+            position: relative;
+            z-index: 1;
+          }
+          .ai-prompt-shell .ant-input,
+          .ai-session-prompt-main .ant-input {
+            background: transparent !important;
+            background-color: transparent !important;
+            background-image: none !important;
           }
           .ai-collect-workbench .ai-prompt-input.ant-input::placeholder {
-            color: rgba(245, 247, 247, 0.72);
+            color: ${aura.subtle};
           }
           .ai-collect-panel::-webkit-scrollbar,
           .ai-mission-content::-webkit-scrollbar,
@@ -2055,6 +2077,7 @@ const AICollect: React.FC = () => {
             border-radius: 8px;
             background: ${aura.surfaceSoft};
             border: 1px solid ${aura.borderSoft};
+            backdrop-filter: ${aura.backdrop};
           }
           .ai-stage-shell {
             padding: 0;
@@ -2062,10 +2085,169 @@ const AICollect: React.FC = () => {
             flex-direction: column;
             overflow: hidden;
           }
+          .ai-stage-shell-full {
+            width: 100%;
+            height: 100%;
+            border-radius: 8px !important;
+          }
           .ai-stage-top {
             flex-shrink: 0;
-            padding: 14px;
+            padding: 14px 14px 12px;
             border-bottom: 1px solid ${aura.border};
+            background: rgba(16, 20, 30, 0.36);
+            backdrop-filter: ${aura.backdrop};
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .ai-stage-headline {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+          }
+          .ai-stage-overview {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+            gap: 10px;
+          }
+          .ai-overview-card {
+            min-height: 64px;
+            padding: 11px 13px;
+            border-radius: 8px;
+            border: 1px solid ${aura.borderSoft};
+            background: rgba(255, 255, 255, 0.035);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+          }
+          .ai-overview-card span {
+            color: ${aura.subtle};
+            font-size: 11px;
+          }
+          .ai-overview-card strong {
+            color: ${aura.text};
+            font-size: 16px;
+            line-height: 1.3;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .ai-step-strip {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+          }
+          .ai-step-strip-track {
+            display: flex;
+            gap: 8px;
+            min-width: 0;
+            overflow: auto;
+            padding-bottom: 2px;
+          }
+          .ai-step-strip-meta {
+            flex-shrink: 0;
+          }
+          .ai-step-chip {
+            height: 34px;
+            padding: 0 12px;
+            border-radius: 999px;
+            border: 1px solid ${aura.border};
+            background: rgba(255, 255, 255, 0.03);
+            color: ${aura.muted};
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+          }
+          .ai-step-chip:hover {
+            color: ${aura.text};
+            background: rgba(255, 255, 255, 0.05);
+          }
+          .ai-step-chip.is-active {
+            color: ${aura.text};
+            border-color: rgba(138, 180, 255, 0.22);
+            background: ${aura.accentSoft};
+          }
+          .ai-step-chip.is-done {
+            color: ${aura.success};
+            border-color: rgba(101, 213, 163, 0.2);
+            background: rgba(101, 213, 163, 0.08);
+          }
+          .ai-step-chip-index {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.06);
+            font-size: 11px;
+          }
+          .ai-step-chip-title {
+            font-size: 12px;
+            font-weight: 500;
+          }
+          .ai-runtime-dock {
+            flex-shrink: 0;
+            padding: 10px 14px 14px;
+            border-top: 1px solid ${aura.border};
+            background: rgba(16, 20, 30, 0.32);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .ai-runtime-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+          }
+          .ai-runtime-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+            gap: 8px;
+          }
+          .ai-runtime-item {
+            min-height: 62px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid ${aura.borderSoft};
+            background: rgba(255, 255, 255, 0.035);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+          .ai-runtime-item span {
+            color: ${aura.subtle};
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+          }
+          .ai-runtime-item strong {
+            color: ${aura.text};
+            font-size: 12px;
+            line-height: 1.45;
+            font-weight: 500;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+          .ai-runtime-item.is-live {
+            border-color: rgba(138, 180, 255, 0.18);
+            background: rgba(138, 180, 255, 0.08);
+          }
+          .ai-runtime-item.is-ok span {
+            color: ${aura.success};
+          }
+          .ai-runtime-item.is-warn span {
+            color: ${aura.warning};
           }
           .ai-stage-content {
             flex: 1;
@@ -2088,6 +2270,8 @@ const AICollect: React.FC = () => {
             padding: 14px;
             border-radius: 8px;
             background: ${aura.surfaceSoft};
+            border: 1px solid ${aura.borderSoft};
+            backdrop-filter: ${aura.backdrop};
           }
           .ai-logic-workbench {
             gap: 12px;
@@ -2100,9 +2284,10 @@ const AICollect: React.FC = () => {
             padding: 16px;
             border-radius: 8px;
             background:
-              linear-gradient(180deg, rgba(31, 35, 35, 0.84), rgba(21, 24, 24, 0.78)),
-              repeating-linear-gradient(90deg, rgba(143, 227, 232, 0.04) 0 1px, transparent 1px 24px);
-            border: 1px solid rgba(143, 227, 232, 0.16);
+              linear-gradient(180deg, rgba(37, 42, 52, 0.92), rgba(25, 29, 37, 0.88)),
+              repeating-linear-gradient(90deg, rgba(138, 180, 255, 0.035) 0 1px, transparent 1px 24px);
+            border: 1px solid ${aura.border};
+            backdrop-filter: ${aura.backdrop};
             overflow: hidden;
           }
           .ai-projection-head {
@@ -2117,8 +2302,8 @@ const AICollect: React.FC = () => {
             min-height: 280px;
             padding: 16px;
             border-radius: 10px;
-            background: rgba(12, 15, 18, 0.72);
-            border: 1px solid rgba(143, 227, 232, 0.16);
+            background: rgba(17, 20, 26, 0.72);
+            border: 1px solid ${aura.border};
             box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02), 0 24px 80px rgba(0, 0, 0, 0.24);
             overflow: hidden;
           }
@@ -2127,8 +2312,8 @@ const AICollect: React.FC = () => {
             position: absolute;
             inset: 0;
             background-image:
-              linear-gradient(rgba(143, 227, 232, 0.05) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(143, 227, 232, 0.05) 1px, transparent 1px);
+              linear-gradient(rgba(138, 180, 255, 0.045) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(138, 180, 255, 0.045) 1px, transparent 1px);
             background-size: 28px 28px;
             opacity: 0.35;
             pointer-events: none;
@@ -2139,7 +2324,7 @@ const AICollect: React.FC = () => {
             right: 0;
             top: -30%;
             height: 38%;
-            background: linear-gradient(180deg, transparent, rgba(143, 227, 232, 0.18), transparent);
+            background: linear-gradient(180deg, transparent, rgba(138, 180, 255, 0.2), transparent);
             filter: blur(1px);
             animation: aiScanSweep 2.6s ease-in-out infinite;
             pointer-events: none;
@@ -2180,8 +2365,8 @@ const AICollect: React.FC = () => {
             gap: 10px;
             padding: 0 14px;
             border-radius: 21px;
-            background: rgba(143, 227, 232, 0.08);
-            border: 1px solid rgba(143, 227, 232, 0.18);
+            background: rgba(138, 180, 255, 0.08);
+            border: 1px solid rgba(138, 180, 255, 0.18);
           }
           .ai-page-search span {
             color: ${aura.muted};
@@ -2253,8 +2438,8 @@ const AICollect: React.FC = () => {
             align-items: center;
             padding: 0 7px;
             border-radius: 10px;
-            background: rgba(143, 227, 232, 0.12);
-            border: 1px solid rgba(143, 227, 232, 0.32);
+            background: ${aura.accentSoft};
+            border: 1px solid rgba(138, 180, 255, 0.28);
             color: ${aura.accent};
             font-size: 11px;
             font-style: normal;
@@ -2282,8 +2467,9 @@ const AICollect: React.FC = () => {
             gap: 18px;
             padding: 18px;
             border-radius: 8px;
-            background: rgba(31, 35, 35, 0.72);
-            border: 1px solid rgba(143, 227, 232, 0.12);
+            background: rgba(34, 39, 49, 0.76);
+            border: 1px solid ${aura.border};
+            backdrop-filter: ${aura.backdrop};
           }
           .ai-logic-score {
             display: flex;
@@ -2297,14 +2483,14 @@ const AICollect: React.FC = () => {
           }
           .ai-logic-metrics {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(146px, 1fr));
             gap: 10px;
           }
           .ai-logic-metric {
             min-height: 88px;
             padding: 12px;
             border-radius: 8px;
-            background: rgba(31, 35, 35, 0.62);
+            background: rgba(255, 255, 255, 0.04);
             border: 1px solid ${aura.borderSoft};
           }
           .ai-logic-metric span,
@@ -2334,7 +2520,7 @@ const AICollect: React.FC = () => {
             gap: 9px;
             padding: 13px;
             border-radius: 8px;
-            background: rgba(31, 35, 35, 0.7);
+            background: rgba(255, 255, 255, 0.04);
             border: 1px solid ${aura.borderSoft};
           }
           .ai-logic-card-top {
@@ -2384,10 +2570,11 @@ const AICollect: React.FC = () => {
             display: flex;
             align-items: center;
             justify-content: space-between;
+            flex-wrap: wrap;
             gap: 16px;
             padding: 13px 14px;
             border-radius: 8px;
-            background: rgba(31, 35, 35, 0.58);
+            background: rgba(255, 255, 255, 0.035);
             border: 1px solid ${aura.borderSoft};
           }
           .ai-logic-route-flow {
@@ -2404,8 +2591,8 @@ const AICollect: React.FC = () => {
             padding: 0 10px;
             border-radius: 14px;
             color: ${aura.text};
-            background: rgba(143, 227, 232, 0.1);
-            border: 1px solid rgba(143, 227, 232, 0.16);
+            background: ${aura.accentSoft};
+            border: 1px solid rgba(138, 180, 255, 0.16);
             font-size: 12px;
             font-weight: 500;
           }
@@ -2434,13 +2621,13 @@ const AICollect: React.FC = () => {
           .ai-aura-title {
             display: block;
             color: ${aura.text};
-            font-size: 28px;
+            font-size: 24px;
             line-height: 1.2;
-            font-weight: 700;
+            font-weight: 600;
           }
           .ai-aura-copy {
             color: ${aura.muted};
-            line-height: 1.6;
+            line-height: 1.55;
           }
           .ai-aura-steps {
             position: relative;
@@ -2510,7 +2697,7 @@ const AICollect: React.FC = () => {
           }
           .ai-quality-grid {
             display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(146px, 1fr));
             gap: 10px;
           }
           .ai-quality-item {
@@ -2608,13 +2795,13 @@ const AICollect: React.FC = () => {
           }
           @keyframes aiTerminalFocus {
             0% {
-              box-shadow: inset 0 0 0 1px rgba(143, 227, 232, 0), 0 0 0 rgba(143, 227, 232, 0);
+              box-shadow: inset 0 0 0 1px rgba(138, 180, 255, 0), 0 0 0 rgba(138, 180, 255, 0);
             }
             48% {
-              box-shadow: inset 0 0 0 1px rgba(143, 227, 232, 0.22), 0 0 22px rgba(143, 227, 232, 0.08);
+              box-shadow: inset 0 0 0 1px rgba(138, 180, 255, 0.22), 0 0 22px rgba(138, 180, 255, 0.08);
             }
             100% {
-              box-shadow: inset 0 0 0 1px rgba(143, 227, 232, 0.04), 0 0 0 rgba(143, 227, 232, 0);
+              box-shadow: inset 0 0 0 1px rgba(138, 180, 255, 0.04), 0 0 0 rgba(138, 180, 255, 0);
             }
           }
           @keyframes aiTerminalLineIn {
@@ -2642,10 +2829,10 @@ const AICollect: React.FC = () => {
           }
           @keyframes aiDetectPulse {
             0%, 100% {
-              box-shadow: 0 0 0 rgba(143, 227, 232, 0);
+              box-shadow: 0 0 0 rgba(138, 180, 255, 0);
             }
             50% {
-              box-shadow: 0 0 18px rgba(143, 227, 232, 0.22);
+              box-shadow: 0 0 18px rgba(138, 180, 255, 0.22);
             }
           }
           @media (max-width: 1280px) {
@@ -2663,6 +2850,12 @@ const AICollect: React.FC = () => {
             }
             .ai-session-prompt {
               width: min(680px, calc(100% - 36px));
+            }
+            .ai-stage-overview {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .ai-runtime-list {
+              grid-template-columns: repeat(3, minmax(0, 1fr));
             }
           }
           @media (max-width: 767px) {
@@ -2694,7 +2887,7 @@ const AICollect: React.FC = () => {
               font-size: 14px;
             }
             .ai-collect-body.is-session {
-              padding-bottom: 106px;
+              padding-bottom: 156px;
             }
             .ai-session-prompt {
               bottom: 12px;
@@ -2710,6 +2903,24 @@ const AICollect: React.FC = () => {
               grid-template-columns: 20px minmax(0, 1fr) 28px 28px;
               min-height: 52px;
               border-radius: 0 14px 14px 14px;
+            }
+            .ai-stage-headline {
+              flex-direction: column;
+              align-items: flex-start;
+            }
+            .ai-stage-overview {
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .ai-step-strip {
+              flex-direction: column;
+              align-items: stretch;
+            }
+            .ai-step-strip-meta {
+              display: flex;
+              justify-content: flex-end;
+            }
+            .ai-runtime-list {
+              grid-template-columns: 1fr;
             }
           }
         `}
@@ -2730,20 +2941,32 @@ const AICollect: React.FC = () => {
           {!hasSession ? (
             renderMissionPanel('hero')
           ) : (
-            <>
-              {renderStepNavigator()}
-
-              <main className="ai-collect-panel ai-stage-shell" style={panelStyle}>
-                <div className="ai-stage-content">
-                  {streamError && <Alert type="warning" showIcon message={streamError} style={{ marginBottom: 12 }} />}
-                  {renderStageContent()}
+            <main className="ai-collect-panel ai-stage-shell ai-stage-shell-full" style={panelStyle}>
+              <div className="ai-stage-top">
+                <div className="ai-stage-headline">
+                  <div>
+                    <Text className="ai-aura-kicker">当前阶段</Text>
+                    <Text strong className="ai-panel-title">{processStepMeta[activeProcessStep].title}</Text>
+                  </div>
+                  {renderRunActions()}
                 </div>
-              </main>
-
+                {renderStageOverview()}
+                {renderStepNavigator()}
+              </div>
+              <div className="ai-stage-content">
+                {streamError && <Alert type="warning" showIcon message={streamError} style={{ marginBottom: 12 }} />}
+                {renderStageContent()}
+              </div>
               {renderGuidancePanel()}
-            </>
+            </main>
           )}
         </div>
+        <WorkspaceDock
+          activePanel={activeWorkspacePanel}
+          sessionActive={hasSession}
+          onToggle={handleWorkspacePanelToggle}
+          onClose={handleWorkspacePanelClose}
+        />
         {hasSession ? renderDockedPrompt() : null}
       </div>
     </ErrorBoundary>

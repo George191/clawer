@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { MenuProps } from 'antd';
 import {
   Layout,
   Button,
@@ -16,7 +15,6 @@ import {
   BellOutlined,
   BookOutlined,
   BranchesOutlined,
-  CloudServerOutlined,
   CodeOutlined,
   ControlOutlined,
   DatabaseOutlined,
@@ -30,7 +28,6 @@ import {
   LineChartOutlined,
   LogoutOutlined,
   MenuOutlined,
-  ProfileOutlined,
   PushpinOutlined,
   RightOutlined,
   RobotOutlined,
@@ -39,7 +36,6 @@ import {
   SearchOutlined,
   SettingOutlined,
   SkinOutlined,
-  TeamOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
@@ -97,8 +93,6 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         label: '采集编排',
         children: [
           { key: '/ai-collect', icon: <RobotOutlined />, label: '智能采集' },
-          { key: '/templates', icon: <ProfileOutlined />, label: '模板库' },
-          { key: '/tasks', icon: <ScheduleOutlined />, label: '采集任务', badge: 8 },
         ],
       },
       {
@@ -167,8 +161,8 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         label: '管道开发',
         children: [
           { key: '/pipeline', icon: <ApartmentOutlined />, label: '管道画布' },
-          { key: '/tasks', icon: <ScheduleOutlined />, label: '任务中心', badge: 12 },
-          { key: '/templates', icon: <CodeOutlined />, label: '处理器模板' },
+          { key: '/pipeline/tasks', icon: <ScheduleOutlined />, label: '任务中心', badge: 12 },
+          { key: '/pipeline/templates', icon: <CodeOutlined />, label: '处理器模板' },
         ],
       },
       {
@@ -206,6 +200,8 @@ const explicitRouteProject: Record<string, ProjectKey> = {
   '/explorer': 'data-lake',
   '/data-api': 'data-lake',
   '/pipeline': 'etl-pipeline',
+  '/pipeline/tasks': 'etl-pipeline',
+  '/pipeline/templates': 'etl-pipeline',
   '/pipeline/schedule': 'etl-pipeline',
   '/pipeline/releases': 'etl-pipeline',
   '/pipeline/alerts': 'etl-pipeline',
@@ -215,6 +211,8 @@ const legacyRouteToSidebarKey: Record<string, string> = {
   '/': '/',
   '/instances': '/lake/catalog',
   '/import': '/ai-collect',
+  '/tasks': '/ai-collect',
+  '/templates': '/ai-collect',
   '/graph-analytics': '/lake/lineage',
   '/explore': '/explorer',
   '/dashboards': '/',
@@ -226,6 +224,14 @@ const legacyRouteToSidebarKey: Record<string, string> = {
   '/learning': '/learning',
 };
 
+const resolveProjectByPath = (pathname: string): ProjectKey | null => {
+  const match = Object.entries(explicitRouteProject)
+    .sort(([a], [b]) => b.length - a.length)
+    .find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
+
+  return match?.[1] ?? null;
+};
+
 interface MainLayoutProps {
   children: React.ReactNode;
 }
@@ -234,7 +240,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [manualCollapsed, setManualCollapsed] = useState(false);
   const [pinned, setPinned] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
-  const [currentProject, setCurrentProject] = useState<ProjectKey>('etl-pipeline');
   const [settledCollapsed, setSettledCollapsed] = useState(false);
   const [projectTextReady, setProjectTextReady] = useState(true);
 
@@ -242,8 +247,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const navigate = useNavigate();
   const { mode, toggle } = useThemeStore();
   const isDark = mode === 'dark';
-
-  const activeProject = projectConfigs[currentProject];
+  const [currentProject, setCurrentProject] = useState<ProjectKey>(() => resolveProjectByPath(location.pathname) ?? 'etl-pipeline');
+  const routedProject = useMemo(() => resolveProjectByPath(location.pathname), [location.pathname]);
+  const activeProjectKey = routedProject ?? currentProject;
+  const activeProject = projectConfigs[activeProjectKey];
+  const hideSidebar = activeProjectKey === 'ai-collect';
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
@@ -256,26 +264,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     muted: isDark ? '#6B7280' : '#94A3B8',
     hover: isDark ? 'rgba(255, 255, 255, 0.06)' : '#F1F5F9',
   };
-
-  const projectMenuItems: MenuProps['items'] = projectOrder.map((key) => ({
-    key,
-    label: (
-      <div style={{ minWidth: 180 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: '50%',
-              background: projectConfigs[key].accent,
-              flexShrink: 0,
-            }}
-          />
-          <span style={{ fontWeight: 600 }}>{projectConfigs[key].label}</span>
-        </div>
-      </div>
-    ),
-  }));
 
   const handleResize = useCallback(() => {
     const nextIsMobile = window.innerWidth < 768;
@@ -294,14 +282,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }, [handleResize]);
 
   useEffect(() => {
-    const match = Object.entries(explicitRouteProject)
-      .sort(([a], [b]) => b.length - a.length)
-      .find(([route]) => location.pathname === route || location.pathname.startsWith(`${route}/`));
-
-    if (match && match[1] !== currentProject) {
-      setCurrentProject(match[1]);
+    if (routedProject && routedProject !== currentProject) {
+      setCurrentProject(routedProject);
     }
-  }, [currentProject, location.pathname]);
+  }, [currentProject, routedProject]);
 
   useEffect(() => {
     document.title = `${PRODUCT_NAME_ZH} · ${activeProject.label}`;
@@ -310,8 +294,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const collapsed = isMobile ? manualCollapsed : !pinned && manualCollapsed;
   const projectTextVisible = !collapsed && projectTextReady;
   const projectLogoX = collapsed ? PROJECT_LOGO_COLLAPSED_X : PROJECT_LOGO_EXPANDED_X;
-  const siderWidth = isMobile ? (collapsed ? 0 : SIDER_EXPANDED) : collapsed ? SIDER_COLLAPSED : SIDER_EXPANDED;
-  const contentMarginLeft = isMobile ? 0 : siderWidth;
+  const siderWidth = hideSidebar ? 0 : isMobile ? (collapsed ? 0 : SIDER_EXPANDED) : collapsed ? SIDER_COLLAPSED : SIDER_EXPANDED;
+  const contentMarginLeft = hideSidebar || isMobile ? 0 : siderWidth;
   const normalizedPath = legacyRouteToSidebarKey[location.pathname] ?? location.pathname;
 
   useEffect(() => {
@@ -362,64 +346,144 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     }
   };
 
+  const overlayShellStyle: React.CSSProperties = {
+    padding: '6px 0',
+    borderRadius: 18,
+    background: isDark ? '#202326' : '#FFFFFF',
+    border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.12)' : '#E2E8F0'}`,
+    boxShadow: isDark ? '0 18px 44px rgba(0, 0, 0, 0.45)' : '0 18px 38px rgba(15, 23, 42, 0.14)',
+  };
+
+  const overlayRowStyle: React.CSSProperties = {
+    width: '100%',
+    minHeight: 40,
+    border: 'none',
+    background: 'transparent',
+    color: palette.text,
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '8px 12px',
+    borderRadius: 6,
+    cursor: 'pointer',
+    fontSize: 13,
+    fontWeight: 500,
+    textAlign: 'left',
+  };
+
+  const bindOverlayHover = (
+    event: React.MouseEvent<HTMLButtonElement>,
+    options?: { accent?: string; outline?: string },
+  ) => {
+    event.currentTarget.style.background = options?.accent ?? palette.hover;
+    if (options?.outline) {
+      event.currentTarget.style.boxShadow = `inset 0 0 0 1px ${options.outline}`;
+    }
+  };
+
+  const resetOverlayHover = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.currentTarget.style.background = 'transparent';
+    event.currentTarget.style.boxShadow = 'none';
+  };
+
+  const renderProjectPanel = () => (
+    <div style={{ ...overlayShellStyle, width: 296 }}>
+      <div style={{ padding: '8px 14px 10px' }}>
+        <div style={{ color: palette.text, fontSize: 13, fontWeight: 600 }}>项目域切换</div>
+        <div style={{ color: palette.secondary, fontSize: 12, marginTop: 3 }}>选择当前工作域，主界面会同步切换到对应产品模块。</div>
+      </div>
+      {projectOrder.map((key, index) => {
+        const project = projectConfigs[key];
+        const isActive = key === activeProjectKey;
+        return (
+          <React.Fragment key={key}>
+            {index > 0 ? <div style={{ height: 1, background: palette.border, margin: '4px 14px' }} /> : null}
+            <button
+              type="button"
+              onClick={() => handleProjectChange(key)}
+              style={{
+                ...overlayRowStyle,
+                color: isActive ? palette.text : palette.text,
+              }}
+              onMouseEnter={(event) => bindOverlayHover(event, {
+                accent: isActive ? (isDark ? 'rgba(143, 227, 232, 0.12)' : '#E0F2FE') : palette.hover,
+                outline: isActive ? (isDark ? '#8FE3E8' : '#0EA5E9') : undefined,
+              })}
+              onMouseLeave={resetOverlayHover}
+            >
+              <span
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: 7,
+                  background: `linear-gradient(135deg, ${project.accent}, #1D4ED8)`,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#fff',
+                  fontSize: 12,
+                  fontWeight: 800,
+                  flexShrink: 0,
+                }}
+              >
+                {project.shortLabel.slice(0, 1)}
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 13, fontWeight: isActive ? 600 : 500 }}>{project.label}</span>
+                <span style={{ display: 'block', fontSize: 12, color: palette.secondary, marginTop: 2 }}>{project.shortLabel}</span>
+              </span>
+              {isActive ? (
+                <span style={{ color: activeProject.accent, fontSize: 12, fontWeight: 600 }}>当前</span>
+              ) : (
+                <RightOutlined style={{ color: palette.secondary, fontSize: 12 }} />
+              )}
+            </button>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+
   const renderNotificationPanel = () => (
     <div
       style={{
+        ...overlayShellStyle,
         width: 320,
-        padding: 12,
-        borderRadius: 8,
-        background: palette.surface,
-        border: `1px solid ${palette.border}`,
-        boxShadow: isDark ? '0 16px 38px rgba(0, 0, 0, 0.42)' : '0 16px 34px rgba(15, 23, 42, 0.12)',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-        <strong style={{ color: palette.text }}>通知中心</strong>
-        <span style={{ color: palette.muted, fontSize: 12 }}>3 条未读</span>
+      <div style={{ padding: '8px 14px 10px' }}>
+        <div style={{ color: palette.text, fontSize: 13, fontWeight: 600 }}>通知中心</div>
+        <div style={{ color: palette.secondary, fontSize: 12, marginTop: 3 }}>3 条未读，按产品运行事件实时聚合。</div>
       </div>
       {[
-        ['采集任务完成', 'Google Patent 模板已写入 ODS 层', '#10B981'],
-        ['质量规则告警', 'navwarn.content 缺失率超过阈值', '#F59E0B'],
-        ['ETL 调度提示', 'DWD 聚合任务将在 18:30 执行', '#0EA5E9'],
-      ].map(([title, desc, color]) => (
-        <div
+        { title: '采集任务完成', desc: 'Google Patent 模板已写入 ODS 层', color: '#10B981', icon: <RobotOutlined /> },
+        { title: '质量规则告警', desc: 'navwarn.content 缺失率超过阈值', color: '#F59E0B', icon: <AuditOutlined /> },
+        { title: 'ETL 调度提示', desc: 'DWD 聚合任务将在 18:30 执行', color: '#0EA5E9', icon: <ScheduleOutlined /> },
+      ].map(({ title, desc, color, icon }, index) => (
+        <button
           key={title}
+          type="button"
           style={{
-            display: 'grid',
-            gridTemplateColumns: '8px 1fr',
-            gap: 10,
-            padding: '10px 6px',
-            borderTop: `1px solid ${palette.borderSoft}`,
+            ...overlayRowStyle,
+            marginTop: index === 0 ? 0 : 4,
+            background: 'transparent',
           }}
+          onMouseEnter={(event) => bindOverlayHover(event)}
+          onMouseLeave={resetOverlayHover}
         >
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, marginTop: 6 }} />
-          <span>
+          <span style={{ width: 26, display: 'inline-flex', justifyContent: 'center', color, fontSize: 15, flexShrink: 0 }}>
+            {icon}
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
             <span style={{ display: 'block', color: palette.text, fontSize: 13, fontWeight: 600 }}>{title}</span>
             <span style={{ display: 'block', color: palette.secondary, fontSize: 12, marginTop: 2 }}>{desc}</span>
           </span>
-        </div>
+        </button>
       ))}
     </div>
   );
 
   const renderAccountPanel = () => {
-    const rowStyle: React.CSSProperties = {
-      width: '100%',
-      height: 36,
-      border: 'none',
-      background: 'transparent',
-      color: palette.text,
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      padding: '0 8px',
-      borderRadius: 6,
-      cursor: 'pointer',
-      fontSize: 13,
-      fontWeight: 500,
-      textAlign: 'left',
-    };
-
     const accountRows = [
       { key: 'account', icon: <SettingOutlined />, label: 'Account settings', onClick: undefined },
       { key: 'theme', icon: <SkinOutlined />, label: 'Theme', onClick: toggle },
@@ -430,12 +494,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     return (
       <div
         style={{
+          ...overlayShellStyle,
           width: 276,
-          padding: '6px 0',
-          borderRadius: 18,
-          background: isDark ? '#202326' : '#FFFFFF',
-          border: `1px solid ${isDark ? 'rgba(255, 255, 255, 0.12)' : '#E2E8F0'}`,
-          boxShadow: isDark ? '0 18px 44px rgba(0, 0, 0, 0.45)' : '0 18px 38px rgba(15, 23, 42, 0.14)',
         }}
       >
         <div style={{ padding: '8px 14px 9px' }}>
@@ -449,21 +509,19 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               type="button"
               onClick={item.onClick}
               style={{
-                ...rowStyle,
-                color: item.key === 'logout' ? palette.text : rowStyle.color,
+                ...overlayRowStyle,
+                minHeight: 36,
+                padding: '0 8px',
+                gap: 8,
+                color: item.key === 'logout' ? palette.text : overlayRowStyle.color,
               }}
               onMouseEnter={(event) => {
-                event.currentTarget.style.background = item.key === 'account'
-                  ? isDark ? 'rgba(143, 227, 232, 0.12)' : '#E0F2FE'
-                  : palette.hover;
-                if (item.key === 'account') {
-                  event.currentTarget.style.boxShadow = `inset 0 0 0 1px ${isDark ? '#8FE3E8' : '#0EA5E9'}`;
-                }
+                bindOverlayHover(event, item.key === 'account' ? {
+                  accent: isDark ? 'rgba(143, 227, 232, 0.12)' : '#E0F2FE',
+                  outline: isDark ? '#8FE3E8' : '#0EA5E9',
+                } : undefined);
               }}
-              onMouseLeave={(event) => {
-                event.currentTarget.style.background = 'transparent';
-                event.currentTarget.style.boxShadow = 'none';
-              }}
+              onMouseLeave={resetOverlayHover}
             >
               <span style={{ width: 26, display: 'inline-flex', justifyContent: 'center', color: palette.secondary, fontSize: 15 }}>
                 {item.icon}
@@ -501,7 +559,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-          {isMobile && (
+          {isMobile && !hideSidebar && (
             <Button
               type="text"
               icon={<MenuOutlined />}
@@ -536,13 +594,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               </span>
               <span style={{ color: palette.muted, fontSize: 12 }}>/</span>
               <Dropdown
-                menu={{
-                  items: projectMenuItems,
-                  selectable: true,
-                  selectedKeys: [currentProject],
-                  onClick: ({ key }) => handleProjectChange(key),
-                }}
                 trigger={['click']}
+                menu={{ items: [] }}
+                popupRender={renderProjectPanel}
               >
                 <button
                   type="button"
@@ -560,16 +614,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     maxWidth: 260,
                   }}
                 >
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background: activeProject.accent,
-                      boxShadow: `0 0 0 3px ${activeProject.accent}22`,
-                      flexShrink: 0,
-                    }}
-                  />
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {activeProject.label}
                   </span>
@@ -646,7 +690,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       </Header>
 
       <div style={{ display: 'flex', paddingTop: HEADER_H }}>
-        {isMobile && !collapsed && (
+        {isMobile && !collapsed && !hideSidebar && (
           <button
             type="button"
             aria-label="关闭侧边栏遮罩"
@@ -661,6 +705,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           />
         )}
 
+        {!hideSidebar && (
         <aside
           style={{
             position: 'fixed',
@@ -696,13 +741,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             }}
           >
             <Dropdown
-              menu={{
-                items: projectMenuItems,
-                selectable: true,
-                selectedKeys: [currentProject],
-                onClick: ({ key }) => handleProjectChange(key),
-              }}
               trigger={['click']}
+              menu={{ items: [] }}
+              popupRender={renderProjectPanel}
             >
               <button
                 type="button"
@@ -961,6 +1002,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             )}
           </div>
         </aside>
+        )}
 
         <main
           style={{
