@@ -195,13 +195,6 @@ class SpiderEngine:
 
             for attempt in self._retry_loop():
                 try:
-                    # 重试时打印提示
-                    if attempt > 0:
-                        logger.info(
-                            "[%s] ↻ Retry page %d (attempt #%d)",
-                            template.name, current_page, attempt + 1,
-                        )
-
                     await adapter.on_before_page(current_page, is_first)
 
                     url = template.get_full_list_url(current_page, results_per_page)
@@ -236,12 +229,6 @@ class SpiderEngine:
                     break  # 页面成功，跳出重试循环
 
                 except Exception as e:
-                    logger.warning(
-                        "[%s] ✗ Page %d failed (attempt %d): %s",
-                        template.name, current_page, attempt + 1,
-                        str(e)[:150],
-                    )
-
                     adapter_action = await adapter.on_error(e, current_page, attempt)
 
                     if adapter_action == "abort":
@@ -262,10 +249,6 @@ class SpiderEngine:
                     # None → 继续下一次重试
 
             if not page_succeeded:
-                logger.error(
-                    "[%s] ✗ Page %d FAILED after all retry attempts, moving on",
-                    template.name, current_page,
-                )
                 result.errors.append(f"List page {current_page}: exceeded retries")
                 break  # 超出重试次数，中断翻页
 
@@ -419,12 +402,6 @@ class SpiderEngine:
 
         for attempt in self._retry_loop():
             try:
-                if attempt > 0:
-                    logger.info(
-                        "[%s] ↻ Retry page %d (attempt #%d)",
-                        template.name, page, attempt + 1,
-                    )
-
                 await adapter.on_before_page(page, is_first)
 
                 _session = getattr(adapter, "_session", None)
@@ -474,11 +451,6 @@ class SpiderEngine:
                 await self._client.mark_last_proxy_failed()
 
             except Exception as e:
-                logger.warning(
-                    "[%s] ✗ Page %d failed (attempt %d): %s",
-                    template.name, page, attempt + 1,
-                    str(e)[:150],
-                )
 
                 adapter_action = await adapter.on_error(e, page, attempt)
                 if adapter_action == "abort":

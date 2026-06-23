@@ -36,6 +36,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.config.settings import settings
 from app.downloader.http_client import HttpClient
+from app.models.template import RequestConfig
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,21 @@ async def fetch_media_url(
         while attempt:
             try:
                 url = MEDIA_API_TPL.format(media_id=media_id)
-                text = await client.request_page(url, anti_crawl_enabled=True)
+                text = await client.request_page(
+                    url,
+                    RequestConfig(
+                        headers={
+                            "Accept": "application/json, */*;q=0.8",
+                            "Accept-Language": "en-US,en;q=0.9",
+                            "User-Agent": (
+                                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                "Chrome/125.0.0.0 Safari/537.36"
+                            ),
+                        },
+                    ),
+                    anti_crawl_enabled=True,
+                )
                 data = json.loads(text)
                 if isinstance(data, dict):
                     cache[media_id] = data
@@ -80,12 +95,6 @@ async def fetch_media_url(
                 if "404" in err_str:
                     cache[media_id] = None  # 缓存失败结果，避免重复请求
                     return None
-                sleep_s = min(30, 1 * attempt)
-                logger.warning(
-                    "Media %d fetch failed (attempt %d), retry in %ds: %s",
-                    media_id, attempt, sleep_s, err_str,
-                )
-                await asyncio.sleep(sleep_s)
                 attempt += 1
 
     return None
