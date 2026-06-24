@@ -1040,7 +1040,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-rail {
           position: absolute;
-          left: max(12px, calc(50% - 524px));
+          left: 68px;
           bottom: 34px;
           display: flex;
           flex-direction: row;
