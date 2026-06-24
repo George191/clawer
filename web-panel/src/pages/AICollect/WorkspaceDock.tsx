@@ -1040,7 +1040,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-rail {
           position: absolute;
-          left: max(18px, calc(50% - 500px));
+          left: max(12px, calc(50% - 524px));
           bottom: 34px;
           display: flex;
           flex-direction: row;
@@ -1050,7 +1050,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           z-index: 2;
         }
         .workspace-dock-shell.is-session .workspace-dock-rail {
-          left: max(18px, calc(50% - 468px));
+          left: max(12px, calc(50% - 492px));
           bottom: 35px;
         }
         .workspace-dock-trigger {
@@ -1078,7 +1078,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-panel {
           position: absolute;
-          left: max(28px, calc(50% - 452px));
+          left: max(22px, calc(50% - 468px));
           bottom: 74px;
           width: min(396px, calc(100vw - 48px));
           max-height: min(488px, calc(100vh - 140px));
@@ -1096,7 +1096,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           pointer-events: none;
         }
         .workspace-dock-shell.is-session .workspace-dock-panel {
-          left: max(28px, calc(50% - 420px));
+          left: max(22px, calc(50% - 436px));
           bottom: 116px;
           max-height: min(488px, calc(100vh - 196px));
         }

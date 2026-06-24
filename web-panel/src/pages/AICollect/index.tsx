@@ -1948,9 +1948,15 @@ const AICollect: React.FC = () => {
             letter-spacing: 0;
           }
           .ai-prompt-name {
-            color: ${aura.accent};
-            font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
-            font-weight: 600;
+            display: inline-block;
+            color: #9fc7ff;
+            background: linear-gradient(135deg, #c2d8ff 0%, #8ab4ff 58%, #8ee3f0 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-family: "SF Pro Rounded", "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+            font-weight: 700;
+            text-shadow: 0 10px 26px rgba(138, 180, 255, 0.18);
           }
           .ai-prompt-shell {
             --prompt-surface-base: rgba(29, 33, 41, 0.88);
@@ -2008,8 +2014,10 @@ const AICollect: React.FC = () => {
             min-height: 34px !important;
             max-height: 70px;
             padding: 0 !important;
-            background: transparent !important;
+            background: var(--prompt-surface-base) !important;
+            background-color: var(--prompt-surface-base) !important;
             border-color: transparent !important;
+            border-radius: 20px !important;
             box-shadow: none !important;
             resize: none;
             font-size: 15px;
@@ -2017,12 +2025,12 @@ const AICollect: React.FC = () => {
             color: ${aura.text} !important;
             font-family: inherit;
             font-weight: 400;
+            caret-color: ${aura.accent};
             position: relative;
             z-index: 1;
           }
           .ai-prompt-shell .ant-input,
           .ai-session-prompt-main .ant-input {
-            background: transparent !important;
             background-color: transparent !important;
             background-image: none !important;
           }
