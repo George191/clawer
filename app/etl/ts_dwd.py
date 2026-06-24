@@ -35,42 +35,6 @@ from app.etl.base import ETLBase
 
 logger = logging.getLogger(__name__)
 
-DWD_PATENT_DDL = """
-CREATE TABLE IF NOT EXISTS ts_dwd.dwd_patent (
-    id                  BIGSERIAL,
-    data_source         VARCHAR(128)    NOT NULL,
-    data_type           VARCHAR(64)     NOT NULL,
-    record_id           VARCHAR(256)    NOT NULL,
-
-    title               TEXT,
-    publication_number  VARCHAR(128),
-    application_number  VARCHAR(128),
-    assignee            TEXT,
-    inventor            TEXT,
-    publication_date    DATE,
-    filing_date         DATE,
-    priority_date       DATE,
-    grant_date          DATE,
-    abstract            TEXT,
-    claims              JSONB,
-    legal_status        VARCHAR(64),
-    ipc_classification  VARCHAR(256),
-    cpc_classification  VARCHAR(256),
-    patent_type         VARCHAR(64),
-    original_file       TEXT,
-    thumbnail           TEXT,
-    figures             JSONB,
-
-    task_results        JSONB,
-
-    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT pk_dwd_patent PRIMARY KEY (id, created_at),
-    CONSTRAINT uq_dwd_record UNIQUE (record_id, data_source, created_at)
-) PARTITION BY RANGE (created_at);
-"""
-
 DWD_PATENT_UPDATE_ODS = """
 UPDATE ts_dwd.dwd_patent SET
     title = :title,
@@ -160,15 +124,6 @@ class TsDwd(ETLBase):
     _consumer_group = settings.etl_dwd_consumer_group
     _producer_topic = settings.etl_graph_topic
     _producer_client_id = "etl-ts-dwd-producer"
-    
-    async def _ddl_for_table(self, table: str) -> str:
-        ddl_map = {
-            "patent": DWD_PATENT_DDL,
-        }
-        ddl = ddl_map.get(table, "")
-        if not ddl:
-            logger.warning("%s No DDL defined for table '%s'", self._log_prefix, table)
-        return ddl
 
     # =================================================================
     #  公共参数构建 — 消除重复
@@ -244,7 +199,7 @@ class TsDwd(ETLBase):
             "ipc_classification": message.get("ipc_classification"),
             "cpc_classification": message.get("cpc_classification"),
             "patent_type": message.get("patent_type"),
-            "original_file": message.get("original_file"),
+            "original_file": message.get("url") or message.get("original_file"),
             "thumbnail": message.get("thumbnail"),
             "figures": json.dumps(message.get("figures") or {}),
         }

@@ -1,17 +1,3 @@
-"""ETL ODS 层 — 操作数据存储层（标准化与清洗）。
-
-职责：
-- 从 Kafka 消费 RDS 处理后的数据 (spider-rds-processed)
-- 按 data_type/data_source 路由到对应的标准化处理器
-- 字段映射、类型转换、空值处理、异常数据标记
-- RDS assets 中的 MinIO 路径替换到 patent 对应的资源字段中
-- 标准化结果入库 ts_ods 表
-- 推送到 TASK/DWD 层 Kafka Topic
-
-标准化器位于 app/etl/normalizers/ 包中，按类型/源拆分。
-扩展新数据源：在 normalizers/ 下创建模块并注册即可。
-"""
-
 from __future__ import annotations
 
 import logging
@@ -24,67 +10,65 @@ from app.etl.normalizers import get_normalizer
 
 logger = logging.getLogger(__name__)
 
-ODS_PATENT_DDL = """
-CREATE TABLE IF NOT EXISTS ts_ods.ods_patent (
-    id                  BIGSERIAL,
-    data_source         VARCHAR(128)    NOT NULL,
-    data_type           VARCHAR(64)     NOT NULL,
-    record_id           VARCHAR(256)    NOT NULL,
-
-    title               TEXT,
-    publication_number       VARCHAR(128),
-    application_number  VARCHAR(128),
-    assignee            TEXT,
-    inventor            TEXT,
-    publication_date    DATE,
-    filing_date         DATE,
-    priority_date       DATE,
-    grant_date          DATE,
-    abstract            TEXT,
-    claims              JSONB,
-    legal_status        VARCHAR(64),
-    ipc_classification  VARCHAR(256),
-    cpc_classification  VARCHAR(256),
-    patent_type         VARCHAR(64),
-
-    original_file       TEXT,
-    thumbnail           TEXT,
-    figures             JSONB,
-
-    quality_score       DOUBLE PRECISION,
-    quality_flags       JSONB,
-    extra_data          JSONB,
-
-    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT pk_ods_patent PRIMARY KEY (id, created_at),
-    CONSTRAINT uq_ods_record UNIQUE (record_id, data_source, created_at)
-) PARTITION BY RANGE (created_at);
+ODS_NEWS_INSERT = """
+INSERT INTO ts_ods.ods_news (
+    record_id, data_source, data_type,
+    title, url, source_url, source_published_at, source_updated_at,
+    summary, content, content_html, summary_html,
+    author, organization, tags, external_links,
+    attachments, images, slides, thumbnail,
+    created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type,
+    :title, :url, :source_url, CAST(:source_published_at AS timestamptz), CAST(:source_updated_at AS timestamptz),
+    :summary, :content, :content_html, :summary_html,
+    :author, CAST(:organization AS jsonb), CAST(:tags AS jsonb), CAST(:external_links AS jsonb),
+    CAST(:attachments AS jsonb), CAST(:images AS jsonb), CAST(:slides AS jsonb), :thumbnail,
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id) DO UPDATE SET
+    data_source = EXCLUDED.data_source,
+    data_type = EXCLUDED.data_type,
+    title = EXCLUDED.title,
+    url = EXCLUDED.url,
+    source_url = EXCLUDED.source_url,
+    source_published_at = EXCLUDED.source_published_at,
+    source_updated_at = EXCLUDED.source_updated_at,
+    summary = EXCLUDED.summary,
+    content = EXCLUDED.content,
+    content_html = EXCLUDED.content_html,
+    summary_html = EXCLUDED.summary_html,
+    author = EXCLUDED.author,
+    organization = EXCLUDED.organization,
+    tags = EXCLUDED.tags,
+    external_links = EXCLUDED.external_links,
+    attachments = EXCLUDED.attachments,
+    images = EXCLUDED.images,
+    slides = EXCLUDED.slides,
+    thumbnail = EXCLUDED.thumbnail,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
 """
 
 ODS_PATENT_INSERT = """
 INSERT INTO ts_ods.ods_patent (
-    data_source, data_type, record_id,
+    record_id, data_source, data_type,
     title, publication_number, application_number, assignee, inventor,
     publication_date, filing_date, priority_date, grant_date,
-    abstract, claims, legal_status,
-    ipc_classification, cpc_classification, patent_type,
-    original_file, thumbnail, figures,
-    quality_score, quality_flags, extra_data,
+    abstract, claims, legal_status, ipc_classification, cpc_classification, patent_type,
+    url, thumbnail, figures, quality_score, quality_flags,
     created_at, updated_at
 ) VALUES (
-    :data_source, :data_type, :record_id,
+    :record_id, :data_source, :data_type,
     :title, :publication_number, :application_number, :assignee, :inventor,
-    CAST(:publication_date AS date), CAST(:filing_date AS date),
-    CAST(:priority_date AS date), CAST(:grant_date AS date),
-    :abstract, CAST(:claims AS jsonb), :legal_status,
-    :ipc_classification, :cpc_classification, :patent_type,
-    :original_file, :thumbnail, CAST(:figures AS jsonb),
-    CAST(:quality_score AS float), CAST(:quality_flags AS jsonb), CAST(:extra_data AS jsonb),
+    CAST(:publication_date AS date), CAST(:filing_date AS date), CAST(:priority_date AS date), CAST(:grant_date AS date),
+    :abstract, CAST(:claims AS jsonb), :legal_status, :ipc_classification, :cpc_classification, :patent_type,
+    :url, :thumbnail, CAST(:figures AS jsonb), CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
-ON CONFLICT (record_id, data_source, created_at) DO UPDATE SET
+ON CONFLICT (record_id) DO UPDATE SET
+    data_source = EXCLUDED.data_source,
+    data_type = EXCLUDED.data_type,
     title = EXCLUDED.title,
     publication_number = EXCLUDED.publication_number,
     application_number = EXCLUDED.application_number,
@@ -100,15 +84,80 @@ ON CONFLICT (record_id, data_source, created_at) DO UPDATE SET
     ipc_classification = EXCLUDED.ipc_classification,
     cpc_classification = EXCLUDED.cpc_classification,
     patent_type = EXCLUDED.patent_type,
-    original_file = EXCLUDED.original_file,
+    url = EXCLUDED.url,
     thumbnail = EXCLUDED.thumbnail,
     figures = EXCLUDED.figures,
     quality_score = EXCLUDED.quality_score,
     quality_flags = EXCLUDED.quality_flags,
-    extra_data = EXCLUDED.extra_data,
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
+
+ODS_NAVWARN_INSERT = """
+INSERT INTO ts_ods.ods_navwarn (
+    record_id, data_source, data_type,
+    navarea_id, warning_no, warning_prefix, serial_number, warning_year, sea_name,
+    issued_at, message_text, hazard_type, coordinates,
+    quality_score, quality_flags, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type,
+    CAST(:navarea_id AS integer), :warning_no, :warning_prefix, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :sea_name,
+    CAST(:issued_at AS timestamptz), :message_text, :hazard_type, CAST(:coordinates AS jsonb),
+    CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id) DO UPDATE SET
+    data_source = EXCLUDED.data_source,
+    data_type = EXCLUDED.data_type,
+    navarea_id = EXCLUDED.navarea_id,
+    warning_no = EXCLUDED.warning_no,
+    warning_prefix = EXCLUDED.warning_prefix,
+    serial_number = EXCLUDED.serial_number,
+    warning_year = EXCLUDED.warning_year,
+    sea_name = EXCLUDED.sea_name,
+    issued_at = EXCLUDED.issued_at,
+    message_text = EXCLUDED.message_text,
+    hazard_type = EXCLUDED.hazard_type,
+    coordinates = EXCLUDED.coordinates,
+    quality_score = EXCLUDED.quality_score,
+    quality_flags = EXCLUDED.quality_flags,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_INTELLIGENCE_INSERT = """
+INSERT INTO ts_ods.ods_intelligence (
+    record_id, data_source, data_type,
+    title, url, source_published_at, source_updated_at, summary,
+    file_name, file_size, file_type,
+    created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type,
+    :title, :url, CAST(:source_published_at AS timestamptz), CAST(:source_updated_at AS timestamptz), :summary,
+    :file_name, :file_size, :file_type,
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id) DO UPDATE SET
+    data_source = EXCLUDED.data_source,
+    data_type = EXCLUDED.data_type,
+    title = EXCLUDED.title,
+    url = EXCLUDED.url,
+    source_published_at = EXCLUDED.source_published_at,
+    source_updated_at = EXCLUDED.source_updated_at,
+    summary = EXCLUDED.summary,
+    file_name = EXCLUDED.file_name,
+    file_size = EXCLUDED.file_size,
+    file_type = EXCLUDED.file_type,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+_ODS_INSERT_SQL = {
+    "news": ODS_NEWS_INSERT,
+    "patent": ODS_PATENT_INSERT,
+    "navwarn": ODS_NAVWARN_INSERT,
+    "intelligence": ODS_INTELLIGENCE_INSERT,
+}
 
 
 class TsOds(ETLBase):
@@ -118,18 +167,26 @@ class TsOds(ETLBase):
     _producer_topic = settings.etl_ods_topic
     _producer_client_id = "etl-ts-ods-producer"
 
-    async def _ddl_for_table(self, table: str) -> str:
-        ddl_map = {
-            "patent": ODS_PATENT_DDL,
-        }
-        ddl = ddl_map.get(table, "")
-        if not ddl:
-            logger.warning("%s No DDL defined for table '%s'", self._log_prefix, table)
-        return ddl
+    async def _handler_news(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="news")
 
     async def _handler_patent(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="patent")
+
+    async def _handler_navwarn(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="navwarn")
+
+    async def _handler_intelligence(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="intelligence")
+
+    async def _process_ods_record(self, message: dict[str, Any], table: str) -> bool:
+        insert_sql = _ODS_INSERT_SQL.get(table)
+        if not insert_sql:
+            logger.warning("%s Unsupported ODS table: %s", self._log_prefix, table)
+            return False
+
         try:
-            data_type = message.get("data_type", "")
+            data_type = message.get("data_type", "") or table
             data_source = message.get("data_source", "")
             record_id = message.get("record_id", "")
 
@@ -137,27 +194,39 @@ class TsOds(ETLBase):
             normalizer = get_normalizer(data_type, data_source)
             normalized = normalizer(raw_data)
 
-            now = datetime.now(timezone.utc)
+            normalized_record_id = normalized.get("record_id") or record_id
+            if not normalized_record_id:
+                logger.warning("%s Normalized message missing record_id, table=%s", self._log_prefix, table)
+                return False
 
-            result = await self._pg.fetch_one(
-                ODS_PATENT_INSERT,
-                {
-                    **normalized,
-                    "created_at": now,
-                    "updated_at": now,
-                },
+            now = datetime.now(timezone.utc)
+            payload = {
+                **normalized,
+                "record_id": normalized_record_id,
+                "data_source": normalized.get("data_source") or data_source,
+                "data_type": normalized.get("data_type") or data_type,
+                "created_at": now,
+                "updated_at": now,
+            }
+            result = await self._execute_with_table_recovery(
+                table,
+                lambda: self._pg.fetch_one(insert_sql, payload),
             )
 
-            await self._emit(result, record_id=record_id, data_source=data_source, data_type=data_type)
-            
+            await self._emit(
+                result,
+                record_id=normalized_record_id,
+                data_source=result.get("data_source") if result else normalized.get("data_source"),
+                data_type=result.get("data_type") if result else normalized.get("data_type"),
+            )
             logger.debug(
-                "%s Normalized publication_number=%s source=%s → TASK/DWD",
+                "%s Normalized table=ods_%s record_id=%s source=%s",
                 self._log_prefix,
-                normalized.get("publication_number"),
-                data_source,
+                table,
+                normalized_record_id,
+                normalized.get("data_source"),
             )
             return True
-
         except Exception:
-            logger.exception("%s Failed to normalize message", self._log_prefix)
+            logger.exception("%s Failed to normalize table=%s", self._log_prefix, table)
             return False

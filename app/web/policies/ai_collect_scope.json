@@ -1,0 +1,35 @@
+{
+  "description": "Guardrails for user-triggered AI collect workflows in the frontend.",
+  "url_rules": {
+    "allowed_schemes": ["http", "https"],
+    "blocked_exact_hosts": ["localhost", "127.0.0.1", "0.0.0.0", "::1"],
+    "blocked_prefix_hosts": ["10.", "192.168."],
+    "blocked_172_range": [16, 31]
+  },
+  "limits": {
+    "max_template_pages": 100,
+    "max_dry_run_limit": 100,
+    "max_generated_adapter_lines": 500
+  },
+  "adapter_rules": {
+    "forbidden_patterns": [
+      "eval(",
+      "child_process",
+      "process.env",
+      "/etc/",
+      "/proc/",
+      "/.ssh/"
+    ]
+  },
+  "publish_scope": {
+    "allowed_paths": [
+      "templates/*.yaml",
+      "app/adapters/*.py"
+    ],
+    "forbidden_actions": [
+      "modify_existing_templates",
+      "modify_existing_adapters",
+      "delete_existing_assets"
+    ]
+  }
+}

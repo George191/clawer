@@ -29,7 +29,6 @@ from app.etl.ts_task import TsTask
 from app.etl.ts_dwd import TsDwd
 from app.etl.ts_dws import TsDws
 from app.etl.ts_dim import TsDim
-from app.storage.postgres_client import get_pg_client
 
 logger = logging.getLogger(__name__)
 

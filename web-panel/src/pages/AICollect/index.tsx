@@ -1263,6 +1263,13 @@ const AICollect: React.FC = () => {
               linear-gradient(180deg, #101212 0%, ${aura.bg} 58%, #141818 100%) !important;
           }
           .ai-collect-workbench {
+            --ai-session-prompt-bottom: 18px;
+            --ai-session-prompt-height: 96px;
+            --ai-session-runtime-safe-bottom: 76px;
+            --ai-session-body-safe-bottom: 172px;
+            --ai-session-veil-height: 148px;
+            --ai-session-dock-rail-bottom: 35px;
+            --ai-session-dock-panel-bottom: 138px;
             height: calc(100vh - 48px);
             max-height: calc(100vh - 48px);
             overflow: hidden;
@@ -1324,10 +1331,38 @@ const AICollect: React.FC = () => {
             grid-template-columns: minmax(204px, 232px) minmax(0, 1.12fr) minmax(250px, 292px);
             gap: 0 12px;
             overflow: hidden;
+            position: relative;
           }
           .ai-collect-body.is-session {
             display: block;
-            padding-bottom: 132px;
+            padding-bottom: var(--ai-session-body-safe-bottom);
+          }
+          .ai-session-bottom-veil {
+            position: absolute;
+            left: 50%;
+            bottom: 0;
+            width: min(980px, calc(100% - 64px));
+            height: var(--ai-session-veil-height);
+            pointer-events: none;
+            opacity: 0;
+            z-index: 12;
+            transform: translateX(-50%);
+            background:
+              radial-gradient(120% 118% at 50% 100%, rgba(19, 23, 31, 0.96) 0%, rgba(19, 23, 31, 0.88) 34%, rgba(19, 23, 31, 0.58) 56%, rgba(19, 23, 31, 0.22) 76%, rgba(19, 23, 31, 0) 100%);
+            clip-path: ellipse(50% 88% at 50% 100%);
+            filter: blur(2px);
+            transition: opacity 220ms ease;
+          }
+          .ai-session-bottom-veil::before {
+            content: '';
+            position: absolute;
+            inset: 14px 10% 0;
+            border-radius: 50%;
+            background: radial-gradient(72% 78% at 50% 100%, rgba(138, 180, 255, 0.12) 0%, rgba(138, 180, 255, 0.07) 22%, rgba(138, 180, 255, 0) 72%);
+            opacity: 0.82;
+          }
+          .ai-session-bottom-veil.is-visible {
+            opacity: 1;
           }
           .ai-collect-panel {
             padding: 14px;
@@ -1422,9 +1457,9 @@ const AICollect: React.FC = () => {
           .ai-session-prompt {
             position: absolute;
             left: 50%;
-            bottom: 18px;
-            z-index: 16;
-            width: min(760px, calc(100% - 52px));
+            bottom: var(--ai-session-prompt-bottom);
+            z-index: 18;
+            width: min(648px, calc(100% - 52px));
             margin: 0;
             display: flex;
             flex-direction: column;
@@ -1439,7 +1474,7 @@ const AICollect: React.FC = () => {
             align-self: flex-start;
             padding: 0 8px 0 10px;
             border-radius: 14px 14px 0 0;
-            background: rgba(29, 33, 41, 0.92);
+            background: linear-gradient(180deg, rgba(34, 39, 51, 0.96), rgba(24, 29, 39, 0.88));
             border: 1px solid ${aura.border};
             border-bottom: none;
             color: ${aura.text};
@@ -1448,6 +1483,7 @@ const AICollect: React.FC = () => {
             max-width: min(100%, 560px);
             position: relative;
             backdrop-filter: ${aura.backdrop};
+            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
           }
           .ai-session-reference-icon {
             width: 17px;
@@ -1517,21 +1553,29 @@ const AICollect: React.FC = () => {
             grid-template-columns: 22px minmax(0, 1fr) 30px 30px;
             align-items: center;
             gap: 8px;
-            min-height: 56px;
-            padding: 0 12px 0 15px;
-            border-radius: 0 14px 14px 14px;
-            background: rgba(29, 33, 41, 0.9);
+            min-height: 58px;
+            padding: 0 14px 0 16px;
+            border-radius: 0 18px 18px 18px;
             border: 1px solid ${aura.border};
-            box-shadow: ${aura.shadow};
+            box-shadow: 0 28px 58px rgba(0, 0, 0, 0.34);
             position: relative;
             backdrop-filter: ${aura.backdrop};
+            overflow: hidden;
+          }
+          .ai-session-prompt-main::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
           }
           .ai-session-leading-icon {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: ${aura.muted};
+            color: ${aura.accent};
             font-size: 15px;
+            position: relative;
+            z-index: 1;
           }
           .ai-session-prompt-main .ant-input {
             background: transparent !important;
@@ -1542,6 +1586,8 @@ const AICollect: React.FC = () => {
             font-size: 13px;
             line-height: 1.5;
             resize: none;
+            position: relative;
+            z-index: 1;
           }
           .ai-session-icon-btn {
             width: 30px !important;
@@ -1554,6 +1600,8 @@ const AICollect: React.FC = () => {
             align-items: center;
             justify-content: center;
             box-shadow: none !important;
+            position: relative;
+            z-index: 1;
           }
           .ai-session-icon-btn:hover {
             color: ${aura.accent} !important;
@@ -1979,7 +2027,6 @@ const AICollect: React.FC = () => {
             position: absolute;
             inset: 0;
             border-radius: inherit;
-            background: linear-gradient(180deg, rgba(30, 40, 67, 0.68), rgba(23, 28, 40, 0.26));
             pointer-events: none;
           }
           .ai-prompt-leading-icon {
@@ -2203,7 +2250,7 @@ const AICollect: React.FC = () => {
           }
           .ai-runtime-dock {
             flex-shrink: 0;
-            padding: 10px 14px 14px;
+            padding: 10px 14px calc(14px + var(--ai-session-runtime-safe-bottom));
             border-top: 1px solid ${aura.border};
             background: rgba(16, 20, 30, 0.32);
             display: flex;
@@ -2868,6 +2915,13 @@ const AICollect: React.FC = () => {
           }
           @media (max-width: 767px) {
             .ai-collect-workbench {
+              --ai-session-prompt-bottom: 12px;
+              --ai-session-prompt-height: 86px;
+              --ai-session-runtime-safe-bottom: 92px;
+              --ai-session-body-safe-bottom: 198px;
+              --ai-session-veil-height: 132px;
+              --ai-session-dock-rail-bottom: 92px;
+              --ai-session-dock-panel-bottom: 166px;
               height: calc(100vh - 48px);
               max-height: calc(100vh - 48px);
               padding: 12px;
@@ -2895,10 +2949,10 @@ const AICollect: React.FC = () => {
               font-size: 14px;
             }
             .ai-collect-body.is-session {
-              padding-bottom: 156px;
+              padding-bottom: var(--ai-session-body-safe-bottom);
             }
             .ai-session-prompt {
-              bottom: 12px;
+              bottom: var(--ai-session-prompt-bottom);
               width: calc(100% - 24px);
             }
             .ai-session-reference {
@@ -2969,6 +3023,7 @@ const AICollect: React.FC = () => {
             </main>
           )}
         </div>
+        <div className={`ai-session-bottom-veil ${hasSession ? 'is-visible' : ''}`} aria-hidden="true" />
         <WorkspaceDock
           activePanel={activeWorkspacePanel}
           sessionActive={hasSession}

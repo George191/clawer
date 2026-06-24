@@ -204,7 +204,7 @@ class MongoStorage(StorageBackend):
             ],
         }
 
-        if template_name and data_type:
+        if template_name:
             collection = await self._get_collection(template_name)
             cursor = collection.find(filter_query).limit(limit)
             results: list[dict[str, Any]] = []

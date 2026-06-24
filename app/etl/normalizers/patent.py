@@ -19,8 +19,9 @@ from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import _extract_asset_paths, _pick_first, safe_date, safe_str
 
 
-def _normalize_patent_common(record: dict[str, Any], source: str) -> dict[str, Any]:
+def normalize_google_patent(record: dict[str, Any]) -> dict[str, Any]:
     patent = record.get("patent", {}) or {}
+    meta = record.get("_meta", {}) or {}
 
     quality_flags: list[str] = []
 
@@ -106,7 +107,7 @@ def _normalize_patent_common(record: dict[str, Any], source: str) -> dict[str, A
         except (json.JSONDecodeError, TypeError):
             claims_raw = {"text": claims_raw}
 
-    original_file, thumbnail, figures = _extract_asset_paths(record)
+    url, thumbnail, figures = _extract_asset_paths(record)
 
     if not publication_number:
         quality_flags.append("missing_publication_number")
@@ -119,7 +120,6 @@ def _normalize_patent_common(record: dict[str, Any], source: str) -> dict[str, A
 
     quality_score = max(0.0, 1.0 - len(quality_flags) * 0.2)
 
-    meta = record.get("_meta", {}) or {}
     record_id = (
         meta.get("record_id")
         or record.get("record_id")
@@ -127,29 +127,8 @@ def _normalize_patent_common(record: dict[str, Any], source: str) -> dict[str, A
         or ""
     )
 
-    excluded_keys = {
-        "id", "rank", "_meta", "assets", "patent", "entity_matches",
-        "measure_matches", "is_similar_document", "_kafka_meta",
-        "data_source", "data_type", "record_id",
-        "title", "publication_number", "patent_id",
-        "application_number", "app_number",
-        "assignee", "assignee_name", "current_assignee",
-        "inventor", "inventor_name",
-        "publication_date", "pub_date", "filing_date", "priority_date",
-        "earliest_priority_date", "grant_date", "granted_date",
-        "abstract", "description", "legal_status", "status",
-        "ipc", "ipc_classification", "cpc", "cpc_classification",
-        "patent_type", "type", "kind",
-        "claims", "pdf", "thumbnail", "figures", "snippet", "language",
-        "family_metadata",
-    }
-
-    patent_extra = {k: v for k, v in patent.items() if k not in excluded_keys}
-    top_extra = {k: v for k, v in record.items() if k not in excluded_keys}
-    extra = {**top_extra, "patent": patent_extra} if patent_extra else top_extra
-
     return {
-        "data_source": source,
+        "data_source": record.get("data_source") or meta.get("data_source") or meta.get("template") or "google_patent",
         "data_type": record.get("data_type") or patent.get("data_type") or "patent",
         "record_id": record_id,
         "title": title,
@@ -167,17 +146,10 @@ def _normalize_patent_common(record: dict[str, Any], source: str) -> dict[str, A
         "ipc_classification": ipc,
         "cpc_classification": cpc,
         "patent_type": patent_type,
-        "original_file": original_file,
+        "url": url,
         "thumbnail": thumbnail,
         "figures": json.dumps(figures) if figures else None,
         "quality_score": quality_score,
         "quality_flags": json.dumps(quality_flags),
-        "extra_data": json.dumps(extra) if extra else None,
     }
-
-
-def normalize_google_patent(record: dict[str, Any]) -> dict[str, Any]:
-    return _normalize_patent_common(record, "google_patent")
-
-
 register_normalizer("patent", "google_patent", normalize_google_patent)

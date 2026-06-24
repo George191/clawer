@@ -1,21 +1,22 @@
-"""Google Patent 按日采集任务 — 单元测试。
+"""Google Patent 按日采集 — 单元测试。
 
 测试覆盖:
-    - 日期格式化
-    - 查询字符串构造
-    - 日期范围工具函数
-    - API 上限检测逻辑
+    - 日期工具函数（纯函数）
+    - 常量定义
+    - GooglePatentCrawler 类的依赖注入和生命周期
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.scheduler.tasks.google_patent_daily import (
+from app.scheduler.tasks.google_patent.crawler import (
     MAX_PAGES_PER_QUERY,
     MAX_RESULTS_PER_QUERY,
+    GooglePatentCrawler,
     build_date_range_query,
     format_patent_date,
     get_yesterday_utc,
@@ -96,3 +97,68 @@ class TestConstants:
 
     def test_max_pages(self) -> None:
         assert MAX_PAGES_PER_QUERY == 10
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  GooglePatentCrawler 类测试
+# ══════════════════════════════════════════════════════════════════════
+
+class TestGooglePatentCrawler:
+    """测试 GooglePatentCrawler 类。"""
+
+    def test_init_with_defaults(self) -> None:
+        """默认构造应延迟初始化依赖。"""
+        crawler = GooglePatentCrawler()
+        assert crawler._task_store is None
+        assert crawler._engine is None
+        assert crawler._owns_engine is True
+
+    def test_init_with_injected_deps(self) -> None:
+        """应支持依赖注入。"""
+        mock_store = MagicMock()
+        mock_engine = MagicMock()
+        crawler = GooglePatentCrawler(task_store=mock_store, engine=mock_engine)
+        assert crawler._task_store is mock_store
+        assert crawler._engine is mock_engine
+        assert crawler._owns_engine is False
+
+    def test_get_store_uses_global_singleton(self) -> None:
+        """未注入 task_store 时应使用全局单例。"""
+        crawler = GooglePatentCrawler()
+        with patch("app.scheduler.tasks.google_patent.crawler.get_task_store") as mock_get:
+            mock_store = MagicMock()
+            mock_get.return_value = mock_store
+            store = crawler._get_store()
+            assert store is mock_store
+            # 第二次调用应复用缓存
+            crawler._get_store()
+            mock_get.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_only_closes_owned_engine(self) -> None:
+        """close() 只关闭自建的 engine，不关闭注入的。"""
+        mock_engine = AsyncMock()
+        crawler = GooglePatentCrawler(engine=mock_engine)
+        await crawler.close()
+        mock_engine.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_close_closes_owned_engine(self) -> None:
+        """close() 应关闭自建的 engine。"""
+        crawler = GooglePatentCrawler()
+        mock_engine = AsyncMock()
+        crawler._engine = mock_engine
+        crawler._owns_engine = True
+        await crawler.close()
+        mock_engine.close.assert_called_once()
+        assert crawler._engine is None
+
+    @pytest.mark.asyncio
+    async def test_crawl_date_range_validates_dates(self) -> None:
+        """起始日期晚于结束日期应抛 ValueError。"""
+        crawler = GooglePatentCrawler()
+        with pytest.raises(ValueError, match="起始日期不能晚于结束日期"):
+            await crawler.crawl_date_range(
+                start_date=date(2026, 6, 22),
+                end_date=date(2026, 6, 21),
+            )

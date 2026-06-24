@@ -26,13 +26,19 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable, Awaitable, ClassVar
+from typing import Any, Awaitable, Callable, ClassVar, TypeVar
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.errors import NodeNotReadyError, KafkaConnectionError, RequestTimedOutError
 
 from app.config.settings import settings
 from app.etl.offset_manager import get_offset_manager
+from app.etl.table_layout import partition_bounds, schema_name_for
+from app.storage.etl_metadata_store import (
+    ensure_ddlregistry_table,
+    get_registered_ddl,
+    get_registered_ddl_record,
+)
 from app.storage.postgres_client import get_pg_client
 
 logger = logging.getLogger(__name__)
@@ -42,15 +48,16 @@ KAFKA_MAX_RETRY = 30
 KAFKA_MAX_RETRY_DELAY = 60
 
 _OFFSET_MANAGER = get_offset_manager()
+T = TypeVar("T")
 
 
 class ETLBase:
     _layer: ClassVar[str] = ""
+    _table_role: ClassVar[str] = "current"
     _consumer_topics: ClassVar[list[str]] = []
     _consumer_group: ClassVar[str] = ""
     _producer_topic: ClassVar[str] = ""
     _producer_client_id: ClassVar[str] = ""
-    _ddl_template: ClassVar[str] = ""
 
     def __init__(self, table_name: str = "") -> None:
         self._table_name = table_name
@@ -88,43 +95,248 @@ class ETLBase:
         )
         return handlers
 
-    def _table_fqn(self, table: str) -> str:
-        return f"ts_{self._layer}.{self._layer}_{table}"
+    def _table_fqn(self, table: str, table_role: str | None = None) -> str:
+        role = table_role or self._table_role
+        return f"{schema_name_for(self._layer, role)}.{self._layer}_{table}"
 
     # =================================================================
     #  Schema & 分区表
     # =================================================================
     async def _on_init_schema(self) -> None:
-        await self._pg.execute(f"CREATE SCHEMA IF NOT EXISTS ts_{self._layer}")
+        await self._pg.execute(
+            f"CREATE SCHEMA IF NOT EXISTS {schema_name_for(self._layer, self._table_role)}"
+        )
+        await ensure_ddlregistry_table(self._pg)
         for table in self._handlers:
-            ddl = await self._ddl_for_table(table)
-            if ddl:
-                await self._pg.execute(ddl)
-                logger.info("%s Table ensured: %s", self._log_prefix, self._table_fqn(table))
-                await self._create_partitions(table)
+            await self._ensure_registered_table(table, self._table_role)
+            if self._table_role == "current":
+                await self._ensure_registered_table(table, "history")
 
     async def _ddl_for_table(self, table: str) -> str:
-        return self._ddl_template.replace("{table_name}", table)
+        ddl_from_registry = await get_registered_ddl(
+            self._pg,
+            self._layer,
+            table,
+            self._table_role,
+        )
+        if ddl_from_registry:
+            return ddl_from_registry
 
-    async def _create_partitions(self, table: str) -> None:
+        logger.warning(
+            "%s No DDL defined for table '%s' in registry",
+            self._log_prefix,
+            table,
+        )
+        return ""
+
+    async def _ensure_registered_table(self, table: str, table_role: str) -> None:
+        ddl_record = await get_registered_ddl_record(
+            self._pg,
+            self._layer,
+            table,
+            table_role,
+        )
+        if not ddl_record:
+            if table_role == self._table_role:
+                await self._ddl_for_table(table)
+            return
+
+        await self._pg.execute(
+            f"CREATE SCHEMA IF NOT EXISTS {schema_name_for(self._layer, table_role)}"
+        )
+        await self._pg.init_schema([ddl_record["ddl_sql"]])
+        logger.info(
+            "%s Table ensured: %s",
+            self._log_prefix,
+            self._table_fqn(table, table_role),
+        )
+        await self._create_partitions(table, table_role=table_role, ddl_record=ddl_record)
+
+    async def _create_partitions(
+        self,
+        table: str,
+        table_role: str | None = None,
+        ddl_record: dict[str, Any] | None = None,
+    ) -> None:
+        role = table_role or self._table_role
+        if ddl_record is None:
+            ddl_record = await get_registered_ddl_record(
+                self._pg,
+                self._layer,
+                table,
+                role,
+            )
+        if not ddl_record:
+            return
+
+        partition_type = ddl_record.get("partition_type")
+        if partition_type == "hash":
+            await self._create_hash_partitions(table, role, ddl_record)
+            return
+
+        if partition_type != "range":
+            return
+
+        granularity = ddl_record.get("partition_granularity")
+        if granularity not in {"month", "year"}:
+            logger.warning(
+                "%s Unsupported partition granularity for %s: %s",
+                self._log_prefix,
+                self._table_fqn(table, role),
+                granularity,
+            )
+            return
+
+        if not await self._is_partitioned_table(table, role):
+            logger.warning(
+                "%s Partitioned DDL exists but physical table is not partitioned: %s",
+                self._log_prefix,
+                self._table_fqn(table, role),
+            )
+            return
+
         now = datetime.now(timezone.utc)
-        month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
-        month_end = datetime(month_start.year, month_start.month + 1, 1, tzinfo=timezone.utc)
-        
-        partition_name = f"ts_{self._layer}.{self._layer}_{table}_{month_start:%Y%m}"
+        range_start, range_end, suffix = partition_bounds(now, granularity)
+        schema_name = schema_name_for(self._layer, role)
+        partition_name = f"{schema_name}.{self._layer}_{table}_{suffix}"
         partition_sql = (
             f"CREATE TABLE IF NOT EXISTS {partition_name} "
-            f"PARTITION OF {self._table_fqn(table)} "
-            f"FOR VALUES FROM ('{month_start:%Y-%m-%d}') TO ('{month_end:%Y-%m-%d}')"
+            f"PARTITION OF {self._table_fqn(table, role)} "
+            f"FOR VALUES FROM ('{range_start:%Y-%m-%d}') TO ('{range_end:%Y-%m-%d}')"
         )
         try:
             await self._pg.execute(partition_sql)
+            default_partition_sql = (
+                f"CREATE TABLE IF NOT EXISTS {schema_name}.{self._layer}_{table}_default "
+                f"PARTITION OF {self._table_fqn(table, role)} DEFAULT"
+            )
+            await self._pg.execute(default_partition_sql)
             logger.debug("%s Partition ensured: %s", self._log_prefix, partition_name)
         except Exception as e:
             logger.info(
                 "%s Partition skip for %s (maybe not a partitioned table): %s",
-                self._log_prefix, self._table_fqn(table), e,
+                self._log_prefix, self._table_fqn(table, role), e,
             )
+
+    async def _create_hash_partitions(
+        self,
+        table: str,
+        table_role: str,
+        ddl_record: dict[str, Any],
+    ) -> None:
+        partition_count = ddl_record.get("partition_count")
+        if not isinstance(partition_count, int) or partition_count <= 0:
+            logger.warning(
+                "%s Unsupported hash partition count for %s: %s",
+                self._log_prefix,
+                self._table_fqn(table, table_role),
+                partition_count,
+            )
+            return
+
+        if not await self._is_partitioned_table(table, table_role):
+            logger.warning(
+                "%s Hash-partitioned DDL exists but physical table is not partitioned: %s",
+                self._log_prefix,
+                self._table_fqn(table, table_role),
+            )
+            return
+
+        schema_name = schema_name_for(self._layer, table_role)
+        parent_table = self._table_fqn(table, table_role)
+        width = max(2, len(str(partition_count - 1)))
+        for remainder in range(partition_count):
+            partition_name = (
+                f"{schema_name}.{self._layer}_{table}_p{remainder:0{width}d}"
+            )
+            partition_sql = (
+                f"CREATE TABLE IF NOT EXISTS {partition_name} "
+                f"PARTITION OF {parent_table} "
+                f"FOR VALUES WITH (MODULUS {partition_count}, REMAINDER {remainder})"
+            )
+            await self._pg.execute(partition_sql)
+
+    async def _recover_registered_table(
+        self,
+        table: str,
+        table_role: str | None = None,
+    ) -> None:
+        role = table_role or self._table_role
+        await self._ensure_registered_table(table, role)
+        if role == "current":
+            await self._ensure_registered_table(table, "history")
+
+    @staticmethod
+    def _schema_error_messages(exc: BaseException) -> list[str]:
+        messages: list[str] = []
+        seen: set[int] = set()
+        current: BaseException | None = exc
+
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            text = str(current).strip()
+            if text:
+                messages.append(text)
+
+            nested = getattr(current, "orig", None)
+            if isinstance(nested, BaseException) and id(nested) not in seen:
+                current = nested
+                continue
+
+            current = current.__cause__ or current.__context__
+
+        return messages
+
+    def _is_recoverable_table_error(self, exc: BaseException) -> bool:
+        message = " | ".join(self._schema_error_messages(exc)).lower()
+        return (
+            "no partition of relation" in message
+            or "undefinedtableerror" in message
+            or ('relation "' in message and '" does not exist' in message)
+        )
+
+    async def _execute_with_table_recovery(
+        self,
+        table: str,
+        operation: Callable[[], Awaitable[T]],
+        *,
+        table_role: str | None = None,
+    ) -> T:
+        role = table_role or self._table_role
+        try:
+            return await operation()
+        except Exception as exc:
+            if not self._is_recoverable_table_error(exc):
+                raise
+
+            logger.warning(
+                "%s Recovering table=%s role=%s after schema error: %s",
+                self._log_prefix,
+                table,
+                role,
+                self._schema_error_messages(exc)[0] if self._schema_error_messages(exc) else exc,
+            )
+            await self._recover_registered_table(table, role)
+            return await operation()
+
+    async def _is_partitioned_table(self, table: str, table_role: str | None = None) -> bool:
+        role = table_role or self._table_role
+        row = await self._pg.fetch_one(
+            """
+            SELECT 1
+            FROM pg_partitioned_table pt
+            JOIN pg_class c ON c.oid = pt.partrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = :schema_name
+              AND c.relname = :table_name
+            LIMIT 1
+            """,
+            {
+                "schema_name": schema_name_for(self._layer, role),
+                "table_name": f"{self._layer}_{table}",
+            },
+        )
+        return row is not None
 
     # =================================================================
     #  Kafka 生产者

@@ -29,24 +29,6 @@ from app.etl.tasks import get_tasks
 
 logger = logging.getLogger(__name__)
 
-TASK_PATENT_DDL = """
-CREATE TABLE IF NOT EXISTS ts_task.task_patent (
-    id              BIGSERIAL,
-    data_source     VARCHAR(128)    NOT NULL,
-    data_type       VARCHAR(64)     NOT NULL,
-    record_id       VARCHAR(256)    NOT NULL,
-
-    task            VARCHAR(64)     NOT NULL,
-    result          TEXT,
-    result_type     VARCHAR(32)     NOT NULL,
-
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT pk_task_patent PRIMARY KEY (id, created_at),
-    CONSTRAINT uq_task_result UNIQUE (record_id, data_source, task, created_at)
-) PARTITION BY RANGE (created_at);
-"""
-
 TASK_PATENT_INSERT = """
 INSERT INTO ts_task.task_patent (
     data_source, data_type, record_id,
@@ -70,15 +52,6 @@ class TsTask(ETLBase):
     _consumer_group = settings.etl_task_consumer_group
     _producer_topic = settings.etl_task_topic
     _producer_client_id = "etl-ts-task-producer"
-
-    async def _ddl_for_table(self, table: str) -> str:
-        ddl_map = {
-            "patent": TASK_PATENT_DDL,
-        }
-        ddl = ddl_map.get(table, "")
-        if not ddl:
-            logger.warning("%s No DDL defined for table '%s'", self._log_prefix, table)
-        return ddl
 
     async def _handler_patent(self, message: dict[str, Any]) -> bool:
         try:

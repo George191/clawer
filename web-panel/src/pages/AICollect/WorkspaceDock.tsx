@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Input, Segmented, Tooltip, Typography } from 'antd';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Input, InputNumber, Segmented, Select, Switch, Tooltip, Typography } from 'antd';
 import {
   BellOutlined,
   CaretRightOutlined,
@@ -13,6 +13,8 @@ import {
   EditOutlined,
   ExperimentOutlined,
   PauseCircleOutlined,
+  PlusOutlined,
+  PushpinOutlined,
   RadarChartOutlined,
   ReadOutlined,
   ScheduleOutlined,
@@ -35,6 +37,11 @@ import type {
 const { Text } = Typography;
 const { TextArea } = Input;
 const aura = workspacePalette;
+const mobileDockBreakpoint = 767;
+const dockPanelEdgePadding = 12;
+const dockPanelAnchorOffset = 16;
+const listPageSize = 4;
+const listLoadThreshold = 56;
 
 export type WorkspacePanel = 'templates' | 'tasks';
 
@@ -48,6 +55,11 @@ interface WorkspaceDockProps {
 type TemplateFilter = 'all' | TemplateStatus;
 type TaskFilter = 'all' | TaskStatus;
 type TemplateDetailMode = 'overview' | 'edit';
+type TaskComposerMode = 'once' | 'recurring';
+type TaskRecurringMode = 'daily' | 'interval';
+type TaskIncrementalMode = 'time_window' | 'stop_condition';
+type TaskIntervalUnit = 'minute' | 'hour';
+type TaskLookbackUnit = 'hour' | 'day';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
 type SiteKind = 'news' | 'patent' | 'intelligence' | 'warning' | 'signal' | 'generic';
 
@@ -96,6 +108,42 @@ interface SiteProfile {
   hue: string;
 }
 
+interface TemplateInsight {
+  tableName: string;
+  currentCount: number;
+  yesterdayGrowth: number;
+}
+
+interface TaskTemplateParameterDraft {
+  key: string;
+  label: string;
+  value: string;
+  placeholder: string;
+}
+
+interface TaskComposerDraft {
+  name: string;
+  template: string;
+  templateLocked: boolean;
+  scheduleMode: TaskComposerMode;
+  recurringMode: TaskRecurringMode;
+  dailyTime: string;
+  intervalValue: number;
+  intervalUnit: TaskIntervalUnit;
+  templateParams: TaskTemplateParameterDraft[];
+  incremental: boolean;
+  incrementalMode: TaskIncrementalMode;
+  incrementalField: string;
+  lookbackValue: number;
+  lookbackUnit: TaskLookbackUnit;
+  overlapMinutes: number;
+  stopField: string;
+  stopComparator: '<' | '<=';
+  stopThreshold: string;
+  stopConsecutivePages: number;
+  maxEmptyPages: number;
+}
+
 const templateStatusMeta: Record<TemplateStatus, { label: string; color: string }> = {
   active: { label: '已启用', color: '#31D26B' },
   draft: { label: '草稿', color: '#FBBF24' },
@@ -114,6 +162,31 @@ const fieldHints = [
   'region_code',
   'detail_html',
 ] as const;
+
+const taskComposerModeMeta: Record<TaskComposerMode, { label: string }> = {
+  once: { label: '一次性任务' },
+  recurring: { label: '周期任务' },
+};
+
+const recurringModeMeta: Record<TaskRecurringMode, { label: string }> = {
+  daily: { label: '每天几点' },
+  interval: { label: '每隔多久' },
+};
+
+const intervalUnitMeta: Array<{ value: TaskIntervalUnit; label: string }> = [
+  { value: 'minute', label: '分钟' },
+  { value: 'hour', label: '小时' },
+];
+
+const lookbackUnitMeta: Array<{ value: TaskLookbackUnit; label: string }> = [
+  { value: 'hour', label: '小时' },
+  { value: 'day', label: '天' },
+];
+
+const incrementalModeMeta: Record<TaskIncrementalMode, { label: string }> = {
+  time_window: { label: '时间范围过滤' },
+  stop_condition: { label: '阈值停止规则' },
+};
 
 const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tint: string }> = {
   news: { icon: <ReadOutlined />, label: '新闻', tint: '#BFA8FF' },
@@ -160,6 +233,28 @@ const formatCompactNumber = (value: number) => {
   return `${value}`;
 };
 
+const formatSignedCompactNumber = (value: number) => {
+  if (value === 0) return '0';
+  return `${value > 0 ? '+' : '-'}${formatCompactNumber(Math.abs(value))}`;
+};
+
+const togglePinnedState = (prev: Record<string, true>, key: string) => {
+  const next = { ...prev };
+  if (next[key]) {
+    delete next[key];
+  } else {
+    next[key] = true;
+  }
+  return next;
+};
+
+const normalizeTemplateKey = (value: string) => value.replace(/@.*$/, '');
+
+const toTableName = (value: string) => `ods_${normalizeTemplateKey(value)
+  .replace(/[^a-zA-Z0-9]+/g, '_')
+  .replace(/^_+|_+$/g, '')
+  .toLowerCase()}`;
+
 const createHistory = (recordsValue: number) => {
   const span = Math.max(420, Math.round(recordsValue * 0.12));
   const start = Math.max(recordsValue - span, 0);
@@ -195,6 +290,32 @@ const buildInitialTaskLogs = (item: CollectTask): TaskLog[] => [
   },
 ];
 
+const buildTaskRuntimeItem = (item: CollectTask, index: number): TaskRuntimeItem => {
+  const recordsValue = parseCompactNumber(item.records);
+  return {
+    status: item.status,
+    progress: item.progress,
+    recordsValue,
+    throughput: item.status === 'running' ? 18 + index * 4 : item.status === 'queued' ? 0 : 12,
+    lastDelta: item.status === 'running' ? 96 + index * 14 : 0,
+    history: createHistory(recordsValue),
+    logs: buildInitialTaskLogs(item),
+    controlState: null,
+    downloadState: item.status === 'running' ? 'running' : item.status === 'completed' ? 'paused' : 'idle',
+    syncState: item.status === 'running' || item.status === 'completed' ? 'running' : 'idle',
+  };
+};
+
+const toAvatarLabel = (value: string) => {
+  const initials = value
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() ?? '')
+    .join('')
+    .slice(0, 2);
+  return initials || 'AI';
+};
+
 const inferSiteKind = (value: string): SiteKind => {
   const text = value.toLowerCase();
   if (text.includes('patent') || text.includes('专利')) return 'patent';
@@ -229,6 +350,116 @@ const resolveSiteProfile = (value: string): SiteProfile => {
     logo: derived.logo,
     hue: siteKindMeta[kind].tint,
   };
+};
+
+const taskTemplateParameterBlueprints: Record<SiteKind, Array<{ key: string; label: string; placeholder: string }>> = {
+  news: [
+    { key: 'keyword', label: '关键词', placeholder: '例如：satellite / policy / tender' },
+    { key: 'page_limit', label: '抓取页数', placeholder: '例如：20' },
+    { key: 'category', label: '栏目过滤', placeholder: '例如：最新公告' },
+  ],
+  patent: [
+    { key: 'query', label: '检索式', placeholder: '例如：autonomous navigation' },
+    { key: 'assignee', label: '申请人', placeholder: '例如：OpenAI' },
+    { key: 'page_limit', label: '抓取页数', placeholder: '例如：50' },
+  ],
+  intelligence: [
+    { key: 'dataset', label: '数据主题', placeholder: '例如：market intelligence' },
+    { key: 'region', label: '区域范围', placeholder: '例如：global' },
+    { key: 'page_limit', label: '抓取页数', placeholder: '例如：30' },
+  ],
+  warning: [
+    { key: 'region', label: '海域/区域', placeholder: '例如：South China Sea' },
+    { key: 'notice_type', label: '通告类型', placeholder: '例如：navwarn' },
+    { key: 'page_limit', label: '抓取页数', placeholder: '例如：10' },
+  ],
+  signal: [
+    { key: 'check_scope', label: '校验范围', placeholder: '例如：abstract / attachment' },
+    { key: 'sample_limit', label: '抽样量', placeholder: '例如：200' },
+    { key: 'threshold', label: '质量阈值', placeholder: '例如：0.95' },
+  ],
+  generic: [
+    { key: 'keyword', label: '关键词', placeholder: '例如：policy update' },
+    { key: 'page_limit', label: '抓取页数', placeholder: '例如：20' },
+    { key: 'detail_limit', label: '详情上限', placeholder: '例如：200' },
+  ],
+};
+
+const defaultIncrementalFields = [
+  'publish_time',
+  'updated_at',
+  'notice_time',
+  'filing_date',
+  'created_at',
+  'record_id',
+] as const;
+
+const defaultStopFields = [
+  'publish_time',
+  'record_id',
+  'priority_score',
+  'sort_value',
+  'page_cursor',
+] as const;
+
+const taskComposerFieldLabels: Record<string, string> = {
+  keyword: 'Keyword',
+  page_limit: 'Page Limit',
+  category: 'Category',
+  query: 'Query',
+  assignee: 'Assignee',
+  dataset: 'Dataset',
+  region: 'Region',
+  notice_type: 'Notice Type',
+  check_scope: 'Check Scope',
+  sample_limit: 'Sample Limit',
+  threshold: 'Threshold',
+  detail_limit: 'Detail Limit',
+};
+
+const taskComposerFieldPlaceholders: Record<string, string> = {
+  keyword: 'satellite / policy / tender',
+  page_limit: '50',
+  category: 'latest notice',
+  query: 'autonomous navigation',
+  assignee: 'OpenAI',
+  dataset: 'market intelligence',
+  region: 'global',
+  notice_type: 'navwarn',
+  check_scope: 'abstract / attachment',
+  sample_limit: '100',
+  threshold: '0.95',
+  detail_limit: '100',
+};
+
+const buildTaskTemplateParameterDrafts = (templateValue: string) => {
+  const kind = resolveSiteProfile(templateValue).kind;
+  return taskTemplateParameterBlueprints[kind].map((item) => ({
+    ...item,
+    value: '',
+  }));
+};
+
+const inferIncrementalField = (templateValue: string) => {
+  const normalized = templateValue.toLowerCase();
+  if (normalized.includes('patent')) return 'filing_date';
+  if (normalized.includes('warn')) return 'notice_time';
+  if (normalized.includes('market')) return 'updated_at';
+  return 'publish_time';
+};
+
+const formatTaskNextRun = (draft: TaskComposerDraft) => {
+  if (draft.scheduleMode === 'once') return '待手动启动';
+  if (draft.recurringMode === 'daily') return `每天 ${draft.dailyTime}`;
+  return `每 ${draft.intervalValue} ${draft.intervalUnit === 'minute' ? '分钟' : '小时'}`;
+};
+
+const formatIncrementalSummary = (draft: TaskComposerDraft) => {
+  if (!draft.incremental) return '全量采集';
+  if (draft.incrementalMode === 'time_window') {
+    return `${draft.incrementalField} 回看 ${draft.lookbackValue}${draft.lookbackUnit === 'hour' ? '小时' : '天'}，重叠 ${draft.overlapMinutes} 分钟`;
+  }
+  return `${draft.stopField} ${draft.stopComparator} ${draft.stopThreshold} 时停止，连续命中 ${draft.stopConsecutivePages} 页`;
 };
 
 const stripDecorativeSuffix = (value: string) => value.replace(/\s+[^\u4E00-\u9FFFa-zA-Z0-9]+$/g, '');
@@ -304,6 +535,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   onToggle,
   onClose,
 }) => {
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  const templateTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const taskTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
@@ -311,6 +547,35 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
   const [templateEditSnapshot, setTemplateEditSnapshot] = useState<TemplateDraft | null>(null);
+  const [templateVisibleCount, setTemplateVisibleCount] = useState(listPageSize);
+  const [taskVisibleCount, setTaskVisibleCount] = useState(listPageSize);
+  const [pinnedTemplateKeys, setPinnedTemplateKeys] = useState<Record<string, true>>({});
+  const [pinnedTaskKeys, setPinnedTaskKeys] = useState<Record<string, true>>({});
+  const [taskComposerOpen, setTaskComposerOpen] = useState(false);
+  const [taskComposerDraft, setTaskComposerDraft] = useState<TaskComposerDraft>({
+    name: '',
+    template: '',
+    templateLocked: false,
+    scheduleMode: 'once',
+    recurringMode: 'daily',
+    dailyTime: '09:00',
+    intervalValue: 30,
+    intervalUnit: 'minute',
+    templateParams: [],
+    incremental: false,
+    incrementalMode: 'time_window',
+    incrementalField: 'publish_time',
+    lookbackValue: 6,
+    lookbackUnit: 'hour',
+    overlapMinutes: 15,
+    stopField: 'publish_time',
+    stopComparator: '<=',
+    stopThreshold: '7d',
+    stopConsecutivePages: 2,
+    maxEmptyPages: 2,
+  });
+  const [panelAnchorStyle, setPanelAnchorStyle] = useState<React.CSSProperties>({});
+  const [bodyScrollState, setBodyScrollState] = useState({ canScroll: false, isAtBottom: true });
 
   const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplateDraft>>(() => Object.fromEntries(
     templates.map((item) => [item.key, {
@@ -321,23 +586,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       savedAt: item.lastRun,
     }]),
   ) as Record<string, TemplateDraft>);
+  const [taskItems, setTaskItems] = useState<CollectTask[]>(tasks);
 
   const [taskRuntime, setTaskRuntime] = useState<Record<string, TaskRuntimeItem>>(() => Object.fromEntries(
-    tasks.map((item, index) => {
-      const recordsValue = parseCompactNumber(item.records);
-      return [item.key, {
-        status: item.status,
-        progress: item.progress,
-        recordsValue,
-        throughput: item.status === 'running' ? 18 + index * 4 : item.status === 'queued' ? 0 : 12,
-        lastDelta: item.status === 'running' ? 96 + index * 14 : 0,
-        history: createHistory(recordsValue),
-        logs: buildInitialTaskLogs(item),
-        controlState: null,
-        downloadState: item.status === 'running' ? 'running' : item.status === 'completed' ? 'paused' : 'idle',
-        syncState: item.status === 'running' || item.status === 'completed' ? 'running' : 'idle',
-      }];
-    }),
+    tasks.map((item, index) => [item.key, buildTaskRuntimeItem(item, index)]),
   ) as Record<string, TaskRuntimeItem>);
 
   useEffect(() => {
@@ -393,18 +645,26 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     }
     if (activePanel !== 'tasks') {
       setSelectedTaskKey(null);
+      setTaskComposerOpen(false);
     }
   }, [activePanel]);
 
-  const templateRows = useMemo(() => templates.filter((item) => {
-    const matchFilter = templateFilter === 'all' || item.status === templateFilter;
-    const matchKeyword = !keyword
-      || `${item.name} ${item.title} ${item.domain} ${item.adapter}`.toLowerCase().includes(keyword.toLowerCase());
-    return matchFilter && matchKeyword;
-  }), [keyword, templateFilter]);
+  const templateRows = useMemo(() => templates
+    .filter((item) => {
+      const matchFilter = templateFilter === 'all' || item.status === templateFilter;
+      const matchKeyword = !keyword
+        || `${item.name} ${item.title} ${item.domain} ${item.adapter}`.toLowerCase().includes(keyword.toLowerCase());
+      return matchFilter && matchKeyword;
+    })
+    .sort((left, right) => {
+      const leftPinned = Boolean(pinnedTemplateKeys[left.key]);
+      const rightPinned = Boolean(pinnedTemplateKeys[right.key]);
+      if (leftPinned === rightPinned) return 0;
+      return leftPinned ? -1 : 1;
+    }), [keyword, pinnedTemplateKeys, templateFilter]);
 
-  const taskRows = useMemo<TaskRow[]>(() => tasks.map((item) => {
-    const runtime = taskRuntime[item.key];
+  const allTaskRows = useMemo<TaskRow[]>(() => taskItems.map((item, index) => {
+    const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item, index);
     const site = resolveSiteProfile(item.template);
     return {
       ...item,
@@ -412,12 +672,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       site,
       display: getTaskDisplay(runtime),
     };
-  }).filter((item) => {
-    const matchFilter = taskFilter === 'all' || item.runtime.status === taskFilter;
-    const matchKeyword = !keyword
-      || `${item.name} ${item.template} ${item.area} ${item.owner}`.toLowerCase().includes(keyword.toLowerCase());
-    return matchFilter && matchKeyword;
-  }), [keyword, taskFilter, taskRuntime]);
+  }), [taskItems, taskRuntime]);
+
+  const taskRows = useMemo(() => allTaskRows
+    .filter((item) => {
+      const matchFilter = taskFilter === 'all' || item.runtime.status === taskFilter;
+      const matchKeyword = !keyword
+        || `${item.name} ${item.template} ${item.area} ${item.owner}`.toLowerCase().includes(keyword.toLowerCase());
+      return matchFilter && matchKeyword;
+    })
+    .sort((left, right) => {
+      const leftPinned = Boolean(pinnedTaskKeys[left.key]);
+      const rightPinned = Boolean(pinnedTaskKeys[right.key]);
+      if (leftPinned === rightPinned) return 0;
+      return leftPinned ? -1 : 1;
+    }), [allTaskRows, keyword, pinnedTaskKeys, taskFilter]);
 
   useEffect(() => {
     if (selectedTemplateKey && !templateRows.some((item) => item.key === selectedTemplateKey)) {
@@ -426,30 +695,96 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, [selectedTemplateKey, templateRows]);
 
   useEffect(() => {
+    setTemplateVisibleCount(listPageSize);
+  }, [keyword, templateFilter]);
+
+  useEffect(() => {
     if (selectedTaskKey && !taskRows.some((item) => item.key === selectedTaskKey)) {
       setSelectedTaskKey(null);
     }
   }, [selectedTaskKey, taskRows]);
 
+  useEffect(() => {
+    setTaskVisibleCount(listPageSize);
+  }, [keyword, taskFilter]);
+
   const selectedTemplate = useMemo(
     () => templates.find((item) => item.key === selectedTemplateKey) ?? null,
     [selectedTemplateKey],
+  );
+  const taskTemplateOptions = useMemo(
+    () => templates
+      .filter((item) => item.status !== 'deprecated')
+      .map((item) => ({
+        value: `${item.name}@${item.version}`,
+        label: `${item.name}@${item.version}`,
+        title: item.title,
+        version: item.version,
+        site: resolveSiteProfile(item.name),
+      })),
+    [],
   );
   const selectedTask = useMemo(
     () => taskRows.find((item) => item.key === selectedTaskKey) ?? null,
     [selectedTaskKey, taskRows],
   );
   const selectedTemplateDraft = selectedTemplate ? templateDrafts[selectedTemplate.key] : null;
+  const templateTaskCounts = useMemo<Record<string, number>>(() => Object.fromEntries(
+    templates.map((item) => [item.key, taskItems.filter(
+      (taskItem) => normalizeTemplateKey(taskItem.template) === normalizeTemplateKey(item.name),
+    ).length]),
+  ) as Record<string, number>, [taskItems]);
   const hasRunningTask = useMemo(
     () => Object.values(taskRuntime).some((runtime) => runtime.status === 'running' && runtime.controlState !== 'canceled'),
     [taskRuntime],
   );
-  const selectedTemplateSite = useMemo(
-    () => (selectedTemplate ? resolveSiteProfile(selectedTemplate.name) : null),
-    [selectedTemplate],
-  );
+  const templateInsights = useMemo<Record<string, TemplateInsight>>(() => Object.fromEntries(
+    templates.map((item) => {
+      const linkedTasks = allTaskRows.filter((row) => normalizeTemplateKey(row.template) === normalizeTemplateKey(item.name));
+      const currentCount = linkedTasks.reduce((sum, row) => sum + row.runtime.recordsValue, 0)
+        || (item.status === 'deprecated' ? 0 : Math.max(item.fields * Math.max(item.taskCount, 1) * 28, item.taskCount * 120));
+      const yesterdayGrowth = linkedTasks.length
+        ? linkedTasks.reduce((sum, row) => sum + (
+          row.runtime.status === 'running'
+            ? Math.max(row.runtime.lastDelta * 36, 120)
+            : row.runtime.status === 'completed'
+              ? Math.max(Math.round(row.runtime.recordsValue * 0.024), 48)
+              : row.runtime.status === 'paused'
+                ? Math.max(Math.round(row.runtime.recordsValue * 0.008), 8)
+                : row.runtime.status === 'failed'
+                  ? Math.max(Math.round(row.runtime.recordsValue * 0.004), 4)
+                  : 0
+        ), 0)
+        : item.status === 'active'
+          ? Math.max(Math.round(currentCount * 0.08), currentCount > 0 ? 12 : 0)
+          : item.status === 'draft'
+            ? Math.max(Math.round(currentCount * 0.02), currentCount > 0 ? 4 : 0)
+            : 0;
 
-  const hasDetail = activePanel === 'templates' ? Boolean(selectedTemplate) : activePanel === 'tasks' ? Boolean(selectedTask) : false;
+      return [item.key, {
+        tableName: toTableName(item.name),
+        currentCount,
+        yesterdayGrowth,
+      }];
+    }),
+  ) as Record<string, TemplateInsight>, [allTaskRows]);
+  const visibleTemplateRows = useMemo(
+    () => templateRows.slice(0, templateVisibleCount),
+    [templateRows, templateVisibleCount],
+  );
+  const visibleTaskRows = useMemo(
+    () => taskRows.slice(0, taskVisibleCount),
+    [taskRows, taskVisibleCount],
+  );
+  const templateHasMore = visibleTemplateRows.length < templateRows.length;
+  const taskHasMore = visibleTaskRows.length < taskRows.length;
+  const showBodyFade = bodyScrollState.canScroll && !bodyScrollState.isAtBottom;
+
+  const hasDetail = activePanel === 'templates'
+    ? Boolean(selectedTemplate)
+    : activePanel === 'tasks'
+      ? Boolean(selectedTask) || taskComposerOpen
+      : false;
   const taskInsertedLines = selectedTask ? Math.max(selectedTask.runtime.lastDelta, 24) : 0;
   const taskUpdatedLines = selectedTask ? Math.max(Math.round(selectedTask.runtime.lastDelta * 0.42), 12) : 0;
   const taskDeletedLines = selectedTask ? Math.max(Math.round(selectedTask.runtime.lastDelta * 0.18), selectedTask.runtime.controlState === 'canceled' ? 11 : 5) : 0;
@@ -471,6 +806,150 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     }
   }, [selectedTemplate, templateDetailMode]);
 
+  const loadMoreRows = useCallback(() => {
+    if (activePanel === 'templates' && templateHasMore) {
+      setTemplateVisibleCount((prev) => Math.min(prev + listPageSize, templateRows.length));
+    }
+    if (activePanel === 'tasks' && taskHasMore) {
+      setTaskVisibleCount((prev) => Math.min(prev + listPageSize, taskRows.length));
+    }
+  }, [activePanel, taskHasMore, taskRows.length, templateHasMore, templateRows.length]);
+
+  const syncBodyScrollState = useCallback(() => {
+    const container = bodyScrollRef.current;
+    if (!container) {
+      setBodyScrollState({ canScroll: false, isAtBottom: true });
+      return;
+    }
+
+    const canScroll = container.scrollHeight - container.clientHeight > 6;
+    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 18;
+
+    setBodyScrollState((prev) => (
+      prev.canScroll === canScroll && prev.isAtBottom === isAtBottom
+        ? prev
+        : { canScroll, isAtBottom }
+    ));
+  }, []);
+
+  const syncPanelAnchor = useCallback(() => {
+    if (!activePanel || !shellRef.current || !panelRef.current) {
+      setPanelAnchorStyle({});
+      return;
+    }
+
+    if (window.innerWidth <= mobileDockBreakpoint) {
+      setPanelAnchorStyle({});
+      return;
+    }
+
+    const trigger = activePanel === 'templates'
+      ? templateTriggerRef.current
+      : taskTriggerRef.current;
+    if (!trigger) {
+      setPanelAnchorStyle({});
+      return;
+    }
+
+    const shellRect = shellRef.current.getBoundingClientRect();
+    const triggerRect = trigger.getBoundingClientRect();
+    const panelRect = panelRef.current.getBoundingClientRect();
+
+    const maxLeft = Math.max(dockPanelEdgePadding, shellRect.width - panelRect.width - dockPanelEdgePadding);
+    const preferredLeft = triggerRect.left - shellRect.left - 18;
+    const left = Math.min(Math.max(preferredLeft, dockPanelEdgePadding), maxLeft);
+
+    const maxBottom = Math.max(dockPanelAnchorOffset, shellRect.height - panelRect.height - dockPanelEdgePadding);
+    const preferredBottom = shellRect.bottom - triggerRect.top + dockPanelAnchorOffset;
+    const bottom = Math.min(preferredBottom, maxBottom);
+
+    const anchorX = Math.min(
+      Math.max(triggerRect.left - shellRect.left + (triggerRect.width / 2) - left, 26),
+      Math.max(panelRect.width - 26, 26),
+    );
+
+    setPanelAnchorStyle({
+      left: `${left}px`,
+      right: 'auto',
+      bottom: `${bottom}px`,
+      transformOrigin: `${anchorX}px calc(100% + ${dockPanelAnchorOffset}px)`,
+    });
+  }, [activePanel]);
+
+  useLayoutEffect(() => {
+    syncPanelAnchor();
+  }, [syncPanelAnchor, activePanel, hasDetail, sessionActive, taskComposerOpen, templateDetailMode]);
+
+  useEffect(() => {
+    if (!activePanel) {
+      setPanelAnchorStyle({});
+      return undefined;
+    }
+
+    const sync = () => {
+      window.requestAnimationFrame(() => {
+        syncPanelAnchor();
+      });
+    };
+
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => {
+        sync();
+      })
+      : null;
+
+    const observedNodes = [shellRef.current, panelRef.current, templateTriggerRef.current, taskTriggerRef.current]
+      .filter((node): node is HTMLElement => node !== null);
+    observedNodes.forEach((node) => observer?.observe(node));
+
+    window.addEventListener('resize', sync);
+    window.addEventListener('scroll', sync, true);
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', sync);
+      window.removeEventListener('scroll', sync, true);
+    };
+  }, [activePanel, syncPanelAnchor]);
+
+  useEffect(() => {
+    const container = bodyScrollRef.current;
+    if (!container) return undefined;
+
+    const handleScroll = () => {
+      if (container.scrollHeight - container.scrollTop - container.clientHeight <= listLoadThreshold) {
+        loadMoreRows();
+      }
+      window.requestAnimationFrame(() => {
+        syncBodyScrollState();
+      });
+    };
+
+    const observer = typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => {
+        window.requestAnimationFrame(() => {
+          syncBodyScrollState();
+        });
+      })
+      : null;
+
+    observer?.observe(container);
+    if (container.firstElementChild) {
+      observer?.observe(container.firstElementChild);
+    }
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    window.requestAnimationFrame(() => {
+      handleScroll();
+      syncBodyScrollState();
+    });
+
+    return () => {
+      observer?.disconnect();
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, [activePanel, loadMoreRows, syncBodyScrollState, visibleTaskRows.length, visibleTemplateRows.length]);
+
   const updateTemplateDraft = (templateKey: string, patch: Partial<TemplateDraft>) => {
     setTemplateDrafts((prev) => ({
       ...prev,
@@ -480,6 +959,150 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       },
     }));
   };
+
+  const toggleTemplatePinned = useCallback((templateKey: string) => {
+    setPinnedTemplateKeys((prev) => togglePinnedState(prev, templateKey));
+  }, []);
+
+  const toggleTaskPinned = useCallback((taskKey: string) => {
+    setPinnedTaskKeys((prev) => togglePinnedState(prev, taskKey));
+  }, []);
+
+  const handleTemplatePinClick = useCallback((event: React.MouseEvent<HTMLElement>, templateKey: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleTemplatePinned(templateKey);
+  }, [toggleTemplatePinned]);
+
+  const handleTaskPinClick = useCallback((event: React.MouseEvent<HTMLElement>, taskKey: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleTaskPinned(taskKey);
+  }, [toggleTaskPinned]);
+
+  const buildTaskComposerDraft = useCallback((patch?: Partial<TaskComposerDraft>): TaskComposerDraft => {
+    const fallbackTemplate = taskTemplateOptions[0]?.value ?? 'generic';
+    const template = patch?.template ?? fallbackTemplate;
+    const scheduleMode = patch?.scheduleMode ?? 'once';
+    const defaultField = inferIncrementalField(template);
+    return {
+      name: '',
+      template,
+      templateLocked: false,
+      scheduleMode,
+      recurringMode: 'daily',
+      dailyTime: '09:00',
+      intervalValue: 30,
+      intervalUnit: 'minute' as TaskIntervalUnit,
+      templateParams: buildTaskTemplateParameterDrafts(template),
+      incremental: scheduleMode === 'recurring',
+      incrementalMode: 'time_window' as TaskIncrementalMode,
+      incrementalField: defaultField,
+      lookbackValue: 6,
+      lookbackUnit: 'hour' as TaskLookbackUnit,
+      overlapMinutes: 15,
+      stopField: defaultField,
+      stopComparator: '<=' as const,
+      stopThreshold: '7d',
+      stopConsecutivePages: 2,
+      maxEmptyPages: 2,
+      ...patch,
+    };
+  }, [taskTemplateOptions]);
+
+  const resetTaskComposer = useCallback((patch?: Partial<TaskComposerDraft>) => {
+    setTaskComposerDraft(buildTaskComposerDraft(patch));
+  }, [buildTaskComposerDraft]);
+
+  const openTaskComposer = useCallback((patch?: Partial<TaskComposerDraft>) => {
+    setSelectedTaskKey(null);
+    setKeyword('');
+    setTaskFilter('all');
+    setTaskComposerOpen(true);
+    resetTaskComposer(patch);
+  }, [resetTaskComposer]);
+
+  const closeTaskComposer = useCallback(() => {
+    setTaskComposerOpen(false);
+    resetTaskComposer();
+  }, [resetTaskComposer]);
+
+  const updateTaskComposerDraft = useCallback((patch: Partial<TaskComposerDraft>) => {
+    setTaskComposerDraft((prev) => ({
+      ...prev,
+      ...patch,
+    }));
+  }, []);
+
+  const updateTaskComposerTemplate = useCallback((templateValue: string, patch?: Partial<TaskComposerDraft>) => {
+    setTaskComposerDraft((prev) => ({
+      ...prev,
+      template: templateValue,
+      templateParams: buildTaskTemplateParameterDrafts(templateValue),
+      incrementalField: inferIncrementalField(templateValue),
+      stopField: inferIncrementalField(templateValue),
+      ...patch,
+    }));
+  }, []);
+
+  const updateTaskComposerParameter = useCallback((index: number, value: string) => {
+    setTaskComposerDraft((prev) => ({
+      ...prev,
+      templateParams: prev.templateParams.map((item, itemIndex) => (itemIndex === index ? { ...item, value } : item)),
+    }));
+  }, []);
+
+  const handleTaskComposerModeChange = useCallback((scheduleMode: TaskComposerMode) => {
+    setTaskComposerDraft((prev) => ({
+      ...prev,
+      scheduleMode,
+      incremental: scheduleMode === 'recurring',
+    }));
+  }, []);
+
+  const handleCreateTask = useCallback(() => {
+    const normalizedTemplate = taskComposerDraft.template
+      || (selectedTemplate ? `${selectedTemplate.name}@${selectedTemplate.version}` : '')
+      || taskTemplateOptions[0]?.value
+      || '';
+    const matchedTemplate = templates.find((item) => `${item.name}@${item.version}` === normalizedTemplate) ?? null;
+    const fallbackName = normalizedTemplate
+      ? `${normalizeTemplateKey(normalizedTemplate).replace(/_/g, ' ')} task`
+      : 'New collect task';
+    const nextTask: CollectTask = {
+      key: `task-${Date.now()}`,
+      name: taskComposerDraft.name.trim() || fallbackName,
+      template: normalizedTemplate,
+      group: 'prototype',
+      area: matchedTemplate ? `${matchedTemplate.title} workspace` : selectedTemplate ? `${selectedTemplate.title} workspace` : 'Collect workspace',
+      status: 'queued',
+      progress: 0,
+      records: '0',
+      lag: '-',
+      nextRun: formatTaskNextRun(taskComposerDraft),
+      owner: matchedTemplate?.owner || 'AI Collect',
+      avatar: toAvatarLabel(matchedTemplate?.owner || 'AI Collect'),
+      comments: [
+        `${taskComposerModeMeta[taskComposerDraft.scheduleMode].label} / ${formatIncrementalSummary(taskComposerDraft)}`,
+      ],
+      subIssues: [],
+    };
+
+    setKeyword('');
+    setTaskFilter('all');
+    setTaskItems((prev) => [nextTask, ...prev]);
+    setTaskRuntime((prev) => ({
+      ...prev,
+      [nextTask.key]: buildTaskRuntimeItem(nextTask, 0),
+    }));
+    setSelectedTaskKey(nextTask.key);
+    setTaskVisibleCount((prev) => Math.max(prev, listPageSize));
+    setTaskComposerOpen(false);
+    resetTaskComposer({
+      template: normalizedTemplate,
+      templateLocked: taskComposerDraft.templateLocked,
+    });
+  }, [resetTaskComposer, selectedTemplate, taskComposerDraft, taskTemplateOptions]);
 
   const updateTaskState = (
     taskKey: string,
@@ -575,17 +1198,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const renderTemplateList = () => (
     <div className="workspace-dock-list">
-      {templateRows.map((item) => {
+      {visibleTemplateRows.map((item) => {
         const status = templateStatusMeta[item.status];
         const draft = templateDrafts[item.key];
         const isSelected = selectedTemplateKey === item.key;
+        const isPinned = Boolean(pinnedTemplateKeys[item.key]);
         const site = resolveSiteProfile(item.name);
+        const insight = templateInsights[item.key];
+        const linkedTaskCount = templateTaskCounts[item.key] ?? item.taskCount;
 
         return (
           <button
             type="button"
             key={item.key}
-            className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''}`}
+            className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''} ${isPinned ? 'is-pinned' : ''}`}
             onClick={() => {
               setSelectedTemplateKey(item.key);
               setTemplateDetailMode('overview');
@@ -604,14 +1230,29 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   <Text type="secondary">{draft.adapter}</Text>
                 </div>
               </div>
-              <span className="workspace-dock-card-score">{item.quality}%</span>
+              <div className="workspace-dock-card-side">
+                <span
+                  className={`workspace-dock-card-pin ${isPinned ? 'is-pinned' : ''}`}
+                  title={isPinned ? 'Unpin template' : 'Pin template'}
+                  onClick={(event) => handleTemplatePinClick(event, item.key)}
+                >
+                  <PushpinOutlined />
+                </span>
+                <span className="workspace-dock-card-score">{item.quality}%</span>
+              </div>
             </div>
 
             <div className="workspace-dock-card-meta">
               <span><SiteLogoMark site={site} />{item.domain}</span>
               <span>{item.version}</span>
-              <span>{item.fields} 字段</span>
-              <span>{item.taskCount} 任务</span>
+              <span>{item.fields} fields</span>
+              <span>{linkedTaskCount} tasks</span>
+            </div>
+
+            <div className="workspace-dock-card-analytics">
+              <span className="is-table">{insight.tableName}</span>
+              <span className="is-current">now {formatCompactNumber(insight.currentCount)}</span>
+              <span className="is-growth">yday {formatSignedCompactNumber(insight.yesterdayGrowth)}</span>
             </div>
 
             <div className="workspace-dock-card-bar">
@@ -620,21 +1261,25 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           </button>
         );
       })}
-      {!templateRows.length && <div className="workspace-dock-empty">没有匹配到模板</div>}
+      {!templateRows.length && <div className="workspace-dock-empty">No templates matched</div>}
     </div>
   );
 
   const renderTaskList = () => (
     <div className="workspace-dock-list">
-      {taskRows.map((item) => {
+      {visibleTaskRows.map((item) => {
         const isSelected = selectedTaskKey === item.key;
+        const isPinned = Boolean(pinnedTaskKeys[item.key]);
 
         return (
           <button
             type="button"
             key={item.key}
-            className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''}`}
-            onClick={() => setSelectedTaskKey(item.key)}
+            className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''} ${isPinned ? 'is-pinned' : ''}`}
+            onClick={() => {
+              setTaskComposerOpen(false);
+              setSelectedTaskKey(item.key);
+            }}
           >
             <div className="workspace-dock-card-row">
               <div className="workspace-dock-card-main">
@@ -654,7 +1299,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   </div>
                 </div>
               </div>
-              <span className={`workspace-dock-card-score ${item.display.isRunning ? 'is-live' : ''}`}>{item.runtime.progress}%</span>
+              <div className="workspace-dock-card-side">
+                <span
+                  className={`workspace-dock-card-pin ${isPinned ? 'is-pinned' : ''}`}
+                  title={isPinned ? 'Unpin task' : 'Pin task'}
+                  onClick={(event) => handleTaskPinClick(event, item.key)}
+                >
+                  <PushpinOutlined />
+                </span>
+                <span className={`workspace-dock-card-score ${item.display.isRunning ? 'is-live' : ''}`}>{item.runtime.progress}%</span>
+              </div>
             </div>
 
             <div className="workspace-dock-card-meta">
@@ -670,24 +1324,711 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           </button>
         );
       })}
-      {!taskRows.length && <div className="workspace-dock-empty">没有匹配到任务</div>}
+      {!taskRows.length && <div className="workspace-dock-empty">No tasks matched</div>}
     </div>
   );
 
+  const renderTaskComposer = () => {
+    const matchedTemplate = templates.find((item) => `${item.name}@${item.version}` === taskComposerDraft.template) ?? null;
+    const composerKind = matchedTemplate ? resolveSiteProfile(matchedTemplate.name).kind : 'generic';
+    const composerSummary = taskComposerDraft.scheduleMode === 'once'
+      ? '一次性任务适合补采、验证模板参数，默认按全量采集执行。'
+      : taskComposerDraft.recurringMode === 'daily'
+        ? `周期任务会在每天 ${taskComposerDraft.dailyTime} 执行，默认按增量方式续采。`
+        : `周期任务会按每 ${taskComposerDraft.intervalValue} ${taskComposerDraft.intervalUnit === 'minute' ? '分钟' : '小时'} 执行，默认按增量方式续采。`;
+    const incrementalSummary = formatIncrementalSummary(taskComposerDraft);
+    const nextRunSummary = formatTaskNextRun(taskComposerDraft);
+    const templateSelectionRequired = !taskComposerDraft.templateLocked;
+
+    return (
+      <section className="workspace-dock-detail is-task-composer">
+        <div className="workspace-dock-detail-head">
+          <div className="workspace-dock-detail-leading">
+            <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={composerKind} /></span>
+            <div>
+              <Text strong className="workspace-dock-detail-title">新建任务</Text>
+              <Text type="secondary">{matchedTemplate ? matchedTemplate.title : '配置任务模板与运行方式'}</Text>
+            </div>
+          </div>
+          <div className="workspace-dock-detail-head-actions">
+            <button
+              type="button"
+              className="workspace-dock-detail-close"
+              aria-label="关闭任务创建"
+              onClick={closeTaskComposer}
+            >
+              <CloseOutlined />
+            </button>
+          </div>
+        </div>
+
+        <div className="workspace-dock-detail-body">
+          <div className="workspace-dock-inline-meta">
+            <span className="is-domain">{matchedTemplate?.domain ?? '选择模板'}</span>
+            <span className="is-version">{taskComposerModeMeta[taskComposerDraft.scheduleMode].label}</span>
+            <span className="is-asset">{nextRunSummary}</span>
+          </div>
+
+          <label className="workspace-dock-form-block">
+            <span>任务名称</span>
+            <Input
+              value={taskComposerDraft.name}
+              placeholder="输入任务名称"
+              onChange={(event) => updateTaskComposerDraft({ name: event.target.value })}
+            />
+          </label>
+
+          <label className="workspace-dock-form-block">
+            <span>模板版本</span>
+            <Select
+              value={taskComposerDraft.template || undefined}
+              disabled={taskComposerDraft.templateLocked}
+              placeholder={taskTemplateOptions[0]?.label ?? 'template@v1.0'}
+              onChange={(value) => updateTaskComposerTemplate(value)}
+              showSearch
+              popupClassName="workspace-dock-template-select-dropdown"
+              optionFilterProp="label"
+              filterOption={(input, option) => {
+                const searchText = `${String(option?.value ?? '')} ${String((option as { title?: string } | undefined)?.title ?? '')}`.toLowerCase();
+                return searchText.includes(input.toLowerCase());
+              }}
+              options={taskTemplateOptions.map((option) => ({
+                value: option.value,
+                title: option.title,
+                label: (
+                  <span className="workspace-dock-template-select-option">
+                    <SiteLogoMark site={option.site} />
+                    <span>{option.label}</span>
+                  </span>
+                ),
+              }))}
+            />
+          </label>
+
+          <label className="workspace-dock-form-block">
+            <span>运行方式</span>
+            <Segmented
+              block
+              size="small"
+              value={taskComposerDraft.scheduleMode}
+              onChange={(value) => handleTaskComposerModeChange(value as TaskComposerMode)}
+              options={[
+                { label: '一次性任务', value: 'once' },
+                { label: '周期任务', value: 'recurring' },
+              ]}
+            />
+          </label>
+
+          {taskComposerDraft.scheduleMode === 'recurring' ? (
+            <>
+              <label className="workspace-dock-form-block">
+                <span>执行策略</span>
+                <Segmented
+                  block
+                  size="small"
+                  value={taskComposerDraft.recurringMode}
+                  onChange={(value) => updateTaskComposerDraft({ recurringMode: value as TaskRecurringMode })}
+                  options={[
+                    { label: recurringModeMeta.daily.label, value: 'daily' },
+                    { label: recurringModeMeta.interval.label, value: 'interval' },
+                  ]}
+                />
+              </label>
+
+              {taskComposerDraft.recurringMode === 'daily' ? (
+                <div className="workspace-dock-form-grid">
+                  <label>
+                    <span>执行时间</span>
+                    <Input
+                      type="time"
+                      value={taskComposerDraft.dailyTime}
+                      onChange={(event) => updateTaskComposerDraft({ dailyTime: event.target.value || '09:00' })}
+                    />
+                  </label>
+                  <label>
+                    <span>空页停止阈值</span>
+                    <InputNumber
+                      min={1}
+                      max={20}
+                      value={taskComposerDraft.maxEmptyPages}
+                      onChange={(value) => updateTaskComposerDraft({ maxEmptyPages: value ?? 2 })}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div className="workspace-dock-form-grid">
+                  <label>
+                    <span>执行间隔</span>
+                    <InputNumber
+                      min={5}
+                      max={720}
+                      value={taskComposerDraft.intervalValue}
+                      onChange={(value) => updateTaskComposerDraft({ intervalValue: value ?? 30 })}
+                    />
+                  </label>
+                  <label>
+                    <span>间隔单位</span>
+                    <Select
+                      value={taskComposerDraft.intervalUnit}
+                      options={intervalUnitMeta}
+                      onChange={(value) => updateTaskComposerDraft({ intervalUnit: value as TaskIntervalUnit })}
+                    />
+                  </label>
+                </div>
+              )}
+            </>
+          ) : null}
+
+          <div className="workspace-dock-note-panel">
+            <small>执行摘要</small>
+            <p>{composerSummary}</p>
+          </div>
+
+          <div className="workspace-dock-form-block">
+            <span>模板参数</span>
+            <div className="workspace-dock-form-grid">
+              {taskComposerDraft.templateParams.map((item, index) => (
+                <label key={item.key}>
+                  <span>{item.label}</span>
+                  <Input
+                    value={item.value}
+                    placeholder={item.placeholder}
+                    onChange={(event) => updateTaskComposerParameter(index, event.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="workspace-dock-switch-row">
+            <div>
+              <strong>增量采集</strong>
+              <small>关闭后按全量任务执行；开启后会追加增量边界与停止规则。</small>
+            </div>
+            <Switch
+              checked={taskComposerDraft.incremental}
+              onChange={(checked) => updateTaskComposerDraft({ incremental: checked })}
+            />
+          </div>
+
+          {taskComposerDraft.incremental ? (
+            <div className="workspace-dock-progress-panel">
+              <div className="workspace-dock-progress-meta">
+                <strong>增量参数配置</strong>
+                <span>{incrementalSummary}</span>
+              </div>
+
+              <label className="workspace-dock-form-block" style={{ marginTop: 10 }}>
+                <span>增量策略</span>
+                <Segmented
+                  block
+                  size="small"
+                  value={taskComposerDraft.incrementalMode}
+                  onChange={(value) => updateTaskComposerDraft({ incrementalMode: value as TaskIncrementalMode })}
+                  options={[
+                    { label: incrementalModeMeta.time_window.label, value: 'time_window' },
+                    { label: incrementalModeMeta.stop_condition.label, value: 'stop_condition' },
+                  ]}
+                />
+              </label>
+
+              {taskComposerDraft.incrementalMode === 'time_window' ? (
+                <>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
+                    <label>
+                      <span>时间字段</span>
+                      <Select
+                        value={taskComposerDraft.incrementalField}
+                        options={defaultIncrementalFields.map((item) => ({ value: item, label: item }))}
+                        onChange={(value) => updateTaskComposerDraft({ incrementalField: value })}
+                      />
+                    </label>
+                    <label>
+                      <span>重叠分钟</span>
+                      <InputNumber
+                        min={0}
+                        max={240}
+                        value={taskComposerDraft.overlapMinutes}
+                        onChange={(value) => updateTaskComposerDraft({ overlapMinutes: value ?? 15 })}
+                      />
+                    </label>
+                  </div>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
+                    <label>
+                      <span>回看窗口</span>
+                      <InputNumber
+                        min={1}
+                        max={90}
+                        value={taskComposerDraft.lookbackValue}
+                        onChange={(value) => updateTaskComposerDraft({ lookbackValue: value ?? 6 })}
+                      />
+                    </label>
+                    <label>
+                      <span>窗口单位</span>
+                      <Select
+                        value={taskComposerDraft.lookbackUnit}
+                        options={lookbackUnitMeta}
+                        onChange={(value) => updateTaskComposerDraft({ lookbackUnit: value as TaskLookbackUnit })}
+                      />
+                    </label>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
+                    <label>
+                      <span>判断字段</span>
+                      <Select
+                        value={taskComposerDraft.stopField}
+                        options={defaultStopFields.map((item) => ({ value: item, label: item }))}
+                        onChange={(value) => updateTaskComposerDraft({ stopField: value })}
+                      />
+                    </label>
+                    <label>
+                      <span>比较方式</span>
+                      <Select
+                        value={taskComposerDraft.stopComparator}
+                        options={[
+                          { value: '<', label: '< 阈值' },
+                          { value: '<=', label: '<= 阈值' },
+                        ]}
+                        onChange={(value) => updateTaskComposerDraft({ stopComparator: value as '<' | '<=' })}
+                      />
+                    </label>
+                  </div>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
+                    <label>
+                      <span>停止阈值</span>
+                      <Input
+                        value={taskComposerDraft.stopThreshold}
+                        placeholder="例如：7d / 2026-06-01 / 1000"
+                        onChange={(event) => updateTaskComposerDraft({ stopThreshold: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      <span>连续命中页数</span>
+                      <InputNumber
+                        min={1}
+                        max={20}
+                        value={taskComposerDraft.stopConsecutivePages}
+                        onChange={(value) => updateTaskComposerDraft({ stopConsecutivePages: value ?? 2 })}
+                      />
+                    </label>
+                  </div>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
+                    <label>
+                      <span>最多空页数</span>
+                      <InputNumber
+                        min={1}
+                        max={20}
+                        value={taskComposerDraft.maxEmptyPages}
+                        onChange={(value) => updateTaskComposerDraft({ maxEmptyPages: value ?? 2 })}
+                      />
+                    </label>
+                    <label>
+                      <span>策略说明</span>
+                      <Input value="若页面抓取到的排序字段持续低于阈值，则提前停止翻页" readOnly />
+                    </label>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
+
+          <div className="workspace-dock-detail-actions">
+            <span>{incrementalSummary}</span>
+            <div className="workspace-dock-action-row">
+              <button type="button" className="workspace-dock-inline-action" onClick={closeTaskComposer}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="workspace-dock-inline-action is-primary"
+                disabled={templateSelectionRequired && !taskComposerDraft.template.trim()}
+                onClick={handleCreateTask}
+              >
+                <PlusOutlined />
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderTaskComposerClean = () => {
+    const matchedTemplate = templates.find((item) => `${item.name}@${item.version}` === taskComposerDraft.template) ?? null;
+    const composerKind = matchedTemplate ? resolveSiteProfile(matchedTemplate.name).kind : 'generic';
+    const scheduleModeLabel = taskComposerDraft.scheduleMode === 'once' ? 'One-time Task' : 'Recurring Task';
+    const nextRunSummary = taskComposerDraft.scheduleMode === 'once'
+      ? 'Manual start'
+      : taskComposerDraft.recurringMode === 'daily'
+        ? `Daily ${taskComposerDraft.dailyTime}`
+        : `Every ${taskComposerDraft.intervalValue} ${taskComposerDraft.intervalUnit === 'minute' ? 'minutes' : 'hours'}`;
+    const incrementalSummary = !taskComposerDraft.incremental
+      ? 'Full collect'
+      : taskComposerDraft.incrementalMode === 'time_window'
+        ? `${taskComposerDraft.incrementalField} lookback ${taskComposerDraft.lookbackValue} ${taskComposerDraft.lookbackUnit === 'hour' ? 'hours' : 'days'}, overlap ${taskComposerDraft.overlapMinutes} min`
+        : `${taskComposerDraft.stopField} ${taskComposerDraft.stopComparator} ${taskComposerDraft.stopThreshold}, hit ${taskComposerDraft.stopConsecutivePages} pages`;
+    const composerSummary = taskComposerDraft.scheduleMode === 'once'
+      ? 'Run this task once for validation, sampling, or a full manual collection.'
+      : taskComposerDraft.recurringMode === 'daily'
+        ? `Run this task every day at ${taskComposerDraft.dailyTime}. Incremental collect is enabled by default.`
+        : `Run this task every ${taskComposerDraft.intervalValue} ${taskComposerDraft.intervalUnit === 'minute' ? 'minutes' : 'hours'}. Incremental collect is enabled by default.`;
+
+    return (
+      <section className="workspace-dock-detail is-task-composer">
+        <div className="workspace-dock-detail-head">
+          <div className="workspace-dock-detail-leading">
+            <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={composerKind} /></span>
+            <div>
+              <Text strong className="workspace-dock-detail-title">New Task</Text>
+              <Text type="secondary">{matchedTemplate ? matchedTemplate.title : 'Create a task from a template version.'}</Text>
+            </div>
+          </div>
+          <div className="workspace-dock-detail-head-actions">
+            <button
+              type="button"
+              className="workspace-dock-detail-close"
+              aria-label="Close task composer"
+              onClick={closeTaskComposer}
+            >
+              <CloseOutlined />
+            </button>
+          </div>
+        </div>
+
+        <div className="workspace-dock-detail-body">
+          <div className="workspace-dock-inline-meta">
+            <span className="is-domain">{matchedTemplate?.domain ?? 'Select template'}</span>
+            <span className="is-version">{scheduleModeLabel}</span>
+            <span className="is-asset">{nextRunSummary}</span>
+          </div>
+
+          <label className="workspace-dock-form-block">
+            <span>Task Name</span>
+            <Input
+              value={taskComposerDraft.name}
+              placeholder="Enter task name"
+              onChange={(event) => updateTaskComposerDraft({ name: event.target.value })}
+            />
+          </label>
+
+          <label className="workspace-dock-form-block">
+            <span>Template Version</span>
+            <Select
+              value={taskComposerDraft.template || undefined}
+              disabled={taskComposerDraft.templateLocked}
+              placeholder={taskTemplateOptions[0]?.label ?? 'Select template version'}
+              onChange={(value) => updateTaskComposerTemplate(value)}
+              showSearch
+              popupClassName="workspace-dock-template-select-dropdown"
+              filterOption={(input, option) => {
+                const searchText = String((option as { searchText?: string } | undefined)?.searchText ?? '').toLowerCase();
+                return searchText.includes(input.toLowerCase());
+              }}
+              options={taskTemplateOptions.map((option) => ({
+                value: option.value,
+                searchText: `${option.value} ${option.title}`.toLowerCase(),
+                label: (
+                  <span className="workspace-dock-template-select-option">
+                    <SiteLogoMark site={option.site} />
+                    <span>{option.label}</span>
+                  </span>
+                ),
+              }))}
+            />
+          </label>
+
+          <label className="workspace-dock-form-block">
+            <span>Run Mode</span>
+            <Segmented
+              block
+              size="small"
+              value={taskComposerDraft.scheduleMode}
+              onChange={(value) => handleTaskComposerModeChange(value as TaskComposerMode)}
+              options={[
+                { label: 'One-time', value: 'once' },
+                { label: 'Recurring', value: 'recurring' },
+              ]}
+            />
+          </label>
+
+          {taskComposerDraft.scheduleMode === 'recurring' ? (
+            <>
+              <label className="workspace-dock-form-block">
+                <span>Recurring Strategy</span>
+                <Segmented
+                  block
+                  size="small"
+                  value={taskComposerDraft.recurringMode}
+                  onChange={(value) => updateTaskComposerDraft({ recurringMode: value as TaskRecurringMode })}
+                  options={[
+                    { label: 'Daily At', value: 'daily' },
+                    { label: 'Every', value: 'interval' },
+                  ]}
+                />
+              </label>
+
+              {taskComposerDraft.recurringMode === 'daily' ? (
+                <div className="workspace-dock-form-grid">
+                  <label>
+                    <span>Run At</span>
+                    <Input
+                      type="time"
+                      value={taskComposerDraft.dailyTime}
+                      onChange={(event) => updateTaskComposerDraft({ dailyTime: event.target.value || '09:00' })}
+                    />
+                  </label>
+                  <label>
+                    <span>Empty Page Limit</span>
+                    <InputNumber
+                      min={1}
+                      max={20}
+                      value={taskComposerDraft.maxEmptyPages}
+                      onChange={(value) => updateTaskComposerDraft({ maxEmptyPages: value ?? 2 })}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div className="workspace-dock-form-grid">
+                  <label>
+                    <span>Interval</span>
+                    <InputNumber
+                      min={5}
+                      max={720}
+                      value={taskComposerDraft.intervalValue}
+                      onChange={(value) => updateTaskComposerDraft({ intervalValue: value ?? 30 })}
+                    />
+                  </label>
+                  <label>
+                    <span>Unit</span>
+                    <Select
+                      value={taskComposerDraft.intervalUnit}
+                      options={[
+                        { value: 'minute', label: 'Minute' },
+                        { value: 'hour', label: 'Hour' },
+                      ]}
+                      onChange={(value) => updateTaskComposerDraft({ intervalUnit: value as TaskIntervalUnit })}
+                    />
+                  </label>
+                </div>
+              )}
+            </>
+          ) : null}
+
+          <div className="workspace-dock-note-panel">
+            <small>Run Summary</small>
+            <p>{composerSummary}</p>
+          </div>
+
+          <div className="workspace-dock-progress-panel">
+            <div className="workspace-dock-progress-meta">
+              <strong>Template Parameters</strong>
+              <span>{taskComposerDraft.templateParams.length} fields</span>
+            </div>
+            <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
+              {taskComposerDraft.templateParams.map((item, index) => (
+                <label key={item.key}>
+                  <span>{taskComposerFieldLabels[item.key] ?? item.key}</span>
+                  <Input
+                    value={item.value}
+                    placeholder={taskComposerFieldPlaceholders[item.key] ?? item.placeholder}
+                    onChange={(event) => updateTaskComposerParameter(index, event.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="workspace-dock-switch-row">
+            <div>
+              <strong>Incremental Collect</strong>
+              <small>Turn off for a full run. Turn on to collect with time-window or stop-condition rules.</small>
+            </div>
+            <Switch
+              checked={taskComposerDraft.incremental}
+              onChange={(checked) => updateTaskComposerDraft({ incremental: checked })}
+            />
+          </div>
+
+          {taskComposerDraft.incremental ? (
+            <div className="workspace-dock-progress-panel">
+              <div className="workspace-dock-progress-meta">
+                <strong>Incremental Rules</strong>
+                <span>{incrementalSummary}</span>
+              </div>
+
+              <label className="workspace-dock-form-block" style={{ marginTop: 10 }}>
+                <span>Incremental Strategy</span>
+                <Segmented
+                  block
+                  size="small"
+                  value={taskComposerDraft.incrementalMode}
+                  onChange={(value) => updateTaskComposerDraft({ incrementalMode: value as TaskIncrementalMode })}
+                  options={[
+                    { label: 'Time Window', value: 'time_window' },
+                    { label: 'Stop Condition', value: 'stop_condition' },
+                  ]}
+                />
+              </label>
+
+              {taskComposerDraft.incrementalMode === 'time_window' ? (
+                <>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
+                    <label>
+                      <span>Time Field</span>
+                      <Select
+                        value={taskComposerDraft.incrementalField}
+                        options={defaultIncrementalFields.map((item) => ({ value: item, label: item }))}
+                        onChange={(value) => updateTaskComposerDraft({ incrementalField: value })}
+                      />
+                    </label>
+                    <label>
+                      <span>Overlap Minutes</span>
+                      <InputNumber
+                        min={0}
+                        max={240}
+                        value={taskComposerDraft.overlapMinutes}
+                        onChange={(value) => updateTaskComposerDraft({ overlapMinutes: value ?? 15 })}
+                      />
+                    </label>
+                  </div>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
+                    <label>
+                      <span>Lookback Window</span>
+                      <InputNumber
+                        min={1}
+                        max={90}
+                        value={taskComposerDraft.lookbackValue}
+                        onChange={(value) => updateTaskComposerDraft({ lookbackValue: value ?? 6 })}
+                      />
+                    </label>
+                    <label>
+                      <span>Window Unit</span>
+                      <Select
+                        value={taskComposerDraft.lookbackUnit}
+                        options={[
+                          { value: 'hour', label: 'Hour' },
+                          { value: 'day', label: 'Day' },
+                        ]}
+                        onChange={(value) => updateTaskComposerDraft({ lookbackUnit: value as TaskLookbackUnit })}
+                      />
+                    </label>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
+                    <label>
+                      <span>Judge Field</span>
+                      <Select
+                        value={taskComposerDraft.stopField}
+                        options={defaultStopFields.map((item) => ({ value: item, label: item }))}
+                        onChange={(value) => updateTaskComposerDraft({ stopField: value })}
+                      />
+                    </label>
+                    <label>
+                      <span>Comparator</span>
+                      <Select
+                        value={taskComposerDraft.stopComparator}
+                        options={[
+                          { value: '<', label: '< threshold' },
+                          { value: '<=', label: '<= threshold' },
+                        ]}
+                        onChange={(value) => updateTaskComposerDraft({ stopComparator: value as '<' | '<=' })}
+                      />
+                    </label>
+                  </div>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
+                    <label>
+                      <span>Stop Threshold</span>
+                      <Input
+                        value={taskComposerDraft.stopThreshold}
+                        placeholder="7d / 2026-06-01 / 1000"
+                        onChange={(event) => updateTaskComposerDraft({ stopThreshold: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      <span>Hit Pages</span>
+                      <InputNumber
+                        min={1}
+                        max={20}
+                        value={taskComposerDraft.stopConsecutivePages}
+                        onChange={(value) => updateTaskComposerDraft({ stopConsecutivePages: value ?? 2 })}
+                      />
+                    </label>
+                  </div>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
+                    <label>
+                      <span>Max Empty Pages</span>
+                      <InputNumber
+                        min={1}
+                        max={20}
+                        value={taskComposerDraft.maxEmptyPages}
+                        onChange={(value) => updateTaskComposerDraft({ maxEmptyPages: value ?? 2 })}
+                      />
+                    </label>
+                    <label>
+                      <span>Rule Note</span>
+                      <Input value="Stop early when the captured sort field keeps falling below the threshold." readOnly />
+                    </label>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : null}
+
+          <div className="workspace-dock-detail-actions">
+            <span>{incrementalSummary}</span>
+            <div className="workspace-dock-action-row">
+              <button type="button" className="workspace-dock-inline-action" onClick={closeTaskComposer}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="workspace-dock-inline-action is-primary"
+                disabled={!taskComposerDraft.template.trim()}
+                onClick={handleCreateTask}
+              >
+                <PlusOutlined />
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
   const renderTemplateDetail = () => {
     if (!selectedTemplate || !selectedTemplateDraft) return null;
+
+    const templatePinned = Boolean(pinnedTemplateKeys[selectedTemplate.key]);
+    const linkedTaskCount = templateTaskCounts[selectedTemplate.key] ?? selectedTemplate.taskCount;
 
     return (
       <section className="workspace-dock-detail">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
-            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={selectedTemplateSite?.kind ?? 'generic'} /></span>
+            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={resolveSiteProfile(selectedTemplate.name).kind} /></span>
             <div>
               <Text strong className="workspace-dock-detail-title">{selectedTemplate.title}</Text>
               <Text type="secondary">{selectedTemplate.name}</Text>
             </div>
           </div>
           <div className="workspace-dock-detail-head-actions">
+            <Tooltip title={templatePinned ? 'Unpin template' : 'Pin template'} placement="top">
+              <button
+                type="button"
+                className={`workspace-dock-detail-icon-btn ${templatePinned ? 'is-pinned' : ''}`}
+                aria-label={templatePinned ? 'Unpin template' : 'Pin template'}
+                onClick={() => toggleTemplatePinned(selectedTemplate.key)}
+              >
+                <PushpinOutlined />
+              </button>
+            </Tooltip>
             {templateDetailMode === 'overview' ? (
               <Tooltip title="编辑模板" placement="top">
                 <button
@@ -756,7 +2097,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               <span className="is-domain">域名 {selectedTemplate.domain}</span>
               <span className="is-version">版本 {selectedTemplate.version}</span>
               <span className="is-field">字段 {selectedTemplate.fields}</span>
-              <span className="is-asset">资源 {selectedTemplate.taskCount}</span>
+              <span className="is-asset">资源 {linkedTaskCount}</span>
               <span className="is-quality">质量 {selectedTemplate.quality}%</span>
             </div>
 
@@ -777,6 +2118,28 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className="workspace-dock-note-panel">
               <small>说明</small>
               <p>{selectedTemplateDraft.notes}</p>
+            </div>
+
+            <div className="workspace-dock-detail-actions">
+              <span>已关联 {linkedTaskCount} 个任务</span>
+              <div className="workspace-dock-action-row">
+                <button
+                  type="button"
+                  className="workspace-dock-inline-action is-primary"
+                  onClick={() => {
+                    openTaskComposer({
+                      name: `${selectedTemplate.title} task`,
+                      template: `${selectedTemplate.name}@${selectedTemplate.version}`,
+                      templateLocked: true,
+                      scheduleMode: 'recurring',
+                    });
+                    onToggle('tasks');
+                  }}
+                >
+                  <PlusOutlined />
+                  New Task
+                </button>
+              </div>
             </div>
           </div>
         ) : (
@@ -833,6 +2196,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
     const { runtime, display } = selectedTask;
     const taskCanceled = runtime.controlState === 'canceled';
+    const taskPinned = Boolean(pinnedTaskKeys[selectedTask.key]);
 
     return (
       <section className="workspace-dock-detail">
@@ -845,6 +2209,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           </div>
           <div className="workspace-dock-detail-head-actions">
+            <Tooltip title={taskPinned ? 'Unpin task' : 'Pin task'} placement="top">
+              <button
+                type="button"
+                className={`workspace-dock-detail-icon-btn ${taskPinned ? 'is-pinned' : ''}`}
+                aria-label={taskPinned ? 'Unpin task' : 'Pin task'}
+                onClick={() => toggleTaskPinned(selectedTask.key)}
+              >
+                <PushpinOutlined />
+              </button>
+            </Tooltip>
             {runtime.status === 'running' && runtime.controlState !== 'canceled' ? (
               <Tooltip title="暂停任务" placement="top">
                 <button
@@ -1038,7 +2412,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           opacity: 0.94;
           animation: workspaceTaskPulse 1.2s ease-in-out infinite;
         }
-        .workspace-dock-rail {
+                .workspace-dock-rail {
           position: absolute;
           left: 68px;
           bottom: 34px;
@@ -1051,7 +2425,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-shell.is-session .workspace-dock-rail {
           left: max(12px, calc(50% - 492px));
-          bottom: 35px;
+          bottom: var(--ai-session-dock-rail-bottom);
         }
         .workspace-dock-trigger {
           border: none;
@@ -1081,6 +2455,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           left: max(22px, calc(50% - 468px));
           bottom: 74px;
           width: min(396px, calc(100vw - 48px));
+          height: min(488px, calc(100vh - 140px));
           max-height: min(488px, calc(100vh - 140px));
           border-radius: 12px;
           border: 1px solid ${aura.border};
@@ -1090,6 +2465,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           box-shadow: 0 22px 54px rgba(0, 0, 0, 0.34);
           backdrop-filter: ${aura.backdrop};
           overflow: hidden;
+          display: flex;
+          flex-direction: column;
           opacity: 0;
           transform: translateY(16px);
           transition: opacity 200ms ease, transform 220ms ease;
@@ -1097,7 +2474,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-shell.is-session .workspace-dock-panel {
           left: max(22px, calc(50% - 436px));
-          bottom: 116px;
+          bottom: var(--ai-session-dock-panel-bottom);
+          height: min(488px, calc(100vh - 196px));
           max-height: min(488px, calc(100vh - 196px));
         }
         .workspace-dock-panel.is-open {
@@ -1109,15 +2487,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           width: min(812px, calc(100vw - 48px));
         }
         .workspace-dock-stack {
+          flex: 1;
           height: 100%;
+          min-height: 0;
           display: grid;
           grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: minmax(0, 1fr);
         }
         .workspace-dock-panel.is-detail .workspace-dock-stack {
           grid-template-columns: 396px minmax(0, 1fr);
         }
         .workspace-dock-master {
+          flex: 1;
           min-width: 0;
+          min-height: 0;
           display: flex;
           flex-direction: column;
           border-right: 1px solid transparent;
@@ -1130,6 +2513,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: grid;
           gap: 8px;
           border-bottom: 1px solid ${aura.borderSoft};
+        }
+        .workspace-dock-toolbar-search-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .workspace-dock-toolbar-search-row .ant-input-affix-wrapper {
+          flex: 1;
+          min-width: 0;
+        }
+        .workspace-dock-toolbar-actions {
+          display: flex;
+          justify-content: flex-end;
+          flex-shrink: 0;
         }
         .workspace-dock-toolbar .ant-input-affix-wrapper,
         .workspace-dock-toolbar .ant-segmented {
@@ -1155,21 +2552,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-body {
           flex: 1;
           min-height: 0;
-          padding: 8px 10px 10px;
+          position: relative;
           overflow: auto;
-          scrollbar-width: none;
-          overscroll-behavior: contain;
         }
-        .workspace-dock-body::-webkit-scrollbar,
-        .workspace-dock-detail-body::-webkit-scrollbar {
-          display: none;
-          width: 0;
-          height: 0;
-        }
+        
         .workspace-dock-list {
           display: flex;
           flex-direction: column;
           gap: 6px;
+          padding: 8px 10px 10px;
         }
         .workspace-dock-card {
           width: 100%;
@@ -1191,6 +2582,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-selectable.is-selected {
           border-color: rgba(138, 180, 255, 0.24);
           background: rgba(138, 180, 255, 0.08);
+        }
+        .workspace-dock-selectable.is-pinned {
+          border-color: rgba(246, 195, 91, 0.18);
         }
         .workspace-dock-card-row {
           display: flex;
@@ -1274,6 +2668,36 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           line-height: 1;
           flex-shrink: 0;
         }
+        .workspace-dock-card-side {
+          flex-shrink: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 6px;
+        }
+        .workspace-dock-card-pin {
+          width: 20px;
+          height: 20px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          color: rgba(255, 255, 255, 0.34);
+          transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+        }
+        .workspace-dock-card-pin:hover {
+          color: ${aura.text};
+          background: rgba(255, 255, 255, 0.06);
+          transform: translateY(-1px);
+        }
+        .workspace-dock-card-pin.is-pinned {
+          color: #F6C35B;
+          background: rgba(246, 195, 91, 0.08);
+        }
+        .workspace-dock-card-pin .anticon {
+          font-size: 11px;
+          line-height: 1;
+        }
         .workspace-dock-card-score {
           flex-shrink: 0;
           color: ${aura.subtle};
@@ -1304,6 +2728,36 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-card-meta span {
           gap: 6px;
+        }
+        .workspace-dock-card-analytics {
+          margin-top: 8px;
+          display: grid;
+          grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 1fr));
+          gap: 6px;
+        }
+        .workspace-dock-card-analytics span {
+          min-height: 18px;
+          padding: 0 7px;
+          border-radius: 999px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 9px;
+          line-height: 1;
+          background: rgba(255, 255, 255, 0.04);
+        }
+        .workspace-dock-card-analytics .is-table {
+          color: #97B8FF;
+          justify-content: flex-start;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .workspace-dock-card-analytics .is-current {
+          color: #8FDEC2;
+        }
+        .workspace-dock-card-analytics .is-growth {
+          color: #F6C35B;
         }
         .workspace-dock-meta-logo {
           width: 14px;
@@ -1358,8 +2812,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: ${aura.subtle};
           font-size: 11px;
         }
+        .workspace-dock-empty.workspace-dock-empty-compact {
+          min-height: 72px;
+        }
+        .workspace-dock-bottom-fade {
+          position: sticky;
+          bottom: 0;
+          margin-top: -26px;
+          height: 26px;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.32) 100%);
+          pointer-events: none;
+          z-index: 2;
+        }
         .workspace-dock-detail {
           min-width: 0;
+          min-height: 0;
           display: flex;
           flex-direction: column;
           overflow: hidden;
@@ -1459,6 +2926,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: #F6C35B;
           background: rgba(246, 195, 91, 0.08);
         }
+        .workspace-dock-detail-icon-btn.is-pinned {
+          color: #F6C35B;
+          background: rgba(246, 195, 91, 0.08);
+        }
         .workspace-dock-detail-icon-btn.is-sync {
           color: #8AB4FF;
           background: rgba(138, 180, 255, 0.08);
@@ -1468,7 +2939,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           min-height: 0;
           padding: 10px 12px 12px;
           overflow: auto;
-          scrollbar-width: none;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
           overscroll-behavior: contain;
           display: flex;
           flex-direction: column;
@@ -1564,7 +3036,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           flex-wrap: wrap;
           gap: 6px;
         }
-        .workspace-dock-code-panel pre {
+                .workspace-dock-code-panel pre {
           margin: 8px 0 0;
           color: ${aura.text};
           font-size: 11px;
@@ -1579,6 +3051,62 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-size: 11px;
           line-height: 1.55;
         }
+        .workspace-dock-detail.is-task-composer .workspace-dock-detail-body {
+          gap: 12px;
+          padding: 12px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-inline-meta {
+          gap: 8px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-inline-meta span {
+          min-height: 20px;
+          padding: 0 8px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.045);
+          font-size: 10px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block,
+        .workspace-dock-detail.is-task-composer .workspace-dock-progress-panel,
+        .workspace-dock-detail.is-task-composer .workspace-dock-note-panel,
+        .workspace-dock-detail.is-task-composer .workspace-dock-switch-row {
+          border-radius: 10px;
+          border-color: ${aura.borderSoft};
+          background: rgba(255, 255, 255, 0.04);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block {
+          padding: 10px;
+          gap: 8px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid {
+          gap: 10px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid label {
+          padding: 10px;
+          border-radius: 10px;
+          border: 1px solid ${aura.borderSoft};
+          background: rgba(255, 255, 255, 0.028);
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-note-panel,
+        .workspace-dock-detail.is-task-composer .workspace-dock-progress-panel {
+          padding: 12px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-progress-meta strong,
+        .workspace-dock-detail.is-task-composer .workspace-dock-switch-row strong {
+          font-size: 12px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-note-panel p,
+        .workspace-dock-detail.is-task-composer .workspace-dock-switch-row small {
+          font-size: 11px;
+          line-height: 1.6;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-detail-actions {
+          padding: 10px 12px;
+          border-radius: 10px;
+          border: 1px solid ${aura.borderSoft};
+          background: rgba(255, 255, 255, 0.035);
+          font-size: 11px;
+        }
         .workspace-dock-form-grid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1592,13 +3120,96 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-form-block .ant-input,
         .workspace-dock-form-grid .ant-input,
+        .workspace-dock-form-block .ant-input-number,
+        .workspace-dock-form-grid .ant-input-number,
         .workspace-dock-form-block .ant-input-affix-wrapper,
-        .workspace-dock-form-grid .ant-input-affix-wrapper {
+        .workspace-dock-form-grid .ant-input-affix-wrapper,
+        .workspace-dock-form-block .ant-select-selector,
+        .workspace-dock-form-grid .ant-select-selector {
           background: rgba(255, 255, 255, 0.04);
           border-color: ${aura.border};
           color: ${aura.text};
           font-size: 11px;
           line-height: 1.5;
+        }
+        .workspace-dock-form-block .ant-select,
+        .workspace-dock-form-grid .ant-select,
+        .workspace-dock-form-block .ant-input-number,
+        .workspace-dock-form-grid .ant-input-number {
+          width: 100%;
+        }
+        .workspace-dock-form-block .ant-segmented,
+        .workspace-dock-form-grid .ant-segmented {
+          padding: 3px;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid ${aura.border};
+        }
+        .workspace-dock-form-block .ant-segmented-item,
+        .workspace-dock-form-grid .ant-segmented-item {
+          font-size: 12px;
+          color: ${aura.subtle};
+        }
+        .workspace-dock-form-block .ant-segmented-item-selected,
+        .workspace-dock-form-grid .ant-segmented-item-selected {
+          color: ${aura.text};
+          background: rgba(138, 180, 255, 0.14);
+          box-shadow: none;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid label > span,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block > span {
+          font-size: 10px;
+          letter-spacing: 0.02em;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-input,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-input,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-input-number,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-input-number,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-input-affix-wrapper,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-input-affix-wrapper,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-select-selector,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-select-selector {
+          min-height: 34px;
+          border-radius: 9px;
+          font-size: 12px;
+          background: rgba(255, 255, 255, 0.055);
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-input,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-input {
+          padding-top: 6px;
+          padding-bottom: 6px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-segmented,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-segmented {
+          padding: 4px;
+          border-radius: 10px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-segmented-item,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-segmented-item {
+          min-height: 30px;
+          font-size: 11px;
+        }
+        .workspace-dock-detail.is-task-composer .workspace-dock-switch-row .ant-switch {
+          flex-shrink: 0;
+        }
+        .workspace-dock-template-select-option {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+        }
+        .workspace-dock-template-select-option span:last-child {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .workspace-dock-template-select-dropdown .ant-select-item {
+          border-radius: 8px;
+          margin: 2px 6px;
+          padding-top: 8px;
+          padding-bottom: 8px;
+        }
+        .workspace-dock-template-select-dropdown .ant-select-item-option-content {
+          overflow: visible;
         }
         .workspace-dock-detail-actions {
           display: flex;
@@ -1607,6 +3218,94 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           gap: 10px;
           color: ${aura.subtle};
           font-size: 10px;
+        }
+        .workspace-dock-switch-row {
+          padding: 10px;
+          border-radius: 9px;
+          border: 1px solid ${aura.borderSoft};
+          background: rgba(255, 255, 255, 0.035);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .workspace-dock-switch-row strong {
+          display: block;
+          color: ${aura.text};
+          font-size: 12px;
+          line-height: 1.2;
+        }
+        .workspace-dock-switch-row small {
+          display: block;
+          margin-top: 4px;
+          color: ${aura.subtle};
+          font-size: 10px;
+          line-height: 1.45;
+        }
+        .workspace-dock-action-row {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .workspace-dock-inline-action {
+          min-height: 30px;
+          padding: 0 11px;
+          border-radius: 999px;
+          border: 1px solid ${aura.border};
+          background: rgba(255, 255, 255, 0.035);
+          color: ${aura.subtle};
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          cursor: pointer;
+          font-size: 10px;
+          line-height: 1;
+          transition: border-color 160ms ease, color 160ms ease, background 160ms ease, transform 160ms ease;
+        }
+        .workspace-dock-inline-action:hover:not(:disabled) {
+          border-color: ${aura.border};
+          color: ${aura.text};
+          background: rgba(255, 255, 255, 0.065);
+          transform: translateY(-1px);
+        }
+        .workspace-dock-inline-action:disabled {
+          opacity: 0.38;
+          cursor: not-allowed;
+          transform: none;
+        }
+        .workspace-dock-inline-action.is-primary {
+          border-color: rgba(138, 180, 255, 0.42);
+          background: rgba(138, 180, 255, 0.14);
+          color: #DCE8FF;
+        }
+        .workspace-dock-inline-action.is-primary:hover:not(:disabled) {
+          border-color: rgba(138, 180, 255, 0.58);
+          background: rgba(138, 180, 255, 0.2);
+          color: #F5F8FF;
+        }
+        .workspace-dock-inline-action.is-icon-only {
+          width: 32px;
+          height: 32px;
+          padding: 0;
+          gap: 0;
+          border-radius: 10px;
+          border-color: rgba(138, 180, 255, 0.24);
+          background:
+            linear-gradient(180deg, rgba(138, 180, 255, 0.18), rgba(138, 180, 255, 0.08)),
+            rgba(255, 255, 255, 0.035);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 20px rgba(0, 0, 0, 0.18);
+        }
+        .workspace-dock-inline-action.is-icon-only:hover:not(:disabled) {
+          border-color: rgba(138, 180, 255, 0.42);
+          background:
+            linear-gradient(180deg, rgba(138, 180, 255, 0.26), rgba(138, 180, 255, 0.12)),
+            rgba(255, 255, 255, 0.05);
+        }
+        .workspace-dock-inline-action.is-icon-only .anticon {
+          font-size: 14px;
         }
         .workspace-dock-progress-meta {
           display: flex;
@@ -1808,9 +3507,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           }
         }
         @media (max-width: 960px) {
-          .workspace-dock-panel.is-detail {
-            width: min(420px, calc(100vw - 36px));
-          }
           .workspace-dock-panel.is-detail .workspace-dock-stack {
             grid-template-columns: minmax(0, 1fr);
           }
@@ -1823,7 +3519,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           .workspace-dock-rail,
           .workspace-dock-shell.is-session .workspace-dock-rail {
             left: 18px;
-            bottom: 92px;
+            bottom: var(--ai-session-dock-rail-bottom);
             gap: 12px;
           }
           .workspace-dock-panel,
@@ -1832,13 +3528,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             right: 12px;
             width: auto;
             bottom: 126px;
+            height: min(74vh, calc(100vh - 132px));
             max-height: min(74vh, calc(100vh - 132px));
           }
           .workspace-dock-shell.is-session .workspace-dock-panel {
-            bottom: 152px;
+            bottom: var(--ai-session-dock-panel-bottom);
+            height: min(74vh, calc(100vh - 132px));
           }
           .workspace-dock-form-grid,
           .workspace-dock-metric-grid {
+            grid-template-columns: 1fr;
+          }
+          .workspace-dock-card-analytics {
             grid-template-columns: 1fr;
           }
           .workspace-dock-detail-actions {
@@ -1848,7 +3549,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
       `}</style>
 
-      <div className={`workspace-dock-shell ${activePanel ? 'is-open' : ''} ${sessionActive ? 'is-session' : ''}`}>
+      <div
+        ref={shellRef}
+        className={`workspace-dock-shell ${activePanel ? 'is-open' : ''} ${sessionActive ? 'is-session' : ''}`}
+      >
         <div
           className={`workspace-dock-hitbox ${activePanel ? 'is-open' : ''}`}
           onClick={onClose}
@@ -1856,20 +3560,22 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         />
 
         <div className="workspace-dock-rail">
-          <Tooltip title="模板库" placement="top">
+          <Tooltip title="Templates" placement="top">
             <button
+              ref={templateTriggerRef}
               type="button"
-              aria-label="模板库"
+              aria-label="Templates"
               className={`workspace-dock-trigger ${activePanel === 'templates' ? 'is-active' : ''}`}
               onClick={() => onToggle('templates')}
             >
               <DockTemplateGlyph />
             </button>
           </Tooltip>
-          <Tooltip title="采集任务" placement="top">
+          <Tooltip title="Tasks" placement="top">
             <button
+              ref={taskTriggerRef}
               type="button"
-              aria-label="采集任务"
+              aria-label="Tasks"
               className={`workspace-dock-trigger ${activePanel === 'tasks' ? 'is-active' : ''}`}
               onClick={() => onToggle('tasks')}
             >
@@ -1878,18 +3584,37 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           </Tooltip>
         </div>
 
-        <aside className={`workspace-dock-panel ${activePanel ? 'is-open' : ''} ${hasDetail ? 'is-detail' : ''}`}>
+        <aside
+          ref={panelRef}
+          style={panelAnchorStyle}
+          className={`workspace-dock-panel ${activePanel ? 'is-open' : ''} ${hasDetail ? 'is-detail' : ''}`}
+        >
           {activePanel ? (
             <div className="workspace-dock-stack">
               <section className="workspace-dock-master">
                 <div className="workspace-dock-toolbar">
-                  <Input
-                    allowClear
-                    prefix={<SearchOutlined />}
-                    value={keyword}
-                    onChange={(event) => setKeyword(event.target.value)}
-                    placeholder={activePanel === 'templates' ? '搜索模板、域名或适配器' : '搜索任务、模板或负责人'}
-                  />
+                  <div className="workspace-dock-toolbar-search-row">
+                    <Input
+                      allowClear
+                      prefix={<SearchOutlined />}
+                      value={keyword}
+                      onChange={(event) => setKeyword(event.target.value)}
+                      placeholder={activePanel === 'templates' ? '搜索模板、域名或适配器' : '搜索任务或模板'}
+                    />
+                    {activePanel === 'tasks' ? (
+                      <div className="workspace-dock-toolbar-actions">
+                        <button
+                          type="button"
+                          className="workspace-dock-inline-action is-primary is-icon-only"
+                          aria-label="New Task"
+                          title="New Task"
+                          onClick={() => openTaskComposer()}
+                        >
+                          <EditOutlined />
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                   {activePanel === 'templates' ? (
                     <Segmented
                       block
@@ -1919,12 +3644,19 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   )}
                 </div>
 
-                <div className="workspace-dock-body">
+                <div ref={bodyScrollRef} className="workspace-dock-body">
                   {activePanel === 'templates' ? renderTemplateList() : renderTaskList()}
+                  {showBodyFade ? (
+                    <div className="workspace-dock-bottom-fade" aria-hidden="true" />
+                  ) : null}
                 </div>
               </section>
 
-              {activePanel === 'templates' ? renderTemplateDetail() : renderTaskDetail()}
+              {activePanel === 'templates'
+                ? renderTemplateDetail()
+                : activePanel === 'tasks'
+                  ? (taskComposerOpen ? renderTaskComposerClean() : renderTaskDetail())
+                  : null}
             </div>
           ) : null}
         </aside>

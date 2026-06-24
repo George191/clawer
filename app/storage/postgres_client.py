@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from sqlalchemy import text
@@ -48,7 +50,8 @@ class PostgresClient:
         if self._engine is not None and self._connected:
             return
 
-        masked_url = _mask_url(settings.pg_url)
+        pg_url = _resolved_pg_url()
+        masked_url = _mask_url(pg_url)
         retryable = (
             OperationalError, DBAPIError, InterfaceError,
             ConnectionRefusedError, OSError, SATimeoutError, SA2TimeoutError,
@@ -60,7 +63,7 @@ class PostgresClient:
         while attempt < max_retries:
             try:
                 self._engine = create_async_engine(
-                    settings.pg_url,
+                    pg_url,
                     pool_size=settings.pg_pool_min,
                     max_overflow=settings.pg_pool_max - settings.pg_pool_min,
                     pool_pre_ping=True,
@@ -197,6 +200,52 @@ def get_pg_client() -> PostgresClient:
     if _pg_client is None:
         _pg_client = PostgresClient()
     return _pg_client
+
+
+def _resolved_pg_url() -> str:
+    pg_url = settings.pg_url.strip()
+    if not pg_url:
+        return pg_url
+
+    if "?" in pg_url:
+        base_url, query = pg_url.split("?", 1)
+        suffix = f"?{query}"
+    else:
+        base_url, suffix = pg_url, ""
+
+    if base_url.rstrip("/").count("/") >= 3:
+        return pg_url
+
+    pg_db = _configured_pg_db()
+    if not pg_db:
+        return pg_url
+
+    return f"{base_url.rstrip('/')}/{pg_db}{suffix}"
+
+
+def _configured_pg_db() -> str:
+    pg_db = os.getenv("SPIDER_PG_DB", "").strip()
+    if pg_db:
+        return pg_db
+
+    env_file = settings.__class__.model_config.get("env_file")
+    if not env_file:
+        return ""
+
+    env_path = Path(env_file)
+    if not env_path.is_absolute():
+        env_path = Path.cwd() / env_path
+    if not env_path.exists():
+        return ""
+
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("SPIDER_PG_DB="):
+                return line.split("=", 1)[1].strip()
+    except Exception:
+        logger.exception("Failed to read SPIDER_PG_DB from %s", env_path)
+
+    return ""
 
 
 def _mask_url(url: str) -> str:

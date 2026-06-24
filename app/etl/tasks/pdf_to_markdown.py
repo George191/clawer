@@ -32,9 +32,9 @@ class PdfToMarkdownTask(BaseTask):
     name = "pdf_to_markdown"
 
     async def execute(self, *, message: dict[str, Any]) -> TaskResult:
-        pdf_url = message.get("original_file")
+        pdf_url = message.get("url") or message.get("original_file")
         if not pdf_url:
-            logger.info("PdfToMarkdownTask: no original_file — skipped")
+            logger.info("PdfToMarkdownTask: no pdf url — skipped")
             return TaskResult(data="", data_type="skipped")
 
         publication_number = message.get("publication_number", "")

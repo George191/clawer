@@ -3,11 +3,12 @@
 记录每次任务执行的完整生命周期：
     created → started → success / failed / retry
 
-查询接口支持：
-    - 按任务名称查询历史
-    - 按时间范围查询
-    - 按状态查询
-    - 获取最近一次执行结果
+设计要点
+--------
+- 连接管理复用项目 MongoStorage 的延迟连接模式
+- 全局单例通过 get_task_store() 工厂获取（与 get_pg_client 一致）
+- 索引创建仅在首次连接时执行一次
+- 集合名 _scheduler_tasks 与业务数据隔离
 """
 
 from __future__ import annotations
@@ -22,16 +23,22 @@ from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# 任务状态常量
+# ══════════════════════════════════════════════════════════════════════
+#  常量
+# ══════════════════════════════════════════════════════════════════════
+
 STATUS_CREATED = "created"
 STATUS_STARTED = "started"
 STATUS_SUCCESS = "success"
 STATUS_FAILED = "failed"
 STATUS_RETRY = "retry"
 
-# 集合名
 COLLECTION_NAME = "_scheduler_tasks"
 
+
+# ══════════════════════════════════════════════════════════════════════
+#  TaskStore
+# ══════════════════════════════════════════════════════════════════════
 
 class TaskStore:
     """任务执行记录的持久化存储。
@@ -39,7 +46,7 @@ class TaskStore:
     每条记录结构:
     {
         "_id": str,              # task_id (Celery task id)
-        "task_name": str,         # 任务名称
+        "task_name": str,         # 任务名称（用于聚合查询）
         "status": str,            # created/started/success/failed/retry
         "params": dict,           # 任务参数
         "result": dict | None,    # 执行结果
@@ -55,21 +62,36 @@ class TaskStore:
     def __init__(self, mongo_client: AsyncIOMotorClient | None = None) -> None:
         self._client = mongo_client
         self._collection: AsyncIOMotorCollection | None = None
+        self._indexes_ready = False
+
+    # ── 连接管理 ──────────────────────────────────────────────────────
 
     async def _get_collection(self) -> AsyncIOMotorCollection:
-        """延迟获取 MongoDB collection。"""
-        if self._collection is None:
-            if self._client is None:
-                self._client = AsyncIOMotorClient(settings.db_url)
-            db = self._client[settings.db_name]
-            self._collection = db[COLLECTION_NAME]
+        """延迟获取 MongoDB collection，首次连接时创建索引。"""
+        if self._collection is not None:
+            return self._collection
 
-            # 创建索引（幂等操作）
-            await self._collection.create_index("task_name")
-            await self._collection.create_index("status")
-            await self._collection.create_index([("task_name", 1), ("created_at", -1)])
+        if self._client is None:
+            self._client = AsyncIOMotorClient(settings.db_url)
+        db = self._client[settings.db_name]
+        self._collection = db[COLLECTION_NAME]
+
+        if not self._indexes_ready:
+            await self._ensure_indexes()
+            self._indexes_ready = True
 
         return self._collection
+
+    async def _ensure_indexes(self) -> None:
+        """创建查询索引（幂等操作）。"""
+        coll = self._collection
+        assert coll is not None
+        await coll.create_index("task_name")
+        await coll.create_index("status")
+        await coll.create_index([("task_name", 1), ("created_at", -1)])
+        logger.info("TaskStore indexes ensured on %s", COLLECTION_NAME)
+
+    # ── 生命周期记录 ──────────────────────────────────────────────────
 
     async def record_created(
         self,
@@ -136,7 +158,10 @@ class TaskStore:
         error: str,
         retry_count: int = 0,
     ) -> None:
-        """记录任务失败。"""
+        """记录任务失败。
+
+        retry_count > 0 时状态标记为 retry，便于监控区分瞬时失败与终态失败。
+        """
         coll = await self._get_collection()
         now = datetime.now(timezone.utc)
         status = STATUS_RETRY if retry_count > 0 else STATUS_FAILED
@@ -151,6 +176,8 @@ class TaskStore:
         )
         await self._update_duration(task_id)
         logger.warning("Task %s: %s (retry_count=%d)", status, task_id, retry_count)
+
+    # ── 查询接口 ──────────────────────────────────────────────────────
 
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
         """获取单条任务记录。"""
@@ -216,6 +243,8 @@ class TaskStore:
         stats["total"] = sum(stats.values())
         return stats
 
+    # ── 内部工具 ──────────────────────────────────────────────────────
+
     async def _update_duration(self, task_id: str) -> None:
         """计算并更新任务执行时长（毫秒）。"""
         coll = await self._get_collection()
@@ -235,10 +264,13 @@ class TaskStore:
         """关闭 MongoDB 连接。"""
         if self._client:
             self._client.close()
+            self._client = None
+            self._collection = None
+            self._indexes_ready = False
 
 
 # ══════════════════════════════════════════════════════════════════════
-#  全局单例
+#  全局单例工厂（与 get_pg_client 模式一致）
 # ══════════════════════════════════════════════════════════════════════
 
 _store: TaskStore | None = None

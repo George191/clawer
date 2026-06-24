@@ -31,9 +31,11 @@ class SyncWorker:
         self,
         poll_interval: int = 10,
         batch_size: int = 50,
+        template_name: str | None = None,
     ) -> None:
         self._poll_interval = poll_interval
         self._batch_size = batch_size
+        self._template_name = template_name
         self._kafka: KafkaProducer | None = None
         self._mongo = MongoClient()
         self._running = False
@@ -43,9 +45,10 @@ class SyncWorker:
         self._kafka = KafkaProducer()
 
         logger.info(
-            "SyncWorker started (poll=%ds, batch=%d)",
+            "SyncWorker started (poll=%ds, batch=%d, template=%s)",
             self._poll_interval,
             self._batch_size,
+            self._template_name,
         )
 
         while self._running:
@@ -58,7 +61,10 @@ class SyncWorker:
                 await asyncio.sleep(self._poll_interval)
 
     async def _process_batch(self) -> int:
-        ready = await self._mongo.get_ready_to_sync(limit=self._batch_size)
+        ready = await self._mongo.get_ready_to_sync(
+            template_name=self._template_name,
+            limit=self._batch_size,
+        )
         if not ready:
             return 0
 
