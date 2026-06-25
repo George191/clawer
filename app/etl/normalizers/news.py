@@ -16,6 +16,16 @@ from app.etl.normalizers.base import (
 )
 
 
+def _normalize_satellite_today_news_types(record: dict[str, Any]) -> list[str]:
+    value = record.get("category_names")
+    if isinstance(value, list):
+        news_types = [safe_str(item) for item in value]
+        news_types = [item for item in news_types if item]
+        if news_types:
+            return news_types
+    return []
+
+
 def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
     meta = record.get("_meta", {}) or {}
     assets = record.get("assets") or {}
@@ -77,9 +87,6 @@ def _parse_ssc_datetime(value: Any) -> datetime | None:
     return None
 
 
-_parse_ssc_news_datetime = _parse_ssc_datetime
-
-
 def _parse_ssc_press_month_group(value: Any) -> datetime | None:
     text = safe_str(value)
     if not text:
@@ -123,6 +130,7 @@ def normalize_blacksky_posts(record: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_satellite_today(record: dict[str, Any]) -> dict[str, Any]:
     normalized = _news_common(record, "satellite_today")
+    normalized["news_type"] = json_dumps(_normalize_satellite_today_news_types(record))
     normalized["source_published_at"] = safe_datetime(record.get("date"))
     normalized["source_updated_at"] = safe_datetime(record.get("modified"))
     return normalized

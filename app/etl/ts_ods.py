@@ -27,15 +27,6 @@ def _prefer_value(table_ref: str, column: str) -> str:
     return f"COALESCE(EXCLUDED.{column}, {table_ref}.{column})"
 
 
-def _prefer_nonzero(table_ref: str, column: str) -> str:
-    return (
-        f"CASE "
-        f"WHEN EXCLUDED.{column} IS NULL OR EXCLUDED.{column} = 0 "
-        f"THEN {table_ref}.{column} "
-        f"ELSE EXCLUDED.{column} END"
-    )
-
-
 def _prefer_json(table_ref: str, column: str) -> str:
     return (
         f"CASE "
@@ -48,19 +39,23 @@ def _prefer_json(table_ref: str, column: str) -> str:
     )
 
 
+def _prefer_geography(table_ref: str, column: str) -> str:
+    return f"COALESCE(EXCLUDED.{column}, {table_ref}.{column})"
+
+
 ODS_NEWS_INSERT = f"""
 INSERT INTO ts_ods.ods_news (
     record_id, data_source, data_type,
     title, url, source_url, source_published_at, source_updated_at,
     summary, content, content_html, summary_html,
-    author, organization, tags, external_links,
+    author, news_type, organization, tags, external_links,
     attachments, images, slides, thumbnail,
     created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
     :title, :url, :source_url, CAST(:source_published_at AS timestamptz), CAST(:source_updated_at AS timestamptz),
     :summary, :content, :content_html, :summary_html,
-    :author, CAST(:organization AS jsonb), CAST(:tags AS jsonb), CAST(:external_links AS jsonb),
+    :author, CAST(:news_type AS jsonb), CAST(:organization AS jsonb), CAST(:tags AS jsonb), CAST(:external_links AS jsonb),
     CAST(:attachments AS jsonb), CAST(:images AS jsonb), CAST(:slides AS jsonb), :thumbnail,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
@@ -77,6 +72,7 @@ ON CONFLICT (record_id) DO UPDATE SET
     content_html = {_prefer_text(_ODS_NEWS_TABLE, "content_html")},
     summary_html = {_prefer_text(_ODS_NEWS_TABLE, "summary_html")},
     author = {_prefer_text(_ODS_NEWS_TABLE, "author")},
+    news_type = {_prefer_text(_ODS_NEWS_TABLE, "news_type")},
     organization = {_prefer_json(_ODS_NEWS_TABLE, "organization")},
     tags = {_prefer_json(_ODS_NEWS_TABLE, "tags")},
     external_links = {_prefer_json(_ODS_NEWS_TABLE, "external_links")},
@@ -135,12 +131,16 @@ ODS_NAVWARN_INSERT = f"""
 INSERT INTO ts_ods.ods_navwarn (
     record_id, data_source, data_type,
     navarea_id, warning_no, serial_number, warning_year, region,
-    issued_at, message_text, hazard_type, latitude, longitude, coordinate_count,
+    issued_at, message_text, hazard_type, coordinate,
     quality_score, quality_flags, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
     CAST(:navarea_id AS integer), :warning_no, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :region,
-    CAST(:issued_at AS timestamptz), :message_text, :hazard_type, CAST(:latitude AS double precision), CAST(:longitude AS double precision), CAST(:coordinate_count AS integer),
+    CAST(:issued_at AS timestamptz), :message_text, :hazard_type,
+    CASE
+        WHEN NULLIF(BTRIM(CAST(:coordinate AS text)), '') IS NULL THEN NULL
+        ELSE ST_GeogFromText(:coordinate)
+    END,
     CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
@@ -155,9 +155,7 @@ ON CONFLICT (record_id) DO UPDATE SET
     issued_at = {_prefer_value(_ODS_NAVWARN_TABLE, "issued_at")},
     message_text = {_prefer_text(_ODS_NAVWARN_TABLE, "message_text")},
     hazard_type = {_prefer_text(_ODS_NAVWARN_TABLE, "hazard_type")},
-    latitude = {_prefer_value(_ODS_NAVWARN_TABLE, "latitude")},
-    longitude = {_prefer_value(_ODS_NAVWARN_TABLE, "longitude")},
-    coordinate_count = {_prefer_nonzero(_ODS_NAVWARN_TABLE, "coordinate_count")},
+    coordinate = {_prefer_geography(_ODS_NAVWARN_TABLE, "coordinate")},
     quality_score = {_prefer_value(_ODS_NAVWARN_TABLE, "quality_score")},
     quality_flags = {_prefer_json(_ODS_NAVWARN_TABLE, "quality_flags")},
     updated_at = EXCLUDED.updated_at
@@ -197,14 +195,14 @@ INSERT INTO ts_ods_hist.ods_news (
     record_id, data_source, data_type,
     title, url, source_url, source_published_at, source_updated_at,
     summary, content, content_html, summary_html,
-    author, organization, tags, external_links,
+    author, news_type, organization, tags, external_links,
     attachments, images, slides, thumbnail,
     created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
     :title, :url, :source_url, CAST(:source_published_at AS timestamptz), CAST(:source_updated_at AS timestamptz),
     :summary, :content, :content_html, :summary_html,
-    :author, CAST(:organization AS jsonb), CAST(:tags AS jsonb), CAST(:external_links AS jsonb),
+    :author, CAST(:news_type AS jsonb), CAST(:organization AS jsonb), CAST(:tags AS jsonb), CAST(:external_links AS jsonb),
     CAST(:attachments AS jsonb), CAST(:images AS jsonb), CAST(:slides AS jsonb), :thumbnail,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
@@ -232,12 +230,16 @@ RETURNING *
 INSERT INTO ts_ods_hist.ods_navwarn (
     record_id, data_source, data_type,
     navarea_id, warning_no, serial_number, warning_year, region,
-    issued_at, message_text, hazard_type, latitude, longitude, coordinate_count,
+    issued_at, message_text, hazard_type, coordinate,
     quality_score, quality_flags, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
     CAST(:navarea_id AS integer), :warning_no, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :region,
-    CAST(:issued_at AS timestamptz), :message_text, :hazard_type, CAST(:latitude AS double precision), CAST(:longitude AS double precision), CAST(:coordinate_count AS integer),
+    CAST(:issued_at AS timestamptz), :message_text, :hazard_type,
+    CASE
+        WHEN NULLIF(BTRIM(CAST(:coordinate AS text)), '') IS NULL THEN NULL
+        ELSE ST_GeogFromText(:coordinate)
+    END,
     CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )

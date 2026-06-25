@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_news (
     content_html TEXT,
     summary_html TEXT,
     author TEXT,
+    news_type JSONB,
     organization JSONB,
     tags JSONB,
     external_links JSONB,
@@ -172,9 +173,7 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_navwarn (
     issued_at TIMESTAMPTZ,
     message_text TEXT,
     hazard_type TEXT,
-    latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION,
-    coordinate_count INTEGER,
+    coordinate geography(Geometry, 4326),
     quality_score DOUBLE PRECISION,
     quality_flags JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -183,6 +182,7 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_navwarn (
 CREATE INDEX IF NOT EXISTS idx_ods_navwarn_data_source ON ts_ods.ods_navwarn (data_source);
 CREATE INDEX IF NOT EXISTS idx_ods_navwarn_issued_at ON ts_ods.ods_navwarn (issued_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ods_navwarn_updated_at ON ts_ods.ods_navwarn (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ods_navwarn_coordinate ON ts_ods.ods_navwarn USING GIST (coordinate);
 """.strip(),
     "intelligence": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_intelligence (
@@ -356,6 +356,14 @@ def _ddlregistry_bootstrap_sql() -> str:
     CREATE UNIQUE INDEX IF NOT EXISTS uq_ddlregistry_table
         ON {table_name} (layer, table_role, schema_name, table_name);
     """
+
+
+async def _ensure_postgis_extension(pg: PostgresClient) -> None:
+    await pg.execute(
+        """
+        CREATE EXTENSION IF NOT EXISTS postgis;
+        """
+    )
 
 
 def _current_table_ref(layer: str, logical_table: str) -> str:
@@ -620,6 +628,7 @@ async def ensure_ddlregistry_table(pg: PostgresClient) -> None:
         return
 
     table_name = _ddlregistry_table_name()
+    await _ensure_postgis_extension(pg)
     await pg.init_schema([_ddlregistry_bootstrap_sql()])
     row = await pg.fetch_one(
         "SELECT to_regclass(:table_name) AS table_name",

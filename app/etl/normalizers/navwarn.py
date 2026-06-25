@@ -10,7 +10,8 @@ from app.etl.normalizers.base import safe_datetime, safe_str
 
 
 _NAVAREA_PREFIX_RE = re.compile(r"^(NAVAREA\s+[IVXLC\d]+)\b[\s\-:,.]*", re.IGNORECASE)
-_WARNING_NO_RE = re.compile(r"(?P<serial>\d{1,4})\s*[/\-]\s*(?P<year>\d{2,4})")
+_WARNING_SLASH_RE = re.compile(r"(?P<serial>\d{1,4})\s*/\s*(?P<year>\d{2,4})")
+_WARNING_YEAR_SERIAL_RE = re.compile(r"(?P<year>\d{2,4})\s*-\s*(?P<serial>\d{1,4})")
 
 
 def _normalize_warning_number(
@@ -41,15 +42,23 @@ def _normalize_warning_number(
             region_prefix = navarea_match.group(1).strip()
             candidate = candidate[navarea_match.end():].strip()
 
-    match = _WARNING_NO_RE.search(candidate)
+    match = _WARNING_SLASH_RE.search(candidate)
+    year_first = False
+    if not match:
+        match = _WARNING_YEAR_SERIAL_RE.search(candidate)
+        year_first = match is not None
     if not match:
         return candidate or text, warning_region or region_prefix, None, None
 
     serial_text = match.group("serial")
     year_text = match.group("year")
-    warning_no_normalized = f"{int(serial_text):0{len(serial_text)}d}/{year_text}"
+    serial_number = int(serial_text)
     warning_year = int(year_text) if len(year_text) == 4 else 2000 + int(year_text)
-    return warning_no_normalized, warning_region or region_prefix, int(serial_text), warning_year
+    if year_first:
+        warning_no_normalized = f"{year_text}-{serial_number:0{len(serial_text)}d}"
+    else:
+        warning_no_normalized = f"{serial_number:0{len(serial_text)}d}/{year_text}"
+    return warning_no_normalized, warning_region or region_prefix, serial_number, warning_year
 
 
 def _extract_coordinates(text: str | None) -> list[dict[str, Any]]:
@@ -58,16 +67,22 @@ def _extract_coordinates(text: str | None) -> list[dict[str, Any]]:
 
     pattern = re.compile(
         r"(?<!\d)"
-        r"(\d{1,2})[- ](\d{2}(?:\.\d+)?)\s*([NS])[\s,;]*"
-        r"(\d{1,3})[- ](\d{2}(?:\.\d+)?)\s*([EW])",
+        r"(\d{1,2})[- ](\d{2}(?:\.\d+)?)(?:[- ](\d{2}(?:\.\d+)?))?\s*([NS])[\s,;]*"
+        r"(\d{1,3})[- ](\d{2}(?:\.\d+)?)(?:[- ](\d{2}(?:\.\d+)?))?\s*([EW])",
         re.IGNORECASE,
     )
     coordinates: list[dict[str, Any]] = []
     for match in pattern.finditer(text):
-        lat_deg, lat_min, lat_dir = int(match.group(1)), float(match.group(2)), match.group(3).upper()
-        lon_deg, lon_min, lon_dir = int(match.group(4)), float(match.group(5)), match.group(6).upper()
-        lat = lat_deg + lat_min / 60.0
-        lon = lon_deg + lon_min / 60.0
+        lat_deg = int(match.group(1))
+        lat_min = float(match.group(2))
+        lat_sec = float(match.group(3) or 0)
+        lat_dir = match.group(4).upper()
+        lon_deg = int(match.group(5))
+        lon_min = float(match.group(6))
+        lon_sec = float(match.group(7) or 0)
+        lon_dir = match.group(8).upper()
+        lat = lat_deg + lat_min / 60.0 + lat_sec / 3600.0
+        lon = lon_deg + lon_min / 60.0 + lon_sec / 3600.0
         if lat_dir == "S":
             lat = -lat
         if lon_dir == "W":
@@ -80,6 +95,15 @@ def _extract_coordinates(text: str | None) -> list[dict[str, Any]]:
             }
         )
     return coordinates
+
+
+def _coordinates_to_wkt(coordinates: list[dict[str, Any]]) -> str | None:
+    if not coordinates:
+        return None
+    points = [f"{item['lon']} {item['lat']}" for item in coordinates]
+    if len(points) == 1:
+        return f"POINT({points[0]})"
+    return f"MULTIPOINT({', '.join(f'({point})' for point in points)})"
 
 
 def _classify_hazard_type(text: str | None) -> str | None:
@@ -129,9 +153,6 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     issued_at = _parse_issue_time(issue_time_raw)
     coordinates = _extract_coordinates(message_text)
     hazard_type = _classify_hazard_type(message_text)
-    latitude = coordinates[0]["lat"] if coordinates else None
-    longitude = coordinates[0]["lon"] if coordinates else None
-    coordinate_count = len(coordinates)
 
     meta_record_id = safe_str(meta.get("record_id") or record.get("record_id"))
     if meta_record_id:
@@ -172,9 +193,7 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
         "issued_at": issued_at,
         "message_text": message_text,
         "hazard_type": hazard_type,
-        "latitude": latitude,
-        "longitude": longitude,
-        "coordinate_count": coordinate_count,
+        "coordinate": _coordinates_to_wkt(coordinates),
         "quality_score": quality_score,
         "quality_flags": json.dumps(quality_flags, ensure_ascii=False),
     }
