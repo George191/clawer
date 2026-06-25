@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -57,7 +58,7 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
     }
 
 
-def _parse_ssc_news_datetime(value: Any) -> datetime | None:
+def _parse_ssc_datetime(value: Any) -> datetime | None:
     parsed = safe_datetime(value)
     if parsed is not None:
         return parsed
@@ -65,6 +66,8 @@ def _parse_ssc_news_datetime(value: Any) -> datetime | None:
     text = safe_str(value)
     if not text:
         return None
+
+    text = re.sub(r"\bsept(?=\.?\s)", "Sep", text, flags=re.IGNORECASE)
 
     for fmt in ("%b. %d, %Y", "%b %d, %Y"):
         try:
@@ -74,10 +77,26 @@ def _parse_ssc_news_datetime(value: Any) -> datetime | None:
     return None
 
 
+_parse_ssc_news_datetime = _parse_ssc_datetime
+
+
+def _parse_ssc_press_month_group(value: Any) -> datetime | None:
+    text = safe_str(value)
+    if not text:
+        return None
+
+    for fmt in ("%B %Y", "%b %Y"):
+        try:
+            return datetime.strptime(text.title(), fmt).replace(day=1, tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
 def normalize_ssc_news(record: dict[str, Any]) -> dict[str, Any]:
     normalized = _news_common(record, "ssc_news")
-    normalized["source_published_at"] = _parse_ssc_news_datetime(record.get("date"))
-    normalized["source_updated_at"] = _parse_ssc_news_datetime(record.get("modified"))
+    normalized["source_published_at"] = _parse_ssc_datetime(record.get("date"))
+    normalized["source_updated_at"] = _parse_ssc_datetime(record.get("modified"))
     return normalized
 
 
@@ -111,8 +130,11 @@ def normalize_satellite_today(record: dict[str, Any]) -> dict[str, Any]:
 
 def normalize_ssc_press(record: dict[str, Any]) -> dict[str, Any]:
     normalized = _news_common(record, "ssc_press")
-    normalized["source_published_at"] = _parse_ssc_news_datetime(record.get("date"))
-    normalized["source_updated_at"] = _parse_ssc_news_datetime(record.get("modified"))
+    normalized["source_published_at"] = (
+        _parse_ssc_datetime(record.get("date"))
+        or _parse_ssc_press_month_group(record.get("month_group"))
+    )
+    normalized["source_updated_at"] = _parse_ssc_datetime(record.get("modified"))
     return normalized
 
 

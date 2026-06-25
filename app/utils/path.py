@@ -1,5 +1,6 @@
 
 from functools import reduce
+import re
 from typing import Any
 
 
@@ -8,7 +9,13 @@ def get_nested_value(d: dict[str, Any], path: str, default: Any = None) -> Any:
 
     按 "." 分隔的路径从嵌套字典中取值。
     """
+    parts = [part for part in re.split(r"\.|\[|\]", path) if part]
+
     try:
-        return reduce(lambda c, k: c[k], path.split("."), d)
-    except (KeyError, TypeError):
+        return reduce(
+            lambda current, key: current[key] if isinstance(current, dict) else current[int(key)],
+            parts,
+            d,
+        )
+    except (KeyError, TypeError, IndexError, ValueError):
         return default

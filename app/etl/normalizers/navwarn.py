@@ -9,13 +9,47 @@ from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_datetime, safe_str
 
 
-def _parse_warning_number(warning_no: str | None) -> tuple[str | None, int | None, int | None]:
-    if not warning_no:
-        return None, None, None
-    match = re.match(r"(.+?)\s+(\d+)/(\d+)", warning_no.strip())
+_NAVAREA_PREFIX_RE = re.compile(r"^(NAVAREA\s+[IVXLC\d]+)\b[\s\-:,.]*", re.IGNORECASE)
+_WARNING_NO_RE = re.compile(r"(?P<serial>\d{1,4})\s*[/\-]\s*(?P<year>\d{2,4})")
+
+
+def _normalize_warning_number(
+    warning_no: str | None,
+    region: str | None,
+) -> tuple[str | None, str | None, int | None, int | None]:
+    text = safe_str(warning_no)
+    if not text:
+        return None, safe_str(region), None, None
+
+    candidate = re.sub(r"\s+", " ", text).strip()
+    warning_region = safe_str(region)
+    region_prefix = None
+
+    if warning_region:
+        region_match = re.match(
+            rf"^{re.escape(warning_region)}(?:\b|$)[\s\-:,.]*",
+            candidate,
+            flags=re.IGNORECASE,
+        )
+        if region_match:
+            region_prefix = warning_region
+            candidate = candidate[region_match.end():].strip()
+
+    if region_prefix is None:
+        navarea_match = _NAVAREA_PREFIX_RE.match(candidate)
+        if navarea_match:
+            region_prefix = navarea_match.group(1).strip()
+            candidate = candidate[navarea_match.end():].strip()
+
+    match = _WARNING_NO_RE.search(candidate)
     if not match:
-        return None, None, None
-    return match.group(1).strip(), int(match.group(2)), int(match.group(3))
+        return candidate or text, warning_region or region_prefix, None, None
+
+    serial_text = match.group("serial")
+    year_text = match.group("year")
+    warning_no_normalized = f"{int(serial_text):0{len(serial_text)}d}/{year_text}"
+    warning_year = int(year_text) if len(year_text) == 4 else 2000 + int(year_text)
+    return warning_no_normalized, warning_region or region_prefix, int(serial_text), warning_year
 
 
 def _extract_coordinates(text: str | None) -> list[dict[str, Any]]:
@@ -23,7 +57,9 @@ def _extract_coordinates(text: str | None) -> list[dict[str, Any]]:
         return []
 
     pattern = re.compile(
-        r"(\d{1,2})-(\d{2}(?:\.\d+)?)\s*([NS])\s+(\d{1,3})-(\d{2}(?:\.\d+)?)\s*([EW])",
+        r"(?<!\d)"
+        r"(\d{1,2})[- ](\d{2}(?:\.\d+)?)\s*([NS])[\s,;]*"
+        r"(\d{1,3})[- ](\d{2}(?:\.\d+)?)\s*([EW])",
         re.IGNORECASE,
     )
     coordinates: list[dict[str, Any]] = []
@@ -82,15 +118,20 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     quality_flags: list[str] = []
 
     message_id = safe_str(record.get("message_id"))
-    warning_no = safe_str(record.get("warning_no"))
-    sea_name = safe_str(record.get("sea_name"))
+    region = safe_str(record.get("region") or record.get("sea_name"))
+    warning_no, region, serial_number, warning_year = _normalize_warning_number(
+        record.get("warning_no"),
+        region,
+    )
     issue_time_raw = safe_str(record.get("issue_time"))
     message_text = safe_str(record.get("message_text"))
 
-    warning_prefix, serial_number, year_suffix = _parse_warning_number(warning_no)
     issued_at = _parse_issue_time(issue_time_raw)
     coordinates = _extract_coordinates(message_text)
     hazard_type = _classify_hazard_type(message_text)
+    latitude = coordinates[0]["lat"] if coordinates else None
+    longitude = coordinates[0]["lon"] if coordinates else None
+    coordinate_count = len(coordinates)
 
     meta_record_id = safe_str(meta.get("record_id") or record.get("record_id"))
     if meta_record_id:
@@ -106,6 +147,10 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
 
     if not warning_no:
         quality_flags.append("missing_warning_no")
+    if serial_number is None:
+        quality_flags.append("missing_serial_number")
+    if warning_year is None:
+        quality_flags.append("missing_warning_year")
     if not message_text:
         quality_flags.append("missing_message_text")
     if not issued_at:
@@ -121,14 +166,15 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
         "record_id": record_id,
         "navarea_id": record.get("navarea_id"),
         "warning_no": warning_no,
-        "warning_prefix": warning_prefix,
         "serial_number": serial_number,
-        "warning_year": (2000 + year_suffix) if year_suffix is not None else None,
-        "sea_name": sea_name,
+        "warning_year": warning_year,
+        "region": region,
         "issued_at": issued_at,
         "message_text": message_text,
         "hazard_type": hazard_type,
-        "coordinates": json.dumps(coordinates, ensure_ascii=False) if coordinates else None,
+        "latitude": latitude,
+        "longitude": longitude,
+        "coordinate_count": coordinate_count,
         "quality_score": quality_score,
         "quality_flags": json.dumps(quality_flags, ensure_ascii=False),
     }

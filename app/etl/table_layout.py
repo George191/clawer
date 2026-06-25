@@ -10,6 +10,7 @@ PartitionGranularity = Literal["month", "year"]
 
 META_SCHEMA_NAME = "ts_meta"
 DEFAULT_HASH_PARTITION_COUNT = 32
+RDS_CURRENT_HASH_PARTITION_COLUMN = "record_id, data_source, data_type"
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,12 @@ def default_table_layout(
     partition_granularity: PartitionGranularity | None = None
     partition_count: int | None = None
 
-    if role == "current" and layer in {"rds", "ods"}:
+    if role == "current" and layer == "rds":
+        partition_type = "hash"
+        partition_column = RDS_CURRENT_HASH_PARTITION_COLUMN
+        partition_count = DEFAULT_HASH_PARTITION_COUNT
+
+    if role == "current" and layer == "ods":
         partition_type = "hash"
         partition_column = "record_id"
         partition_count = DEFAULT_HASH_PARTITION_COUNT

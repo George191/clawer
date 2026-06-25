@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from app.etl.table_layout import (
     META_SCHEMA_NAME,
+    RDS_CURRENT_HASH_PARTITION_COLUMN,
     default_table_layout,
     logical_table_name,
     normalize_table_role,
@@ -24,6 +25,185 @@ _CREATE_TABLE_RE = re.compile(
     r"\((?P<partition_column>[^)]+)\))?\s*;)",
     re.IGNORECASE | re.DOTALL,
 )
+_RECORD_ID_INLINE_PK_RE = re.compile(
+    r"(^\s*record_id\s+TEXT)\s+PRIMARY\s+KEY(\s*,?\s*$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_TABLE_PRIMARY_KEY_RE = re.compile(
+    r"^\s*PRIMARY\s+KEY\s*\([^)]*\)\s*,?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+_RDS_CURRENT_BASELINE_DDLS: dict[str, str] = {
+    "news": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_news (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rds_news_data_source ON ts_rds.rds_news (data_source);
+CREATE INDEX IF NOT EXISTS idx_rds_news_created_at ON ts_rds.rds_news (created_at DESC);
+""".strip(),
+    "patent": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_patent (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rds_patent_data_source ON ts_rds.rds_patent (data_source);
+CREATE INDEX IF NOT EXISTS idx_rds_patent_created_at ON ts_rds.rds_patent (created_at DESC);
+""".strip(),
+    "navwarn": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_navwarn (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rds_navwarn_data_source ON ts_rds.rds_navwarn (data_source);
+CREATE INDEX IF NOT EXISTS idx_rds_navwarn_created_at ON ts_rds.rds_navwarn (created_at DESC);
+""".strip(),
+    "intelligence": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_intelligence (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rds_intelligence_data_source ON ts_rds.rds_intelligence (data_source);
+CREATE INDEX IF NOT EXISTS idx_rds_intelligence_created_at ON ts_rds.rds_intelligence (created_at DESC);
+""".strip(),
+}
+
+_ODS_CURRENT_BASELINE_DDLS: dict[str, str] = {
+    "news": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_news (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    title TEXT,
+    url TEXT,
+    source_url TEXT,
+    source_published_at TIMESTAMPTZ,
+    source_updated_at TIMESTAMPTZ,
+    summary TEXT,
+    content TEXT,
+    content_html TEXT,
+    summary_html TEXT,
+    author TEXT,
+    organization JSONB,
+    tags JSONB,
+    external_links JSONB,
+    attachments JSONB,
+    images JSONB,
+    slides JSONB,
+    thumbnail TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ods_news_data_source ON ts_ods.ods_news (data_source);
+CREATE INDEX IF NOT EXISTS idx_ods_news_published_at ON ts_ods.ods_news (source_published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ods_news_updated_at ON ts_ods.ods_news (updated_at DESC);
+""".strip(),
+    "patent": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_patent (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    title TEXT,
+    publication_number TEXT,
+    application_number TEXT,
+    assignee TEXT,
+    inventor TEXT,
+    publication_date DATE,
+    filing_date DATE,
+    priority_date DATE,
+    grant_date DATE,
+    abstract TEXT,
+    claims JSONB,
+    legal_status TEXT,
+    ipc_classification TEXT,
+    cpc_classification TEXT,
+    patent_type TEXT,
+    url TEXT,
+    thumbnail TEXT,
+    figures JSONB,
+    quality_score DOUBLE PRECISION,
+    quality_flags JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ods_patent_data_source ON ts_ods.ods_patent (data_source);
+CREATE INDEX IF NOT EXISTS idx_ods_patent_publication_date ON ts_ods.ods_patent (publication_date DESC);
+CREATE INDEX IF NOT EXISTS idx_ods_patent_updated_at ON ts_ods.ods_patent (updated_at DESC);
+""".strip(),
+    "navwarn": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_navwarn (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    navarea_id INTEGER,
+    warning_no TEXT,
+    warning_prefix TEXT,
+    serial_number INTEGER,
+    warning_year INTEGER,
+    sea_name TEXT,
+    issued_at TIMESTAMPTZ,
+    message_text TEXT,
+    hazard_type TEXT,
+    coordinates JSONB,
+    quality_score DOUBLE PRECISION,
+    quality_flags JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ods_navwarn_data_source ON ts_ods.ods_navwarn (data_source);
+CREATE INDEX IF NOT EXISTS idx_ods_navwarn_issued_at ON ts_ods.ods_navwarn (issued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ods_navwarn_updated_at ON ts_ods.ods_navwarn (updated_at DESC);
+""".strip(),
+    "intelligence": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_intelligence (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    title TEXT,
+    url TEXT,
+    source_published_at TIMESTAMPTZ,
+    source_updated_at TIMESTAMPTZ,
+    summary TEXT,
+    file_name TEXT,
+    file_size TEXT,
+    file_type TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ods_intelligence_data_source ON ts_ods.ods_intelligence (data_source);
+CREATE INDEX IF NOT EXISTS idx_ods_intelligence_published_at ON ts_ods.ods_intelligence (source_published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ods_intelligence_updated_at ON ts_ods.ods_intelligence (updated_at DESC);
+""".strip(),
+}
 
 
 def _ddl_checksum(
@@ -156,15 +336,24 @@ def _ddlregistry_bootstrap_sql() -> str:
             )
         );
 
-    CREATE UNIQUE INDEX IF NOT EXISTS uq_ddlregistry_active_table
-        ON {table_name} (layer, table_role, schema_name, table_name)
-        WHERE is_active = TRUE;
-
     CREATE UNIQUE INDEX IF NOT EXISTS uq_ddlregistry_version
         ON {table_name} (layer, table_role, schema_name, table_name, version);
 
     CREATE INDEX IF NOT EXISTS idx_ddlregistry_lookup
         ON {table_name} (layer, table_role, schema_name, table_name, version DESC);
+
+    DELETE FROM {table_name} older
+    USING {table_name} newer
+    WHERE older.layer = newer.layer
+      AND older.table_role = newer.table_role
+      AND older.schema_name = newer.schema_name
+      AND older.table_name = newer.table_name
+      AND older.id < newer.id;
+
+    DROP INDEX IF EXISTS uq_ddlregistry_active_table;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_ddlregistry_table
+        ON {table_name} (layer, table_role, schema_name, table_name);
     """
 
 
@@ -219,6 +408,48 @@ def _build_create_table_statement(
     return f"{ddl_sql};"
 
 
+def _clean_table_body(body: str) -> str:
+    lines = [line.rstrip() for line in body.splitlines() if line.strip()]
+    if lines and lines[-1].endswith(","):
+        lines[-1] = lines[-1][:-1]
+    return "\n".join(lines)
+
+
+def _append_table_constraint(body: str, constraint_sql: str) -> str:
+    lines = [line.rstrip() for line in body.splitlines() if line.strip()]
+    if not lines:
+        raise ValueError("Unsupported DDL format: CREATE TABLE body is empty")
+    if not lines[-1].endswith(","):
+        lines[-1] = f"{lines[-1]},"
+    lines.append(f"    {constraint_sql}")
+    return "\n".join(lines)
+
+
+def _rewrite_rds_current_primary_key(body: str) -> str:
+    rewritten = _RECORD_ID_INLINE_PK_RE.sub(r"\1 NOT NULL\2", body, count=1)
+    rewritten = _TABLE_PRIMARY_KEY_RE.sub("", rewritten)
+    rewritten = _clean_table_body(rewritten)
+    return _append_table_constraint(
+        rewritten,
+        "PRIMARY KEY (record_id, data_source, data_type)",
+    )
+
+
+def _baseline_current_ddls() -> dict[str, dict[str, str]]:
+    return {
+        "rds": _RDS_CURRENT_BASELINE_DDLS,
+        "ods": _ODS_CURRENT_BASELINE_DDLS,
+    }
+
+
+def _rewrite_history_body(body: str) -> str:
+    rewritten = _RECORD_ID_INLINE_PK_RE.sub(r"\1 NOT NULL\2", body, count=1)
+    rewritten = _TABLE_PRIMARY_KEY_RE.sub("", rewritten)
+    if rewritten == body:
+        raise ValueError("Unsupported current DDL: missing record_id primary key")
+    return _clean_table_body(rewritten)
+
+
 def _build_current_ddl(
     *,
     layer: str,
@@ -229,9 +460,12 @@ def _build_current_ddl(
 ) -> str:
     current_ref = _current_table_ref(layer, logical_table)
     create_table = _parse_create_table_statement(current_ddl_sql)
+    body = str(create_table["body"])
+    if layer == "rds":
+        body = _rewrite_rds_current_primary_key(body)
     statement = _build_create_table_statement(
         table_ref=current_ref,
-        body=str(create_table["body"]),
+        body=body,
         partition_type=partition_type,
         partition_column=partition_column,
     )
@@ -253,11 +487,7 @@ def _build_history_ddl(
     current_ref = _current_table_ref(layer, logical_table)
     history_ref = _history_table_ref(layer, logical_table)
     create_table = _parse_create_table_statement(current_ddl_sql)
-    body = str(create_table["body"])
-    body = body.replace("record_id TEXT PRIMARY KEY,", "record_id TEXT NOT NULL,", 1)
-    body = body.replace("record_id TEXT PRIMARY KEY\n", "record_id TEXT NOT NULL\n", 1)
-    if body == create_table["body"]:
-        raise ValueError(f"Unsupported current DDL for {current_ref}: missing record_id primary key")
+    body = _rewrite_history_body(str(create_table["body"]))
 
     history_statement = _build_create_table_statement(
         table_ref=history_ref,
@@ -293,16 +523,34 @@ def _build_history_ddl(
 
 
 async def _seed_current_registry_records(pg: PostgresClient) -> None:
-    current_rows = await pg.fetch_all(
+    existing_rows = await pg.fetch_all(
         f"""
         SELECT layer, table_name, ddl_sql, description
         FROM {_ddlregistry_table_name()}
-        WHERE is_active = TRUE
-          AND table_role = 'current'
+        WHERE table_role = 'current'
           AND layer IN ('rds', 'ods')
         ORDER BY layer, table_name
         """
     )
+    current_rows: list[dict[str, Any]] = list(existing_rows)
+    existing_keys = {
+        (row["layer"], logical_table_name(row["layer"], row["table_name"]))
+        for row in existing_rows
+    }
+
+    for layer, tables in _baseline_current_ddls().items():
+        for logical_table, ddl_sql in tables.items():
+            if (layer, logical_table) in existing_keys:
+                continue
+            current_rows.append(
+                {
+                    "layer": layer,
+                    "table_name": default_table_layout(layer, logical_table, "current").table_name,
+                    "ddl_sql": ddl_sql,
+                    "description": f"Baseline current DDL for {layer}/{logical_table}",
+                }
+            )
+
     for row in current_rows:
         layer = row["layer"]
         logical_table = logical_table_name(layer, row["table_name"])
@@ -334,8 +582,7 @@ async def _seed_history_registry_records(pg: PostgresClient) -> None:
         f"""
         SELECT layer, table_name, ddl_sql
         FROM {_ddlregistry_table_name()}
-        WHERE is_active = TRUE
-          AND table_role = 'current'
+        WHERE table_role = 'current'
           AND layer IN ('rds', 'ods')
         ORDER BY layer, table_name
         """
@@ -406,8 +653,6 @@ async def get_registered_ddl(
           AND schema_name = :schema_name
           AND table_name = :table_name
           AND table_role = :table_role
-          AND is_active = TRUE
-        ORDER BY version DESC
         LIMIT 1
         """,
         {
@@ -452,8 +697,6 @@ async def get_registered_ddl_record(
           AND schema_name = :schema_name
           AND table_name = :table_name
           AND table_role = :table_role
-          AND is_active = TRUE
-        ORDER BY version DESC
         LIMIT 1
         """,
         {
@@ -489,7 +732,7 @@ async def list_registered_ddl_records(
             created_at,
             updated_at
         FROM {_ddlregistry_table_name()}
-        WHERE is_active = TRUE
+        WHERE 1 = 1
     """
     params: dict[str, Any] = {}
     if layer:
@@ -568,19 +811,20 @@ async def save_registered_ddl(
                   AND table_role = :table_role
                   AND schema_name = :schema_name
                   AND table_name = :table_name
-                  AND is_active = TRUE
-                ORDER BY version DESC
                 LIMIT 1
             """),
             params,
         )
         current = result.mappings().first()
+        next_version = int(current["version"]) + 1 if current else 1
 
         if current and current["checksum"] == checksum:
             await session.execute(
                 text(f"""
                     UPDATE {_ddlregistry_table_name()}
-                    SET description = COALESCE(:description, description),
+                    SET ddl_sql = :ddl_sql,
+                        checksum = :checksum,
+                        description = COALESCE(:description, description),
                         partition_type = :partition_type,
                         partition_column = :partition_column,
                         partition_granularity = :partition_granularity,
@@ -591,6 +835,8 @@ async def save_registered_ddl(
                 """),
                 {
                     "id": current["id"],
+                    "ddl_sql": ddl_sql,
+                    "checksum": checksum,
                     "description": description,
                     "partition_type": effective_partition_type,
                     "partition_column": effective_partition_column,
@@ -608,15 +854,44 @@ async def save_registered_ddl(
                 "changed": False,
             }
 
-        next_version = int(current["version"]) + 1 if current else 1
         if current:
             await session.execute(
-                text(
-                    f"UPDATE {_ddlregistry_table_name()} "
-                    "SET is_active = FALSE, updated_at = NOW() WHERE id = :id"
-                ),
-                {"id": current["id"]},
+                text(f"""
+                    UPDATE {_ddlregistry_table_name()}
+                    SET ddl_sql = :ddl_sql,
+                        version = :version,
+                        checksum = :checksum,
+                        partition_type = :partition_type,
+                        partition_column = :partition_column,
+                        partition_granularity = :partition_granularity,
+                        partition_count = :partition_count,
+                        description = COALESCE(:description, description),
+                        updated_by = COALESCE(:updated_by, updated_by),
+                        is_active = TRUE,
+                        updated_at = NOW()
+                    WHERE id = :id
+                """),
+                {
+                    "id": current["id"],
+                    "ddl_sql": ddl_sql,
+                    "version": int(current["version"]) + 1,
+                    "checksum": checksum,
+                    "partition_type": effective_partition_type,
+                    "partition_column": effective_partition_column,
+                    "partition_granularity": effective_partition_granularity,
+                    "partition_count": effective_partition_count,
+                    "description": description,
+                    "updated_by": updated_by,
+                },
             )
+            return {
+                "layer": layer,
+                "table_role": role,
+                "schema_name": schema_name,
+                "table_name": table_name,
+                "version": int(current["version"]) + 1,
+                "changed": True,
+            }
 
         await session.execute(
             text(f"""
@@ -653,6 +928,6 @@ async def save_registered_ddl(
         "table_role": role,
         "schema_name": schema_name,
         "table_name": table_name,
-        "version": next_version,
+        "version": 1,
         "changed": True,
     }

@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any
+
+from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
@@ -16,7 +19,7 @@ INSERT INTO ts_rds.rds_{table_name}
 VALUES
     (:record_id, :data_source, :data_type, CAST(:raw_data AS jsonb), :kafka_offset, :kafka_partition, :kafka_topic,
      CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz))
-ON CONFLICT (record_id) DO UPDATE SET
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     data_source = EXCLUDED.data_source,
     data_type = EXCLUDED.data_type,
     raw_data = EXCLUDED.raw_data,
@@ -24,6 +27,15 @@ ON CONFLICT (record_id) DO UPDATE SET
     kafka_partition = EXCLUDED.kafka_partition,
     kafka_topic = EXCLUDED.kafka_topic,
     updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+_RDS_HISTORY_INSERT_TEMPLATE = """
+INSERT INTO ts_rds_hist.rds_{table_name}
+    (record_id, data_source, data_type, raw_data, kafka_offset, kafka_partition, kafka_topic, created_at, updated_at)
+VALUES
+    (:record_id, :data_source, :data_type, CAST(:raw_data AS jsonb), :kafka_offset, :kafka_partition, :kafka_topic,
+     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz))
 RETURNING *
 """
 
@@ -47,6 +59,23 @@ class TsRds(ETLBase):
     async def _handler_intelligence(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="intelligence")
 
+    async def _write_current_and_history(
+        self,
+        *,
+        table: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        current_sql = _RDS_INSERT_TEMPLATE.replace("{table_name}", table)
+        history_sql = _RDS_HISTORY_INSERT_TEMPLATE.replace("{table_name}", table)
+
+        async with self._pg.locked_transaction(
+            f"rds:{table}:{payload['record_id']}:{payload['data_source']}:{payload['data_type']}"
+        ) as session:
+            result = await session.execute(text(current_sql), payload)
+            current_row = result.mappings().first()
+            await session.execute(text(history_sql), payload)
+            return dict(current_row) if current_row else None
+
     async def _process_rds_record(self, message: dict[str, Any], table: str) -> bool:
         try:
             meta = extract_meta(message)
@@ -61,7 +90,6 @@ class TsRds(ETLBase):
             raw_data = json.loads(json.dumps(message, default=str))
             kafka_meta = message.get("_kafka_meta", {}) or {}
             now = datetime.now(timezone.utc)
-            sql = _RDS_INSERT_TEMPLATE.replace("{table_name}", table)
             payload = {
                 "record_id": record_id,
                 "data_source": data_source,
@@ -76,7 +104,7 @@ class TsRds(ETLBase):
 
             result = await self._execute_with_table_recovery(
                 table,
-                lambda: self._pg.fetch_one(sql, payload),
+                partial(self._write_current_and_history, table=table, payload=payload),
             )
 
             await self._emit(result, record_id=record_id, data_source=data_source, data_type=data_type)

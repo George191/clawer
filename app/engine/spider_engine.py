@@ -31,8 +31,9 @@ from app.models.template import (
     ResponseType,
     SiteTemplate,
 )
-from app.parser.template_parser import TemplateParser, resolve_json_path
+from app.parser.template_parser import TemplateParser
 from app.storage.file_storage import FileStorage, StorageBackend
+from app.utils.path import get_nested_value
 
 logger = logging.getLogger(__name__)
 
@@ -427,7 +428,7 @@ class SpiderEngine:
 
                 # 仅第一页提取分页元数据
                 if is_first and template.json_total_path:
-                    total_val = resolve_json_path(json_data, template.json_total_path)
+                    total_val = get_nested_value(json_data, template.json_total_path)
                     if total_val is not None:
                         try:
                             total_records = int(total_val)
@@ -435,7 +436,7 @@ class SpiderEngine:
                             pass
 
                 if is_first and template.json_total_num_pages:
-                    api_pages_val = resolve_json_path(
+                    api_pages_val = get_nested_value(
                         json_data, template.json_total_num_pages
                     )
                     if api_pages_val is not None:
