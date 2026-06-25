@@ -38,6 +38,7 @@ _HISTORY_PARTITION_DEFAULTS: dict[tuple[str, str], tuple[str, str]] = {
     ("rds", "*"): ("updated_at", "month"),
     ("ods", "patent"): ("publication_date", "year"),
     ("ods", "news"): ("source_published_at", "month"),
+    ("ods", "navwarn"): ("issued_at", "month"),
     ("ods", "intelligence"): ("source_published_at", "month"),
 }
 

@@ -27,6 +27,15 @@ def _prefer_value(table_ref: str, column: str) -> str:
     return f"COALESCE(EXCLUDED.{column}, {table_ref}.{column})"
 
 
+def _prefer_nonzero(table_ref: str, column: str) -> str:
+    return (
+        f"CASE "
+        f"WHEN EXCLUDED.{column} IS NULL OR EXCLUDED.{column} = 0 "
+        f"THEN {table_ref}.{column} "
+        f"ELSE EXCLUDED.{column} END"
+    )
+
+
 def _prefer_json(table_ref: str, column: str) -> str:
     return (
         f"CASE "
@@ -125,13 +134,13 @@ RETURNING *
 ODS_NAVWARN_INSERT = f"""
 INSERT INTO ts_ods.ods_navwarn (
     record_id, data_source, data_type,
-    navarea_id, warning_no, warning_prefix, serial_number, warning_year, sea_name,
-    issued_at, message_text, hazard_type, coordinates,
+    navarea_id, warning_no, serial_number, warning_year, region,
+    issued_at, message_text, hazard_type, latitude, longitude, coordinate_count,
     quality_score, quality_flags, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
-    CAST(:navarea_id AS integer), :warning_no, :warning_prefix, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :sea_name,
-    CAST(:issued_at AS timestamptz), :message_text, :hazard_type, CAST(:coordinates AS jsonb),
+    CAST(:navarea_id AS integer), :warning_no, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :region,
+    CAST(:issued_at AS timestamptz), :message_text, :hazard_type, CAST(:latitude AS double precision), CAST(:longitude AS double precision), CAST(:coordinate_count AS integer),
     CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
@@ -140,14 +149,15 @@ ON CONFLICT (record_id) DO UPDATE SET
     data_type = EXCLUDED.data_type,
     navarea_id = {_prefer_value(_ODS_NAVWARN_TABLE, "navarea_id")},
     warning_no = {_prefer_text(_ODS_NAVWARN_TABLE, "warning_no")},
-    warning_prefix = {_prefer_text(_ODS_NAVWARN_TABLE, "warning_prefix")},
     serial_number = {_prefer_value(_ODS_NAVWARN_TABLE, "serial_number")},
     warning_year = {_prefer_value(_ODS_NAVWARN_TABLE, "warning_year")},
-    sea_name = {_prefer_text(_ODS_NAVWARN_TABLE, "sea_name")},
+    region = {_prefer_text(_ODS_NAVWARN_TABLE, "region")},
     issued_at = {_prefer_value(_ODS_NAVWARN_TABLE, "issued_at")},
     message_text = {_prefer_text(_ODS_NAVWARN_TABLE, "message_text")},
     hazard_type = {_prefer_text(_ODS_NAVWARN_TABLE, "hazard_type")},
-    coordinates = {_prefer_json(_ODS_NAVWARN_TABLE, "coordinates")},
+    latitude = {_prefer_value(_ODS_NAVWARN_TABLE, "latitude")},
+    longitude = {_prefer_value(_ODS_NAVWARN_TABLE, "longitude")},
+    coordinate_count = {_prefer_nonzero(_ODS_NAVWARN_TABLE, "coordinate_count")},
     quality_score = {_prefer_value(_ODS_NAVWARN_TABLE, "quality_score")},
     quality_flags = {_prefer_json(_ODS_NAVWARN_TABLE, "quality_flags")},
     updated_at = EXCLUDED.updated_at
@@ -221,13 +231,13 @@ RETURNING *
     "navwarn": """
 INSERT INTO ts_ods_hist.ods_navwarn (
     record_id, data_source, data_type,
-    navarea_id, warning_no, warning_prefix, serial_number, warning_year, sea_name,
-    issued_at, message_text, hazard_type, coordinates,
+    navarea_id, warning_no, serial_number, warning_year, region,
+    issued_at, message_text, hazard_type, latitude, longitude, coordinate_count,
     quality_score, quality_flags, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
-    CAST(:navarea_id AS integer), :warning_no, :warning_prefix, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :sea_name,
-    CAST(:issued_at AS timestamptz), :message_text, :hazard_type, CAST(:coordinates AS jsonb),
+    CAST(:navarea_id AS integer), :warning_no, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :region,
+    CAST(:issued_at AS timestamptz), :message_text, :hazard_type, CAST(:latitude AS double precision), CAST(:longitude AS double precision), CAST(:coordinate_count AS integer),
     CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
