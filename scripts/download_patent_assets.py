@@ -37,6 +37,7 @@ from urllib.request import Request, urlopen
 try:
     from minio import Minio
     from pymongo import MongoClient
+    from pymongo.errors import PyMongoError
 except ImportError as exc:  # pragma: no cover - operator-facing import guard
     raise SystemExit(
         "Missing dependency. Install on the server with: pip install pymongo minio"
@@ -587,6 +588,12 @@ def main() -> None:
     downloader = PatentDownloader(settings)
     try:
         downloader.run()
+    except PyMongoError as exc:
+        logger.error("MongoDB error: %s", exc)
+        raise SystemExit(2) from exc
+    except Exception as exc:
+        logger.error("Downloader failed: %s", exc)
+        raise SystemExit(1) from exc
     finally:
         downloader.close()
 
