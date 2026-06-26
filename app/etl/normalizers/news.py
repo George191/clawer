@@ -6,11 +6,9 @@ from typing import Any
 
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import (
+    apply_asset_path_overrides,
     html_to_text,
     json_dumps,
-    replace_img_placeholders,
-    resolve_asset_link,
-    resolve_news_media_items,
     safe_datetime,
     safe_str,
 )
@@ -27,21 +25,21 @@ def _normalize_satellite_today_news_types(record: dict[str, Any]) -> list[str]:
 
 
 def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
+    record, _ = apply_asset_path_overrides(record)
     meta = record.get("_meta", {}) or {}
-    assets = record.get("assets") or {}
     data_source = safe_str(meta.get("data_source") or meta.get("template")) or source
     record_id = safe_str(meta.get("record_id") or record.get("record_id") or record.get("url") or record.get("id")) or ""
 
-    content_html = replace_img_placeholders(
-        safe_str(record.get("content_html")),
-        resolve_news_media_items(record.get("images"), assets, "images"),
-    )
+    content_html = safe_str(record.get("content_html"))
     summary_html = safe_str(record.get("excerpt_html"))
-    attachments = resolve_news_media_items(record.get("attachments"), assets, "attachments")
-    images = resolve_news_media_items(record.get("images"), assets, "images")
-    slides = resolve_news_media_items(record.get("slides"), assets, "slides")
+    attachments = record.get("attachments")
+    images = record.get("images")
+    slides = record.get("slides")
     tags = record.get("tags") or record.get("tag_names")
     organization = record.get("organization") or record.get("source_names")
+    featured_media = record.get("featured_media")
+    if isinstance(featured_media, dict):
+        featured_media = featured_media.get("source_url")
 
     return {
         "data_source": data_source,
@@ -61,10 +59,7 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
         "attachments": json_dumps(attachments),
         "images": json_dumps(images),
         "slides": json_dumps(slides),
-        "thumbnail": (
-            resolve_asset_link(assets, "thumbnail", "featured_media", "featured_media.source_url")
-            or safe_str(record.get("thumbnail") or record.get("featured_media"))
-        ),
+        "thumbnail": safe_str(record.get("thumbnail") or featured_media),
     }
 
 

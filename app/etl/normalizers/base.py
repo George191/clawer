@@ -1,15 +1,9 @@
-"""ODS 标准化工具 — 基础函数。
-
-提供各类型/源标准化器的公共依赖：
-- safe_str / safe_date / _pick_first  类型安全的值提取
-- _extract_asset_paths              从 RDS 原始数据中提取 MinIO 资源路径
-- _normalize_generic                通用兜底标准化器
-"""
+"""Shared ODS normalizer primitives."""
 
 from __future__ import annotations
 
 import json
-import re
+from copy import deepcopy
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -133,139 +127,75 @@ def html_to_text(html: Any) -> str | None:
     return content or None
 
 
-def normalize_asset_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        if "source_url" in value:
-            source_url = safe_str(value.get("source_url"))
-            if source_url:
-                return source_url
-        if "url" in value:
-            url = safe_str(value.get("url"))
-            if url:
-                return url
-        if "href" in value:
-            href = safe_str(value.get("href"))
-            if href:
-                return href
-    return value
+def _iter_asset_path_values(node: Any, path: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], str]]:
+    if isinstance(node, str):
+        value = safe_str(node)
+        return [(path, value)] if value else []
+    if isinstance(node, dict):
+        values: list[tuple[tuple[str, ...], str]] = []
+        for key, value in node.items():
+            values.extend(_iter_asset_path_values(value, (*path, str(key))))
+        return values
+    if isinstance(node, list):
+        values = []
+        for index, value in enumerate(node):
+            values.extend(_iter_asset_path_values(value, (*path, str(index))))
+        return values
+    return []
 
 
-def build_asset_lookup(assets: Any) -> dict[str, str]:
-    lookup: dict[str, str] = {}
-
-    def _visit(node: Any, path: list[str]) -> None:
-        normalized = normalize_asset_value(node)
-        if normalized is not node and isinstance(normalized, str) and path:
-            lookup[".".join(path)] = normalized
-        elif isinstance(node, str) and path:
-            value = safe_str(node)
-            if value:
-                lookup[".".join(path)] = value
-
-        if isinstance(node, dict):
-            for key, value in node.items():
-                _visit(value, [*path, str(key)])
-        elif isinstance(node, list):
-            for idx, value in enumerate(node):
-                _visit(value, [*path, str(idx)])
-
-    if assets not in (None, "", [], {}):
-        _visit(assets, [])
-    return lookup
-
-
-def resolve_asset_link(
-    assets: Any,
-    *candidates: str | None,
-) -> str | None:
-    lookup = build_asset_lookup(assets)
-    for candidate in candidates:
-        key = safe_str(candidate)
-        if not key:
-            continue
-        if key in lookup:
-            return lookup[key]
+def _ensure_path_child(parent: Any, key: str, next_key: str) -> Any:
+    default_value: Any = [] if next_key.isdigit() else {}
+    if isinstance(parent, dict):
+        child = parent.get(key)
+        if child is None or not isinstance(child, (dict, list)):
+            child = default_value
+            parent[key] = child
+        return child
+    if isinstance(parent, list) and key.isdigit():
+        index = int(key)
+        while len(parent) <= index:
+            parent.append(None)
+        child = parent[index]
+        if child is None or not isinstance(child, (dict, list)):
+            child = default_value
+            parent[index] = child
+        return child
     return None
 
 
-def resolve_news_media_items(
-    items: Any,
-    assets: Any,
-    asset_key: str,
-) -> list[dict[str, Any]] | None:
-    if not isinstance(items, list):
-        return items if isinstance(items, list) else None
+def _set_path_value(target: dict[str, Any], path: tuple[str, ...], value: str) -> None:
+    if not path:
+        return
 
-    resolved: list[dict[str, Any]] = []
-    for idx, item in enumerate(items):
-        if not isinstance(item, dict):
-            resolved.append(item)
-            continue
+    current: Any = target
+    for index, key in enumerate(path[:-1]):
+        next_key = path[index + 1]
+        current = _ensure_path_child(current, key, next_key)
+        if current is None:
+            return
 
-        asset_url = resolve_asset_link(
-            assets,
-            f"{asset_key}.{idx}",
-            f"{asset_key}.{idx}.url",
-            f"{asset_key}.{idx}.href",
-            f"{asset_key}.{idx}.source_url",
-        )
-        merged = dict(item)
-        if asset_url:
-            merged["url"] = asset_url
-        resolved.append(merged)
-    return resolved
+    leaf = path[-1]
+    if isinstance(current, dict):
+        current[leaf] = value
+    elif isinstance(current, list) and leaf.isdigit():
+        item_index = int(leaf)
+        while len(current) <= item_index:
+            current.append(None)
+        current[item_index] = value
 
 
-_IMG_PLACEHOLDER_RE = re.compile(r"\{\{img_(\d+)}}")
+def apply_asset_path_overrides(record: dict[str, Any]) -> tuple[dict[str, Any], set[tuple[str, ...]]]:
+    assets = record.get("assets") or {}
+    asset_paths: set[tuple[str, ...]] = set()
+    if not isinstance(assets, (dict, list)):
+        return record, asset_paths
 
-
-def replace_img_placeholders(content_html: str | None, images: Any) -> str | None:
-    html = safe_str(content_html)
-    if not html or not isinstance(images, list):
-        return html
-
-    def _repl(match: re.Match[str]) -> str:
-        idx = int(match.group(1))
-        if idx >= len(images):
-            return match.group(0)
-        item = images[idx]
-        if not isinstance(item, dict):
-            return match.group(0)
-        return safe_str(item.get("url")) or match.group(0)
-
-    return _IMG_PLACEHOLDER_RE.sub(_repl, html)
-
-
-def _extract_asset_paths(record: dict[str, Any]) -> tuple[str | None, str | None, Any]:
-    assets = record.get("assets", {}) or {}
-    patent_data = record.get("patent", {}) or {}
-
-    pdf = _pick_first(
-        resolve_asset_link(assets, "pdf", "url"),
-        safe_str(patent_data.get("pdf")),
-    )
-    thumbnail = _pick_first(
-        resolve_asset_link(assets, "thumbnail", "featured_media", "featured_media.source_url"),
-        safe_str(patent_data.get("thumbnail")),
-    )
-
-    figures_raw = _pick_first(
-        assets.get("figures"),
-        patent_data.get("figures"),
-    )
-    if isinstance(figures_raw, (list, dict)):
-        figures = figures_raw
-    else:
-        figures_text = safe_str(figures_raw)
-        if not figures_text:
-            figures = None
-        else:
-            try:
-                figures = json.loads(figures_text)
-            except (json.JSONDecodeError, TypeError):
-                figures = [figures_text]
-
-    return pdf, thumbnail, figures if figures else None
+    merged = deepcopy(record)
+    for path, value in _iter_asset_path_values(assets):
+        _set_path_value(merged, path, value)
+        asset_paths.add(path)
+    return merged, asset_paths
 
 
 def normalize_generic(record: dict[str, Any]) -> dict[str, Any]:

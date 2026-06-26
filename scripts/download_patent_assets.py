@@ -600,3 +600,16 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+# python download_patent_assets.py \
+#   --db-url "mongodb://mongoadmin:mongoadmin@10.10.0.200:27017/raw_data" \
+#   --db-name "raw_data" \
+#   --minio-endpoint "10.10.0.200:9000" \
+#   --minio-access-key "minioadmin" \
+#   --minio-secret-key "minioadmin" \
+#   --minio-bucket "intenal" \
+#   --minio-secure false \
+#   --batch 100 \
+#   --workers 8

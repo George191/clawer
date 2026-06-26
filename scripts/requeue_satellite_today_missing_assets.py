@@ -17,7 +17,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from app.config.settings import settings
 from app.downloader.http_client import HttpClient
 from app.engine.template_loader import TemplateLoader
-from app.etl.normalizers.base import build_asset_lookup
 from app.utils.path import get_nested_value
 
 logger = logging.getLogger(__name__)
@@ -53,9 +52,30 @@ def _has_asset_prefix(asset_lookup: dict[str, str], selector: str) -> bool:
     return any(key == selector or key.startswith(prefix) for key in asset_lookup)
 
 
+def _build_asset_lookup(assets: Any) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+
+    def visit(node: Any, path: list[str]) -> None:
+        if isinstance(node, str) and path:
+            value = node.strip()
+            if value:
+                lookup[".".join(path)] = value
+            return
+        if isinstance(node, dict):
+            for key, value in node.items():
+                visit(value, [*path, str(key)])
+            return
+        if isinstance(node, list):
+            for index, value in enumerate(node):
+                visit(value, [*path, str(index)])
+
+    visit(assets, [])
+    return lookup
+
+
 def _selector_missing_entries(record: dict[str, Any], selector: str) -> list[str]:
     value = get_nested_value(record, selector)
-    asset_lookup = build_asset_lookup(record.get("assets") or {})
+    asset_lookup = _build_asset_lookup(record.get("assets") or {})
 
     if isinstance(value, list):
         missing: list[str] = []

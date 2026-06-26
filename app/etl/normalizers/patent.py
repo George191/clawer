@@ -16,98 +16,30 @@ import json
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
-from app.etl.normalizers.base import _extract_asset_paths, _pick_first, safe_date, safe_str
+from app.etl.normalizers.base import apply_asset_path_overrides, safe_date, safe_str
 
 
 def normalize_google_patent(record: dict[str, Any]) -> dict[str, Any]:
+    record, _ = apply_asset_path_overrides(record)
     patent = record.get("patent", {}) or {}
     meta = record.get("_meta", {}) or {}
 
     quality_flags: list[str] = []
 
-    title = _pick_first(
-        safe_str(patent.get("title")),
-        safe_str(patent.get("invention_title")),
-        safe_str(record.get("title")),
-        safe_str(record.get("invention_title")),
-    )
-    publication_number = _pick_first(
-        safe_str(patent.get("publication_number")),
-        safe_str(patent.get("patent_number")),
-        safe_str(patent.get("patent_id")),
-        safe_str(record.get("publication_number")),
-        safe_str(record.get("patent_number")),
-        safe_str(record.get("patent_id")),
-    )
-    application_number = safe_str(
-        patent.get("application_number") or patent.get("app_number")
-        or record.get("application_number") or record.get("app_number")
-    )
-    assignee = _pick_first(
-        safe_str(patent.get("assignee")),
-        safe_str(patent.get("assignee_name")),
-        safe_str(patent.get("current_assignee")),
-        safe_str(record.get("assignee")),
-        safe_str(record.get("assignee_name")),
-        safe_str(record.get("current_assignee")),
-    )
-    inventor = _pick_first(
-        safe_str(patent.get("inventor")),
-        safe_str(patent.get("inventor_name")),
-        safe_str(record.get("inventor")),
-        safe_str(record.get("inventor_name")),
-    )
+    title = safe_str(patent.get("title"))
+    publication_number = safe_str(patent.get("publication_number"))
+    assignee = safe_str(patent.get("assignee"))
+    inventor = safe_str(patent.get("inventor"))
 
-    publication_date = safe_date(
-        patent.get("publication_date") or patent.get("pub_date")
-        or record.get("publication_date") or record.get("pub_date")
-    )
-    filing_date = safe_date(
-        patent.get("filing_date") or patent.get("application_date")
-        or record.get("filing_date") or record.get("application_date")
-    )
-    priority_date = safe_date(
-        patent.get("priority_date") or patent.get("earliest_priority_date")
-        or record.get("priority_date") or record.get("earliest_priority_date")
-    )
-    grant_date = safe_date(
-        patent.get("grant_date") or patent.get("granted_date")
-        or record.get("grant_date") or record.get("granted_date")
-    )
+    publication_date = safe_date(patent.get("publication_date"))
+    filing_date = safe_date(patent.get("filing_date"))
+    priority_date = safe_date(patent.get("priority_date"))
+    grant_date = safe_date(patent.get("grant_date"))
 
-    abstract = _pick_first(
-        safe_str(patent.get("abstract")),
-        safe_str(patent.get("description")),
-        safe_str(patent.get("snippet")),
-        safe_str(record.get("abstract")),
-        safe_str(record.get("description")),
-        safe_str(record.get("snippet")),
-    )
-    legal_status = safe_str(
-        patent.get("legal_status") or patent.get("status")
-        or record.get("legal_status") or record.get("status")
-    )
-    ipc = safe_str(
-        patent.get("ipc") or patent.get("ipc_classification")
-        or record.get("ipc") or record.get("ipc_classification")
-    )
-    cpc = safe_str(
-        patent.get("cpc") or patent.get("cpc_classification")
-        or record.get("cpc") or record.get("cpc_classification")
-    )
-    patent_type = safe_str(
-        patent.get("patent_type") or patent.get("type") or patent.get("kind")
-        or record.get("patent_type") or record.get("type") or record.get("kind")
-    )
-
-    claims_raw = patent.get("claims") or record.get("claims")
-    if isinstance(claims_raw, str):
-        try:
-            claims_raw = json.loads(claims_raw)
-        except (json.JSONDecodeError, TypeError):
-            claims_raw = {"text": claims_raw}
-
-    url, thumbnail, figures = _extract_asset_paths(record)
+    abstract = safe_str(patent.get("snippet"))
+    url = safe_str(patent.get("pdf"))
+    thumbnail = safe_str(patent.get("thumbnail"))
+    figures = patent.get("figures")
 
     if not publication_number:
         quality_flags.append("missing_publication_number")
@@ -122,18 +54,17 @@ def normalize_google_patent(record: dict[str, Any]) -> dict[str, Any]:
 
     record_id = (
         meta.get("record_id")
-        or record.get("record_id")
         or publication_number
         or ""
     )
 
     return {
-        "data_source": record.get("data_source") or meta.get("data_source") or meta.get("template") or "google_patent",
-        "data_type": record.get("data_type") or patent.get("data_type") or "patent",
+        "data_source": meta.get("data_source") or meta.get("template") or "google_patent",
+        "data_type": "patent",
         "record_id": record_id,
         "title": title,
         "publication_number": publication_number,
-        "application_number": application_number,
+        "application_number": None,
         "assignee": assignee,
         "inventor": inventor,
         "publication_date": publication_date,
@@ -141,11 +72,11 @@ def normalize_google_patent(record: dict[str, Any]) -> dict[str, Any]:
         "priority_date": priority_date,
         "grant_date": grant_date,
         "abstract": abstract,
-        "claims": json.dumps(claims_raw) if claims_raw else None,
-        "legal_status": legal_status,
-        "ipc_classification": ipc,
-        "cpc_classification": cpc,
-        "patent_type": patent_type,
+        "claims": None,
+        "legal_status": None,
+        "ipc_classification": None,
+        "cpc_classification": None,
+        "patent_type": None,
         "url": url,
         "thumbnail": thumbnail,
         "figures": json.dumps(figures) if figures else None,
