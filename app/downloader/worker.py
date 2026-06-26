@@ -45,6 +45,8 @@ RETRY_MAX_DELAY: float = 60.0
 RETRY_ALERT_THRESHOLD: int = 10
 # 严重告警阈值：每 N 次连续重试输出 ERROR 日志，提示持续故障
 RETRY_CRITICAL_THRESHOLD: int = 50
+# 最大重试次数：达到后跳过该资源
+RETRY_MAX_ATTEMPTS: int = 10
 
 
 class DownloadWorker:
@@ -520,6 +522,14 @@ class DownloadWorker:
                     "DownloadWorker: retry %d for %s | error=%s | status=%s | time=%s",
                     retry_count, url, error_type, status, timestamp,
                 )
+
+                if retry_count >= RETRY_MAX_ATTEMPTS:
+                    logger.warning(
+                        "DownloadWorker: reached max retries (%d), skipping: %s",
+                        RETRY_MAX_ATTEMPTS,
+                        url,
+                    )
+                    return None
 
                 # 阈值告警：连续重试达到预设阈值时触发通知
                 if retry_count % RETRY_CRITICAL_THRESHOLD == 0:

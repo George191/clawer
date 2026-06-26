@@ -105,6 +105,7 @@ class TsRds(ETLBase):
             result = await self._execute_with_table_recovery(
                 table,
                 partial(self._write_current_and_history, table=table, payload=payload),
+                payload=payload,
             )
 
             await self._emit(result, record_id=record_id, data_source=data_source, data_type=data_type)

@@ -49,6 +49,13 @@ KAFKA_MAX_RETRY_DELAY = 60
 
 _OFFSET_MANAGER = get_offset_manager()
 T = TypeVar("T")
+KAFKA_RETRYABLE_ERRORS = (
+    NodeNotReadyError,
+    KafkaConnectionError,
+    RequestTimedOutError,
+    ConnectionError,
+    OSError,
+)
 
 
 class ETLBase:
@@ -68,6 +75,54 @@ class ETLBase:
         self._pg = get_pg_client()
         self._running = False
         self._pending_offsets: dict[str, int] = {}
+
+    async def _close_consumer(self) -> None:
+        if not self._consumer:
+            return
+        try:
+            await self._consumer.stop()
+        except Exception:
+            logger.debug("%s Ignore consumer stop error", self._log_prefix, exc_info=True)
+        finally:
+            self._consumer = None
+
+    async def _close_producer(self) -> None:
+        if not self._producer:
+            return
+        try:
+            await self._producer.stop()
+        except Exception:
+            logger.debug("%s Ignore producer stop error", self._log_prefix, exc_info=True)
+        finally:
+            self._producer = None
+
+    async def _reconnect_consumer(self) -> None:
+        await self._close_consumer()
+        self._pending_offsets.clear()
+        await self._connect_consumer()
+
+    async def _reconnect_producer(self) -> None:
+        await self._close_producer()
+        await self._connect_producer()
+
+    async def _ensure_partitions_for_payload(
+        self,
+        table: str,
+        payload: dict[str, Any],
+        table_role: str | None = None,
+    ) -> None:
+        role = table_role or self._table_role
+        await self._create_partitions(
+            table,
+            table_role=role,
+            payload=payload,
+        )
+        if role == "current":
+            await self._create_partitions(
+                table,
+                table_role="history",
+                payload=payload,
+            )
 
     @staticmethod
     def _offset_key(topic: str, partition: int) -> str:
@@ -108,9 +163,9 @@ class ETLBase:
         )
         await ensure_ddlregistry_table(self._pg)
         for table in self._handlers:
-            await self._ensure_registered_table(table, self._table_role)
+            await self._ensure_registered_table(table, self._table_role, create_partitions=False)
             if self._table_role == "current":
-                await self._ensure_registered_table(table, "history")
+                await self._ensure_registered_table(table, "history", create_partitions=False)
 
     async def _ddl_for_table(self, table: str) -> str:
         ddl_from_registry = await get_registered_ddl(
@@ -129,7 +184,13 @@ class ETLBase:
         )
         return ""
 
-    async def _ensure_registered_table(self, table: str, table_role: str) -> None:
+    async def _ensure_registered_table(
+        self,
+        table: str,
+        table_role: str,
+        *,
+        create_partitions: bool = True,
+    ) -> None:
         ddl_record = await get_registered_ddl_record(
             self._pg,
             self._layer,
@@ -150,13 +211,15 @@ class ETLBase:
             self._log_prefix,
             self._table_fqn(table, table_role),
         )
-        await self._create_partitions(table, table_role=table_role, ddl_record=ddl_record)
+        if create_partitions:
+            await self._create_partitions(table, table_role=table_role, ddl_record=ddl_record)
 
     async def _create_partitions(
         self,
         table: str,
         table_role: str | None = None,
         ddl_record: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> None:
         role = table_role or self._table_role
         if ddl_record is None:
@@ -171,7 +234,7 @@ class ETLBase:
 
         partition_type = ddl_record.get("partition_type")
         if partition_type == "hash":
-            await self._create_hash_partitions(table, role, ddl_record)
+            await self._create_hash_partitions(table, role, ddl_record, payload=payload)
             return
 
         if partition_type != "range":
@@ -195,34 +258,56 @@ class ETLBase:
             )
             return
 
-        now = datetime.now(timezone.utc)
-        range_start, range_end, suffix = partition_bounds(now, granularity)
+        partition_value = self._partition_value_for_payload(ddl_record, payload)
+        if partition_value is None:
+            return
+
+        range_start, range_end, suffix = partition_bounds(partition_value, granularity)
         schema_name = schema_name_for(self._layer, role)
         partition_name = f"{schema_name}.{self._layer}_{table}_{suffix}"
-        partition_sql = (
-            f"CREATE TABLE IF NOT EXISTS {partition_name} "
-            f"PARTITION OF {self._table_fqn(table, role)} "
+        range_bound = (
             f"FOR VALUES FROM ('{range_start:%Y-%m-%d}') TO ('{range_end:%Y-%m-%d}')"
         )
-        try:
-            await self._pg.execute(partition_sql)
-            default_partition_sql = (
-                f"CREATE TABLE IF NOT EXISTS {schema_name}.{self._layer}_{table}_default "
-                f"PARTITION OF {self._table_fqn(table, role)} DEFAULT"
+        existing_bounds = await self._partition_bounds_map(table, role)
+        if range_bound in existing_bounds:
+            logger.debug(
+                "%s Range partition already attached for %s: %s",
+                self._log_prefix,
+                self._table_fqn(table, role),
+                existing_bounds[range_bound],
             )
-            await self._pg.execute(default_partition_sql)
-            logger.debug("%s Partition ensured: %s", self._log_prefix, partition_name)
-        except Exception as e:
-            logger.info(
-                "%s Partition skip for %s (maybe not a partitioned table): %s",
-                self._log_prefix, self._table_fqn(table, role), e,
+        else:
+            partition_sql = (
+                f"CREATE TABLE IF NOT EXISTS {partition_name} "
+                f"PARTITION OF {self._table_fqn(table, role)} "
+                f"{range_bound}"
             )
+            try:
+                await self._pg.execute(partition_sql)
+                logger.debug("%s Partition ensured: %s", self._log_prefix, partition_name)
+            except Exception as e:
+                if self._is_default_partition_overlap_error(e):
+                    await self._materialize_range_partition_from_default(
+                        table=table,
+                        table_role=role,
+                        partition_name=partition_name,
+                        range_bound=range_bound,
+                        range_start=range_start,
+                        range_end=range_end,
+                        partition_column=str(ddl_record.get("partition_column") or ""),
+                    )
+                    return
+                logger.info(
+                    "%s Partition skip for %s (maybe not a partitioned table): %s",
+                    self._log_prefix, self._table_fqn(table, role), e,
+                )
 
     async def _create_hash_partitions(
         self,
         table: str,
         table_role: str,
         ddl_record: dict[str, Any],
+        payload: dict[str, Any] | None = None,
     ) -> None:
         partition_count = ddl_record.get("partition_count")
         if not isinstance(partition_count, int) or partition_count <= 0:
@@ -245,16 +330,217 @@ class ETLBase:
         schema_name = schema_name_for(self._layer, table_role)
         parent_table = self._table_fqn(table, table_role)
         width = max(2, len(str(partition_count - 1)))
-        for remainder in range(partition_count):
+        existing_bounds = await self._partition_bounds_map(table, table_role)
+        remainders = range(partition_count)
+        if payload is not None:
+            remainder = await self._hash_partition_remainder(
+                table,
+                table_role,
+                ddl_record,
+                payload,
+            )
+            if remainder is None:
+                return
+            remainders = [remainder]
+
+        for remainder in remainders:
+            hash_bound = f"FOR VALUES WITH (MODULUS {partition_count}, REMAINDER {remainder})"
+            if hash_bound in existing_bounds:
+                logger.debug(
+                    "%s Hash partition already attached for %s: %s",
+                    self._log_prefix,
+                    parent_table,
+                    existing_bounds[hash_bound],
+                )
+                continue
             partition_name = (
                 f"{schema_name}.{self._layer}_{table}_p{remainder:0{width}d}"
             )
             partition_sql = (
                 f"CREATE TABLE IF NOT EXISTS {partition_name} "
                 f"PARTITION OF {parent_table} "
-                f"FOR VALUES WITH (MODULUS {partition_count}, REMAINDER {remainder})"
+                f"{hash_bound}"
             )
             await self._pg.execute(partition_sql)
+
+    async def _materialize_range_partition_from_default(
+        self,
+        *,
+        table: str,
+        table_role: str,
+        partition_name: str,
+        range_bound: str,
+        range_start: datetime,
+        range_end: datetime,
+        partition_column: str,
+    ) -> None:
+        existing_bounds = await self._partition_bounds_map(table, table_role)
+        default_table = existing_bounds.get("DEFAULT")
+        if not default_table:
+            raise RuntimeError(
+                f"{self._table_fqn(table, table_role)} default partition not found while creating {partition_name}"
+            )
+
+        parent_table = self._table_fqn(table, table_role)
+        schema_name = schema_name_for(self._layer, table_role)
+        default_table_fqn = f"{schema_name}.{default_table}"
+        column_sql = await self._partition_table_column_sql(table, table_role)
+        lock_key = f"partition-range:{parent_table}:{range_start:%Y%m%d}:{range_end:%Y%m%d}"
+
+        async with self._pg.locked_transaction(lock_key) as session:
+            refreshed_bounds = await self._partition_bounds_map(table, table_role)
+            if range_bound.upper() in refreshed_bounds:
+                return
+
+            await session.execute(text(f"""
+                CREATE TABLE IF NOT EXISTS {partition_name}
+                (LIKE {parent_table} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING GENERATED INCLUDING IDENTITY INCLUDING STORAGE INCLUDING COMMENTS)
+            """))
+            await session.execute(
+                text(f"""
+                    INSERT INTO {partition_name} ({column_sql})
+                    SELECT {column_sql}
+                    FROM {default_table_fqn}
+                    WHERE {partition_column} >= :range_start
+                      AND {partition_column} < :range_end
+                """),
+                {
+                    "range_start": range_start,
+                    "range_end": range_end,
+                },
+            )
+            await session.execute(
+                text(f"""
+                    DELETE FROM {default_table_fqn}
+                    WHERE {partition_column} >= :range_start
+                      AND {partition_column} < :range_end
+                """),
+                {
+                    "range_start": range_start,
+                    "range_end": range_end,
+                },
+            )
+            await session.execute(
+                text(f"""
+                    ALTER TABLE {parent_table}
+                    ATTACH PARTITION {partition_name}
+                    {range_bound}
+                """)
+            )
+        logger.info(
+            "%s Materialized range partition %s from default partition %s",
+            self._log_prefix,
+            partition_name,
+            default_table_fqn,
+        )
+
+    def _partition_value_for_payload(
+        self,
+        ddl_record: dict[str, Any],
+        payload: dict[str, Any] | None,
+    ) -> datetime | None:
+        if not payload:
+            return None
+
+        partition_column = str(ddl_record.get("partition_column") or "").strip()
+        if not partition_column:
+            return None
+
+        value = payload.get(partition_column)
+        if isinstance(value, datetime):
+            return value
+        return None
+
+    async def _hash_partition_remainder(
+        self,
+        table: str,
+        table_role: str,
+        ddl_record: dict[str, Any],
+        payload: dict[str, Any],
+    ) -> int | None:
+        partition_count = ddl_record.get("partition_count")
+        partition_column = str(ddl_record.get("partition_column") or "").strip()
+        if not isinstance(partition_count, int) or partition_count <= 0 or not partition_column:
+            return None
+
+        key_columns = [column.strip() for column in partition_column.split(",") if column.strip()]
+        if not key_columns:
+            return None
+
+        parent_table = self._table_fqn(table, table_role)
+        args_sql = ", ".join(
+            f"CAST(:value_{index} AS text)"
+            for index, _ in enumerate(key_columns)
+        )
+        sql = f"""
+            SELECT remainder
+            FROM generate_series(0, :partition_count - 1) AS remainder
+            WHERE satisfies_hash_partition(
+                '{parent_table}'::regclass,
+                :partition_count,
+                remainder,
+                {args_sql}
+            )
+            LIMIT 1
+        """
+        params: dict[str, Any] = {"partition_count": partition_count}
+        for index, column in enumerate(key_columns):
+            params[f"value_{index}"] = str(payload.get(column) or "")
+
+        row = await self._pg.fetch_one(sql, params)
+        return int(row["remainder"]) if row and row.get("remainder") is not None else None
+
+    async def _partition_bounds_map(
+        self,
+        table: str,
+        table_role: str | None = None,
+    ) -> dict[str, str]:
+        role = table_role or self._table_role
+        rows = await self._pg.fetch_all(
+            """
+            SELECT
+                child.relname AS child_table,
+                pg_get_expr(child.relpartbound, child.oid) AS part_bound
+            FROM pg_inherits inh
+            JOIN pg_class parent ON parent.oid = inh.inhparent
+            JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
+            JOIN pg_class child ON child.oid = inh.inhrelid
+            WHERE parent_ns.nspname = :schema_name
+              AND parent.relname = :table_name
+            """,
+            {
+                "schema_name": schema_name_for(self._layer, role),
+                "table_name": f"{self._layer}_{table}",
+            },
+        )
+        bounds: dict[str, str] = {}
+        for row in rows:
+            part_bound = str(row.get("part_bound") or "").upper()
+            child_table = str(row.get("child_table") or "")
+            if part_bound:
+                bounds[part_bound] = child_table
+        return bounds
+
+    async def _partition_table_column_sql(
+        self,
+        table: str,
+        table_role: str | None = None,
+    ) -> str:
+        role = table_role or self._table_role
+        rows = await self._pg.fetch_all(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = :schema_name
+              AND table_name = :table_name
+            ORDER BY ordinal_position
+            """,
+            {
+                "schema_name": schema_name_for(self._layer, role),
+                "table_name": f"{self._layer}_{table}",
+            },
+        )
+        return ", ".join(str(row["column_name"]) for row in rows)
 
     async def _recover_registered_table(
         self,
@@ -295,12 +581,20 @@ class ETLBase:
             or ('relation "' in message and '" does not exist' in message)
         )
 
+    def _is_default_partition_overlap_error(self, exc: BaseException) -> bool:
+        message = " | ".join(self._schema_error_messages(exc)).lower()
+        return (
+            "updated partition constraint for default partition" in message
+            and "would be violated by some row" in message
+        )
+
     async def _execute_with_table_recovery(
         self,
         table: str,
         operation: Callable[[], Awaitable[T]],
         *,
         table_role: str | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> T:
         role = table_role or self._table_role
         try:
@@ -317,6 +611,8 @@ class ETLBase:
                 self._schema_error_messages(exc)[0] if self._schema_error_messages(exc) else exc,
             )
             await self._recover_registered_table(table, role)
+            if payload is not None:
+                await self._ensure_partitions_for_payload(table, payload, role)
             return await operation()
 
     async def _is_partitioned_table(self, table: str, table_role: str | None = None) -> bool:
@@ -343,8 +639,6 @@ class ETLBase:
     # =================================================================
     async def _connect_producer(self) -> None:
         brokers = _brokers()
-        retryable = (NodeNotReadyError, KafkaConnectionError, RequestTimedOutError, ConnectionError, OSError)
-
         for attempt in range(KAFKA_MAX_RETRY):
             try:
                 self._producer = AIOKafkaProducer(
@@ -354,11 +648,15 @@ class ETLBase:
                     key_serializer=lambda k: k.encode("utf-8") if k else None,
                     acks="all",
                     request_timeout_ms=30000,
+                    retry_backoff_ms=1000,
+                    metadata_max_age_ms=60000,
+                    connections_max_idle_ms=540000,
                 )
                 await self._producer.start()
                 logger.info("%s Kafka producer connected: client=%s", self._log_prefix, self._producer_client_id)
                 return
-            except retryable as e:
+            except KAFKA_RETRYABLE_ERRORS as e:
+                await self._close_producer()
                 delay = min(KAFKA_RETRY_WAIT * (2 ** min(attempt, 5)), KAFKA_MAX_RETRY_DELAY)
                 logger.warning("%s Kafka producer retry %d/%d: %s", self._log_prefix, attempt + 1, KAFKA_MAX_RETRY, e)
                 await asyncio.sleep(delay)
@@ -376,11 +674,26 @@ class ETLBase:
         if not self._producer:
             await self._connect_producer()
 
-        await self._producer.send_and_wait(
-            topic=self._producer_topic,
-            value=value,
-            key=record_id,
-        )
+        try:
+            await self._producer.send_and_wait(
+                topic=self._producer_topic,
+                value=value,
+                key=record_id,
+            )
+        except KAFKA_RETRYABLE_ERRORS as exc:
+            logger.warning(
+                "%s Producer send failed, reconnecting topic=%s record_id=%s error=%s",
+                self._log_prefix,
+                self._producer_topic,
+                record_id,
+                exc,
+            )
+            await self._reconnect_producer()
+            await self._producer.send_and_wait(
+                topic=self._producer_topic,
+                value=value,
+                key=record_id,
+            )
         logger.info(
             "%s Emitted → %s record_id=%s source=%s type=%s",
             self._log_prefix, self._producer_topic, record_id, data_source, data_type,
@@ -391,8 +704,6 @@ class ETLBase:
     # =================================================================
     async def _connect_consumer(self) -> None:
         brokers = _brokers()
-        retryable = (NodeNotReadyError, KafkaConnectionError, RequestTimedOutError, ConnectionError, OSError)
-
         for attempt in range(KAFKA_MAX_RETRY):
             try:
                 self._consumer = AIOKafkaConsumer(
@@ -406,6 +717,10 @@ class ETLBase:
                     max_poll_records=100,
                     session_timeout_ms=30000,
                     heartbeat_interval_ms=10000,
+                    request_timeout_ms=40000,
+                    retry_backoff_ms=1000,
+                    metadata_max_age_ms=60000,
+                    connections_max_idle_ms=540000,
                 )
                 await self._consumer.start()
                 logger.info(
@@ -414,7 +729,8 @@ class ETLBase:
                 )
                 await self._resume_from_redis()
                 return
-            except retryable as e:
+            except KAFKA_RETRYABLE_ERRORS as e:
+                await self._close_consumer()
                 delay = min(KAFKA_RETRY_WAIT * (2 ** min(attempt, 5)), KAFKA_MAX_RETRY_DELAY)
                 logger.warning(
                     "%s Kafka consumer retry %d/%d: %s",
@@ -508,8 +824,17 @@ class ETLBase:
                                 await self._commit_and_save(msg.topic, msg.partition, msg.offset)
                         except Exception:
                             logger.exception("%s Handler error", self._log_prefix)
+            except KAFKA_RETRYABLE_ERRORS as exc:
+                logger.warning(
+                    "%s Consumer connection lost, reconnecting: %s",
+                    self._log_prefix,
+                    exc,
+                )
+                await self._reconnect_consumer()
+                await asyncio.sleep(1)
             except Exception:
                 logger.exception("%s Consumer loop error, reconnecting...", self._log_prefix)
+                await self._reconnect_consumer()
                 await asyncio.sleep(5)
 
     async def _dispatch(self, message: dict[str, Any]) -> bool:
@@ -539,20 +864,13 @@ class ETLBase:
     # =================================================================
     async def stop(self) -> None:
         self._running = False
-        if self._consumer:
-            try:
-                await self._consumer.stop()
-            except Exception:
-                pass
         if self._producer:
             try:
                 await self._producer.flush()
             except Exception:
                 pass
-            try:
-                await self._producer.stop()
-            except Exception:
-                pass
+        await self._close_consumer()
+        await self._close_producer()
         try:
             await self._pg.close()
         except Exception:

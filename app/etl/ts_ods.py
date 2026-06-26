@@ -72,7 +72,7 @@ ON CONFLICT (record_id) DO UPDATE SET
     content_html = {_prefer_text(_ODS_NEWS_TABLE, "content_html")},
     summary_html = {_prefer_text(_ODS_NEWS_TABLE, "summary_html")},
     author = {_prefer_text(_ODS_NEWS_TABLE, "author")},
-    news_type = {_prefer_text(_ODS_NEWS_TABLE, "news_type")},
+    news_type = {_prefer_json(_ODS_NEWS_TABLE, "news_type")},
     organization = {_prefer_json(_ODS_NEWS_TABLE, "organization")},
     tags = {_prefer_json(_ODS_NEWS_TABLE, "tags")},
     external_links = {_prefer_json(_ODS_NEWS_TABLE, "external_links")},
@@ -363,6 +363,7 @@ class TsOds(ETLBase):
             result = await self._execute_with_table_recovery(
                 table,
                 partial(self._write_current_and_history, table=table, payload=payload),
+                payload=payload,
             )
 
             await self._emit(

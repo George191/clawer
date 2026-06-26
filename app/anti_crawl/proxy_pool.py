@@ -516,10 +516,11 @@ def get_proxy_pool() -> ProxyPool:
     global _proxy_pool
     if _proxy_pool is None:
         _proxy_pool = ProxyPool()
-    
-    adapters = _build_adapters_from_config()
-    for adapter in adapters:
-        _proxy_pool.register_adapter(adapter)
+
+    if not _proxy_pool._adapters:
+        adapters = _build_adapters_from_config()
+        for adapter in adapters:
+            _proxy_pool.register_adapter(adapter)
     return _proxy_pool
 
 
