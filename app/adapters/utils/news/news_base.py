@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
@@ -42,6 +42,11 @@ _ATTACHMENT_EXTENSIONS = (
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
     ".csv", ".txt", ".zip", ".rar", ".7z", ".json", ".xml",
     ".kml", ".kmz", ".geojson", ".gdb", ".gpkg",
+)
+
+_IMAGE_EXTENSIONS = (
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
+    ".tif", ".tiff", ".avif", ".ico",
 )
 
 
@@ -101,7 +106,8 @@ class NewsBaseAdapter(BaseSiteAdapter):
                 continue
 
             try:
-                parsed = urlparse(href)
+                clean = self.clean_url(urljoin(_base_url, href))
+                parsed = urlparse(clean)
                 domain = parsed.netloc.lower().replace("www.", "")
             except Exception:
                 continue
@@ -122,16 +128,69 @@ class NewsBaseAdapter(BaseSiteAdapter):
                 continue
 
             # 去重（忽略 fragment）
-            clean = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-            if parsed.query:
-                clean += f"?{parsed.query}"
+            if self.is_attachment_url(clean) or self.is_image_url(clean):
+                continue
+
             if clean in seen:
                 continue
             seen.add(clean)
 
-            external_links.append(href)
+            external_links.append(clean)
 
         return external_links
+
+    @classmethod
+    def dedupe_urls(cls, urls: list[str]) -> list[str]:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for url in urls:
+            if not isinstance(url, str):
+                continue
+            clean = cls.clean_url(url)
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            deduped.append(clean)
+        return deduped
+
+    @classmethod
+    def dedupe_media_items(cls, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            url = cls.clean_url(str(item.get("url") or ""))
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            next_item = dict(item)
+            next_item["url"] = url
+            deduped.append(next_item)
+        return deduped
+
+    @classmethod
+    def merge_unique_list(cls, existing: Any, incoming: list[str]) -> list[str]:
+        merged: list[str] = []
+        if isinstance(existing, list):
+            merged.extend(str(item) for item in existing if isinstance(item, str))
+        merged.extend(incoming)
+        return cls.dedupe_urls(merged)
+
+    @classmethod
+    def merge_external_links(cls, existing: Any, incoming: list[str]) -> list[str]:
+        merged: list[str] = []
+        if isinstance(existing, list):
+            merged.extend(str(item) for item in existing if isinstance(item, str))
+        merged.extend(incoming)
+
+        external_links: list[str] = []
+        for url in merged:
+            clean = cls.clean_url(url)
+            if not clean or cls.is_attachment_url(clean) or cls.is_image_url(clean):
+                continue
+            external_links.append(clean)
+        return cls.dedupe_urls(external_links)
 
     def merge_external_links_from_content(
         self,
@@ -140,36 +199,55 @@ class NewsBaseAdapter(BaseSiteAdapter):
         content_field: str = "content_html",
     ) -> None:
         """从正文 HTML 提取外链并合并到 record.external_links。"""
-        content_html = str(record.get(content_field) or "").strip()
-        if not content_html:
-            return
-
-        links = [
-            link
-            for link in self.extract_external_links(content_html, base_url)
-            if not self.is_attachment_url(link)
-        ]
-        if not links:
-            return
-
         existing = record.get("external_links") or []
-        merged: list[str] = []
-        seen: set[str] = set()
-        for url in [*existing, *links]:
-            if url in seen:
-                continue
-            seen.add(url)
-            merged.append(url)
-        record["external_links"] = merged
+        links: list[str] = []
+        content_html = str(record.get(content_field) or "").strip()
+        if content_html:
+            links = self.extract_external_links(content_html, base_url)
+
+        if not links and not existing:
+            record.pop("external_links", None)
+            return
+
+        merged = self.merge_external_links(existing, links)
+        if merged:
+            record["external_links"] = merged
+        else:
+            record.pop("external_links", None)
 
     @staticmethod
     def is_attachment_url(url: str) -> bool:
         return bool(NewsBaseAdapter._attachment_extension(url))
 
     @staticmethod
+    def is_image_url(url: str) -> bool:
+        return bool(NewsBaseAdapter._image_extension(url))
+
+    @staticmethod
+    def clean_url(url: str) -> str:
+        value = str(url or "").strip()
+        if not value:
+            return ""
+        parsed = urlparse(value)
+        if not parsed.scheme or parsed.scheme not in ("http", "https"):
+            return ""
+        clean = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        if parsed.query:
+            clean += f"?{parsed.query}"
+        return clean
+
+    @staticmethod
     def _attachment_extension(url: str) -> str:
         path = urlparse(url).path.lower()
         for extension in _ATTACHMENT_EXTENSIONS:
+            if path.endswith(extension):
+                return extension
+        return ""
+
+    @staticmethod
+    def _image_extension(url: str) -> str:
+        path = urlparse(url).path.lower()
+        for extension in _IMAGE_EXTENSIONS:
             if path.endswith(extension):
                 return extension
         return ""

@@ -1,0 +1,112 @@
+name: arstechnica
+display_name: "Ars Technica News"
+base_url: "https://arstechnica.com"
+data_type: news
+adapter: arstechnica
+anti_crawl_enabled: false
+description: >
+  Crawl Ars Technica articles from the server-rendered homepage pagination,
+  then enrich each record from the official RSS feed when available and from
+  server-rendered article pages. RSS is only used as recent metadata and does
+  not limit historical backfill.
+
+response_type: html
+
+list_page: "/page/{page}/"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+dedup_fields:
+  - url
+
+list_fields:
+  - name: title
+    selector: "main article h2 a"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "Article title from homepage card"
+
+  - name: url
+    selector: "main article h2 a"
+    selector_type: css
+    field_type: href
+    required: true
+    transform: strip
+    description: "Article URL from homepage card"
+
+  - name: date
+    selector: "main article time"
+    selector_type: css
+    field_type: attr
+    attr_name: datetime
+    required: false
+    transform: strip
+    description: "Homepage card publication datetime"
+
+  - name: summary
+    selector: "main article p"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "Homepage card summary"
+
+  - name: thumbnail
+    selector: "main article img.wp-post-image"
+    selector_type: css
+    field_type: src
+    required: false
+    transform: strip
+    description: "Homepage card thumbnail"
+
+list_pagination:
+  type: next_page
+  next_selector: "a.post-navigation-link[href]"
+  start_page: 1
+  max_pages: 200
+  results_per_page: 36
+
+detail_page: "{url}"
+detail_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+detail_fields:
+  - name: content
+    selector: "article .post-content"
+    selector_type: css
+    field_type: html
+    required: false
+    description: "Article body blocks; adapter merges all matching blocks"
+
+download:
+  - selector: "thumbnail"
+    selector_type: json
+    link_type: src
+    description: "RSS or metadata thumbnail"
+    asset_type: thumbnail
+
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    description: "Body image resources"
+    asset_type: image
+
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    description: "Linked attachments such as PDFs"
+    asset_type: attachment
+
+# python -m app.crawler.main --template arstechnica

@@ -180,13 +180,13 @@ async def run_single_template(
     try:
         result = await engine.crawl(template)
         if result.success:
-            logger.info(f"✓ 成功采集: {template.name}, 参数: {params}")
+            logger.info(f"[OK] 成功采集: {template.name}, 参数: {params}")
             return True
         else:
-            logger.warning(f"✗ 采集失败: {template.name}, 错误: {result.errors}")
+            logger.warning(f"[FAIL] 采集失败: {template.name}, 错误: {result.errors}")
             return False
     except Exception as e:
-        logger.exception(f"✗ 采集异常: {template.name}, 错误: {e}")
+        logger.exception(f"[ERROR] 采集异常: {template.name}, 错误: {e}")
         return False
 
 
@@ -372,13 +372,13 @@ async def run_from_list_file_stream(
                     result = await engine.crawl(tmpl)
                     
                     if result.success:
-                        logger.info(f"✓ 批次 {idx + 1} 成功")
+                        logger.info(f"[OK] 批次 {idx + 1} 成功")
                         return len(batch_data)
-                    logger.warning(f"✗ 批次 {idx + 1} 失败: {result.errors}")
+                    logger.warning(f"[FAIL] 批次 {idx + 1} 失败: {result.errors}")
                     return -len(batch_data)
                 
                 except Exception as e:
-                    logger.exception(f"✗ 批次 {idx + 1} 异常: {e}")
+                    logger.exception(f"[ERROR] 批次 {idx + 1} 异常: {e}")
                     return -len(batch_data)
         
         # 创建所有任务，带错峰启动避免并发洪峰
@@ -476,14 +476,14 @@ async def run_from_command_line(
                 success = result.success
 
                 if success:
-                    logger.info(f"✓ 成功: {template.name}, 参数: {params}")
+                    logger.info(f"[OK] 成功: {template.name}, 参数: {params}")
                     return True
                 else:
-                    logger.warning(f"✗ 失败: {template.name}, 错误: {result.errors}")
+                    logger.warning(f"[FAIL] 失败: {template.name}, 错误: {result.errors}")
                     return False
 
             except Exception as e:
-                logger.exception(f"✗ 异常: {template.name}, 错误: {e}")
+                logger.exception(f"[ERROR] 异常: {template.name}, 错误: {e}")
                 return False
 
     try:
@@ -513,8 +513,17 @@ async def run_from_command_line(
         await engine.close()
 
 
+def _reconfigure_stdio_utf8() -> None:
+    """Ensure redirected Windows logs are written as UTF-8."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def setup_logging(service: str = "crawler") -> None:
     """设置日志。"""
+    _reconfigure_stdio_utf8()
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format=f"%(asctime)s [{service.upper()}] %(levelname)s %(name)s: %(message)s",

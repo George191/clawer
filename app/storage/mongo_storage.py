@@ -15,14 +15,18 @@ from functools import reduce
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from pymongo import ReturnDocument
 
 from app.config.settings import settings
 from app.storage.file_storage import StorageBackend
 from app.utils.path import get_nested_value
 
 logger = logging.getLogger(__name__)
+
+DOWNLOAD_CLAIM_TIMEOUT = timedelta(hours=2)
 
 
 class MongoStorage(StorageBackend):
@@ -53,6 +57,7 @@ class MongoStorage(StorageBackend):
         collection = self._db[collection_name]
         await collection.create_index("_meta.record_id", unique=True)
         await collection.create_index("_meta.download_status")
+        await collection.create_index("_meta.download_claimed_at")
         await collection.create_index("_meta.sync_status")
         return collection
 
@@ -82,10 +87,19 @@ class MongoStorage(StorageBackend):
 
         existing = await collection.find_one({"_meta.record_id": record_id})
         if existing:
-            record_with_meta["_meta"]["created_at"] = existing["_meta"].get(
+            existing_meta = existing.get("_meta", {})
+            record_with_meta["_meta"]["created_at"] = existing_meta.get(
                 "created_at", datetime.now(timezone.utc)
             )
+            record_with_meta["_meta"]["download_status"] = existing_meta.get(
+                "download_status", "pending"
+            )
+            record_with_meta["_meta"]["sync_status"] = existing_meta.get(
+                "sync_status", "pending"
+            )
             record_with_meta["_meta"]["updated_at"] = datetime.now(timezone.utc)
+            if "assets" not in record and existing.get("assets") is not None:
+                record_with_meta["assets"] = existing["assets"]
             await collection.replace_one(
                 {"_meta.record_id": record_id},
                 record_with_meta,
@@ -133,13 +147,16 @@ class MongoStorage(StorageBackend):
         updates: dict[str, Any],
     ) -> None:
         collection = await self._get_collection(template_name)
-        updates["_meta.updated_at"] = datetime.now(timezone.utc)
+        set_fields = {
+            **updates,
+            "_meta.updated_at": datetime.now(timezone.utc),
+        }
 
         await collection.update_one(
             {"_meta.record_id": record_id},
-            {"$set": updates},
+            {"$set": set_fields},
         )
-        logger.debug("Updated %d fields for %s", len(updates) - 1, record_id)
+        logger.debug("Updated %d fields for %s", len(updates), record_id)
 
     async def update_sync_status(
         self,
@@ -243,18 +260,14 @@ class MongoStorage(StorageBackend):
         """
         await self._ensure_connection()
 
-        filter_query: dict[str, Any] = {
-            "_meta.download_status": {"$in": ["pending", "downloading"]},
-        }
+        stale_before = datetime.now(timezone.utc) - DOWNLOAD_CLAIM_TIMEOUT
+        filter_query = self._download_claim_filter(stale_before)
 
         if template_name:
             collection = await self._get_collection(template_name)
-            cursor = collection.find(filter_query).limit(limit)
-            results = []
-            async for doc in cursor:
-                doc.pop("_id", None)
-                results.append(doc)
-            return results
+            return await self._claim_pending_downloads_from_collection(
+                collection, filter_query, limit,
+            )
 
         # 全库扫描
         coll_names = await self._db.list_collection_names()
@@ -270,13 +283,60 @@ class MongoStorage(StorageBackend):
             results = []
             for coll_name in coll_names:
                 collection = self._db[coll_name]
-                cursor = collection.find(filter_query).limit(limit)
-                async for doc in cursor:
-                    doc.pop("_id", None)
-                    results.append(doc)
-                    if len(results) >= limit:
-                        return results
+                claimed = await self._claim_pending_downloads_from_collection(
+                    collection, filter_query, limit - len(results),
+                )
+                results.extend(claimed)
+                if len(results) >= limit:
+                    return results
             return results
+
+    @staticmethod
+    def _download_claim_filter(stale_before: datetime) -> dict[str, Any]:
+        return {
+            "$or": [
+                {"_meta.download_status": "pending"},
+                {
+                    "$and": [
+                        {"_meta.download_status": "downloading"},
+                        {
+                            "$or": [
+                                {"_meta.download_claimed_at": {"$lt": stale_before}},
+                                {"_meta.download_claimed_at": {"$exists": False}},
+                            ]
+                        },
+                    ]
+                },
+            ]
+        }
+
+    async def _claim_pending_downloads_from_collection(
+        self,
+        collection: Any,
+        filter_query: dict[str, Any],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        results = []
+        for _ in range(max(0, limit)):
+            now = datetime.now(timezone.utc)
+            doc = await collection.find_one_and_update(
+                filter_query,
+                {
+                    "$set": {
+                        "_meta.download_status": "downloading",
+                        "_meta.download_claimed_at": now,
+                        "_meta.updated_at": now,
+                    },
+                    "$inc": {"_meta.download_attempts": 1},
+                },
+                sort=[("_meta.updated_at", 1), ("_id", 1)],
+                return_document=ReturnDocument.AFTER,
+            )
+            if doc is None:
+                break
+            doc.pop("_id", None)
+            results.append(doc)
+        return results
 
     async def _balanced_pending_downloads(
         self,
@@ -294,12 +354,10 @@ class MongoStorage(StorageBackend):
             if len(results) >= limit:
                 break
             collection = self._db[coll_name]
-            cursor = collection.find(filter_query).limit(per_coll)
-            async for doc in cursor:
-                doc.pop("_id", None)
-                results.append(doc)
-                if len(results) >= limit:
-                    break
+            claimed = await self._claim_pending_downloads_from_collection(
+                collection, filter_query, min(per_coll, limit - len(results)),
+            )
+            results.extend(claimed)
 
         return results
 

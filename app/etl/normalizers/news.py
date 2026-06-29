@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
@@ -131,6 +132,39 @@ def normalize_satellite_today(record: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _parse_arstechnica_datetime(*values: Any) -> datetime | None:
+    for value in values:
+        parsed = safe_datetime(value)
+        if parsed is not None:
+            return parsed
+
+        text = safe_str(value)
+        if not text:
+            continue
+        try:
+            parsed = parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            continue
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def normalize_arstechnica(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "arstechnica")
+    normalized["summary_html"] = safe_str(record.get("summary_html"))
+    normalized["summary"] = html_to_text(record.get("summary") or record.get("summary_html"))
+    normalized["news_type"] = json_dumps(record.get("category_names"))
+    normalized["source_published_at"] = _parse_arstechnica_datetime(
+        record.get("source_published_at"),
+        record.get("date"),
+    )
+    normalized["source_updated_at"] = _parse_arstechnica_datetime(
+        record.get("source_updated_at"),
+        record.get("modified"),
+    )
+    return normalized
+
+
 def normalize_ssc_press(record: dict[str, Any]) -> dict[str, Any]:
     normalized = _news_common(record, "ssc_press")
     normalized["source_published_at"] = (
@@ -146,4 +180,5 @@ register_normalizer("news", "blacksky_press", normalize_blacksky_press)
 register_normalizer("news", "blacksky_news", normalize_blacksky_news)
 register_normalizer("news", "blacksky_posts", normalize_blacksky_posts)
 register_normalizer("news", "satellite_today", normalize_satellite_today)
+register_normalizer("news", "arstechnica", normalize_arstechnica)
 register_normalizer("news", "ssc_press", normalize_ssc_press)

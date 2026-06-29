@@ -74,7 +74,7 @@ def extract_content(html: str, record: dict, detail_url: str, content_field_sele
         dateline.drop_tree()
 
     images: list[dict[str, str]] = []
-    img_idx = 0
+    placeholders: dict[str, str] = {}
     for img in content_clone.cssselect("img"):
         src = img.get("src") or img.get("data-src") or ""
         if not src or src.startswith("data:"):
@@ -82,23 +82,38 @@ def extract_content(html: str, record: dict, detail_url: str, content_field_sele
         if "/emoji/" in src or "emoji" in src.lower():
             continue
 
-        full_url = urljoin(detail_url, src.strip())
-        placeholder = f"{{{{img_{img_idx}}}}}"
+        full_url = NewsBaseAdapter.clean_url(urljoin(detail_url, src.strip()))
+        if not full_url:
+            continue
+        placeholder = placeholders.get(full_url)
+        if placeholder:
+            img.set("src", placeholder)
+            if "srcset" in img.attrib:
+                del img.attrib["srcset"]
+            if "data-src" in img.attrib:
+                del img.attrib["data-src"]
+            continue
+
+        placeholder = f"{{{{img_{len(images)}}}}}"
         alt = (img.get("alt") or "").strip()
         images.append({
             "url": full_url,
             "placeholder": placeholder,
             "alt": alt,
         })
+        placeholders[full_url] = placeholder
         img.set("src", placeholder)
-        img_idx += 1
+        if "srcset" in img.attrib:
+            del img.attrib["srcset"]
+        if "data-src" in img.attrib:
+            del img.attrib["data-src"]
 
     content_html = etree.tostring(content_clone, encoding="unicode", method="html").strip()
     if content_html:
         record["content_html"] = content_html
 
     if images:
-        record["images"] = images
+        record["images"] = NewsBaseAdapter.dedupe_media_items(images)
 
 
 def extract_slides(html: str, record: dict, detail_url: str, content_field_selector: str) -> None:
@@ -133,8 +148,8 @@ def extract_slides(html: str, record: dict, detail_url: str, content_field_selec
         if not raw_src:
             continue
 
-        media_url = urljoin(detail_url, raw_src.strip())
-        if media_url in seen:
+        media_url = NewsBaseAdapter.clean_url(urljoin(detail_url, raw_src.strip()))
+        if not media_url or media_url in seen:
             continue
         seen.add(media_url)
 
@@ -153,7 +168,7 @@ def extract_slides(html: str, record: dict, detail_url: str, content_field_selec
         slides.append(slide)
 
     if slides:
-        record["slides"] = slides
+        record["slides"] = NewsBaseAdapter.dedupe_media_items(slides)
 
 
 def extract_attachments(html: str, record: dict, detail_url: str, content_field_selector: str) -> None:
@@ -172,7 +187,9 @@ def extract_attachments(html: str, record: dict, detail_url: str, content_field_
             if not raw_url:
                 continue
 
-            file_url = urljoin(detail_url, raw_url)
+            file_url = NewsBaseAdapter.clean_url(urljoin(detail_url, raw_url))
+            if NewsBaseAdapter.is_image_url(file_url):
+                continue
             if not _is_attachment_url(file_url) or file_url in seen:
                 continue
             seen.add(file_url)
@@ -188,7 +205,7 @@ def extract_attachments(html: str, record: dict, detail_url: str, content_field_
             attachments.append(attachment)
 
     if attachments:
-        record["attachments"] = attachments
+        record["attachments"] = NewsBaseAdapter.dedupe_media_items(attachments)
 
 
 def extract_tags(html: str, record: dict) -> None:
@@ -210,25 +227,18 @@ def extract_tags(html: str, record: dict) -> None:
 
 def extract_external_links(adapter: NewsBaseAdapter, record: dict, detail_url: str) -> None:
     """从 SSC 正文 HTML 提取外链。"""
+    existing = record.get("external_links") or []
+    external_links: list[str] = []
     content_html = str(record.get("content_html") or "").strip()
-    if not content_html:
-        return
+    if content_html:
+        external_links = adapter.extract_external_links(content_html, detail_url)
 
-    external_links = [
-        link
-        for link in adapter.extract_external_links(content_html, detail_url)
-        if not _is_attachment_url(link)
-    ]
-    if external_links:
-        existing = record.get("external_links") or []
-        merged: list[str] = []
-        seen: set[str] = set()
-        for url in [*existing, *external_links]:
-            if url in seen:
-                continue
-            seen.add(url)
-            merged.append(url)
-        record["external_links"] = merged
+    if external_links or existing:
+        merged = adapter.merge_external_links(existing, external_links)
+        if merged:
+            record["external_links"] = merged
+        else:
+            record.pop("external_links", None)
 
 
 def _find_content_nodes(tree: Any, content_field_selector: str) -> list[Any]:

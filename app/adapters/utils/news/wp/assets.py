@@ -65,6 +65,7 @@ def _wrapper_html(wrapper: Any) -> str:
 def extract_images_from_wrapper(wrapper: Any, base_url: str) -> list[dict[str, str]]:
     """Extract non-slide body images from a parsed HTML wrapper."""
     images: list[dict[str, str]] = []
+    placeholders: dict[str, str] = {}
 
     for img in wrapper.cssselect("img"):
         if _has_slide_ancestor(img):
@@ -74,8 +75,20 @@ def extract_images_from_wrapper(wrapper: Any, base_url: str) -> list[dict[str, s
         if _is_ignored_image(raw_src):
             continue
 
+        image_url = NewsBaseAdapter.clean_url(urljoin(base_url, raw_src))
+        if not image_url:
+            continue
+        placeholder = placeholders.get(image_url)
+        if placeholder:
+            img.set("src", placeholder)
+            if "srcset" in img.attrib:
+                del img.attrib["srcset"]
+            if "data-src" in img.attrib:
+                del img.attrib["data-src"]
+            continue
+
         image = {
-            "url": urljoin(base_url, raw_src),
+            "url": image_url,
             "placeholder": f"{{{{img_{len(images)}}}}}",
             "alt": (img.get("alt") or "").strip(),
         }
@@ -83,6 +96,7 @@ def extract_images_from_wrapper(wrapper: Any, base_url: str) -> list[dict[str, s
         if caption:
             image["caption"] = caption
         images.append(image)
+        placeholders[image_url] = image["placeholder"]
 
         img.set("src", image["placeholder"])
         if "srcset" in img.attrib:
@@ -90,7 +104,7 @@ def extract_images_from_wrapper(wrapper: Any, base_url: str) -> list[dict[str, s
         if "data-src" in img.attrib:
             del img.attrib["data-src"]
 
-    return images
+    return NewsBaseAdapter.dedupe_media_items(images)
 
 
 def extract_images_from_html(html: str, base_url: str) -> tuple[list[dict[str, str]], str]:
@@ -128,7 +142,11 @@ def extract_attachment_links(html: str, base_url: str) -> list[dict[str, str]]:
         href = (link.get("href") or "").strip()
         if not href:
             continue
-        file_url = urljoin(base_url, href)
+        file_url = NewsBaseAdapter.clean_url(urljoin(base_url, href))
+        if not file_url:
+            continue
+        if NewsBaseAdapter.is_image_url(file_url):
+            continue
         ext = attachment_extension(file_url)
         if not ext or file_url in seen:
             continue
@@ -143,7 +161,7 @@ def extract_attachment_links(html: str, base_url: str) -> list[dict[str, str]]:
             item["label"] = label
         attachments.append(item)
 
-    return attachments
+    return NewsBaseAdapter.dedupe_media_items(attachments)
 
 
 async def process_content_html(
@@ -165,13 +183,13 @@ async def process_content_html(
 
     images = extract_images_from_wrapper(wrapper, base_url)
     if images:
-        record["images"] = images
+        record["images"] = NewsBaseAdapter.dedupe_media_items(images)
 
     record["content_html"] = _wrapper_html(wrapper)
 
     attachments = extract_attachment_links(content_html, base_url)
     if attachments:
-        record["attachments"] = attachments
+        record["attachments"] = NewsBaseAdapter.dedupe_media_items(attachments)
 
     adapter.merge_external_links_from_content(record, base_url)
 

@@ -190,9 +190,43 @@ class DownloadWorker:
 
                 # 下载并上传到 MinIO
                 data_type = meta["data_type"]
-                updates: dict[str, Any] = {}
+                pending_by_url: dict[str, dict[str, Any]] = {}
+                skipped_existing = 0
 
                 for idx, dl_info in enumerate(download_urls):
+                    asset_key = dl_info.get("asset_key", f"assets.{idx}")
+                    if self._asset_exists(record, asset_key):
+                        skipped_existing += 1
+                        continue
+
+                    url = str(dl_info.get("url") or "").strip()
+                    if not url:
+                        continue
+
+                    pending = pending_by_url.setdefault(
+                        url,
+                        {
+                            "url": url,
+                            "filename": dl_info["filename"],
+                            "asset_keys": [],
+                        },
+                    )
+                    pending["asset_keys"].append(asset_key)
+
+                # The record may already have partial assets from a previous run.
+                if not pending_by_url:
+                    status = "downloaded" if skipped_existing else "no_assets"
+                    await self._mongo.update_file_status(
+                        template_name, record_id, status,
+                    )
+                    logger.info(
+                        "DownloadWorker: %s has %d existing assets, status=%s",
+                        record_id, skipped_existing, status,
+                    )
+                    return True
+
+                downloaded_assets = 0
+                for dl_info in pending_by_url.values():
                     url = dl_info["url"]
                     filename = dl_info["filename"]
 
@@ -201,27 +235,33 @@ class DownloadWorker:
                         record_id, filename,
                     )
                     if asset_path:
-                        key = dl_info.get("asset_key", f"assets.{idx}")
-                        updates[key] = asset_path
+                        asset_keys = list(dict.fromkeys(dl_info["asset_keys"]))
+                        updates = {key: asset_path for key in asset_keys}
+                        await self._mongo.update_record_fields(
+                            template_name, record_id, updates,
+                        )
+                        for key in asset_keys:
+                            self._set_nested_value(record, key, asset_path)
+                        downloaded_assets += len(updates)
 
-                # worker 停止时不清算状态，保留 pending 以便下次继续
                 if not self._running:
+                    await self._mongo.update_file_status(
+                        template_name, record_id, "pending",
+                    )
                     logger.info(
                         "DownloadWorker: worker stopping, leaving %s pending",
                         record_id,
                     )
                     return False
 
-                if updates:
-                    await self._mongo.update_record_fields(
-                        template_name, record_id, updates,
-                    )
+                if downloaded_assets or skipped_existing:
                     await self._mongo.update_file_status(
                         template_name, record_id, "downloaded",
                     )
                     logger.info(
-                        "DownloadWorker: downloaded %d assets for %s",
-                        len(updates), record_id,
+                        "DownloadWorker: downloaded %d assets for %s "
+                        "(skipped_existing=%d)",
+                        downloaded_assets, record_id, skipped_existing,
                     )
                 else:
                     await self._mongo.update_file_status(
@@ -233,11 +273,30 @@ class DownloadWorker:
                 logger.exception("DownloadWorker: failed for %s", record_id)
                 try:
                     await self._mongo.update_file_status(
-                        template_name, record_id, "", "failed",
+                        template_name, record_id, "failed",
                     )
                 except Exception:
                     pass
                 return False
+
+    @staticmethod
+    def _asset_exists(record: dict[str, Any], asset_key: str) -> bool:
+        value = get_nested_value(record, asset_key)
+        if isinstance(value, str):
+            return bool(value.strip())
+        return value is not None
+
+    @staticmethod
+    def _set_nested_value(record: dict[str, Any], asset_key: str, value: str) -> None:
+        current: dict[str, Any] = record
+        parts = asset_key.split(".")
+        for part in parts[:-1]:
+            next_value = current.get(part)
+            if not isinstance(next_value, dict):
+                next_value = {}
+                current[part] = next_value
+            current = next_value
+        current[parts[-1]] = value
 
     async def _get_template(self, template_name: str) -> SiteTemplate | None:
         """获取模板（带缓存）。"""
