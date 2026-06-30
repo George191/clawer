@@ -34,15 +34,6 @@ class TableLayout:
         return False
 
 
-_HISTORY_PARTITION_DEFAULTS: dict[tuple[str, str], tuple[str, str]] = {
-    ("rds", "*"): ("updated_at", "month"),
-    ("ods", "patent"): ("publication_date", "year"),
-    ("ods", "news"): ("source_published_at", "month"),
-    ("ods", "navwarn"): ("issued_at", "month"),
-    ("ods", "intelligence"): ("source_published_at", "month"),
-}
-
-
 def normalize_table_role(table_role: str | None) -> TableRole:
     role = (table_role or "current").strip().lower()
     if role not in {"current", "history"}:
@@ -88,17 +79,8 @@ def default_table_layout(
 
     if role == "current" and layer == "ods":
         partition_type = "hash"
-        partition_column = "record_id"
+        partition_column = RDS_CURRENT_HASH_PARTITION_COLUMN
         partition_count = DEFAULT_HASH_PARTITION_COUNT
-
-    if role == "history":
-        defaults = _HISTORY_PARTITION_DEFAULTS.get((layer, logical_table))
-        if defaults is None:
-            defaults = _HISTORY_PARTITION_DEFAULTS.get((layer, "*"))
-        if defaults is not None:
-            partition_type = "range"
-            partition_column = defaults[0]
-            partition_granularity = defaults[1]  # type: ignore[assignment]
 
     return TableLayout(
         layer=layer,

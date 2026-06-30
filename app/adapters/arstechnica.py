@@ -18,6 +18,16 @@ from app.downloader.http_client import HttpClient
 
 logger = logging.getLogger(__name__)
 
+_PAGE_DELAY_SECONDS = 1.0
+_MAX_RETRIES = 4
+_RETRYABLE_PATTERNS = ("(28)", "(7)", "(6)", "HTTP Error 0", "HTTP Error 103")
+_DETAIL_DELAY_SECONDS = 0.5
+_DETAIL_REQUIRED_FIELDS = (
+    "author",
+    "source_published_at",
+    "content_html",
+)
+
 _RSS_NS = {
     "content": "http://purl.org/rss/1.0/modules/content/",
     "dc": "http://purl.org/dc/elements/1.1/",
@@ -52,11 +62,27 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
         super().__init__(base_url, http_client, **kwargs)
         self._template: Any = None
         self._rss_meta_by_url: dict[str, dict[str, Any]] = {}
+        self._retry_count: int = 0
+        self._should_stop_after_page: bool = False
+        self._inline_detail_enabled: bool = False
 
     async def on_before_crawl(self, template: Any) -> None:
         await super().on_before_crawl(template)
         self._template = template
+        self._retry_count = 0
+        self._should_stop_after_page = False
+        param_values = getattr(template, "_param_values", {}) or {}
+        detail_value = str(param_values.get("detail") or "0").strip().lower()
+        self._inline_detail_enabled = detail_value in {"1", "true", "yes", "on"}
         await self._load_rss_metadata()
+
+    async def on_before_page(self, page: int, is_first: bool) -> None:
+        if self._retry_count > 0:
+            wait = min(30.0, 3.0 * (2 ** min(self._retry_count - 1, 3)))
+            await asyncio.sleep(wait)
+            return
+        if not is_first:
+            await asyncio.sleep(_PAGE_DELAY_SECONDS)
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         records = await super().on_after_page(page, records)
@@ -66,19 +92,48 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
         records = self._dedupe_records(records)
         for record in records:
             self._merge_rss_metadata(record)
+            self._populate_assets_from_content(record)
 
-        async def enrich(record: dict) -> dict:
-            return await self._enrich_detail(record)
+        if self._inline_detail_enabled:
+            for index, record in enumerate(records):
+                if not self._needs_detail_enrichment(record):
+                    continue
+                if index > 0:
+                    await asyncio.sleep(_DETAIL_DELAY_SECONDS)
+                records[index] = await self._enrich_detail(record)
 
-        return await asyncio.gather(*(enrich(record) for record in records))
+        expected = (
+            self._template.list_pagination.results_per_page
+            if self._template is not None and self._template.list_pagination is not None
+            else 0
+        )
+        self._should_stop_after_page = bool(expected and len(records) < expected)
+        if self._retry_count > 0:
+            logger.info(
+                "[ArsTechnica] Page %d recovered after %d retries",
+                page,
+                self._retry_count,
+            )
+            self._retry_count = 0
+        return records
+
+    def on_page_advance(self) -> bool | None:
+        if self._should_stop_after_page:
+            logger.info("[ArsTechnica] Reached final archive page, stopping pagination")
+            return False
+        return None
 
     async def _load_rss_metadata(self) -> None:
         rss_url = f"{self._base_url}/feed/"
-        text = await self._client.request_page(
-            rss_url,
-            None,
-            anti_crawl_enabled=False,
-        )
+        try:
+            text = await self._client.request_page(
+                rss_url,
+                None,
+                anti_crawl_enabled=False,
+            )
+        except Exception as exc:
+            logger.warning("[ArsTechnica] Failed to fetch RSS metadata: %s", exc)
+            return
         try:
             root = etree.fromstring(text.encode("utf-8"))
         except Exception as exc:
@@ -93,16 +148,20 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
             media_url = self._first_text(item, "media:content/@url")
             thumb_url = self._first_text(item, "media:content/media:thumbnail/@url")
             summary = self._first_text(item, "description/text()")
-            content_html = self._first_text(item, "content:encoded/text()")
+            content_html = self._clean_feed_html(self._first_text(item, "content:encoded/text()"))
+            published = self._normalize_rss_date(self._first_text(item, "pubDate/text()"))
 
             self._rss_meta_by_url[url] = {
                 "author": self._first_text(item, "dc:creator/text()"),
                 "summary": self._clean_text(summary),
-                "summary_html": self._clean_feed_html(content_html),
+                "summary_html": content_html,
+                "content_html": content_html,
+                "content": self._html_to_text(content_html),
                 "category_names": categories[:1],
                 "tags": categories[1:],
                 "thumbnail": thumb_url or media_url,
-                "date": self._normalize_rss_date(self._first_text(item, "pubDate/text()")),
+                "date": published,
+                "source_published_at": published,
             }
 
     @staticmethod
@@ -126,6 +185,28 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
             if value and not record.get(key):
                 record[key] = value
 
+    @staticmethod
+    def _needs_detail_enrichment(record: dict[str, Any]) -> bool:
+        return any(not record.get(field) for field in _DETAIL_REQUIRED_FIELDS)
+
+    def _populate_assets_from_content(self, record: dict[str, Any]) -> None:
+        content_html = str(record.get("content_html") or "").strip()
+        url = str(record.get("url") or "").strip()
+        if not content_html or not url:
+            return
+
+        if not record.get("images"):
+            images = self._extract_images_from_html(content_html, url, record)
+            if images:
+                record["images"] = images
+
+        if not record.get("attachments"):
+            attachments = self._extract_attachments_from_html(content_html, url)
+            if attachments:
+                record["attachments"] = attachments
+
+        self.merge_external_links_from_content(record, url)
+
     async def _enrich_detail(self, record: dict[str, Any]) -> dict[str, Any]:
         url = str(record.get("url") or "").strip()
         if not url:
@@ -135,9 +216,16 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
             html = await self._client.request_page(
                 url,
                 self._detail_request(),
-                anti_crawl_enabled=self._template.effective_anti_crawl_enabled,
+                anti_crawl_enabled=(
+                    self._template.effective_anti_crawl_enabled
+                    if self._template is not None
+                    else False
+                ),
             )
         except Exception as exc:
+            error_str = str(exc)
+            if "403" in error_str or "429" in error_str or "503" in error_str:
+                await asyncio.sleep(5)
             logger.warning("[ArsTechnica] Failed to fetch detail '%s': %s", url, exc)
             return record
 
@@ -254,6 +342,62 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
             attachments.append(item)
         return self.dedupe_media_items(attachments)
 
+    def _extract_images_from_html(
+        self,
+        content_html: str,
+        detail_url: str,
+        record: dict[str, Any],
+    ) -> list[dict[str, str]]:
+        try:
+            wrapper = lxml_html.fragment_fromstring(content_html, create_parent="div")
+        except Exception:
+            return []
+
+        images: list[dict[str, str]] = []
+        cover_urls = {
+            self.clean_url(str(record.get("thumbnail") or "").strip()),
+        }
+
+        for img in wrapper.cssselect("img"):
+            raw_src = (
+                img.get("src")
+                or img.get("data-src")
+                or ""
+            ).strip()
+            src = self.clean_url(urljoin(detail_url, raw_src))
+            if not src or src in cover_urls:
+                continue
+            item = {"url": src, "alt": (img.get("alt") or "").strip()}
+            images.append(item)
+        return self.dedupe_media_items(images)
+
+    def _extract_attachments_from_html(
+        self,
+        content_html: str,
+        detail_url: str,
+    ) -> list[dict[str, str]]:
+        try:
+            wrapper = lxml_html.fragment_fromstring(content_html, create_parent="div")
+        except Exception:
+            return []
+
+        attachments: list[dict[str, str]] = []
+        for link in wrapper.cssselect("a[href]"):
+            href = self.clean_url(urljoin(detail_url, link.get("href", "").strip()))
+            if not href or self.is_image_url(href):
+                continue
+            if not self.is_attachment_url(href):
+                continue
+            item: dict[str, str] = {
+                "url": href,
+                "type": self._extension_for_url(href),
+            }
+            label = self._clean_text(link.text_content())
+            if label:
+                item["label"] = label
+            attachments.append(item)
+        return self.dedupe_media_items(attachments)
+
     def extract_external_links(self, html: str, _base_url: str) -> list[str]:
         return self.dedupe_urls(super().extract_external_links(html, _base_url))
 
@@ -273,10 +417,35 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
     ) -> str | None:
         error_str = str(error)
         if "404" in error_str:
-            return "skip"
-        if "403" in error_str:
-            logger.warning("[ArsTechnica] 403 Forbidden")
-            return "skip"
+            logger.info("[ArsTechnica] 404 on list page %d, reached archive end", page)
+            return "stop"
+        if attempt >= _MAX_RETRIES:
+            logger.warning(
+                "[ArsTechnica] Page %d exceeded retry limit after error: %s",
+                page,
+                error_str[:160],
+            )
+            return "abort"
+        if "403" in error_str or "429" in error_str or "503" in error_str:
+            self._retry_count += 1
+            logger.warning(
+                "[ArsTechnica] Retrying page %d after HTTP block/error [%d/%d]: %s",
+                page,
+                attempt + 1,
+                _MAX_RETRIES,
+                error_str[:160],
+            )
+            return None
+        if any(pattern in error_str for pattern in _RETRYABLE_PATTERNS):
+            self._retry_count += 1
+            logger.warning(
+                "[ArsTechnica] Retrying page %d after network error [%d/%d]: %s",
+                page,
+                attempt + 1,
+                _MAX_RETRIES,
+                error_str[:160],
+            )
+            return None
         return None
 
     @staticmethod

@@ -117,8 +117,14 @@ class SpiderEngine:
         logger.info("Saved %d records, cumulative: %d", len(records), len(result.records))
 
     async def crawl(self, template: SiteTemplate) -> CrawlResult:
+        return await self.crawl_from_page(template, None)
+
+    async def crawl_from_page(
+        self,
+        template: SiteTemplate,
+        resume_page: int | None,
+    ) -> CrawlResult:
         result = CrawlResult(template.name, template.data_type)
-        resume_page: int | None = None
 
         logger.info(
             "Starting crawl: template=%s, data_type=%s, response_type=%s, priority=%d%s",
@@ -236,6 +242,9 @@ class SpiderEngine:
                         result.errors.append(f"List page {current_page}: {e}")
                         await adapter.close()
                         return all_records
+                    elif adapter_action == "stop":
+                        await adapter.close()
+                        return all_records
                     elif adapter_action == "reset_session":
                         await adapter.on_before_crawl(template)
                         continue
@@ -268,7 +277,8 @@ class SpiderEngine:
                 if not has_next:
                     break
 
-            adapter.on_page_advance()
+            if adapter.on_page_advance() is False:
+                break
             pages_crawled += 1
             current_page += 1
 

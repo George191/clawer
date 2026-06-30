@@ -117,12 +117,6 @@ class ETLBase:
             table_role=role,
             payload=payload,
         )
-        if role == "current":
-            await self._create_partitions(
-                table,
-                table_role="history",
-                payload=payload,
-            )
 
     @staticmethod
     def _offset_key(topic: str, partition: int) -> str:
@@ -164,8 +158,6 @@ class ETLBase:
         await ensure_ddlregistry_table(self._pg)
         for table in self._handlers:
             await self._ensure_registered_table(table, self._table_role, create_partitions=False)
-            if self._table_role == "current":
-                await self._ensure_registered_table(table, "history", create_partitions=False)
 
     async def _ddl_for_table(self, table: str) -> str:
         ddl_from_registry = await get_registered_ddl(
@@ -549,8 +541,6 @@ class ETLBase:
     ) -> None:
         role = table_role or self._table_role
         await self._ensure_registered_table(table, role)
-        if role == "current":
-            await self._ensure_registered_table(table, "history")
 
     @staticmethod
     def _schema_error_messages(exc: BaseException) -> list[str]:

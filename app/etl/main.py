@@ -23,6 +23,7 @@ import logging
 import sys
 
 from app.config.settings import settings
+from app.etl.base import ETLBase
 from app.etl.ts_rds import TsRds
 from app.etl.ts_ods import TsOds
 from app.etl.ts_task import TsTask
@@ -106,6 +107,28 @@ async def run_dim() -> None:
     await _run_layer(TsDim, "dim")
 
 
+async def run_init_schema() -> None:
+    setup_logging("etl-init-schema")
+    _preflight_check()
+
+    workers: list[ETLBase] = [
+        TsRds(),
+        TsOds(),
+        TsTask(),
+        TsDwd(),
+        TsDws(),
+        TsDim(),
+    ]
+    try:
+        for worker in workers:
+            logger.info("Initializing schema for layer=%s", worker._layer)
+            await worker._pg.connect()
+            await worker._on_init_schema()
+        logger.info("ETL schema initialization complete")
+    finally:
+        await asyncio.gather(*(worker.stop() for worker in workers), return_exceptions=True)
+
+
 async def run_all() -> None:
     setup_logging("etl-all")
     _preflight_check()
@@ -151,7 +174,11 @@ async def run_all() -> None:
 
 
 def main() -> None:
+    if "--init-schema" in sys.argv:
+        asyncio.run(run_init_schema())
+        return
 
+    layer = ""
     for i, arg in enumerate(sys.argv):
         if arg == "--layer" and i + 1 < len(sys.argv):
             layer = sys.argv[i + 1].lower()

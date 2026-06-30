@@ -424,6 +424,7 @@ async def run_from_list_file_stream(
 async def run_from_command_line(
     template_args: list[tuple[str, dict[str, str]]],
     delay: float = 0,
+    start_page: int | None = None,
 ) -> None:
     """
     根据命令行参数运行采集（用于非list-file的批量参数）。
@@ -472,7 +473,7 @@ async def run_from_command_line(
                 logger.info(f"  参数: {params}")
 
             try:
-                result = await engine.crawl(template)
+                result = await engine.crawl_from_page(template, start_page)
                 success = result.success
 
                 if success:
@@ -604,6 +605,11 @@ def main() -> None:
         default=100,
         help="Batch size for list-file mode (default: 100)",
     )
+    parser.add_argument(
+        "--start-page",
+        type=int,
+        help="Start crawling list pages from this page number",
+    )
     
     args = parser.parse_args()
     
@@ -655,7 +661,13 @@ def main() -> None:
         
         # 运行
         if template_args:
-            asyncio.run(run_from_command_line(template_args, delay=args.delay))
+            asyncio.run(
+                run_from_command_line(
+                    template_args,
+                    delay=args.delay,
+                    start_page=args.start_page,
+                )
+            )
 
 if __name__ == "__main__":
     main()

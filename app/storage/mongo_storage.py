@@ -65,6 +65,35 @@ class MongoStorage(StorageBackend):
         content = json.dumps(record, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(content.encode()).hexdigest()
 
+    @staticmethod
+    def _has_meaningful_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        if isinstance(value, (list, dict, set, tuple)):
+            return len(value) > 0
+        return True
+
+    @classmethod
+    def _merge_non_empty_fields(
+        cls,
+        existing: Any,
+        incoming: Any,
+    ) -> Any:
+        if isinstance(existing, dict) and isinstance(incoming, dict):
+            merged = dict(existing)
+            for key, value in incoming.items():
+                if key in merged:
+                    merged[key] = cls._merge_non_empty_fields(merged[key], value)
+                    continue
+                if cls._has_meaningful_value(value):
+                    merged[key] = value
+            return merged
+        if cls._has_meaningful_value(incoming):
+            return incoming
+        return existing
+
     async def save_record(self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any]) -> str:
         collection = await self._get_collection(template_name)
         search_params = record.pop("_meta_search_params", None) or {}
@@ -88,6 +117,9 @@ class MongoStorage(StorageBackend):
         existing = await collection.find_one({"_meta.record_id": record_id})
         if existing:
             existing_meta = existing.get("_meta", {})
+            merged_record = self._merge_non_empty_fields(existing, record_with_meta)
+            record_with_meta = merged_record if isinstance(merged_record, dict) else record_with_meta
+            existing_meta = existing.get("_meta", {})
             record_with_meta["_meta"]["created_at"] = existing_meta.get(
                 "created_at", datetime.now(timezone.utc)
             )
@@ -98,8 +130,6 @@ class MongoStorage(StorageBackend):
                 "sync_status", "pending"
             )
             record_with_meta["_meta"]["updated_at"] = datetime.now(timezone.utc)
-            if "assets" not in record and existing.get("assets") is not None:
-                record_with_meta["assets"] = existing["assets"]
             await collection.replace_one(
                 {"_meta.record_id": record_id},
                 record_with_meta,

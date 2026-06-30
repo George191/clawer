@@ -33,7 +33,6 @@ _TABLE_PRIMARY_KEY_RE = re.compile(
     r"^\s*PRIMARY\s+KEY\s*\([^)]*\)\s*,?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
-
 _RDS_CURRENT_BASELINE_DDLS: dict[str, str] = {
     "news": """
 CREATE TABLE IF NOT EXISTS ts_rds.rds_news (
@@ -100,7 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_rds_intelligence_created_at ON ts_rds.rds_intelli
 _ODS_CURRENT_BASELINE_DDLS: dict[str, str] = {
     "news": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_news (
-    record_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL,
     title TEXT,
@@ -122,7 +121,8 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_news (
     slides JSONB,
     thumbnail TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
 );
 CREATE INDEX IF NOT EXISTS idx_ods_news_data_source ON ts_ods.ods_news (data_source);
 CREATE INDEX IF NOT EXISTS idx_ods_news_published_at ON ts_ods.ods_news (source_published_at DESC);
@@ -130,7 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_ods_news_updated_at ON ts_ods.ods_news (updated_a
 """.strip(),
     "patent": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_patent (
-    record_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL,
     title TEXT,
@@ -154,7 +154,8 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_patent (
     quality_score DOUBLE PRECISION,
     quality_flags JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
 );
 CREATE INDEX IF NOT EXISTS idx_ods_patent_data_source ON ts_ods.ods_patent (data_source);
 CREATE INDEX IF NOT EXISTS idx_ods_patent_publication_date ON ts_ods.ods_patent (publication_date DESC);
@@ -162,7 +163,7 @@ CREATE INDEX IF NOT EXISTS idx_ods_patent_updated_at ON ts_ods.ods_patent (updat
 """.strip(),
     "navwarn": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_navwarn (
-    record_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL,
     navarea_id INTEGER,
@@ -177,7 +178,8 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_navwarn (
     quality_score DOUBLE PRECISION,
     quality_flags JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
 );
 CREATE INDEX IF NOT EXISTS idx_ods_navwarn_data_source ON ts_ods.ods_navwarn (data_source);
 CREATE INDEX IF NOT EXISTS idx_ods_navwarn_issued_at ON ts_ods.ods_navwarn (issued_at DESC);
@@ -186,7 +188,7 @@ CREATE INDEX IF NOT EXISTS idx_ods_navwarn_coordinate ON ts_ods.ods_navwarn USIN
 """.strip(),
     "intelligence": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_intelligence (
-    record_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL,
     title TEXT,
@@ -198,7 +200,8 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_intelligence (
     file_size TEXT,
     file_type TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
 );
 CREATE INDEX IF NOT EXISTS idx_ods_intelligence_data_source ON ts_ods.ods_intelligence (data_source);
 CREATE INDEX IF NOT EXISTS idx_ods_intelligence_published_at ON ts_ods.ods_intelligence (source_published_at DESC);
@@ -371,11 +374,6 @@ def _current_table_ref(layer: str, logical_table: str) -> str:
     return f"{layout.schema_name}.{layout.table_name}"
 
 
-def _history_table_ref(layer: str, logical_table: str) -> str:
-    layout = default_table_layout(layer, logical_table, "history")
-    return f"{layout.schema_name}.{layout.table_name}"
-
-
 def _parse_create_table_statement(ddl_sql: str) -> dict[str, str | None]:
     match = _CREATE_TABLE_RE.search(ddl_sql)
     if not match:
@@ -444,19 +442,21 @@ def _rewrite_rds_current_primary_key(body: str) -> str:
     )
 
 
+def _rewrite_ods_current_primary_key(body: str) -> str:
+    rewritten = _RECORD_ID_INLINE_PK_RE.sub(r"\1 NOT NULL\2", body, count=1)
+    rewritten = _TABLE_PRIMARY_KEY_RE.sub("", rewritten)
+    rewritten = _clean_table_body(rewritten)
+    return _append_table_constraint(
+        rewritten,
+        "PRIMARY KEY (record_id, data_source, data_type)",
+    )
+
+
 def _baseline_current_ddls() -> dict[str, dict[str, str]]:
     return {
         "rds": _RDS_CURRENT_BASELINE_DDLS,
         "ods": _ODS_CURRENT_BASELINE_DDLS,
     }
-
-
-def _rewrite_history_body(body: str) -> str:
-    rewritten = _RECORD_ID_INLINE_PK_RE.sub(r"\1 NOT NULL\2", body, count=1)
-    rewritten = _TABLE_PRIMARY_KEY_RE.sub("", rewritten)
-    if rewritten == body:
-        raise ValueError("Unsupported current DDL: missing record_id primary key")
-    return _clean_table_body(rewritten)
 
 
 def _build_current_ddl(
@@ -472,6 +472,8 @@ def _build_current_ddl(
     body = str(create_table["body"])
     if layer == "rds":
         body = _rewrite_rds_current_primary_key(body)
+    elif layer == "ods":
+        body = _rewrite_ods_current_primary_key(body)
     statement = _build_create_table_statement(
         table_ref=current_ref,
         body=body,
@@ -483,52 +485,6 @@ def _build_current_ddl(
         statement=str(create_table["statement"]),
         replacement=statement,
     )
-
-
-def _build_history_ddl(
-    *,
-    layer: str,
-    logical_table: str,
-    current_ddl_sql: str,
-    partition_type: str,
-    partition_column: str | None,
-) -> str:
-    current_ref = _current_table_ref(layer, logical_table)
-    history_ref = _history_table_ref(layer, logical_table)
-    create_table = _parse_create_table_statement(current_ddl_sql)
-    body = _rewrite_history_body(str(create_table["body"]))
-
-    history_statement = _build_create_table_statement(
-        table_ref=history_ref,
-        body=f"    history_id BIGSERIAL,\n\n{body}",
-        partition_type=partition_type,
-        partition_column=partition_column,
-    )
-    ddl_sql = _replace_create_table_statement(
-        current_ddl_sql,
-        statement=str(create_table["statement"]),
-        replacement=history_statement,
-    )
-    ddl_sql = ddl_sql.replace(f" ON {current_ref} ", f" ON {history_ref} ")
-
-    table_name = default_table_layout(layer, logical_table, "history").table_name
-    record_index = (
-        f"CREATE INDEX IF NOT EXISTS idx_{table_name}_record_id "
-        f"ON {history_ref} (record_id);\n"
-    )
-    if f"idx_{table_name}_record_id" not in ddl_sql:
-        ddl_sql = f"{ddl_sql.rstrip()}\n{record_index}"
-
-    if partition_type == "range" and partition_column:
-        history_index_name = f"idx_{table_name}_{partition_column}"
-        history_index_sql = (
-            f"CREATE INDEX IF NOT EXISTS {history_index_name} "
-            f"ON {history_ref} ({partition_column} DESC NULLS LAST);\n"
-        )
-        if history_index_name not in ddl_sql:
-            ddl_sql = f"{ddl_sql.rstrip()}\n{history_index_sql}"
-
-    return ddl_sql.rstrip()
 
 
 async def _seed_current_registry_records(pg: PostgresClient) -> None:
@@ -585,43 +541,6 @@ async def _seed_current_registry_records(pg: PostgresClient) -> None:
             updated_by="system:current-bootstrap",
         )
 
-
-async def _seed_history_registry_records(pg: PostgresClient) -> None:
-    current_rows = await pg.fetch_all(
-        f"""
-        SELECT layer, table_name, ddl_sql
-        FROM {_ddlregistry_table_name()}
-        WHERE table_role = 'current'
-          AND layer IN ('rds', 'ods')
-        ORDER BY layer, table_name
-        """
-    )
-    for row in current_rows:
-        layer = row["layer"]
-        logical_table = logical_table_name(layer, row["table_name"])
-        history_layout = default_table_layout(layer, logical_table, "history")
-        history_ddl_sql = _build_history_ddl(
-            layer=layer,
-            logical_table=logical_table,
-            current_ddl_sql=row["ddl_sql"],
-            partition_type=history_layout.partition_type,
-            partition_column=history_layout.partition_column,
-        )
-        await save_registered_ddl(
-            pg,
-            layer=layer,
-            table=logical_table,
-            ddl_sql=history_ddl_sql,
-            table_role="history",
-            partition_type=history_layout.partition_type,
-            partition_column=history_layout.partition_column,
-            partition_granularity=history_layout.partition_granularity,
-            partition_count=history_layout.partition_count,
-            description=f"Auto-generated history DDL for {layer}/{logical_table}",
-            updated_by="system:history-bootstrap",
-        )
-
-
 async def ensure_ddlregistry_table(pg: PostgresClient) -> None:
     global _DDLREGISTRY_READY
     if _DDLREGISTRY_READY:
@@ -641,7 +560,6 @@ async def ensure_ddlregistry_table(pg: PostgresClient) -> None:
     try:
         _DDLREGISTRY_READY = True
         await _seed_current_registry_records(pg)
-        await _seed_history_registry_records(pg)
     except Exception:
         _DDLREGISTRY_READY = False
         raise

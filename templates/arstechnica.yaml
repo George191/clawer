@@ -10,6 +10,12 @@ description: >
   server-rendered article pages. RSS is only used as recent metadata and does
   not limit historical backfill.
 
+params:
+  - name: detail
+    required: false
+    default: "0"
+    description: "Set to 1 to fetch article detail pages during crawl; default 0 keeps crawl list-only for later backfill."
+
 response_type: html
 
 list_page: "/page/{page}/"
@@ -70,7 +76,7 @@ list_pagination:
   type: next_page
   next_selector: "a.post-navigation-link[href]"
   start_page: 1
-  max_pages: 200
+  max_pages: 0
   results_per_page: 36
 
 detail_page: "{url}"

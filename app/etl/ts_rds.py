@@ -30,15 +30,6 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
 RETURNING *
 """
 
-_RDS_HISTORY_INSERT_TEMPLATE = """
-INSERT INTO ts_rds_hist.rds_{table_name}
-    (record_id, data_source, data_type, raw_data, kafka_offset, kafka_partition, kafka_topic, created_at, updated_at)
-VALUES
-    (:record_id, :data_source, :data_type, CAST(:raw_data AS jsonb), :kafka_offset, :kafka_partition, :kafka_topic,
-     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz))
-RETURNING *
-"""
-
 
 class TsRds(ETLBase):
     _layer = "rds"
@@ -59,21 +50,19 @@ class TsRds(ETLBase):
     async def _handler_intelligence(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="intelligence")
 
-    async def _write_current_and_history(
+    async def _write_current(
         self,
         *,
         table: str,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
         current_sql = _RDS_INSERT_TEMPLATE.replace("{table_name}", table)
-        history_sql = _RDS_HISTORY_INSERT_TEMPLATE.replace("{table_name}", table)
 
         async with self._pg.locked_transaction(
             f"rds:{table}:{payload['record_id']}:{payload['data_source']}:{payload['data_type']}"
         ) as session:
             result = await session.execute(text(current_sql), payload)
             current_row = result.mappings().first()
-            await session.execute(text(history_sql), payload)
             return dict(current_row) if current_row else None
 
     async def _process_rds_record(self, message: dict[str, Any], table: str) -> bool:
@@ -104,7 +93,7 @@ class TsRds(ETLBase):
 
             result = await self._execute_with_table_recovery(
                 table,
-                partial(self._write_current_and_history, table=table, payload=payload),
+                partial(self._write_current, table=table, payload=payload),
                 payload=payload,
             )
 

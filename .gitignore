@@ -6,3 +6,6 @@ node_modules/
 __pycache__/
 static/
 logs/
+.agents/
+.codex/
+.pytest.cache/

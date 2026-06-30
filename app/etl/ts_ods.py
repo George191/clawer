@@ -59,7 +59,7 @@ INSERT INTO ts_ods.ods_news (
     CAST(:attachments AS jsonb), CAST(:images AS jsonb), CAST(:slides AS jsonb), :thumbnail,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
-ON CONFLICT (record_id) DO UPDATE SET
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     data_source = EXCLUDED.data_source,
     data_type = EXCLUDED.data_type,
     title = {_prefer_text(_ODS_NEWS_TABLE, "title")},
@@ -100,7 +100,7 @@ INSERT INTO ts_ods.ods_patent (
     :url, :thumbnail, CAST(:figures AS jsonb), CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
-ON CONFLICT (record_id) DO UPDATE SET
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     data_source = EXCLUDED.data_source,
     data_type = EXCLUDED.data_type,
     title = {_prefer_text(_ODS_PATENT_TABLE, "title")},
@@ -144,7 +144,7 @@ INSERT INTO ts_ods.ods_navwarn (
     CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
-ON CONFLICT (record_id) DO UPDATE SET
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     data_source = EXCLUDED.data_source,
     data_type = EXCLUDED.data_type,
     navarea_id = {_prefer_value(_ODS_NAVWARN_TABLE, "navarea_id")},
@@ -174,7 +174,7 @@ INSERT INTO ts_ods.ods_intelligence (
     :file_name, :file_size, :file_type,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
-ON CONFLICT (record_id) DO UPDATE SET
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     data_source = EXCLUDED.data_source,
     data_type = EXCLUDED.data_type,
     title = {_prefer_text(_ODS_INTELLIGENCE_TABLE, "title")},
@@ -188,78 +188,6 @@ ON CONFLICT (record_id) DO UPDATE SET
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
-
-_ODS_HISTORY_INSERT_SQL = {
-    "news": """
-INSERT INTO ts_ods_hist.ods_news (
-    record_id, data_source, data_type,
-    title, url, source_url, source_published_at, source_updated_at,
-    summary, content, content_html, summary_html,
-    author, news_type, organization, tags, external_links,
-    attachments, images, slides, thumbnail,
-    created_at, updated_at
-) VALUES (
-    :record_id, :data_source, :data_type,
-    :title, :url, :source_url, CAST(:source_published_at AS timestamptz), CAST(:source_updated_at AS timestamptz),
-    :summary, :content, :content_html, :summary_html,
-    :author, CAST(:news_type AS jsonb), CAST(:organization AS jsonb), CAST(:tags AS jsonb), CAST(:external_links AS jsonb),
-    CAST(:attachments AS jsonb), CAST(:images AS jsonb), CAST(:slides AS jsonb), :thumbnail,
-    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
-)
-RETURNING *
-""",
-    "patent": """
-INSERT INTO ts_ods_hist.ods_patent (
-    record_id, data_source, data_type,
-    title, publication_number, application_number, assignee, inventor,
-    publication_date, filing_date, priority_date, grant_date,
-    abstract, claims, legal_status, ipc_classification, cpc_classification, patent_type,
-    url, thumbnail, figures, quality_score, quality_flags,
-    created_at, updated_at
-) VALUES (
-    :record_id, :data_source, :data_type,
-    :title, :publication_number, :application_number, :assignee, :inventor,
-    CAST(:publication_date AS date), CAST(:filing_date AS date), CAST(:priority_date AS date), CAST(:grant_date AS date),
-    :abstract, CAST(:claims AS jsonb), :legal_status, :ipc_classification, :cpc_classification, :patent_type,
-    :url, :thumbnail, CAST(:figures AS jsonb), CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
-    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
-)
-RETURNING *
-""",
-    "navwarn": """
-INSERT INTO ts_ods_hist.ods_navwarn (
-    record_id, data_source, data_type,
-    navarea_id, warning_no, serial_number, warning_year, region,
-    issued_at, message_text, hazard_type, coordinate,
-    quality_score, quality_flags, created_at, updated_at
-) VALUES (
-    :record_id, :data_source, :data_type,
-    CAST(:navarea_id AS integer), :warning_no, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :region,
-    CAST(:issued_at AS timestamptz), :message_text, :hazard_type,
-    CASE
-        WHEN NULLIF(BTRIM(CAST(:coordinate AS text)), '') IS NULL THEN NULL
-        ELSE ST_GeogFromText(:coordinate)
-    END,
-    CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
-    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
-)
-RETURNING *
-""",
-    "intelligence": """
-INSERT INTO ts_ods_hist.ods_intelligence (
-    record_id, data_source, data_type,
-    title, url, source_published_at, source_updated_at, summary,
-    file_name, file_size, file_type,
-    created_at, updated_at
-) VALUES (
-    :record_id, :data_source, :data_type,
-    :title, :url, CAST(:source_published_at AS timestamptz), CAST(:source_updated_at AS timestamptz), :summary,
-    :file_name, :file_size, :file_type,
-    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
-)
-RETURNING *
-""",
-}
 
 _ODS_INSERT_SQL = {
     "news": ODS_NEWS_INSERT,
@@ -288,21 +216,19 @@ class TsOds(ETLBase):
     async def _handler_intelligence(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="intelligence")
 
-    async def _write_current_and_history(
+    async def _write_current(
         self,
         *,
         table: str,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
         current_sql = _ODS_INSERT_SQL[table]
-        history_sql = _ODS_HISTORY_INSERT_SQL[table]
 
         async with self._pg.locked_transaction(
             f"ods:{table}:{payload['record_id']}"
         ) as session:
             result = await session.execute(text(current_sql), payload)
             current_row = result.mappings().first()
-            await session.execute(text(history_sql), payload)
             return dict(current_row) if current_row else None
 
     def _validate_required_fields(
@@ -362,7 +288,7 @@ class TsOds(ETLBase):
             }
             result = await self._execute_with_table_recovery(
                 table,
-                partial(self._write_current_and_history, table=table, payload=payload),
+                partial(self._write_current, table=table, payload=payload),
                 payload=payload,
             )
 

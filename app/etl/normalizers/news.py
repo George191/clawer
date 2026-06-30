@@ -4,6 +4,7 @@ import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urlparse
 
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import (
@@ -25,6 +26,20 @@ def _normalize_satellite_today_news_types(record: dict[str, Any]) -> list[str]:
     return []
 
 
+def _media_source_url(value: Any) -> str | None:
+    if isinstance(value, dict):
+        value = value.get("source_url")
+
+    text = safe_str(value)
+    if not text:
+        return None
+
+    parsed = urlparse(text)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return text
+    return None
+
+
 def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
     record, _ = apply_asset_path_overrides(record)
     meta = record.get("_meta", {}) or {}
@@ -38,9 +53,7 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
     slides = record.get("slides")
     tags = record.get("tags") or record.get("tag_names")
     organization = record.get("organization") or record.get("source_names")
-    featured_media = record.get("featured_media")
-    if isinstance(featured_media, dict):
-        featured_media = featured_media.get("source_url")
+    featured_media_url = _media_source_url(record.get("featured_media"))
 
     return {
         "data_source": data_source,
@@ -60,7 +73,7 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
         "attachments": json_dumps(attachments),
         "images": json_dumps(images),
         "slides": json_dumps(slides),
-        "thumbnail": safe_str(record.get("thumbnail") or featured_media),
+        "thumbnail": _media_source_url(record.get("thumbnail")) or featured_media_url,
     }
 
 
