@@ -2019,16 +2019,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           </div>
           <div className="workspace-dock-detail-head-actions">
-            <Tooltip title={templatePinned ? 'Unpin template' : 'Pin template'} placement="top">
-              <button
-                type="button"
-                className={`workspace-dock-detail-icon-btn ${templatePinned ? 'is-pinned' : ''}`}
-                aria-label={templatePinned ? 'Unpin template' : 'Pin template'}
-                onClick={() => toggleTemplatePinned(selectedTemplate.key)}
-              >
-                <PushpinOutlined />
-              </button>
-            </Tooltip>
             {templateDetailMode === 'overview' ? (
               <Tooltip title="编辑模板" placement="top">
                 <button
@@ -2209,16 +2199,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           </div>
           <div className="workspace-dock-detail-head-actions">
-            <Tooltip title={taskPinned ? 'Unpin task' : 'Pin task'} placement="top">
-              <button
-                type="button"
-                className={`workspace-dock-detail-icon-btn ${taskPinned ? 'is-pinned' : ''}`}
-                aria-label={taskPinned ? 'Unpin task' : 'Pin task'}
-                onClick={() => toggleTaskPinned(selectedTask.key)}
-              >
-                <PushpinOutlined />
-              </button>
-            </Tooltip>
             {runtime.status === 'running' && runtime.controlState !== 'canceled' ? (
               <Tooltip title="暂停任务" placement="top">
                 <button
@@ -2527,6 +2507,30 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           justify-content: flex-end;
           flex-shrink: 0;
+        }
+        .workspace-dock-toolbar-action-btn {
+          min-width: 34px;
+          height: 34px;
+          padding: 0 10px;
+          border-radius: 10px;
+          border: 1px solid ${aura.border};
+          background: rgba(255, 255, 255, 0.035);
+          color: ${aura.subtle};
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: border-color 160ms ease, background 160ms ease, color 160ms ease, transform 160ms ease;
+        }
+        .workspace-dock-toolbar-action-btn:hover {
+          color: ${aura.text};
+          border-color: rgba(138, 180, 255, 0.2);
+          background: rgba(255, 255, 255, 0.05);
+          transform: translateY(-1px);
+        }
+        .workspace-dock-toolbar-action-btn .anticon {
+          font-size: 14px;
+          line-height: 1;
         }
         .workspace-dock-toolbar .ant-input-affix-wrapper,
         .workspace-dock-toolbar .ant-segmented {
@@ -3605,12 +3609,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                       <div className="workspace-dock-toolbar-actions">
                         <button
                           type="button"
-                          className="workspace-dock-inline-action is-primary is-icon-only"
+                          className="workspace-dock-toolbar-action-btn"
                           aria-label="New Task"
                           title="New Task"
                           onClick={() => openTaskComposer()}
                         >
-                          <EditOutlined />
+                          <PlusOutlined />
                         </button>
                       </div>
                     ) : null}

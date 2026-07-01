@@ -1386,7 +1386,6 @@ const AICollect: React.FC = () => {
             border-color: ${aura.border} !important;
             color: ${aura.text} !important;
             border-radius: 8px !important;
-            backdrop-filter: ${aura.backdrop};
           }
           .ai-collect-workbench .ant-input::placeholder {
             color: ${aura.subtle};
