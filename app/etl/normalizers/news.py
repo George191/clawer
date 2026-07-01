@@ -67,6 +67,7 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
         "content_html": content_html,
         "summary_html": summary_html,
         "author": safe_str(record.get("author")),
+        "news_type": None,
         "organization": json_dumps(organization),
         "tags": json_dumps(tags),
         "external_links": json_dumps(record.get("external_links")),

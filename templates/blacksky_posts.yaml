@@ -19,7 +19,7 @@ response_type: json
 json_item_path: ""
 json_total_path: ""
 
-list_page: "/wp-json/wp/v2/posts?per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,content,excerpt,featured_media"
+list_page: "/wp-json/wp/v2/posts?per_page={num}&page={page}&_fields=id,date,modified,slug,link,title,content,excerpt,featured_media,author,yoast_head_json"
 list_request:
   method: GET
   headers:
@@ -88,6 +88,13 @@ list_fields:
     field_type: text
     required: false
     description: "摘要 HTML"
+
+  - name: author
+    selector: "yoast_head_json.author"
+    selector_type: json
+    field_type: text
+    required: false
+    description: "作者名称"
 
   - name: featured_media
     selector: "featured_media"
