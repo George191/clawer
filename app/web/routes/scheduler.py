@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from app.scheduler.task_repository import TaskConfig, TaskRepository
@@ -223,14 +223,15 @@ async def update_task(task_name: str, req: TaskConfigUpdate) -> dict[str, Any]:
     return _config_to_response(updated).model_dump()
 
 
-@router.delete("/scheduler/tasks/{task_name}", status_code=204)
-async def delete_task(task_name: str) -> None:
+@router.delete("/scheduler/tasks/{task_name}", status_code=204, response_class=Response)
+async def delete_task(task_name: str) -> Response:
     """删除任务配置。"""
     repo = _get_repo()
     existing = await repo.get_by_name(task_name)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_name}")
     await repo.delete(task_name, updated_by="api")
+    return Response(status_code=204)
 
 
 @router.post("/scheduler/tasks/{task_name}/toggle", response_model=TaskConfigResponse)

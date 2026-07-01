@@ -187,6 +187,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
 };
 
 const explicitRouteProject: Record<string, ProjectKey> = {
+  '/': 'ai-collect',
   '/ai-collect': 'ai-collect',
   '/source-strategy': 'ai-collect',
   '/anti-crawl': 'ai-collect',

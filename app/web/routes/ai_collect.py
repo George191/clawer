@@ -4,14 +4,16 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config.settings import settings
+from app.web.services.platform_overview import build_platform_overview
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +307,11 @@ async def analyze_stream(url: str, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/ai/platform/overview")
+async def platform_overview():
+    return await build_platform_overview()
 
 
 @router.post("/ai/generate-template")

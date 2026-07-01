@@ -1075,10 +1075,26 @@ const AICollect: React.FC = () => {
 
   const renderStepNavigator = () => (
     <div className="ai-step-strip">
+      <div className="ai-step-strip-head">
+        <div>
+          <Text className="ai-step-strip-label">流程推进</Text>
+          <Text className="ai-step-strip-current">{processStepMeta[activeProcessStep].desc}</Text>
+        </div>
+        <div className="ai-step-strip-meta">
+          {processStepMeta[activeProcessStep].needConfirm ? (
+            <Button size="small" className="ai-step-confirm" onClick={() => handleConfirmProcessStep(activeProcessStep)}>
+              确认当前阶段
+            </Button>
+          ) : (
+            <Tag className="ai-aura-tag">自动推进</Tag>
+          )}
+        </div>
+      </div>
       <div className="ai-step-strip-track">
         {visibleProcessSteps.map((step, index) => {
           const status = getStepStatus(step);
           const meta = processStepMeta[step];
+          const statusLabel = status === 'done' ? '已完成' : status === 'active' ? '进行中' : '待推进';
           return (
             <button
               type="button"
@@ -1091,22 +1107,17 @@ const AICollect: React.FC = () => {
                 setSelectedLogStep(step);
               }}
             >
-              <span className="ai-step-chip-index">
-                {status === 'done' ? <CheckCircleOutlined /> : index + 1}
-              </span>
+              <div className="ai-step-chip-top">
+                <span className="ai-step-chip-index">
+                  {status === 'done' ? <CheckCircleOutlined /> : index + 1}
+                </span>
+                <span className="ai-step-chip-state">{statusLabel}</span>
+              </div>
               <span className="ai-step-chip-title">{meta.title}</span>
+              <span className="ai-step-chip-desc">{meta.desc}</span>
             </button>
           );
         })}
-      </div>
-      <div className="ai-step-strip-meta">
-        {processStepMeta[activeProcessStep].needConfirm ? (
-          <Button size="small" className="ai-step-confirm" onClick={() => handleConfirmProcessStep(activeProcessStep)}>
-            确认当前阶段
-          </Button>
-        ) : (
-          <Tag className="ai-aura-tag">自动推进</Tag>
-        )}
       </div>
     </div>
   );
@@ -1275,11 +1286,11 @@ const AICollect: React.FC = () => {
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 16px;
             position: relative;
             background: transparent;
             border-radius: 0;
-            padding: 14px;
+            padding: 18px;
             color: ${aura.text};
             font-family: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
           }
@@ -1334,8 +1345,14 @@ const AICollect: React.FC = () => {
             position: relative;
           }
           .ai-collect-body.is-session {
-            display: block;
-            padding-bottom: var(--ai-session-body-safe-bottom);
+            display: flex;
+            justify-content: center;
+            padding: 8px 10px var(--ai-session-body-safe-bottom);
+          }
+          .ai-session-shell {
+            width: min(1380px, 100%);
+            min-height: 0;
+            display: flex;
           }
           .ai-session-bottom-veil {
             position: absolute;
@@ -2138,21 +2155,26 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            background:
+              linear-gradient(180deg, rgba(31, 36, 45, 0.97) 0%, rgba(21, 25, 33, 0.98) 100%);
+            position: relative;
           }
           .ai-stage-shell-full {
-            width: 100%;
+            width: min(1380px, 100%);
             height: 100%;
             border-radius: 8px !important;
+            margin: 0 auto;
           }
           .ai-stage-top {
             flex-shrink: 0;
-            padding: 14px 14px 12px;
+            padding: 20px 20px 16px;
             border-bottom: 1px solid ${aura.border};
-            background: rgba(16, 20, 30, 0.36);
+            background:
+              linear-gradient(180deg, rgba(138, 180, 255, 0.08) 0%, rgba(16, 20, 30, 0.34) 56%, rgba(16, 20, 30, 0.16) 100%);
             backdrop-filter: ${aura.backdrop};
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 14px;
           }
           .ai-stage-headline {
             display: flex;
@@ -2161,20 +2183,34 @@ const AICollect: React.FC = () => {
             gap: 16px;
             flex-wrap: wrap;
           }
+          .ai-stage-headline-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+          .ai-stage-subtitle {
+            max-width: 720px;
+            color: ${aura.muted};
+            font-size: 13px;
+            line-height: 1.75;
+          }
           .ai-stage-overview {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
             gap: 10px;
           }
           .ai-overview-card {
-            min-height: 64px;
-            padding: 11px 13px;
+            min-height: 74px;
+            padding: 13px 14px;
             border-radius: 8px;
             border: 1px solid ${aura.borderSoft};
-            background: rgba(255, 255, 255, 0.035);
+            background:
+              linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.025));
             display: flex;
             flex-direction: column;
             justify-content: space-between;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
           }
           .ai-overview-card span {
             color: ${aura.subtle};
@@ -2191,70 +2227,151 @@ const AICollect: React.FC = () => {
           }
           .ai-step-strip {
             display: flex;
-            align-items: center;
+            flex-direction: column;
+            gap: 14px;
+            padding: 14px;
+            border-radius: 8px;
+            border: 1px solid ${aura.borderSoft};
+            background:
+              linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.02));
+          }
+          .ai-step-strip-head {
+            display: flex;
+            align-items: flex-start;
             justify-content: space-between;
-            gap: 12px;
+            gap: 14px;
+            flex-wrap: wrap;
+          }
+          .ai-step-strip-label {
+            display: block;
+            color: ${aura.subtle};
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+          }
+          .ai-step-strip-current {
+            display: block;
+            margin-top: 6px;
+            color: ${aura.muted};
+            font-size: 13px;
+            line-height: 1.72;
+            max-width: 760px;
           }
           .ai-step-strip-track {
-            display: flex;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 8px;
             min-width: 0;
-            overflow: auto;
-            padding-bottom: 2px;
+            overflow: visible;
           }
           .ai-step-strip-meta {
             flex-shrink: 0;
           }
           .ai-step-chip {
-            height: 34px;
-            padding: 0 12px;
-            border-radius: 999px;
+            min-height: 110px;
+            padding: 14px;
+            border-radius: 8px;
             border: 1px solid ${aura.border};
             background: rgba(255, 255, 255, 0.03);
             color: ${aura.muted};
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 12px;
             cursor: pointer;
-            white-space: nowrap;
-            transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+            white-space: normal;
+            text-align: left;
+            position: relative;
+            overflow: hidden;
+            transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+          }
+          .ai-step-chip::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.12);
+            opacity: 0.5;
           }
           .ai-step-chip:hover {
             color: ${aura.text};
-            background: rgba(255, 255, 255, 0.05);
+            background: rgba(255, 255, 255, 0.055);
+            transform: translateY(-1px);
           }
           .ai-step-chip.is-active {
             color: ${aura.text};
             border-color: rgba(138, 180, 255, 0.22);
             background: ${aura.accentSoft};
+            box-shadow: inset 0 0 0 1px rgba(138, 180, 255, 0.06);
           }
           .ai-step-chip.is-done {
             color: ${aura.success};
             border-color: rgba(101, 213, 163, 0.2);
             background: rgba(101, 213, 163, 0.08);
           }
+          .ai-step-chip.is-active::before {
+            background: linear-gradient(90deg, rgba(138, 180, 255, 0.94), rgba(142, 227, 240, 0.6));
+            opacity: 1;
+          }
+          .ai-step-chip.is-done::before {
+            background: linear-gradient(90deg, rgba(101, 213, 163, 0.94), rgba(101, 213, 163, 0.48));
+            opacity: 1;
+          }
+          .ai-step-chip-top {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+          }
           .ai-step-chip-index {
-            width: 18px;
-            height: 18px;
+            width: 24px;
+            height: 24px;
             border-radius: 50%;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             background: rgba(255, 255, 255, 0.06);
             font-size: 11px;
+            font-weight: 600;
+          }
+          .ai-step-chip-state {
+            min-height: 22px;
+            display: inline-flex;
+            align-items: center;
+            padding: 0 8px;
+            border-radius: 999px;
+            border: 1px solid ${aura.borderSoft};
+            background: rgba(255, 255, 255, 0.035);
+            color: ${aura.subtle};
+            font-size: 11px;
+            line-height: 1;
           }
           .ai-step-chip-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: ${aura.text};
+            line-height: 1.45;
+          }
+          .ai-step-chip-desc {
+            color: ${aura.muted};
             font-size: 12px;
-            font-weight: 500;
+            line-height: 1.65;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
           }
           .ai-runtime-dock {
             flex-shrink: 0;
-            padding: 10px 14px calc(14px + var(--ai-session-runtime-safe-bottom));
+            padding: 14px 20px calc(16px + var(--ai-session-runtime-safe-bottom));
             border-top: 1px solid ${aura.border};
-            background: rgba(16, 20, 30, 0.32);
+            background:
+              linear-gradient(180deg, rgba(16, 20, 30, 0.26), rgba(16, 20, 30, 0.44));
             display: flex;
             flex-direction: column;
-            gap: 10px;
+            gap: 12px;
           }
           .ai-runtime-head {
             display: flex;
@@ -2265,14 +2382,14 @@ const AICollect: React.FC = () => {
           .ai-runtime-list {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
-            gap: 8px;
+            gap: 10px;
           }
           .ai-runtime-item {
-            min-height: 62px;
-            padding: 10px 12px;
+            min-height: 70px;
+            padding: 12px 14px;
             border-radius: 8px;
             border: 1px solid ${aura.borderSoft};
-            background: rgba(255, 255, 255, 0.035);
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
             display: flex;
             flex-direction: column;
             gap: 6px;
@@ -2306,9 +2423,10 @@ const AICollect: React.FC = () => {
           .ai-stage-content {
             flex: 1;
             min-height: 0;
-            padding: 14px;
+            padding: 18px 20px;
             overflow: auto;
             scrollbar-width: none;
+            background: linear-gradient(180deg, rgba(22, 26, 34, 0.08), rgba(22, 26, 34, 0));
           }
           .ai-stage-content::-webkit-scrollbar {
             display: none;
@@ -2335,7 +2453,7 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             gap: 14px;
-            padding: 16px;
+            padding: 20px;
             border-radius: 8px;
             background:
               linear-gradient(180deg, rgba(37, 42, 52, 0.92), rgba(25, 29, 37, 0.88)),
@@ -2948,7 +3066,10 @@ const AICollect: React.FC = () => {
               font-size: 14px;
             }
             .ai-collect-body.is-session {
-              padding-bottom: var(--ai-session-body-safe-bottom);
+              padding: 4px 0 var(--ai-session-body-safe-bottom);
+            }
+            .ai-session-shell {
+              width: 100%;
             }
             .ai-session-prompt {
               bottom: var(--ai-session-prompt-bottom);
@@ -2969,16 +3090,25 @@ const AICollect: React.FC = () => {
               flex-direction: column;
               align-items: flex-start;
             }
+            .ai-stage-top,
+            .ai-stage-content,
+            .ai-runtime-dock {
+              padding-left: 16px;
+              padding-right: 16px;
+            }
             .ai-stage-overview {
               grid-template-columns: repeat(2, minmax(0, 1fr));
             }
-            .ai-step-strip {
+            .ai-step-strip-track {
+              grid-template-columns: 1fr;
+            }
+            .ai-step-strip-head {
               flex-direction: column;
               align-items: stretch;
             }
             .ai-step-strip-meta {
               display: flex;
-              justify-content: flex-end;
+              justify-content: flex-start;
             }
             .ai-runtime-list {
               grid-template-columns: 1fr;
@@ -3002,24 +3132,29 @@ const AICollect: React.FC = () => {
           {!hasSession ? (
             renderMissionPanel('hero')
           ) : (
-            <main className="ai-collect-panel ai-stage-shell ai-stage-shell-full" style={panelStyle}>
-              <div className="ai-stage-top">
-                <div className="ai-stage-headline">
-                  <div>
-                    <Text className="ai-aura-kicker">当前阶段</Text>
-                    <Text strong className="ai-panel-title">{processStepMeta[activeProcessStep].title}</Text>
+            <div className="ai-session-shell">
+              <main className="ai-collect-panel ai-stage-shell ai-stage-shell-full" style={panelStyle}>
+                <div className="ai-stage-top">
+                  <div className="ai-stage-headline">
+                    <div className="ai-stage-headline-copy">
+                      <div>
+                        <Text className="ai-aura-kicker">当前阶段</Text>
+                        <Text strong className="ai-panel-title">{processStepMeta[activeProcessStep].title}</Text>
+                      </div>
+                      <Text className="ai-stage-subtitle">{processStepMeta[activeProcessStep].desc}</Text>
+                    </div>
+                    {renderRunActions()}
                   </div>
-                  {renderRunActions()}
+                  {renderStageOverview()}
+                  {renderStepNavigator()}
                 </div>
-                {renderStageOverview()}
-                {renderStepNavigator()}
-              </div>
-              <div className="ai-stage-content">
-                {streamError && <Alert type="warning" showIcon message={streamError} style={{ marginBottom: 12 }} />}
-                {renderStageContent()}
-              </div>
-              {renderGuidancePanel()}
-            </main>
+                <div className="ai-stage-content">
+                  {streamError && <Alert type="warning" showIcon message={streamError} style={{ marginBottom: 12 }} />}
+                  {renderStageContent()}
+                </div>
+                {renderGuidancePanel()}
+              </main>
+            </div>
           )}
         </div>
         <div className={`ai-session-bottom-veil ${hasSession ? 'is-visible' : ''}`} aria-hidden="true" />

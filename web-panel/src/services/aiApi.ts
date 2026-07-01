@@ -55,6 +55,97 @@ export interface AdapterResponse {
   };
 }
 
+export type PlatformHealthStatus = 'healthy' | 'degraded' | 'inactive';
+export type PlatformTaskStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'paused'
+  | 'planned';
+
+export interface PlatformSummary {
+  healthScore: number;
+  templateCount: number;
+  sourceCount: number;
+  liveTaskCount: number;
+  dataDomainCount: number;
+  healthyStageCount: number;
+}
+
+export interface PlatformStage {
+  key: string;
+  title: string;
+  accent: string;
+  status: PlatformHealthStatus;
+  description: string;
+  command: string;
+  primaryMetric: string;
+  secondaryMetric: string;
+  badge: string;
+  dependencies: string[];
+}
+
+export interface PlatformSourceGroup {
+  key: string;
+  label: string;
+  count: number;
+  fieldCount: number;
+  domains: string[];
+  templates: string[];
+  updatedAt: string;
+}
+
+export interface PlatformTask {
+  id: string;
+  name: string;
+  template: string;
+  status: PlatformTaskStatus;
+  progress: number;
+  records: number;
+  startedAt?: string;
+  kind: 'live' | 'suggested';
+  stage: string;
+  mode?: string;
+}
+
+export interface PlatformEtlLayer {
+  key: string;
+  label: string;
+  schema: string;
+  status: PlatformHealthStatus;
+  topicIn: string;
+  topicOut: string;
+  focus: string;
+}
+
+export interface PlatformGuardrail {
+  key: string;
+  label: string;
+  value: string;
+  hint: string;
+  status: PlatformHealthStatus;
+}
+
+export interface PlatformRecommendation {
+  title: string;
+  detail: string;
+  action: string;
+  path: string;
+  level: 'critical' | 'warning' | 'info';
+}
+
+export interface PlatformOverview {
+  updatedAt: string;
+  summary: PlatformSummary;
+  stages: PlatformStage[];
+  sources: PlatformSourceGroup[];
+  taskBoard: PlatformTask[];
+  etlLayers: PlatformEtlLayer[];
+  guardrails: PlatformGuardrail[];
+  recommendations: PlatformRecommendation[];
+}
+
 // ── SSE 事件类型 ────────────────────────────────────────────────────────────
 
 export type SSEEventType =
@@ -111,3 +202,6 @@ export const generateAdapter = (
   siteType = 'default',
 ): Promise<AdapterResponse> =>
   client.post('/ai/generate-adapter', { url, siteType }).then((r) => r.data);
+
+export const fetchPlatformOverview = (): Promise<PlatformOverview> =>
+  client.get('/ai/platform/overview').then((r) => r.data);
