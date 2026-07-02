@@ -58,9 +58,7 @@ class TsRds(ETLBase):
     ) -> dict[str, Any] | None:
         current_sql = _RDS_INSERT_TEMPLATE.replace("{table_name}", table)
 
-        async with self._pg.locked_transaction(
-            f"rds:{table}:{payload['record_id']}:{payload['data_source']}:{payload['data_type']}"
-        ) as session:
+        async with self._pg.session() as session:
             result = await session.execute(text(current_sql), payload)
             current_row = result.mappings().first()
             return dict(current_row) if current_row else None

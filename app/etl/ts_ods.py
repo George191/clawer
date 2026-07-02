@@ -224,9 +224,7 @@ class TsOds(ETLBase):
     ) -> dict[str, Any] | None:
         current_sql = _ODS_INSERT_SQL[table]
 
-        async with self._pg.locked_transaction(
-            f"ods:{table}:{payload['record_id']}"
-        ) as session:
+        async with self._pg.session() as session:
             result = await session.execute(text(current_sql), payload)
             current_row = result.mappings().first()
             return dict(current_row) if current_row else None

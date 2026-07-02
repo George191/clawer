@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from pymongo import ReturnDocument
+from pymongo import ReplaceOne, ReturnDocument
 
 from app.config.settings import settings
 from app.storage.file_storage import StorageBackend
@@ -33,6 +33,7 @@ class MongoStorage(StorageBackend):
     def __init__(self) -> None:
         self._client = None
         self._db = None
+        self._initialized_collections: set[str] = set()
 
     def _get_collection_name(self, template_name: str) -> str:
         return template_name
@@ -55,15 +56,49 @@ class MongoStorage(StorageBackend):
         await self._ensure_connection()
         collection_name = self._get_collection_name(template_name)
         collection = self._db[collection_name]
-        await collection.create_index("_meta.record_id", unique=True)
-        await collection.create_index("_meta.download_status")
-        await collection.create_index("_meta.download_claimed_at")
-        await collection.create_index("_meta.sync_status")
+        if collection_name not in self._initialized_collections:
+            await collection.create_index("_meta.record_id", unique=True)
+            await collection.create_index("_meta.download_status")
+            await collection.create_index("_meta.download_claimed_at")
+            await collection.create_index("_meta.sync_status")
+            await collection.create_index(
+                [
+                    ("_meta.download_status", 1),
+                    ("_meta.download_claimed_at", 1),
+                    ("_meta.updated_at", 1),
+                    ("_id", 1),
+                ]
+            )
+            self._initialized_collections.add(collection_name)
         return collection
 
     def _resolve_record_id(self, record: dict[str, Any]) -> str:
         content = json.dumps(record, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(content.encode()).hexdigest()
+
+    @staticmethod
+    def _build_record_with_meta(
+        *,
+        template_name: str,
+        data_type: str,
+        record_id: str,
+        record: dict[str, Any],
+        search_params: dict[str, Any],
+        now: datetime,
+    ) -> dict[str, Any]:
+        return {
+            **record,
+            "_meta": {
+                "template": template_name,
+                "data_type": data_type,
+                "record_id": record_id,
+                "download_status": "pending",
+                "sync_status": "pending",
+                "search_params": search_params,
+                "created_at": now,
+                "updated_at": now,
+            },
+        }
 
     @staticmethod
     def _has_meaningful_value(value: Any) -> bool:
@@ -94,61 +129,112 @@ class MongoStorage(StorageBackend):
             return incoming
         return existing
 
+    @classmethod
+    def _drop_none_values(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            cleaned: dict[str, Any] = {}
+            for key, item in value.items():
+                if item is None:
+                    continue
+                next_item = cls._drop_none_values(item)
+                if next_item is None:
+                    continue
+                cleaned[key] = next_item
+            return cleaned
+        if isinstance(value, list):
+            cleaned_list = [
+                cls._drop_none_values(item)
+                for item in value
+                if item is not None
+            ]
+            return [item for item in cleaned_list if item is not None]
+        return value
+
     async def save_record(self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any]) -> str:
-        collection = await self._get_collection(template_name)
-        search_params = record.pop("_meta_search_params", None) or {}
-
-        record_id = self._resolve_record_id({f: get_nested_value(record, f) for f in dedup_fields})
-
-        record_with_meta = {
-            **record,
-            "_meta": {
-                "template": template_name,
-                "data_type": data_type,
-                "record_id": record_id,
-                "download_status": "pending",
-                "sync_status": "pending",
-                "search_params": search_params,
-                "created_at": datetime.now(timezone.utc),
-                "updated_at": datetime.now(timezone.utc),
-            },
-        }
-
-        existing = await collection.find_one({"_meta.record_id": record_id})
-        if existing:
-            existing_meta = existing.get("_meta", {})
-            merged_record = self._merge_non_empty_fields(existing, record_with_meta)
-            record_with_meta = merged_record if isinstance(merged_record, dict) else record_with_meta
-            existing_meta = existing.get("_meta", {})
-            record_with_meta["_meta"]["created_at"] = existing_meta.get(
-                "created_at", datetime.now(timezone.utc)
-            )
-            record_with_meta["_meta"]["download_status"] = existing_meta.get(
-                "download_status", "pending"
-            )
-            record_with_meta["_meta"]["sync_status"] = existing_meta.get(
-                "sync_status", "pending"
-            )
-            record_with_meta["_meta"]["updated_at"] = datetime.now(timezone.utc)
-            await collection.replace_one(
-                {"_meta.record_id": record_id},
-                record_with_meta,
-                upsert=True,
-            )
-            logger.debug("Updated record in MongoDB: %s", record_id)
-        else:
-            await collection.insert_one(record_with_meta)
-            logger.debug("Inserted record in MongoDB: %s", record_id)
-
-        return record_id
+        ids = await self.save_records(template_name, data_type, dedup_fields, [record])
+        return ids[0]
 
     async def save_records(
         self, template_name: str, data_type: str, dedup_fields: list[str], records: list[dict[str, Any]]
     ) -> list[str]:
+        if not records:
+            return []
+
+        collection = await self._get_collection(template_name)
+        now = datetime.now(timezone.utc)
+        prepared_records: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        pending_docs: dict[str, dict[str, Any]] = {}
         ids: list[str] = []
+
         for record in records:
-            record_id = await self.save_record(template_name, data_type, dedup_fields, record)
+            search_params = record.pop("_meta_search_params", None) or {}
+            cleaned_record = self._drop_none_values(record)
+            record_id = self._resolve_record_id(
+                {f: get_nested_value(cleaned_record, f) for f in dedup_fields}
+            )
+            pending = pending_docs.get(record_id)
+            if pending is not None:
+                merged_pending = self._merge_non_empty_fields(pending, cleaned_record)
+                cleaned_record = (
+                    self._drop_none_values(merged_pending)
+                    if isinstance(merged_pending, dict)
+                    else cleaned_record
+                )
+            pending_docs[record_id] = cleaned_record
+            prepared_records.append((record_id, cleaned_record, search_params))
             ids.append(record_id)
+
+        unique_ids = list(dict.fromkeys(ids))
+        existing_docs: dict[str, dict[str, Any]] = {}
+        cursor = collection.find({"_meta.record_id": {"$in": unique_ids}})
+        async for doc in cursor:
+            meta = doc.get("_meta", {})
+            record_id = meta.get("record_id")
+            if record_id:
+                existing_docs[record_id] = doc
+
+        operations: list[ReplaceOne] = []
+        processed_ids: set[str] = set()
+        for record_id, cleaned_record, search_params in reversed(prepared_records):
+            if record_id in processed_ids:
+                continue
+            processed_ids.add(record_id)
+            cleaned_record = pending_docs[record_id]
+            record_with_meta = self._build_record_with_meta(
+                template_name=template_name,
+                data_type=data_type,
+                record_id=record_id,
+                record=cleaned_record,
+                search_params=search_params,
+                now=now,
+            )
+            existing = existing_docs.get(record_id)
+            if existing:
+                merged_record = self._merge_non_empty_fields(existing, record_with_meta)
+                final_record = merged_record if isinstance(merged_record, dict) else record_with_meta
+                final_record = self._drop_none_values(final_record)
+                existing_meta = existing.get("_meta", {})
+                final_record["_meta"]["created_at"] = existing_meta.get("created_at", now)
+                final_record["_meta"]["download_status"] = existing_meta.get(
+                    "download_status", "pending"
+                )
+                final_record["_meta"]["sync_status"] = existing_meta.get(
+                    "sync_status", "pending"
+                )
+                final_record["_meta"]["updated_at"] = now
+            else:
+                final_record = self._drop_none_values(record_with_meta)
+
+            operations.append(
+                ReplaceOne(
+                    {"_meta.record_id": record_id},
+                    final_record,
+                    upsert=True,
+                )
+            )
+
+        if operations:
+            await collection.bulk_write(operations, ordered=False)
         logger.info("Saved %d records to MongoDB for %s/%s", len(ids), template_name, data_type)
         return ids
 

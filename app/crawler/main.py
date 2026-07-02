@@ -530,6 +530,7 @@ def setup_logging(service: str = "crawler") -> None:
         format=f"%(asctime)s [{service.upper()}] %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
+        force=True,
     )
     
 def log_infra_status() -> None:
