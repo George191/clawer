@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -17,6 +18,11 @@ logger = logging.getLogger(__name__)
 
 # 默认 API 基础 URL
 DEFAULT_ZDPEN_API_URL = "http://www.zdopen.com/FreeProxy/Get/"
+
+# 错误码 12012: 上一个客户端IP仍在提取中，请等待2分钟后更换
+ERROR_CODE_IP_IN_USE = "12012"
+# 该错误的最小等待时间（秒）
+IP_IN_USE_WAIT_SECONDS = 180
 
 
 class ZdopenAPIAdapter(ProxySourceAdapter):
@@ -93,23 +99,45 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
         api_url = self._build_api_url()
         logger.info("Fetching proxies from Zdopen API: %s", api_url)
 
-        try:
-            client = await self._get_client()
-            response = await client.get(api_url)
-            response.raise_for_status()
-            data = response.json()
-        except curl_requests.errors.RequestsError as e:
-            logger.error("ZdopenAPIAdapter: HTTP request failed: %s", e)
-            return []
-        except ValueError as e:
-            logger.error("ZdopenAPIAdapter: JSON parse failed: %s", e)
-            return []
+        max_retries = self._config.get("max_retries", 3)
+        wait_seconds = IP_IN_USE_WAIT_SECONDS
+        retries = 0
 
-        proxy_list = self._extract_proxy_list(data)
-        proxies = self._parse_proxy_items(proxy_list)
+        while retries <= max_retries:
+            try:
+                client = await self._get_client()
+                response = await client.get(api_url)
+                response.raise_for_status()
+                data = response.json()
+            except curl_requests.errors.RequestsError as e:
+                logger.error("ZdopenAPIAdapter: HTTP request failed: %s", e)
+                return []
+            except ValueError as e:
+                logger.error("ZdopenAPIAdapter: JSON parse failed: %s", e)
+                return []
 
-        logger.info("ZdopenAPIAdapter: fetched %d proxies", len(proxies))
-        return proxies
+            code = data.get("code", "")
+            if code == ERROR_CODE_IP_IN_USE:
+                msg = data.get("msg", "Unknown error")
+                logger.warning("ZdopenAPI returned error code=%s: %s", code, msg)
+                
+                if retries >= max_retries:
+                    logger.error("ZdopenAPIAdapter: max retries (%d) reached for IP-in-use error", max_retries)
+                    return []
+                
+                retries += 1
+                logger.info("ZdopenAPIAdapter: waiting %ds before retry %d/%d", wait_seconds, retries, max_retries)
+                await asyncio.sleep(wait_seconds)
+                wait_seconds = int(wait_seconds * 1.5)
+                continue
+
+            proxy_list = self._extract_proxy_list(data)
+            proxies = self._parse_proxy_items(proxy_list)
+
+            logger.info("ZdopenAPIAdapter: fetched %d proxies", len(proxies))
+            return proxies
+
+        return []
 
     def _extract_proxy_list(self, data: Any) -> list[dict]:
         """从 API 响应中提取代理条目列表。

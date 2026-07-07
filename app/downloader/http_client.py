@@ -206,6 +206,7 @@ class HttpClient:
                     new_proxy = await _proxy_pool.lease_proxy(task_id)
                     if new_proxy:
                         self._leased_proxies[task_id] = new_proxy
+                        logger.info(f"[{new_proxy}] Replaced failed proxy {proxy_url} for task {task_id}")
                         
     async def download_bytes(
         self,
