@@ -11,14 +11,14 @@
 
 from __future__ import annotations
 
-from functools import reduce
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from pymongo import ReplaceOne, ReturnDocument
+from pymongo import ReplaceOne
 
 from app.config.settings import settings
 from app.storage.file_storage import StorageBackend
@@ -64,7 +64,6 @@ class MongoStorage(StorageBackend):
             await collection.create_index(
                 [
                     ("_meta.download_status", 1),
-                    ("_meta.download_claimed_at", 1),
                     ("_meta.updated_at", 1),
                     ("_id", 1),
                 ]
@@ -164,6 +163,7 @@ class MongoStorage(StorageBackend):
         now = datetime.now(timezone.utc)
         prepared_records: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         pending_docs: dict[str, dict[str, Any]] = {}
+        pending_search_params: dict[str, dict[str, Any]] = {}
         ids: list[str] = []
 
         for record in records:
@@ -181,6 +181,15 @@ class MongoStorage(StorageBackend):
                     else cleaned_record
                 )
             pending_docs[record_id] = cleaned_record
+            pending_params = pending_search_params.get(record_id)
+            if pending_params is not None:
+                merged_params = self._merge_non_empty_fields(pending_params, search_params)
+                search_params = (
+                    self._drop_none_values(merged_params)
+                    if isinstance(merged_params, dict)
+                    else search_params
+                )
+            pending_search_params[record_id] = search_params
             prepared_records.append((record_id, cleaned_record, search_params))
             ids.append(record_id)
 
@@ -200,6 +209,7 @@ class MongoStorage(StorageBackend):
                 continue
             processed_ids.add(record_id)
             cleaned_record = pending_docs[record_id]
+            search_params = pending_search_params[record_id]
             record_with_meta = self._build_record_with_meta(
                 template_name=template_name,
                 data_type=data_type,
@@ -251,7 +261,10 @@ class MongoStorage(StorageBackend):
                 "$set": {
                     "_meta.download_status": download_status,
                     "_meta.updated_at": datetime.now(timezone.utc),
-                }
+                },
+                "$unset": {
+                    "_meta.download_claim_token": "",
+                },
             },
         )
         logger.debug("Updated file_status for %s: %s", record_id, download_status)
@@ -432,24 +445,52 @@ class MongoStorage(StorageBackend):
         filter_query: dict[str, Any],
         limit: int,
     ) -> list[dict[str, Any]]:
-        results = []
-        for _ in range(max(0, limit)):
-            now = datetime.now(timezone.utc)
-            doc = await collection.find_one_and_update(
-                filter_query,
-                {
-                    "$set": {
-                        "_meta.download_status": "downloading",
-                        "_meta.download_claimed_at": now,
-                        "_meta.updated_at": now,
-                    },
-                    "$inc": {"_meta.download_attempts": 1},
+        batch_limit = max(0, limit)
+        if batch_limit == 0:
+            return []
+
+        candidates = await collection.find(
+            filter_query,
+            {"_id": 1},
+        ).sort([
+            ("_meta.updated_at", 1),
+            ("_id", 1),
+        ]).limit(batch_limit).to_list(length=batch_limit)
+        if not candidates:
+            return []
+
+        now = datetime.now(timezone.utc)
+        claim_token = uuid.uuid4().hex
+        candidate_ids = [doc["_id"] for doc in candidates]
+
+        await collection.update_many(
+            {
+                "_id": {"$in": candidate_ids},
+                **filter_query,
+            },
+            {
+                "$set": {
+                    "_meta.download_status": "downloading",
+                    "_meta.download_claimed_at": now,
+                    "_meta.download_claim_token": claim_token,
+                    "_meta.updated_at": now,
                 },
-                sort=[("_meta.updated_at", 1), ("_id", 1)],
-                return_document=ReturnDocument.AFTER,
-            )
-            if doc is None:
-                break
+                "$inc": {"_meta.download_attempts": 1},
+            },
+        )
+
+        claimed_docs = await collection.find(
+            {
+                "_id": {"$in": candidate_ids},
+                "_meta.download_claim_token": claim_token,
+            }
+        ).sort([
+            ("_meta.updated_at", 1),
+            ("_id", 1),
+        ]).to_list(length=batch_limit)
+
+        results: list[dict[str, Any]] = []
+        for doc in claimed_docs:
             doc.pop("_id", None)
             results.append(doc)
         return results

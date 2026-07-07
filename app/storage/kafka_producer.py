@@ -5,6 +5,7 @@
 - 重试机制：NodeNotReadyError / 连接超时自动指数退避重试
 - 批量发送：send_records 一次性推送多条记录
 - JSON 序列化：自动处理 datetime 等类型
+- SASL 认证：通过 settings 配置（见 app/base/kafka_config.py）
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.base.kafka_config import build_producer_kwargs
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -40,32 +42,33 @@ class KafkaProducer:
             RequestTimedOutError,
         )
 
-        brokers = [b.strip() for b in settings.kafka_brokers.split(",") if b.strip()]
         retryable = (NodeNotReadyError, KafkaConnectionError, RequestTimedOutError, ConnectionError, OSError)
 
         attempt = 0
         while True:
             try:
                 self._producer = AIOKafkaProducer(
-                    bootstrap_servers=brokers,
-                    client_id=settings.kafka_client_id,
-                    value_serializer=lambda v: json.dumps(
-                        v, ensure_ascii=False, default=str
-                    ).encode("utf-8"),
-                    key_serializer=lambda k: k.encode("utf-8") if k else None,
-                    acks="all",
-                    enable_idempotence=settings.kafka_enable_idempotence,
-                    max_request_size=1048576,
-                    request_timeout_ms=30000,
-                    connections_max_idle_ms=540000,
+                    **build_producer_kwargs(
+                        client_id=settings.kafka_client_id,
+                        enable_idempotence=settings.kafka_enable_idempotence,
+                    )
                 )
                 await self._producer.start()
 
                 await asyncio.sleep(1)
 
-                await self._producer.partitions_for(self._topic)
+                try:
+                    await self._producer.partitions_for(self._topic)
+                except Exception:
+                    await asyncio.sleep(2)
+                    try:
+                        await self._producer.partitions_for(self._topic)
+                    except Exception:
+                        logger.warning("Topic %s not found, waiting for auto-creation...", self._topic)
+                        await asyncio.sleep(3)
+
                 self._connected = True
-                logger.info("Connected to Kafka: %s, topic: %s", brokers, self._topic)
+                logger.info("Connected to Kafka: %s, topic: %s", settings.kafka_brokers, self._topic)
                 return
 
             except retryable as e:

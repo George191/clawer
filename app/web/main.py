@@ -164,11 +164,17 @@ def create_app() -> FastAPI:
         # ── Kafka ──
         if settings.kafka_brokers:
             try:
-                from aiokafka.admin import AIOKafkaAdminClient
-                brokers = [b.strip() for b in settings.kafka_brokers.split(",") if b.strip()]
-                admin = AIOKafkaAdminClient(bootstrap_servers=brokers)
+                from aiokafka.admin import AIOKafkaAdminClient, NewTopic
+                from app.base.kafka_config import build_admin_client_kwargs
+                admin = AIOKafkaAdminClient(**build_admin_client_kwargs())
                 await admin.start()
                 await admin.list_topics()
+                topics_to_create = [settings.kafka_topic, settings.etl_rds_topic, settings.etl_ods_topic]
+                existing_topics = await admin.list_topics()
+                for topic in topics_to_create:
+                    if topic and topic not in existing_topics:
+                        await admin.create_topics([NewTopic(name=topic, num_partitions=3, replication_factor=1)])
+                        logger.info("Created Kafka topic: %s", topic)
                 checks["kafka"] = "connected"
                 await admin.close()
             except Exception:

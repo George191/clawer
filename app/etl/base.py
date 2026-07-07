@@ -40,6 +40,7 @@ from app.storage.etl_metadata_store import (
     get_registered_ddl_record,
 )
 from app.storage.postgres_client import get_pg_client
+from app.base.kafka_config import get_brokers, build_producer_kwargs, build_consumer_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -628,19 +629,16 @@ class ETLBase:
     #  Kafka 生产者
     # =================================================================
     async def _connect_producer(self) -> None:
-        brokers = _brokers()
         for attempt in range(KAFKA_MAX_RETRY):
             try:
                 self._producer = AIOKafkaProducer(
-                    bootstrap_servers=brokers,
-                    client_id=self._producer_client_id,
-                    value_serializer=lambda v: json.dumps(v, ensure_ascii=False, default=str).encode("utf-8"),
-                    key_serializer=lambda k: k.encode("utf-8") if k else None,
-                    acks="all",
-                    request_timeout_ms=30000,
-                    retry_backoff_ms=1000,
-                    metadata_max_age_ms=60000,
-                    connections_max_idle_ms=540000,
+                    **build_producer_kwargs(
+                        client_id=self._producer_client_id,
+                        request_timeout_ms=30000,
+                        retry_backoff_ms=1000,
+                        metadata_max_age_ms=60000,
+                        connections_max_idle_ms=540000,
+                    )
                 )
                 await self._producer.start()
                 logger.info("%s Kafka producer connected: client=%s", self._log_prefix, self._producer_client_id)
@@ -693,24 +691,17 @@ class ETLBase:
     #  Kafka 消费者 & 恢复器
     # =================================================================
     async def _connect_consumer(self) -> None:
-        brokers = _brokers()
         for attempt in range(KAFKA_MAX_RETRY):
             try:
                 self._consumer = AIOKafkaConsumer(
                     *self._consumer_topics,
-                    bootstrap_servers=brokers,
-                    group_id=self._consumer_group,
-                    value_deserializer=lambda v: json.loads(v.decode("utf-8")) if v else None,
-                    key_deserializer=lambda k: k.decode("utf-8") if k else None,
-                    auto_offset_reset="earliest",
-                    enable_auto_commit=False,
-                    max_poll_records=100,
-                    session_timeout_ms=30000,
-                    heartbeat_interval_ms=10000,
-                    request_timeout_ms=40000,
-                    retry_backoff_ms=1000,
-                    metadata_max_age_ms=60000,
-                    connections_max_idle_ms=540000,
+                    **build_consumer_kwargs(
+                        group_id=self._consumer_group,
+                        request_timeout_ms=40000,
+                        retry_backoff_ms=1000,
+                        metadata_max_age_ms=60000,
+                        connections_max_idle_ms=540000,
+                    )
                 )
                 await self._consumer.start()
                 logger.info(
@@ -869,7 +860,7 @@ class ETLBase:
 
 
 def _brokers() -> list[str]:
-    return [b.strip() for b in settings.kafka_brokers.split(",") if b.strip()]
+    return get_brokers()
 
 
 PIPELINE_VERSION = "2.0"

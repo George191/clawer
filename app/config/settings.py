@@ -65,6 +65,18 @@ class AppSettings(BaseSettings):
     kafka_client_id: str = Field(default="", description="Kafka客户端ID")
     kafka_enable_idempotence: bool = Field(default=True, description="是否启用幂等生产者")
 
+    # ── Kafka SASL Authentication ────────────────────────────────
+    kafka_sasl_mechanism: str = Field(
+        default="",
+        description="Kafka SASL认证机制: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512",
+    )
+    kafka_sasl_username: str = Field(default="", description="Kafka SASL用户名")
+    kafka_sasl_password: str = Field(default="", description="Kafka SASL密码")
+    kafka_security_protocol: str = Field(
+        default="PLAINTEXT",
+        description="Kafka安全协议: PLAINTEXT, SASL_PLAINTEXT, SASL_SSL",
+    )
+
     # ── Anti-Crawl Intelligence Layer (反爬智能层) ────────────────────────────
     anti_crawl_enabled: bool = Field(default=False, description="是否启用反爬智能层")
 
@@ -184,42 +196,6 @@ class AppSettings(BaseSettings):
     etl_dim_consumer_group: str = Field(
         default="spider-dim-group",
         description="DIM 层 Kafka Consumer Group",
-    )
-
-    # ── Elasticsearch Syncer (RDS → ES 实时同步) ─────────────────────────────
-    es_url: str = Field(
-        default="http://localhost:9200",
-        description="Elasticsearch 连接 URL",
-    )
-    es_username: str = Field(default="", description="Elasticsearch 用户名")
-    es_password: str = Field(default="", description="Elasticsearch 密码")
-    es_index_prefix: str = Field(
-        default="spider_",
-        description="ES 索引前缀, 索引名 = 前缀 + 表名",
-    )
-    es_syncer_enabled: bool = Field(
-        default=False,
-        description="是否启用 RDS→ES 同步器",
-    )
-    es_syncer_poll_interval: int = Field(
-        default=10,
-        description="ES 同步器轮询间隔(秒)",
-    )
-    es_syncer_batch_size: int = Field(
-        default=200,
-        description="ES 同步器每批处理记录数",
-    )
-    es_syncer_max_retries: int = Field(
-        default=3,
-        description="ES 同步器最大重试次数",
-    )
-    es_syncer_retry_backoff: float = Field(
-        default=2.0,
-        description="ES 同步器重试退避因子(秒)",
-    )
-    es_syncer_tables: str = Field(
-        default="patent,news,navwarn,intelligence",
-        description="ES 同步器处理的 RDS 表名(逗号分隔), 对应 ts_rds.rds_<name>",
     )
 
 

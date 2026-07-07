@@ -275,12 +275,12 @@ class DashboardMetricsEngine:
         try:
             from aiokafka.admin import AIOKafkaAdminClient
             from app.config.settings import settings as app_settings
+            from app.base.kafka_config import build_admin_client_kwargs
         except ImportError:
             logger.debug("aiokafka admin not available, skipping lag query")
             return lag
 
-        brokers = bootstrap_servers or app_settings.kafka_brokers
-        if not brokers:
+        if not app_settings.kafka_brokers:
             logger.debug("No Kafka brokers configured, skipping lag query")
             return lag
 
@@ -296,8 +296,7 @@ class DashboardMetricsEngine:
             ]
 
         admin = AIOKafkaAdminClient(
-            bootstrap_servers=brokers,
-            client_id="dashboard-lag-checker",
+            **build_admin_client_kwargs(client_id="dashboard-lag-checker")
         )
 
         try:
@@ -344,15 +343,15 @@ class DashboardMetricsEngine:
         try:
             from aiokafka.admin import NewKafkaAdminClient
             from app.config.settings import settings as app_settings
+            from app.base.kafka_config import build_admin_client_kwargs
         except ImportError:
             return lag
 
-        brokers = bootstrap_servers or app_settings.kafka_brokers
         group = consumer_group or app_settings.etl_rds_consumer_group
-        if not brokers:
+        if not app_settings.kafka_brokers:
             return lag
 
-        admin = NewKafkaAdminClient(bootstrap_servers=brokers)
+        admin = NewKafkaAdminClient(**build_admin_client_kwargs())
         try:
             await admin.start()
             descriptions = await admin.describe_consumer_groups([group])

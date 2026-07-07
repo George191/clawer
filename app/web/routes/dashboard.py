@@ -232,9 +232,9 @@ async def _get_kafka_lag() -> dict[str, Any]:
 
     try:
         from aiokafka.admin import AIOKafkaAdminClient
+        from app.base.kafka_config import build_admin_client_kwargs
 
-        brokers = [b.strip() for b in settings.kafka_brokers.split(",") if b.strip()]
-        admin = AIOKafkaAdminClient(bootstrap_servers=brokers)
+        admin = AIOKafkaAdminClient(**build_admin_client_kwargs())
         await admin.start()
 
         try:
