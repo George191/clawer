@@ -116,14 +116,18 @@ services:
       - "9092:9092"
       - "29092:29092"
       - "9093:9093"
+      - "9094:9094"
     volumes:
       - ./docker/kafka_jaas.conf:/etc/kafka/kafka_server_jaas.conf
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt
+      - ./docker/kafka.key:/etc/kafka/kafka.key
+      - ./docker/kafka.crt:/etc/kafka/ca.crt
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092,SASL_PLAINTEXT://0.0.0.0:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092,SASL_PLAINTEXT://localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092,SASL_PLAINTEXT://0.0.0.0:9093,SASL_SSL://0.0.0.0:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,SASL_PLAINTEXT:SASL_PLAINTEXT,SASL_SSL:SASL_SSL
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092,SASL_PLAINTEXT://localhost:9093,SASL_SSL://localhost:9094
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
       KAFKA_SECURITY_INTER_BROKER_PROTOCOL: PLAINTEXT
@@ -132,6 +136,12 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_OPTS: "-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.key
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: ""
+      KAFKA_SSL_TRUSTSTORE_FILENAME: ca.crt
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: ""
+      KAFKA_SSL_KEY_CREDENTIALS: ""
+      KAFKA_SSL_CLIENT_AUTH: none
     healthcheck:
       test: kafka-topics --bootstrap-server localhost:9092 --list || exit 1
       interval: 10s

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import ssl
 from typing import Any
 
 from app.config.settings import settings
@@ -33,7 +34,7 @@ def get_brokers(bootstrap_servers: str | None = None) -> list[str]:
 
 
 def build_kafka_kwargs(**extra: Any) -> dict[str, Any]:
-    """构建 Kafka 连接参数字典（包含 SASL 认证）。
+    """构建 Kafka 连接参数字典（包含 SASL 认证和 SSL）。
 
     Args:
         **extra: 额外的连接参数，将覆盖默认值
@@ -56,6 +57,13 @@ def build_kafka_kwargs(**extra: Any) -> dict[str, Any]:
                 "sasl_plain_password": settings.kafka_sasl_password,
             }
         )
+
+    # SSL 配置（自签名证书）
+    if settings.kafka_security_protocol in ("SSL", "SASL_SSL"):
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        kwargs["ssl_context"] = ssl_context
 
     kwargs.update(extra)
     return kwargs
