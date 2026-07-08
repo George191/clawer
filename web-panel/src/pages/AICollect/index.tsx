@@ -97,10 +97,13 @@ type MissionTab = 'goal' | 'policy';
 type RunStatus = 'idle' | 'running' | 'paused' | 'completed';
 type ProcessStepKey = 'prepare' | 'entry' | 'structure' | 'contract' | 'dryrun' | 'publish';
 type TerminalLogLevel = 'info' | 'ok' | 'warn';
+type TemplateStageId = 'site' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
 type TemplateEntry = {
+  id: string;
   key: string;
   value: string;
   step: ProcessStepKey;
+  stageId: TemplateStageId;
   multiline: boolean;
   depth: number;
 };
@@ -181,9 +184,95 @@ const templateStepKeys: Record<ProcessStepKey, string[]> = {
   publish: [],
 };
 
+const templateStageMeta: Record<TemplateStageId, {
+  title: string;
+  desc: string;
+  threshold: ProcessStepKey;
+  addable?: boolean;
+  rootKey?: 'download' | 'list_fields';
+}> = {
+  site: {
+    title: 'Site',
+    desc: 'base url, source identity and crawler baseline',
+    threshold: 'prepare',
+  },
+  request: {
+    title: 'Request',
+    desc: 'request method, query params and fetch contract',
+    threshold: 'entry',
+  },
+  response: {
+    title: 'Response',
+    desc: 'response type and result path resolution',
+    threshold: 'entry',
+  },
+  pagination: {
+    title: 'Pagination',
+    desc: 'page turning strategy and continuation cursor',
+    threshold: 'structure',
+  },
+  fields: {
+    title: 'Fields',
+    desc: 'list/detail fields, selectors and output schema',
+    threshold: 'structure',
+    addable: true,
+    rootKey: 'list_fields',
+  },
+  dedup: {
+    title: 'Dedup',
+    desc: 'unique fields and record identity contract',
+    threshold: 'contract',
+  },
+  download: {
+    title: 'Download',
+    desc: 'asset selectors, file types and download policy',
+    threshold: 'contract',
+    addable: true,
+    rootKey: 'download',
+  },
+};
+
+const templateStageOrder: TemplateStageId[] = ['site', 'request', 'response', 'pagination', 'fields', 'dedup', 'download'];
+
 const inferTemplateStep = (key: string): ProcessStepKey => {
   const matchedStep = processStepOrder.find((step) => templateStepKeys[step].includes(key));
   return matchedStep ?? 'publish';
+};
+
+const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
+  if (
+    key === 'name'
+    || key === 'display_name'
+    || key === 'base_url'
+    || key === 'data_type'
+    || key === 'adapter'
+    || key === 'anti_crawl_enabled'
+    || key === 'description'
+  ) {
+    return 'site';
+  }
+  if (key === 'batch_params' || key === 'params' || key === 'list_page' || path.startsWith('list_request')) {
+    return 'request';
+  }
+  if (
+    key === 'response_type'
+    || key === 'json_item_path'
+    || key === 'json_total_path'
+    || key === 'json_page_path'
+    || key === 'json_total_num_pages'
+  ) {
+    return 'response';
+  }
+  if (key === 'list_pagination' || path.startsWith('list_pagination')) {
+    return 'pagination';
+  }
+  if (key === 'dedup_fields' || path.startsWith('dedup_fields')) {
+    return 'dedup';
+  }
+  if (key === 'download' || path.startsWith('download')) {
+    return 'download';
+  }
+  return 'fields';
 };
 
 const stripYamlQuotes = (value: string) => value.trim().replace(/^['"]|['"]$/g, '');
@@ -283,9 +372,11 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
         }
 
         entries.push({
+          id: key,
           key,
           value: keyValue,
           step: inferTemplateStep(keyName),
+          stageId: inferTemplateStageId(keyName, key),
           multiline,
           depth,
         });
@@ -298,9 +389,11 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
         }
       } else {
         entries.push({
+          id: itemPath,
           key: itemPath,
           value: normalizeYamlValue(value),
           step: inferTemplateStep(listBase.split('.').pop() ?? listBase),
+          stageId: inferTemplateStageId(listBase.split('.').pop() ?? listBase, itemPath),
           multiline: value.includes('[') || value.includes('{'),
           depth,
         });
@@ -327,9 +420,11 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
     }
 
     entries.push({
+      id: path,
       key: path,
       value,
       step: inferTemplateStep(keyName),
+      stageId: inferTemplateStageId(keyName, path),
       multiline,
       depth,
     });
@@ -497,7 +592,6 @@ const AICollect: React.FC = () => {
   const analyzeStreamRef = useRef<EventSource | null>(null);
   const simulationTimerRef = useRef<number | null>(null);
   const promptGenerationTimerRef = useRef<number | null>(null);
-  const templateScrollRef = useRef<HTMLDivElement | null>(null);
   const referenceEditCanceledRef = useRef(false);
   const accountDisplayName = 'Blank George';
   const currentUserName = accountDisplayName.split(/\s+/)[0] || accountDisplayName;
@@ -524,8 +618,8 @@ const AICollect: React.FC = () => {
   const [referenceDraft, setReferenceDraft] = useState('');
   const [expandedStep, setExpandedStep] = useState<WorkMode>('explore');
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
-  const [selectedStageGuideStep, setSelectedStageGuideStep] = useState<ProcessStepKey | null>(null);
-  const [hoveredStageGuideStep, setHoveredStageGuideStep] = useState<ProcessStepKey | null>(null);
+  const [hoveredStageGuideStep, setHoveredStageGuideStep] = useState<TemplateStageId | null>(null);
+  const [stageTipsDismissed, setStageTipsDismissed] = useState(false);
   const [completedProcessSteps, setCompletedProcessSteps] = useState<Set<ProcessStepKey>>(new Set());
   const [visibleProcessSteps, setVisibleProcessSteps] = useState<ProcessStepKey[]>(['prepare']);
   const [selectedLogStep, setSelectedLogStep] = useState<ProcessStepKey>('prepare');
@@ -535,9 +629,8 @@ const AICollect: React.FC = () => {
 
   const [editingTemplateKey, setEditingTemplateKey] = useState<string | null>(null);
   const [templateValueDrafts, setTemplateValueDrafts] = useState<Record<string, string>>({});
-  const [browserPreviewVisible, setBrowserPreviewVisible] = useState(true);
+  const [templateDraftEntries, setTemplateDraftEntries] = useState<TemplateEntry[]>([]);
   const [sideInspectorOpen, setSideInspectorOpen] = useState(false);
-  const [composerMaskVisible, setComposerMaskVisible] = useState(false);
 
   const hasSession = runStatus !== 'idle';
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
@@ -552,10 +645,6 @@ const AICollect: React.FC = () => {
       ?? templateCatalog.find((template) => template.id === 'google_patent')
       ?? templateCatalog[0];
   }, [intent, submittedPrompt, templateId, url]);
-  const visibleTemplateEntries = useMemo(
-    () => activeTemplate.entries.filter((entry) => processStepOrder.indexOf(entry.step) <= activeStepIndex),
-    [activeStepIndex, activeTemplate.entries],
-  );
   const browserPreviewHost = useMemo(() => {
     const candidate = url || submittedPrompt.match(/https?:\/\/[^\s，。；,]+/i)?.[0] || '';
     if (!candidate) return '';
@@ -571,14 +660,18 @@ const AICollect: React.FC = () => {
     () => `app/adapters/${activeTemplate.id === 'empty' ? 'generated_adapter' : activeTemplate.id}.py`,
     [activeTemplate.id],
   );
-  const adapterClassName = useMemo(() => {
-    const raw = activeTemplate.id === 'empty' ? 'generated_adapter' : activeTemplate.id;
-    return raw
-      .split(/[_-]+/)
-      .filter(Boolean)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join('') || 'GeneratedAdapter';
-  }, [activeTemplate.id]);
+  const browserPreviewFavicon = useMemo(
+    () => (browserPreviewHost ? `https://www.google.com/s2/favicons?sz=64&domain_url=https://${browserPreviewHost}` : ''),
+    [browserPreviewHost],
+  );
+  const adapterFileLabel = useMemo(
+    () => adapterFileName.split('/').pop() ?? adapterFileName,
+    [adapterFileName],
+  );
+  const adapterFileDirectory = useMemo(
+    () => adapterFileName.split('/').slice(0, -1).join('/'),
+    [adapterFileName],
+  );
   const sessionSideMode = useMemo<'browser' | 'code'>(
     () => (
       processStepOrder.indexOf(activeProcessStep) < processStepOrder.indexOf('contract')
@@ -590,42 +683,56 @@ const AICollect: React.FC = () => {
   const sessionStatusText = useMemo(
     () => (
       sessionSideMode === 'browser'
-        ? `AI 控制浏览器 · ${submittedPrompt || url || '目标页面待分析'} · ${browserPreviewHost || 'live session'}`
-        : `AI 正在编写适配器 · ${adapterFileName} · ${processStepMeta[activeProcessStep].title} · ${processStepMeta[activeProcessStep].desc}`
+        ? (browserPreviewHost || 'source.local')
+        : adapterFileName
     ),
-    [activeProcessStep, adapterFileName, browserPreviewHost, sessionSideMode, submittedPrompt, url],
+    [adapterFileName, browserPreviewHost, sessionSideMode],
   );
   const browserInspectorNotes = useMemo(
     () => [
-      `打开 ${browserPreviewHost || '目标页面'} 并采集页面结构证据`,
-      `围绕 ${processStepMeta[activeProcessStep].title} 提取列表与详情信号`,
+      `${templateStageMeta.site.title}: ${browserPreviewHost || 'source.local'}`,
+      `${processStepMeta[activeProcessStep].title}: ${processStepMeta[activeProcessStep].desc}`,
       liveLogs[0] ?? '等待新的浏览器事件',
     ],
     [activeProcessStep, browserPreviewHost, liveLogs],
   );
   const codeInspectorNotes = useMemo(
     () => [
-      `生成 ${adapterFileName}`,
-      `同步 ${visibleTemplateEntries.length} 个模板字段与提取规则`,
-      `当前阶段：${processStepMeta[activeProcessStep].desc}`,
+      adapterFileName,
+      `${templateDraftEntries.length} mapped keys`,
+      `${processStepMeta[activeProcessStep].title}`,
     ],
-    [activeProcessStep, adapterFileName, visibleTemplateEntries.length],
-  );
-  const codePreviewText = useMemo(
-    () => [
-      `# ${activeTemplate.displayName}`,
-      `class ${adapterClassName}Adapter(BaseAdapter):`,
-      `    source_host = "${browserPreviewHost || 'pending-host'}"`,
-      `    template_file = "${activeTemplate.fileName}"`,
-      `    current_stage = "${processStepMeta[activeProcessStep].title}"`,
-      `    mapped_keys = ${visibleTemplateEntries.length}`,
-    ].join('\n'),
-    [activeProcessStep, activeTemplate.displayName, activeTemplate.fileName, adapterClassName, browserPreviewHost, visibleTemplateEntries.length],
+    [activeProcessStep, adapterFileName, templateDraftEntries.length],
   );
   const activeWorkspacePanel = useMemo<WorkspacePanel | null>(() => {
     const panel = searchParams.get('panel');
     return panel === 'templates' || panel === 'tasks' ? panel : null;
   }, [searchParams]);
+  const templateStages = useMemo(() => {
+    const stageSet = new Set(templateDraftEntries.map((entry) => entry.stageId));
+    return templateStageOrder.filter((stageId) => stageSet.has(stageId));
+  }, [templateDraftEntries]);
+  const visibleTemplateStages = useMemo(
+    () => templateStages.filter(
+      (stageId) => processStepOrder.indexOf(templateStageMeta[stageId].threshold) <= activeStepIndex,
+    ),
+    [activeStepIndex, templateStages],
+  );
+  const visibleTemplateEntries = useMemo(
+    () => templateDraftEntries.filter((entry) => visibleTemplateStages.includes(entry.stageId)),
+    [templateDraftEntries, visibleTemplateStages],
+  );
+  const templateEditable = !completedProcessSteps.has('contract');
+  const templateReadyForConfirm = activeProcessStep === 'contract'
+    && visibleTemplateStages.length === templateStages.length
+    && templateEditable;
+  const adapterDiffStats = useMemo(
+    () => ({
+      added: Math.max(visibleTemplateEntries.length * 4 + 12, 32),
+      removed: Math.max(Math.round(visibleTemplateEntries.length * 0.75), 6),
+    }),
+    [visibleTemplateEntries.length],
+  );
 
   useEffect(() => () => {
     analyzeStreamRef.current?.close();
@@ -644,11 +751,10 @@ const AICollect: React.FC = () => {
   useEffect(() => {
     if (!hasSession) {
       setEditingTemplateKey(null);
-      setSelectedStageGuideStep(null);
       setHoveredStageGuideStep(null);
+      setStageTipsDismissed(false);
       setPromptGenerating(false);
       setSideInspectorOpen(false);
-      setComposerMaskVisible(false);
       if (promptGenerationTimerRef.current) {
         window.clearTimeout(promptGenerationTimerRef.current);
         promptGenerationTimerRef.current = null;
@@ -657,41 +763,19 @@ const AICollect: React.FC = () => {
   }, [hasSession]);
 
   useEffect(() => {
-    if (!hasSession) {
-      setBrowserPreviewVisible(true);
-      return;
-    }
-    setBrowserPreviewVisible(Boolean(browserPreviewHost));
-  }, [browserPreviewHost, hasSession, submittedPrompt]);
+    if (!hasSession) return undefined;
+
+    const handlePointerDown = () => {
+      setStageTipsDismissed(true);
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    return () => window.removeEventListener('pointerdown', handlePointerDown);
+  }, [hasSession]);
 
   const pushLiveLog = useCallback((log: string) => {
     setLiveLogs((prev) => [log, ...prev].slice(0, 8));
   }, []);
-
-  const updateComposerMaskVisibility = useCallback(() => {
-    const node = templateScrollRef.current;
-    if (!node) {
-      setComposerMaskVisible(false);
-      return;
-    }
-    if (node.scrollHeight <= node.clientHeight + 4) {
-      setComposerMaskVisible(false);
-      return;
-    }
-    const remaining = node.scrollHeight - node.scrollTop - node.clientHeight;
-    setComposerMaskVisible(remaining <= 168);
-  }, []);
-
-  useEffect(() => {
-    if (!hasSession) {
-      setComposerMaskVisible(false);
-      return;
-    }
-    const rafId = window.requestAnimationFrame(() => {
-      updateComposerMaskVisibility();
-    });
-    return () => window.cancelAnimationFrame(rafId);
-  }, [activeProcessStep, hasSession, submittedPrompt, updateComposerMaskVisibility, visibleTemplateEntries.length]);
 
   const finishPromptGeneration = useCallback(() => {
     if (promptGenerationTimerRef.current) {
@@ -722,14 +806,13 @@ const AICollect: React.FC = () => {
       promptGenerationTimerRef.current = null;
     }
     setActiveProcessStep('prepare');
-    setSelectedStageGuideStep(null);
     setHoveredStageGuideStep(null);
+    setStageTipsDismissed(false);
     setSelectedLogStep('prepare');
     setCompletedProcessSteps(new Set());
     setVisibleProcessSteps(['prepare']);
     setScanPulse(0);
     setPromptGenerating(false);
-    setComposerMaskVisible(false);
     setLiveLogs(['已接收采集目标，准备投射源站页面']);
   }, []);
 
@@ -1460,31 +1543,80 @@ const AICollect: React.FC = () => {
   };
 
   useEffect(() => {
-    setTemplateValueDrafts((prev) => {
-      const next = { ...prev };
-      activeTemplate.entries.forEach((entry) => {
-        if (!(entry.key in next)) {
-          next[entry.key] = entry.value;
-        }
-      });
-      return next;
-    });
+    setTemplateDraftEntries(activeTemplate.entries);
+    setTemplateValueDrafts(
+      Object.fromEntries(activeTemplate.entries.map((entry) => [entry.id, entry.value])),
+    );
   }, [activeTemplate]);
 
-  const handleTemplateValueChange = useCallback((key: string, value: string) => {
-    setTemplateValueDrafts((prev) => ({ ...prev, [key]: value }));
+  const handleTemplateValueChange = useCallback((id: string, value: string) => {
+    setTemplateValueDrafts((prev) => ({ ...prev, [id]: value }));
   }, []);
 
+  const handleAppendTemplateStageEntry = useCallback((stageId: TemplateStageId) => {
+    const stageConfig = templateStageMeta[stageId];
+    if (!stageConfig.addable || !stageConfig.rootKey) return;
+
+    const rootKey = stageConfig.rootKey;
+    const matchingIndexes = templateDraftEntries
+      .filter((entry) => entry.stageId === stageId)
+      .map((entry) => {
+        const match = entry.key.match(/\[(\d+)\]/);
+        return match ? Number(match[1]) : -1;
+      });
+    const nextIndex = matchingIndexes.length ? Math.max(...matchingIndexes) + 1 : 0;
+
+    const newEntries: TemplateEntry[] = rootKey === 'list_fields'
+      ? [
+        ['name', 'new_field'],
+        ['selector', '$.new_field'],
+        ['selector_type', 'json'],
+        ['field_type', 'text'],
+        ['required', 'false'],
+      ].map(([fieldKey, value], offset) => ({
+        id: `${rootKey}[${nextIndex}].${fieldKey}__draft_${offset}`,
+        key: `${rootKey}[${nextIndex}].${fieldKey}`,
+        value,
+        step: 'structure' as ProcessStepKey,
+        stageId,
+        multiline: false,
+        depth: 2,
+      }))
+      : [
+        ['selector', '$.asset_url'],
+        ['selector_type', 'json'],
+        ['link_type', 'href'],
+        ['file_extension', 'bin'],
+        ['asset_type', 'attachment'],
+        ['description', 'new asset'],
+        ['url_prefix', 'https://'],
+      ].map(([fieldKey, value], offset) => ({
+        id: `${rootKey}[${nextIndex}].${fieldKey}__draft_${offset}`,
+        key: `${rootKey}[${nextIndex}].${fieldKey}`,
+        value,
+        step: 'contract' as ProcessStepKey,
+        stageId,
+        multiline: false,
+        depth: 2,
+      }));
+
+    setTemplateDraftEntries((prev) => [...prev, ...newEntries]);
+    setTemplateValueDrafts((prev) => ({
+      ...prev,
+      ...Object.fromEntries(newEntries.map((entry) => [entry.id, entry.value])),
+    }));
+  }, [templateDraftEntries]);
+
   const renderTemplateField = useCallback((entry: TemplateEntry) => {
-    const value = templateValueDrafts[entry.key] ?? entry.value;
-    const isEditing = editingTemplateKey === entry.key;
+    const value = templateValueDrafts[entry.id] ?? entry.value;
+    const isEditing = editingTemplateKey === entry.id;
     const label = entry.key.split('.').pop() ?? entry.key;
     const pathHint = label === entry.key ? '' : entry.key.slice(0, -(label.length + 1));
 
     return (
       <div
         className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''}`}
-        key={entry.key}
+        key={entry.id}
         style={{ ['--ai-template-depth' as string]: String(entry.depth) }}
       >
         <div className="ai-template-field-key">
@@ -1493,7 +1625,10 @@ const AICollect: React.FC = () => {
         </div>
         <div
           className={`ai-template-field-value ${isEditing ? 'is-editing' : ''}`}
-          onDoubleClick={() => setEditingTemplateKey(entry.key)}
+          onDoubleClick={() => {
+            if (!templateEditable) return;
+            setEditingTemplateKey(entry.id);
+          }}
         >
           {isEditing ? (
             entry.multiline ? (
@@ -1501,14 +1636,14 @@ const AICollect: React.FC = () => {
                 autoFocus
                 value={value}
                 autoSize={{ minRows: 3, maxRows: 10 }}
-                onChange={(event) => handleTemplateValueChange(entry.key, event.target.value)}
+                onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
                 onBlur={() => setEditingTemplateKey(null)}
               />
             ) : (
               <Input
                 autoFocus
                 value={value}
-                onChange={(event) => handleTemplateValueChange(entry.key, event.target.value)}
+                onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
                 onBlur={() => setEditingTemplateKey(null)}
                 onPressEnter={() => setEditingTemplateKey(null)}
               />
@@ -1519,7 +1654,39 @@ const AICollect: React.FC = () => {
         </div>
       </div>
     );
-  }, [editingTemplateKey, handleTemplateValueChange, templateValueDrafts]);
+  }, [editingTemplateKey, handleTemplateValueChange, templateEditable, templateValueDrafts]);
+
+  const renderTemplateStageSection = useCallback((stageId: TemplateStageId) => {
+    const stageEntries = visibleTemplateEntries.filter((entry) => entry.stageId === stageId);
+    if (!stageEntries.length) return null;
+
+    return (
+      <section className="ai-template-stage-section" key={stageId} data-stage-id={stageId}>
+        <div className="ai-template-stage-head">
+          <div className="ai-template-stage-copy">
+            <span className="ai-template-stage-title">{templateStageMeta[stageId].title}</span>
+            <small>{templateStageMeta[stageId].desc}</small>
+          </div>
+          <div className="ai-template-stage-actions">
+            <span>{stageEntries.length}</span>
+            {templateEditable && templateStageMeta[stageId].addable ? (
+              <button
+                type="button"
+                className="ai-template-stage-add"
+                onClick={() => handleAppendTemplateStageEntry(stageId)}
+                aria-label={`Add ${templateStageMeta[stageId].title}`}
+              >
+                +
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div className="ai-template-stage-body">
+          {stageEntries.map(renderTemplateField)}
+        </div>
+      </section>
+    );
+  }, [handleAppendTemplateStageEntry, renderTemplateField, templateEditable, visibleTemplateEntries]);
 
   const renderSessionTemplateSheet = () => (
     <section className="ai-session-template-shell">
@@ -1535,27 +1702,32 @@ const AICollect: React.FC = () => {
         {renderSessionBrowserPreview()}
       </header>
 
-      <div
-        className="ai-session-template-scroll"
-        ref={templateScrollRef}
-        onScroll={updateComposerMaskVisibility}
-      >
+      <div className="ai-session-template-scroll">
         <article className="ai-template-sheet">
           <div className="ai-template-sheet-body">
-            {visibleTemplateEntries.map(renderTemplateField)}
+            {visibleTemplateStages.map(renderTemplateStageSection)}
           </div>
+          {templateReadyForConfirm ? (
+            <div className="ai-template-confirm-bar">
+              <Button
+                type="primary"
+                className="ai-template-confirm-btn"
+                onClick={() => handleConfirmProcessStep('contract')}
+              >
+                Confirm Template
+              </Button>
+            </div>
+          ) : null}
         </article>
-        <div className="ai-session-template-divider" aria-hidden="true" />
       </div>
     </section>
   );
 
   const renderSessionStageRail = () => {
-    const guideStep = selectedStageGuideStep;
-    const focusStep = hoveredStageGuideStep ?? selectedStageGuideStep;
-    const guideStageIndex = guideStep ? Math.max(0, processStepOrder.indexOf(guideStep)) : 0;
+    const guideStep = stageTipsDismissed ? null : hoveredStageGuideStep;
+    const guideStageIndex = guideStep ? Math.max(0, visibleTemplateStages.indexOf(guideStep)) : 0;
     const popoverOffset = -8 + guideStageIndex * 16;
-    const focusStageIndex = focusStep ? Math.max(0, processStepOrder.indexOf(focusStep)) : -1;
+    const focusStageIndex = guideStep ? Math.max(0, visibleTemplateStages.indexOf(guideStep)) : -1;
 
     return (
       <aside
@@ -1564,14 +1736,7 @@ const AICollect: React.FC = () => {
         onMouseLeave={() => setHoveredStageGuideStep(null)}
       >
         <div className="ai-session-stage-bars">
-          {processStepOrder.map((step, index) => {
-            const status = completedProcessSteps.has(step)
-              ? 'done'
-              : step === activeProcessStep
-                ? 'active'
-                : visibleProcessSteps.includes(step)
-                  ? 'visible'
-                  : 'idle';
+          {visibleTemplateStages.map((step, index) => {
             const distance = focusStageIndex >= 0 ? Math.abs(index - focusStageIndex) : null;
             const barWidth = distance === null
               ? 6
@@ -1599,21 +1764,16 @@ const AICollect: React.FC = () => {
               <button
                 type="button"
                 key={step}
-                className={`ai-session-stage-bar is-${status}`}
+                className="ai-session-stage-bar"
                 style={{
                   ['--ai-stage-bar-width' as string]: `${barWidth}px`,
                   ['--ai-stage-bar-opacity' as string]: String(barOpacity),
                 }}
-                onMouseEnter={() => setHoveredStageGuideStep(step)}
-                onClick={() => {
-                  if (!visibleProcessSteps.includes(step)) return;
-                  setActiveProcessStep(step);
-                  setMode(processStepMode[step]);
-                  setExpandedStep(processStepMode[step]);
-                  setSelectedLogStep(step);
-                  setSelectedStageGuideStep((prev) => (prev === step ? null : step));
+                onMouseEnter={() => {
+                  setStageTipsDismissed(false);
+                  setHoveredStageGuideStep(step);
                 }}
-                aria-label={processStepMeta[step].title}
+                aria-label={templateStageMeta[step].title}
               >
                 <span />
               </button>
@@ -1622,21 +1782,11 @@ const AICollect: React.FC = () => {
         </div>
         {guideStep ? (
           <div className="ai-session-stage-card" style={{ top: `${popoverOffset}px` }}>
-            <strong>{processStepMeta[guideStep].title}</strong>
-            <p>{processStepMeta[guideStep].desc}</p>
+            <strong>{templateStageMeta[guideStep].title}</strong>
+            <p>{templateStageMeta[guideStep].desc}</p>
             <div className="ai-session-stage-card-foot">
               <span className="ai-session-stage-file">{activeTemplate.fileName}</span>
-              {guideStep === activeProcessStep && processStepMeta[guideStep].needConfirm ? (
-                <Button
-                  size="small"
-                  className="ai-session-stage-confirm"
-                  onClick={() => handleConfirmProcessStep(guideStep)}
-                >
-                  确认阶段
-                </Button>
-              ) : (
-                <em>{guideStageIndex + 1}/{processStepOrder.length}</em>
-              )}
+              <em>{guideStageIndex + 1}/{visibleTemplateStages.length}</em>
             </div>
           </div>
         ) : null}
@@ -1652,9 +1802,19 @@ const AICollect: React.FC = () => {
         aria-label={sessionSideMode === 'browser' ? '展开浏览器状态面板' : '展开编码状态面板'}
         onClick={() => setSideInspectorOpen(true)}
       >
-        <span className="ai-session-status-icon" aria-hidden="true">
-          <SessionStatusIcon className="ai-session-status-icon-svg" />
-        </span>
+        {sessionSideMode === 'browser' ? (
+          <span className="ai-session-status-favicon" aria-hidden="true">
+            {browserPreviewFavicon ? (
+              <img src={browserPreviewFavicon} alt="" />
+            ) : (
+              <GlobalOutlined />
+            )}
+          </span>
+        ) : (
+          <span className="ai-session-status-icon" aria-hidden="true">
+            <FileTextOutlined className="ai-session-status-icon-svg" />
+          </span>
+        )}
         <span className="ai-session-status-copy">
           <span className="ai-session-status-copy-base">{sessionStatusText}</span>
           <span className="ai-session-status-copy-sweep" aria-hidden="true">{sessionStatusText}</span>
@@ -1666,14 +1826,6 @@ const AICollect: React.FC = () => {
   const renderSessionSidePanel = () => (
     <aside className={`ai-session-side-panel is-${sessionSideMode}`}>
       <div className="ai-session-side-head">
-        <div className="ai-session-side-copy">
-          <Text className="ai-session-side-label">
-            {sessionSideMode === 'browser' ? 'AI Browser' : 'Adapter Coding'}
-          </Text>
-          <Text strong className="ai-session-side-title">
-            {sessionSideMode === 'browser' ? 'AI 正在控制浏览器' : 'AI 正在编写适配器'}
-          </Text>
-        </div>
         <Button
           type="text"
           className="ai-session-side-close"
@@ -1686,15 +1838,18 @@ const AICollect: React.FC = () => {
       {sessionSideMode === 'browser' ? (
         <div className="ai-side-browser-shell">
           <div className="ai-side-browser-bar">
-            <span className="ai-side-browser-dot is-red" />
-            <span className="ai-side-browser-dot is-yellow" />
-            <span className="ai-side-browser-dot is-green" />
-            <strong>{browserPreviewHost || 'browser-session'}</strong>
+            <span className="ai-side-browser-favicon" aria-hidden="true">
+              {browserPreviewFavicon ? (
+                <img src={browserPreviewFavicon} alt="" />
+              ) : (
+                <GlobalOutlined />
+              )}
+            </span>
+            <strong>{browserPreviewHost || 'source.local'}</strong>
           </div>
           <div className="ai-side-browser-viewport">
-            <div className="ai-side-browser-chip">AI browsing</div>
-            {browserInspectorNotes.map((note) => (
-              <div className="ai-side-browser-row" key={note}>
+            {[...browserInspectorNotes, ...liveLogs.slice(0, 4)].map((note, index) => (
+              <div className="ai-side-browser-row" key={`${index}-${note}`}>
                 <span />
                 <strong>{note}</strong>
               </div>
@@ -1703,16 +1858,24 @@ const AICollect: React.FC = () => {
         </div>
       ) : (
         <div className="ai-side-code-shell">
-          <div className="ai-side-code-bar">
-            <strong>{adapterFileName}</strong>
-            <em>coding</em>
+          <div className="ai-side-code-card">
+            <div className="ai-side-code-card-top">
+              <span className="ai-side-code-card-icon" aria-hidden="true">
+                <FileTextOutlined />
+              </span>
+              <strong>{adapterFileLabel}</strong>
+            </div>
+            <span className="ai-side-code-path">{adapterFileDirectory}</span>
+            <div className="ai-side-code-diff">
+              <b className="is-added">+{adapterDiffStats.added}</b>
+              <b className="is-removed">-{adapterDiffStats.removed}</b>
+            </div>
           </div>
-          <pre className="ai-side-code-block">{codePreviewText}</pre>
           <div className="ai-side-code-list">
-            {codeInspectorNotes.map((note) => (
-              <div className="ai-side-code-row" key={note}>
+            {visibleTemplateStages.map((stageId) => (
+              <div className="ai-side-code-row" key={stageId}>
                 <span />
-                <strong>{note}</strong>
+                <strong>{templateStageMeta[stageId].title}</strong>
               </div>
             ))}
           </div>
@@ -1734,7 +1897,6 @@ const AICollect: React.FC = () => {
         onClick={() => setSideInspectorOpen((prev) => !prev)}
       >
         <SessionStatusIcon className="ai-session-side-trigger-icon" />
-        <span>{sessionSideMode === 'browser' ? '查看浏览器' : '查看编码状态'}</span>
       </button>
       {sideInspectorOpen ? renderSessionSidePanel() : null}
     </div>
@@ -1744,7 +1906,7 @@ const AICollect: React.FC = () => {
     const referenceText = submittedPrompt || url || '目标源站待识别';
 
     return (
-      <section className={`ai-session-prompt ${composerMaskVisible ? 'is-masked' : ''}`}>
+      <section className="ai-session-prompt">
         <div className="ai-session-reference">
           <span className="ai-session-reference-icon"><LinkOutlined /></span>
           {referenceEditing ? (
@@ -2081,33 +2243,6 @@ const AICollect: React.FC = () => {
             display: flex;
             justify-content: center;
           }
-          .ai-session-bottom-veil {
-            position: absolute;
-            left: 50%;
-            bottom: 0;
-            width: min(980px, calc(100% - 64px));
-            height: var(--ai-session-veil-height);
-            pointer-events: none;
-            opacity: 0;
-            z-index: 12;
-            transform: translateX(-50%);
-            background:
-              radial-gradient(120% 118% at 50% 100%, rgba(19, 23, 31, 0.96) 0%, rgba(19, 23, 31, 0.88) 34%, rgba(19, 23, 31, 0.58) 56%, rgba(19, 23, 31, 0.22) 76%, rgba(19, 23, 31, 0) 100%);
-            clip-path: ellipse(50% 88% at 50% 100%);
-            filter: blur(2px);
-            transition: opacity 220ms ease;
-          }
-          .ai-session-bottom-veil::before {
-            content: '';
-            position: absolute;
-            inset: 14px 10% 0;
-            border-radius: 50%;
-            background: radial-gradient(72% 78% at 50% 100%, rgba(138, 180, 255, 0.12) 0%, rgba(138, 180, 255, 0.07) 22%, rgba(138, 180, 255, 0) 72%);
-            opacity: 0.82;
-          }
-          .ai-session-bottom-veil.is-visible {
-            opacity: 1;
-          }
           .ai-collect-panel {
             padding: 14px;
             overflow: auto;
@@ -2208,23 +2343,6 @@ const AICollect: React.FC = () => {
             flex-direction: column;
             padding: 2px 0 6px;
             animation: aiComposerDock 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-          }
-          .ai-session-prompt::before {
-            content: '';
-            position: absolute;
-            left: 50%;
-            bottom: -18px;
-            width: min(860px, calc(100vw - 32px));
-            height: 176px;
-            transform: translateX(-50%);
-            pointer-events: none;
-            opacity: 0;
-            background:
-              linear-gradient(180deg, rgba(16, 18, 18, 0) 0%, rgba(16, 18, 18, 0.26) 22%, rgba(16, 18, 18, 0.68) 58%, ${aura.bg} 100%);
-            transition: opacity 180ms ease;
-          }
-          .ai-session-prompt.is-masked::before {
-            opacity: 1;
           }
           .ai-session-reference {
             height: 28px;
@@ -2429,42 +2547,33 @@ const AICollect: React.FC = () => {
             transform: translateY(-50%);
           }
           .ai-session-stage-bars {
-            width: 12px;
+            width: 24px;
             padding: 0;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 5px;
             pointer-events: auto;
           }
           .ai-session-stage-bar {
-            width: 12px;
-            height: 10px;
+            width: 24px;
+            height: 6px;
             padding: 0;
             border: none;
             background: transparent;
             display: inline-flex;
             align-items: center;
-            justify-content: center;
+            justify-content: flex-start;
             cursor: pointer;
           }
           .ai-session-stage-bar span {
-            width: 6px;
+            width: var(--ai-stage-bar-width, 6px);
             height: 2px;
             border-radius: 999px;
-            background: rgba(255, 255, 255, 0.2);
-            transition: width 160ms ease, background 160ms ease, opacity 160ms ease, transform 160ms ease;
+            background: rgba(255, 255, 255, var(--ai-stage-bar-opacity, 0.24));
+            transition: width 180ms ease, background 180ms ease, opacity 180ms ease, transform 180ms ease;
           }
-          .ai-session-stage-bar.is-visible span {
-            width: 8px;
-            background: rgba(255, 255, 255, 0.34);
-          }
-          .ai-session-stage-bar.is-done span {
-            width: 8px;
-            background: rgba(255, 255, 255, 0.28);
-          }
-          .ai-session-stage-bar.is-active span {
-            width: 12px;
-            background: rgba(255, 255, 255, 0.9);
+          .ai-session-stage-bar:hover span,
+          .ai-session-stage-bar:focus-visible span {
             transform: translateX(1px);
           }
           .ai-session-stage-card {
@@ -2543,6 +2652,87 @@ const AICollect: React.FC = () => {
             border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 18px;
           }
+          .ai-template-sheet-body {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+          }
+          .ai-template-stage-section {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            padding-bottom: 18px;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+          }
+          .ai-template-stage-section:last-child {
+            padding-bottom: 0;
+            border-bottom: none;
+          }
+          .ai-template-stage-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+          }
+          .ai-template-stage-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+          }
+          .ai-template-stage-title {
+            color: ${aura.text};
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.3;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+          }
+          .ai-template-stage-copy small {
+            color: ${aura.muted};
+            font-size: 11px;
+            line-height: 1.55;
+          }
+          .ai-template-stage-actions {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: ${aura.subtle};
+            font-size: 11px;
+            white-space: nowrap;
+          }
+          .ai-template-stage-add {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.04);
+            color: ${aura.text};
+            cursor: pointer;
+            transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+          }
+          .ai-template-stage-add:hover {
+            border-color: rgba(138, 180, 255, 0.32);
+            background: rgba(138, 180, 255, 0.12);
+            color: #ffffff;
+          }
+          .ai-template-stage-body {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+          .ai-template-confirm-bar {
+            display: flex;
+            justify-content: flex-end;
+            padding-top: 18px;
+            margin-top: 20px;
+            border-top: 1px dashed rgba(255, 255, 255, 0.14);
+          }
+          .ai-template-confirm-btn {
+            min-width: 138px;
+            height: 34px !important;
+            border-radius: 17px !important;
+          }
           .ai-session-status-line {
             width: 100%;
             min-width: 0;
@@ -2552,7 +2742,7 @@ const AICollect: React.FC = () => {
             border: none;
             background: transparent;
             display: grid;
-            grid-template-columns: 16px minmax(0, 1fr);
+            grid-template-columns: 18px minmax(0, 1fr);
             align-items: center;
             gap: 8px;
             color: ${aura.text};
@@ -2576,6 +2766,23 @@ const AICollect: React.FC = () => {
             width: 16px;
             height: 16px;
             display: block;
+          }
+          .ai-session-status-favicon {
+            width: 18px;
+            height: 18px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.9);
+            border-radius: 4px;
+            overflow: hidden;
+            flex-shrink: 0;
+          }
+          .ai-session-status-favicon img {
+            width: 16px;
+            height: 16px;
+            display: block;
+            border-radius: 4px;
           }
           .ai-session-status-copy {
             min-width: 0;
@@ -2617,14 +2824,13 @@ const AICollect: React.FC = () => {
             right: 0;
             top: 112px;
             bottom: calc(var(--ai-session-prompt-height) + 52px);
-            width: clamp(72px, calc((100vw - 882px) / 2 - 12px), 118px);
+            width: clamp(52px, calc((100vw - 882px) / 2 - 12px), 86px);
             border: none;
             background: transparent;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 14px;
             color: rgba(255, 255, 255, 0.28);
             cursor: pointer;
             transition: color 160ms ease, transform 160ms ease;
@@ -2646,14 +2852,6 @@ const AICollect: React.FC = () => {
             position: relative;
             z-index: 1;
           }
-          .ai-session-side-trigger span {
-            position: relative;
-            z-index: 1;
-            writing-mode: vertical-rl;
-            text-orientation: mixed;
-            font-size: 11px;
-            letter-spacing: 0.16em;
-          }
           .ai-session-side-panel {
             position: absolute;
             right: 16px;
@@ -2674,26 +2872,8 @@ const AICollect: React.FC = () => {
           }
           .ai-session-side-head {
             display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 12px;
-          }
-          .ai-session-side-copy {
-            min-width: 0;
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-          }
-          .ai-session-side-label {
-            color: ${aura.subtle};
-            font-size: 11px;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-          }
-          .ai-session-side-title {
-            color: ${aura.text};
-            font-size: 15px;
-            line-height: 1.4;
+            align-items: center;
+            justify-content: flex-end;
           }
           .ai-session-side-close {
             width: 26px !important;
@@ -2717,8 +2897,7 @@ const AICollect: React.FC = () => {
             gap: 12px;
             flex: 1;
           }
-          .ai-side-browser-bar,
-          .ai-side-code-bar {
+          .ai-side-browser-bar {
             min-height: 40px;
             padding: 0 12px;
             border-radius: 12px;
@@ -2728,8 +2907,7 @@ const AICollect: React.FC = () => {
             align-items: center;
             gap: 8px;
           }
-          .ai-side-browser-bar strong,
-          .ai-side-code-bar strong {
+          .ai-side-browser-bar strong {
             min-width: 0;
             color: rgba(255, 255, 255, 0.82);
             font-size: 12px;
@@ -2738,32 +2916,22 @@ const AICollect: React.FC = () => {
             text-overflow: ellipsis;
             white-space: nowrap;
           }
-          .ai-side-code-bar em {
-            margin-left: auto;
-            padding: 0 8px;
-            border-radius: 999px;
-            background: rgba(129, 216, 208, 0.12);
-            color: ${tiffanyAccent};
-            font-size: 11px;
-            line-height: 22px;
-            font-style: normal;
-            white-space: nowrap;
-          }
-          .ai-side-browser-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
+          .ai-side-browser-favicon {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.9);
+            border-radius: 4px;
+            overflow: hidden;
             flex-shrink: 0;
           }
-          .ai-side-browser-dot.is-red {
-            background: #FF5F57;
-          }
-          .ai-side-browser-dot.is-yellow {
-            background: #FEBC2E;
-          }
-          .ai-side-browser-dot.is-green {
-            background: #28C840;
+          .ai-side-browser-favicon img {
+            width: 16px;
+            height: 16px;
+            display: block;
+            border-radius: 4px;
           }
           .ai-side-browser-viewport {
             flex: 1;
@@ -2776,17 +2944,6 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             gap: 10px;
-          }
-          .ai-side-browser-chip {
-            align-self: flex-start;
-            padding: 0 10px;
-            border-radius: 999px;
-            background: rgba(129, 216, 208, 0.12);
-            color: ${tiffanyAccent};
-            font-size: 11px;
-            line-height: 24px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
           }
           .ai-side-browser-row,
           .ai-side-code-row {
@@ -2807,28 +2964,67 @@ const AICollect: React.FC = () => {
             background: rgba(129, 216, 208, 0.82);
             display: inline-block;
           }
-          .ai-side-code-block {
-            margin: 0;
+          .ai-side-code-card {
             padding: 14px;
             border-radius: 16px;
             background: rgba(18, 21, 27, 0.78);
             border: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+          .ai-side-code-card-top {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+          .ai-side-code-card-top strong {
+            min-width: 0;
+            color: rgba(255, 255, 255, 0.92);
+            font-size: 13px;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .ai-side-code-card-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 7px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.06);
             color: rgba(255, 255, 255, 0.86);
-            font-size: 12px;
-            line-height: 1.72;
+            flex-shrink: 0;
+          }
+          .ai-side-code-path {
+            color: ${aura.muted};
+            font-size: 11px;
+            line-height: 1.5;
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-            white-space: pre-wrap;
             word-break: break-word;
+          }
+          .ai-side-code-diff {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+          }
+          .ai-side-code-diff b {
+            font-size: 28px;
+            line-height: 1;
+            font-weight: 600;
+          }
+          .ai-side-code-diff .is-added {
+            color: #65d5a3;
+          }
+          .ai-side-code-diff .is-removed {
+            color: #ff7d7d;
           }
           .ai-side-code-list {
             display: flex;
             flex-direction: column;
             gap: 10px;
-          }
-          .ai-template-sheet-body {
-            display: flex;
-            flex-direction: column;
-            gap: 18px;
           }
           .ai-template-field {
             --ai-template-indent: calc(var(--ai-template-depth, 0) * 14px);
@@ -2895,15 +3091,6 @@ const AICollect: React.FC = () => {
             box-shadow: none !important;
             padding: 0 !important;
             border-radius: 0 !important;
-          }
-          .ai-session-template-divider {
-            width: min(620px, calc(100% - 120px));
-            margin: 22px auto calc(var(--ai-session-prompt-height) + 44px);
-            border-top: 1px dashed rgba(255, 255, 255, 0.2);
-            opacity: 0.58;
-          }
-          .ai-session-bottom-veil {
-            display: none !important;
           }
           .ai-session-shell {
             align-items: stretch;
@@ -4567,7 +4754,6 @@ const AICollect: React.FC = () => {
             </div>
           )}
         </div>
-        <div className={`ai-session-bottom-veil ${hasSession ? 'is-visible' : ''}`} aria-hidden="true" />
         <WorkspaceDock
           activePanel={activeWorkspacePanel}
           sessionActive={hasSession}
