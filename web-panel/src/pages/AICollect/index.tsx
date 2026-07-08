@@ -1552,13 +1552,19 @@ const AICollect: React.FC = () => {
 
   const renderSessionStageRail = () => {
     const guideStep = selectedStageGuideStep;
+    const focusStep = hoveredStageGuideStep ?? selectedStageGuideStep;
     const guideStageIndex = guideStep ? Math.max(0, processStepOrder.indexOf(guideStep)) : 0;
     const popoverOffset = -8 + guideStageIndex * 16;
+    const focusStageIndex = focusStep ? Math.max(0, processStepOrder.indexOf(focusStep)) : -1;
 
     return (
-      <aside className="ai-session-stage-float" aria-label="分析阶段提示">
+      <aside
+        className="ai-session-stage-float"
+        aria-label="分析阶段提示"
+        onMouseLeave={() => setHoveredStageGuideStep(null)}
+      >
         <div className="ai-session-stage-bars">
-          {processStepOrder.map((step) => {
+          {processStepOrder.map((step, index) => {
             const status = completedProcessSteps.has(step)
               ? 'done'
               : step === activeProcessStep
@@ -1566,11 +1572,39 @@ const AICollect: React.FC = () => {
                 : visibleProcessSteps.includes(step)
                   ? 'visible'
                   : 'idle';
+            const distance = focusStageIndex >= 0 ? Math.abs(index - focusStageIndex) : null;
+            const barWidth = distance === null
+              ? 6
+              : distance === 0
+                ? (hoveredStageGuideStep ? 20 : 18)
+                : distance === 1
+                  ? 14
+                  : distance === 2
+                    ? 10
+                    : distance === 3
+                      ? 8
+                      : 6;
+            const barOpacity = distance === null
+              ? 0.24
+              : distance === 0
+                ? (hoveredStageGuideStep ? 0.72 : 0.94)
+                : distance === 1
+                  ? 0.52
+                  : distance === 2
+                    ? 0.38
+                    : distance === 3
+                      ? 0.3
+                      : 0.24;
             return (
               <button
                 type="button"
                 key={step}
                 className={`ai-session-stage-bar is-${status}`}
+                style={{
+                  ['--ai-stage-bar-width' as string]: `${barWidth}px`,
+                  ['--ai-stage-bar-opacity' as string]: String(barOpacity),
+                }}
+                onMouseEnter={() => setHoveredStageGuideStep(step)}
                 onClick={() => {
                   if (!visibleProcessSteps.includes(step)) return;
                   setActiveProcessStep(step);
