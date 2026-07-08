@@ -619,7 +619,8 @@ const AICollect: React.FC = () => {
   const [expandedStep, setExpandedStep] = useState<WorkMode>('explore');
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
   const [hoveredStageGuideStep, setHoveredStageGuideStep] = useState<TemplateStageId | null>(null);
-  const [stageTipsDismissed, setStageTipsDismissed] = useState(false);
+  const [activeTemplateStage, setActiveTemplateStage] = useState<TemplateStageId | null>(null);
+  const [templateStageVisibility, setTemplateStageVisibility] = useState<Partial<Record<TemplateStageId, number>>>({});
   const [completedProcessSteps, setCompletedProcessSteps] = useState<Set<ProcessStepKey>>(new Set());
   const [visibleProcessSteps, setVisibleProcessSteps] = useState<ProcessStepKey[]>(['prepare']);
   const [selectedLogStep, setSelectedLogStep] = useState<ProcessStepKey>('prepare');
@@ -631,6 +632,8 @@ const AICollect: React.FC = () => {
   const [templateValueDrafts, setTemplateValueDrafts] = useState<Record<string, string>>({});
   const [templateDraftEntries, setTemplateDraftEntries] = useState<TemplateEntry[]>([]);
   const [sideInspectorOpen, setSideInspectorOpen] = useState(false);
+  const templateScrollRef = useRef<HTMLDivElement | null>(null);
+  const templateStageSectionRefs = useRef<Partial<Record<TemplateStageId, HTMLElement | null>>>({});
 
   const hasSession = runStatus !== 'idle';
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
@@ -752,7 +755,8 @@ const AICollect: React.FC = () => {
     if (!hasSession) {
       setEditingTemplateKey(null);
       setHoveredStageGuideStep(null);
-      setStageTipsDismissed(false);
+      setActiveTemplateStage(null);
+      setTemplateStageVisibility({});
       setPromptGenerating(false);
       setSideInspectorOpen(false);
       if (promptGenerationTimerRef.current) {
@@ -760,17 +764,6 @@ const AICollect: React.FC = () => {
         promptGenerationTimerRef.current = null;
       }
     }
-  }, [hasSession]);
-
-  useEffect(() => {
-    if (!hasSession) return undefined;
-
-    const handlePointerDown = () => {
-      setStageTipsDismissed(true);
-    };
-
-    window.addEventListener('pointerdown', handlePointerDown);
-    return () => window.removeEventListener('pointerdown', handlePointerDown);
   }, [hasSession]);
 
   const pushLiveLog = useCallback((log: string) => {
@@ -807,7 +800,8 @@ const AICollect: React.FC = () => {
     }
     setActiveProcessStep('prepare');
     setHoveredStageGuideStep(null);
-    setStageTipsDismissed(false);
+    setActiveTemplateStage(null);
+    setTemplateStageVisibility({});
     setSelectedLogStep('prepare');
     setCompletedProcessSteps(new Set());
     setVisibleProcessSteps(['prepare']);
@@ -1549,6 +1543,91 @@ const AICollect: React.FC = () => {
     );
   }, [activeTemplate]);
 
+  useEffect(() => {
+    const scrollElement = templateScrollRef.current;
+    if (!scrollElement || !visibleTemplateStages.length) return undefined;
+
+    let frame = 0;
+    const observers: ResizeObserver[] = [];
+
+    const measureVisibleStages = () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+
+      frame = window.requestAnimationFrame(() => {
+        const viewportTop = scrollElement.scrollTop;
+        const viewportHeight = scrollElement.clientHeight;
+        const viewportBottom = viewportTop + viewportHeight;
+        const anchorLine = viewportTop + Math.min(144, viewportHeight * 0.32);
+
+        const nextVisibility: Partial<Record<TemplateStageId, number>> = {};
+        let nextActiveStage: TemplateStageId | null = null;
+        let fallbackStage: TemplateStageId | null = null;
+        let smallestDistance = Number.POSITIVE_INFINITY;
+
+        visibleTemplateStages.forEach((stageId) => {
+          const node = templateStageSectionRefs.current[stageId];
+          if (!node) return;
+
+          const top = node.offsetTop;
+          const height = node.offsetHeight;
+          const bottom = top + height;
+          const visibleTop = Math.max(top, viewportTop);
+          const visibleBottom = Math.min(bottom, viewportBottom);
+          const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+          const visibility = height > 0 ? Math.min(1, visibleHeight / height) : 0;
+
+          nextVisibility[stageId] = visibility;
+
+          if (anchorLine >= top && anchorLine <= bottom) {
+            nextActiveStage = stageId;
+          }
+
+          const distance = Math.abs(top - anchorLine);
+          if (distance < smallestDistance) {
+            smallestDistance = distance;
+            fallbackStage = stageId;
+          }
+        });
+
+        const resolvedStage = nextActiveStage ?? fallbackStage ?? visibleTemplateStages[0] ?? null;
+
+        setActiveTemplateStage((prev) => (prev === resolvedStage ? prev : resolvedStage));
+        setTemplateStageVisibility((prev) => {
+          const keys = Array.from(new Set([...Object.keys(prev), ...Object.keys(nextVisibility)])) as TemplateStageId[];
+          const changed = keys.some((key) => Math.abs((prev[key] ?? 0) - (nextVisibility[key] ?? 0)) > 0.01);
+          return changed ? nextVisibility : prev;
+        });
+      });
+    };
+
+    measureVisibleStages();
+    scrollElement.addEventListener('scroll', measureVisibleStages, { passive: true });
+    window.addEventListener('resize', measureVisibleStages);
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(() => {
+        measureVisibleStages();
+      });
+      observer.observe(scrollElement);
+      visibleTemplateStages.forEach((stageId) => {
+        const node = templateStageSectionRefs.current[stageId];
+        if (node) observer.observe(node);
+      });
+      observers.push(observer);
+    }
+
+    return () => {
+      scrollElement.removeEventListener('scroll', measureVisibleStages);
+      window.removeEventListener('resize', measureVisibleStages);
+      observers.forEach((observer) => observer.disconnect());
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [visibleTemplateEntries.length, visibleTemplateStages]);
+
   const handleTemplateValueChange = useCallback((id: string, value: string) => {
     setTemplateValueDrafts((prev) => ({ ...prev, [id]: value }));
   }, []);
@@ -1661,7 +1740,14 @@ const AICollect: React.FC = () => {
     if (!stageEntries.length) return null;
 
     return (
-      <section className="ai-template-stage-section" key={stageId} data-stage-id={stageId}>
+      <section
+        className="ai-template-stage-section"
+        key={stageId}
+        data-stage-id={stageId}
+        ref={(node) => {
+          templateStageSectionRefs.current[stageId] = node;
+        }}
+      >
         <div className="ai-template-stage-head">
           <div className="ai-template-stage-copy">
             <span className="ai-template-stage-title">{templateStageMeta[stageId].title}</span>
@@ -1702,7 +1788,7 @@ const AICollect: React.FC = () => {
         {renderSessionBrowserPreview()}
       </header>
 
-      <div className="ai-session-template-scroll">
+      <div className="ai-session-template-scroll" ref={templateScrollRef}>
         <article className="ai-template-sheet">
           <div className="ai-template-sheet-body">
             {visibleTemplateStages.map(renderTemplateStageSection)}
@@ -1724,10 +1810,21 @@ const AICollect: React.FC = () => {
   );
 
   const renderSessionStageRail = () => {
-    const guideStep = stageTipsDismissed ? null : hoveredStageGuideStep;
+    const guideStep = hoveredStageGuideStep;
     const guideStageIndex = guideStep ? Math.max(0, visibleTemplateStages.indexOf(guideStep)) : 0;
-    const popoverOffset = -8 + guideStageIndex * 16;
-    const focusStageIndex = guideStep ? Math.max(0, visibleTemplateStages.indexOf(guideStep)) : -1;
+    const hoveredStageIndex = hoveredStageGuideStep ? visibleTemplateStages.indexOf(hoveredStageGuideStep) : -1;
+    const popoverOffset = -6 + guideStageIndex * 12;
+    const handleStageBarClick = (stageId: TemplateStageId) => {
+      const scrollElement = templateScrollRef.current;
+      const node = templateStageSectionRefs.current[stageId];
+      if (!scrollElement || !node) return;
+
+      const nextScrollTop = Math.max(0, node.offsetTop - 12);
+      scrollElement.scrollTo({
+        top: nextScrollTop,
+        behavior: 'smooth',
+      });
+    };
 
     return (
       <aside
@@ -1737,43 +1834,44 @@ const AICollect: React.FC = () => {
       >
         <div className="ai-session-stage-bars">
           {visibleTemplateStages.map((step, index) => {
-            const distance = focusStageIndex >= 0 ? Math.abs(index - focusStageIndex) : null;
-            const barWidth = distance === null
-              ? 6
-              : distance === 0
-                ? (hoveredStageGuideStep ? 20 : 18)
-                : distance === 1
-                  ? 14
-                  : distance === 2
-                    ? 10
-                    : distance === 3
-                      ? 8
-                      : 6;
-            const barOpacity = distance === null
-              ? 0.24
-              : distance === 0
-                ? (hoveredStageGuideStep ? 0.72 : 0.94)
-                : distance === 1
-                  ? 0.52
-                  : distance === 2
-                    ? 0.38
-                    : distance === 3
-                      ? 0.3
-                      : 0.24;
+            const visibility = templateStageVisibility[step] ?? 0;
+            const isHovered = hoveredStageGuideStep === step;
+            const isActiveAnchor = activeTemplateStage === step;
+            const hoverDistance = hoveredStageIndex >= 0 ? Math.abs(index - hoveredStageIndex) : null;
+            const hoverWidth = hoverDistance === null
+              ? 0
+              : hoverDistance === 0
+                ? 30
+                : hoverDistance === 1
+                  ? 23
+                  : hoverDistance === 2
+                    ? 17
+                    : 0;
+            const barWidth = Math.max(6, hoverWidth);
+            const barColor = isHovered
+              ? '#FFFFFF'
+              : isActiveAnchor
+                ? `rgba(255, 255, 255, ${Math.min(0.68, 0.42 + visibility * 0.18)})`
+                : hoverDistance === 1
+                  ? `rgba(255, 255, 255, ${Math.min(0.86, 0.42 + visibility * 0.26)})`
+                  : hoverDistance === 2
+                    ? `rgba(255, 255, 255, ${Math.min(0.7, 0.32 + visibility * 0.24)})`
+                    : `rgba(255, 255, 255, ${Math.min(0.54, 0.14 + visibility * 0.52)})`;
             return (
               <button
                 type="button"
                 key={step}
-                className="ai-session-stage-bar"
+                className={`ai-session-stage-bar ${isActiveAnchor ? 'is-active' : ''} ${visibility > 0.08 ? 'is-visible' : ''}`}
                 style={{
                   ['--ai-stage-bar-width' as string]: `${barWidth}px`,
-                  ['--ai-stage-bar-opacity' as string]: String(barOpacity),
+                  ['--ai-stage-bar-color' as string]: barColor,
                 }}
                 onMouseEnter={() => {
-                  setStageTipsDismissed(false);
                   setHoveredStageGuideStep(step);
                 }}
+                onClick={() => handleStageBarClick(step)}
                 aria-label={templateStageMeta[step].title}
+                aria-current={isActiveAnchor ? 'true' : undefined}
               >
                 <span />
               </button>
@@ -2547,16 +2645,16 @@ const AICollect: React.FC = () => {
             transform: translateY(-50%);
           }
           .ai-session-stage-bars {
-            width: 24px;
+            width: 56px;
             padding: 0;
             display: flex;
             flex-direction: column;
-            gap: 5px;
+            gap: 6px;
             pointer-events: auto;
           }
           .ai-session-stage-bar {
-            width: 24px;
-            height: 6px;
+            width: 56px;
+            height: 8px;
             padding: 0;
             border: none;
             background: transparent;
@@ -2567,18 +2665,25 @@ const AICollect: React.FC = () => {
           }
           .ai-session-stage-bar span {
             width: var(--ai-stage-bar-width, 6px);
-            height: 2px;
+            height: var(--ai-stage-bar-height, 2px);
             border-radius: 999px;
-            background: rgba(255, 255, 255, var(--ai-stage-bar-opacity, 0.24));
-            transition: width 180ms ease, background 180ms ease, opacity 180ms ease, transform 180ms ease;
+            background: var(--ai-stage-bar-color, rgba(255, 255, 255, 0.24));
+            box-shadow: 0 0 16px color-mix(in srgb, var(--ai-stage-bar-color, rgba(255,255,255,0.24)) 68%, transparent);
+            transition: width 180ms ease, height 180ms ease, background 180ms ease, opacity 180ms ease, transform 180ms ease, box-shadow 180ms ease;
           }
           .ai-session-stage-bar:hover span,
           .ai-session-stage-bar:focus-visible span {
-            transform: translateX(1px);
+            transform: translateX(2px);
+          }
+          .ai-session-stage-bar.is-visible span {
+            opacity: 0.96;
+          }
+          .ai-session-stage-bar.is-active span {
+            box-shadow: 0 0 16px rgba(255, 255, 255, 0.46);
           }
           .ai-session-stage-card {
             position: absolute;
-            left: 20px;
+            left: 45px;
             width: 244px;
             padding: 12px 12px 10px;
             border-radius: 14px;
