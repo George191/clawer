@@ -25,12 +25,10 @@ logger = logging.getLogger(__name__)
 _proxy_pool = None
 _delayer = None
 _rotator = None
-_fallback = None
-
 
 def _init_anti_crawl():
     """延迟初始化反爬各组件。"""
-    global _proxy_pool, _delayer, _rotator, _fallback
+    global _proxy_pool, _delayer, _rotator
     if _rotator is None:
         from app.anti_crawl.request_delayer import get_delayer
         from app.anti_crawl.identity_rotator import get_identity_rotator
@@ -39,9 +37,6 @@ def _init_anti_crawl():
     if settings.anti_crawl_enabled and _proxy_pool is None:
         from app.anti_crawl.proxy_pool import get_proxy_pool
         _proxy_pool = get_proxy_pool()
-    if settings.fallback_enabled and _fallback is None:
-        from app.scheduler.request_fallback import get_request_fallback
-        _fallback = get_request_fallback()
 
 
 class DownloadError(Exception):
@@ -145,9 +140,6 @@ class HttpClient:
         self._last_proxy_url = proxy_url
 
         use_proxy = proxy_url is not None
-        if _fallback is not None and _fallback.enabled:
-            mode = await _fallback.get_mode(url)
-            use_proxy = use_proxy and (mode == "proxy")
 
         try:
             request_kwargs = dict(
@@ -172,8 +164,6 @@ class HttpClient:
 
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
-            if _fallback is not None:
-                await _fallback.record_success(url, "proxy" if use_proxy else "direct")
 
             if config.encoding:
                 response.encoding = config.encoding
@@ -184,15 +174,11 @@ class HttpClient:
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_failure(proxy_url)
                 await self._release_failed_proxy(task_id, proxy_url)
-            if _fallback is not None:
-                await _fallback.record_failure(url, "proxy" if use_proxy else "direct")
             raise
         except Exception as e:
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_failure(proxy_url)
                 await self._release_failed_proxy(task_id, proxy_url)
-            if _fallback is not None:
-                await _fallback.record_failure(url, "proxy" if use_proxy else "direct")
             raise
 
     async def _release_failed_proxy(self, task_id: int, proxy_url: str) -> None:
@@ -283,16 +269,12 @@ class HttpClient:
 
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
-            if _fallback is not None:
-                await _fallback.record_success(url, "proxy" if use_proxy else "direct")
 
             return data
 
         except Exception as e:
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_failure(proxy_url)
-            if _fallback is not None:
-                await _fallback.record_failure(url, "proxy" if use_proxy else "direct")
             raise
 
     async def close(self) -> None:
