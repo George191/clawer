@@ -2076,11 +2076,11 @@ const AICollect: React.FC = () => {
           .ai-collect-workbench .ai-prompt-input.ant-input {
             min-height: 34px !important;
             max-height: 70px;
-            padding: 0 !important;
-            background: var(--prompt-surface-base) !important;
-            background-color: var(--prompt-surface-base) !important;
+            padding: 0 0 0 2px !important;
+            background: transparent !important;
+            background-color: transparent !important;
             border-color: transparent !important;
-            border-radius: 20px !important;
+            border-radius: 0 !important;
             box-shadow: none !important;
             resize: none;
             font-size: 15px;
