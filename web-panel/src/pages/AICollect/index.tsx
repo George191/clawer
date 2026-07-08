@@ -1843,7 +1843,7 @@ const AICollect: React.FC = () => {
               : hoverDistance === 0
                 ? 30
                 : hoverDistance === 1
-                  ? 23
+                  ? 15
                   : 0;
             const barWidth = Math.max(6, hoverWidth);
             const barColor = isHovered
