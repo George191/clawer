@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -23,9 +22,10 @@ from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter, _SOCIAL_DOMAINS
 from app.adapters.utils.news.wp import assets as wp_assets
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 from app.models.template import RequestConfig
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "blacksky_news")
 
 
 def _normalize_title(title: str) -> str:
@@ -72,12 +72,12 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
                 await self._build_html_link_map(page=p)
 
             logger.info(
-                "[BlackSkyNews] Built HTML link map with %d entries",
+                "Built HTML link map with %d entries",
                 len(self._html_link_map),
             )
         except Exception as e:
             logger.warning(
-                "[BlackSkyNews] Failed to build HTML link map: %s",
+                "Failed to build HTML link map: %s",
                 str(e)[:100],
             )
 
@@ -98,7 +98,7 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
                 url, cfg, anti_crawl_enabled=False,
             )
         except Exception as e:
-            logger.debug("[BlackSkyNews] HTML page %d fetch failed: %s", page, str(e)[:80])
+            logger.debug("Failed to fetch HTML page %d: %s", page, str(e)[:80])
             return
 
         try:
@@ -138,7 +138,7 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
         for item in items:
             self._source_map[item["id"]] = item["name"]
         logger.info(
-            "[BlackSkyNews] Fetched %d sources from API",
+            "Fetched %d sources from API",
             len(self._source_map),
         )
 

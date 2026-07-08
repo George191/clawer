@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -15,8 +14,9 @@ from lxml import etree, html as lxml_html
 from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "arstechnica")
 
 _PAGE_DELAY_SECONDS = 1.0
 _MAX_RETRIES = 4
@@ -110,7 +110,7 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
         self._should_stop_after_page = bool(expected and len(records) < expected)
         if self._retry_count > 0:
             logger.info(
-                "[ArsTechnica] Page %d recovered after %d retries",
+                "Page %d recovered after %d retries",
                 page,
                 self._retry_count,
             )
@@ -119,7 +119,7 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
 
     def on_page_advance(self) -> bool | None:
         if self._should_stop_after_page:
-            logger.info("[ArsTechnica] Reached final archive page, stopping pagination")
+            logger.info("Reached final archive page, stopping pagination")
             return False
         return None
 
@@ -132,12 +132,12 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
                 anti_crawl_enabled=False,
             )
         except Exception as exc:
-            logger.warning("[ArsTechnica] Failed to fetch RSS metadata: %s", exc)
+            logger.warning("Failed to fetch RSS metadata: %s", exc)
             return
         try:
             root = etree.fromstring(text.encode("utf-8"))
         except Exception as exc:
-            logger.warning("[ArsTechnica] Failed to parse RSS metadata: %s", exc)
+            logger.warning("Failed to parse RSS metadata: %s", exc)
             return
 
         for item in root.xpath("//item"):
@@ -226,13 +226,13 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
             error_str = str(exc)
             if "403" in error_str or "429" in error_str or "503" in error_str:
                 await asyncio.sleep(5)
-            logger.warning("[ArsTechnica] Failed to fetch detail '%s': %s", url, exc)
+            logger.warning("Failed to fetch detail '%s': %s", url, exc)
             return record
 
         try:
             tree = lxml_html.fromstring(html)
         except Exception as exc:
-            logger.warning("[ArsTechnica] Failed to parse detail '%s': %s", url, exc)
+            logger.warning("Failed to parse detail '%s': %s", url, exc)
             return record
 
         self._merge_detail_metadata(record, tree)
@@ -417,11 +417,11 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
     ) -> str | None:
         error_str = str(error)
         if "404" in error_str:
-            logger.info("[ArsTechnica] 404 on list page %d, reached archive end", page)
+            logger.info("404 on list page %d; reached archive end", page)
             return "stop"
         if attempt >= _MAX_RETRIES:
             logger.warning(
-                "[ArsTechnica] Page %d exceeded retry limit after error: %s",
+                "Page %d exceeded retry limit: %s",
                 page,
                 error_str[:160],
             )
@@ -429,7 +429,7 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
         if "403" in error_str or "429" in error_str or "503" in error_str:
             self._retry_count += 1
             logger.warning(
-                "[ArsTechnica] Retrying page %d after HTTP block/error [%d/%d]: %s",
+                "Retrying page %d after HTTP block/error [%d/%d]: %s",
                 page,
                 attempt + 1,
                 _MAX_RETRIES,
@@ -439,7 +439,7 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
         if any(pattern in error_str for pattern in _RETRYABLE_PATTERNS):
             self._retry_count += 1
             logger.warning(
-                "[ArsTechnica] Retrying page %d after network error [%d/%d]: %s",
+                "Retrying page %d after network error [%d/%d]: %s",
                 page,
                 attempt + 1,
                 _MAX_RETRIES,

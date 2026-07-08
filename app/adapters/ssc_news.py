@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 from urllib.parse import urljoin
 
@@ -11,9 +10,10 @@ from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter
 from app.adapters.utils.news.ssc import common as ssc_common
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 from app.parser.template_parser import TemplateParser
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "ssc_news")
 
 
 @register_adapter("ssc_news")
@@ -37,7 +37,7 @@ class SscNewsAdapter(NewsBaseAdapter):
         await super().on_before_crawl(template)
         self._template = template
         logger.info(
-            "[SscNews] Starting crawl: base_url=%s, list_page=%s",
+            "Starting crawl: base_url=%s, list_page=%s",
             self._base_url, template.list_page,
         )
 
@@ -69,7 +69,7 @@ class SscNewsAdapter(NewsBaseAdapter):
             )
         except Exception as e:
             logger.warning(
-                "[SscNews] Failed to fetch detail '%s': %s",
+                "Failed to fetch detail '%s': %s",
                 detail_url, e,
             )
             return record
@@ -110,6 +110,6 @@ class SscNewsAdapter(NewsBaseAdapter):
         if "404" in error_str:
             return "skip"
         if "403" in error_str:
-            logger.warning("[SscNews] 403 Forbidden, may need different approach")
+            logger.warning("403 Forbidden; skipping page")
             return "skip"
         return None

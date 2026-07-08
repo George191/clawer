@@ -20,14 +20,14 @@ URL 规则：
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
 from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "sealagom")
 
 # ── 可重试的网络错误特征 ───────────────────────────────────────────────────
 # curl: (28) = 连接/操作超时

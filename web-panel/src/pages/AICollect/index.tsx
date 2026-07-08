@@ -23,6 +23,7 @@ import {
   BranchesOutlined,
   CaretRightOutlined,
   CheckCircleOutlined,
+  CloseOutlined,
   DeploymentUnitOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -52,12 +53,70 @@ import workspacePalette from './palette';
 
 const { Text } = Typography;
 const { TextArea } = Input;
+const tiffanyAccent = '#81D8D0';
+const SessionStatusIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    className={className}
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M5.5 6.25H14.25C15.9069 6.25 17.25 7.59315 17.25 9.25V10.75"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+    />
+    <path
+      d="M5.5 8.75H14.5"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+    />
+    <path
+      d="M6 11.75V16C6 17.6569 7.34315 19 9 19H11.5"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+    />
+    <circle cx="7.4" cy="7.45" r="0.65" fill="currentColor" />
+    <circle cx="9.85" cy="7.45" r="0.65" fill="currentColor" />
+    <path
+      d="M14.8 12.7L19.4 14.5L17.2 15.65L18.35 19L16.8 19.55L15.65 16.2L13.5 18.05L14.8 12.7Z"
+      stroke="currentColor"
+      strokeWidth="1.35"
+      strokeLinejoin="round"
+      strokeLinecap="round"
+    />
+  </svg>
+);
 
 type WorkMode = 'explore' | 'contract' | 'dryrun' | 'publish';
 type MissionTab = 'goal' | 'policy';
 type RunStatus = 'idle' | 'running' | 'paused' | 'completed';
 type ProcessStepKey = 'prepare' | 'entry' | 'structure' | 'contract' | 'dryrun' | 'publish';
 type TerminalLogLevel = 'info' | 'ok' | 'warn';
+type TemplateEntry = {
+  key: string;
+  value: string;
+  step: ProcessStepKey;
+  multiline: boolean;
+  depth: number;
+};
+
+type TemplateCatalogItem = {
+  id: string;
+  fileName: string;
+  displayName: string;
+  entries: TemplateEntry[];
+};
+
+const templateSourceModules = import.meta.glob('../../../../templates/*.yaml', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
 
 const processStepOrder: ProcessStepKey[] = ['prepare', 'entry', 'structure', 'contract', 'dryrun', 'publish'];
 
@@ -102,6 +161,203 @@ const processStepMeta: Record<ProcessStepKey, { title: string; desc: string; nee
     needConfirm: true,
   },
 };
+
+const templateStepKeys: Record<ProcessStepKey, string[]> = {
+  prepare: ['name', 'display_name', 'base_url', 'data_type', 'adapter', 'anti_crawl_enabled', 'description'],
+  entry: [
+    'batch_params',
+    'params',
+    'response_type',
+    'json_item_path',
+    'json_total_path',
+    'json_page_path',
+    'json_total_num_pages',
+    'list_page',
+    'list_request',
+  ],
+  structure: ['dedup_fields', 'list_fields', 'list_pagination'],
+  contract: ['download'],
+  dryrun: [],
+  publish: [],
+};
+
+const inferTemplateStep = (key: string): ProcessStepKey => {
+  const matchedStep = processStepOrder.find((step) => templateStepKeys[step].includes(key));
+  return matchedStep ?? 'publish';
+};
+
+const stripYamlQuotes = (value: string) => value.trim().replace(/^['"]|['"]$/g, '');
+
+const parseTemplateEntries = (raw: string): TemplateEntry[] => {
+  const entries: TemplateEntry[] = [];
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const keyPathStack: Array<{ indent: number; path: string }> = [];
+  const listItemContextStack: Array<{ indent: number; path: string }> = [];
+  const listIndexMap = new Map<string, number>();
+
+  const normalizeYamlValue = (value: string) => {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : 'null';
+  };
+
+  const collectBlockValue = (startIndex: number, parentIndent: number) => {
+    const blockLines: string[] = [];
+    let nextIndex = startIndex;
+
+    while (nextIndex < lines.length) {
+      const nextLine = lines[nextIndex];
+      const nextTrimmed = nextLine.trim();
+
+      if (!nextTrimmed) {
+        blockLines.push('');
+        nextIndex += 1;
+        continue;
+      }
+
+      const nextIndent = nextLine.match(/^\s*/)?.[0].length ?? 0;
+      if (nextIndent <= parentIndent) break;
+
+      blockLines.push(nextLine.slice(Math.min(nextLine.length, parentIndent + 2)));
+      nextIndex += 1;
+    }
+
+    return {
+      nextIndex: nextIndex - 1,
+      value: blockLines.join('\n').trimEnd() || 'null',
+    };
+  };
+
+  const pruneStacks = (indent: number, isListItem: boolean) => {
+    while (keyPathStack.length && keyPathStack[keyPathStack.length - 1].indent >= indent) {
+      keyPathStack.pop();
+    }
+    while (
+      listItemContextStack.length
+      && (
+        listItemContextStack[listItemContextStack.length - 1].indent > indent
+        || (isListItem && listItemContextStack[listItemContextStack.length - 1].indent === indent)
+      )
+    ) {
+      listItemContextStack.pop();
+    }
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    const isListItem = trimmed.startsWith('- ');
+    pruneStacks(indent, isListItem);
+
+    const parentPath = keyPathStack[keyPathStack.length - 1]?.path
+      ?? listItemContextStack[listItemContextStack.length - 1]?.path
+      ?? '';
+    const depth = Math.max(0, Math.floor(indent / 2));
+
+    const listItemMatch = trimmed.match(/^- (.+)$/);
+    if (listItemMatch) {
+      const listBase = parentPath || 'list';
+      const listKey = `${listBase}@${indent}`;
+      const listIndex = (listIndexMap.get(listKey) ?? -1) + 1;
+      const itemPath = `${listBase}[${listIndex}]`;
+      listIndexMap.set(listKey, listIndex);
+
+      const value = listItemMatch[1];
+      const nestedKeyMatch = value.match(/^([A-Za-z_][\w-]*):(?:\s*(.*))?$/);
+      if (nestedKeyMatch) {
+        const keyName = nestedKeyMatch[1];
+        const rawValue = (nestedKeyMatch[2] ?? '').trim();
+        const key = `${itemPath}.${keyName}`;
+        let keyValue = normalizeYamlValue(rawValue);
+        let multiline = false;
+
+        if (rawValue === '|' || rawValue === '>') {
+          const block = collectBlockValue(index + 1, indent);
+          keyValue = block.value;
+          multiline = true;
+          index = block.nextIndex;
+        } else if (keyValue.includes('[') || keyValue.includes('{')) {
+          multiline = true;
+        }
+
+        entries.push({
+          key,
+          value: keyValue,
+          step: inferTemplateStep(keyName),
+          multiline,
+          depth,
+        });
+
+        if (!rawValue) {
+          listItemContextStack.push({ indent, path: itemPath });
+          keyPathStack.push({ indent, path: key });
+        } else {
+          listItemContextStack.push({ indent, path: itemPath });
+        }
+      } else {
+        entries.push({
+          key: itemPath,
+          value: normalizeYamlValue(value),
+          step: inferTemplateStep(listBase.split('.').pop() ?? listBase),
+          multiline: value.includes('[') || value.includes('{'),
+          depth,
+        });
+      }
+      continue;
+    }
+
+    const keyMatch = trimmed.match(/^([A-Za-z_][\w-]*):(?:\s*(.*))?$/);
+    if (!keyMatch) continue;
+
+    const keyName = keyMatch[1];
+    const rawValue = (keyMatch[2] ?? '').trim();
+    const path = parentPath ? `${parentPath}.${keyName}` : keyName;
+    let value = normalizeYamlValue(rawValue);
+    let multiline = false;
+
+    if (rawValue === '|' || rawValue === '>') {
+      const block = collectBlockValue(index + 1, indent);
+      value = block.value;
+      multiline = true;
+      index = block.nextIndex;
+    } else if (value.includes('[') || value.includes('{')) {
+      multiline = true;
+    }
+
+    entries.push({
+      key: path,
+      value,
+      step: inferTemplateStep(keyName),
+      multiline,
+      depth,
+    });
+
+    if (!rawValue) {
+      keyPathStack.push({ indent, path });
+    }
+  }
+
+  return entries;
+};
+
+const templateCatalog: TemplateCatalogItem[] = Object.entries(templateSourceModules)
+  .map(([path, raw]) => {
+    const fileName = path.split('/').pop() ?? path;
+    const id = fileName.replace(/\.ya?ml$/i, '');
+    const entries = parseTemplateEntries(raw);
+    const name = entries.find((entry) => entry.key === 'display_name')?.value
+      ?? entries.find((entry) => entry.key === 'name')?.value
+      ?? id;
+    return {
+      id,
+      fileName,
+      displayName: stripYamlQuotes(name),
+      entries,
+    };
+  })
+  .sort((left, right) => left.id.localeCompare(right.id));
 
 const sampleFields: FieldDef[] = [
   { name: 'title', selector: 'h1, .title', type: 'text', sample: 'Autonomous navigation route planning', required: true },
@@ -240,6 +496,8 @@ const AICollect: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const analyzeStreamRef = useRef<EventSource | null>(null);
   const simulationTimerRef = useRef<number | null>(null);
+  const promptGenerationTimerRef = useRef<number | null>(null);
+  const templateScrollRef = useRef<HTMLDivElement | null>(null);
   const referenceEditCanceledRef = useRef(false);
   const accountDisplayName = 'Blank George';
   const currentUserName = accountDisplayName.split(/\s+/)[0] || accountDisplayName;
@@ -266,15 +524,104 @@ const AICollect: React.FC = () => {
   const [referenceDraft, setReferenceDraft] = useState('');
   const [expandedStep, setExpandedStep] = useState<WorkMode>('explore');
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
+  const [selectedStageGuideStep, setSelectedStageGuideStep] = useState<ProcessStepKey | null>(null);
+  const [hoveredStageGuideStep, setHoveredStageGuideStep] = useState<ProcessStepKey | null>(null);
   const [completedProcessSteps, setCompletedProcessSteps] = useState<Set<ProcessStepKey>>(new Set());
   const [visibleProcessSteps, setVisibleProcessSteps] = useState<ProcessStepKey[]>(['prepare']);
   const [selectedLogStep, setSelectedLogStep] = useState<ProcessStepKey>('prepare');
   const [scanPulse, setScanPulse] = useState(0);
   const [liveLogs, setLiveLogs] = useState<string[]>(['等待采集目标']);
+  const [promptGenerating, setPromptGenerating] = useState(false);
+
+  const [editingTemplateKey, setEditingTemplateKey] = useState<string | null>(null);
+  const [templateValueDrafts, setTemplateValueDrafts] = useState<Record<string, string>>({});
+  const [browserPreviewVisible, setBrowserPreviewVisible] = useState(true);
+  const [sideInspectorOpen, setSideInspectorOpen] = useState(false);
+  const [composerMaskVisible, setComposerMaskVisible] = useState(false);
 
   const hasSession = runStatus !== 'idle';
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
   const qualityScore = mode === 'publish' ? 94 : mode === 'dryrun' ? 86 : mode === 'contract' ? 88 : 92;
+  const activeStepIndex = processStepOrder.indexOf(activeProcessStep);
+  const activeTemplate = useMemo(() => {
+    if (!templateCatalog.length) return { id: 'empty', fileName: 'empty.yaml', displayName: 'Template', entries: [] };
+
+    const signal = `${templateId} ${submittedPrompt} ${intent} ${url}`.toLowerCase();
+    return templateCatalog.find((template) => signal.includes(template.id.toLowerCase()))
+      ?? (signal.includes('patent') ? templateCatalog.find((template) => template.id === 'google_patent') : undefined)
+      ?? templateCatalog.find((template) => template.id === 'google_patent')
+      ?? templateCatalog[0];
+  }, [intent, submittedPrompt, templateId, url]);
+  const visibleTemplateEntries = useMemo(
+    () => activeTemplate.entries.filter((entry) => processStepOrder.indexOf(entry.step) <= activeStepIndex),
+    [activeStepIndex, activeTemplate.entries],
+  );
+  const browserPreviewHost = useMemo(() => {
+    const candidate = url || submittedPrompt.match(/https?:\/\/[^\s，。；,]+/i)?.[0] || '';
+    if (!candidate) return '';
+
+    try {
+      const normalized = candidate.replace(/\{\{\s*[^}]+\s*\}\}|\{\s*[^}]+\s*\}/g, 'sample');
+      return new URL(normalized).host;
+    } catch {
+      return candidate.replace(/^https?:\/\//i, '').split('/')[0] ?? candidate;
+    }
+  }, [submittedPrompt, url]);
+  const adapterFileName = useMemo(
+    () => `app/adapters/${activeTemplate.id === 'empty' ? 'generated_adapter' : activeTemplate.id}.py`,
+    [activeTemplate.id],
+  );
+  const adapterClassName = useMemo(() => {
+    const raw = activeTemplate.id === 'empty' ? 'generated_adapter' : activeTemplate.id;
+    return raw
+      .split(/[_-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('') || 'GeneratedAdapter';
+  }, [activeTemplate.id]);
+  const sessionSideMode = useMemo<'browser' | 'code'>(
+    () => (
+      processStepOrder.indexOf(activeProcessStep) < processStepOrder.indexOf('contract')
+        ? 'browser'
+        : 'code'
+    ),
+    [activeProcessStep],
+  );
+  const sessionStatusText = useMemo(
+    () => (
+      sessionSideMode === 'browser'
+        ? `AI 控制浏览器 · ${submittedPrompt || url || '目标页面待分析'} · ${browserPreviewHost || 'live session'}`
+        : `AI 正在编写适配器 · ${adapterFileName} · ${processStepMeta[activeProcessStep].title} · ${processStepMeta[activeProcessStep].desc}`
+    ),
+    [activeProcessStep, adapterFileName, browserPreviewHost, sessionSideMode, submittedPrompt, url],
+  );
+  const browserInspectorNotes = useMemo(
+    () => [
+      `打开 ${browserPreviewHost || '目标页面'} 并采集页面结构证据`,
+      `围绕 ${processStepMeta[activeProcessStep].title} 提取列表与详情信号`,
+      liveLogs[0] ?? '等待新的浏览器事件',
+    ],
+    [activeProcessStep, browserPreviewHost, liveLogs],
+  );
+  const codeInspectorNotes = useMemo(
+    () => [
+      `生成 ${adapterFileName}`,
+      `同步 ${visibleTemplateEntries.length} 个模板字段与提取规则`,
+      `当前阶段：${processStepMeta[activeProcessStep].desc}`,
+    ],
+    [activeProcessStep, adapterFileName, visibleTemplateEntries.length],
+  );
+  const codePreviewText = useMemo(
+    () => [
+      `# ${activeTemplate.displayName}`,
+      `class ${adapterClassName}Adapter(BaseAdapter):`,
+      `    source_host = "${browserPreviewHost || 'pending-host'}"`,
+      `    template_file = "${activeTemplate.fileName}"`,
+      `    current_stage = "${processStepMeta[activeProcessStep].title}"`,
+      `    mapped_keys = ${visibleTemplateEntries.length}`,
+    ].join('\n'),
+    [activeProcessStep, activeTemplate.displayName, activeTemplate.fileName, adapterClassName, browserPreviewHost, visibleTemplateEntries.length],
+  );
   const activeWorkspacePanel = useMemo<WorkspacePanel | null>(() => {
     const panel = searchParams.get('panel');
     return panel === 'templates' || panel === 'tasks' ? panel : null;
@@ -285,14 +632,84 @@ const AICollect: React.FC = () => {
     if (simulationTimerRef.current) {
       window.clearTimeout(simulationTimerRef.current);
     }
+    if (promptGenerationTimerRef.current) {
+      window.clearTimeout(promptGenerationTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
     setExpandedStep(mode);
   }, [mode]);
 
+  useEffect(() => {
+    if (!hasSession) {
+      setEditingTemplateKey(null);
+      setSelectedStageGuideStep(null);
+      setHoveredStageGuideStep(null);
+      setPromptGenerating(false);
+      setSideInspectorOpen(false);
+      setComposerMaskVisible(false);
+      if (promptGenerationTimerRef.current) {
+        window.clearTimeout(promptGenerationTimerRef.current);
+        promptGenerationTimerRef.current = null;
+      }
+    }
+  }, [hasSession]);
+
+  useEffect(() => {
+    if (!hasSession) {
+      setBrowserPreviewVisible(true);
+      return;
+    }
+    setBrowserPreviewVisible(Boolean(browserPreviewHost));
+  }, [browserPreviewHost, hasSession, submittedPrompt]);
+
   const pushLiveLog = useCallback((log: string) => {
     setLiveLogs((prev) => [log, ...prev].slice(0, 8));
+  }, []);
+
+  const updateComposerMaskVisibility = useCallback(() => {
+    const node = templateScrollRef.current;
+    if (!node) {
+      setComposerMaskVisible(false);
+      return;
+    }
+    if (node.scrollHeight <= node.clientHeight + 4) {
+      setComposerMaskVisible(false);
+      return;
+    }
+    const remaining = node.scrollHeight - node.scrollTop - node.clientHeight;
+    setComposerMaskVisible(remaining <= 168);
+  }, []);
+
+  useEffect(() => {
+    if (!hasSession) {
+      setComposerMaskVisible(false);
+      return;
+    }
+    const rafId = window.requestAnimationFrame(() => {
+      updateComposerMaskVisibility();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [activeProcessStep, hasSession, submittedPrompt, updateComposerMaskVisibility, visibleTemplateEntries.length]);
+
+  const finishPromptGeneration = useCallback(() => {
+    if (promptGenerationTimerRef.current) {
+      window.clearTimeout(promptGenerationTimerRef.current);
+      promptGenerationTimerRef.current = null;
+    }
+    setPromptGenerating(false);
+  }, []);
+
+  const triggerPromptGeneration = useCallback(() => {
+    if (promptGenerationTimerRef.current) {
+      window.clearTimeout(promptGenerationTimerRef.current);
+    }
+    setPromptGenerating(true);
+    promptGenerationTimerRef.current = window.setTimeout(() => {
+      promptGenerationTimerRef.current = null;
+      setPromptGenerating(false);
+    }, 1400);
   }, []);
 
   const resetSimulation = useCallback(() => {
@@ -300,11 +717,19 @@ const AICollect: React.FC = () => {
       window.clearTimeout(simulationTimerRef.current);
       simulationTimerRef.current = null;
     }
+    if (promptGenerationTimerRef.current) {
+      window.clearTimeout(promptGenerationTimerRef.current);
+      promptGenerationTimerRef.current = null;
+    }
     setActiveProcessStep('prepare');
+    setSelectedStageGuideStep(null);
+    setHoveredStageGuideStep(null);
     setSelectedLogStep('prepare');
     setCompletedProcessSteps(new Set());
     setVisibleProcessSteps(['prepare']);
     setScanPulse(0);
+    setPromptGenerating(false);
+    setComposerMaskVisible(false);
     setLiveLogs(['已接收采集目标，准备投射源站页面']);
   }, []);
 
@@ -427,6 +852,7 @@ const AICollect: React.FC = () => {
   const handleCancelAnalysis = useCallback(() => {
     analyzeStreamRef.current?.close();
     analyzeStreamRef.current = null;
+    finishPromptGeneration();
     setRunStatus('idle');
     setMode('explore');
     setStreamError('');
@@ -435,7 +861,7 @@ const AICollect: React.FC = () => {
     setReferenceEditing(false);
     setReferenceDraft('');
     message.info('已取消当前分析');
-  }, [message]);
+  }, [finishPromptGeneration, message]);
 
   const handleDryRun = useCallback(async () => {
     setRunStatus('running');
@@ -573,17 +999,30 @@ const AICollect: React.FC = () => {
     pushLiveLog(`用户引导：${guide}`);
     setTaskDraft('');
     setScanPulse((prev) => prev + 1);
-  }, [pushLiveLog, taskDraft]);
+    triggerPromptGeneration();
+  }, [pushLiveLog, taskDraft, triggerPromptGeneration]);
+
+  const handleSessionSparkleAction = useCallback(() => {
+    if (promptGenerating) {
+      finishPromptGeneration();
+      return;
+    }
+    handleGuideSubmit();
+  }, [finishPromptGeneration, handleGuideSubmit, promptGenerating]);
 
   const handlePromptKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== 'Enter' || event.shiftKey) return;
     event.preventDefault();
     if (hasSession) {
+      if (promptGenerating) {
+        finishPromptGeneration();
+        return;
+      }
       handleGuideSubmit();
       return;
     }
     handleAnalyze();
-  }, [handleAnalyze, handleGuideSubmit, hasSession]);
+  }, [finishPromptGeneration, handleAnalyze, handleGuideSubmit, hasSession, promptGenerating]);
 
   const commitReferenceEdit = useCallback(() => {
     if (referenceEditCanceledRef.current) {
@@ -1020,11 +1459,258 @@ const AICollect: React.FC = () => {
     ],
   };
 
+  useEffect(() => {
+    setTemplateValueDrafts((prev) => {
+      const next = { ...prev };
+      activeTemplate.entries.forEach((entry) => {
+        if (!(entry.key in next)) {
+          next[entry.key] = entry.value;
+        }
+      });
+      return next;
+    });
+  }, [activeTemplate]);
+
+  const handleTemplateValueChange = useCallback((key: string, value: string) => {
+    setTemplateValueDrafts((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const renderTemplateField = useCallback((entry: TemplateEntry) => {
+    const value = templateValueDrafts[entry.key] ?? entry.value;
+    const isEditing = editingTemplateKey === entry.key;
+    const label = entry.key.split('.').pop() ?? entry.key;
+    const pathHint = label === entry.key ? '' : entry.key.slice(0, -(label.length + 1));
+
+    return (
+      <div
+        className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''}`}
+        key={entry.key}
+        style={{ ['--ai-template-depth' as string]: String(entry.depth) }}
+      >
+        <div className="ai-template-field-key">
+          <span>{label}</span>
+          {pathHint ? <small>{pathHint}</small> : null}
+        </div>
+        <div
+          className={`ai-template-field-value ${isEditing ? 'is-editing' : ''}`}
+          onDoubleClick={() => setEditingTemplateKey(entry.key)}
+        >
+          {isEditing ? (
+            entry.multiline ? (
+              <TextArea
+                autoFocus
+                value={value}
+                autoSize={{ minRows: 3, maxRows: 10 }}
+                onChange={(event) => handleTemplateValueChange(entry.key, event.target.value)}
+                onBlur={() => setEditingTemplateKey(null)}
+              />
+            ) : (
+              <Input
+                autoFocus
+                value={value}
+                onChange={(event) => handleTemplateValueChange(entry.key, event.target.value)}
+                onBlur={() => setEditingTemplateKey(null)}
+                onPressEnter={() => setEditingTemplateKey(null)}
+              />
+            )
+          ) : (
+            <pre>{value || 'null'}</pre>
+          )}
+        </div>
+      </div>
+    );
+  }, [editingTemplateKey, handleTemplateValueChange, templateValueDrafts]);
+
+  const renderSessionTemplateSheet = () => (
+    <section className="ai-session-template-shell">
+      <header className="ai-session-fixed-meta">
+        <div className="ai-session-fixed-copy">
+          <Text className="ai-session-fixed-eyebrow">Template Contract</Text>
+          <div className="ai-session-fixed-title-row">
+            <h2>{activeTemplate.displayName}</h2>
+            <Text className="ai-session-fixed-stat">{visibleTemplateEntries.length} keys</Text>
+          </div>
+          <Text className="ai-session-fixed-subtitle">{activeTemplate.fileName}</Text>
+        </div>
+        {renderSessionBrowserPreview()}
+      </header>
+
+      <div
+        className="ai-session-template-scroll"
+        ref={templateScrollRef}
+        onScroll={updateComposerMaskVisibility}
+      >
+        <article className="ai-template-sheet">
+          <div className="ai-template-sheet-body">
+            {visibleTemplateEntries.map(renderTemplateField)}
+          </div>
+        </article>
+        <div className="ai-session-template-divider" aria-hidden="true" />
+      </div>
+    </section>
+  );
+
+  const renderSessionStageRail = () => {
+    const guideStep = selectedStageGuideStep;
+    const guideStageIndex = guideStep ? Math.max(0, processStepOrder.indexOf(guideStep)) : 0;
+    const popoverOffset = -8 + guideStageIndex * 16;
+
+    return (
+      <aside className="ai-session-stage-float" aria-label="分析阶段提示">
+        <div className="ai-session-stage-bars">
+          {processStepOrder.map((step) => {
+            const status = completedProcessSteps.has(step)
+              ? 'done'
+              : step === activeProcessStep
+                ? 'active'
+                : visibleProcessSteps.includes(step)
+                  ? 'visible'
+                  : 'idle';
+            return (
+              <button
+                type="button"
+                key={step}
+                className={`ai-session-stage-bar is-${status}`}
+                onClick={() => {
+                  if (!visibleProcessSteps.includes(step)) return;
+                  setActiveProcessStep(step);
+                  setMode(processStepMode[step]);
+                  setExpandedStep(processStepMode[step]);
+                  setSelectedLogStep(step);
+                  setSelectedStageGuideStep((prev) => (prev === step ? null : step));
+                }}
+                aria-label={processStepMeta[step].title}
+              >
+                <span />
+              </button>
+            );
+          })}
+        </div>
+        {guideStep ? (
+          <div className="ai-session-stage-card" style={{ top: `${popoverOffset}px` }}>
+            <strong>{processStepMeta[guideStep].title}</strong>
+            <p>{processStepMeta[guideStep].desc}</p>
+            <div className="ai-session-stage-card-foot">
+              <span className="ai-session-stage-file">{activeTemplate.fileName}</span>
+              {guideStep === activeProcessStep && processStepMeta[guideStep].needConfirm ? (
+                <Button
+                  size="small"
+                  className="ai-session-stage-confirm"
+                  onClick={() => handleConfirmProcessStep(guideStep)}
+                >
+                  确认阶段
+                </Button>
+              ) : (
+                <em>{guideStageIndex + 1}/{processStepOrder.length}</em>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </aside>
+    );
+  };
+
+  const renderSessionBrowserPreview = () => {
+    return (
+      <button
+        type="button"
+        className={`ai-session-status-line is-${sessionSideMode}`}
+        aria-label={sessionSideMode === 'browser' ? '展开浏览器状态面板' : '展开编码状态面板'}
+        onClick={() => setSideInspectorOpen(true)}
+      >
+        <span className="ai-session-status-icon" aria-hidden="true">
+          <SessionStatusIcon className="ai-session-status-icon-svg" />
+        </span>
+        <span className="ai-session-status-copy">
+          <span className="ai-session-status-copy-base">{sessionStatusText}</span>
+          <span className="ai-session-status-copy-sweep" aria-hidden="true">{sessionStatusText}</span>
+        </span>
+      </button>
+    );
+  };
+
+  const renderSessionSidePanel = () => (
+    <aside className={`ai-session-side-panel is-${sessionSideMode}`}>
+      <div className="ai-session-side-head">
+        <div className="ai-session-side-copy">
+          <Text className="ai-session-side-label">
+            {sessionSideMode === 'browser' ? 'AI Browser' : 'Adapter Coding'}
+          </Text>
+          <Text strong className="ai-session-side-title">
+            {sessionSideMode === 'browser' ? 'AI 正在控制浏览器' : 'AI 正在编写适配器'}
+          </Text>
+        </div>
+        <Button
+          type="text"
+          className="ai-session-side-close"
+          icon={<CloseOutlined />}
+          aria-label="关闭右侧状态面板"
+          onClick={() => setSideInspectorOpen(false)}
+        />
+      </div>
+
+      {sessionSideMode === 'browser' ? (
+        <div className="ai-side-browser-shell">
+          <div className="ai-side-browser-bar">
+            <span className="ai-side-browser-dot is-red" />
+            <span className="ai-side-browser-dot is-yellow" />
+            <span className="ai-side-browser-dot is-green" />
+            <strong>{browserPreviewHost || 'browser-session'}</strong>
+          </div>
+          <div className="ai-side-browser-viewport">
+            <div className="ai-side-browser-chip">AI browsing</div>
+            {browserInspectorNotes.map((note) => (
+              <div className="ai-side-browser-row" key={note}>
+                <span />
+                <strong>{note}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="ai-side-code-shell">
+          <div className="ai-side-code-bar">
+            <strong>{adapterFileName}</strong>
+            <em>coding</em>
+          </div>
+          <pre className="ai-side-code-block">{codePreviewText}</pre>
+          <div className="ai-side-code-list">
+            {codeInspectorNotes.map((note) => (
+              <div className="ai-side-code-row" key={note}>
+                <span />
+                <strong>{note}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+
+  const renderSessionLayout = () => (
+    <div className="ai-session-layout">
+      <div className="ai-session-template-frame">
+        {renderSessionStageRail()}
+        {renderSessionTemplateSheet()}
+      </div>
+      <button
+        type="button"
+        className={`ai-session-side-trigger is-${sessionSideMode} ${sideInspectorOpen ? 'is-open' : ''}`}
+        aria-label={sessionSideMode === 'browser' ? '点击查看浏览器状态' : '点击查看适配器编写状态'}
+        onClick={() => setSideInspectorOpen((prev) => !prev)}
+      >
+        <SessionStatusIcon className="ai-session-side-trigger-icon" />
+        <span>{sessionSideMode === 'browser' ? '查看浏览器' : '查看编码状态'}</span>
+      </button>
+      {sideInspectorOpen ? renderSessionSidePanel() : null}
+    </div>
+  );
+
   const renderDockedPrompt = () => {
     const referenceText = submittedPrompt || url || '目标源站待识别';
 
     return (
-      <section className="ai-session-prompt">
+      <section className={`ai-session-prompt ${composerMaskVisible ? 'is-masked' : ''}`}>
         <div className="ai-session-reference">
           <span className="ai-session-reference-icon"><LinkOutlined /></span>
           {referenceEditing ? (
@@ -1062,10 +1748,15 @@ const AICollect: React.FC = () => {
             placeholder="补充字段规则、调度要求或数据边界"
           />
           <Button
-            className="ai-session-icon-btn ai-session-sparkle-btn"
-            aria-label="智能优化输入内容"
+            className={`ai-session-icon-btn ai-session-sparkle-btn ${promptGenerating ? 'is-busy' : ''}`}
+            aria-label={promptGenerating ? '暂停本次生成' : '智能优化输入内容'}
+            onClick={handleSessionSparkleAction}
           >
-            <span className="ai-session-sparkle" aria-hidden="true">✦</span>
+            {promptGenerating ? (
+              <PauseCircleOutlined className="ai-session-sparkle-pause" aria-hidden="true" />
+            ) : (
+              <span className="ai-session-sparkle" aria-hidden="true">✦</span>
+            )}
           </Button>
           <Button className="ai-session-icon-btn" icon={<AudioOutlined />} aria-label="语音输入" disabled />
         </div>
@@ -1277,7 +1968,7 @@ const AICollect: React.FC = () => {
             --ai-session-prompt-bottom: 18px;
             --ai-session-prompt-height: 96px;
             --ai-session-runtime-safe-bottom: 76px;
-            --ai-session-body-safe-bottom: 172px;
+            --ai-session-body-safe-bottom: 18px;
             --ai-session-veil-height: 148px;
             --ai-session-dock-rail-bottom: 35px;
             --ai-session-dock-panel-bottom: 138px;
@@ -1347,12 +2038,14 @@ const AICollect: React.FC = () => {
           .ai-collect-body.is-session {
             display: flex;
             justify-content: center;
-            padding: 8px 10px var(--ai-session-body-safe-bottom);
+            padding: 8px 10px 0;
           }
           .ai-session-shell {
-            width: min(1380px, 100%);
+            width: 100%;
+            flex: 1;
             min-height: 0;
             display: flex;
+            justify-content: center;
           }
           .ai-session-bottom-veil {
             position: absolute;
@@ -1482,6 +2175,23 @@ const AICollect: React.FC = () => {
             padding: 2px 0 6px;
             animation: aiComposerDock 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
           }
+          .ai-session-prompt::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            bottom: -18px;
+            width: min(860px, calc(100vw - 32px));
+            height: 176px;
+            transform: translateX(-50%);
+            pointer-events: none;
+            opacity: 0;
+            background:
+              linear-gradient(180deg, rgba(16, 18, 18, 0) 0%, rgba(16, 18, 18, 0.26) 22%, rgba(16, 18, 18, 0.68) 58%, ${aura.bg} 100%);
+            transition: opacity 180ms ease;
+          }
+          .ai-session-prompt.is-masked::before {
+            opacity: 1;
+          }
           .ai-session-reference {
             height: 28px;
             display: inline-flex;
@@ -1490,7 +2200,7 @@ const AICollect: React.FC = () => {
             align-self: flex-start;
             padding: 0 8px 0 10px;
             border-radius: 14px 14px 0 0;
-            background: linear-gradient(180deg, rgba(34, 39, 51, 0.96), rgba(24, 29, 39, 0.88));
+            background: rgba(29, 33, 41, 0.9);
             border: 1px solid ${aura.border};
             border-bottom: none;
             color: ${aura.text};
@@ -1498,6 +2208,7 @@ const AICollect: React.FC = () => {
             font-weight: 400;
             max-width: min(100%, 560px);
             position: relative;
+            z-index: 1;
             backdrop-filter: ${aura.backdrop};
             box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
           }
@@ -1508,7 +2219,6 @@ const AICollect: React.FC = () => {
             align-items: center;
             justify-content: center;
             border-radius: 5px;
-            background: rgba(255, 255, 255, 0.08);
             color: ${aura.text};
             font-size: 11px;
           }
@@ -1547,12 +2257,7 @@ const AICollect: React.FC = () => {
             opacity: 1;
             pointer-events: auto;
           }
-          .ai-reference-edit:hover {
-            color: ${aura.accent} !important;
-            background: ${aura.accentSoft} !important;
-          }
           .ai-collect-workbench .ai-reference-input.ant-input {
-            width: min(420px, 52vw);
             height: 24px !important;
             min-height: 24px !important;
             padding: 0 !important;
@@ -1577,6 +2282,8 @@ const AICollect: React.FC = () => {
             position: relative;
             backdrop-filter: ${aura.backdrop};
             overflow: hidden;
+            background: var(--prompt-surface);
+            z-index: 1;
           }
           .ai-session-prompt-main::before {
             content: '';
@@ -1588,7 +2295,6 @@ const AICollect: React.FC = () => {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: ${aura.accent};
             font-size: 15px;
             position: relative;
             z-index: 1;
@@ -1604,6 +2310,569 @@ const AICollect: React.FC = () => {
             resize: none;
             position: relative;
             z-index: 1;
+          }
+          .ai-session-layout {
+            width: 100%;
+            min-height: 0;
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            position: relative;
+          }
+          .ai-session-template-frame {
+            width: min(100%, 882px);
+            min-height: 0;
+            display: flex;
+            justify-content: center;
+            position: relative;
+            padding-left: 54px;
+          }
+          .ai-session-template-shell {
+            width: 100%;
+            max-width: 794px;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          }
+          .ai-session-fixed-meta {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(236px, 286px);
+            align-items: center;
+            gap: 14px;
+            padding: 2px 2px 10px;
+            background: transparent;
+            border: none;
+            box-shadow: none;
+          }
+          .ai-session-fixed-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+          }
+          .ai-session-fixed-eyebrow,
+          .ai-session-fixed-subtitle,
+          .ai-session-fixed-stat {
+            color: ${aura.subtle};
+            font-size: 10px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+          }
+          .ai-session-fixed-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            flex-wrap: wrap;
+          }
+          .ai-session-fixed-title-row h2 {
+            margin: 0;
+            color: ${aura.text};
+            font-size: 21px;
+            line-height: 1.2;
+            font-weight: 600;
+          }
+          .ai-session-fixed-stat {
+            white-space: nowrap;
+            font-size: 10px;
+          }
+          .ai-session-fixed-subtitle {
+            color: ${aura.muted};
+            text-transform: none;
+            letter-spacing: 0;
+            font-size: 11px;
+          }
+          .ai-session-stage-float {
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            z-index: 7;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            pointer-events: none;
+            transform: translateY(-50%);
+          }
+          .ai-session-stage-bars {
+            width: 12px;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            pointer-events: auto;
+          }
+          .ai-session-stage-bar {
+            width: 12px;
+            height: 10px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+          }
+          .ai-session-stage-bar span {
+            width: 6px;
+            height: 2px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.2);
+            transition: width 160ms ease, background 160ms ease, opacity 160ms ease, transform 160ms ease;
+          }
+          .ai-session-stage-bar.is-visible span {
+            width: 8px;
+            background: rgba(255, 255, 255, 0.34);
+          }
+          .ai-session-stage-bar.is-done span {
+            width: 8px;
+            background: rgba(255, 255, 255, 0.28);
+          }
+          .ai-session-stage-bar.is-active span {
+            width: 12px;
+            background: rgba(255, 255, 255, 0.9);
+            transform: translateX(1px);
+          }
+          .ai-session-stage-card {
+            position: absolute;
+            left: 20px;
+            width: 244px;
+            padding: 12px 12px 10px;
+            border-radius: 14px;
+            background: rgba(42, 46, 53, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+            pointer-events: auto;
+            transition: top 220ms ease;
+          }
+          .ai-session-stage-card strong {
+            display: block;
+            color: ${aura.text};
+            font-size: 14px;
+            line-height: 1.4;
+            font-weight: 600;
+          }
+          .ai-session-stage-card p {
+            margin: 8px 0 10px;
+            color: ${aura.muted};
+            font-size: 12px;
+            line-height: 1.66;
+          }
+          .ai-session-stage-card-foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+          }
+          .ai-session-stage-file {
+            min-width: 0;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 11px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          .ai-session-stage-card-foot em {
+            color: rgba(255, 255, 255, 0.52);
+            font-size: 12px;
+            font-style: normal;
+          }
+          .ai-session-stage-confirm {
+            height: 26px !important;
+            padding: 0 10px !important;
+            border-radius: 13px !important;
+            border: 1px solid rgba(129, 216, 208, 0.28) !important;
+            background: rgba(129, 216, 208, 0.12) !important;
+            color: ${aura.text} !important;
+            font-size: 12px !important;
+          }
+          .ai-session-stage-confirm:hover {
+            color: ${tiffanyAccent} !important;
+            border-color: rgba(129, 216, 208, 0.46) !important;
+          }
+          .ai-session-template-scroll {
+            width: 100%;
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+            padding: 2px 0 0;
+          }
+          .ai-template-sheet {
+            width: 100%;
+            margin: 0;
+            padding: 28px 30px 30px;
+            background:
+              linear-gradient(180deg, rgba(44, 49, 60, 0.98), rgba(34, 39, 49, 0.98)),
+              rgba(28, 33, 42, 0.98);
+            color: ${aura.text};
+            box-shadow: 0 18px 46px rgba(0, 0, 0, 0.24);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 18px;
+          }
+          .ai-session-status-line {
+            width: 100%;
+            min-width: 0;
+            height: 28px;
+            padding: 0 2px 0 6px;
+            border-radius: 0;
+            border: none;
+            background: transparent;
+            display: grid;
+            grid-template-columns: 16px minmax(0, 1fr);
+            align-items: center;
+            gap: 8px;
+            color: ${aura.text};
+            cursor: pointer;
+            overflow: hidden;
+            transition: opacity 160ms ease;
+          }
+          .ai-session-status-line:hover {
+            opacity: 0.92;
+          }
+          .ai-session-status-icon {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.92);
+            flex-shrink: 0;
+          }
+          .ai-session-status-icon-svg {
+            width: 16px;
+            height: 16px;
+            display: block;
+          }
+          .ai-session-status-copy {
+            min-width: 0;
+            position: relative;
+            display: block;
+            overflow: hidden;
+            white-space: nowrap;
+          }
+          .ai-session-status-copy-base,
+          .ai-session-status-copy-sweep {
+            display: block;
+            font-size: 12px;
+            line-height: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: clip;
+          }
+          .ai-session-status-copy-base {
+            color: rgba(255, 255, 255, 0.72);
+          }
+          .ai-session-status-copy-sweep {
+            position: absolute;
+            inset: 0;
+            color: rgba(255, 255, 255, 0.96);
+            background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.98) 48%, transparent 100%);
+            background-size: 34% 100%;
+            background-repeat: no-repeat;
+            background-position: -120% 0;
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: aiStatusSweep 4.2s ease-in-out infinite;
+          }
+          .ai-session-status-meta {
+            display: none;
+          }
+          .ai-session-side-trigger {
+            position: absolute;
+            right: 0;
+            top: 112px;
+            bottom: calc(var(--ai-session-prompt-height) + 52px);
+            width: clamp(72px, calc((100vw - 882px) / 2 - 12px), 118px);
+            border: none;
+            background: transparent;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            color: rgba(255, 255, 255, 0.28);
+            cursor: pointer;
+            transition: color 160ms ease, transform 160ms ease;
+          }
+          .ai-session-side-trigger::before {
+            content: '';
+            position: absolute;
+            inset: 18px 0;
+            border-left: 1px dashed rgba(255, 255, 255, 0.08);
+          }
+          .ai-session-side-trigger:hover,
+          .ai-session-side-trigger.is-open {
+            color: rgba(255, 255, 255, 0.72);
+            transform: translateX(-2px);
+          }
+          .ai-session-side-trigger-icon {
+            width: 20px;
+            height: 20px;
+            position: relative;
+            z-index: 1;
+          }
+          .ai-session-side-trigger span {
+            position: relative;
+            z-index: 1;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            font-size: 11px;
+            letter-spacing: 0.16em;
+          }
+          .ai-session-side-panel {
+            position: absolute;
+            right: 16px;
+            top: 110px;
+            bottom: calc(var(--ai-session-prompt-height) + 48px);
+            width: clamp(280px, calc((100vw - 882px) / 2 + 116px), 340px);
+            padding: 16px;
+            border-radius: 18px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(29, 33, 41, 0.96);
+            box-shadow: 0 22px 54px rgba(0, 0, 0, 0.28);
+            backdrop-filter: blur(18px);
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            z-index: 9;
+            animation: aiSidePanelIn 220ms ease both;
+          }
+          .ai-session-side-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+          }
+          .ai-session-side-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+          .ai-session-side-label {
+            color: ${aura.subtle};
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+          }
+          .ai-session-side-title {
+            color: ${aura.text};
+            font-size: 15px;
+            line-height: 1.4;
+          }
+          .ai-session-side-close {
+            width: 26px !important;
+            height: 26px !important;
+            min-width: 26px !important;
+            border-radius: 50% !important;
+            border: none !important;
+            background: transparent !important;
+            color: rgba(255, 255, 255, 0.5) !important;
+            box-shadow: none !important;
+          }
+          .ai-session-side-close:hover {
+            color: ${tiffanyAccent} !important;
+            background: rgba(129, 216, 208, 0.08) !important;
+          }
+          .ai-side-browser-shell,
+          .ai-side-code-shell {
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            flex: 1;
+          }
+          .ai-side-browser-bar,
+          .ai-side-code-bar {
+            min-height: 40px;
+            padding: 0 12px;
+            border-radius: 12px;
+            background: rgba(18, 21, 27, 0.72);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          .ai-side-browser-bar strong,
+          .ai-side-code-bar strong {
+            min-width: 0;
+            color: rgba(255, 255, 255, 0.82);
+            font-size: 12px;
+            font-weight: 500;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .ai-side-code-bar em {
+            margin-left: auto;
+            padding: 0 8px;
+            border-radius: 999px;
+            background: rgba(129, 216, 208, 0.12);
+            color: ${tiffanyAccent};
+            font-size: 11px;
+            line-height: 22px;
+            font-style: normal;
+            white-space: nowrap;
+          }
+          .ai-side-browser-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+          }
+          .ai-side-browser-dot.is-red {
+            background: #FF5F57;
+          }
+          .ai-side-browser-dot.is-yellow {
+            background: #FEBC2E;
+          }
+          .ai-side-browser-dot.is-green {
+            background: #28C840;
+          }
+          .ai-side-browser-viewport {
+            flex: 1;
+            min-height: 0;
+            padding: 14px;
+            border-radius: 16px;
+            background:
+              linear-gradient(180deg, rgba(40, 45, 54, 0.98), rgba(24, 28, 36, 0.98));
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .ai-side-browser-chip {
+            align-self: flex-start;
+            padding: 0 10px;
+            border-radius: 999px;
+            background: rgba(129, 216, 208, 0.12);
+            color: ${tiffanyAccent};
+            font-size: 11px;
+            line-height: 24px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+          }
+          .ai-side-browser-row,
+          .ai-side-code-row {
+            display: grid;
+            grid-template-columns: 10px minmax(0, 1fr);
+            align-items: start;
+            gap: 10px;
+            color: rgba(255, 255, 255, 0.74);
+            font-size: 12px;
+            line-height: 1.7;
+          }
+          .ai-side-browser-row span,
+          .ai-side-code-row span {
+            width: 6px;
+            height: 6px;
+            margin-top: 7px;
+            border-radius: 50%;
+            background: rgba(129, 216, 208, 0.82);
+            display: inline-block;
+          }
+          .ai-side-code-block {
+            margin: 0;
+            padding: 14px;
+            border-radius: 16px;
+            background: rgba(18, 21, 27, 0.78);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.86);
+            font-size: 12px;
+            line-height: 1.72;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
+          .ai-side-code-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .ai-template-sheet-body {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+          }
+          .ai-template-field {
+            --ai-template-indent: calc(var(--ai-template-depth, 0) * 14px);
+            display: grid;
+            grid-template-columns: minmax(168px, 220px) minmax(0, 1fr);
+            gap: 12px 18px;
+            align-items: start;
+            padding: 0 0 18px;
+            padding-left: var(--ai-template-indent);
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.09);
+          }
+          .ai-template-field:last-child {
+            padding-bottom: 0;
+            border-bottom: none;
+          }
+          .ai-template-field-key {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 4px;
+            padding-top: 2px;
+          }
+          .ai-template-field-key span {
+            color: ${aura.text};
+            font-size: 13px;
+            font-weight: 600;
+            line-height: 1.35;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+          }
+          .ai-template-field-key small {
+            color: ${aura.muted};
+            font-size: 11px;
+            line-height: 1.4;
+            letter-spacing: 0;
+            text-transform: none;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+          }
+          .ai-template-field-value {
+            min-height: 42px;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(13, 16, 22, 0.26);
+            border-radius: 10px;
+          }
+          .ai-template-field-value.is-editing {
+            border-color: rgba(138, 180, 255, 0.48);
+            box-shadow: 0 0 0 3px rgba(138, 180, 255, 0.14);
+          }
+          .ai-template-field-value pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+            font-size: 12px;
+            line-height: 1.7;
+            color: ${aura.text};
+          }
+          .ai-template-field-value .ant-input,
+          .ai-template-field-value .ant-input-affix-wrapper,
+          .ai-template-field-value .ant-input-textarea textarea {
+            background: transparent !important;
+            color: ${aura.text} !important;
+            border-color: transparent !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            border-radius: 0 !important;
+          }
+          .ai-session-template-divider {
+            width: min(620px, calc(100% - 120px));
+            margin: 22px auto calc(var(--ai-session-prompt-height) + 44px);
+            border-top: 1px dashed rgba(255, 255, 255, 0.2);
+            opacity: 0.58;
+          }
+          .ai-session-bottom-veil {
+            display: none !important;
+          }
+          .ai-session-shell {
+            align-items: stretch;
           }
           .ai-session-icon-btn {
             width: 30px !important;
@@ -1635,17 +2904,36 @@ const AICollect: React.FC = () => {
             justify-content: center;
             width: 16px;
             height: 16px;
-            color: ${aura.text};
+            color: rgba(255, 255, 255, 0.96);
             font-size: 16px;
             line-height: 1;
             position: relative;
+          }
+          .ai-session-sparkle-pause {
+            font-size: 16px;
+            color: rgba(255, 255, 255, 0.96);
+          }
+          .ai-session-sparkle-btn {
+            color: rgba(255, 255, 255, 0.96) !important;
+          }
+          .ai-session-sparkle-btn:hover {
+            background: transparent !important;
+            color: ${tiffanyAccent} !important;
+          }
+          .ai-session-sparkle-btn.is-busy {
+            color: rgba(255, 255, 255, 0.96) !important;
+          }
+          .ai-session-sparkle-btn:hover .ai-session-sparkle,
+          .ai-session-sparkle-btn:hover .ai-session-sparkle::after,
+          .ai-session-sparkle-btn:hover .ai-session-sparkle-pause {
+            color: ${tiffanyAccent};
           }
           .ai-session-sparkle::after {
             content: '✦';
             position: absolute;
             right: -3px;
             top: -5px;
-            color: ${aura.text};
+            color: rgba(255, 255, 255, 0.96);
             font-size: 8px;
             line-height: 1;
             transform: scale(0.82);
@@ -2966,6 +4254,24 @@ const AICollect: React.FC = () => {
               transform: translate(-50%, 0) scale(1);
             }
           }
+          @keyframes aiStatusSweep {
+            from {
+              background-position: -120% 0;
+            }
+            to {
+              background-position: 220% 0;
+            }
+          }
+          @keyframes aiSidePanelIn {
+            from {
+              opacity: 0;
+              transform: translateX(24px);
+            }
+            to {
+              opacity: 1;
+              transform: translateX(0);
+            }
+          }
           @keyframes aiTerminalFocus {
             0% {
               box-shadow: inset 0 0 0 1px rgba(138, 180, 255, 0), 0 0 0 rgba(138, 180, 255, 0);
@@ -3024,6 +4330,13 @@ const AICollect: React.FC = () => {
             .ai-session-prompt {
               width: min(680px, calc(100% - 36px));
             }
+            .ai-session-template-frame {
+              width: min(100%, 850px);
+              padding-left: 76px;
+            }
+            .ai-session-stage-card {
+              width: 252px;
+            }
             .ai-stage-overview {
               grid-template-columns: repeat(2, minmax(0, 1fr));
             }
@@ -3031,12 +4344,24 @@ const AICollect: React.FC = () => {
               grid-template-columns: repeat(3, minmax(0, 1fr));
             }
           }
+          @media (max-width: 1140px) {
+            .ai-session-fixed-meta {
+              grid-template-columns: 1fr;
+            }
+            .ai-session-status-line {
+              margin-top: 2px;
+            }
+            .ai-session-side-trigger,
+            .ai-session-side-panel {
+              display: none;
+            }
+          }
           @media (max-width: 767px) {
             .ai-collect-workbench {
               --ai-session-prompt-bottom: 12px;
               --ai-session-prompt-height: 86px;
               --ai-session-runtime-safe-bottom: 92px;
-              --ai-session-body-safe-bottom: 198px;
+              --ai-session-body-safe-bottom: 12px;
               --ai-session-veil-height: 132px;
               --ai-session-dock-rail-bottom: 92px;
               --ai-session-dock-panel-bottom: 166px;
@@ -3067,10 +4392,57 @@ const AICollect: React.FC = () => {
               font-size: 14px;
             }
             .ai-collect-body.is-session {
-              padding: 4px 0 var(--ai-session-body-safe-bottom);
+              padding: 4px 0 0;
             }
             .ai-session-shell {
               width: 100%;
+            }
+            .ai-session-template-frame {
+              padding-left: 0;
+            }
+            .ai-session-stage-float {
+              display: none;
+            }
+            .ai-session-template-shell {
+              gap: 12px;
+            }
+            .ai-session-fixed-meta {
+              gap: 12px;
+              padding: 14px 16px;
+              border-radius: 14px;
+            }
+            .ai-session-status-line {
+              height: 40px;
+              grid-template-columns: 18px minmax(0, 1fr);
+              padding-right: 10px;
+            }
+            .ai-session-status-meta {
+              display: none;
+            }
+            .ai-session-fixed-title-row {
+              flex-direction: column;
+              align-items: flex-start;
+              gap: 8px;
+            }
+            .ai-session-fixed-title-row h2 {
+              font-size: 24px;
+            }
+            .ai-session-template-scroll {
+              width: 100%;
+              padding-top: 2px;
+            }
+            .ai-template-sheet {
+              padding: 20px 16px 20px;
+              border-radius: 14px;
+            }
+            .ai-template-field {
+              grid-template-columns: 1fr;
+              gap: 10px;
+              padding-left: 0;
+            }
+            .ai-session-template-divider {
+              width: calc(100% - 40px);
+              margin-bottom: calc(var(--ai-session-prompt-height) + 30px);
             }
             .ai-session-prompt {
               bottom: var(--ai-session-prompt-bottom);
@@ -3134,6 +4506,8 @@ const AICollect: React.FC = () => {
             renderMissionPanel('hero')
           ) : (
             <div className="ai-session-shell">
+              {renderSessionLayout()}
+              {false && (
               <main className="ai-collect-panel ai-stage-shell ai-stage-shell-full" style={panelStyle}>
                 <div className="ai-stage-top">
                   <div className="ai-stage-headline">
@@ -3155,6 +4529,7 @@ const AICollect: React.FC = () => {
                 </div>
                 {renderGuidancePanel()}
               </main>
+              )}
             </div>
           )}
         </div>

@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
@@ -21,8 +20,9 @@ from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "news_base")
 
 # 社交媒体和常见非内容域名（外链提取时排除）
 _SOCIAL_DOMAINS = {

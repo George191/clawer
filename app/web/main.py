@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config.settings import settings
+from app.logging_utils import configure_adapter_logging
 from app.web.routes.dashboard import router as dashboard_router
 from app.web.routes.etl import router as etl_router
 from app.web.routes.monitor import router as monitor_router
@@ -41,6 +42,7 @@ _STATIC_DIR = (Path(__file__).resolve().parent.parent.parent / "web-panel" / "di
 @asynccontextmanager
 async def lifespan(appy: FastAPI):
     """应用生命周期：启动时初始化、关闭时清理。"""
+    configure_adapter_logging(getattr(logging, settings.log_level.upper(), logging.INFO))
     logger.info("=" * 50)
     logger.info("Web API starting on port 8000")
     logger.info("  Templates dir: %s", settings.template_dir)

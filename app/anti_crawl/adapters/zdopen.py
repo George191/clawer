@@ -7,14 +7,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 
 from curl_cffi import requests as curl_requests
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "zdopen_api", "proxy")
 
 # 默认 API 基础 URL
 DEFAULT_ZDPEN_API_URL = "http://www.zdopen.com/FreeProxy/Get/"
@@ -93,11 +93,11 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
             ProxyInfo 对象列表。
         """
         if not self.validate_config():
-            logger.error("ZdopenAPIAdapter: invalid config, missing url or app_id+akey")
+            logger.error("Invalid config: missing url or app_id+akey")
             return []
 
         api_url = self._build_api_url()
-        logger.info("Fetching proxies from Zdopen API: %s", api_url)
+        logger.info("Fetching proxies from API: %s", api_url)
 
         max_retries = self._config.get("max_retries", 3)
         wait_seconds = IP_IN_USE_WAIT_SECONDS
@@ -110,10 +110,10 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                 response.raise_for_status()
                 data = response.json()
             except curl_requests.errors.RequestsError as e:
-                logger.error("ZdopenAPIAdapter: HTTP request failed: %s", e)
+                logger.error("HTTP request failed: %s", e)
                 return []
             except ValueError as e:
-                logger.error("ZdopenAPIAdapter: JSON parse failed: %s", e)
+                logger.error("JSON parse failed: %s", e)
                 return []
 
             code = data.get("code", "")
@@ -122,11 +122,11 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                 logger.warning("ZdopenAPI returned error code=%s: %s", code, msg)
                 
                 if retries >= max_retries:
-                    logger.error("ZdopenAPIAdapter: max retries (%d) reached for IP-in-use error", max_retries)
+                    logger.error("Max retries reached (%d) for IP-in-use error", max_retries)
                     return []
                 
                 retries += 1
-                logger.info("ZdopenAPIAdapter: waiting %ds before retry %d/%d", wait_seconds, retries, max_retries)
+                logger.info("Waiting %ds before retry %d/%d", wait_seconds, retries, max_retries)
                 await asyncio.sleep(wait_seconds)
                 wait_seconds = int(wait_seconds * 1.5)
                 continue
@@ -134,7 +134,7 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
             proxy_list = self._extract_proxy_list(data)
             proxies = self._parse_proxy_items(proxy_list)
 
-            logger.info("ZdopenAPIAdapter: fetched %d proxies", len(proxies))
+            logger.info("Fetched %d proxies", len(proxies))
             return proxies
 
         return []
@@ -177,7 +177,7 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                 if isinstance(value, list) and value:
                     first = value[0]
                     if isinstance(first, dict) and "ip" in first:
-                        logger.debug("Found proxy list in key: '%s'", key)
+                        logger.debug("Found proxy list in response key '%s'", key)
                         return value
 
             # 递归查找嵌套结构，如 {"data": {"proxy_list": [...]}}
@@ -193,7 +193,7 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                             if result:
                                 return result
 
-        logger.warning("ZdopenAPIAdapter: unexpected response format: %s", type(data))
+        logger.warning("Unexpected response format: %s", type(data))
         if isinstance(data, dict):
             logger.debug("Response keys: %s", list(data.keys()))
         return []

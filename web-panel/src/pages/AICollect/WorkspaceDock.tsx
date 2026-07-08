@@ -2403,10 +2403,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           pointer-events: auto;
           z-index: 2;
         }
-        .workspace-dock-shell.is-session .workspace-dock-rail {
-          left: max(12px, calc(50% - 492px));
-          bottom: var(--ai-session-dock-rail-bottom);
-        }
         .workspace-dock-trigger {
           border: none;
           background: transparent;
@@ -2451,12 +2447,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           transform: translateY(16px);
           transition: opacity 200ms ease, transform 220ms ease;
           pointer-events: none;
-        }
-        .workspace-dock-shell.is-session .workspace-dock-panel {
-          left: max(22px, calc(50% - 436px));
-          bottom: var(--ai-session-dock-panel-bottom);
-          height: min(488px, calc(100vh - 196px));
-          max-height: min(488px, calc(100vh - 196px));
         }
         .workspace-dock-panel.is-open {
           opacity: 1;
@@ -2823,8 +2813,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           position: sticky;
           bottom: 0;
           margin-top: -26px;
-          height: 26px;
-          background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.32) 100%);
+          height: 20px;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(125, 125, 126, 0.32) 100%);
           pointer-events: none;
           z-index: 2;
         }
@@ -3534,10 +3524,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             bottom: 126px;
             height: min(74vh, calc(100vh - 132px));
             max-height: min(74vh, calc(100vh - 132px));
-          }
-          .workspace-dock-shell.is-session .workspace-dock-panel {
-            bottom: var(--ai-session-dock-panel-bottom);
-            height: min(74vh, calc(100vh - 132px));
           }
           .workspace-dock-form-grid,
           .workspace-dock-metric-grid {

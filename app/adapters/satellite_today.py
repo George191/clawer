@@ -12,15 +12,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 
 from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter
 from app.adapters.utils.news.wp import assets as wp_assets
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "satellite_today")
 
 
 @register_adapter("satellite_today")
@@ -133,7 +133,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                 self._category_map[cid] = {"name": name, "slug": slug}
 
         logger.info(
-            "[SatelliteToday] Loaded %d categories/topics",
+            "Loaded %d categories/topics",
             len(self._category_map),
         )
 

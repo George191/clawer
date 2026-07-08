@@ -20,15 +20,15 @@ URL 规则:
 
 from __future__ import annotations
 
-import logging
 from urllib.parse import urljoin
 from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 from app.parser.template_parser import TemplateParser
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "planet")
 
 # 递归最大深度，防止无限循环
 _MAX_CRAWL_DEPTH = 5
@@ -56,7 +56,7 @@ class PlanetAdapter(BaseSiteAdapter):
         await super().on_before_crawl(template)
         self._template = template
         logger.info(
-            "[PlanetAdapter] ▶ Starting crawl: base_url=%s, list_page=%s",
+            "Starting crawl: base_url=%s, list_page=%s",
             self._base_url, template.list_page,
         )
 
@@ -88,8 +88,7 @@ class PlanetAdapter(BaseSiteAdapter):
         """
         if depth >= _MAX_CRAWL_DEPTH:
             logger.warning(
-                "[PlanetAdapter] Max recursion depth (%d) reached, "
-                "skipping subdirectories",
+                "Max recursion depth reached (%d); skipping subdirectories",
                 _MAX_CRAWL_DEPTH,
             )
             return []
@@ -118,7 +117,7 @@ class PlanetAdapter(BaseSiteAdapter):
             # 仅采集 PDF 文件
             if not name.lower().endswith(".pdf"):
                 logger.debug(
-                    "[PlanetAdapter] Skipping non-PDF file: %s", name,
+                    "Skipping non-PDF file: %s", name,
                 )
                 continue
 
@@ -150,7 +149,7 @@ class PlanetAdapter(BaseSiteAdapter):
         sub_dir_url = urljoin(current_dir_url, raw_url)
 
         logger.info(
-            "[PlanetAdapter] ▶ Entering subdirectory depth=%d: %s → %s",
+            "Entering subdirectory depth=%d: %s -> %s",
             depth, dir_name, sub_dir_url,
         )
 
@@ -162,15 +161,16 @@ class PlanetAdapter(BaseSiteAdapter):
             )
         except Exception as e:
             logger.warning(
-                "[PlanetAdapter] Failed to fetch subdirectory '%s': %s",
+                "Failed to fetch subdirectory '%s': %s",
                 sub_dir_url, e,
             )
             return []
 
         records = self._parser.parse_list(html, self._template.list_fields)
         logger.debug(
-            "[PlanetAdapter] Subdirectory '%s': parsed %d records",
-            dir_name, len(records),
+            "Parsed %d records from subdirectory '%s'",
+            len(records),
+            dir_name,
         )
 
         return await self._process_records(records, depth, sub_dir_url)
@@ -200,7 +200,7 @@ class PlanetAdapter(BaseSiteAdapter):
         error_str = str(error)
         if "404" in error_str:
             logger.info(
-                "[PlanetAdapter] Path not found (404), skipping",
+                "Path not found (404), skipping",
             )
             return "skip"
         return None

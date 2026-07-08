@@ -5,13 +5,13 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "file_source", "proxy")
 
 
 class FileProxySourceAdapter(ProxySourceAdapter):
@@ -52,17 +52,17 @@ class FileProxySourceAdapter(ProxySourceAdapter):
 
         path = Path(file_path)
         if not path.exists():
-            logger.warning("FileProxySourceAdapter: file not found: %s", path)
+            logger.warning("Proxy file not found: %s", path)
             return []
 
         if not path.is_file():
-            logger.warning("FileProxySourceAdapter: path is not a file: %s", path)
+            logger.warning("Proxy file path is not a file: %s", path)
             return []
 
         try:
             content = path.read_text(encoding=encoding)
         except (OSError, UnicodeDecodeError) as e:
-            logger.error("FileProxySourceAdapter: failed to read file %s: %s", path, e)
+            logger.error("Failed to read proxy file %s: %s", path, e)
             return []
 
         proxies: list[ProxyInfo] = []
@@ -81,5 +81,5 @@ class FileProxySourceAdapter(ProxySourceAdapter):
             
             proxies.append(ProxyInfo(line))
 
-        logger.info("FileProxySourceAdapter: loaded %d proxies from %s", len(proxies), path)
+        logger.info("Loaded %d proxies from %s", len(proxies), path)
         return proxies

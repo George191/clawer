@@ -24,6 +24,7 @@ import sys
 
 from app.config.settings import settings
 from app.etl.base import ETLBase
+from app.logging_utils import setup_service_logging
 from app.etl.ts_rds import TsRds
 from app.etl.ts_ods import TsOds
 from app.etl.ts_task import TsTask
@@ -35,11 +36,9 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(service: str = "etl") -> None:
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format=f"%(asctime)s [{service.upper()}] %(levelname)s %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
+    setup_service_logging(
+        service,
+        getattr(logging, settings.log_level.upper(), logging.INFO),
     )
 
 def _mask_url(url: str) -> str:

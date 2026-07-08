@@ -15,17 +15,16 @@ import sys
 from app.base.kafka import KafkaProducer
 from app.base.mongo import MongoClient
 from app.config.settings import settings
+from app.logging_utils import setup_service_logging
 from app.syncer.worker import SyncWorker
 
 logger = logging.getLogger(__name__)
 
 
 def setup_logging(service: str = "syncer") -> None:
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format=f"%(asctime)s [{service.upper()}] %(levelname)s %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
+    setup_service_logging(
+        service,
+        getattr(logging, settings.log_level.upper(), logging.INFO),
     )
 
 

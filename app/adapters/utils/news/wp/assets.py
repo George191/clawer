@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -14,9 +13,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential, stop_never
 
 from app.adapters.utils.news import NewsBaseAdapter
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 from app.models.template import RequestConfig
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "wp_assets")
 
 
 def _image_src(img: Any) -> str:

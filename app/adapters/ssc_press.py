@@ -14,7 +14,6 @@ SSC 页面结构处理放在 app.adapters.utils.news.ssc.common 中。
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 from typing import Any
 from urllib.parse import urljoin
@@ -25,9 +24,10 @@ from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter
 from app.adapters.utils.news.ssc import common as ssc_common
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 from app.models.template import RequestConfig
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "ssc_press")
 
 _DETAIL_CONCURRENCY = 4
 
@@ -70,12 +70,12 @@ class SscPressAdapter(NewsBaseAdapter):
             )
             self._press_links = self._parse_media_room(html_content)
             logger.info(
-                "[SscPress] Parsed %d press links from Media Room",
+                "Parsed %d press links from Media Room",
                 len(self._press_links),
             )
         except Exception as e:
             logger.warning(
-                "[SscPress] Failed to parse Media Room: %s",
+                "Failed to parse Media Room: %s",
                 str(e)[:100],
             )
 
@@ -237,7 +237,7 @@ class SscPressAdapter(NewsBaseAdapter):
             )
         except Exception as e:
             logger.warning(
-                "[SscPress] Failed to fetch detail '%s': %s",
+                "Failed to fetch detail '%s': %s",
                 detail_url, str(e)[:80],
             )
             return record

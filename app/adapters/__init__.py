@@ -12,13 +12,13 @@ USPTO 的 CAPTCHA 处理等），使 SpiderEngine 保持通用性。
 from __future__ import annotations
 
 import importlib
-import logging
 import pkgutil
 from typing import Any
 
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "registry")
 
 # ── 全局注册表 ──────────────────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ def _ensure_adapters_loaded() -> None:
         try:
             importlib.import_module(f"app.adapters.{module_name}")
         except Exception as e:
-            logger.debug("Skip adapter module '%s': %s", module_name, e)
+            logger.debug("Skipping adapter module '%s': %s", module_name, e)
 
 
 def register_adapter(name: str):

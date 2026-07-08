@@ -19,14 +19,14 @@ peid/eid 生命周期
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
-from app.downloader.http_client import HttpClient
 from app.adapters.utils.browser_events import BrowserEventEmitter, PageSession
+from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "google_patent")
 
 
 @register_adapter("google_patent")
@@ -92,7 +92,7 @@ class GooglePatentAdapter(BaseSiteAdapter):
         ]
         if len(filtered) < len(records):
             logger.info(
-                "[GooglePatentAdapter] Filtered %d similar documents on page %d",
+                "Filtered %d similar documents on page %d",
                 len(records) - len(filtered),
                 page,
             )
@@ -127,14 +127,14 @@ class GooglePatentAdapter(BaseSiteAdapter):
         error_str = str(error)
         if "429" in error_str:
             logger.warning(
-                "[GooglePatentAdapter] Rate limited on page %d, resetting session",
+                "Rate limited on page %d; resetting session",
                 page,
             )
             # self._session = PageSession()
             return "reset_session"
         if "captcha" in error_str.lower():
             logger.error(
-                "[GooglePatentAdapter] CAPTCHA detected on page %d, aborting",
+                "CAPTCHA detected on page %d; aborting",
                 page,
             )
             return "abort"

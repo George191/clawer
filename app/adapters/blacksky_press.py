@@ -11,15 +11,15 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter
 from app.adapters.utils.news.wp import assets as wp_assets
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "blacksky_press")
 
 
 @register_adapter("blacksky_press")

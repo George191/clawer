@@ -12,15 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.config.settings import settings
 from app.downloader.http_client import HttpClient
+from app.logging_utils import get_adapter_logger
 
-logger = logging.getLogger(__name__)
+logger = get_adapter_logger(__name__, "google_patent_events")
 
 # ── 事件模板（Google Patents 规范）───────────────────────────────────
 
@@ -193,7 +193,7 @@ class BrowserEventEmitter:
                 url,
                 self._build_request_config(headers),
             )
-            logger.debug("gen_204 OK (204 No Content expected)")
+            logger.debug("gen_204 OK (204 expected)")
         except Exception as e:
             # gen_204 返回 204 时 curl_cffi 可能报空响应异常，
             # 这属于正常情况，仅记录调试日志，不中断采集流程。

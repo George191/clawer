@@ -28,6 +28,7 @@ from typing import Any, Generator, Optional
 from app.config.settings import settings
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
+from app.logging_utils import setup_service_logging
 from app.models.template import SiteTemplate
 from app.adapters import get_adapter_class
 from app.adapters import GenericAdapter
@@ -514,22 +515,11 @@ async def run_from_command_line(
         await engine.close()
 
 
-def _reconfigure_stdio_utf8() -> None:
-    """Ensure redirected Windows logs are written as UTF-8."""
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(encoding="utf-8", errors="replace")
-
-
 def setup_logging(service: str = "crawler") -> None:
     """设置日志。"""
-    _reconfigure_stdio_utf8()
-    logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
-        format=f"%(asctime)s [{service.upper()}] %(levelname)s %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
+    setup_service_logging(
+        service,
+        getattr(logging, settings.log_level.upper(), logging.INFO),
         force=True,
     )
     
