@@ -2049,7 +2049,7 @@ const AICollect: React.FC = () => {
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            color: ${aura.accent};
+            color: ${aura.subtle};
             font-size: 18px;
             position: relative;
             z-index: 1;
@@ -2099,6 +2099,7 @@ const AICollect: React.FC = () => {
           }
           .ai-collect-workbench .ai-prompt-input.ant-input::placeholder {
             color: ${aura.subtle};
+            text-indent: 5px;
           }
           .ai-collect-panel::-webkit-scrollbar,
           .ai-mission-content::-webkit-scrollbar,

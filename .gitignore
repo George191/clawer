@@ -9,3 +9,4 @@ logs/
 .agents/
 .codex/
 .pytest.cache/
+*.log
