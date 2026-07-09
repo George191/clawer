@@ -1149,22 +1149,6 @@ const AICollect: React.FC = () => {
     () => sessionInspectorTabs.find((tab) => tab.id === activeInspectorTabId) ?? sessionInspectorTabs[sessionInspectorTabs.length - 1] ?? null,
     [activeInspectorTabId, sessionInspectorTabs],
   );
-  const browserInspectorNotes = useMemo(
-    () => [
-      `${templateStageMeta.site.title}: ${browserPreviewHost || 'source.local'}`,
-      `${processStepMeta[activeProcessStep].title}: ${processStepMeta[activeProcessStep].desc}`,
-      liveLogs[0] ?? '等待新的浏览器事件',
-    ],
-    [activeProcessStep, browserPreviewHost, liveLogs],
-  );
-  const codeInspectorNotes = useMemo(
-    () => [
-      adapterFileName,
-      `${templateDraftEntries.length} mapped keys`,
-      `${processStepMeta[activeProcessStep].title}`,
-    ],
-    [activeProcessStep, adapterFileName, templateDraftEntries.length],
-  );
   const activeWorkspacePanel = useMemo<WorkspacePanel | null>(() => {
     const panel = searchParams.get('panel');
     return panel === 'templates' || panel === 'tasks' ? panel : null;
@@ -1193,7 +1177,8 @@ const AICollect: React.FC = () => {
     && templateStagesReady;
   const templateEditable = workflowPhase === 'analyzing-template' || workflowPhase === 'confirm-template';
   const templateReadyForConfirm = workflowPhase === 'confirm-template' && templateStagesReady;
-  const templateCollapsed = workflowPhase === 'generating-adapter' || workflowPhase === 'release-template';
+  const displayWorkflowPhase = guidePreviewPhase ?? workflowPhase;
+  const templateCollapsed = displayWorkflowPhase === 'generating-adapter' || displayWorkflowPhase === 'release-template';
   const listFieldNameOptions = useMemo(
     () => Array.from(new Set(
       templateDraftEntries
@@ -1203,7 +1188,6 @@ const AICollect: React.FC = () => {
     )),
     [templateDraftEntries, templateValueDrafts],
   );
-  const displayWorkflowPhase = guidePreviewPhase ?? workflowPhase;
   const sessionGuideSteps = useMemo<SessionGuideStepId[]>(() => {
     const steps: SessionGuideStepId[] = [...visibleTemplateStages];
 
@@ -3224,15 +3208,6 @@ const AICollect: React.FC = () => {
         <div className="ai-session-inspector-body">
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
-              <div className="ai-session-inspector-toolbar">
-                <span className="ai-session-inspector-toolbar-icon is-browser" aria-hidden="true">
-                  {browserPreviewFavicon ? <img src={browserPreviewFavicon} alt="" /> : <GlobalOutlined />}
-                </span>
-                <div className="ai-session-inspector-toolbar-copy">
-                  <strong>{activeInspectorTab.title}</strong>
-                  <span>{activeInspectorTab.subtitle}</span>
-                </div>
-              </div>
               <div className="ai-session-inspector-browser-frame">
                 {activeInspectorTab.subtitle.startsWith('http') ? (
                   <iframe src={activeInspectorTab.subtitle} title={activeInspectorTab.title} />
@@ -3243,27 +3218,9 @@ const AICollect: React.FC = () => {
                   </div>
                 )}
               </div>
-              <div className="ai-session-inspector-meta">
-                {[browserPreviewHost || 'source.local', `${visibleTemplateStages.length}/${Math.max(templateStages.length, 1)} template stages mapped`, ...liveLogs.slice(0, 3)].map((note) => (
-                  <span key={note}>{note}</span>
-                ))}
-              </div>
             </div>
           ) : (
             <div className="ai-session-inspector-editor">
-              <div className="ai-session-inspector-toolbar">
-                <span className="ai-session-inspector-toolbar-icon" aria-hidden="true">
-                  <AdapterEditorIcon className="ai-session-status-icon-svg" />
-                </span>
-                <div className="ai-session-inspector-toolbar-copy">
-                  <strong>{activeInspectorTab.title}</strong>
-                  <span>{activeInspectorTab.subtitle}</span>
-                </div>
-                <div className="ai-session-inspector-diff">
-                  <b className="is-added">+{adapterDiffStats.added}</b>
-                  <b className="is-removed">-{adapterDiffStats.removed}</b>
-                </div>
-              </div>
               <div className="ai-session-inspector-editor-body">
                 {adapterPreviewLines.map((line) => (
                   <div
@@ -3274,11 +3231,6 @@ const AICollect: React.FC = () => {
                     <span className="ai-session-inspector-editor-prefix">{line.prefix}</span>
                     <code>{renderPythonPreviewContent(line.content || ' ', line.key)}</code>
                   </div>
-                ))}
-              </div>
-              <div className="ai-session-inspector-meta">
-                {codeInspectorNotes.map((note) => (
-                  <span key={note}>{note}</span>
                 ))}
               </div>
             </div>
@@ -3487,68 +3439,73 @@ const AICollect: React.FC = () => {
     return (
       <section className={`ai-session-main-shell is-adapter ${expandingPinnedPanel === 'adapter' ? 'is-restoring-from-tab' : ''}`}>
         {renderWorkflowHeader()}
-        <div className="ai-session-adapter-shell">
-          {renderPinnedTabs()}
-          <div className="ai-session-adapter-overview">
-            <div className="ai-session-adapter-copy">
-              <Text className="ai-session-fixed-eyebrow">Adapter Build</Text>
-              <h3>{currentStep?.title ?? 'Adapter Build'}</h3>
-              <p>AI is implementing the adapter in serial steps from the confirmed template contract.</p>
+        <div className="ai-session-adapter-scroll">
+          <div className="ai-session-adapter-shell">
+            {renderPinnedTabs()}
+            <div className="ai-session-adapter-overview">
+              <div className="ai-session-adapter-copy">
+                <Text className="ai-session-fixed-eyebrow">Adapter Build</Text>
+                <h3>{currentStep?.title ?? 'Adapter Build'}</h3>
+                <p>AI is implementing the adapter in serial steps from the confirmed template contract.</p>
+              </div>
+              <div className="ai-session-adapter-progress">
+                <Progress percent={adapterProgressPercent} showInfo={false} strokeColor="#ffffff" trailColor="rgba(255,255,255,0.1)" />
+                <span>{Math.min(adapterBuildIndex + 1, adapterBuildPlan.length)}/{adapterBuildPlan.length}</span>
+              </div>
             </div>
-            <div className="ai-session-adapter-progress">
-              <Progress percent={adapterProgressPercent} showInfo={false} strokeColor="#ffffff" trailColor="rgba(255,255,255,0.1)" />
-              <span>{Math.min(adapterBuildIndex + 1, adapterBuildPlan.length)}/{adapterBuildPlan.length}</span>
+            <div className="ai-session-adapter-steps is-flow">
+              {adapterBuildPlan.map((step, index) => {
+                const status = index < adapterBuildIndex ? 'done' : index === currentStepIndex ? 'active' : 'pending';
+                const expanded = expandedAdapterStep === index;
+                const statusLabel = status === 'done'
+                  ? `已处理 ${step.elapsed}`
+                  : status === 'active'
+                    ? `处理中 ${step.elapsed}`
+                    : '待处理';
+
+                return (
+                  <div className={`ai-session-adapter-task is-${status} ${expanded ? 'is-expanded' : ''}`} key={step.title}>
+                    <div className="ai-session-adapter-task-head">
+                      <div className="ai-session-adapter-task-copy">
+                        <strong>{step.title}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="ai-session-adapter-task-status"
+                        aria-expanded={expanded}
+                        onClick={() => {
+                          setExpandedAdapterStep((prev) => (prev === index ? null : index));
+                        }}
+                      >
+                        <span className="ai-session-adapter-task-status-label">{statusLabel}</span>
+                        <span
+                          className={`ai-session-adapter-task-status-caret ${expanded ? 'is-expanded' : ''}`}
+                          aria-hidden="true"
+                        >
+                          <ChevronRightIcon />
+                        </span>
+                      </button>
+                    </div>
+                    {expanded ? (
+                      <div className="ai-session-adapter-task-body">
+                        <p>{step.desc}</p>
+                        <div className="ai-session-adapter-task-list">
+                          {step.details.map((detail) => (
+                            <div className="ai-session-adapter-task-item" key={detail}>
+                              <i aria-hidden="true" />
+                              <span>{detail}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           </div>
-          <div className="ai-session-adapter-steps is-flow">
-            {adapterBuildPlan.map((step, index) => {
-              const status = index < adapterBuildIndex ? 'done' : index === currentStepIndex ? 'active' : 'pending';
-              const expanded = expandedAdapterStep === index;
-              const statusLabel = status === 'done'
-                ? `已处理 ${step.elapsed}`
-                : status === 'active'
-                  ? `处理中 ${step.elapsed}`
-                  : '待处理';
-
-              return (
-                <div className={`ai-session-adapter-task is-${status} ${expanded ? 'is-expanded' : ''}`} key={step.title}>
-                  <div className="ai-session-adapter-task-head">
-                    <div className="ai-session-adapter-task-copy">
-                      <strong>{step.title}</strong>
-                    </div>
-                    <button
-                      type="button"
-                      className="ai-session-adapter-task-status"
-                      aria-expanded={expanded}
-                      onClick={() => {
-                        setExpandedAdapterStep((prev) => (prev === index ? null : index));
-                      }}
-                    >
-                      <span className="ai-session-adapter-task-status-label">{statusLabel}</span>
-                      <span
-                        className={`ai-session-adapter-task-status-caret ${expanded ? 'is-expanded' : ''}`}
-                        aria-hidden="true"
-                      >
-                        <ChevronRightIcon />
-                      </span>
-                    </button>
-                  </div>
-                  {expanded ? (
-                    <div className="ai-session-adapter-task-body">
-                      <p>{step.desc}</p>
-                      <div className="ai-session-adapter-task-list">
-                        {step.details.map((detail) => (
-                          <div className="ai-session-adapter-task-item" key={detail}>
-                            <i aria-hidden="true" />
-                            <span>{detail}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+          <div className="ai-session-template-tail" aria-hidden="true">
+            <div className="ai-session-template-divider" />
           </div>
         </div>
       </section>
@@ -3558,61 +3515,66 @@ const AICollect: React.FC = () => {
   const renderWorkflowReleasePanel = () => (
     <section className="ai-session-main-shell is-release">
       {renderWorkflowHeader()}
-      <div className="ai-session-release-shell">
-        {renderPinnedTabs()}
-        <div className="ai-session-release-grid">
-          {(['draft', 'archive', 'publish'] as ReleaseAction[]).map((action) => (
-            <button
-              type="button"
-              key={action}
-              className={`ai-session-release-card ${selectedReleaseAction === action ? 'is-selected' : ''}`}
-              onClick={() => setSelectedReleaseAction(action)}
+      <div className="ai-session-release-scroll">
+        <div className="ai-session-release-shell">
+          {renderPinnedTabs()}
+          <div className="ai-session-release-grid">
+            {(['draft', 'archive', 'publish'] as ReleaseAction[]).map((action) => (
+              <button
+                type="button"
+                key={action}
+                className={`ai-session-release-card ${selectedReleaseAction === action ? 'is-selected' : ''}`}
+                onClick={() => setSelectedReleaseAction(action)}
+              >
+                <strong>{releaseActionMeta[action].title}</strong>
+                <p>{releaseActionMeta[action].desc}</p>
+              </button>
+            ))}
+          </div>
+          <div className="ai-session-release-grid is-task">
+            {(['launch', 'skip'] as TaskPublishMode[]).map((modeValue) => (
+              <button
+                type="button"
+                key={modeValue}
+                className={`ai-session-release-card ${selectedTaskPublishMode === modeValue ? 'is-selected' : ''}`}
+                onClick={() => setSelectedTaskPublishMode(modeValue)}
+              >
+                <strong>{taskPublishMeta[modeValue].title}</strong>
+                <p>{taskPublishMeta[modeValue].desc}</p>
+              </button>
+            ))}
+          </div>
+          <div className="ai-session-release-summary">
+            <div>
+              <span>Template</span>
+              <strong>{activeTemplate.fileName}</strong>
+            </div>
+            <div>
+              <span>Adapter</span>
+              <strong>{adapterFileLabel}</strong>
+            </div>
+            <div>
+              <span>Fields</span>
+              <strong>{selectedCount}</strong>
+            </div>
+            <div>
+              <span>Diff</span>
+              <strong>+{adapterDiffStats.added} / -{adapterDiffStats.removed}</strong>
+            </div>
+          </div>
+          <div className="ai-session-release-footer">
+            <Button
+              type="primary"
+              className="ai-template-confirm-btn"
+              onClick={() => void handleApplyReleaseAction()}
             >
-              <strong>{releaseActionMeta[action].title}</strong>
-              <p>{releaseActionMeta[action].desc}</p>
-            </button>
-          ))}
-        </div>
-        <div className="ai-session-release-grid is-task">
-          {(['launch', 'skip'] as TaskPublishMode[]).map((modeValue) => (
-            <button
-              type="button"
-              key={modeValue}
-              className={`ai-session-release-card ${selectedTaskPublishMode === modeValue ? 'is-selected' : ''}`}
-              onClick={() => setSelectedTaskPublishMode(modeValue)}
-            >
-              <strong>{taskPublishMeta[modeValue].title}</strong>
-              <p>{taskPublishMeta[modeValue].desc}</p>
-            </button>
-          ))}
-        </div>
-        <div className="ai-session-release-summary">
-          <div>
-            <span>Template</span>
-            <strong>{activeTemplate.fileName}</strong>
-          </div>
-          <div>
-            <span>Adapter</span>
-            <strong>{adapterFileLabel}</strong>
-          </div>
-          <div>
-            <span>Fields</span>
-            <strong>{selectedCount}</strong>
-          </div>
-          <div>
-            <span>Diff</span>
-            <strong>+{adapterDiffStats.added} / -{adapterDiffStats.removed}</strong>
+              {releaseActionMeta[selectedReleaseAction].cta}
+            </Button>
+            <Text className="ai-session-release-note">{taskPublishMeta[selectedTaskPublishMode].desc}</Text>
           </div>
         </div>
-        <div className="ai-session-release-footer">
-          <Button
-            type="primary"
-            className="ai-template-confirm-btn"
-            onClick={() => void handleApplyReleaseAction()}
-          >
-            {releaseActionMeta[selectedReleaseAction].cta}
-          </Button>
-          <Text className="ai-session-release-note">{taskPublishMeta[selectedTaskPublishMode].desc}</Text>
+        <div className="ai-session-template-tail" aria-hidden="true">
+          <div className="ai-session-template-divider" />
         </div>
       </div>
     </section>
@@ -4297,7 +4259,8 @@ const AICollect: React.FC = () => {
             transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition), transform var(--ai-session-split-transition);
           }
           .ai-session-main-shell.is-restoring-from-tab .ai-session-template-scroll,
-          .ai-session-main-shell.is-restoring-from-tab .ai-session-adapter-shell {
+          .ai-session-main-shell.is-restoring-from-tab .ai-session-adapter-scroll,
+          .ai-session-main-shell.is-restoring-from-tab .ai-session-release-scroll {
             animation: ai-session-panel-restore 380ms cubic-bezier(0.2, 0.82, 0.28, 1);
             transform-origin: left top;
           }
@@ -4310,6 +4273,9 @@ const AICollect: React.FC = () => {
             overflow: visible;
             pointer-events: none;
             z-index: 7;
+          }
+          .ai-session-layout.has-inspector.is-inspector-expanded .ai-session-guide-anchor {
+            left: -40px;
           }
           .ai-session-template-frame.is-template-collapsed {
             padding-left: 0;
@@ -4559,6 +4525,36 @@ const AICollect: React.FC = () => {
             border-radius: 18px;
             background: transparent;
           }
+          .ai-session-adapter-scroll {
+            width: 100%;
+            flex: 1;
+            min-height: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2px 0 0;
+            position: relative;
+            isolation: isolate;
+            border-radius: 18px;
+            background: transparent;
+          }
+          .ai-session-release-scroll {
+            width: 100%;
+            flex: 1;
+            min-height: 0;
+            overflow-x: hidden;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2px 0 0;
+            position: relative;
+            isolation: isolate;
+            border-radius: 18px;
+            background: transparent;
+          }
           .ai-template-sheet {
             width: calc(100% - 18px);
             max-width: 776px;
@@ -4701,6 +4697,8 @@ const AICollect: React.FC = () => {
             transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition), padding var(--ai-session-split-transition);
           }
           .ai-session-adapter-shell {
+            flex: none;
+            margin-bottom: 20px;
             display: flex;
             flex-direction: column;
             gap: 16px;
@@ -4870,6 +4868,8 @@ const AICollect: React.FC = () => {
             color: rgba(255, 255, 255, 0.66);
           }
           .ai-session-release-shell {
+            flex: none;
+            margin-bottom: 20px;
             display: flex;
             flex-direction: column;
             gap: 14px;
@@ -5074,7 +5074,6 @@ const AICollect: React.FC = () => {
             width: 0;
             max-width: 0;
             min-width: 0;
-            margin: var(--ai-session-inspector-top-offset) 0 var(--ai-session-inspector-bottom-offset);
             border-radius: 18px;
             border: 1px solid rgba(255, 255, 255, 0);
             background: rgba(24, 28, 36, 0.97);
@@ -5153,8 +5152,7 @@ const AICollect: React.FC = () => {
             gap: 8px;
             overflow: hidden;
           }
-          .ai-session-inspector-tab-icon,
-          .ai-session-inspector-toolbar-icon {
+          .ai-session-inspector-tab-icon {
             width: 16px;
             height: 16px;
             display: inline-flex;
@@ -5163,8 +5161,7 @@ const AICollect: React.FC = () => {
             color: rgba(255, 255, 255, 0.9);
             flex-shrink: 0;
           }
-          .ai-session-inspector-tab-icon.is-browser img,
-          .ai-session-inspector-toolbar-icon.is-browser img {
+          .ai-session-inspector-tab-icon.is-browser img {
             width: 14px;
             height: 14px;
             border-radius: 4px;
@@ -5202,49 +5199,6 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             gap: 12px;
-          }
-          .ai-session-inspector-toolbar {
-            min-height: 42px;
-            padding: 0 12px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            background: rgba(255, 255, 255, 0.035);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-          }
-          .ai-session-inspector-toolbar-copy {
-            min-width: 0;
-            display: flex;
-            flex: 1;
-            align-self: stretch;
-            align-items: center;
-            gap: 8px;
-            overflow: hidden;
-          }
-          .ai-session-inspector-toolbar-copy strong,
-          .ai-session-inspector-toolbar-copy span {
-            min-width: 0;
-            height: 100%;
-            display: inline-flex;
-            align-items: center;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          }
-          .ai-session-inspector-toolbar-copy strong {
-            flex: 0 1 auto;
-            max-width: 42%;
-            color: ${aura.text};
-            font-size: 12px;
-            font-weight: 600;
-            line-height: 1;
-          }
-          .ai-session-inspector-toolbar-copy span {
-            flex: 1 1 auto;
-            color: ${aura.muted};
-            font-size: 11px;
-            line-height: 1;
           }
           .ai-session-inspector-browser-frame,
           .ai-session-inspector-editor-body {
@@ -5284,23 +5238,6 @@ const AICollect: React.FC = () => {
           .ai-session-inspector-empty span {
             font-size: 11px;
             word-break: break-word;
-          }
-          .ai-session-inspector-diff {
-            margin-left: auto;
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-          }
-          .ai-session-inspector-diff b {
-            font-size: 12px;
-            line-height: 1.2;
-            font-weight: 600;
-          }
-          .ai-session-inspector-diff .is-added {
-            color: #65d5a3;
-          }
-          .ai-session-inspector-diff .is-removed {
-            color: #ff7d7d;
           }
           .ai-session-inspector-editor-body {
             padding: 12px 0;
@@ -5379,23 +5316,6 @@ const AICollect: React.FC = () => {
           .ai-session-python-token.is-operator,
           .ai-session-python-token.is-punctuation {
             color: #f8f8f2;
-          }
-          .ai-session-inspector-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-          }
-          .ai-session-inspector-meta span {
-            max-width: 100%;
-            padding: 4px 8px;
-            border-radius: 999px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            color: ${aura.muted};
-            font-size: 11px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
           }
           .ai-session-side-trigger,
           .ai-session-side-hotspot {
@@ -7426,7 +7346,9 @@ const AICollect: React.FC = () => {
             .ai-session-fixed-title-row h2 {
               font-size: 16px;
             }
-            .ai-session-template-scroll {
+            .ai-session-template-scroll,
+            .ai-session-adapter-scroll,
+            .ai-session-release-scroll {
               width: 100%;
               padding-top: 2px;
               border-radius: 14px;
