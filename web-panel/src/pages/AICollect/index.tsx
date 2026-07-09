@@ -21,7 +21,6 @@ import type { ColumnsType } from 'antd/es/table';
 import {
   AudioOutlined,
   BranchesOutlined,
-  CaretRightOutlined,
   CheckCircleOutlined,
   CloseOutlined,
   DeploymentUnitOutlined,
@@ -92,16 +91,134 @@ const SessionStatusIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+const YamlFileIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 480 511.65"
+    className={className}
+    xmlns="http://www.w3.org/2000/svg"
+    shapeRendering="geometricPrecision"
+    textRendering="geometricPrecision"
+    imageRendering="optimizeQuality"
+    fillRule="evenodd"
+    clipRule="evenodd"
+    aria-hidden="true"
+  >
+    <path
+      fill="currentColor"
+      d="M84.68 237.33H375.8v-81.86h-86.02c-9.02 0-21.62-4.88-27.56-10.83-5.95-5.95-9.6-16.68-9.6-25.7V31.81H33.92c-.77 0-1.34.39-1.72.77-.58.38-.77.96-.77 1.73v443.23c0 .58.38 1.34.77 1.73.38.57 1.15.77 1.72.77h339.39c.76 0 .72-.39 1.1-.77.58-.39 1.39-1.15 1.39-1.73v-46.46H84.68c-17.25 0-31.47-14.16-31.47-31.47V268.79c0-17.31 14.16-31.46 31.47-31.46zm1.86 52.82h29.79l17.57 29.23 17.48-29.23h29.63l-33.71 50.47v36.36h-26.92v-36.36l-33.84-50.47zm143.04 72.52h-30.4l-4.36 14.31h-27.39l32.68-86.83h29.37l32.54 86.83h-28.09l-4.35-14.31zm-5.68-18.79-9.48-31.21-9.52 31.21h19zm44.32-53.73h35.4l13.48 52.84 13.52-52.84h35.23v86.83H343.9v-66.19l-16.94 66.19h-19.89l-16.9-66.19v66.19h-21.95v-86.83zm109.98 0H405v65.49h41.96v21.34H378.2v-86.83zm28.98-52.82h41.36c17.3 0 31.46 14.2 31.46 31.46v130.82c0 17.26-14.2 31.47-31.46 31.47h-41.36v56.4c0 6.72-2.69 12.66-7.1 17.08-4.41 4.41-10.36 7.09-17.07 7.09H24.17c-6.71 0-12.66-2.68-17.07-7.09C2.69 500.14 0 494.2 0 487.48V24.37C0 17.65 2.69 11.7 7.1 7.29 11.51 2.88 17.65.19 24.17.19h244.49c.58-.19 1.16-.19 1.73-.19 2.69 0 5.37 1.15 7.29 2.88h.38c.39.19.58.38.96.77l124.9 126.43c2.11 2.1 3.64 4.98 3.64 8.24 0 .96-.19 1.73-.38 2.69v96.32zM281.13 116.45V37.22l89.22 90.36h-78.09c-3.07 0-5.75-1.34-7.86-3.26-1.92-1.92-3.27-4.8-3.27-7.87z"
+    />
+  </svg>
+);
+
+const AdapterEditorIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 512 380.24"
+    className={className}
+    xmlns="http://www.w3.org/2000/svg"
+    shapeRendering="geometricPrecision"
+    textRendering="geometricPrecision"
+    imageRendering="optimizeQuality"
+    fillRule="evenodd"
+    clipRule="evenodd"
+    aria-hidden="true"
+  >
+    <path
+      fill="currentColor"
+      d="M34.66 0h442.68C496.4 0 512 15.6 512 34.66v310.92c0 19.06-15.6 34.66-34.66 34.66H34.66C15.6 380.24 0 364.64 0 345.58V34.66C0 15.6 15.6 0 34.66 0zm173.92 264.36c5.76 5.04 6.34 13.81 1.3 19.57-5.05 5.76-13.81 6.35-19.57 1.3l-52.73-46.19c-5.76-5.05-6.35-13.81-1.3-19.58.43-.49.89-.94 1.37-1.36l52.66-46.14c5.76-5.04 14.52-4.46 19.57 1.31 5.04 5.76 4.46 14.52-1.3 19.57l-40.82 35.76 40.82 35.76zm113.11 20.87c-5.76 5.05-14.52 4.46-19.57-1.3-5.04-5.76-4.46-14.53 1.3-19.57l40.82-35.76-40.82-35.76c-5.76-5.05-6.34-13.81-1.3-19.57 5.05-5.77 13.81-6.35 19.57-1.31l52.66 46.14c.48.42.94.87 1.37 1.36 5.05 5.77 4.46 14.53-1.3 19.58l-52.73 46.19zm-65.95-124.31c1.74-7.47 9.22-12.12 16.69-10.38 7.47 1.74 12.12 9.22 10.38 16.69l-30.13 129.04c-1.74 7.48-9.22 12.13-16.69 10.39-7.47-1.74-12.12-9.22-10.38-16.69l30.13-129.05zM22.03 97.05v251.91a9.56 9.56 0 0 0 9.59 9.59H481.8a9.56 9.56 0 0 0 9.59-9.59V97.05H22.03zm422.32-58.09c9.46 0 17.12 7.67 17.12 17.12 0 9.46-7.66 17.12-17.12 17.12-9.45 0-17.12-7.66-17.12-17.12 0-9.45 7.67-17.12 17.12-17.12zm-116.03 0c9.46 0 17.12 7.67 17.12 17.12 0 9.46-7.66 17.12-17.12 17.12-9.45 0-17.11-7.66-17.11-17.12 0-9.45 7.66-17.12 17.11-17.12zm58.02 0c9.45 0 17.12 7.67 17.12 17.12 0 9.46-7.67 17.12-17.12 17.12-9.45 0-17.12-7.66-17.12-17.12 0-9.45 7.67-17.12 17.12-17.12z"
+    />
+  </svg>
+);
+
+const AdapterPinnedIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    version="1.1"
+    viewBox="0 0 122.83 122.88"
+    className={className}
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <g>
+      <path
+        fill="currentColor"
+        d="M60.18 24.74l.86.86L84.54 2.11C85.94.71 87.8 0 89.66 0h.03c1.86.01 3.71.71 5.11 2.11l25.91 25.91c1.41 1.41 2.12 3.27 2.12 5.13 0 .1-.01.2-.01.3-.07 1.76-.77 3.5-2.11 4.84L97.22 61.77l.92.92c.99.99 1.49 2.29 1.49 3.6 0 .11-.01.22-.02.33-.07 1.19-.56 2.36-1.47 3.26l-48.38 48.38c-3.08 3.08-7.13 4.61-11.18 4.61-4.05 0-8.1-1.54-11.18-4.61l-2.18-2.18L7.24 98.1l-2.63-2.63C1.54 92.4 0 88.35 0 84.3c0-4.05 1.54-8.1 4.61-11.18l48.38-48.38c.99-.99 2.29-1.48 3.59-1.48v-.01c1.31 0 2.61.5 3.6 1.49zM37.63 79.35c1.47-1.47 3.39-1.55 4.95-.64l1.31-1.31c.03-1.46-.54-2.89-1.07-4.23-1.15-2.88-2.15-5.38 1.3-7.7-.68-1.17-.51-2.7.49-3.7 1.2-1.2 3.14-1.2 4.34 0 1.2 1.2 1.2 3.14 0 4.34-.86.86-2.12 1.11-3.2.72l.02.03c-.4.23-.72.47-.98.71-1.45 1.39-.81 3-.07 4.83l.13.33c.35.88.7 1.81.91 2.79L57.8 63.5l-1.62-1.62-.37-.37.63-.16 6.95-1.78-1.94 7.59-2.2-2.2-9.18 9.18c.99.2 1.92.54 2.82.9l.41.16c1.85.74 3.48 1.39 4.88-.13.19-.2.37-.45.55-.74l-1.03-1.03a.444.444 0 010-.63l3.81-3.81c.17-.17.45-.17.63 0L66 72.74c.17.17.17.45 0 .63l-3.81 3.81c-.17.17-.45.17-.63 0l-1.35-1.35c-2.31 3.43-4.81 2.43-7.68 1.28-1.37-.55-2.85-1.14-4.35-1.07l-4.14 4.14c.92 1.56.83 3.48-.64 4.95-1.47 1.47-4.18 1.6-5.77 0-1.59-1.6-1.47-4.31 0-5.78zm-24.48 16.22c.16.11.31.23.45.37l13.79 13.79c.14.14.26.29.37.45l3.87 3.87c1.91 1.91 4.43 2.87 6.96 2.87 2.52 0 5.05-.96 6.96-2.87L93.3 66.29 56.59 29.58 8.83 77.34c-1.91 1.91-2.87 4.43-2.87 6.96 0 2.52.96 5.05 2.87 6.96l4.32 4.31zm87.52-58.76c1.26 1.26 1.26 3.32 0 4.57l-4.23 4.23c-1.26 1.26-3.32 1.26-4.57 0-1.26-1.26-1.26-3.31 0-4.57l4.23-4.23c1.26-1.26 3.32-1.26 4.57 0zM87 23.13c1.26 1.26 1.26 3.32 0 4.57l-4.23 4.23c-1.26 1.26-3.32 1.26-4.57 0-1.26-1.26-1.26-3.31 0-4.57l4.23-4.23c1.25-1.25 3.31-1.25 4.57 0zm29.49 9.11L90.58 6.33a1.283 1.283 0 00-.9-.38h-.02c-.32 0-.65.13-.91.38L65.32 29.76 93.06 57.5l23.43-23.43c.22-.22.35-.51.38-.79 0-.04 0-.08 0-.12-.01-.34-.13-.68-.38-.92z"
+      />
+    </g>
+  </svg>
+);
+
+const ChevronRightIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 12 12"
+    className={className}
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    aria-hidden="true"
+  >
+    <path
+      d="M4 2.25L7.5 6L4 9.75"
+      stroke="currentColor"
+      strokeWidth="1.35"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 type WorkMode = 'explore' | 'contract' | 'dryrun' | 'publish';
 type MissionTab = 'goal' | 'policy';
 type RunStatus = 'idle' | 'running' | 'paused' | 'completed';
 type ProcessStepKey = 'prepare' | 'entry' | 'structure' | 'contract' | 'dryrun' | 'publish';
 type TerminalLogLevel = 'info' | 'ok' | 'warn';
 type TemplateStageId = 'site' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
+type SessionWorkflowPhase = 'analyzing-template' | 'confirm-template' | 'generating-adapter' | 'release-template';
+type SessionGuideStepId = TemplateStageId | 'confirm-template' | 'generate-adapter' | 'save-template';
+type SessionInspectorTabKind = 'browser' | 'code';
+type SessionInspectorTab = {
+  id: string;
+  kind: SessionInspectorTabKind;
+  title: string;
+  subtitle: string;
+};
+type AdapterBuildStepId = 'request' | 'fields' | 'download' | 'file';
+type AdapterBuildStep = {
+  id: AdapterBuildStepId;
+  title: string;
+  desc: string;
+  log: string;
+  elapsed: string;
+  details: string[];
+};
+type AdapterPreviewLine = {
+  key: string;
+  lineNumber: number;
+  prefix: '+' | ' ';
+  content: string;
+  added?: boolean;
+};
+type PythonPreviewTokenKind =
+  | 'plain'
+  | 'keyword'
+  | 'builtin'
+  | 'string'
+  | 'comment'
+  | 'number'
+  | 'function-name'
+  | 'class-name'
+  | 'property'
+  | 'decorator'
+  | 'operator'
+  | 'punctuation';
+type PythonPreviewToken = {
+  value: string;
+  kind: PythonPreviewTokenKind;
+};
+type ReleaseAction = 'draft' | 'archive' | 'publish';
+type TaskPublishMode = 'launch' | 'skip';
 type TemplateEntry = {
   id: string;
   key: string;
   value: string;
+  nodeType: 'group' | 'value';
   step: ProcessStepKey;
   stageId: TemplateStageId;
   multiline: boolean;
@@ -114,6 +231,184 @@ type TemplateCatalogItem = {
   displayName: string;
   entries: TemplateEntry[];
 };
+
+const pythonPreviewKeywords = new Set([
+  'and',
+  'as',
+  'async',
+  'await',
+  'class',
+  'def',
+  'elif',
+  'else',
+  'except',
+  'finally',
+  'for',
+  'from',
+  'if',
+  'import',
+  'in',
+  'is',
+  'lambda',
+  'not',
+  'or',
+  'pass',
+  'raise',
+  'return',
+  'try',
+  'while',
+  'with',
+  'yield',
+]);
+
+const pythonPreviewBuiltins = new Set(['False', 'None', 'self', 'True']);
+
+function tokenizePythonPreviewLine(line: string): PythonPreviewToken[] {
+  const tokens: PythonPreviewToken[] = [];
+  let index = 0;
+  let previousSignificantKind: PythonPreviewTokenKind | null = null;
+  let previousSignificantValue = '';
+
+  const commitToken = (value: string, kind: PythonPreviewTokenKind) => {
+    if (!value) {
+      return;
+    }
+    const token = { value, kind };
+    tokens.push(token);
+    if (value.trim()) {
+      previousSignificantKind = kind;
+      previousSignificantValue = value;
+    }
+  };
+
+  while (index < line.length) {
+    const char = line[index];
+
+    if (char === ' ' || char === '\t') {
+      let end = index + 1;
+      while (end < line.length && (line[end] === ' ' || line[end] === '\t')) {
+        end += 1;
+      }
+      commitToken(line.slice(index, end), 'plain');
+      index = end;
+      continue;
+    }
+
+    if (char === '#') {
+      commitToken(line.slice(index), 'comment');
+      break;
+    }
+
+    if (char === '@') {
+      let end = index + 1;
+      while (end < line.length && /[A-Za-z0-9_.]/.test(line[end])) {
+        end += 1;
+      }
+      commitToken(line.slice(index, end), 'decorator');
+      index = end;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      const quote = char;
+      let end = index + 1;
+      while (end < line.length) {
+        if (line[end] === '\\') {
+          end += 2;
+          continue;
+        }
+        if (line[end] === quote) {
+          end += 1;
+          break;
+        }
+        end += 1;
+      }
+      commitToken(line.slice(index, end), 'string');
+      index = end;
+      continue;
+    }
+
+    if (/\d/.test(char)) {
+      let end = index + 1;
+      while (end < line.length && /[\d._]/.test(line[end])) {
+        end += 1;
+      }
+      commitToken(line.slice(index, end), 'number');
+      index = end;
+      continue;
+    }
+
+    if (/[A-Za-z_]/.test(char)) {
+      let end = index + 1;
+      while (end < line.length && /[A-Za-z0-9_]/.test(line[end])) {
+        end += 1;
+      }
+
+      const value = line.slice(index, end);
+      let kind: PythonPreviewTokenKind = 'plain';
+      let nextNonSpaceIndex = end;
+      while (nextNonSpaceIndex < line.length && /\s/.test(line[nextNonSpaceIndex])) {
+        nextNonSpaceIndex += 1;
+      }
+      let previousNonSpaceIndex = index - 1;
+      while (previousNonSpaceIndex >= 0 && /\s/.test(line[previousNonSpaceIndex])) {
+        previousNonSpaceIndex -= 1;
+      }
+
+      const nextNonSpaceChar = line[nextNonSpaceIndex] ?? '';
+      const previousNonSpaceChar = previousNonSpaceIndex >= 0 ? line[previousNonSpaceIndex] : '';
+
+      if (pythonPreviewKeywords.has(value)) {
+        kind = 'keyword';
+      } else if (pythonPreviewBuiltins.has(value)) {
+        kind = 'builtin';
+      } else if (previousSignificantKind === 'keyword' && previousSignificantValue === 'class') {
+        kind = 'class-name';
+      } else if (previousSignificantKind === 'keyword' && previousSignificantValue === 'def') {
+        kind = 'function-name';
+      } else if (nextNonSpaceChar === '(') {
+        kind = 'function-name';
+      } else if (previousNonSpaceChar === '.') {
+        kind = 'property';
+      } else if (/^[A-Z]/.test(value)) {
+        kind = 'class-name';
+      }
+
+      commitToken(value, kind);
+      index = end;
+      continue;
+    }
+
+    if (/[=:+\-*/%<>!&|]/.test(char)) {
+      let end = index + 1;
+      while (end < line.length && /[=:+\-*/%<>!&|]/.test(line[end])) {
+        end += 1;
+      }
+      commitToken(line.slice(index, end), 'operator');
+      index = end;
+      continue;
+    }
+
+    commitToken(char, 'punctuation');
+    index += 1;
+  }
+
+  return tokens;
+}
+
+function renderPythonPreviewContent(line: string, keyPrefix: string) {
+  const tokens = tokenizePythonPreviewLine(line);
+
+  if (!tokens.length) {
+    return ' ';
+  }
+
+  return tokens.map((token, index) => (
+    <span className={`ai-session-python-token is-${token.kind}`} key={`${keyPrefix}-${index}`}>
+      {token.value}
+    </span>
+  ));
+}
 
 const templateSourceModules = import.meta.glob('../../../../templates/*.yaml', {
   query: '?raw',
@@ -233,6 +528,74 @@ const templateStageMeta: Record<TemplateStageId, {
 };
 
 const templateStageOrder: TemplateStageId[] = ['site', 'request', 'response', 'pagination', 'fields', 'dedup', 'download'];
+const INSPECTOR_TRANSITION_MS = 360;
+
+const sessionGuideMeta: Record<Exclude<SessionGuideStepId, TemplateStageId>, { title: string; desc: string }> = {
+  'confirm-template': {
+    title: 'Confirm',
+    desc: 'Freeze the YAML contract and lock template editing.',
+  },
+  'generate-adapter': {
+    title: 'Adapter',
+    desc: 'Generate the adapter draft from the confirmed template.',
+  },
+  'save-template': {
+    title: 'Save',
+    desc: 'Finalize release, archive, publish and task routing.',
+  },
+};
+
+const adapterBuildStepBlueprints: ReadonlyArray<{ id: AdapterBuildStepId }> = [
+  { id: 'request' },
+  { id: 'fields' },
+  { id: 'download' },
+  { id: 'file' },
+];
+
+const formatElapsedLabel = (totalSeconds: number) => (
+  totalSeconds >= 60
+    ? `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
+    : `${totalSeconds}s`
+);
+
+const releaseActionMeta: Record<ReleaseAction, { title: string; desc: string; cta: string }> = {
+  draft: {
+    title: 'Draft',
+    desc: 'Keep the template editable as an internal release draft.',
+    cta: 'Save Draft',
+  },
+  archive: {
+    title: 'Archive',
+    desc: 'Store the finished template without exposing it to task publish.',
+    cta: 'Archive Template',
+  },
+  publish: {
+    title: 'Publish',
+    desc: 'Promote the template to the active library and prepare task dispatch.',
+    cta: 'Publish Template',
+  },
+};
+
+const taskPublishMeta: Record<TaskPublishMode, { title: string; desc: string }> = {
+  launch: {
+    title: 'Launch task',
+    desc: 'Create the task draft immediately after the template action is applied.',
+  },
+  skip: {
+    title: 'Skip task',
+    desc: 'Finish the template flow without opening a task draft.',
+  },
+};
+
+const isTemplateStageId = (value: SessionGuideStepId): value is TemplateStageId => (
+  templateStageOrder.includes(value as TemplateStageId)
+);
+
+const toPascalCase = (value: string) => value
+  .split(/[^a-zA-Z0-9]+/)
+  .filter(Boolean)
+  .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+  .join('');
 
 const inferTemplateStep = (key: string): ProcessStepKey => {
   const matchedStep = processStepOrder.find((step) => templateStepKeys[step].includes(key));
@@ -276,6 +639,24 @@ const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
 };
 
 const stripYamlQuotes = (value: string) => value.trim().replace(/^['"]|['"]$/g, '');
+const yamlBooleanPattern = /^(true|false)$/i;
+const yamlNumberPattern = /^-?\d+(?:\.\d+)?$/;
+const isStructuredInlineYamlValue = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) return true;
+  if (trimmed.startsWith('{') && trimmed.endsWith('}') && /[:,]/.test(trimmed.slice(1, -1))) return true;
+  return false;
+};
+const numericTemplateKeys = new Set([
+  'batch_size',
+  'start_line',
+  'limit',
+  'delay',
+  'start_page',
+  'max_pages',
+  'results_per_page',
+]);
 
 const parseTemplateEntries = (raw: string): TemplateEntry[] => {
   const entries: TemplateEntry[] = [];
@@ -362,12 +743,23 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
         let keyValue = normalizeYamlValue(rawValue);
         let multiline = false;
 
+        entries.push({
+          id: itemPath,
+          key: itemPath,
+          value: '',
+          nodeType: 'group',
+          step: inferTemplateStep(listBase.split('.').pop() ?? listBase),
+          stageId: inferTemplateStageId(listBase.split('.').pop() ?? listBase, itemPath),
+          multiline: false,
+          depth,
+        });
+
         if (rawValue === '|' || rawValue === '>') {
           const block = collectBlockValue(index + 1, indent);
           keyValue = block.value;
           multiline = true;
           index = block.nextIndex;
-        } else if (keyValue.includes('[') || keyValue.includes('{')) {
+        } else if (isStructuredInlineYamlValue(keyValue)) {
           multiline = true;
         }
 
@@ -375,10 +767,11 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
           id: key,
           key,
           value: keyValue,
+          nodeType: rawValue ? 'value' : 'group',
           step: inferTemplateStep(keyName),
           stageId: inferTemplateStageId(keyName, key),
           multiline,
-          depth,
+          depth: depth + 1,
         });
 
         if (!rawValue) {
@@ -392,6 +785,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
           id: itemPath,
           key: itemPath,
           value: normalizeYamlValue(value),
+          nodeType: 'value',
           step: inferTemplateStep(listBase.split('.').pop() ?? listBase),
           stageId: inferTemplateStageId(listBase.split('.').pop() ?? listBase, itemPath),
           multiline: value.includes('[') || value.includes('{'),
@@ -415,7 +809,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
       value = block.value;
       multiline = true;
       index = block.nextIndex;
-    } else if (value.includes('[') || value.includes('{')) {
+    } else if (isStructuredInlineYamlValue(value)) {
       multiline = true;
     }
 
@@ -423,6 +817,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
       id: path,
       key: path,
       value,
+      nodeType: rawValue ? 'value' : 'group',
       step: inferTemplateStep(keyName),
       stageId: inferTemplateStageId(keyName, path),
       multiline,
@@ -616,11 +1011,18 @@ const AICollect: React.FC = () => {
   const [submittedPrompt, setSubmittedPrompt] = useState('');
   const [referenceEditing, setReferenceEditing] = useState(false);
   const [referenceDraft, setReferenceDraft] = useState('');
+  const [workflowPhase, setWorkflowPhase] = useState<SessionWorkflowPhase>('analyzing-template');
   const [expandedStep, setExpandedStep] = useState<WorkMode>('explore');
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
-  const [hoveredStageGuideStep, setHoveredStageGuideStep] = useState<TemplateStageId | null>(null);
+  const [hoveredStageGuideStep, setHoveredStageGuideStep] = useState<SessionGuideStepId | null>(null);
   const [activeTemplateStage, setActiveTemplateStage] = useState<TemplateStageId | null>(null);
   const [templateStageVisibility, setTemplateStageVisibility] = useState<Partial<Record<TemplateStageId, number>>>({});
+  const [guidePreviewPhase, setGuidePreviewPhase] = useState<SessionWorkflowPhase | null>(null);
+  const [templateTabVisible, setTemplateTabVisible] = useState(false);
+  const [templateTabAnimating, setTemplateTabAnimating] = useState(false);
+  const [adapterTabVisible, setAdapterTabVisible] = useState(false);
+  const [adapterTabAnimating, setAdapterTabAnimating] = useState(false);
+  const [expandingPinnedPanel, setExpandingPinnedPanel] = useState<'template' | 'adapter' | null>(null);
   const [completedProcessSteps, setCompletedProcessSteps] = useState<Set<ProcessStepKey>>(new Set());
   const [visibleProcessSteps, setVisibleProcessSteps] = useState<ProcessStepKey[]>(['prepare']);
   const [selectedLogStep, setSelectedLogStep] = useState<ProcessStepKey>('prepare');
@@ -628,12 +1030,20 @@ const AICollect: React.FC = () => {
   const [liveLogs, setLiveLogs] = useState<string[]>(['等待采集目标']);
   const [promptGenerating, setPromptGenerating] = useState(false);
 
-  const [editingTemplateKey, setEditingTemplateKey] = useState<string | null>(null);
   const [templateValueDrafts, setTemplateValueDrafts] = useState<Record<string, string>>({});
   const [templateDraftEntries, setTemplateDraftEntries] = useState<TemplateEntry[]>([]);
-  const [sideInspectorOpen, setSideInspectorOpen] = useState(false);
+  const [adapterBuildIndex, setAdapterBuildIndex] = useState(0);
+  const [expandedAdapterStep, setExpandedAdapterStep] = useState<number | null>(0);
+  const [selectedReleaseAction, setSelectedReleaseAction] = useState<ReleaseAction>('draft');
+  const [selectedTaskPublishMode, setSelectedTaskPublishMode] = useState<TaskPublishMode>('launch');
+  const [sessionInspectorTabs, setSessionInspectorTabs] = useState<SessionInspectorTab[]>([]);
+  const [activeInspectorTabId, setActiveInspectorTabId] = useState<string | null>(null);
+  const [inspectorMounted, setInspectorMounted] = useState(false);
+  const [inspectorExpanded, setInspectorExpanded] = useState(false);
+  const [inspectorAnimating, setInspectorAnimating] = useState(false);
   const templateScrollRef = useRef<HTMLDivElement | null>(null);
   const templateStageSectionRefs = useRef<Partial<Record<TemplateStageId, HTMLElement | null>>>({});
+  const inspectorTransitionTimerRef = useRef<number | null>(null);
 
   const hasSession = runStatus !== 'idle';
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
@@ -659,6 +1069,34 @@ const AICollect: React.FC = () => {
       return candidate.replace(/^https?:\/\//i, '').split('/')[0] ?? candidate;
     }
   }, [submittedPrompt, url]);
+  const browserPreviewUrl = useMemo(() => {
+    const candidate = url || submittedPrompt.match(/https?:\/\/[^\s锛屻€傦紱,]+/i)?.[0] || '';
+    if (!candidate) return '';
+
+    try {
+      const normalized = candidate.replace(/\{\{\s*[^}]+\s*\}\}|\{\s*[^}]+\s*\}/g, 'sample');
+      return new URL(normalized).toString();
+    } catch {
+      return '';
+    }
+  }, [submittedPrompt, url]);
+  const browserPreviewTitle = useMemo(() => {
+    const normalizedHost = browserPreviewHost.replace(/^www\./i, '').split(':')[0];
+    const fallbackTitle = activeTemplate.displayName || 'Website';
+
+    if (!normalizedHost) return fallbackTitle;
+    if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(normalizedHost)) return fallbackTitle;
+
+    const hostParts = normalizedHost.split('.').filter(Boolean);
+    const titleSource = hostParts.length > 1 ? hostParts[hostParts.length - 2] : hostParts[0];
+    const title = titleSource
+      ?.split(/[-_]/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+
+    return title || fallbackTitle;
+  }, [activeTemplate.displayName, browserPreviewHost]);
   const adapterFileName = useMemo(
     () => `app/adapters/${activeTemplate.id === 'empty' ? 'generated_adapter' : activeTemplate.id}.py`,
     [activeTemplate.id],
@@ -676,20 +1114,40 @@ const AICollect: React.FC = () => {
     [adapterFileName],
   );
   const sessionSideMode = useMemo<'browser' | 'code'>(
-    () => (
-      processStepOrder.indexOf(activeProcessStep) < processStepOrder.indexOf('contract')
-        ? 'browser'
-        : 'code'
-    ),
-    [activeProcessStep],
+    () => (workflowPhase === 'generating-adapter' || workflowPhase === 'release-template' ? 'code' : 'browser'),
+    [workflowPhase],
   );
   const sessionStatusText = useMemo(
     () => (
       sessionSideMode === 'browser'
-        ? (browserPreviewHost || 'source.local')
+        ? browserPreviewTitle
         : adapterFileName
     ),
-    [adapterFileName, browserPreviewHost, sessionSideMode],
+    [adapterFileName, browserPreviewTitle, sessionSideMode],
+  );
+  const currentInspectorTab = useMemo<SessionInspectorTab>(
+    () => (
+      sessionSideMode === 'browser'
+        ? {
+            id: `browser:${browserPreviewUrl || browserPreviewHost || 'source.local'}`,
+            kind: 'browser',
+            title: browserPreviewTitle,
+            subtitle: browserPreviewUrl || browserPreviewHost || 'source.local',
+          }
+        : {
+            id: `code:${adapterFileName}`,
+            kind: 'code',
+            title: adapterFileLabel,
+            subtitle: adapterFileName,
+          }
+    ),
+    [adapterFileLabel, adapterFileName, browserPreviewHost, browserPreviewTitle, browserPreviewUrl, sessionSideMode],
+  );
+  const sideInspectorVisible = inspectorMounted && sessionInspectorTabs.length > 0;
+  const sideInspectorOpen = sideInspectorVisible && inspectorExpanded;
+  const activeInspectorTab = useMemo(
+    () => sessionInspectorTabs.find((tab) => tab.id === activeInspectorTabId) ?? sessionInspectorTabs[sessionInspectorTabs.length - 1] ?? null,
+    [activeInspectorTabId, sessionInspectorTabs],
   );
   const browserInspectorNotes = useMemo(
     () => [
@@ -725,10 +1183,58 @@ const AICollect: React.FC = () => {
     () => templateDraftEntries.filter((entry) => visibleTemplateStages.includes(entry.stageId)),
     [templateDraftEntries, visibleTemplateStages],
   );
-  const templateEditable = !completedProcessSteps.has('contract');
-  const templateReadyForConfirm = activeProcessStep === 'contract'
-    && visibleTemplateStages.length === templateStages.length
-    && templateEditable;
+  const visibleTemplateValueCount = useMemo(
+    () => visibleTemplateEntries.filter((entry) => entry.nodeType === 'value').length,
+    [visibleTemplateEntries],
+  );
+  const templateStagesReady = templateStages.length > 0
+    && visibleTemplateStages.length === templateStages.length;
+  const templateAnalysisComplete = activeProcessStep === 'contract'
+    && templateStagesReady;
+  const templateEditable = workflowPhase === 'analyzing-template' || workflowPhase === 'confirm-template';
+  const templateReadyForConfirm = workflowPhase === 'confirm-template' && templateStagesReady;
+  const templateCollapsed = workflowPhase === 'generating-adapter' || workflowPhase === 'release-template';
+  const listFieldNameOptions = useMemo(
+    () => Array.from(new Set(
+      templateDraftEntries
+        .filter((entry) => /^list_fields\[\d+\]\.name$/.test(entry.key))
+        .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+        .filter(Boolean),
+    )),
+    [templateDraftEntries, templateValueDrafts],
+  );
+  const displayWorkflowPhase = guidePreviewPhase ?? workflowPhase;
+  const sessionGuideSteps = useMemo<SessionGuideStepId[]>(() => {
+    const steps: SessionGuideStepId[] = [...visibleTemplateStages];
+
+    if (templateStagesReady || templateCollapsed) {
+      steps.push('confirm-template');
+    }
+    if (workflowPhase === 'generating-adapter' || workflowPhase === 'release-template') {
+      steps.push('generate-adapter');
+    }
+    if (workflowPhase === 'release-template') {
+      steps.push('save-template');
+    }
+
+    return steps;
+  }, [templateCollapsed, templateStagesReady, visibleTemplateStages, workflowPhase]);
+  const currentGuideStep = useMemo<SessionGuideStepId | null>(() => {
+    if (workflowPhase === 'release-template') return 'save-template';
+    if (workflowPhase === 'generating-adapter') return 'generate-adapter';
+    if (workflowPhase === 'confirm-template') return 'confirm-template';
+    return activeTemplateStage ?? visibleTemplateStages[visibleTemplateStages.length - 1] ?? null;
+  }, [activeTemplateStage, visibleTemplateStages, workflowPhase]);
+  const displayGuideStep = useMemo<SessionGuideStepId | null>(() => {
+    if (displayWorkflowPhase === 'release-template') return 'save-template';
+    if (displayWorkflowPhase === 'generating-adapter') return 'generate-adapter';
+    return activeTemplateStage ?? visibleTemplateStages[visibleTemplateStages.length - 1] ?? null;
+  }, [activeTemplateStage, displayWorkflowPhase, visibleTemplateStages]);
+  const activeGuideIndex = currentGuideStep ? sessionGuideSteps.indexOf(currentGuideStep) : -1;
+  const displayTemplatePanel = displayWorkflowPhase === 'analyzing-template' || displayWorkflowPhase === 'confirm-template';
+  const displayAdapterPanel = displayWorkflowPhase === 'generating-adapter';
+  const showPinnedTemplateTab = templateTabVisible && !displayTemplatePanel;
+  const showPinnedAdapterTab = adapterTabVisible && !displayAdapterPanel;
   const adapterDiffStats = useMemo(
     () => ({
       added: Math.max(visibleTemplateEntries.length * 4 + 12, 32),
@@ -736,6 +1242,208 @@ const AICollect: React.FC = () => {
     }),
     [visibleTemplateEntries.length],
   );
+  const adapterBuildPlan = useMemo<AdapterBuildStep[]>(() => {
+    const getEntryValue = (key: string, fallback = '') => {
+      const entry = templateDraftEntries.find((item) => item.key === key);
+      return stripYamlQuotes(
+        (entry ? templateValueDrafts[entry.id] : undefined)
+        ?? entry?.value
+        ?? fallback,
+      );
+    };
+
+    const baseUrl = getEntryValue('base_url', url || 'https://source.local');
+    const responseType = (getEntryValue('response_type', 'html') || 'html').toLowerCase();
+    const requestMethod = (getEntryValue('list_request.method', 'GET') || 'GET').toUpperCase();
+    const paginationType = getEntryValue('list_pagination.type', 'page_number') || 'page_number';
+    const className = `${toPascalCase(activeTemplate.id || 'Generated')}Adapter`;
+    const fieldNames = templateDraftEntries
+      .filter((entry) => /^list_fields\[\d+\]\.name$/.test(entry.key))
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+    const fieldTypes = templateDraftEntries
+      .filter((entry) => /^list_fields\[\d+\]\.field_type$/.test(entry.key))
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+    const paramNames = templateDraftEntries
+      .filter((entry) => /^params\[\d+\]\.name$/.test(entry.key))
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+    const dedupKeys = templateDraftEntries
+      .filter((entry) => /^dedup_fields\[\d+\]$/.test(entry.key) && entry.nodeType === 'value')
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+    const downloadSelectors = templateDraftEntries
+      .filter((entry) => /^download\[\d+\]\.selector$/.test(entry.key))
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+    const downloadAssetTypes = templateDraftEntries
+      .filter((entry) => /^download\[\d+\]\.asset_type$/.test(entry.key))
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+    const dynamicSteps: AdapterBuildStep[] = adapterBuildStepBlueprints.flatMap((blueprint): AdapterBuildStep[] => {
+      if (blueprint.id === 'request') {
+        const elapsedSeconds = 18 + paramNames.length * 7 + (paginationType ? 8 : 0);
+        return [{
+          id: blueprint.id,
+          title: `${requestMethod} request contract`,
+          desc: `${responseType.toUpperCase()} adapter entry, task inputs and pagination flow are being bound.`,
+          log: `adapter draft: ${requestMethod.toLowerCase()} request contract bound`,
+          elapsed: formatElapsedLabel(elapsedSeconds),
+          details: [
+            `Input parameters resolved: ${paramNames.length ? paramNames.join(', ') : 'no explicit params'}.`,
+            `Request method, base URL and encoding align to ${requestMethod} ${baseUrl}.`,
+            `Pagination strategy uses ${paginationType} before parser execution starts.`,
+          ],
+        }];
+      }
+
+      if (blueprint.id === 'fields') {
+        const elapsedSeconds = 26 + fieldNames.length * 6 + dedupKeys.length * 5;
+        return [{
+          id: blueprint.id,
+          title: `${fieldNames.length || 0} field mapping`,
+          desc: 'Collected fields, output types and dedup identity are being normalized.',
+          log: 'adapter draft: field mapping merged into parser',
+          elapsed: formatElapsedLabel(elapsedSeconds),
+          details: [
+            `Mapped fields: ${fieldNames.slice(0, 6).join(', ') || 'no fields detected yet'}.`,
+            `Output types sampled: ${fieldTypes.slice(0, 4).join(', ') || responseType}.`,
+            `Record identity uses ${dedupKeys.join(', ') || 'fallback source_url + title'} for deduplication.`,
+          ],
+        }];
+      }
+
+      if (blueprint.id === 'download') {
+        if (!downloadSelectors.length) return [];
+
+        const elapsedSeconds = 16 + downloadSelectors.length * 8;
+        return [{
+          id: blueprint.id,
+          title: `${downloadSelectors.length} asset hooks`,
+          desc: 'Asset selectors, file hints and downstream download handoff are being prepared.',
+          log: 'adapter draft: download policy attached',
+          elapsed: formatElapsedLabel(elapsedSeconds),
+          details: [
+            `Asset selectors resolved: ${downloadSelectors.slice(0, 3).join(', ')}${downloadSelectors.length > 3 ? '...' : ''}.`,
+            `Asset categories include ${downloadAssetTypes.slice(0, 4).join(', ') || 'attachment'}.`,
+            'Download handoff points are reserved for storage and worker execution.',
+          ],
+        }];
+      }
+
+      const elapsedSeconds = 20 + Math.round(adapterDiffStats.added / 18) + Math.round(adapterDiffStats.removed / 12);
+      return [{
+        id: blueprint.id,
+        title: `Finalize ${className}`,
+        desc: 'The adapter scaffold, parser route and diff footprint are being finalized.',
+        log: 'adapter draft: file scaffold completed',
+        elapsed: formatElapsedLabel(elapsedSeconds),
+        details: [
+          `Parser entry targets ${responseType === 'json' ? 'JSON payload traversal' : 'HTML document traversal'}.`,
+          `Generated scaffold locks into ${activeTemplate.id || 'generated_template'} with ${fieldNames.length} mapped fields.`,
+          `Current file delta is +${adapterDiffStats.added} / -${adapterDiffStats.removed}.`,
+        ],
+      }];
+    });
+
+    return dynamicSteps;
+  }, [activeTemplate.id, adapterDiffStats.added, adapterDiffStats.removed, templateDraftEntries, templateValueDrafts, url]);
+  const adapterPreviewLines = useMemo<AdapterPreviewLine[]>(() => {
+    const getEntryValue = (key: string, fallback = '') => {
+      const entry = templateDraftEntries.find((item) => item.key === key);
+      return stripYamlQuotes(
+        (entry ? templateValueDrafts[entry.id] : undefined)
+        ?? entry?.value
+        ?? fallback,
+      );
+    };
+
+    const baseUrl = getEntryValue('base_url', url || 'https://source.local');
+    const responseType = (getEntryValue('response_type', 'html') || 'html').toLowerCase();
+    const requestMethod = (getEntryValue('list_request.method', 'GET') || 'GET').toUpperCase();
+    const paginationType = getEntryValue('list_pagination.type', 'page_number') || 'page_number';
+    const className = `${toPascalCase(activeTemplate.id || 'Generated')}Adapter`;
+    const fieldNames = templateDraftEntries
+      .filter((entry) => /^list_fields\[\d+\]\.name$/.test(entry.key))
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+    const dedupKeys = templateDraftEntries
+      .filter((entry) => /^dedup_fields\[\d+\]$/.test(entry.key) && entry.nodeType === 'value')
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+    const downloadSelectors = templateDraftEntries
+      .filter((entry) => /^download\[\d+\]\.selector$/.test(entry.key))
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
+      .filter(Boolean);
+
+    const responseAccessor = responseType === 'json' ? 'response.json()' : 'response.text()';
+    const dedupLiteral = dedupKeys.length
+      ? `[${dedupKeys.map((key) => `'${key}'`).join(', ')}]`
+      : "['source_url', 'title']";
+    const fieldComment = fieldNames.length ? fieldNames.join(', ') : 'title, source_url';
+    const downloadComment = downloadSelectors.length ? downloadSelectors.join(', ') : 'no download selectors';
+
+    return [
+      { key: 'adapter-1', lineNumber: 1, prefix: '+', added: true, content: `class ${className}(BaseAdapter):` },
+      { key: 'adapter-2', lineNumber: 2, prefix: '+', added: true, content: `    template_key = '${activeTemplate.id || 'generated_template'}'` },
+      { key: 'adapter-3', lineNumber: 3, prefix: '+', added: true, content: `    start_urls = ['${baseUrl}']` },
+      { key: 'adapter-4', lineNumber: 4, prefix: ' ', content: '' },
+      { key: 'adapter-5', lineNumber: 5, prefix: '+', added: true, content: '    async def fetch_list(self, page: int = 1):' },
+      { key: 'adapter-6', lineNumber: 6, prefix: '+', added: true, content: `        return await self.request(method='${requestMethod}', page=page)` },
+      { key: 'adapter-7', lineNumber: 7, prefix: ' ', content: '' },
+      { key: 'adapter-8', lineNumber: 8, prefix: '+', added: true, content: '    def parse_list(self, response):' },
+      { key: 'adapter-9', lineNumber: 9, prefix: '+', added: true, content: `        payload = ${responseAccessor}` },
+      { key: 'adapter-10', lineNumber: 10, prefix: '+', added: true, content: `        # fields: ${fieldComment}` },
+      { key: 'adapter-11', lineNumber: 11, prefix: '+', added: true, content: `        # dedup: ${dedupLiteral}` },
+      { key: 'adapter-12', lineNumber: 12, prefix: '+', added: true, content: `        # pagination: ${paginationType}` },
+      { key: 'adapter-13', lineNumber: 13, prefix: '+', added: true, content: `        # downloads: ${downloadComment}` },
+    ];
+  }, [activeTemplate.id, templateDraftEntries, templateValueDrafts, url]);
+  const adapterProgressPercent = Math.min(
+    100,
+    workflowPhase === 'release-template'
+      ? 100
+      : Math.round((adapterBuildIndex / adapterBuildPlan.length) * 100),
+  );
+  const sessionPromptPlaceholder = useMemo(() => {
+    if (displayWorkflowPhase === 'confirm-template') return 'Confirm fields, dedup keys or download rules before locking the template';
+    if (displayWorkflowPhase === 'generating-adapter') return 'Refine adapter logic, parser hints or asset handling';
+    if (displayWorkflowPhase === 'release-template') return 'Choose draft, archive, publish and whether to launch a task';
+    return 'Refine fields, request rules or crawl boundaries while the template is forming';
+  }, [displayWorkflowPhase]);
+  const sessionHeaderMeta = useMemo(() => {
+    if (displayWorkflowPhase === 'release-template') {
+      return {
+        eyebrow: 'Release Gate',
+        title: 'Template Release',
+        subtitle: activeTemplate.fileName,
+        stat: releaseActionMeta[selectedReleaseAction].title,
+      };
+    }
+    if (displayWorkflowPhase === 'generating-adapter') {
+      const currentAdapterStep = adapterBuildPlan[Math.min(adapterBuildIndex, adapterBuildPlan.length - 1)];
+      return {
+        eyebrow: 'Adapter Build',
+        title: 'Implementation Steps',
+        subtitle: currentAdapterStep?.title ?? 'Adapter generation in progress',
+        stat: `${Math.min(adapterBuildIndex + 1, adapterBuildPlan.length)}/${adapterBuildPlan.length}`,
+      };
+    }
+    return {
+      eyebrow: displayWorkflowPhase === 'confirm-template' ? 'Template Confirm' : 'Template Analysis',
+      title: activeTemplate.displayName,
+      subtitle: activeTemplate.fileName,
+      stat: `${visibleTemplateValueCount} keys`,
+    };
+  }, [
+    activeTemplate.displayName,
+    activeTemplate.fileName,
+    adapterBuildIndex,
+    displayWorkflowPhase,
+    selectedReleaseAction,
+    visibleTemplateValueCount,
+  ]);
 
   useEffect(() => () => {
     analyzeStreamRef.current?.close();
@@ -745,6 +1453,9 @@ const AICollect: React.FC = () => {
     if (promptGenerationTimerRef.current) {
       window.clearTimeout(promptGenerationTimerRef.current);
     }
+    if (inspectorTransitionTimerRef.current) {
+      window.clearTimeout(inspectorTransitionTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -753,12 +1464,30 @@ const AICollect: React.FC = () => {
 
   useEffect(() => {
     if (!hasSession) {
-      setEditingTemplateKey(null);
       setHoveredStageGuideStep(null);
       setActiveTemplateStage(null);
       setTemplateStageVisibility({});
+      setGuidePreviewPhase(null);
+      setTemplateTabVisible(false);
+      setTemplateTabAnimating(false);
+      setAdapterTabVisible(false);
+      setAdapterTabAnimating(false);
+      setExpandingPinnedPanel(null);
       setPromptGenerating(false);
-      setSideInspectorOpen(false);
+      setWorkflowPhase('analyzing-template');
+      setAdapterBuildIndex(0);
+      setExpandedAdapterStep(0);
+      setSelectedReleaseAction('draft');
+      setSelectedTaskPublishMode('launch');
+      if (inspectorTransitionTimerRef.current) {
+        window.clearTimeout(inspectorTransitionTimerRef.current);
+        inspectorTransitionTimerRef.current = null;
+      }
+      setInspectorMounted(false);
+      setInspectorExpanded(false);
+      setInspectorAnimating(false);
+      setSessionInspectorTabs([]);
+      setActiveInspectorTabId(null);
       if (promptGenerationTimerRef.current) {
         window.clearTimeout(promptGenerationTimerRef.current);
         promptGenerationTimerRef.current = null;
@@ -769,6 +1498,77 @@ const AICollect: React.FC = () => {
   const pushLiveLog = useCallback((log: string) => {
     setLiveLogs((prev) => [log, ...prev].slice(0, 8));
   }, []);
+
+  const clearInspectorTransitionTimer = useCallback(() => {
+    if (inspectorTransitionTimerRef.current) {
+      window.clearTimeout(inspectorTransitionTimerRef.current);
+      inspectorTransitionTimerRef.current = null;
+    }
+  }, []);
+
+  const clearSessionInspectorImmediately = useCallback(() => {
+    clearInspectorTransitionTimer();
+    setInspectorMounted(false);
+    setInspectorExpanded(false);
+    setInspectorAnimating(false);
+    setSessionInspectorTabs([]);
+    setActiveInspectorTabId(null);
+  }, [clearInspectorTransitionTimer]);
+
+  const openSessionInspector = useCallback((tab: SessionInspectorTab = currentInspectorTab) => {
+    clearInspectorTransitionTimer();
+    setSessionInspectorTabs((prev) => (prev.some((item) => item.id === tab.id) ? prev : [...prev, tab]));
+    setActiveInspectorTabId(tab.id);
+    setInspectorMounted(true);
+    setInspectorAnimating(true);
+    window.requestAnimationFrame(() => {
+      setInspectorExpanded(true);
+    });
+    inspectorTransitionTimerRef.current = window.setTimeout(() => {
+      inspectorTransitionTimerRef.current = null;
+      setInspectorAnimating(false);
+    }, INSPECTOR_TRANSITION_MS);
+  }, [clearInspectorTransitionTimer, currentInspectorTab]);
+
+  const closeSessionInspector = useCallback(() => {
+    clearInspectorTransitionTimer();
+    if (!inspectorMounted) {
+      clearSessionInspectorImmediately();
+      return;
+    }
+    setInspectorAnimating(true);
+    setInspectorExpanded(false);
+    inspectorTransitionTimerRef.current = window.setTimeout(() => {
+      inspectorTransitionTimerRef.current = null;
+      setInspectorMounted(false);
+      setInspectorAnimating(false);
+      setSessionInspectorTabs([]);
+      setActiveInspectorTabId(null);
+    }, INSPECTOR_TRANSITION_MS);
+  }, [clearInspectorTransitionTimer, clearSessionInspectorImmediately, inspectorMounted]);
+
+  const closeSessionInspectorTab = useCallback((tabId: string) => {
+    setSessionInspectorTabs((prev) => {
+      const index = prev.findIndex((tab) => tab.id === tabId);
+      const next = prev.filter((tab) => tab.id !== tabId);
+
+      if (!next.length) {
+        closeSessionInspector();
+        return prev;
+      }
+
+      setActiveInspectorTabId((current) => {
+        if (current !== tabId) {
+          return current && next.some((tab) => tab.id === current) ? current : next[next.length - 1]?.id ?? null;
+        }
+
+        const fallback = next[index] ?? next[index - 1] ?? null;
+        return fallback?.id ?? null;
+      });
+
+      return next;
+    });
+  }, [closeSessionInspector]);
 
   const finishPromptGeneration = useCallback(() => {
     if (promptGenerationTimerRef.current) {
@@ -802,11 +1602,24 @@ const AICollect: React.FC = () => {
     setHoveredStageGuideStep(null);
     setActiveTemplateStage(null);
     setTemplateStageVisibility({});
+    setGuidePreviewPhase(null);
+    setTemplateTabVisible(false);
+    setTemplateTabAnimating(false);
+    setAdapterTabVisible(false);
+    setAdapterTabAnimating(false);
+    setExpandingPinnedPanel(null);
     setSelectedLogStep('prepare');
     setCompletedProcessSteps(new Set());
     setVisibleProcessSteps(['prepare']);
     setScanPulse(0);
     setPromptGenerating(false);
+    setWorkflowPhase('analyzing-template');
+    setAdapterBuildIndex(0);
+    setExpandedAdapterStep(0);
+    setSelectedReleaseAction('draft');
+    setSelectedTaskPublishMode('launch');
+    setSessionInspectorTabs([]);
+    setActiveInspectorTabId(null);
     setLiveLogs(['已接收采集目标，准备投射源站页面']);
   }, []);
 
@@ -834,6 +1647,115 @@ const AICollect: React.FC = () => {
     simulationTimerRef.current = timer;
     return () => window.clearTimeout(timer);
   }, [activeProcessStep, pushLiveLog, runStatus]);
+
+  useEffect(() => {
+    if (!hasSession || workflowPhase !== 'analyzing-template' || !templateAnalysisComplete) return;
+
+    setWorkflowPhase('confirm-template');
+    setGuidePreviewPhase(null);
+    setRunStatus('completed');
+    pushLiveLog('template contract ready for confirmation');
+  }, [hasSession, pushLiveLog, templateAnalysisComplete, workflowPhase]);
+
+  useEffect(() => {
+    if (!templateCollapsed) {
+      setTemplateTabVisible(false);
+      setTemplateTabAnimating(false);
+      return undefined;
+    }
+
+    setTemplateTabVisible(true);
+    setTemplateTabAnimating(true);
+    const timer = window.setTimeout(() => {
+      setTemplateTabAnimating(false);
+    }, 360);
+
+    return () => window.clearTimeout(timer);
+  }, [templateCollapsed]);
+
+  useEffect(() => {
+    if (workflowPhase !== 'release-template') {
+      setAdapterTabVisible(false);
+      setAdapterTabAnimating(false);
+      return undefined;
+    }
+
+    setAdapterTabVisible(true);
+    setAdapterTabAnimating(true);
+    const timer = window.setTimeout(() => {
+      setAdapterTabAnimating(false);
+    }, 360);
+
+    return () => window.clearTimeout(timer);
+  }, [workflowPhase]);
+
+  useEffect(() => {
+    if (workflowPhase !== 'generating-adapter') return;
+
+    const currentStepIndex = Math.min(adapterBuildIndex, adapterBuildPlan.length - 1);
+    const previousStepIndex = Math.max(0, Math.min(adapterBuildIndex - 1, adapterBuildPlan.length - 1));
+
+    setExpandedAdapterStep((prev) => (
+      prev === null || prev === previousStepIndex ? currentStepIndex : prev
+    ));
+  }, [adapterBuildIndex, workflowPhase]);
+
+  useEffect(() => {
+    if (!expandingPinnedPanel) return undefined;
+
+    const timer = window.setTimeout(() => {
+      setExpandingPinnedPanel(null);
+    }, 420);
+
+    return () => window.clearTimeout(timer);
+  }, [expandingPinnedPanel]);
+
+  useEffect(() => {
+    if (!guidePreviewPhase) return;
+
+    const previewLocked = guidePreviewPhase === 'confirm-template' && !templateStagesReady;
+    const previewPastWorkflow = (
+      (guidePreviewPhase === 'generating-adapter' && workflowPhase === 'confirm-template')
+      || (guidePreviewPhase === 'release-template' && workflowPhase !== 'release-template')
+    );
+
+    if (previewLocked || previewPastWorkflow) {
+      setGuidePreviewPhase(null);
+    }
+  }, [guidePreviewPhase, templateStagesReady, workflowPhase]);
+
+  useEffect(() => {
+    if (workflowPhase !== 'generating-adapter') return undefined;
+
+    if (adapterBuildIndex >= adapterBuildPlan.length) {
+      const timer = window.setTimeout(() => {
+        setCompletedProcessSteps((prev) => {
+          const next = new Set(prev);
+          next.add('dryrun');
+          return next;
+        });
+        setWorkflowPhase('release-template');
+        setMode('publish');
+        setRunStatus('completed');
+        setActiveProcessStep('publish');
+        setSelectedLogStep('publish');
+        setVisibleProcessSteps((prev) => (prev.includes('publish') ? prev : [...prev, 'publish']));
+        pushLiveLog('adapter draft completed; release gate unlocked');
+      }, 280);
+
+      return () => window.clearTimeout(timer);
+    }
+
+    const nextStep = adapterBuildPlan[adapterBuildIndex];
+    if (!nextStep) return undefined;
+
+    const timer = window.setTimeout(() => {
+      pushLiveLog(nextStep.log);
+      setAdapterBuildIndex((prev) => prev + 1);
+    }, adapterBuildIndex === 0 ? 520 : 860);
+
+    return () => window.clearTimeout(timer);
+  }, [adapterBuildIndex, adapterBuildPlan, pushLiveLog, workflowPhase]);
 
   const validateUrl = useCallback((value: string) => {
     if (!value.trim()) return '请输入目标 URL';
@@ -982,6 +1904,84 @@ const AICollect: React.FC = () => {
     setRunStatus('completed');
   }, [fields, maxPages, message, selectedFields, url]);
 
+  const handleConfirmTemplate = useCallback(() => {
+    if (!templateReadyForConfirm) return;
+
+    setCompletedProcessSteps((prev) => {
+      const next = new Set(prev);
+      next.add('contract');
+      return next;
+    });
+    setGuidePreviewPhase(null);
+    setWorkflowPhase('generating-adapter');
+    setMode('dryrun');
+    setRunStatus('running');
+    setActiveProcessStep('dryrun');
+    setSelectedLogStep('dryrun');
+    setVisibleProcessSteps((prev) => (prev.includes('dryrun') ? prev : [...prev, 'dryrun']));
+    setAdapterBuildIndex(0);
+    setExpandedAdapterStep(0);
+    pushLiveLog('template contract confirmed; adapter generation started');
+  }, [pushLiveLog, templateReadyForConfirm]);
+
+  const handleApplyReleaseAction = useCallback(async () => {
+    const releaseLabel = releaseActionMeta[selectedReleaseAction].title;
+    const taskLabel = taskPublishMeta[selectedTaskPublishMode].title;
+
+    pushLiveLog(`release action: ${releaseLabel.toLowerCase()} | task: ${taskLabel.toLowerCase()}`);
+
+    if (selectedReleaseAction === 'publish') {
+      await handleSave();
+      if (selectedTaskPublishMode === 'launch') {
+        message.success('Template published and task draft queued');
+      } else {
+        message.success('Template published without task launch');
+      }
+      return;
+    }
+
+    setRunStatus('completed');
+    message.success(
+      selectedTaskPublishMode === 'launch'
+        ? `${releaseLabel} ready and task draft queued`
+        : `${releaseLabel} ready without task launch`,
+    );
+  }, [handleSave, message, pushLiveLog, selectedReleaseAction, selectedTaskPublishMode]);
+
+  const scrollTemplateToGuideStep = useCallback((step: TemplateStageId | 'confirm-template', defer = false) => {
+    const scrollToStep = () => {
+      const scrollElement = templateScrollRef.current;
+      if (!scrollElement) return;
+
+      if (step === 'confirm-template') {
+        scrollElement.scrollTo({
+          top: scrollElement.scrollHeight,
+          behavior: 'smooth',
+        });
+        return;
+      }
+
+      const node = templateStageSectionRefs.current[step];
+      if (!node) return;
+
+      scrollElement.scrollTo({
+        top: Math.max(0, node.offsetTop - 12),
+        behavior: 'smooth',
+      });
+    };
+
+    if (!defer) {
+      scrollToStep();
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        scrollToStep();
+      });
+    });
+  }, []);
+
   const handleConfirmProcessStep = useCallback((step: ProcessStepKey) => {
     setCompletedProcessSteps((prev) => new Set(prev).add(step));
     pushLiveLog(`${processStepMeta[step].title} 已确认`);
@@ -1073,11 +2073,16 @@ const AICollect: React.FC = () => {
   const handleGuideSubmit = useCallback(() => {
     const guide = taskDraft.trim();
     if (!guide) return;
-    pushLiveLog(`用户引导：${guide}`);
+    const guideLabel = displayWorkflowPhase === 'release-template'
+      ? 'release hint'
+      : displayWorkflowPhase === 'generating-adapter'
+        ? 'adapter hint'
+        : 'template hint';
+    pushLiveLog(`${guideLabel}: ${guide}`);
     setTaskDraft('');
     setScanPulse((prev) => prev + 1);
     triggerPromptGeneration();
-  }, [pushLiveLog, taskDraft, triggerPromptGeneration]);
+  }, [displayWorkflowPhase, pushLiveLog, taskDraft, triggerPromptGeneration]);
 
   const handleSessionSparkleAction = useCallback(() => {
     if (promptGenerating) {
@@ -1628,9 +2633,173 @@ const AICollect: React.FC = () => {
     };
   }, [visibleTemplateEntries.length, visibleTemplateStages]);
 
+  useEffect(() => {
+    if (!hoveredStageGuideStep) return undefined;
+
+    const handlePointerDown = () => {
+      setHoveredStageGuideStep(null);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [hoveredStageGuideStep]);
+
   const handleTemplateValueChange = useCallback((id: string, value: string) => {
     setTemplateValueDrafts((prev) => ({ ...prev, [id]: value }));
   }, []);
+
+  const getTemplateEntryValueByKey = useCallback((key: string) => {
+    const match = templateDraftEntries.find((entry) => entry.key === key);
+    if (!match) return '';
+    return stripYamlQuotes(templateValueDrafts[match.id] ?? match.value);
+  }, [templateDraftEntries, templateValueDrafts]);
+
+  const normalizeTemplateDisplayPath = useCallback(
+    (path: string) => path.replace(/\[\d+\](?=\.|$)/g, ''),
+    [],
+  );
+
+  const getTemplateListItemTitle = useCallback((rootKey: string, itemKey: string, itemIndex: number, fallbackValue = '') => {
+    if (rootKey === 'params') {
+      return getTemplateEntryValueByKey(`${itemKey}.name`) || `param ${itemIndex + 1}`;
+    }
+    if (rootKey === 'list_fields') {
+      return getTemplateEntryValueByKey(`${itemKey}.name`) || `field ${itemIndex + 1}`;
+    }
+    if (rootKey === 'download') {
+      return (
+        getTemplateEntryValueByKey(`${itemKey}.asset_type`)
+        || getTemplateEntryValueByKey(`${itemKey}.selector`)
+        || `asset ${itemIndex + 1}`
+      );
+    }
+    if (rootKey === 'dedup_fields') {
+      return fallbackValue || `field ${itemIndex + 1}`;
+    }
+    return `item ${itemIndex + 1}`;
+  }, [getTemplateEntryValueByKey]);
+
+  const getTemplateEntryDisplayMeta = useCallback((entry: TemplateEntry, value: string) => {
+    const normalizedValue = stripYamlQuotes(value);
+    const arrayGroupMatch = entry.nodeType === 'group'
+      ? entry.key.match(/^([a-z_]+)\[(\d+)\]$/)
+      : null;
+
+    if (arrayGroupMatch) {
+      const [, rootKey, rawIndex] = arrayGroupMatch;
+      const itemIndex = Number(rawIndex);
+      return {
+        label: getTemplateListItemTitle(rootKey, entry.key, itemIndex),
+        pathHint: rootKey,
+      };
+    }
+
+    const arrayValueMatch = entry.nodeType === 'value'
+      ? entry.key.match(/^([a-z_]+)\[(\d+)\]$/)
+      : null;
+
+    if (arrayValueMatch) {
+      const [, rootKey, rawIndex] = arrayValueMatch;
+      const itemIndex = Number(rawIndex);
+      return {
+        label: rootKey === 'dedup_fields' ? 'field' : getTemplateListItemTitle(rootKey, entry.key, itemIndex, normalizedValue),
+        pathHint: rootKey,
+      };
+    }
+
+    const arrayChildMatch = entry.key.match(/^([a-z_]+)\[(\d+)\]\.(.+)$/);
+    if (arrayChildMatch) {
+      const [, rootKey, rawIndex, childPath] = arrayChildMatch;
+      const itemIndex = Number(rawIndex);
+      const label = childPath.split('.').pop() ?? childPath;
+      const itemTitle = getTemplateListItemTitle(rootKey, `${rootKey}[${itemIndex}]`, itemIndex);
+      return {
+        label,
+        pathHint: itemTitle ? `${rootKey} / ${itemTitle}` : rootKey,
+      };
+    }
+
+    const label = entry.key.split('.').pop() ?? entry.key;
+    return {
+      label,
+      pathHint: label === entry.key ? '' : normalizeTemplateDisplayPath(entry.key.slice(0, -(label.length + 1))),
+    };
+  }, [getTemplateListItemTitle, normalizeTemplateDisplayPath]);
+
+  const renderTemplateValueControl = useCallback((entry: TemplateEntry, value: string) => {
+    const normalizedValue = stripYamlQuotes(value);
+    const leafKey = entry.key.split('.').pop()?.replace(/\[\d+\]$/, '') ?? entry.key;
+    const isDedupField = entry.stageId === 'dedup' && /^dedup_fields\[\d+\]$/.test(entry.key);
+    const isBooleanValue = yamlBooleanPattern.test(normalizedValue);
+    const isNumericValue = numericTemplateKeys.has(leafKey) || yamlNumberPattern.test(normalizedValue);
+    const prefersTextarea = entry.multiline || leafKey === 'description';
+    const textValue = entry.multiline ? value : normalizedValue;
+
+    if (isDedupField) {
+      const options = Array.from(new Set([normalizedValue, ...listFieldNameOptions].filter(Boolean)))
+        .map((option) => ({ label: option, value: option }));
+
+      return (
+        <Select
+          size="small"
+          showSearch
+          value={normalizedValue || undefined}
+          options={options}
+          placeholder="Select list field"
+          optionFilterProp="label"
+          onChange={(nextValue) => handleTemplateValueChange(entry.id, nextValue)}
+        />
+      );
+    }
+
+    if (isBooleanValue) {
+      const checked = normalizedValue.toLowerCase() === 'true';
+      return (
+        <div className="ai-template-boolean-control">
+          <Switch
+            className="ai-template-bool-switch"
+            size="small"
+            checked={checked}
+            onChange={(nextChecked) => handleTemplateValueChange(entry.id, nextChecked ? 'true' : 'false')}
+          />
+          <span>{checked ? 'true' : 'false'}</span>
+        </div>
+      );
+    }
+
+    if (isNumericValue) {
+      const numericValue = yamlNumberPattern.test(normalizedValue) ? Number(normalizedValue) : null;
+      return (
+        <InputNumber
+          size="small"
+          controls={false}
+          value={numericValue}
+          onChange={(nextValue) => handleTemplateValueChange(entry.id, nextValue == null ? 'null' : String(nextValue))}
+          style={{ width: '100%' }}
+        />
+      );
+    }
+
+    if (prefersTextarea) {
+      return (
+        <TextArea
+          value={textValue}
+          autoSize={{ minRows: entry.multiline ? 2 : 1, maxRows: 8 }}
+          onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
+        />
+      );
+    }
+
+    return (
+      <Input
+        size="small"
+        value={textValue}
+        onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
+      />
+    );
+  }, [handleTemplateValueChange, listFieldNameOptions]);
 
   const handleAppendTemplateStageEntry = useCallback((stageId: TemplateStageId) => {
     const stageConfig = templateStageMeta[stageId];
@@ -1645,7 +2814,18 @@ const AICollect: React.FC = () => {
       });
     const nextIndex = matchingIndexes.length ? Math.max(...matchingIndexes) + 1 : 0;
 
-    const newEntries: TemplateEntry[] = rootKey === 'list_fields'
+    const itemGroupEntry: TemplateEntry = {
+      id: `${rootKey}[${nextIndex}]__group`,
+      key: `${rootKey}[${nextIndex}]`,
+      value: '',
+      nodeType: 'group',
+      step: rootKey === 'list_fields' ? 'structure' as ProcessStepKey : 'contract' as ProcessStepKey,
+      stageId,
+      multiline: false,
+      depth: 1,
+    };
+
+    const childEntries: TemplateEntry[] = rootKey === 'list_fields'
       ? [
         ['name', 'new_field'],
         ['selector', '$.new_field'],
@@ -1656,6 +2836,7 @@ const AICollect: React.FC = () => {
         id: `${rootKey}[${nextIndex}].${fieldKey}__draft_${offset}`,
         key: `${rootKey}[${nextIndex}].${fieldKey}`,
         value,
+        nodeType: 'value',
         step: 'structure' as ProcessStepKey,
         stageId,
         multiline: false,
@@ -1673,11 +2854,14 @@ const AICollect: React.FC = () => {
         id: `${rootKey}[${nextIndex}].${fieldKey}__draft_${offset}`,
         key: `${rootKey}[${nextIndex}].${fieldKey}`,
         value,
+        nodeType: 'value',
         step: 'contract' as ProcessStepKey,
         stageId,
         multiline: false,
         depth: 2,
       }));
+
+    const newEntries: TemplateEntry[] = [itemGroupEntry, ...childEntries];
 
     setTemplateDraftEntries((prev) => [...prev, ...newEntries]);
     setTemplateValueDrafts((prev) => ({
@@ -1688,13 +2872,14 @@ const AICollect: React.FC = () => {
 
   const renderTemplateField = useCallback((entry: TemplateEntry) => {
     const value = templateValueDrafts[entry.id] ?? entry.value;
-    const isEditing = editingTemplateKey === entry.id;
-    const label = entry.key.split('.').pop() ?? entry.key;
-    const pathHint = label === entry.key ? '' : entry.key.slice(0, -(label.length + 1));
+    const isGroup = entry.nodeType === 'group';
+    const isItemGroup = isGroup && /\[\d+\]$/.test(entry.key);
+    const displayValue = entry.multiline ? value : stripYamlQuotes(value);
+    const { label, pathHint } = getTemplateEntryDisplayMeta(entry, value);
 
     return (
       <div
-        className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''}`}
+        className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''} ${isGroup ? 'is-group' : ''} ${isItemGroup ? 'is-item-group' : ''} ${templateEditable && !isGroup ? 'is-editable' : ''}`}
         key={entry.id}
         style={{ ['--ai-template-depth' as string]: String(entry.depth) }}
       >
@@ -1702,42 +2887,19 @@ const AICollect: React.FC = () => {
           <span>{label}</span>
           {pathHint ? <small>{pathHint}</small> : null}
         </div>
-        <div
-          className={`ai-template-field-value ${isEditing ? 'is-editing' : ''}`}
-          onDoubleClick={() => {
-            if (!templateEditable) return;
-            setEditingTemplateKey(entry.id);
-          }}
-        >
-          {isEditing ? (
-            entry.multiline ? (
-              <TextArea
-                autoFocus
-                value={value}
-                autoSize={{ minRows: 3, maxRows: 10 }}
-                onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
-                onBlur={() => setEditingTemplateKey(null)}
-              />
-            ) : (
-              <Input
-                autoFocus
-                value={value}
-                onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
-                onBlur={() => setEditingTemplateKey(null)}
-                onPressEnter={() => setEditingTemplateKey(null)}
-              />
-            )
-          ) : (
-            <pre>{value || 'null'}</pre>
-          )}
-        </div>
+        {isGroup ? null : (
+          <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
+            {templateEditable ? renderTemplateValueControl(entry, value) : <pre>{displayValue || 'null'}</pre>}
+          </div>
+        )}
       </div>
     );
-  }, [editingTemplateKey, handleTemplateValueChange, templateEditable, templateValueDrafts]);
+  }, [getTemplateEntryDisplayMeta, renderTemplateValueControl, templateEditable, templateValueDrafts]);
 
   const renderTemplateStageSection = useCallback((stageId: TemplateStageId) => {
     const stageEntries = visibleTemplateEntries.filter((entry) => entry.stageId === stageId);
     if (!stageEntries.length) return null;
+    const stageValueCount = stageEntries.filter((entry) => entry.nodeType === 'value').length;
 
     return (
       <section
@@ -1754,7 +2916,7 @@ const AICollect: React.FC = () => {
             <small>{templateStageMeta[stageId].desc}</small>
           </div>
           <div className="ai-template-stage-actions">
-            <span>{stageEntries.length}</span>
+            <span>{stageValueCount}</span>
             {templateEditable && templateStageMeta[stageId].addable ? (
               <button
                 type="button"
@@ -1781,7 +2943,7 @@ const AICollect: React.FC = () => {
           <Text className="ai-session-fixed-eyebrow">Template Contract</Text>
           <div className="ai-session-fixed-title-row">
             <h2>{activeTemplate.displayName}</h2>
-            <Text className="ai-session-fixed-stat">{visibleTemplateEntries.length} keys</Text>
+            <Text className="ai-session-fixed-stat">{visibleTemplateValueCount} keys</Text>
           </div>
           <Text className="ai-session-fixed-subtitle">{activeTemplate.fileName}</Text>
         </div>
@@ -1805,15 +2967,22 @@ const AICollect: React.FC = () => {
             </div>
           ) : null}
         </article>
+        <div className="ai-session-template-tail" aria-hidden="true">
+          <div className="ai-session-template-divider" />
+        </div>
       </div>
     </section>
   );
 
   const renderSessionStageRail = () => {
     const guideStep = hoveredStageGuideStep;
-    const guideStageIndex = guideStep ? Math.max(0, visibleTemplateStages.indexOf(guideStep)) : 0;
-    const hoveredStageIndex = hoveredStageGuideStep ? visibleTemplateStages.indexOf(hoveredStageGuideStep) : -1;
-    const popoverOffset = -6 + guideStageIndex * 12;
+    const guideStageIndex = guideStep && isTemplateStageId(guideStep)
+      ? Math.max(0, visibleTemplateStages.indexOf(guideStep))
+      : 0;
+    const hoveredStageIndex = hoveredStageGuideStep && isTemplateStageId(hoveredStageGuideStep)
+      ? visibleTemplateStages.indexOf(hoveredStageGuideStep)
+      : -1;
+    const popoverOffset = -4 + guideStageIndex * 9;
     const handleStageBarClick = (stageId: TemplateStageId) => {
       const scrollElement = templateScrollRef.current;
       const node = templateStageSectionRefs.current[stageId];
@@ -1876,7 +3045,7 @@ const AICollect: React.FC = () => {
             );
           })}
         </div>
-        {guideStep ? (
+        {guideStep && isTemplateStageId(guideStep) ? (
           <div className="ai-session-stage-card" style={{ top: `${popoverOffset}px` }}>
             <strong>{templateStageMeta[guideStep].title}</strong>
             <p>{templateStageMeta[guideStep].desc}</p>
@@ -1894,9 +3063,9 @@ const AICollect: React.FC = () => {
     return (
       <button
         type="button"
-        className={`ai-session-status-line is-${sessionSideMode}`}
+        className={`ai-session-status-line ${sideInspectorOpen ? 'is-open' : ''}`}
         aria-label={sessionSideMode === 'browser' ? '展开浏览器状态面板' : '展开编码状态面板'}
-        onClick={() => setSideInspectorOpen(true)}
+        onClick={() => openSessionInspector()}
       >
         {sessionSideMode === 'browser' ? (
           <span className="ai-session-status-favicon" aria-hidden="true">
@@ -1908,7 +3077,7 @@ const AICollect: React.FC = () => {
           </span>
         ) : (
           <span className="ai-session-status-icon" aria-hidden="true">
-            <FileTextOutlined className="ai-session-status-icon-svg" />
+            <AdapterEditorIcon className="ai-session-status-icon-svg" />
           </span>
         )}
         <span className="ai-session-status-copy">
@@ -1927,7 +3096,10 @@ const AICollect: React.FC = () => {
           className="ai-session-side-close"
           icon={<CloseOutlined />}
           aria-label="关闭右侧状态面板"
-          onClick={() => setSideInspectorOpen(false)}
+          onClick={() => {
+            setSessionInspectorTabs([]);
+            setActiveInspectorTabId(null);
+          }}
         />
       </div>
 
@@ -1943,13 +3115,13 @@ const AICollect: React.FC = () => {
             </span>
             <strong>{browserPreviewHost || 'source.local'}</strong>
           </div>
-          <div className="ai-side-browser-viewport">
-            {[...browserInspectorNotes, ...liveLogs.slice(0, 4)].map((note, index) => (
-              <div className="ai-side-browser-row" key={`${index}-${note}`}>
-                <span />
-                <strong>{note}</strong>
-              </div>
-            ))}
+        <div className="ai-side-browser-viewport">
+          {[browserPreviewHost || 'source.local', `${visibleTemplateStages.length}/${Math.max(templateStages.length, 1)} template stages mapped`, ...liveLogs.slice(0, 4)].map((note, index) => (
+            <div className="ai-side-browser-row" key={`${index}-${note}`}>
+              <span />
+              <strong>{note}</strong>
+            </div>
+          ))}
           </div>
         </div>
       ) : (
@@ -1957,7 +3129,7 @@ const AICollect: React.FC = () => {
           <div className="ai-side-code-card">
             <div className="ai-side-code-card-top">
               <span className="ai-side-code-card-icon" aria-hidden="true">
-                <FileTextOutlined />
+                <AdapterEditorIcon className="ai-side-code-card-icon-svg" />
               </span>
               <strong>{adapterFileLabel}</strong>
             </div>
@@ -1968,10 +3140,18 @@ const AICollect: React.FC = () => {
             </div>
           </div>
           <div className="ai-side-code-list">
-            {visibleTemplateStages.map((stageId) => (
-              <div className="ai-side-code-row" key={stageId}>
+            {(workflowPhase === 'release-template'
+              ? [
+                  `template: ${releaseActionMeta[selectedReleaseAction].title}`,
+                  `task: ${taskPublishMeta[selectedTaskPublishMode].title}`,
+                  'release gate ready',
+                ]
+              : adapterBuildPlan.map((step, index) => (
+                  `${index < adapterBuildIndex ? 'done' : index === adapterBuildIndex ? 'active' : 'pending'} · ${step.title}`
+                ))).map((label) => (
+              <div className="ai-side-code-row" key={label}>
                 <span />
-                <strong>{templateStageMeta[stageId].title}</strong>
+                <strong>{label}</strong>
               </div>
             ))}
           </div>
@@ -1988,13 +3168,478 @@ const AICollect: React.FC = () => {
       </div>
       <button
         type="button"
-        className={`ai-session-side-trigger is-${sessionSideMode} ${sideInspectorOpen ? 'is-open' : ''}`}
+        className={`ai-session-side-trigger ${sideInspectorOpen ? 'is-open' : ''}`}
         aria-label={sessionSideMode === 'browser' ? '点击查看浏览器状态' : '点击查看适配器编写状态'}
-        onClick={() => setSideInspectorOpen((prev) => !prev)}
+        onClick={() => openSessionInspector()}
       >
-        <SessionStatusIcon className="ai-session-side-trigger-icon" />
+        {sessionSideMode === 'browser' ? (
+          <SessionStatusIcon className="ai-session-side-trigger-icon" />
+        ) : (
+          <AdapterEditorIcon className="ai-session-side-trigger-icon" />
+        )}
       </button>
-      {sideInspectorOpen ? renderSessionSidePanel() : null}
+      {sideInspectorOpen ? renderSessionInspectorPanel() : null}
+    </div>
+  );
+
+  const renderSessionInspectorPanel = () => {
+    if (!activeInspectorTab) return null;
+
+    return (
+      <aside className={`ai-session-inspector-shell ${sideInspectorOpen ? 'is-expanded' : ''}`}>
+        <div className="ai-session-inspector-tabs">
+          {sessionInspectorTabs.map((tab) => (
+            <div
+              className={`ai-session-inspector-tab ${activeInspectorTab.id === tab.id ? 'is-active' : ''}`}
+              key={tab.id}
+            >
+              <button
+                type="button"
+                className="ai-session-inspector-tab-main"
+                onClick={() => setActiveInspectorTabId(tab.id)}
+              >
+                {tab.kind === 'browser' ? (
+                  <span className="ai-session-inspector-tab-icon is-browser" aria-hidden="true">
+                    {browserPreviewFavicon ? <img src={browserPreviewFavicon} alt="" /> : <GlobalOutlined />}
+                  </span>
+                ) : (
+                  <span className="ai-session-inspector-tab-icon" aria-hidden="true">
+                    <AdapterEditorIcon className="ai-session-status-icon-svg" />
+                  </span>
+                )}
+                <span className="ai-session-inspector-tab-label">{tab.title}</span>
+              </button>
+              <button
+                type="button"
+                className="ai-session-inspector-tab-close"
+                aria-label={`Close ${tab.title}`}
+                onClick={() => closeSessionInspectorTab(tab.id)}
+              >
+                <CloseOutlined />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="ai-session-inspector-body">
+          {activeInspectorTab.kind === 'browser' ? (
+            <div className="ai-session-inspector-browser">
+              <div className="ai-session-inspector-toolbar">
+                <span className="ai-session-inspector-toolbar-icon is-browser" aria-hidden="true">
+                  {browserPreviewFavicon ? <img src={browserPreviewFavicon} alt="" /> : <GlobalOutlined />}
+                </span>
+                <div className="ai-session-inspector-toolbar-copy">
+                  <strong>{activeInspectorTab.title}</strong>
+                  <span>{activeInspectorTab.subtitle}</span>
+                </div>
+              </div>
+              <div className="ai-session-inspector-browser-frame">
+                {activeInspectorTab.subtitle.startsWith('http') ? (
+                  <iframe src={activeInspectorTab.subtitle} title={activeInspectorTab.title} />
+                ) : (
+                  <div className="ai-session-inspector-empty">
+                    <strong>No embeddable browser target</strong>
+                    <span>{activeInspectorTab.subtitle}</span>
+                  </div>
+                )}
+              </div>
+              <div className="ai-session-inspector-meta">
+                {[browserPreviewHost || 'source.local', `${visibleTemplateStages.length}/${Math.max(templateStages.length, 1)} template stages mapped`, ...liveLogs.slice(0, 3)].map((note) => (
+                  <span key={note}>{note}</span>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="ai-session-inspector-editor">
+              <div className="ai-session-inspector-toolbar">
+                <span className="ai-session-inspector-toolbar-icon" aria-hidden="true">
+                  <AdapterEditorIcon className="ai-session-status-icon-svg" />
+                </span>
+                <div className="ai-session-inspector-toolbar-copy">
+                  <strong>{activeInspectorTab.title}</strong>
+                  <span>{activeInspectorTab.subtitle}</span>
+                </div>
+                <div className="ai-session-inspector-diff">
+                  <b className="is-added">+{adapterDiffStats.added}</b>
+                  <b className="is-removed">-{adapterDiffStats.removed}</b>
+                </div>
+              </div>
+              <div className="ai-session-inspector-editor-body">
+                {adapterPreviewLines.map((line) => (
+                  <div
+                    className={`ai-session-inspector-editor-line ${line.added ? 'is-added' : ''}`}
+                    key={line.key}
+                  >
+                    <span className="ai-session-inspector-editor-no">{line.lineNumber}</span>
+                    <span className="ai-session-inspector-editor-prefix">{line.prefix}</span>
+                    <code>{renderPythonPreviewContent(line.content || ' ', line.key)}</code>
+                  </div>
+                ))}
+              </div>
+              <div className="ai-session-inspector-meta">
+                {codeInspectorNotes.map((note) => (
+                  <span key={note}>{note}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </aside>
+    );
+  };
+
+  const renderWorkflowGuideRail = () => {
+    const guideStep = hoveredStageGuideStep;
+    const guideStepIndex = guideStep ? Math.max(0, sessionGuideSteps.indexOf(guideStep)) : 0;
+    const hoveredGuideIndex = hoveredStageGuideStep ? sessionGuideSteps.indexOf(hoveredStageGuideStep) : -1;
+    const popoverOffset = 6 + guideStepIndex * 13;
+    const getGuideMeta = (step: SessionGuideStepId) => (
+      isTemplateStageId(step) ? templateStageMeta[step] : sessionGuideMeta[step]
+    );
+    const handleGuideStepClick = (step: SessionGuideStepId) => {
+      setHoveredStageGuideStep(null);
+
+      if (isTemplateStageId(step) || step === 'confirm-template') {
+        const nextPreviewPhase = workflowPhase === 'analyzing-template' ? null : 'confirm-template';
+        setGuidePreviewPhase(nextPreviewPhase);
+        scrollTemplateToGuideStep(step, !displayTemplatePanel);
+        return;
+      }
+
+      if (step === 'generate-adapter') {
+        setGuidePreviewPhase(workflowPhase === 'generating-adapter' ? null : 'generating-adapter');
+        return;
+      }
+
+      setGuidePreviewPhase(workflowPhase === 'release-template' ? null : 'release-template');
+    };
+
+    return (
+      <aside
+        className="ai-session-stage-float"
+        aria-label="session workflow guide"
+        onMouseLeave={() => setHoveredStageGuideStep(null)}
+      >
+        <div className="ai-session-stage-bars">
+          {sessionGuideSteps.map((step, index) => {
+            const visibility = isTemplateStageId(step)
+              ? (templateStageVisibility[step] ?? 0.18)
+              : index < activeGuideIndex
+                ? 1
+                : index === activeGuideIndex
+                  ? 0.92
+                  : 0.24;
+            const isHovered = hoveredStageGuideStep === step;
+            const isCurrentView = displayGuideStep === step;
+            const isDone = activeGuideIndex > -1 && index < activeGuideIndex;
+            const hoverDistance = hoveredGuideIndex >= 0 ? Math.abs(index - hoveredGuideIndex) : null;
+            const hoverWidth = hoverDistance === null
+              ? 6
+              : hoverDistance === 0
+                ? 30
+                : hoverDistance === 1
+                  ? 18
+                  : hoverDistance === 2
+                    ? 11
+                    : 6;
+            const needsAttention = step === 'confirm-template' && templateReadyForConfirm;
+            const barHeight = isHovered ? 1.8 : 1.4;
+            const barColor = isHovered
+              ? '#FFFFFF'
+              : isCurrentView
+                ? '#D9E0EA'
+                : isDone
+                  ? 'rgba(208, 214, 224, 0.68)'
+                  : `rgba(204, 211, 221, ${Math.min(0.52, 0.26 + visibility * 0.26)})`;
+
+            return (
+              <button
+                type="button"
+                key={step}
+                className={`ai-session-stage-bar ${isCurrentView ? 'is-active' : ''} ${isDone ? 'is-done' : ''} ${needsAttention ? 'is-attention' : ''}`}
+                style={{
+                  ['--ai-stage-bar-width' as string]: `${Math.max(6, hoverWidth)}px`,
+                  ['--ai-stage-bar-height' as string]: `${barHeight}px`,
+                  ['--ai-stage-bar-color' as string]: barColor,
+                }}
+                onMouseEnter={() => setHoveredStageGuideStep(step)}
+                onMouseDown={() => setHoveredStageGuideStep(step)}
+                onFocus={() => setHoveredStageGuideStep(step)}
+                onClick={() => handleGuideStepClick(step)}
+                aria-label={getGuideMeta(step).title}
+                aria-current={isCurrentView ? 'true' : undefined}
+              >
+                <span />
+              </button>
+            );
+          })}
+        </div>
+        {guideStep ? (
+          <div className="ai-session-stage-card" style={{ top: `${popoverOffset}px` }}>
+            <strong>{getGuideMeta(guideStep).title}</strong>
+            <p>{getGuideMeta(guideStep).desc}</p>
+            <div className="ai-session-stage-card-foot">
+              <span className="ai-session-stage-file">
+                {isTemplateStageId(guideStep) || guideStep === 'confirm-template' ? activeTemplate.fileName : adapterFileName}
+              </span>
+              <em>{guideStepIndex + 1}/{sessionGuideSteps.length}</em>
+            </div>
+          </div>
+        ) : null}
+      </aside>
+    );
+  };
+
+  const renderWorkflowHeader = () => (
+    <header className="ai-session-fixed-meta">
+      <div className="ai-session-fixed-copy">
+        <Text className="ai-session-fixed-eyebrow">{sessionHeaderMeta.eyebrow}</Text>
+        <div className="ai-session-fixed-title-row">
+          <h2>{sessionHeaderMeta.title}</h2>
+          <Text className="ai-session-fixed-stat">{sessionHeaderMeta.stat}</Text>
+        </div>
+        <Text className="ai-session-fixed-subtitle">{sessionHeaderMeta.subtitle}</Text>
+      </div>
+      {renderSessionBrowserPreview()}
+    </header>
+  );
+
+  const renderPinnedTabs = () => {
+    if (!showPinnedTemplateTab && !showPinnedAdapterTab) return null;
+
+    const fallbackStep = activeTemplateStage
+      ?? visibleTemplateStages[visibleTemplateStages.length - 1]
+      ?? 'confirm-template';
+
+    return (
+      <div className="ai-session-pinned-tab-stack">
+        {showPinnedTemplateTab ? (
+          <button
+            type="button"
+            className={`ai-session-pinned-tab is-template ${templateTabAnimating ? 'is-entering' : ''}`}
+            aria-label={activeTemplate.fileName}
+            title={activeTemplate.fileName}
+            onClick={() => {
+              setExpandingPinnedPanel('template');
+              setGuidePreviewPhase('confirm-template');
+              scrollTemplateToGuideStep(fallbackStep, true);
+            }}
+          >
+            <YamlFileIcon className="ai-session-pinned-tab-icon is-template" />
+          </button>
+        ) : null}
+        {showPinnedAdapterTab ? (
+          <button
+            type="button"
+            className={`ai-session-pinned-tab is-adapter ${adapterTabAnimating ? 'is-entering' : ''}`}
+            aria-label={adapterFileName}
+            title={adapterFileName}
+            onClick={() => {
+              setExpandingPinnedPanel('adapter');
+              setGuidePreviewPhase('generating-adapter');
+            }}
+          >
+            <AdapterPinnedIcon className="ai-session-pinned-tab-icon is-adapter" />
+          </button>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderWorkflowTemplatePanel = () => (
+    <section className={`ai-session-main-shell is-template ${expandingPinnedPanel === 'template' ? 'is-restoring-from-tab' : ''}`}>
+      {renderWorkflowHeader()}
+      <div className="ai-session-template-scroll" ref={templateScrollRef}>
+        {streamError ? (
+          <Alert className="ai-session-inline-alert" type="warning" showIcon message={streamError} />
+        ) : null}
+        <article className="ai-template-sheet">
+          <div className="ai-template-sheet-body">
+            {visibleTemplateStages.map(renderTemplateStageSection)}
+          </div>
+          {templateReadyForConfirm ? (
+            <div className="ai-template-confirm-bar">
+              <div className="ai-template-confirm-copy">
+                <strong>Confirm template</strong>
+                <span>Lock the YAML contract before adapter generation.</span>
+              </div>
+              <Button
+                type="primary"
+                className="ai-template-confirm-btn"
+                onClick={handleConfirmTemplate}
+              >
+                Confirm Template
+              </Button>
+            </div>
+          ) : null}
+        </article>
+        <div className="ai-session-template-tail" aria-hidden="true">
+          <div className="ai-session-template-divider" />
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderWorkflowAdapterPanel = () => {
+    const currentStepIndex = Math.min(adapterBuildIndex, adapterBuildPlan.length - 1);
+    const currentStep = adapterBuildPlan[currentStepIndex];
+
+    return (
+      <section className={`ai-session-main-shell is-adapter ${expandingPinnedPanel === 'adapter' ? 'is-restoring-from-tab' : ''}`}>
+        {renderWorkflowHeader()}
+        <div className="ai-session-adapter-shell">
+          {renderPinnedTabs()}
+          <div className="ai-session-adapter-overview">
+            <div className="ai-session-adapter-copy">
+              <Text className="ai-session-fixed-eyebrow">Adapter Build</Text>
+              <h3>{currentStep?.title ?? 'Adapter Build'}</h3>
+              <p>AI is implementing the adapter in serial steps from the confirmed template contract.</p>
+            </div>
+            <div className="ai-session-adapter-progress">
+              <Progress percent={adapterProgressPercent} showInfo={false} strokeColor="#ffffff" trailColor="rgba(255,255,255,0.1)" />
+              <span>{Math.min(adapterBuildIndex + 1, adapterBuildPlan.length)}/{adapterBuildPlan.length}</span>
+            </div>
+          </div>
+          <div className="ai-session-adapter-steps is-flow">
+            {adapterBuildPlan.map((step, index) => {
+              const status = index < adapterBuildIndex ? 'done' : index === currentStepIndex ? 'active' : 'pending';
+              const expanded = expandedAdapterStep === index;
+              const statusLabel = status === 'done'
+                ? `已处理 ${step.elapsed}`
+                : status === 'active'
+                  ? `处理中 ${step.elapsed}`
+                  : '待处理';
+
+              return (
+                <div className={`ai-session-adapter-task is-${status} ${expanded ? 'is-expanded' : ''}`} key={step.title}>
+                  <div className="ai-session-adapter-task-head">
+                    <div className="ai-session-adapter-task-copy">
+                      <strong>{step.title}</strong>
+                    </div>
+                    <button
+                      type="button"
+                      className="ai-session-adapter-task-status"
+                      aria-expanded={expanded}
+                      onClick={() => {
+                        setExpandedAdapterStep((prev) => (prev === index ? null : index));
+                      }}
+                    >
+                      <span className="ai-session-adapter-task-status-label">{statusLabel}</span>
+                      <span
+                        className={`ai-session-adapter-task-status-caret ${expanded ? 'is-expanded' : ''}`}
+                        aria-hidden="true"
+                      >
+                        <ChevronRightIcon />
+                      </span>
+                    </button>
+                  </div>
+                  {expanded ? (
+                    <div className="ai-session-adapter-task-body">
+                      <p>{step.desc}</p>
+                      <div className="ai-session-adapter-task-list">
+                        {step.details.map((detail) => (
+                          <div className="ai-session-adapter-task-item" key={detail}>
+                            <i aria-hidden="true" />
+                            <span>{detail}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderWorkflowReleasePanel = () => (
+    <section className="ai-session-main-shell is-release">
+      {renderWorkflowHeader()}
+      <div className="ai-session-release-shell">
+        {renderPinnedTabs()}
+        <div className="ai-session-release-grid">
+          {(['draft', 'archive', 'publish'] as ReleaseAction[]).map((action) => (
+            <button
+              type="button"
+              key={action}
+              className={`ai-session-release-card ${selectedReleaseAction === action ? 'is-selected' : ''}`}
+              onClick={() => setSelectedReleaseAction(action)}
+            >
+              <strong>{releaseActionMeta[action].title}</strong>
+              <p>{releaseActionMeta[action].desc}</p>
+            </button>
+          ))}
+        </div>
+        <div className="ai-session-release-grid is-task">
+          {(['launch', 'skip'] as TaskPublishMode[]).map((modeValue) => (
+            <button
+              type="button"
+              key={modeValue}
+              className={`ai-session-release-card ${selectedTaskPublishMode === modeValue ? 'is-selected' : ''}`}
+              onClick={() => setSelectedTaskPublishMode(modeValue)}
+            >
+              <strong>{taskPublishMeta[modeValue].title}</strong>
+              <p>{taskPublishMeta[modeValue].desc}</p>
+            </button>
+          ))}
+        </div>
+        <div className="ai-session-release-summary">
+          <div>
+            <span>Template</span>
+            <strong>{activeTemplate.fileName}</strong>
+          </div>
+          <div>
+            <span>Adapter</span>
+            <strong>{adapterFileLabel}</strong>
+          </div>
+          <div>
+            <span>Fields</span>
+            <strong>{selectedCount}</strong>
+          </div>
+          <div>
+            <span>Diff</span>
+            <strong>+{adapterDiffStats.added} / -{adapterDiffStats.removed}</strong>
+          </div>
+        </div>
+        <div className="ai-session-release-footer">
+          <Button
+            type="primary"
+            className="ai-template-confirm-btn"
+            onClick={() => void handleApplyReleaseAction()}
+          >
+            {releaseActionMeta[selectedReleaseAction].cta}
+          </Button>
+          <Text className="ai-session-release-note">{taskPublishMeta[selectedTaskPublishMode].desc}</Text>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderWorkflowLayout = () => (
+    <div
+      className={[
+        'ai-session-layout',
+        `is-${workflowPhase}`,
+        sideInspectorVisible ? 'has-inspector' : '',
+        sideInspectorOpen ? 'is-inspector-expanded' : '',
+      ].filter(Boolean).join(' ')}
+    >
+      <div className={`ai-session-template-frame ${templateCollapsed ? 'is-template-collapsed' : ''}`}>
+        <div className="ai-session-guide-anchor">
+          {renderWorkflowGuideRail()}
+        </div>
+        {displayWorkflowPhase === 'generating-adapter'
+          ? renderWorkflowAdapterPanel()
+          : displayWorkflowPhase === 'release-template'
+            ? renderWorkflowReleasePanel()
+            : renderWorkflowTemplatePanel()}
+        {renderDockedPrompt()}
+      </div>
+      {sideInspectorVisible ? <div className={`ai-session-inspector-divider ${sideInspectorOpen ? 'is-expanded' : ''}`} aria-hidden="true" /> : null}
+      {sideInspectorVisible ? renderSessionInspectorPanel() : null}
     </div>
   );
 
@@ -2003,7 +3648,8 @@ const AICollect: React.FC = () => {
 
     return (
       <section className="ai-session-prompt">
-        <div className="ai-session-reference">
+        <div className="ai-session-prompt-shell">
+          <div className="ai-session-reference">
           <span className="ai-session-reference-icon"><LinkOutlined /></span>
           {referenceEditing ? (
             <Input
@@ -2030,7 +3676,7 @@ const AICollect: React.FC = () => {
             </>
           )}
         </div>
-        <div className="ai-session-prompt-main">
+          <div className="ai-session-prompt-main">
           <span className="ai-session-leading-icon" aria-hidden="true"><GlobalOutlined /></span>
           <TextArea
             value={taskDraft}
@@ -2051,6 +3697,7 @@ const AICollect: React.FC = () => {
             )}
           </Button>
           <Button className="ai-session-icon-btn" icon={<AudioOutlined />} aria-label="语音输入" disabled />
+          </div>
         </div>
       </section>
     );
@@ -2214,7 +3861,7 @@ const AICollect: React.FC = () => {
         <Button icon={<PauseCircleOutlined />} onClick={handlePauseAnalysis}>暂停</Button>
       ) : null}
       {runStatus === 'paused' ? (
-        <Button icon={<CaretRightOutlined />} onClick={handleResumeAnalysis}>继续</Button>
+        <Button icon={<ChevronRightIcon />} onClick={handleResumeAnalysis}>继续</Button>
       ) : null}
       {runStatus !== 'idle' ? (
         <Button danger icon={<StopOutlined />} onClick={handleCancelAnalysis}>取消</Button>
@@ -2259,11 +3906,20 @@ const AICollect: React.FC = () => {
           .ai-collect-workbench {
             --ai-session-prompt-bottom: 18px;
             --ai-session-prompt-height: 96px;
+            --ai-session-template-tail-gap: calc(var(--ai-session-prompt-height) + 38px);
             --ai-session-runtime-safe-bottom: 76px;
             --ai-session-body-safe-bottom: 18px;
             --ai-session-veil-height: 148px;
             --ai-session-dock-rail-bottom: 35px;
             --ai-session-dock-panel-bottom: 138px;
+            --ai-session-divider-width: 2px;
+            --ai-session-inspector-top-offset: 0px;
+            --ai-session-inspector-bottom-offset: var(--ai-session-prompt-bottom);
+            --ai-session-split-transition: 360ms cubic-bezier(0.22, 1, 0.36, 1);
+            --ai-session-split-gap: 20px;
+            --ai-session-shell-max-width: min(1360px, calc(100% - 8px));
+            --ai-session-split-column-width: calc((var(--ai-session-shell-max-width) - (var(--ai-session-split-gap) * 2) - var(--ai-session-divider-width)) / 2);
+            --ai-session-split-offset: calc((var(--ai-session-split-column-width) + (var(--ai-session-split-gap) * 2) + var(--ai-session-divider-width)) / 2);
             height: calc(100vh - 48px);
             max-height: calc(100vh - 48px);
             overflow: hidden;
@@ -2438,9 +4094,30 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             padding: 2px 0 6px;
+            isolation: isolate;
+            transform: translate(-50%, 0);
+            will-change: transform, width;
+            transition: width var(--ai-session-split-transition);
+          }
+          .ai-session-prompt-shell {
+            display: flex;
+            flex-direction: column;
             animation: aiComposerDock 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
           }
+          .ai-session-prompt::before {
+            content: '';
+            position: absolute;
+            inset: -18px -26px -22px;
+            border-radius: 28px;
+            background:
+              linear-gradient(180deg, rgba(16, 20, 30, 0.12), rgba(16, 20, 30, 0.36) 54%, rgba(16, 20, 30, 0.58));
+            filter: blur(18px);
+            opacity: 0.82;
+            pointer-events: none;
+            z-index: 0;
+          }
           .ai-session-reference {
+            --prompt-surface: rgba(29, 33, 41);
             height: 28px;
             display: inline-flex;
             align-items: center;
@@ -2448,7 +4125,7 @@ const AICollect: React.FC = () => {
             align-self: flex-start;
             padding: 0 8px 0 10px;
             border-radius: 14px 14px 0 0;
-            background: rgba(29, 33, 41, 0.9);
+            background: var(--prompt-surface);
             border: 1px solid ${aura.border};
             border-bottom: none;
             color: ${aura.text};
@@ -2458,7 +4135,7 @@ const AICollect: React.FC = () => {
             position: relative;
             z-index: 1;
             backdrop-filter: ${aura.backdrop};
-            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18);
+            box-shadow: 0 20px 48px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(255, 255, 255, 0.02);
           }
           .ai-session-reference-icon {
             width: 17px;
@@ -2517,7 +4194,7 @@ const AICollect: React.FC = () => {
             line-height: 24px;
           }
           .ai-session-prompt-main {
-            --prompt-surface: rgba(29, 33, 41, 0.9);
+            --prompt-surface: rgba(29, 33, 41);
             display: grid;
             grid-template-columns: 22px minmax(0, 1fr) 30px 30px;
             align-items: center;
@@ -2526,7 +4203,7 @@ const AICollect: React.FC = () => {
             padding: 0 14px 0 16px;
             border-radius: 0 18px 18px 18px;
             border: 1px solid ${aura.border};
-            box-shadow: 0 28px 58px rgba(0, 0, 0, 0.34);
+            box-shadow: 0 34px 78px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.03);
             position: relative;
             backdrop-filter: ${aura.backdrop};
             overflow: hidden;
@@ -2560,100 +4237,164 @@ const AICollect: React.FC = () => {
             z-index: 1;
           }
           .ai-session-layout {
+            --ai-session-inspector-width: var(--ai-session-split-column-width);
             width: 100%;
             min-height: 0;
             flex: 1;
             display: flex;
             justify-content: center;
+            align-items: stretch;
             position: relative;
+            max-width: 100%;
+            gap: 0;
+            transition: max-width var(--ai-session-split-transition), gap var(--ai-session-split-transition), padding var(--ai-session-split-transition);
+          }
+          .ai-session-layout.has-inspector {
+            max-width: var(--ai-session-shell-max-width);
+          }
+          .ai-session-layout.has-inspector.is-inspector-expanded {
+            gap: var(--ai-session-split-gap);
+            padding-right: 0;
           }
           .ai-session-template-frame {
             width: min(100%, 882px);
+            max-width: 882px;
+            flex: 0 1 882px;
+            min-width: 0;
             min-height: 0;
             display: flex;
             justify-content: center;
             position: relative;
-            padding-left: 54px;
+            margin: 0 auto;
+            padding-left: 0;
+            transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition), flex-basis var(--ai-session-split-transition), margin var(--ai-session-split-transition);
+          }
+          .ai-session-layout.has-inspector.is-inspector-expanded .ai-session-template-frame {
+            width: auto;
+            max-width: var(--ai-session-split-column-width);
+            flex-basis: var(--ai-session-split-column-width);
+            margin: 0;
           }
           .ai-session-template-shell {
             width: 100%;
             max-width: 794px;
+            min-width: 0;
             min-height: 0;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 12px;
+            transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition);
+          }
+          .ai-session-main-shell {
+            width: 100%;
+            max-width: 794px;
+            min-width: 0;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            position: relative;
+            transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition), transform var(--ai-session-split-transition);
+          }
+          .ai-session-main-shell.is-restoring-from-tab .ai-session-template-scroll,
+          .ai-session-main-shell.is-restoring-from-tab .ai-session-adapter-shell {
+            animation: ai-session-panel-restore 380ms cubic-bezier(0.2, 0.82, 0.28, 1);
+            transform-origin: left top;
+          }
+          .ai-session-guide-anchor {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 72px;
+            overflow: visible;
+            pointer-events: none;
+            z-index: 7;
+          }
+          .ai-session-template-frame.is-template-collapsed {
+            padding-left: 0;
           }
           .ai-session-fixed-meta {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) minmax(236px, 286px);
+            grid-template-columns: minmax(0, 1fr) minmax(0, 280px);
             align-items: center;
-            gap: 14px;
-            padding: 2px 2px 10px;
+            gap: 10px;
+            padding: 0 2px 6px;
             background: transparent;
             border: none;
             box-shadow: none;
+          }
+          .ai-session-fixed-meta > * {
+            min-width: 0;
           }
           .ai-session-fixed-copy {
             min-width: 0;
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 2px;
+            overflow: hidden;
           }
           .ai-session-fixed-eyebrow,
           .ai-session-fixed-subtitle,
           .ai-session-fixed-stat {
             color: ${aura.subtle};
-            font-size: 10px;
+            font-size: 9px;
             letter-spacing: 0.06em;
             text-transform: uppercase;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
           .ai-session-fixed-title-row {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 10px;
-            flex-wrap: wrap;
+            gap: 8px;
+            flex-wrap: nowrap;
+            min-width: 0;
           }
           .ai-session-fixed-title-row h2 {
             margin: 0;
             color: ${aura.text};
-            font-size: 21px;
+            font-size: 18px;
             line-height: 1.2;
             font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
           }
           .ai-session-fixed-stat {
             white-space: nowrap;
-            font-size: 10px;
+            flex-shrink: 0;
           }
           .ai-session-fixed-subtitle {
             color: ${aura.muted};
             text-transform: none;
             letter-spacing: 0;
-            font-size: 11px;
+            font-size: 10px;
           }
           .ai-session-stage-float {
             position: absolute;
-            left: 10px;
+            left: 0;
             top: 50%;
             z-index: 7;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 6px;
             pointer-events: none;
             transform: translateY(-50%);
           }
           .ai-session-stage-bars {
-            width: 56px;
+            width: 44px;
             padding: 0;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 1px;
             pointer-events: auto;
           }
           .ai-session-stage-bar {
-            width: 56px;
-            height: 8px;
-            padding: 0;
+            width: 44px;
+            padding: 4px 0;
             border: none;
             background: transparent;
             display: inline-flex;
@@ -2662,7 +4403,7 @@ const AICollect: React.FC = () => {
             cursor: pointer;
           }
           .ai-session-stage-bar span {
-            width: var(--ai-stage-bar-width, 6px);
+            width: var(--ai-stage-bar-width, 5px);
             height: var(--ai-stage-bar-height, 2px);
             border-radius: 999px;
             background: var(--ai-stage-bar-color, rgba(255, 255, 255, 0.24));
@@ -2671,38 +4412,105 @@ const AICollect: React.FC = () => {
           }
           .ai-session-stage-bar:hover span,
           .ai-session-stage-bar:focus-visible span {
-            transform: translateX(2px);
+            transform: translateX(1px);
           }
           .ai-session-stage-bar.is-visible span {
             opacity: 0.96;
           }
           .ai-session-stage-bar.is-active span {
-            box-shadow: 0 0 16px rgba(255, 255, 255, 0.46);
+            box-shadow: 0 0 16px rgba(217, 224, 234, 0.46);
+          }
+          .ai-session-stage-bar.is-attention span {
+            animation: ai-session-step-attention 1.2s ease-in-out infinite;
           }
           .ai-session-stage-card {
             position: absolute;
-            left: 45px;
-            width: 244px;
-            padding: 12px 12px 10px;
+            left: 40px;
+            transform: translateY(-50%);
+            width: 228px;
+            padding: 10px 10px 8px;
             border-radius: 14px;
-            background: rgba(42, 46, 53, 0.92);
+            background: rgba(42, 46, 53, 0.82);
             border: 1px solid rgba(255, 255, 255, 0.08);
-            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+            box-shadow: 0 18px 46px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.03);
             pointer-events: auto;
-            transition: top 220ms ease;
+            isolation: isolate;
+            transition: top 220ms ease, transform 220ms ease;
+          }
+          .ai-session-pinned-tab-stack {
+            position: absolute;
+            left: -18px;
+            top: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 8;
+          }
+          .ai-session-pinned-tab {
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px 12px 12px 6px;
+            background: rgba(36, 41, 51, 0.94);
+            box-shadow: 0 16px 30px rgba(0, 0, 0, 0.22);
+            color: ${aura.text};
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+          }
+          .ai-session-pinned-tab.is-adapter {
+            border-radius: 12px 12px 6px 12px;
+            background: rgba(30, 36, 48, 0.96);
+          }
+          .ai-session-pinned-tab:hover,
+          .ai-session-pinned-tab:focus-visible {
+            border-color: rgba(255, 255, 255, 0.14);
+            background: rgba(52, 58, 71, 0.96);
+            transform: translateY(-1px);
+          }
+          .ai-session-pinned-tab.is-entering {
+            animation: ai-session-template-tab-enter 360ms cubic-bezier(0.2, 0.82, 0.28, 1);
+          }
+          .ai-session-pinned-tab-icon {
+            flex-shrink: 0;
+          }
+          .ai-session-pinned-tab-icon.is-template {
+            width: 14px;
+            height: 15px;
+          }
+          .ai-session-pinned-tab-icon.is-adapter {
+            width: 16px;
+            height: 16px;
+            color: #fff;
+            fill: #fff;
+          }
+          .ai-session-stage-card::before {
+            content: '';
+            position: absolute;
+            inset: -14px -16px -16px;
+            border-radius: 18px;
+            background:
+              linear-gradient(180deg, rgba(16, 20, 30, 0.12), rgba(16, 20, 30, 0.34) 56%, rgba(16, 20, 30, 0.08));
+            filter: blur(16px);
+            opacity: 0.92;
+            pointer-events: none;
+            z-index: -1;
           }
           .ai-session-stage-card strong {
             display: block;
             color: ${aura.text};
-            font-size: 14px;
+            font-size: 13px;
             line-height: 1.4;
             font-weight: 600;
           }
           .ai-session-stage-card p {
-            margin: 8px 0 10px;
+            margin: 6px 0 8px;
             color: ${aura.muted};
             font-size: 12px;
-            line-height: 1.66;
+            line-height: 1.55;
           }
           .ai-session-stage-card-foot {
             display: flex;
@@ -2740,31 +4548,43 @@ const AICollect: React.FC = () => {
             width: 100%;
             flex: 1;
             min-height: 0;
-            overflow: auto;
+            overflow-x: hidden;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
             padding: 2px 0 0;
+            position: relative;
+            isolation: isolate;
+            border-radius: 18px;
+            background: transparent;
           }
           .ai-template-sheet {
-            width: 100%;
-            margin: 0;
-            padding: 28px 30px 30px;
+            width: calc(100% - 18px);
+            max-width: 776px;
+            margin: 0 auto;
+            margin-bottom: 20px;
+            padding: 22px 24px 22px;
             background:
               linear-gradient(180deg, rgba(44, 49, 60, 0.98), rgba(34, 39, 49, 0.98)),
               rgba(28, 33, 42, 0.98);
             color: ${aura.text};
-            box-shadow: 0 18px 46px rgba(0, 0, 0, 0.24);
+            box-shadow: 0 20px 52px rgba(0, 0, 0, 0.24);
             border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 18px;
+            border-radius: 16px;
+            flex: none;
+            transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition), padding var(--ai-session-split-transition);
           }
           .ai-template-sheet-body {
             display: flex;
             flex-direction: column;
-            gap: 18px;
+            gap: 10px;
           }
           .ai-template-stage-section {
             display: flex;
             flex-direction: column;
-            gap: 14px;
-            padding-bottom: 18px;
+            gap: 8px;
+            padding-bottom: 10px;
             border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
           }
           .ai-template-stage-section:last-child {
@@ -2775,17 +4595,17 @@ const AICollect: React.FC = () => {
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
-            gap: 12px;
+            gap: 10px;
           }
           .ai-template-stage-copy {
             min-width: 0;
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 3px;
           }
           .ai-template-stage-title {
             color: ${aura.text};
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             line-height: 1.3;
             letter-spacing: 0.04em;
@@ -2793,15 +4613,15 @@ const AICollect: React.FC = () => {
           }
           .ai-template-stage-copy small {
             color: ${aura.muted};
-            font-size: 11px;
-            line-height: 1.55;
+            font-size: 10px;
+            line-height: 1.45;
           }
           .ai-template-stage-actions {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
             color: ${aura.subtle};
-            font-size: 11px;
+            font-size: 10px;
             white-space: nowrap;
           }
           .ai-template-stage-add {
@@ -2822,35 +4642,333 @@ const AICollect: React.FC = () => {
           .ai-template-stage-body {
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 5px;
           }
           .ai-template-confirm-bar {
             display: flex;
-            justify-content: flex-end;
-            padding-top: 18px;
-            margin-top: 20px;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding-top: 14px;
+            margin-top: 16px;
             border-top: 1px dashed rgba(255, 255, 255, 0.14);
+          }
+          .ai-template-confirm-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+          }
+          .ai-template-confirm-copy strong {
+            color: ${aura.text};
+            font-size: 13px;
+            line-height: 1.35;
+            font-weight: 600;
+          }
+          .ai-template-confirm-copy span {
+            color: ${aura.muted};
+            font-size: 11px;
+            line-height: 1.55;
           }
           .ai-template-confirm-btn {
             min-width: 138px;
             height: 34px !important;
             border-radius: 17px !important;
           }
+          .ai-session-inline-alert {
+            width: min(100%, 776px);
+            margin: 0 auto 12px;
+            border-radius: 14px;
+            transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition);
+          }
+          .ai-session-inline-alert .ant-alert-message {
+            font-size: 11px;
+            line-height: 1.35;
+          }
+          .ai-session-adapter-shell,
+          .ai-session-release-shell {
+            width: calc(100% - 18px);
+            max-width: 776px;
+            margin: 0 auto;
+            padding: 20px 22px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background:
+              linear-gradient(180deg, rgba(44, 49, 60, 0.98), rgba(34, 39, 49, 0.98)),
+              rgba(28, 33, 42, 0.98);
+            box-shadow: 0 20px 52px rgba(0, 0, 0, 0.24);
+            color: ${aura.text};
+            transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition), padding var(--ai-session-split-transition);
+          }
+          .ai-session-adapter-shell {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            position: relative;
+          }
+          .ai-session-adapter-overview {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+          }
+          .ai-session-adapter-copy {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+          }
+          .ai-session-adapter-copy h3 {
+            margin: 0;
+            font-size: 16px;
+            line-height: 1.3;
+            font-weight: 600;
+            word-break: break-word;
+          }
+          .ai-session-adapter-copy p {
+            margin: 0;
+            color: ${aura.muted};
+            font-size: 12px;
+            line-height: 1.55;
+          }
+          .ai-session-adapter-progress {
+            width: min(184px, 100%);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: flex-end;
+            flex-shrink: 0;
+          }
+          .ai-session-adapter-progress span {
+            color: ${aura.subtle};
+            font-size: 11px;
+          }
+          .ai-session-adapter-steps {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .ai-session-adapter-steps.is-flow {
+            padding-top: 2px;
+          }
+          .ai-session-adapter-task {
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.028);
+            overflow: hidden;
+          }
+          .ai-session-adapter-task-head {
+            min-height: 52px;
+            padding: 0 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: inherit;
+            text-align: left;
+          }
+          .ai-session-adapter-task-copy {
+            min-width: 0;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+          }
+          .ai-session-adapter-task-copy strong,
+          .ai-session-release-card strong {
+            display: block;
+            color: ${aura.text};
+            font-size: 13px;
+            line-height: 1.4;
+            font-weight: 600;
+          }
+          .ai-session-adapter-task-status {
+            border: none;
+            background: transparent;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: rgba(255, 255, 255, 0.64);
+            font-size: 12px;
+            line-height: 1.4;
+            white-space: nowrap;
+            flex-shrink: 0;
+            cursor: pointer;
+            transition: color 180ms ease, opacity 180ms ease;
+          }
+          .ai-session-adapter-task-status:hover {
+            color: rgba(255, 255, 255, 0.88);
+          }
+          .ai-session-adapter-task-status[aria-expanded='true'] {
+            color: rgba(255, 255, 255, 0.92);
+          }
+          .ai-session-adapter-task-status-label {
+            display: inline-flex;
+            align-items: center;
+          }
+          .ai-session-adapter-task-status-caret {
+            width: 12px;
+            height: 12px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: currentColor;
+            transform: rotate(0deg);
+            transform-origin: center;
+            transition: transform 180ms ease, color 180ms ease, opacity 180ms ease;
+          }
+          .ai-session-adapter-task-status-caret.is-expanded {
+            transform: rotate(90deg);
+          }
+          .ai-session-adapter-task-body {
+            padding: 0 18px 14px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .ai-session-adapter-task-body p,
+          .ai-session-release-card p {
+            margin: 0;
+            color: ${aura.muted};
+            font-size: 11px;
+            line-height: 1.6;
+          }
+          .ai-session-adapter-task-list {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+          }
+          .ai-session-adapter-task-item {
+            display: grid;
+            grid-template-columns: 8px minmax(0, 1fr);
+            gap: 8px;
+            align-items: start;
+          }
+          .ai-session-adapter-task-item i {
+            width: 4px;
+            height: 4px;
+            margin-top: 7px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.34);
+            display: block;
+          }
+          .ai-session-adapter-task-item span {
+            color: rgba(255, 255, 255, 0.78);
+            font-size: 11px;
+            line-height: 1.55;
+          }
+          .ai-session-adapter-task.is-active {
+            border-color: rgba(138, 180, 255, 0.22);
+            background: rgba(138, 180, 255, 0.08);
+          }
+          .ai-session-adapter-task.is-done {
+            background: transparent;
+          }
+          .ai-session-adapter-task.is-active .ai-session-adapter-task-status {
+            color: rgba(188, 219, 255, 0.88);
+          }
+          .ai-session-adapter-task.is-done .ai-session-adapter-task-status {
+            color: rgba(255, 255, 255, 0.66);
+          }
+          .ai-session-release-shell {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            position: relative;
+          }
+          .ai-session-release-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+          }
+          .ai-session-release-grid.is-task {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+          .ai-session-release-card {
+            padding: 14px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.03);
+            text-align: left;
+            cursor: pointer;
+            transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+          }
+          .ai-session-release-card:hover,
+          .ai-session-release-card.is-selected {
+            border-color: rgba(138, 180, 255, 0.22);
+            background: rgba(138, 180, 255, 0.08);
+            transform: translateY(-1px);
+          }
+          .ai-session-release-summary {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+          }
+          .ai-session-release-summary > div {
+            padding: 12px 13px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: rgba(255, 255, 255, 0.03);
+          }
+          .ai-session-release-summary span {
+            display: block;
+            color: ${aura.subtle};
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+          }
+          .ai-session-release-summary strong {
+            display: block;
+            margin-top: 8px;
+            color: ${aura.text};
+            font-size: 13px;
+            line-height: 1.45;
+            word-break: break-word;
+          }
+          .ai-session-release-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            padding-top: 6px;
+          }
+          .ai-session-release-note {
+            color: ${aura.muted};
+            font-size: 12px;
+            line-height: 1.6;
+          }
+          .ai-session-template-tail {
+            width: 100%;
+            min-height: var(--ai-session-template-tail-gap);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: none;
+            background: transparent;
+            box-shadow: none;
+          }
+          .ai-session-template-divider {
+            width: calc(100% + 88px);
+            max-width: 882px;
+            height: 0;
+            border-top: 1px dashed rgba(255, 255, 255, 0.26);
+            opacity: 0.96;
+          }
           .ai-session-status-line {
             width: 100%;
             min-width: 0;
-            height: 28px;
-            padding: 0 2px 0 6px;
+            height: 24px;
+            padding: 0;
             border-radius: 0;
             border: none;
             background: transparent;
-            display: grid;
-            grid-template-columns: 18px minmax(0, 1fr);
+            display: flex;
+            justify-content: flex-end;
             align-items: center;
-            gap: 8px;
+            gap: 5px;
             color: ${aura.text};
             cursor: pointer;
             overflow: hidden;
+            align-self: center;
             transition: opacity 160ms ease;
           }
           .ai-session-status-line:hover {
@@ -2866,8 +4984,6 @@ const AICollect: React.FC = () => {
             flex-shrink: 0;
           }
           .ai-session-status-icon-svg {
-            width: 16px;
-            height: 16px;
             display: block;
           }
           .ai-session-status-favicon {
@@ -2889,19 +5005,20 @@ const AICollect: React.FC = () => {
           }
           .ai-session-status-copy {
             min-width: 0;
+            max-width: min(100%, 236px);
             position: relative;
             display: block;
             overflow: hidden;
             white-space: nowrap;
+            flex: 0 1 auto;
           }
           .ai-session-status-copy-base,
           .ai-session-status-copy-sweep {
             display: block;
             font-size: 12px;
-            line-height: 1;
             white-space: nowrap;
             overflow: hidden;
-            text-overflow: clip;
+            text-overflow: ellipsis;
           }
           .ai-session-status-copy-base {
             color: rgba(255, 255, 255, 0.72);
@@ -2922,7 +5039,366 @@ const AICollect: React.FC = () => {
           .ai-session-status-meta {
             display: none;
           }
-          .ai-session-side-trigger {
+          .ai-session-status-line.is-open {
+            opacity: 1;
+          }
+          .ai-session-inspector-divider {
+            position: relative;
+            top: auto;
+            right: auto;
+            bottom: auto;
+            align-self: stretch;
+            flex: 0 0 0;
+            width: 0;
+            margin: var(--ai-session-inspector-top-offset) 0 var(--ai-session-inspector-bottom-offset);
+            border-left: 1px dashed rgba(255, 255, 255, 0.26);
+            pointer-events: none;
+            z-index: 7;
+            opacity: 0;
+            transform: translateX(30px);
+            transition: flex-basis var(--ai-session-split-transition), opacity var(--ai-session-split-transition), transform var(--ai-session-split-transition);
+          }
+          .ai-session-layout.has-inspector.is-inspector-expanded .ai-session-inspector-divider {
+            flex-basis: var(--ai-session-divider-width);
+            width: 0;
+            opacity: 1;
+            transform: translateX(0);
+          }
+          .ai-session-inspector-shell {
+            position: relative;
+            right: auto;
+            top: auto;
+            bottom: auto;
+            align-self: stretch;
+            flex: 0 0 0;
+            width: 0;
+            max-width: 0;
+            min-width: 0;
+            margin: var(--ai-session-inspector-top-offset) 0 var(--ai-session-inspector-bottom-offset);
+            border-radius: 18px;
+            border: 1px solid rgba(255, 255, 255, 0);
+            background: rgba(24, 28, 36, 0.97);
+            box-shadow: 0 24px 58px rgba(0, 0, 0, 0);
+            backdrop-filter: blur(20px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 9;
+            opacity: 0;
+            transform: translateX(54px);
+            pointer-events: none;
+            transition:
+              width var(--ai-session-split-transition),
+              max-width var(--ai-session-split-transition),
+              flex-basis var(--ai-session-split-transition),
+              margin var(--ai-session-split-transition),
+              opacity var(--ai-session-split-transition),
+              transform var(--ai-session-split-transition),
+              border-color var(--ai-session-split-transition),
+              box-shadow var(--ai-session-split-transition);
+          }
+          .ai-session-inspector-shell.is-expanded {
+            flex-basis: var(--ai-session-inspector-width);
+            width: var(--ai-session-inspector-width);
+            max-width: var(--ai-session-inspector-width);
+            border-color: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 24px 58px rgba(0, 0, 0, 0.28);
+            opacity: 1;
+            transform: translateX(0);
+            pointer-events: auto;
+          }
+          .ai-session-inspector-tabs {
+            height: 44px;
+            padding: 8px 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: flex-end;
+            gap: 6px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: none;
+          }
+          .ai-session-inspector-tabs::-webkit-scrollbar {
+            display: none;
+          }
+          .ai-session-inspector-tab {
+            flex: 0 0 auto;
+            max-width: 220px;
+            height: 32px;
+            padding: 0 6px 0 10px;
+            border-radius: 10px 10px 0 0;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-bottom: none;
+            background: rgba(255, 255, 255, 0.04);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+          }
+          .ai-session-inspector-tab.is-active {
+            background: rgba(255, 255, 255, 0.1);
+          }
+          .ai-session-inspector-tab-main,
+          .ai-session-inspector-tab-close {
+            border: none;
+            background: transparent;
+            color: ${aura.text};
+            padding: 0;
+            cursor: pointer;
+          }
+          .ai-session-inspector-tab-main {
+            min-width: 0;
+            flex: 1;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            overflow: hidden;
+          }
+          .ai-session-inspector-tab-icon,
+          .ai-session-inspector-toolbar-icon {
+            width: 16px;
+            height: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.9);
+            flex-shrink: 0;
+          }
+          .ai-session-inspector-tab-icon.is-browser img,
+          .ai-session-inspector-toolbar-icon.is-browser img {
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+            display: block;
+          }
+          .ai-session-inspector-tab-label {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-size: 12px;
+          }
+          .ai-session-inspector-tab-close {
+            width: 18px;
+            height: 18px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.46);
+          }
+          .ai-session-inspector-tab-close:hover {
+            color: rgba(255, 255, 255, 0.88);
+          }
+          .ai-session-inspector-body {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            padding: 12px;
+          }
+          .ai-session-inspector-browser,
+          .ai-session-inspector-editor {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+          .ai-session-inspector-toolbar {
+            min-height: 42px;
+            padding: 0 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: rgba(255, 255, 255, 0.035);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+          .ai-session-inspector-toolbar-copy {
+            min-width: 0;
+            display: flex;
+            flex: 1;
+            align-self: stretch;
+            align-items: center;
+            gap: 8px;
+            overflow: hidden;
+          }
+          .ai-session-inspector-toolbar-copy strong,
+          .ai-session-inspector-toolbar-copy span {
+            min-width: 0;
+            height: 100%;
+            display: inline-flex;
+            align-items: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .ai-session-inspector-toolbar-copy strong {
+            flex: 0 1 auto;
+            max-width: 42%;
+            color: ${aura.text};
+            font-size: 12px;
+            font-weight: 600;
+            line-height: 1;
+          }
+          .ai-session-inspector-toolbar-copy span {
+            flex: 1 1 auto;
+            color: ${aura.muted};
+            font-size: 11px;
+            line-height: 1;
+          }
+          .ai-session-inspector-browser-frame,
+          .ai-session-inspector-editor-body {
+            flex: 1;
+            min-height: 0;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(14, 17, 23, 0.78);
+            overflow: hidden;
+          }
+          .ai-session-inspector-browser-frame {
+            flex: 1 1 auto;
+            min-height: 420px;
+          }
+          .ai-session-inspector-browser-frame iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: #fff;
+          }
+          .ai-session-inspector-empty {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            color: ${aura.muted};
+            text-align: center;
+            padding: 24px;
+          }
+          .ai-session-inspector-empty strong {
+            color: ${aura.text};
+            font-size: 13px;
+          }
+          .ai-session-inspector-empty span {
+            font-size: 11px;
+            word-break: break-word;
+          }
+          .ai-session-inspector-diff {
+            margin-left: auto;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+          }
+          .ai-session-inspector-diff b {
+            font-size: 12px;
+            line-height: 1.2;
+            font-weight: 600;
+          }
+          .ai-session-inspector-diff .is-added {
+            color: #65d5a3;
+          }
+          .ai-session-inspector-diff .is-removed {
+            color: #ff7d7d;
+          }
+          .ai-session-inspector-editor-body {
+            padding: 12px 0;
+            overflow: auto;
+            background:
+              radial-gradient(circle at top, rgba(102, 217, 239, 0.08), transparent 44%),
+              linear-gradient(180deg, rgba(45, 46, 74, 0.98), rgba(33, 34, 55, 0.98));
+            border-color: rgba(255, 255, 255, 0.06);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+          }
+          .ai-session-inspector-editor-line {
+            display: grid;
+            grid-template-columns: 34px 12px minmax(0, 1fr);
+            gap: 10px;
+            padding: 0 14px;
+            align-items: start;
+            color: #f8f8f2;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+            font-size: 12px;
+            line-height: 1.76;
+          }
+          .ai-session-inspector-editor-line + .ai-session-inspector-editor-line {
+            margin-top: 2px;
+          }
+          .ai-session-inspector-editor-line.is-added .ai-session-inspector-editor-prefix,
+          .ai-session-inspector-editor-line.is-added code {
+            color: #a6e3a1;
+          }
+          .ai-session-inspector-editor-no {
+            color: rgba(98, 114, 164, 0.82);
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+          }
+          .ai-session-inspector-editor-prefix {
+            color: #6272a4;
+            text-align: center;
+          }
+          .ai-session-inspector-editor-line code {
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #f8f8f2;
+            font-weight: 500;
+          }
+          .ai-session-python-token {
+            color: inherit;
+            -webkit-text-stroke: 0.12px currentColor;
+          }
+          .ai-session-python-token.is-keyword {
+            color: #ff79c6;
+          }
+          .ai-session-python-token.is-builtin {
+            color: #8be9fd;
+          }
+          .ai-session-python-token.is-string {
+            color: #f1fa8c;
+          }
+          .ai-session-python-token.is-comment {
+            color: #6272a4;
+            font-style: italic;
+          }
+          .ai-session-python-token.is-number {
+            color: #bd93f9;
+          }
+          .ai-session-python-token.is-function-name {
+            color: #50fa7b;
+          }
+          .ai-session-python-token.is-class-name {
+            color: #8be9fd;
+          }
+          .ai-session-python-token.is-property {
+            color: #66d9ef;
+          }
+          .ai-session-python-token.is-decorator {
+            color: #ffb86c;
+          }
+          .ai-session-python-token.is-operator,
+          .ai-session-python-token.is-punctuation {
+            color: #f8f8f2;
+          }
+          .ai-session-inspector-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+          }
+          .ai-session-inspector-meta span {
+            max-width: 100%;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            color: ${aura.muted};
+            font-size: 11px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .ai-session-side-trigger,
+          .ai-session-side-hotspot {
             position: absolute;
             right: 0;
             top: 112px;
@@ -2938,14 +5414,21 @@ const AICollect: React.FC = () => {
             cursor: pointer;
             transition: color 160ms ease, transform 160ms ease;
           }
-          .ai-session-side-trigger::before {
+          .ai-session-side-hotspot {
+            align-items: flex-end;
+            padding-right: 18px;
+          }
+          .ai-session-side-trigger::before,
+          .ai-session-side-hotspot::before {
             content: '';
             position: absolute;
             inset: 18px 0;
             border-left: 1px dashed rgba(255, 255, 255, 0.08);
           }
           .ai-session-side-trigger:hover,
-          .ai-session-side-trigger.is-open {
+          .ai-session-side-trigger.is-open,
+          .ai-session-side-hotspot:hover,
+          .ai-session-side-hotspot.is-open {
             color: rgba(255, 255, 255, 0.72);
             transform: translateX(-2px);
           }
@@ -2972,6 +5455,24 @@ const AICollect: React.FC = () => {
             gap: 14px;
             z-index: 9;
             animation: aiSidePanelIn 220ms ease both;
+          }
+          .ai-session-side-trigger,
+          .ai-session-side-hotspot,
+          .ai-session-side-panel,
+          .ai-side-browser-shell,
+          .ai-side-code-shell,
+          .ai-side-browser-bar,
+          .ai-side-browser-viewport,
+          .ai-side-browser-row,
+          .ai-side-code-row,
+          .ai-side-code-card,
+          .ai-side-code-card-top,
+          .ai-side-code-card-icon,
+          .ai-side-code-card-icon-svg,
+          .ai-side-code-path,
+          .ai-side-code-diff,
+          .ai-side-code-list {
+            display: none;
           }
           .ai-session-side-head {
             display: flex;
@@ -3101,6 +5602,11 @@ const AICollect: React.FC = () => {
             color: rgba(255, 255, 255, 0.86);
             flex-shrink: 0;
           }
+          .ai-side-code-card-icon-svg {
+            width: 14px;
+            height: 10px;
+            display: block;
+          }
           .ai-side-code-path {
             color: ${aura.muted};
             font-size: 11px;
@@ -3130,14 +5636,24 @@ const AICollect: React.FC = () => {
             gap: 10px;
           }
           .ai-template-field {
-            --ai-template-indent: calc(var(--ai-template-depth, 0) * 14px);
+            --ai-template-indent: calc(var(--ai-template-depth, 0) * 12px);
             display: grid;
-            grid-template-columns: minmax(168px, 220px) minmax(0, 1fr);
-            gap: 12px 18px;
+            grid-template-columns: minmax(156px, 198px) minmax(0, 1fr);
+            gap: 8px 10px;
             align-items: start;
-            padding: 0 0 18px;
+            padding: 0 0 8px;
             padding-left: var(--ai-template-indent);
             border-bottom: 1px dashed rgba(255, 255, 255, 0.09);
+          }
+          .ai-template-field.is-group {
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0;
+            padding: 2px 0 0;
+            padding-left: var(--ai-template-indent);
+            border-bottom: none;
+          }
+          .ai-template-field.is-item-group {
+            padding-top: 6px;
           }
           .ai-template-field:last-child {
             padding-bottom: 0;
@@ -3147,34 +5663,50 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             align-items: flex-start;
-            gap: 4px;
-            padding-top: 2px;
+            gap: 3px;
+            padding-top: 1px;
           }
           .ai-template-field-key span {
             color: ${aura.text};
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             line-height: 1.35;
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           }
           .ai-template-field-key small {
             color: ${aura.muted};
-            font-size: 11px;
+            font-size: 10px;
             line-height: 1.4;
             letter-spacing: 0;
             text-transform: none;
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           }
-          .ai-template-field-value {
-            min-height: 42px;
-            padding: 10px 12px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            background: rgba(13, 16, 22, 0.26);
-            border-radius: 10px;
+          .ai-template-field.is-group .ai-template-field-key {
+            gap: 1px;
           }
-          .ai-template-field-value.is-editing {
-            border-color: rgba(138, 180, 255, 0.48);
-            box-shadow: 0 0 0 3px rgba(138, 180, 255, 0.14);
+          .ai-template-field.is-group .ai-template-field-key span {
+            color: ${aura.subtle};
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+          }
+          .ai-template-field.is-item-group .ai-template-field-key span {
+            color: rgba(255, 255, 255, 0.78);
+            font-size: 10.5px;
+            letter-spacing: 0.02em;
+            text-transform: none;
+          }
+          .ai-template-field-value {
+            min-height: 22px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            border-radius: 0;
+            display: flex;
+            align-items: center;
+          }
+          .ai-template-field-value.is-rich {
+            align-items: stretch;
           }
           .ai-template-field-value pre {
             margin: 0;
@@ -3182,11 +5714,13 @@ const AICollect: React.FC = () => {
             word-break: break-word;
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
             font-size: 12px;
-            line-height: 1.7;
+            line-height: 1.45;
             color: ${aura.text};
           }
           .ai-template-field-value .ant-input,
           .ai-template-field-value .ant-input-affix-wrapper,
+          .ai-template-field-value .ant-input-number,
+          .ai-template-field-value .ant-select-selector,
           .ai-template-field-value .ant-input-textarea textarea {
             background: transparent !important;
             color: ${aura.text} !important;
@@ -3194,6 +5728,88 @@ const AICollect: React.FC = () => {
             box-shadow: none !important;
             padding: 0 !important;
             border-radius: 0 !important;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+            font-size: 12px !important;
+            line-height: 1.45 !important;
+          }
+          .ai-template-field-value .ant-input,
+          .ai-template-field-value .ant-input-affix-wrapper,
+          .ai-template-field-value .ant-input-number,
+          .ai-template-field-value .ant-select-selector {
+            min-height: 22px !important;
+            height: 22px !important;
+          }
+          .ai-template-field-value .ant-select,
+          .ai-template-field-value .ant-input-number {
+            width: 100%;
+          }
+          .ai-template-field-value .ant-input {
+            line-height: 22px !important;
+          }
+          .ai-template-field-value .ant-input-number-input-wrap {
+            height: 100%;
+            display: flex;
+            align-items: center;
+          }
+          .ai-template-field-value .ant-input-number-input {
+            height: 22px !important;
+            line-height: 22px !important;
+            padding: 0;
+            color: ${aura.text};
+          }
+          .ai-template-field-value .ant-select-single.ant-select-sm .ant-select-selector,
+          .ai-template-field-value .ant-select-single .ant-select-selector {
+            display: flex;
+            align-items: center;
+          }
+          .ai-template-field-value .ant-select-selection-item,
+          .ai-template-field-value .ant-select-selection-placeholder {
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+            font-size: 12px;
+            line-height: 22px !important;
+          }
+          .ai-template-field-value.is-rich .ant-input-textarea textarea {
+            min-height: 70px !important;
+            padding: 8px 10px !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            border-radius: 10px !important;
+            background: rgba(13, 16, 22, 0.24) !important;
+          }
+          .ai-template-boolean-control {
+            min-height: 22px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+          }
+          .ai-template-boolean-control span {
+            color: ${aura.subtle};
+            font-size: 12px;
+            line-height: 1;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+          }
+          .ai-template-bool-switch.ant-switch {
+            min-width: 34px;
+            height: 20px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+          }
+          .ai-template-bool-switch.ant-switch .ant-switch-handle {
+            top: 1px;
+            inset-inline-start: 1px;
+            width: 16px;
+            height: 16px;
+          }
+          .ai-template-bool-switch.ant-switch .ant-switch-handle::before {
+            border-radius: 50%;
+            background: linear-gradient(180deg, rgba(235, 239, 248, 0.96), rgba(188, 196, 210, 0.9));
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+          }
+          .ai-template-bool-switch.ant-switch.ant-switch-checked {
+            background: rgba(129, 216, 208, 0.18);
+            border-color: rgba(129, 216, 208, 0.34);
+          }
+          .ai-template-bool-switch.ant-switch.ant-switch-checked .ant-switch-handle::before {
+            background: linear-gradient(180deg, rgba(186, 255, 247, 0.98), rgba(129, 216, 208, 0.92));
           }
           .ai-session-shell {
             align-items: stretch;
@@ -4571,11 +7187,13 @@ const AICollect: React.FC = () => {
           @keyframes aiComposerDock {
             from {
               opacity: 0;
-              transform: translate(-50%, -132px) scale(1.08);
+              filter: blur(10px);
+              transform: translateY(-132px) scale(1.08);
             }
             to {
               opacity: 1;
-              transform: translate(-50%, 0) scale(1);
+              filter: blur(0);
+              transform: translateY(0) scale(1);
             }
           }
           @keyframes aiStatusSweep {
@@ -4638,6 +7256,46 @@ const AICollect: React.FC = () => {
               box-shadow: 0 0 18px rgba(138, 180, 255, 0.22);
             }
           }
+          @keyframes ai-session-step-attention {
+            0%, 100% {
+              background: rgba(194, 200, 210, 0.34);
+              box-shadow: 0 0 0 rgba(235, 241, 255, 0);
+              opacity: 0.74;
+            }
+            50% {
+              background: rgba(246, 247, 251, 0.9);
+              box-shadow: 0 0 14px rgba(246, 247, 251, 0.28);
+              opacity: 1;
+            }
+          }
+          @keyframes ai-session-template-tab-enter {
+            0% {
+              opacity: 0;
+              transform: translate3d(14px, 8px, 0) scale(1.72);
+            }
+            58% {
+              opacity: 1;
+              transform: translate3d(-2px, -1px, 0) scale(0.96);
+            }
+            100% {
+              opacity: 1;
+              transform: translate3d(0, 0, 0) scale(1);
+            }
+          }
+          @keyframes ai-session-panel-restore {
+            0% {
+              opacity: 0.38;
+              transform: translate3d(-22px, -12px, 0) scale(0.76);
+            }
+            55% {
+              opacity: 1;
+              transform: translate3d(1px, 0, 0) scale(1.02);
+            }
+            100% {
+              opacity: 1;
+              transform: translate3d(0, 0, 0) scale(1);
+            }
+          }
           @media (max-width: 1280px) {
             .ai-collect-body {
               grid-template-columns: minmax(204px, 232px) minmax(0, 1fr);
@@ -4656,10 +7314,10 @@ const AICollect: React.FC = () => {
             }
             .ai-session-template-frame {
               width: min(100%, 850px);
-              padding-left: 76px;
+              padding-left: 0;
             }
             .ai-session-stage-card {
-              width: 252px;
+              width: 236px;
             }
             .ai-stage-overview {
               grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4675,8 +7333,19 @@ const AICollect: React.FC = () => {
             .ai-session-status-line {
               margin-top: 2px;
             }
-            .ai-session-side-trigger,
-            .ai-session-side-panel {
+            .ai-session-layout.has-inspector.is-inspector-expanded {
+              max-width: 100%;
+              gap: 0;
+              padding-right: 0;
+            }
+            .ai-session-layout.has-inspector.is-inspector-expanded .ai-session-template-frame {
+              width: min(100%, 850px);
+              max-width: 850px;
+              flex-basis: 850px;
+              margin: 0 auto;
+            }
+            .ai-session-inspector-divider,
+            .ai-session-inspector-shell {
               display: none;
             }
           }
@@ -4684,6 +7353,7 @@ const AICollect: React.FC = () => {
             .ai-collect-workbench {
               --ai-session-prompt-bottom: 12px;
               --ai-session-prompt-height: 86px;
+              --ai-session-template-tail-gap: calc(var(--ai-session-prompt-height) + 28px);
               --ai-session-runtime-safe-bottom: 92px;
               --ai-session-body-safe-bottom: 12px;
               --ai-session-veil-height: 132px;
@@ -4724,49 +7394,82 @@ const AICollect: React.FC = () => {
             .ai-session-template-frame {
               padding-left: 0;
             }
+            .ai-session-main-shell {
+              gap: 10px;
+            }
             .ai-session-stage-float {
               display: none;
             }
             .ai-session-template-shell {
-              gap: 12px;
+              gap: 10px;
             }
             .ai-session-fixed-meta {
-              gap: 12px;
-              padding: 14px 16px;
-              border-radius: 14px;
+              gap: 8px;
+              padding: 0 0 6px;
             }
             .ai-session-status-line {
-              height: 40px;
+              height: 24px;
               grid-template-columns: 18px minmax(0, 1fr);
-              padding-right: 10px;
+              padding-right: 0;
+            }
+            .ai-session-inspector-divider,
+            .ai-session-inspector-shell {
+              display: none;
             }
             .ai-session-status-meta {
               display: none;
             }
             .ai-session-fixed-title-row {
-              flex-direction: column;
-              align-items: flex-start;
+              align-items: center;
               gap: 8px;
             }
             .ai-session-fixed-title-row h2 {
-              font-size: 24px;
+              font-size: 16px;
             }
             .ai-session-template-scroll {
               width: 100%;
               padding-top: 2px;
+              border-radius: 14px;
+            }
+            .ai-session-adapter-shell,
+            .ai-session-release-shell {
+              width: 100%;
+              max-width: none;
+              padding: 18px 14px;
+              border-radius: 14px;
+            }
+            .ai-session-adapter-overview,
+            .ai-session-release-footer {
+              flex-direction: column;
+              align-items: flex-start;
+            }
+            .ai-session-adapter-progress {
+              width: 100%;
+              align-items: flex-start;
+            }
+            .ai-session-adapter-grid,
+            .ai-session-release-summary,
+            .ai-session-release-grid,
+            .ai-session-release-grid.is-task {
+              grid-template-columns: 1fr;
             }
             .ai-template-sheet {
-              padding: 20px 16px 20px;
+              width: 100%;
+              max-width: none;
+              padding: 18px 14px 18px;
               border-radius: 14px;
+            }
+            .ai-template-confirm-bar {
+              align-items: stretch;
+              flex-direction: column;
             }
             .ai-template-field {
               grid-template-columns: 1fr;
-              gap: 10px;
+              gap: 8px;
               padding-left: 0;
             }
             .ai-session-template-divider {
-              width: calc(100% - 40px);
-              margin-bottom: calc(var(--ai-session-prompt-height) + 30px);
+              width: calc(100% + 44px);
             }
             .ai-session-prompt {
               bottom: var(--ai-session-prompt-bottom);
@@ -4830,7 +7533,7 @@ const AICollect: React.FC = () => {
             renderMissionPanel('hero')
           ) : (
             <div className="ai-session-shell">
-              {renderSessionLayout()}
+              {renderWorkflowLayout()}
               {false && (
               <main className="ai-collect-panel ai-stage-shell ai-stage-shell-full" style={panelStyle}>
                 <div className="ai-stage-top">
@@ -4863,7 +7566,6 @@ const AICollect: React.FC = () => {
           onToggle={handleWorkspacePanelToggle}
           onClose={handleWorkspacePanelClose}
         />
-        {hasSession ? renderDockedPrompt() : null}
       </div>
     </ErrorBoundary>
   );
