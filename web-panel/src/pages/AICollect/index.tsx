@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import dayjs from 'dayjs';
 import {
   Alert,
   App,
@@ -14,14 +15,18 @@ import {
   Switch,
   Table,
   Tag,
+  TimePicker,
   Timeline,
+  Tooltip,
   Typography,
+  Upload,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   AudioOutlined,
   BranchesOutlined,
   CheckCircleOutlined,
+  CloudUploadOutlined,
   CloseOutlined,
   DeploymentUnitOutlined,
   EditOutlined,
@@ -37,6 +42,7 @@ import {
   SearchOutlined,
   StopOutlined,
   ThunderboltOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
@@ -164,6 +170,29 @@ const ChevronRightIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+const ReleaseDraftIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 412 511.87" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path
+      fill="currentColor"
+      fillRule="nonzero"
+      d="M35.7 32.95h33.54V11.18C69.24 5.01 74.25 0 80.43 0c6.17 0 11.18 5.01 11.18 11.18v21.77h49.21V11.18c0-6.17 5.01-11.18 11.19-11.18 6.17 0 11.18 5.01 11.18 11.18v21.77h49.21V11.18C212.4 5.01 217.41 0 223.59 0c6.17 0 11.18 5.01 11.18 11.18v21.77h49.21V11.18c0-6.17 5.01-11.18 11.19-11.18 6.17 0 11.18 5.01 11.18 11.18v21.77h34.55c9.83 0 18.76 4.03 25.21 10.49 5.36 5.35 9.04 12.4 10.15 20.23h.04c9.82 0 18.76 4.03 25.21 10.48C407.98 80.62 412 89.56 412 99.37v376.8c0 9.77-4.04 18.7-10.49 25.17-6.51 6.5-15.45 10.53-25.21 10.53H67.71c-9.81 0-18.75-4.02-25.22-10.49-6.14-6.14-10.09-14.53-10.45-23.8-8.36-.86-15.9-4.66-21.55-10.31C4.03 460.82 0 451.89 0 442.06V68.65c0-9.83 4.03-18.77 10.48-25.22 6.45-6.45 15.39-10.48 25.22-10.48zm340.9 51.06v358.05c0 9.8-4.03 18.74-10.49 25.2-6.47 6.47-15.41 10.5-25.21 10.5H52.43c.39 3.59 2.01 6.82 4.44 9.25 2.79 2.79 6.64 4.53 10.84 4.53H376.3c4.22 0 8.07-1.74 10.85-4.52 2.78-2.78 4.52-6.63 4.52-10.85V99.37c0-4.2-1.74-8.05-4.54-10.84a15.334 15.334 0 0 0-10.53-4.52zm-294 302.37c-5.74 0-10.4-4.86-10.4-10.85 0-5.99 4.66-10.85 10.4-10.85h214.78c5.74 0 10.41 4.86 10.41 10.85 0 5.99-4.67 10.85-10.41 10.85H82.6zm0-71.58c-5.74 0-10.4-4.86-10.4-10.85 0-5.99 4.66-10.85 10.4-10.85h214.78c5.74 0 10.41 4.86 10.41 10.85 0 5.99-4.67 10.85-10.41 10.85H82.6zm0-71.58c-5.74 0-10.4-4.86-10.4-10.85 0-5.99 4.66-10.85 10.4-10.85h214.78c5.74 0 10.41 4.86 10.41 10.85 0 5.99-4.67 10.85-10.41 10.85H82.6zm0-71.58c-5.74 0-10.4-4.86-10.4-10.85 0-5.99 4.66-10.85 10.4-10.85h214.78c5.74 0 10.41 4.86 10.41 10.85 0 5.99-4.67 10.85-10.41 10.85H82.6zM306.35 53.28v21.77c0 6.17-5.01 11.18-11.18 11.18-6.18 0-11.19-5.01-11.19-11.18V53.28h-49.21v21.77c0 6.17-5.01 11.18-11.18 11.18-6.18 0-11.19-5.01-11.19-11.18V53.28h-49.21v21.77c0 6.17-5.01 11.18-11.18 11.18-6.18 0-11.19-5.01-11.19-11.18V53.28H91.61v21.77c0 6.17-5.01 11.18-11.18 11.18-6.18 0-11.19-5.01-11.19-11.18V53.28H35.7c-4.22 0-8.07 1.75-10.85 4.52-2.77 2.78-4.52 6.63-4.52 10.85v373.41c0 4.2 1.75 8.05 4.53 10.84 2.8 2.79 6.65 4.53 10.84 4.53h305.2c4.19 0 8.03-1.75 10.83-4.54 2.79-2.8 4.54-6.65 4.54-10.83V68.65c0-4.19-1.74-8.04-4.53-10.84-2.79-2.78-6.64-4.53-10.84-4.53h-34.55z"
+    />
+  </svg>
+);
+
+const ReleaseArchiveIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 128.889 116.15" className={className} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path
+      d="M4.213 3.005c-.328 0-.614.103-.84.348-.246.246-.368.532-.368.84v28.446c0 .308.122.573.368.778.226.205.512.308.84.308h120.463c.328 0 .614-.103.84-.308.246-.205.368-.471.368-.778V4.192c0-.308-.122-.594-.368-.84-.226-.245-.512-.348-.84-.348H4.213zM10.213 33.798c-.235 0-.471.103-.675.307-.185.205-.287.44-.287.656v77.442c0 .216.103.451.287.655.204.206.43.287.675.287h108.462c.246 0 .472-.081.676-.287.185-.204.287-.43.287-.655V34.761c0-.226-.103-.451-.287-.656-.204-.204-.439-.307-.676-.307H10.213zM47.999 52.228H80.89c1.762 0 3.257.614 4.485 1.844 1.249 1.249 1.863 2.744 1.863 4.505 0 1.761-.614 3.277-1.863 4.567-1.229 1.27-2.725 1.925-4.485 1.925H47.999c-1.761 0-3.257-.655-4.485-1.925-1.249-1.29-1.863-2.807-1.863-4.567 0-1.761.614-3.256 1.863-4.505 1.228-1.23 2.723-1.844 4.485-1.844z"
+      stroke="currentColor"
+      strokeWidth="6.0092"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeMiterlimit="2.6131"
+    />
+  </svg>
+);
+
 type WorkMode = 'explore' | 'contract' | 'dryrun' | 'publish';
 type MissionTab = 'goal' | 'policy';
 type RunStatus = 'idle' | 'running' | 'paused' | 'completed';
@@ -214,6 +243,21 @@ type PythonPreviewToken = {
 };
 type ReleaseAction = 'draft' | 'archive' | 'publish';
 type TaskPublishMode = 'launch' | 'skip';
+type ReleaseScheduleKind = 'once' | 'daily' | 'interval';
+type ReleaseTemplateParam = {
+  name: string;
+  description: string;
+  defaultValue: string;
+  required: boolean;
+};
+type ReleaseBatchConfig = {
+  filePath: string;
+  paramName: string;
+  batchSize: string;
+  startLine: string;
+  limit: string;
+  delay: string;
+};
 type TemplateEntry = {
   id: string;
   key: string;
@@ -1081,6 +1125,12 @@ const AICollect: React.FC = () => {
   const [expandedAdapterStep, setExpandedAdapterStep] = useState<number | null>(0);
   const [selectedReleaseAction, setSelectedReleaseAction] = useState<ReleaseAction>('draft');
   const [selectedTaskPublishMode, setSelectedTaskPublishMode] = useState<TaskPublishMode>('launch');
+  const [releaseScheduleKind, setReleaseScheduleKind] = useState<ReleaseScheduleKind>('once');
+  const [releaseDailyTime, setReleaseDailyTime] = useState('09:00');
+  const [releaseIntervalMinutes, setReleaseIntervalMinutes] = useState(60);
+  const [releaseIncremental, setReleaseIncremental] = useState(false);
+  const [releaseBatchInput, setReleaseBatchInput] = useState(false);
+  const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
   const [sessionInspectorTabs, setSessionInspectorTabs] = useState<SessionInspectorTab[]>([]);
   const [activeInspectorTabId, setActiveInspectorTabId] = useState<string | null>(null);
   const [inspectorMounted, setInspectorMounted] = useState(false);
@@ -1103,6 +1153,41 @@ const AICollect: React.FC = () => {
       ?? templateCatalog.find((template) => template.id === 'google_patent')
       ?? templateCatalog[0];
   }, [intent, submittedPrompt, templateId, url]);
+  const releaseTemplateParams = useMemo<ReleaseTemplateParam[]>(() => {
+    const getEntryValue = (key: string) => {
+      const entry = templateDraftEntries.find((item) => item.key === key);
+      return stripYamlQuotes(templateValueDrafts[entry?.id ?? key] ?? entry?.value ?? '');
+    };
+
+    return templateDraftEntries
+      .filter((entry) => /^params\[\d+\]\.name$/.test(entry.key))
+      .map((entry) => {
+        const prefix = entry.key.replace(/\.name$/, '');
+        return {
+          name: getEntryValue(entry.key),
+          description: getEntryValue(`${prefix}.description`),
+          defaultValue: getEntryValue(`${prefix}.default`),
+          required: getEntryValue(`${prefix}.required`) === 'true',
+        };
+      })
+      .filter((param) => Boolean(param.name));
+  }, [templateDraftEntries, templateValueDrafts]);
+  const releaseBatchConfig = useMemo<ReleaseBatchConfig | null>(() => {
+    const getEntryValue = (key: string) => {
+      const entry = templateDraftEntries.find((item) => item.key === key);
+      return stripYamlQuotes(templateValueDrafts[entry?.id ?? key] ?? entry?.value ?? '');
+    };
+    const filePath = getEntryValue('batch_params.file_path');
+    if (!filePath) return null;
+    return {
+      filePath,
+      paramName: getEntryValue('batch_params.param_name'),
+      batchSize: getEntryValue('batch_params.batch_size'),
+      startLine: getEntryValue('batch_params.start_line'),
+      limit: getEntryValue('batch_params.limit'),
+      delay: getEntryValue('batch_params.delay'),
+    };
+  }, [templateDraftEntries, templateValueDrafts]);
   const browserPreviewHost = useMemo(() => {
     const candidate = url || submittedPrompt.match(/https?:\/\/[^\s，。；,]+/i)?.[0] || '';
     if (!candidate) return '';
@@ -1498,6 +1583,12 @@ const AICollect: React.FC = () => {
       setExpandedAdapterStep(0);
       setSelectedReleaseAction('draft');
       setSelectedTaskPublishMode('launch');
+      setReleaseScheduleKind('once');
+      setReleaseDailyTime('09:00');
+      setReleaseIntervalMinutes(60);
+      setReleaseIncremental(false);
+      setReleaseBatchInput(false);
+      setReleaseTaskParamValues({});
       if (inspectorTransitionTimerRef.current) {
         window.clearTimeout(inspectorTransitionTimerRef.current);
         inspectorTransitionTimerRef.current = null;
@@ -1903,7 +1994,7 @@ const AICollect: React.FC = () => {
     }
   }, [message, templateId]);
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(async (showMessage = true) => {
     setRunStatus('running');
     try {
       await generateTemplateApi({
@@ -1915,9 +2006,9 @@ const AICollect: React.FC = () => {
             .map((field) => ({ name: field.name })),
         },
       });
-      message.success('模板和适配器已发布');
+      if (showMessage) message.success('模板和适配器已发布');
     } catch {
-      message.success('前端模板草案已生成，等待接入发布接口');
+      if (showMessage) message.success('前端模板草案已生成，等待接入发布接口');
     }
     setMode('publish');
     setRunStatus('completed');
@@ -1950,22 +2041,21 @@ const AICollect: React.FC = () => {
     pushLiveLog(`release action: ${releaseLabel.toLowerCase()} | task: ${taskLabel.toLowerCase()}`);
 
     if (selectedReleaseAction === 'publish') {
-      await handleSave();
-      if (selectedTaskPublishMode === 'launch') {
-        message.success('Template published and task draft queued');
-      } else {
-        message.success('Template published without task launch');
-      }
+      await handleSave(false);
+      message.success(selectedTaskPublishMode === 'launch'
+        ? 'Template published and crawl task created'
+        : 'Template published');
       return;
     }
 
     setRunStatus('completed');
-    message.success(
-      selectedTaskPublishMode === 'launch'
-        ? `${releaseLabel} ready and task draft queued`
-        : `${releaseLabel} ready without task launch`,
-    );
+    message.success(`${releaseLabel} ready`);
   }, [handleSave, message, pushLiveLog, selectedReleaseAction, selectedTaskPublishMode]);
+
+  const handleReleaseActionSelect = useCallback((action: ReleaseAction) => {
+    setSelectedReleaseAction(action);
+    if (action === 'publish') setSelectedTaskPublishMode('launch');
+  }, []);
 
   const scrollTemplateToGuideStep = useCallback((step: TemplateStageId | 'confirm-template', defer = false) => {
     const scrollToStep = () => {
@@ -2481,7 +2571,7 @@ const AICollect: React.FC = () => {
           <Tag color="green">Ready</Tag>
           <Text strong style={{ display: 'block', marginTop: 10, fontSize: 18 }}>模板资产可发布</Text>
         </div>
-        <Button type="primary" icon={<SaveOutlined />} onClick={handleSave}>发布模板</Button>
+        <Button type="primary" icon={<SaveOutlined />} onClick={() => void handleSave()}>发布模板</Button>
       </div>
       <div className="ai-publish-list">
         {publishPlan.map(([title, desc], index) => (
@@ -2650,7 +2740,7 @@ const AICollect: React.FC = () => {
         window.cancelAnimationFrame(frame);
       }
     };
-  }, [visibleTemplateEntries.length, visibleTemplateStages]);
+  }, [displayTemplatePanel, visibleTemplateEntries.length, visibleTemplateStages]);
 
   useEffect(() => {
     if (!hoveredStageGuideStep) return undefined;
@@ -3212,14 +3302,21 @@ const AICollect: React.FC = () => {
         <div className="ai-session-stage-bars">
           {sessionGuideSteps.map((step, index) => {
             const visibility = isTemplateStageId(step)
-              ? (templateStageVisibility[step] ?? 0.18)
+              ? (templateStageVisibility[step] ?? 0)
               : index < activeGuideIndex
                 ? 1
                 : index === activeGuideIndex
                   ? 0.92
                   : 0.24;
             const isHovered = hoveredStageGuideStep === step;
-            const isCurrentView = displayGuideStep === step;
+            const isVisibleTemplateStage = isTemplateStageId(step)
+              && displayTemplatePanel
+              && visibility > 0.01;
+            const isCurrentView = isVisibleTemplateStage
+              || (!isTemplateStageId(step) && displayGuideStep === step);
+            const isPrimaryView = isTemplateStageId(step)
+              ? activeTemplateStage === step
+              : displayGuideStep === step;
             const isDone = activeGuideIndex > -1 && index < activeGuideIndex;
             const hoverDistance = hoveredGuideIndex >= 0 ? Math.abs(index - hoveredGuideIndex) : null;
             const hoverWidth = hoverDistance === null
@@ -3256,7 +3353,7 @@ const AICollect: React.FC = () => {
                 onFocus={() => setHoveredStageGuideStep(step)}
                 onClick={() => handleGuideStepClick(step)}
                 aria-label={getGuideMeta(step).title}
-                aria-current={isCurrentView ? 'true' : undefined}
+                aria-current={isPrimaryView ? 'true' : undefined}
               >
                 <span />
               </button>
@@ -3296,10 +3393,6 @@ const AICollect: React.FC = () => {
   const renderPinnedTabs = () => {
     if (!showPinnedTemplateTab && !showPinnedAdapterTab) return null;
 
-    const fallbackStep = activeTemplateStage
-      ?? visibleTemplateStages[visibleTemplateStages.length - 1]
-      ?? 'confirm-template';
-
     return (
       <div className="ai-session-pinned-tab-stack">
         {showPinnedTemplateTab ? (
@@ -3311,7 +3404,11 @@ const AICollect: React.FC = () => {
             onClick={() => {
               setExpandingPinnedPanel('template');
               setGuidePreviewPhase('confirm-template');
-              scrollTemplateToGuideStep(fallbackStep, true);
+              window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                  templateScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                });
+              });
             }}
           >
             <YamlFileIcon className="ai-session-pinned-tab-icon is-template" />
@@ -3449,73 +3546,271 @@ const AICollect: React.FC = () => {
     );
   };
 
-  const renderWorkflowReleasePanel = () => (
-    <section className="ai-session-main-shell is-release">
-      {renderWorkflowHeader()}
-      <div className="ai-session-release-scroll">
-        <div className="ai-session-release-shell">
-          {renderPinnedTabs()}
-          <div className="ai-session-release-grid">
-            {(['draft', 'archive', 'publish'] as ReleaseAction[]).map((action) => (
-              <button
-                type="button"
-                key={action}
-                className={`ai-session-release-card ${selectedReleaseAction === action ? 'is-selected' : ''}`}
-                onClick={() => setSelectedReleaseAction(action)}
+  const renderWorkflowReleasePanel = () => {
+    const releaseActionIcons: Record<ReleaseAction, React.ReactNode> = {
+      draft: <ReleaseDraftIcon />,
+      archive: <ReleaseArchiveIcon />,
+      publish: <CloudUploadOutlined />,
+    };
+    const isPublishing = selectedReleaseAction === 'publish';
+    const createsTask = isPublishing && selectedTaskPublishMode === 'launch';
+    const hasTaskComposer = isPublishing && createsTask;
+    const batchParamName = releaseTaskParamValues.batch_param_name ?? releaseBatchConfig?.paramName ?? '';
+    const selectedBatchFile = releaseTaskParamValues.list_file ?? '';
+    const hasSelectedBatchFile = Boolean(selectedBatchFile);
+    const visibleTaskParams = releaseTemplateParams.filter(
+      (param) => !(releaseBatchInput && batchParamName === param.name),
+    );
+    const releaseCta = hasTaskComposer ? 'Publish & Create Task' : releaseActionMeta[selectedReleaseAction].cta;
+
+    return (
+      <section className="ai-session-main-shell is-release">
+        {renderWorkflowHeader()}
+        <div className="ai-session-release-scroll">
+          <div className="ai-session-release-shell">
+            {renderPinnedTabs()}
+            <div className="ai-session-release-head">
+              <div className="ai-session-release-heading">
+                <div className="ai-session-task-create-title">
+                  <DeploymentUnitOutlined aria-hidden="true" />
+                  <div>
+                    <strong>{hasTaskComposer ? 'Create Crawl Task' : releaseActionMeta[selectedReleaseAction].title}</strong>
+                    <span>{hasTaskComposer ? 'Set the schedule and crawl boundary before publish.' : releaseActionMeta[selectedReleaseAction].desc}</span>
+                  </div>
+                </div>
+                <div className="ai-session-release-meta">
+                  <span>{activeTemplate.fileName}</span>
+                  <span>{adapterFileLabel}</span>
+                  <span>{selectedCount} fields</span>
+                </div>
+              </div>
+              <div className="ai-session-release-head-controls">
+                {hasTaskComposer ? (
+                  <button
+                    type="button"
+                    className="ai-session-task-create-skip"
+                    onClick={() => setSelectedTaskPublishMode(createsTask ? 'skip' : 'launch')}
+                  >
+                    {createsTask ? 'Skip' : 'Create task'}
+                  </button>
+                ) : null}
+                <div className="ai-session-release-actions" aria-label="Template release action">
+                  {(['draft', 'archive', 'publish'] as ReleaseAction[]).map((action) => (
+                    <Tooltip
+                      key={action}
+                      placement="top"
+                      title={(
+                        <div className="ai-session-release-tooltip">
+                          <strong>{releaseActionMeta[action].title}</strong>
+                          <span>{releaseActionMeta[action].desc}</span>
+                        </div>
+                      )}
+                    >
+                      <button
+                        type="button"
+                        className={`ai-session-release-action ${selectedReleaseAction === action ? 'is-selected' : ''}`}
+                        aria-label={releaseActionMeta[action].title}
+                        aria-pressed={selectedReleaseAction === action}
+                        onClick={() => handleReleaseActionSelect(action)}
+                      >
+                        {releaseActionIcons[action]}
+                      </button>
+                    </Tooltip>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {hasTaskComposer ? (
+              <section className="ai-session-task-create">
+                <div className="ai-session-task-scheduler">
+                    <div className="ai-session-task-scheduler-row">
+                      <label className="ai-session-task-control is-wide">
+                        <span>Run schedule</span>
+                        <Segmented
+                          size="small"
+                          block
+                          value={releaseScheduleKind}
+                          onChange={(value) => setReleaseScheduleKind(value as ReleaseScheduleKind)}
+                          options={[
+                            { label: 'Once', value: 'once' },
+                            { label: 'Daily', value: 'daily' },
+                            { label: 'Interval', value: 'interval' },
+                          ]}
+                        />
+                      </label>
+                      {releaseScheduleKind === 'daily' ? (
+                        <label className="ai-session-task-control">
+                          <span>Run at</span>
+                          <TimePicker
+                            allowClear={false}
+                            value={dayjs(releaseDailyTime, 'HH:mm')}
+                            format="HH:mm"
+                            minuteStep={5}
+                            needConfirm
+                            popupClassName="ai-session-time-picker-dropdown"
+                            onChange={(_, value) => setReleaseDailyTime((value as string) || '09:00')}
+                          />
+                        </label>
+                      ) : releaseScheduleKind === 'interval' ? (
+                        <label className="ai-session-task-control">
+                          <span>Every (min)</span>
+                          <InputNumber min={5} max={1440} value={releaseIntervalMinutes} onChange={(value) => setReleaseIntervalMinutes(value ?? 60)} />
+                        </label>
+                      ) : (
+                        <label className="ai-session-task-control">
+                          <span>First run</span>
+                          <Input value="After publish" disabled />
+                        </label>
+                      )}
+                    </div>
+                    <div className="ai-session-task-scheduler-row is-limits">
+                      <label className="ai-session-task-control">
+                        <span>Concurrency</span>
+                        <InputNumber min={1} max={50} value={concurrency} onChange={(value) => setConcurrency(value ?? 4)} />
+                      </label>
+                    </div>
+                    {(visibleTaskParams.length || releaseBatchConfig) ? (
+                      <section className="ai-session-task-template-params">
+                        <div className="ai-session-task-template-params-head">
+                          <span>Template inputs</span>
+                          {releaseBatchConfig ? (
+                            <label>
+                              <span>Batch input</span>
+                              <Switch checked={releaseBatchInput} onChange={setReleaseBatchInput} size="small" />
+                            </label>
+                          ) : null}
+                        </div>
+                        {visibleTaskParams.length ? (
+                          <div className="ai-session-task-param-grid">
+                            {visibleTaskParams.map((param) => {
+                              const sizeClass = param.name === 'query'
+                                ? 'is-long'
+                                : ['domain', 'sort', 'order'].includes(param.name)
+                                  ? 'is-compact'
+                                  : '';
+                              return (
+                            <label className={`ai-session-task-control ${sizeClass}`} key={param.name}>
+                              <span>{param.name}{param.required ? ' *' : ''}</span>
+                              <Input
+                                value={releaseTaskParamValues[param.name] ?? param.defaultValue}
+                                placeholder={param.description || param.name}
+                                onChange={(event) => setReleaseTaskParamValues((prev) => ({ ...prev, [param.name]: event.target.value }))}
+                              />
+                            </label>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                        {releaseBatchInput && releaseBatchConfig ? (
+                          <div className="ai-session-task-batch-params">
+                            <div className="ai-session-task-batch-params-body">
+                              <label className="ai-session-task-control is-file">
+                                <span>List file *</span>
+                                <div className="ai-session-task-file-picker">
+                                  <Upload
+                                    accept=".txt,.csv"
+                                    showUploadList={false}
+                                    beforeUpload={() => false}
+                                    onChange={({ file }) => {
+                                      if (file.name) {
+                                        setReleaseTaskParamValues((prev) => ({ ...prev, list_file: file.name }));
+                                      }
+                                    }}
+                                  >
+                                    <Button size="small" icon={<UploadOutlined />}>Choose</Button>
+                                  </Upload>
+                                  {hasSelectedBatchFile ? (
+                                    <span className="ai-session-task-file-reference" title={selectedBatchFile}>
+                                      <span>{selectedBatchFile}</span>
+                                      <button
+                                        type="button"
+                                        className="ai-session-task-file-remove"
+                                        aria-label="Remove selected file"
+                                        onClick={() => setReleaseTaskParamValues(({ list_file, ...rest }) => rest)}
+                                      >
+                                        <CloseOutlined />
+                                      </button>
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </label>
+                              {hasSelectedBatchFile ? (
+                                <div className="ai-session-task-batch-details">
+                                  <label className="ai-session-task-control is-binding">
+                                    <span>Inject into *</span>
+                                    <Select
+                                      value={batchParamName || undefined}
+                                      options={releaseTemplateParams.map((param) => ({ value: param.name, label: param.name }))}
+                                      onChange={(value) => setReleaseTaskParamValues((prev) => ({ ...prev, batch_param_name: value }))}
+                                    />
+                                  </label>
+                              <div className="ai-session-task-batch-number-grid">
+                                <label className="ai-session-task-control">
+                                  <span>Batch size</span>
+                                  <InputNumber min={1} value={Number(releaseTaskParamValues.batch_size ?? releaseBatchConfig.batchSize) || 1} onChange={(value) => setReleaseTaskParamValues((prev) => ({ ...prev, batch_size: String(value ?? 1) }))} />
+                                </label>
+                                <label className="ai-session-task-control">
+                                  <span>Start line</span>
+                                  <InputNumber min={0} value={Number(releaseTaskParamValues.batch_start_line ?? releaseBatchConfig.startLine) || 0} onChange={(value) => setReleaseTaskParamValues((prev) => ({ ...prev, batch_start_line: String(value ?? 0) }))} />
+                                </label>
+                                <label className="ai-session-task-control">
+                                  <span>Limit</span>
+                                  <InputNumber min={1} placeholder="No limit" value={(() => {
+                                    const value = releaseTaskParamValues.batch_limit ?? releaseBatchConfig.limit;
+                                    const parsed = Number(value);
+                                    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+                                  })()} onChange={(value) => setReleaseTaskParamValues((prev) => ({ ...prev, batch_limit: value === null ? '' : String(value) }))} />
+                                </label>
+                                <label className="ai-session-task-control">
+                                  <span>Delay (sec)</span>
+                                  <InputNumber min={0} value={Number(releaseTaskParamValues.batch_delay ?? releaseBatchConfig.delay) || 0} onChange={(value) => setReleaseTaskParamValues((prev) => ({ ...prev, batch_delay: String(value ?? 0) }))} />
+                                </label>
+                              </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
+                      </section>
+                    ) : null}
+                    <div className="ai-session-task-policies">
+                      <label>
+                        <span><strong>Incremental</strong><small>{releaseIncremental ? 'Continue from last boundary' : 'Collect full scope'}</small></span>
+                        <Switch checked={releaseIncremental} onChange={setReleaseIncremental} />
+                      </label>
+                      <label>
+                        <span><strong>Robots policy</strong><small>Honor source limits</small></span>
+                        <Switch checked={respectRobots} onChange={setRespectRobots} />
+                      </label>
+                      <label>
+                        <span><strong>Drift guard</strong><small>Pause on structural change</small></span>
+                        <Switch checked={enableDriftGuard} onChange={setEnableDriftGuard} />
+                      </label>
+                    </div>
+                </div>
+              </section>
+            ) : null}
+            <div className="ai-session-release-footer">
+              <Button
+                type="primary"
+                className="ai-template-confirm-btn"
+                onClick={() => void handleApplyReleaseAction()}
               >
-                <strong>{releaseActionMeta[action].title}</strong>
-                <p>{releaseActionMeta[action].desc}</p>
-              </button>
-            ))}
-          </div>
-          <div className="ai-session-release-grid is-task">
-            {(['launch', 'skip'] as TaskPublishMode[]).map((modeValue) => (
-              <button
-                type="button"
-                key={modeValue}
-                className={`ai-session-release-card ${selectedTaskPublishMode === modeValue ? 'is-selected' : ''}`}
-                onClick={() => setSelectedTaskPublishMode(modeValue)}
-              >
-                <strong>{taskPublishMeta[modeValue].title}</strong>
-                <p>{taskPublishMeta[modeValue].desc}</p>
-              </button>
-            ))}
-          </div>
-          <div className="ai-session-release-summary">
-            <div>
-              <span>Template</span>
-              <strong>{activeTemplate.fileName}</strong>
-            </div>
-            <div>
-              <span>Adapter</span>
-              <strong>{adapterFileLabel}</strong>
-            </div>
-            <div>
-              <span>Fields</span>
-              <strong>{selectedCount}</strong>
-            </div>
-            <div>
-              <span>Diff</span>
-              <strong>+{adapterDiffStats.added} / -{adapterDiffStats.removed}</strong>
+                {releaseCta}
+              </Button>
+              <Text className="ai-session-release-note">
+                {hasTaskComposer ? taskPublishMeta.launch.desc : releaseActionMeta[selectedReleaseAction].desc}
+              </Text>
             </div>
           </div>
-          <div className="ai-session-release-footer">
-            <Button
-              type="primary"
-              className="ai-template-confirm-btn"
-              onClick={() => void handleApplyReleaseAction()}
-            >
-              {releaseActionMeta[selectedReleaseAction].cta}
-            </Button>
-            <Text className="ai-session-release-note">{taskPublishMeta[selectedTaskPublishMode].desc}</Text>
+          <div className="ai-session-template-tail" aria-hidden="true">
+            <div className="ai-session-template-divider" />
           </div>
         </div>
-        <div className="ai-session-template-tail" aria-hidden="true">
-          <div className="ai-session-template-divider" />
-        </div>
-      </div>
-    </section>
-  );
+      </section>
+    );
+  };
 
   const renderWorkflowLayout = () => (
     <div
@@ -3768,7 +4063,7 @@ const AICollect: React.FC = () => {
       <Button
         type={mode === 'publish' ? 'primary' : 'default'}
         icon={mode === 'explore' ? <RobotOutlined /> : mode === 'contract' ? <ExperimentOutlined /> : mode === 'dryrun' ? <SaveOutlined /> : <DeploymentUnitOutlined />}
-        onClick={mode === 'explore' ? handleAnalyze : mode === 'contract' ? handleDryRun : mode === 'dryrun' ? handleSave : undefined}
+        onClick={mode === 'explore' ? handleAnalyze : mode === 'contract' ? handleDryRun : mode === 'dryrun' ? () => void handleSave() : undefined}
       >
         {stageMeta[mode].action}
       </Button>
@@ -4727,8 +5022,7 @@ const AICollect: React.FC = () => {
             flex-direction: column;
             gap: 3px;
           }
-          .ai-session-adapter-task-copy strong,
-          .ai-session-release-card strong {
+          .ai-session-adapter-task-copy strong {
             display: block;
             color: ${aura.text};
             font-size: 13px;
@@ -4780,8 +5074,7 @@ const AICollect: React.FC = () => {
             flex-direction: column;
             gap: 10px;
           }
-          .ai-session-adapter-task-body p,
-          .ai-session-release-card p {
+          .ai-session-adapter-task-body p {
             margin: 0;
             color: ${aura.muted};
             font-size: 11px;
@@ -4829,57 +5122,413 @@ const AICollect: React.FC = () => {
             margin-bottom: 20px;
             display: flex;
             flex-direction: column;
-            gap: 14px;
+            gap: 16px;
             position: relative;
           }
-          .ai-session-release-grid {
+          .ai-session-release-head {
+            min-height: 54px;
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.12);
+          }
+          .ai-session-release-heading {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
+          .ai-session-release-head-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: none;
+          }
+          .ai-session-release-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+          }
+          .ai-session-release-action {
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.025);
+            color: rgba(255, 255, 255, 0.54);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: color 160ms ease, border-color 160ms ease, background 160ms ease, transform 160ms ease;
+          }
+          .ai-session-release-action:hover,
+          .ai-session-release-action:focus-visible,
+          .ai-session-release-action.is-selected {
+            color: #ffffff;
+            border-color: rgba(138, 180, 255, 0.28);
+            background: rgba(138, 180, 255, 0.1);
+            transform: translateY(-1px);
+          }
+          .ai-session-release-action .anticon {
+            font-size: 15px;
+          }
+          .ai-session-release-action > svg {
+            width: 15px;
+            height: 15px;
+          }
+          .ai-session-release-tooltip {
+            width: 210px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+          }
+          .ai-session-release-tooltip strong {
+            color: #ffffff;
+            font-size: 12px;
+            line-height: 1.35;
+          }
+          .ai-session-release-tooltip span {
+            color: rgba(255, 255, 255, 0.68);
+            font-size: 11px;
+            line-height: 1.45;
+          }
+          .ai-session-task-create {
+            padding: 12px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.12);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+          }
+          .ai-session-task-create-title {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+          }
+          .ai-session-task-create-title > .anticon {
+            margin-top: 0;
+            color: rgba(188, 219, 255, 0.9);
+            font-size: 16px;
+          }
+          .ai-session-task-create-title > div {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+          }
+          .ai-session-task-create-title strong {
+            color: ${aura.text};
+            font-size: 13px;
+            line-height: 1.35;
+            font-weight: 600;
+          }
+          .ai-session-task-create-title span {
+            color: ${aura.muted};
+            font-size: 11px;
+            line-height: 1.45;
+          }
+          .ai-session-task-create-skip {
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.54);
+            font-size: 11px;
+            line-height: 20px;
+            cursor: pointer;
+            flex-shrink: 0;
+          }
+          .ai-session-task-create-skip:hover {
+            color: #ffffff;
+            text-decoration: underline;
+          }
+          .ai-session-release-meta {
+            display: flex;
+            align-items: center;
+            gap: 0;
+            min-height: 16px;
+            color: ${aura.muted};
+            font-size: 10px;
+            line-height: 1.35;
+            white-space: nowrap;
+            overflow: hidden;
+          }
+          .ai-session-release-meta span {
+            max-width: 180px;
+            padding: 0 9px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+          }
+          .ai-session-release-meta span:first-child {
+            padding-left: 0;
+          }
+          .ai-session-release-meta span:last-child {
+            border-right: none;
+          }
+          .ai-session-task-scheduler {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .ai-session-task-scheduler-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 140px;
+            gap: 10px;
+            min-height: 54px;
+          }
+          .ai-session-task-scheduler-row.is-limits {
+            grid-template-columns: 82px;
+            justify-content: start;
+          }
+          .ai-session-task-control {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+          }
+          .ai-session-task-control > span {
+            color: ${aura.subtle};
+            font-size: 9px;
+            line-height: 1.3;
+            letter-spacing: 0;
+          }
+          .ai-session-task-control .ant-input,
+          .ai-session-task-control .ant-input-number,
+          .ai-session-task-control .ant-select-selector,
+          .ai-session-task-control .ant-picker {
+            font-size: 12px;
+          }
+          .ai-session-task-control .ant-input,
+          .ai-session-task-control .ant-input-number,
+          .ai-session-task-control .ant-select,
+          .ai-session-task-control .ant-select-selector,
+          .ai-session-task-control .ant-picker,
+          .ai-session-task-control .ant-segmented {
+            height: 32px;
+          }
+          .ai-session-task-control .ant-picker {
+            width: 100%;
+          }
+          .ai-session-task-control .ant-picker-suffix {
+            color: rgba(255, 255, 255, 0.5);
+          }
+          .ai-session-task-control .ant-input-number-input-wrap,
+          .ai-session-task-control .ant-input-number-input {
+            height: 30px;
+          }
+          .ai-session-task-control .ant-segmented-item-label {
+            min-width: 58px;
+            line-height: 30px;
+            white-space: nowrap;
+          }
+          .ai-session-task-control .ant-input-number {
+            width: 100%;
+          }
+          .ai-session-task-control .ant-segmented {
+            background: rgba(255, 255, 255, 0.045);
+          }
+          .ai-session-task-template-params {
+            padding: 10px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          }
+          .ai-session-task-template-params-head {
+            min-height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 8px;
+            color: ${aura.subtle};
+            font-size: 10px;
+          }
+          .ai-session-task-template-params-head > label {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            color: ${aura.muted};
+            white-space: nowrap;
+          }
+          .ai-session-task-param-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+          }
+          .ai-session-task-param-grid .ai-session-task-control {
+            width: 168px;
+          }
+          .ai-session-task-param-grid .ai-session-task-control.is-compact {
+            width: 124px;
+          }
+          .ai-session-task-param-grid .ai-session-task-control.is-long {
+            width: 320px;
+          }
+          .ai-session-task-file-picker {
+            min-width: 0;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+          }
+          .ai-session-task-file-picker .ant-btn {
+            height: 30px;
+            padding: 0 8px;
+            border-radius: 6px;
+            color: rgba(255, 255, 255, 0.72);
+            font-size: 11px;
+          }
+          .ai-session-task-file-reference {
+            min-width: 0;
+            max-width: 124px;
+            padding: 3px 6px;
+            border: 1px solid rgba(138, 180, 255, 0.18);
+            border-radius: 5px;
+            background: rgba(138, 180, 255, 0.08);
+            color: rgba(188, 219, 255, 0.86);
+            font-size: 10px;
+            line-height: 1.2;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+          }
+          .ai-session-task-file-reference > span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          .ai-session-task-file-remove {
+            width: 14px;
+            height: 14px;
+            padding: 0;
+            border: 0;
+            border-radius: 50%;
+            background: transparent;
+            color: rgba(255, 255, 255, 0.48);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex: none;
+          }
+          .ai-session-task-file-remove:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.08);
+          }
+          .ai-session-task-file-remove .anticon {
+            font-size: 10px;
+          }
+          .ai-session-task-batch-params {
+            margin-top: 10px;
+          }
+          .ai-session-task-batch-params-body {
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 12px;
+          }
+          .ai-session-task-batch-params-body .ai-session-task-control.is-file {
+            width: 100%;
+            flex: none;
+          }
+          .ai-session-task-batch-details {
+            display: flex;
+            align-items: end;
+            gap: 12px;
+          }
+          .ai-session-task-batch-details .ai-session-task-control.is-binding {
+            width: 126px;
+            flex: none;
+          }
+          .ai-session-task-batch-number-grid {
+            display: flex;
+            gap: 8px;
+          }
+          .ai-session-task-batch-number-grid .ai-session-task-control {
+            width: 84px;
+            flex: none;
+          }
+          .ai-session-task-policies {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 10px;
+            padding: 9px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
           }
-          .ai-session-release-grid.is-task {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+          .ai-session-task-policies label {
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
           }
-          .ai-session-release-card {
-            padding: 14px;
-            border-radius: 14px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            background: rgba(255, 255, 255, 0.03);
-            text-align: left;
-            cursor: pointer;
-            transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+          .ai-session-task-policies label > span {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
           }
-          .ai-session-release-card:hover,
-          .ai-session-release-card.is-selected {
-            border-color: rgba(138, 180, 255, 0.22);
-            background: rgba(138, 180, 255, 0.08);
-            transform: translateY(-1px);
-          }
-          .ai-session-release-summary {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 10px;
-          }
-          .ai-session-release-summary > div {
-            padding: 12px 13px;
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            background: rgba(255, 255, 255, 0.03);
-          }
-          .ai-session-release-summary span {
-            display: block;
-            color: ${aura.subtle};
-            font-size: 10px;
-            text-transform: uppercase;
-            letter-spacing: 0.06em;
-          }
-          .ai-session-release-summary strong {
-            display: block;
-            margin-top: 8px;
+          .ai-session-task-policies strong {
             color: ${aura.text};
-            font-size: 13px;
-            line-height: 1.45;
-            word-break: break-word;
+            font-size: 11px;
+            line-height: 1.35;
+            font-weight: 500;
+          }
+          .ai-session-task-policies small {
+            color: ${aura.muted};
+            font-size: 10px;
+            line-height: 1.35;
+          }
+          .ai-session-time-picker-dropdown .ant-picker-panel-container {
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(37, 42, 52, 0.98);
+            box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+          }
+          .ai-session-time-picker-dropdown .ant-picker-time-panel-column {
+            overscroll-behavior: contain;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+          }
+          .ai-session-time-picker-dropdown .ant-picker-time-panel-column > li.ant-picker-time-panel-cell .ant-picker-time-panel-cell-inner {
+            color: rgba(255, 255, 255, 0.68);
+          }
+          .ai-session-time-picker-dropdown .ant-picker-time-panel-column > li.ant-picker-time-panel-cell-selected .ant-picker-time-panel-cell-inner,
+          .ai-session-time-picker-dropdown .ant-picker-time-panel-column > li.ant-picker-time-panel-cell:hover .ant-picker-time-panel-cell-inner {
+            background: rgba(129, 216, 208, 0.16);
+            color: #edfffc;
+          }
+          .ai-session-time-picker-dropdown .ant-picker-time-panel-column::after {
+            border-color: rgba(255, 255, 255, 0.07);
+          }
+          .ai-session-time-picker-dropdown .ant-picker-footer {
+            padding: 7px 10px;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+          }
+          .ai-session-time-picker-dropdown .ant-picker-now {
+            color: rgba(188, 219, 255, 0.9);
+            font-size: 11px;
+          }
+          .ai-session-time-picker-dropdown .ant-picker-now:hover {
+            color: #ffffff;
+          }
+          .ai-session-time-picker-dropdown .ant-picker-ok .ant-btn {
+            height: 26px;
+            padding: 0 10px;
+            border-radius: 6px;
+            border-color: rgba(129, 216, 208, 0.34);
+            background: rgba(129, 216, 208, 0.16);
+            color: #e6fffb;
+            font-size: 11px;
+          }
+          .ai-session-time-picker-dropdown .ant-picker-ok .ant-btn:hover {
+            border-color: rgba(129, 216, 208, 0.58);
+            background: rgba(129, 216, 208, 0.24);
           }
           .ai-session-release-footer {
             display: flex;
@@ -7428,11 +8077,32 @@ const AICollect: React.FC = () => {
               width: 100%;
               align-items: flex-start;
             }
-            .ai-session-adapter-grid,
-            .ai-session-release-summary,
-            .ai-session-release-grid,
-            .ai-session-release-grid.is-task {
+            .ai-session-adapter-grid {
               grid-template-columns: 1fr;
+            }
+            .ai-session-task-scheduler-row,
+            .ai-session-task-scheduler-row.is-limits,
+            .ai-session-task-policies {
+              grid-template-columns: 1fr;
+            }
+            .ai-session-task-param-grid .ai-session-task-control,
+            .ai-session-task-param-grid .ai-session-task-control.is-compact,
+            .ai-session-task-param-grid .ai-session-task-control.is-long,
+            .ai-session-task-batch-params-body .ai-session-task-control.is-file,
+            .ai-session-task-batch-details .ai-session-task-control.is-binding {
+              width: 100%;
+            }
+            .ai-session-task-batch-params-body,
+            .ai-session-task-batch-details {
+              align-items: stretch;
+              flex-direction: column;
+            }
+            .ai-session-task-batch-number-grid {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+            .ai-session-task-batch-number-grid .ai-session-task-control {
+              width: auto;
             }
             .ai-template-sheet {
               width: 100%;
