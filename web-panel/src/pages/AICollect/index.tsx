@@ -597,25 +597,86 @@ const toPascalCase = (value: string) => value
   .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
   .join('');
 
-const inferTemplateStep = (key: string): ProcessStepKey => {
+const inferTemplateStep = (key: string, path: string): ProcessStepKey => {
+  if (
+    path === 'batch_params'
+    || path.startsWith('batch_params.')
+    || path === 'params'
+    || path.startsWith('params')
+    || key === 'list_page'
+    || path.startsWith('list_request')
+    || key === 'response_type'
+    || key === 'json_item_path'
+    || key === 'json_total_path'
+    || key === 'json_page_path'
+    || key === 'json_total_num_pages'
+  ) {
+    return 'entry';
+  }
+  if (
+    path === 'list_pagination'
+    || path.startsWith('list_pagination.')
+    || path === 'dedup_fields'
+    || path.startsWith('dedup_fields')
+    || path === 'list_fields'
+    || path.startsWith('list_fields')
+  ) {
+    return 'structure';
+  }
+  if (path === 'download' || path.startsWith('download')) {
+    return 'contract';
+  }
+  if (
+    path === 'name'
+    || path === 'display_name'
+    || path === 'base_url'
+    || path === 'data_type'
+    || path === 'adapter'
+    || path === 'anti_crawl_enabled'
+    || path === 'description'
+  ) {
+    return 'prepare';
+  }
   const matchedStep = processStepOrder.find((step) => templateStepKeys[step].includes(key));
   return matchedStep ?? 'publish';
 };
 
 const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
   if (
-    key === 'name'
-    || key === 'display_name'
-    || key === 'base_url'
-    || key === 'data_type'
-    || key === 'adapter'
-    || key === 'anti_crawl_enabled'
-    || key === 'description'
+    path === 'batch_params'
+    || path.startsWith('batch_params.')
+    || path === 'params'
+    || path.startsWith('params')
+    || key === 'list_page'
+    || path.startsWith('list_request')
+  ) {
+    return 'request';
+  }
+  if (
+    path === 'list_pagination'
+    || path.startsWith('list_pagination.')
+  ) {
+    return 'pagination';
+  }
+  if (path === 'dedup_fields' || path.startsWith('dedup_fields')) {
+    return 'dedup';
+  }
+  if (path === 'download' || path.startsWith('download')) {
+    return 'download';
+  }
+  if (path === 'list_fields' || path.startsWith('list_fields')) {
+    return 'fields';
+  }
+  if (
+    path === 'name'
+    || path === 'display_name'
+    || path === 'base_url'
+    || path === 'data_type'
+    || path === 'adapter'
+    || path === 'anti_crawl_enabled'
+    || path === 'description'
   ) {
     return 'site';
-  }
-  if (key === 'batch_params' || key === 'params' || key === 'list_page' || path.startsWith('list_request')) {
-    return 'request';
   }
   if (
     key === 'response_type'
@@ -625,15 +686,6 @@ const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
     || key === 'json_total_num_pages'
   ) {
     return 'response';
-  }
-  if (key === 'list_pagination' || path.startsWith('list_pagination')) {
-    return 'pagination';
-  }
-  if (key === 'dedup_fields' || path.startsWith('dedup_fields')) {
-    return 'dedup';
-  }
-  if (key === 'download' || path.startsWith('download')) {
-    return 'download';
   }
   return 'fields';
 };
@@ -657,6 +709,9 @@ const numericTemplateKeys = new Set([
   'max_pages',
   'results_per_page',
 ]);
+
+const yamlListPreviewRoots = new Set(['params', 'list_fields', 'download']);
+const flattenedTemplateRootKeys = new Set(['list_pagination', 'dedup_fields', 'download']);
 
 const parseTemplateEntries = (raw: string): TemplateEntry[] => {
   const entries: TemplateEntry[] = [];
@@ -748,7 +803,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
           key: itemPath,
           value: '',
           nodeType: 'group',
-          step: inferTemplateStep(listBase.split('.').pop() ?? listBase),
+          step: inferTemplateStep(listBase.split('.').pop() ?? listBase, itemPath),
           stageId: inferTemplateStageId(listBase.split('.').pop() ?? listBase, itemPath),
           multiline: false,
           depth,
@@ -768,7 +823,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
           key,
           value: keyValue,
           nodeType: rawValue ? 'value' : 'group',
-          step: inferTemplateStep(keyName),
+          step: inferTemplateStep(keyName, key),
           stageId: inferTemplateStageId(keyName, key),
           multiline,
           depth: depth + 1,
@@ -786,7 +841,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
           key: itemPath,
           value: normalizeYamlValue(value),
           nodeType: 'value',
-          step: inferTemplateStep(listBase.split('.').pop() ?? listBase),
+          step: inferTemplateStep(listBase.split('.').pop() ?? listBase, itemPath),
           stageId: inferTemplateStageId(listBase.split('.').pop() ?? listBase, itemPath),
           multiline: value.includes('[') || value.includes('{'),
           depth,
@@ -818,7 +873,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
       key: path,
       value,
       nodeType: rawValue ? 'value' : 'group',
-      step: inferTemplateStep(keyName),
+      step: inferTemplateStep(keyName, path),
       stageId: inferTemplateStageId(keyName, path),
       multiline,
       depth,
@@ -848,6 +903,22 @@ const templateCatalog: TemplateCatalogItem[] = Object.entries(templateSourceModu
     };
   })
   .sort((left, right) => left.id.localeCompare(right.id));
+
+const templateSelectorTypeOptions = Array.from(new Set(
+  templateCatalog
+    .flatMap((template) => template.entries)
+    .filter((entry) => /\.selector_type$/.test(entry.key))
+    .map((entry) => stripYamlQuotes(entry.value))
+    .filter(Boolean),
+)).sort((left, right) => left.localeCompare(right));
+
+const templateFieldTypeOptions = Array.from(new Set(
+  templateCatalog
+    .flatMap((template) => template.entries)
+    .filter((entry) => /\.field_type$/.test(entry.key))
+    .map((entry) => stripYamlQuotes(entry.value))
+    .filter(Boolean),
+)).sort((left, right) => left.localeCompare(right));
 
 const sampleFields: FieldDef[] = [
   { name: 'title', selector: 'h1, .title', type: 'text', sample: 'Autonomous navigation route planning', required: true },
@@ -2698,6 +2769,12 @@ const AICollect: React.FC = () => {
       const [, rootKey, rawIndex, childPath] = arrayChildMatch;
       const itemIndex = Number(rawIndex);
       const label = childPath.split('.').pop() ?? childPath;
+      if (rootKey === 'params') {
+        return {
+          label: label,
+          pathHint: 'params',
+        };
+      }
       const itemTitle = getTemplateListItemTitle(rootKey, `${rootKey}[${itemIndex}]`, itemIndex);
       return {
         label,
@@ -2716,9 +2793,12 @@ const AICollect: React.FC = () => {
     const normalizedValue = stripYamlQuotes(value);
     const leafKey = entry.key.split('.').pop()?.replace(/\[\d+\]$/, '') ?? entry.key;
     const isDedupField = entry.stageId === 'dedup' && /^dedup_fields\[\d+\]$/.test(entry.key);
+    const isSelectorTypeField = leafKey === 'selector_type';
+    const isFieldTypeField = leafKey === 'field_type';
     const isBooleanValue = yamlBooleanPattern.test(normalizedValue);
     const isNumericValue = numericTemplateKeys.has(leafKey) || yamlNumberPattern.test(normalizedValue);
     const prefersTextarea = entry.multiline || leafKey === 'description';
+    const isSiteDescription = entry.stageId === 'site' && leafKey === 'description';
     const textValue = entry.multiline ? value : normalizedValue;
 
     if (isDedupField) {
@@ -2733,6 +2813,21 @@ const AICollect: React.FC = () => {
           options={options}
           placeholder="Select list field"
           optionFilterProp="label"
+          onChange={(nextValue) => handleTemplateValueChange(entry.id, nextValue)}
+        />
+      );
+    }
+
+    if (isSelectorTypeField || isFieldTypeField) {
+      const sourceOptions = isSelectorTypeField ? templateSelectorTypeOptions : templateFieldTypeOptions;
+      const options = Array.from(new Set([normalizedValue, ...sourceOptions].filter(Boolean)))
+        .map((option) => ({ label: option, value: option }));
+
+      return (
+        <Select
+          size="small"
+          value={normalizedValue || undefined}
+          options={options}
           onChange={(nextValue) => handleTemplateValueChange(entry.id, nextValue)}
         />
       );
@@ -2755,13 +2850,30 @@ const AICollect: React.FC = () => {
 
     if (isNumericValue) {
       const numericValue = yamlNumberPattern.test(normalizedValue) ? Number(normalizedValue) : null;
+      const numericTextValue = normalizedValue === 'null' ? '' : normalizedValue;
+      const numericWidth = `calc(${Math.max(2, numericTextValue.length || 1)}ch + 28px)`;
       return (
         <InputNumber
+          className="ai-template-number-input"
           size="small"
-          controls={false}
+          inputMode="numeric"
           value={numericValue}
+          onKeyDown={(event) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            if (['Backspace', 'Delete', 'Tab', 'Enter', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
+              return;
+            }
+            if (/^\d$/.test(event.key)) return;
+            event.preventDefault();
+          }}
+          onPaste={(event) => {
+            const pastedText = event.clipboardData.getData('text').trim();
+            if (!/^\d+$/.test(pastedText)) {
+              event.preventDefault();
+            }
+          }}
           onChange={(nextValue) => handleTemplateValueChange(entry.id, nextValue == null ? 'null' : String(nextValue))}
-          style={{ width: '100%' }}
+          style={{ width: numericWidth }}
         />
       );
     }
@@ -2770,7 +2882,10 @@ const AICollect: React.FC = () => {
       return (
         <TextArea
           value={textValue}
-          autoSize={{ minRows: entry.multiline ? 2 : 1, maxRows: 8 }}
+          autoSize={{
+            minRows: isSiteDescription ? 8 : entry.multiline ? 2 : 1,
+            maxRows: isSiteDescription ? 18 : 8,
+          }}
           onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
         />
       );
@@ -2854,36 +2969,38 @@ const AICollect: React.FC = () => {
     }));
   }, [templateDraftEntries]);
 
-  const renderTemplateField = useCallback((entry: TemplateEntry) => {
-    const value = templateValueDrafts[entry.id] ?? entry.value;
-    const isGroup = entry.nodeType === 'group';
-    const isItemGroup = isGroup && /\[\d+\]$/.test(entry.key);
-    const displayValue = entry.multiline ? value : stripYamlQuotes(value);
-    const { label, pathHint } = getTemplateEntryDisplayMeta(entry, value);
-
-    return (
-      <div
-        className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''} ${isGroup ? 'is-group' : ''} ${isItemGroup ? 'is-item-group' : ''} ${templateEditable && !isGroup ? 'is-editable' : ''}`}
-        key={entry.id}
-        style={{ ['--ai-template-depth' as string]: String(entry.depth) }}
-      >
-        <div className="ai-template-field-key">
-          <span>{label}</span>
-          {pathHint ? <small>{pathHint}</small> : null}
-        </div>
-        {isGroup ? null : (
-          <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
-            {templateEditable ? renderTemplateValueControl(entry, value) : <pre>{displayValue || 'null'}</pre>}
-          </div>
-        )}
-      </div>
-    );
-  }, [getTemplateEntryDisplayMeta, renderTemplateValueControl, templateEditable, templateValueDrafts]);
-
   const renderTemplateStageSection = useCallback((stageId: TemplateStageId) => {
-    const stageEntries = visibleTemplateEntries.filter((entry) => entry.stageId === stageId);
+    const stageEntries = visibleTemplateEntries.filter((entry) => {
+      if (entry.stageId !== stageId) return false;
+      if (
+        entry.nodeType === 'group'
+        && (
+          /^(params|list_fields|download)\[\d+\]$/.test(entry.key)
+          || flattenedTemplateRootKeys.has(entry.key)
+        )
+      ) {
+        return false;
+      }
+      return true;
+    });
     if (!stageEntries.length) return null;
     const stageValueCount = stageEntries.filter((entry) => entry.nodeType === 'value').length;
+    const getTemplateEntryGroupKey = (entry: TemplateEntry, nextEntry?: TemplateEntry) => {
+      const rootGroupMatch = entry.key.match(/^([A-Za-z_][\w-]*)$/);
+      if (entry.nodeType === 'group' && rootGroupMatch) {
+        const rootKey = rootGroupMatch[1];
+        const nextItemMatch = nextEntry?.key.match(new RegExp(`^(${rootKey}\\[\\d+\\])(?:\\.|$)`));
+        return nextItemMatch?.[1] ?? rootKey;
+      }
+
+      const itemMatch = entry.key.match(/^([A-Za-z_][\w-]*\[\d+\])(?:\.|$)/);
+      if (itemMatch) {
+        return itemMatch[1];
+      }
+
+      const rootMatch = entry.key.match(/^([A-Za-z_][\w-]*)(?:\.|$)/);
+      return rootMatch?.[1] ?? entry.key;
+    };
 
     return (
       <section
@@ -2914,11 +3031,61 @@ const AICollect: React.FC = () => {
           </div>
         </div>
         <div className="ai-template-stage-body">
-          {stageEntries.map(renderTemplateField)}
+          {stageEntries.map((entry, index) => {
+            const previousEntry = stageEntries[index - 1];
+            const nextEntry = stageEntries[index + 1];
+            const nextNextEntry = stageEntries[index + 2];
+            const currentGroupKey = getTemplateEntryGroupKey(entry, nextEntry);
+            const nextGroupKey = nextEntry ? getTemplateEntryGroupKey(nextEntry, nextNextEntry) : null;
+            const extraClass = currentGroupKey !== nextGroupKey ? 'is-group-end' : '';
+            const yamlListItemKey = entry.key.match(/^(params|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+            const previousYamlListItemKey = previousEntry?.key.match(/^(params|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+            const yamlListRoot = yamlListItemKey?.split('[')[0] ?? null;
+            const rootKey = entry.key.match(/^([A-Za-z_][\w-]*)(?:\.|\[|$)/)?.[1] ?? entry.key;
+            const isYamlListItem = Boolean(
+              yamlListItemKey
+              && yamlListRoot
+              && yamlListPreviewRoots.has(yamlListRoot)
+            );
+            const isYamlListAnchor = Boolean(
+              isYamlListItem
+              && yamlListItemKey !== previousYamlListItemKey
+            );
+            const flattenRootIndent = flattenedTemplateRootKeys.has(rootKey) && entry.key !== rootKey;
+            const displayDepth = Math.max(
+              0,
+              entry.depth - (isYamlListItem || flattenRootIndent ? 1 : 0),
+            );
+            const value = templateValueDrafts[entry.id] ?? entry.value;
+            const isGroup = entry.nodeType === 'group';
+            const isItemGroup = isGroup && /\[\d+\]$/.test(entry.key);
+            const isRootGroup = isGroup && !entry.key.includes('.') && !/\[\d+\]$/.test(entry.key);
+            const displayValue = entry.multiline ? value : stripYamlQuotes(value);
+            const { label } = getTemplateEntryDisplayMeta(entry, value);
+            const displayLabel = label;
+
+            return (
+              <div
+                className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''} ${isGroup ? 'is-group' : ''} ${isItemGroup ? 'is-item-group' : ''} ${isRootGroup ? 'is-root-group' : ''} ${isYamlListItem ? 'is-yaml-list-item' : ''} ${isYamlListAnchor ? 'has-yaml-dash' : ''} ${extraClass} ${templateEditable && !isGroup ? 'is-editable' : ''}`}
+                key={entry.id}
+                style={{ ['--ai-template-depth' as string]: String(displayDepth) }}
+              >
+                <div className="ai-template-field-key">
+                  {isYamlListItem ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
+                  <span>{displayLabel}</span>
+                </div>
+                {isGroup ? null : (
+                  <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
+                    {templateEditable ? renderTemplateValueControl(entry, value) : <pre>{displayValue || 'null'}</pre>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </section>
     );
-  }, [handleAppendTemplateStageEntry, renderTemplateField, templateEditable, visibleTemplateEntries]);
+  }, [getTemplateEntryDisplayMeta, handleAppendTemplateStageEntry, renderTemplateValueControl, templateEditable, templateValueDrafts, visibleTemplateEntries]);
 
   const renderSessionTemplateSheet = () => (
     <section className="ai-session-template-shell">
@@ -4581,7 +4748,7 @@ const AICollect: React.FC = () => {
             flex-direction: column;
             gap: 8px;
             padding-bottom: 10px;
-            border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.18);
           }
           .ai-template-stage-section:last-child {
             padding-bottom: 0;
@@ -4639,6 +4806,14 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             gap: 5px;
+            padding: 4px 6px;
+            border-radius: 12px;
+            transition: background 160ms ease, box-shadow 160ms ease;
+          }
+          .ai-template-stage-section:hover .ai-template-stage-body,
+          .ai-template-stage-section:focus-within .ai-template-stage-body {
+            background: rgba(255, 255, 255, 0.04);
+            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
           }
           .ai-template-confirm-bar {
             display: flex;
@@ -5561,25 +5736,37 @@ const AICollect: React.FC = () => {
             grid-template-columns: minmax(156px, 198px) minmax(0, 1fr);
             gap: 8px 10px;
             align-items: start;
-            padding: 0 0 8px;
+            padding: 2px 8px 2px 0;
             padding-left: var(--ai-template-indent);
-            border-bottom: 1px dashed rgba(255, 255, 255, 0.09);
+            border-bottom: none;
+            border-radius: 10px;
+            transition: background 160ms ease, box-shadow 160ms ease;
           }
           .ai-template-field.is-group {
             grid-template-columns: minmax(0, 1fr);
             gap: 0;
-            padding: 2px 0 0;
+            padding: 2px 8px 0 0;
             padding-left: var(--ai-template-indent);
             border-bottom: none;
+          }
+          .ai-template-field.is-root-group {
+            margin-top: 6px;
+            padding-top: 2px;
+          }
+          .ai-template-field.is-root-group:first-child {
+            margin-top: 0;
           }
           .ai-template-field.is-item-group {
             padding-top: 6px;
           }
-          .ai-template-field:last-child {
+          .ai-template-field:last-child,
+          .ai-template-field.is-group-end:last-child {
             padding-bottom: 0;
             border-bottom: none;
+            margin-bottom: 0;
           }
           .ai-template-field-key {
+            position: relative;
             display: flex;
             flex-direction: column;
             align-items: flex-start;
@@ -5593,25 +5780,50 @@ const AICollect: React.FC = () => {
             line-height: 1.35;
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           }
-          .ai-template-field-key small {
-            color: ${aura.muted};
-            font-size: 10px;
-            line-height: 1.4;
-            letter-spacing: 0;
-            text-transform: none;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-          }
           .ai-template-field.is-group .ai-template-field-key {
             gap: 1px;
           }
           .ai-template-field.is-group .ai-template-field-key span {
-            color: ${aura.subtle};
-            font-size: 10px;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
+            color: ${aura.text};
+            font-size: 12px;
+            line-height: 1.35;
+            letter-spacing: 0;
+            text-transform: none;
+          }
+          .ai-template-field.is-yaml-list-item .ai-template-field-key {
+            display: grid;
+            grid-template-columns: 10px minmax(0, 1fr);
+            align-items: start;
+            column-gap: 6px;
+          }
+          .ai-template-field-dash {
+            grid-column: 1;
+            justify-self: end;
+            visibility: hidden;
+            color: rgba(255, 255, 255, 0.72);
+            font-size: 12px;
+            line-height: 1.35;
+            font-style: normal;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+          }
+          .ai-template-field.is-yaml-list-item .ai-template-field-key span {
+            grid-column: 2;
+          }
+          .ai-template-field.has-yaml-dash .ai-template-field-dash {
+            visibility: visible;
+          }
+          .ai-template-field.is-root-group .ai-template-field-key {
+            gap: 0;
+          }
+          .ai-template-field.is-root-group .ai-template-field-key span {
+            color: rgba(255, 255, 255, 0.92);
+            font-size: 11px;
+            line-height: 1.45;
+            letter-spacing: 0.02em;
+            text-transform: none;
           }
           .ai-template-field.is-item-group .ai-template-field-key span {
-            color: rgba(255, 255, 255, 0.78);
+            color: rgba(255, 255, 255, 0.9);
             font-size: 10.5px;
             letter-spacing: 0.02em;
             text-transform: none;
@@ -5677,6 +5889,52 @@ const AICollect: React.FC = () => {
             padding: 0;
             color: ${aura.text};
           }
+          .ai-template-number-input {
+            max-width: 100%;
+          }
+          .ai-template-number-input .ant-input-number-input-wrap {
+            justify-content: flex-start;
+            padding-inline-start: 0 !important;
+          }
+          .ai-template-number-input .ant-input-number-handler-wrap {
+            opacity: 0;
+            width: 0;
+            min-width: 0;
+            margin-inline-start: 0;
+            overflow: hidden;
+            pointer-events: none;
+            border-inline-start: none !important;
+            background: transparent !important;
+            transition: opacity 160ms ease, width 160ms ease, min-width 160ms ease, margin-inline-start 160ms ease, background 160ms ease;
+          }
+          .ai-template-number-input:hover .ant-input-number-handler-wrap,
+          .ai-template-number-input:focus-within .ant-input-number-handler-wrap {
+            opacity: 1;
+            width: 24px;
+            min-width: 24px;
+            margin-inline-start: 6px;
+            pointer-events: auto;
+            border-inline-start: 1px solid rgba(255, 255, 255, 0.24) !important;
+            background: rgba(255, 255, 255, 0.05) !important;
+          }
+          .ai-template-number-input .ant-input-number-handler {
+            color: rgba(255, 255, 255, 0.52);
+            border-color: transparent !important;
+            background: transparent !important;
+            transition: color 160ms ease, background 160ms ease;
+          }
+          .ai-template-number-input .ant-input-number-input {
+            text-align: left !important;
+            padding-inline-start: 0 !important;
+          }
+          .ai-template-number-input:hover .ant-input-number-handler,
+          .ai-template-number-input:focus-within .ant-input-number-handler {
+            color: rgba(255, 255, 255, 0.88);
+          }
+          .ai-template-number-input .ant-input-number-handler:hover {
+            color: rgba(255, 255, 255, 1);
+            background: rgba(255, 255, 255, 0.12) !important;
+          }
           .ai-template-field-value .ant-select-single.ant-select-sm .ant-select-selector,
           .ai-template-field-value .ant-select-single .ant-select-selector {
             display: flex;
@@ -5690,7 +5948,6 @@ const AICollect: React.FC = () => {
           }
           .ai-template-field-value.is-rich .ant-input-textarea textarea {
             min-height: 70px !important;
-            padding: 8px 10px !important;
             border: 1px solid rgba(255, 255, 255, 0.08) !important;
             border-radius: 10px !important;
             background: rgba(13, 16, 22, 0.24) !important;
