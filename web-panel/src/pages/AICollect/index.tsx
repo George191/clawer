@@ -691,8 +691,6 @@ const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
 };
 
 const stripYamlQuotes = (value: string) => value.trim().replace(/^['"]|['"]$/g, '');
-const yamlBooleanPattern = /^(true|false)$/i;
-const yamlNumberPattern = /^-?\d+(?:\.\d+)?$/;
 const isStructuredInlineYamlValue = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return false;
@@ -700,17 +698,7 @@ const isStructuredInlineYamlValue = (value: string) => {
   if (trimmed.startsWith('{') && trimmed.endsWith('}') && /[:,]/.test(trimmed.slice(1, -1))) return true;
   return false;
 };
-const numericTemplateKeys = new Set([
-  'batch_size',
-  'start_line',
-  'limit',
-  'delay',
-  'start_page',
-  'max_pages',
-  'results_per_page',
-]);
-
-const yamlListPreviewRoots = new Set(['params', 'list_fields', 'download']);
+const yamlListPreviewRoots = new Set(['params', 'dedup_fields', 'list_fields', 'download']);
 const flattenedTemplateRootKeys = new Set(['list_pagination', 'dedup_fields', 'download']);
 
 const parseTemplateEntries = (raw: string): TemplateEntry[] => {
@@ -776,9 +764,11 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
     const isListItem = trimmed.startsWith('- ');
     pruneStacks(indent, isListItem);
 
-    const parentPath = keyPathStack[keyPathStack.length - 1]?.path
-      ?? listItemContextStack[listItemContextStack.length - 1]?.path
-      ?? '';
+    const keyPathParent = keyPathStack[keyPathStack.length - 1];
+    const listItemParent = listItemContextStack[listItemContextStack.length - 1];
+    const parentPath = listItemParent && (!keyPathParent || listItemParent.indent > keyPathParent.indent)
+      ? listItemParent.path
+      : keyPathParent?.path ?? '';
     const depth = Math.max(0, Math.floor(indent / 2));
 
     const listItemMatch = trimmed.match(/^- (.+)$/);
@@ -831,7 +821,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
 
         if (!rawValue) {
           listItemContextStack.push({ indent, path: itemPath });
-          keyPathStack.push({ indent, path: key });
+          keyPathStack.push({ indent: indent + 2, path: key });
         } else {
           listItemContextStack.push({ indent, path: itemPath });
         }
@@ -903,22 +893,6 @@ const templateCatalog: TemplateCatalogItem[] = Object.entries(templateSourceModu
     };
   })
   .sort((left, right) => left.id.localeCompare(right.id));
-
-const templateSelectorTypeOptions = Array.from(new Set(
-  templateCatalog
-    .flatMap((template) => template.entries)
-    .filter((entry) => /\.selector_type$/.test(entry.key))
-    .map((entry) => stripYamlQuotes(entry.value))
-    .filter(Boolean),
-)).sort((left, right) => left.localeCompare(right));
-
-const templateFieldTypeOptions = Array.from(new Set(
-  templateCatalog
-    .flatMap((template) => template.entries)
-    .filter((entry) => /\.field_type$/.test(entry.key))
-    .map((entry) => stripYamlQuotes(entry.value))
-    .filter(Boolean),
-)).sort((left, right) => left.localeCompare(right));
 
 const sampleFields: FieldDef[] = [
   { name: 'title', selector: 'h1, .title', type: 'text', sample: 'Autonomous navigation route planning', required: true },
@@ -1246,19 +1220,9 @@ const AICollect: React.FC = () => {
     && visibleTemplateStages.length === templateStages.length;
   const templateAnalysisComplete = activeProcessStep === 'contract'
     && templateStagesReady;
-  const templateEditable = workflowPhase === 'analyzing-template' || workflowPhase === 'confirm-template';
   const templateReadyForConfirm = workflowPhase === 'confirm-template' && templateStagesReady;
   const displayWorkflowPhase = guidePreviewPhase ?? workflowPhase;
   const templateCollapsed = displayWorkflowPhase === 'generating-adapter' || displayWorkflowPhase === 'release-template';
-  const listFieldNameOptions = useMemo(
-    () => Array.from(new Set(
-      templateDraftEntries
-        .filter((entry) => /^list_fields\[\d+\]\.name$/.test(entry.key))
-        .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
-        .filter(Boolean),
-    )),
-    [templateDraftEntries, templateValueDrafts],
-  );
   const sessionGuideSteps = useMemo<SessionGuideStepId[]>(() => {
     const steps: SessionGuideStepId[] = [...visibleTemplateStages];
 
@@ -2701,10 +2665,6 @@ const AICollect: React.FC = () => {
     };
   }, [hoveredStageGuideStep]);
 
-  const handleTemplateValueChange = useCallback((id: string, value: string) => {
-    setTemplateValueDrafts((prev) => ({ ...prev, [id]: value }));
-  }, []);
-
   const getTemplateEntryValueByKey = useCallback((key: string) => {
     const match = templateDraftEntries.find((entry) => entry.key === key);
     if (!match) return '';
@@ -2789,193 +2749,13 @@ const AICollect: React.FC = () => {
     };
   }, [getTemplateListItemTitle, normalizeTemplateDisplayPath]);
 
-  const renderTemplateValueControl = useCallback((entry: TemplateEntry, value: string) => {
-    const normalizedValue = stripYamlQuotes(value);
-    const leafKey = entry.key.split('.').pop()?.replace(/\[\d+\]$/, '') ?? entry.key;
-    const isDedupField = entry.stageId === 'dedup' && /^dedup_fields\[\d+\]$/.test(entry.key);
-    const isSelectorTypeField = leafKey === 'selector_type';
-    const isFieldTypeField = leafKey === 'field_type';
-    const isBooleanValue = yamlBooleanPattern.test(normalizedValue);
-    const isNumericValue = numericTemplateKeys.has(leafKey) || yamlNumberPattern.test(normalizedValue);
-    const prefersTextarea = entry.multiline || leafKey === 'description';
-    const isSiteDescription = entry.stageId === 'site' && leafKey === 'description';
-    const textValue = entry.multiline ? value : normalizedValue;
-
-    if (isDedupField) {
-      const options = Array.from(new Set([normalizedValue, ...listFieldNameOptions].filter(Boolean)))
-        .map((option) => ({ label: option, value: option }));
-
-      return (
-        <Select
-          size="small"
-          showSearch
-          value={normalizedValue || undefined}
-          options={options}
-          placeholder="Select list field"
-          optionFilterProp="label"
-          onChange={(nextValue) => handleTemplateValueChange(entry.id, nextValue)}
-        />
-      );
-    }
-
-    if (isSelectorTypeField || isFieldTypeField) {
-      const sourceOptions = isSelectorTypeField ? templateSelectorTypeOptions : templateFieldTypeOptions;
-      const options = Array.from(new Set([normalizedValue, ...sourceOptions].filter(Boolean)))
-        .map((option) => ({ label: option, value: option }));
-
-      return (
-        <Select
-          size="small"
-          value={normalizedValue || undefined}
-          options={options}
-          onChange={(nextValue) => handleTemplateValueChange(entry.id, nextValue)}
-        />
-      );
-    }
-
-    if (isBooleanValue) {
-      const checked = normalizedValue.toLowerCase() === 'true';
-      return (
-        <div className="ai-template-boolean-control">
-          <Switch
-            className="ai-template-bool-switch"
-            size="small"
-            checked={checked}
-            onChange={(nextChecked) => handleTemplateValueChange(entry.id, nextChecked ? 'true' : 'false')}
-          />
-          <span>{checked ? 'true' : 'false'}</span>
-        </div>
-      );
-    }
-
-    if (isNumericValue) {
-      const numericValue = yamlNumberPattern.test(normalizedValue) ? Number(normalizedValue) : null;
-      const numericTextValue = normalizedValue === 'null' ? '' : normalizedValue;
-      const numericWidth = `calc(${Math.max(2, numericTextValue.length || 1)}ch + 28px)`;
-      return (
-        <InputNumber
-          className="ai-template-number-input"
-          size="small"
-          inputMode="numeric"
-          value={numericValue}
-          onKeyDown={(event) => {
-            if (event.ctrlKey || event.metaKey || event.altKey) return;
-            if (['Backspace', 'Delete', 'Tab', 'Enter', 'Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) {
-              return;
-            }
-            if (/^\d$/.test(event.key)) return;
-            event.preventDefault();
-          }}
-          onPaste={(event) => {
-            const pastedText = event.clipboardData.getData('text').trim();
-            if (!/^\d+$/.test(pastedText)) {
-              event.preventDefault();
-            }
-          }}
-          onChange={(nextValue) => handleTemplateValueChange(entry.id, nextValue == null ? 'null' : String(nextValue))}
-          style={{ width: numericWidth }}
-        />
-      );
-    }
-
-    if (prefersTextarea) {
-      return (
-        <TextArea
-          value={textValue}
-          autoSize={{
-            minRows: isSiteDescription ? 8 : entry.multiline ? 2 : 1,
-            maxRows: isSiteDescription ? 18 : 8,
-          }}
-          onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
-        />
-      );
-    }
-
-    return (
-      <Input
-        size="small"
-        value={textValue}
-        onChange={(event) => handleTemplateValueChange(entry.id, event.target.value)}
-      />
-    );
-  }, [handleTemplateValueChange, listFieldNameOptions]);
-
-  const handleAppendTemplateStageEntry = useCallback((stageId: TemplateStageId) => {
-    const stageConfig = templateStageMeta[stageId];
-    if (!stageConfig.addable || !stageConfig.rootKey) return;
-
-    const rootKey = stageConfig.rootKey;
-    const matchingIndexes = templateDraftEntries
-      .filter((entry) => entry.stageId === stageId)
-      .map((entry) => {
-        const match = entry.key.match(/\[(\d+)\]/);
-        return match ? Number(match[1]) : -1;
-      });
-    const nextIndex = matchingIndexes.length ? Math.max(...matchingIndexes) + 1 : 0;
-
-    const itemGroupEntry: TemplateEntry = {
-      id: `${rootKey}[${nextIndex}]__group`,
-      key: `${rootKey}[${nextIndex}]`,
-      value: '',
-      nodeType: 'group',
-      step: rootKey === 'list_fields' ? 'structure' as ProcessStepKey : 'contract' as ProcessStepKey,
-      stageId,
-      multiline: false,
-      depth: 1,
-    };
-
-    const childEntries: TemplateEntry[] = rootKey === 'list_fields'
-      ? [
-        ['name', 'new_field'],
-        ['selector', '$.new_field'],
-        ['selector_type', 'json'],
-        ['field_type', 'text'],
-        ['required', 'false'],
-      ].map(([fieldKey, value], offset) => ({
-        id: `${rootKey}[${nextIndex}].${fieldKey}__draft_${offset}`,
-        key: `${rootKey}[${nextIndex}].${fieldKey}`,
-        value,
-        nodeType: 'value',
-        step: 'structure' as ProcessStepKey,
-        stageId,
-        multiline: false,
-        depth: 2,
-      }))
-      : [
-        ['selector', '$.asset_url'],
-        ['selector_type', 'json'],
-        ['link_type', 'href'],
-        ['file_extension', 'bin'],
-        ['asset_type', 'attachment'],
-        ['description', 'new asset'],
-        ['url_prefix', 'https://'],
-      ].map(([fieldKey, value], offset) => ({
-        id: `${rootKey}[${nextIndex}].${fieldKey}__draft_${offset}`,
-        key: `${rootKey}[${nextIndex}].${fieldKey}`,
-        value,
-        nodeType: 'value',
-        step: 'contract' as ProcessStepKey,
-        stageId,
-        multiline: false,
-        depth: 2,
-      }));
-
-    const newEntries: TemplateEntry[] = [itemGroupEntry, ...childEntries];
-
-    setTemplateDraftEntries((prev) => [...prev, ...newEntries]);
-    setTemplateValueDrafts((prev) => ({
-      ...prev,
-      ...Object.fromEntries(newEntries.map((entry) => [entry.id, entry.value])),
-    }));
-  }, [templateDraftEntries]);
-
   const renderTemplateStageSection = useCallback((stageId: TemplateStageId) => {
     const stageEntries = visibleTemplateEntries.filter((entry) => {
       if (entry.stageId !== stageId) return false;
       if (
         entry.nodeType === 'group'
         && (
-          /^(params|list_fields|download)\[\d+\]$/.test(entry.key)
+          /^(params|dedup_fields|list_fields|download)\[\d+\]$/.test(entry.key)
           || flattenedTemplateRootKeys.has(entry.key)
         )
       ) {
@@ -3018,16 +2798,6 @@ const AICollect: React.FC = () => {
           </div>
           <div className="ai-template-stage-actions">
             <span>{stageValueCount}</span>
-            {templateEditable && templateStageMeta[stageId].addable ? (
-              <button
-                type="button"
-                className="ai-template-stage-add"
-                onClick={() => handleAppendTemplateStageEntry(stageId)}
-                aria-label={`Add ${templateStageMeta[stageId].title}`}
-              >
-                +
-              </button>
-            ) : null}
           </div>
         </div>
         <div className="ai-template-stage-body">
@@ -3038,8 +2808,8 @@ const AICollect: React.FC = () => {
             const currentGroupKey = getTemplateEntryGroupKey(entry, nextEntry);
             const nextGroupKey = nextEntry ? getTemplateEntryGroupKey(nextEntry, nextNextEntry) : null;
             const extraClass = currentGroupKey !== nextGroupKey ? 'is-group-end' : '';
-            const yamlListItemKey = entry.key.match(/^(params|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
-            const previousYamlListItemKey = previousEntry?.key.match(/^(params|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+            const yamlListItemKey = entry.key.match(/^(params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+            const previousYamlListItemKey = previousEntry?.key.match(/^(params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
             const yamlListRoot = yamlListItemKey?.split('[')[0] ?? null;
             const rootKey = entry.key.match(/^([A-Za-z_][\w-]*)(?:\.|\[|$)/)?.[1] ?? entry.key;
             const isYamlListItem = Boolean(
@@ -3066,7 +2836,7 @@ const AICollect: React.FC = () => {
 
             return (
               <div
-                className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''} ${isGroup ? 'is-group' : ''} ${isItemGroup ? 'is-item-group' : ''} ${isRootGroup ? 'is-root-group' : ''} ${isYamlListItem ? 'is-yaml-list-item' : ''} ${isYamlListAnchor ? 'has-yaml-dash' : ''} ${extraClass} ${templateEditable && !isGroup ? 'is-editable' : ''}`}
+                className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''} ${isGroup ? 'is-group' : ''} ${isItemGroup ? 'is-item-group' : ''} ${isRootGroup ? 'is-root-group' : ''} ${isYamlListItem ? 'is-yaml-list-item' : ''} ${isYamlListAnchor ? 'has-yaml-dash' : ''} ${extraClass}`}
                 key={entry.id}
                 style={{ ['--ai-template-depth' as string]: String(displayDepth) }}
               >
@@ -3076,7 +2846,7 @@ const AICollect: React.FC = () => {
                 </div>
                 {isGroup ? null : (
                   <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
-                    {templateEditable ? renderTemplateValueControl(entry, value) : <pre>{displayValue || 'null'}</pre>}
+                    <pre>{displayValue || 'null'}</pre>
                   </div>
                 )}
               </div>
@@ -3085,7 +2855,7 @@ const AICollect: React.FC = () => {
         </div>
       </section>
     );
-  }, [getTemplateEntryDisplayMeta, handleAppendTemplateStageEntry, renderTemplateValueControl, templateEditable, templateValueDrafts, visibleTemplateEntries]);
+  }, [getTemplateEntryDisplayMeta, templateValueDrafts, visibleTemplateEntries]);
 
   const renderSessionTemplateSheet = () => (
     <section className="ai-session-template-shell">
@@ -4820,9 +4590,11 @@ const AICollect: React.FC = () => {
             align-items: center;
             justify-content: space-between;
             gap: 16px;
-            padding-top: 14px;
-            margin-top: 16px;
-            border-top: 1px dashed rgba(255, 255, 255, 0.14);
+            padding: 14px 16px;
+            margin: 18px -4px -4px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.025);
           }
           .ai-template-confirm-copy {
             min-width: 0;
@@ -4842,9 +4614,19 @@ const AICollect: React.FC = () => {
             line-height: 1.55;
           }
           .ai-template-confirm-btn {
-            min-width: 138px;
-            height: 34px !important;
-            border-radius: 17px !important;
+            min-width: 126px;
+            height: 32px !important;
+            border-radius: 8px !important;
+            border: 1px solid rgba(129, 216, 208, 0.34) !important;
+            background: rgba(129, 216, 208, 0.14) !important;
+            box-shadow: none !important;
+            color: rgba(222, 255, 251, 0.96) !important;
+            font-weight: 600;
+          }
+          .ai-template-confirm-btn:hover {
+            border-color: rgba(129, 216, 208, 0.56) !important;
+            background: rgba(129, 216, 208, 0.22) !important;
+            color: #f1fffd !important;
           }
           .ai-session-inline-alert {
             width: min(100%, 776px);
@@ -5840,6 +5622,12 @@ const AICollect: React.FC = () => {
           .ai-template-field-value.is-rich {
             align-items: stretch;
           }
+          .ai-template-field.is-site-description {
+            align-items: stretch;
+          }
+          .ai-template-field.is-site-description .ai-template-field-key {
+            padding-top: 8px;
+          }
           .ai-template-field-value pre {
             margin: 0;
             white-space: pre-wrap;
@@ -5864,7 +5652,7 @@ const AICollect: React.FC = () => {
             font-size: 12px !important;
             line-height: 1.45 !important;
           }
-          .ai-template-field-value .ant-input,
+          .ai-template-field-value input.ant-input,
           .ai-template-field-value .ant-input-affix-wrapper,
           .ai-template-field-value .ant-input-number,
           .ai-template-field-value .ant-select-selector {
@@ -5875,7 +5663,7 @@ const AICollect: React.FC = () => {
           .ai-template-field-value .ant-input-number {
             width: 100%;
           }
-          .ai-template-field-value .ant-input {
+          .ai-template-field-value input.ant-input {
             line-height: 22px !important;
           }
           .ai-template-field-value .ant-input-number-input-wrap {
@@ -5897,31 +5685,23 @@ const AICollect: React.FC = () => {
             padding-inline-start: 0 !important;
           }
           .ai-template-number-input .ant-input-number-handler-wrap {
-            opacity: 0;
-            width: 0;
-            min-width: 0;
-            margin-inline-start: 0;
-            overflow: hidden;
-            pointer-events: none;
-            border-inline-start: none !important;
-            background: transparent !important;
-            transition: opacity 160ms ease, width 160ms ease, min-width 160ms ease, margin-inline-start 160ms ease, background 160ms ease;
-          }
-          .ai-template-number-input:hover .ant-input-number-handler-wrap,
-          .ai-template-number-input:focus-within .ant-input-number-handler-wrap {
             opacity: 1;
-            width: 24px;
-            min-width: 24px;
-            margin-inline-start: 6px;
+            width: 22px;
+            min-width: 22px;
+            margin-inline-start: 4px;
             pointer-events: auto;
-            border-inline-start: 1px solid rgba(255, 255, 255, 0.24) !important;
-            background: rgba(255, 255, 255, 0.05) !important;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.16) !important;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.035) !important;
+            transition: border-color 160ms ease, background 160ms ease;
           }
           .ai-template-number-input .ant-input-number-handler {
-            color: rgba(255, 255, 255, 0.52);
+            height: 10px;
+            color: rgba(255, 255, 255, 0.62);
             border-color: transparent !important;
             background: transparent !important;
-            transition: color 160ms ease, background 160ms ease;
+            transition: color 160ms ease, background 160ms ease, transform 160ms ease;
           }
           .ai-template-number-input .ant-input-number-input {
             text-align: left !important;
@@ -5929,11 +5709,16 @@ const AICollect: React.FC = () => {
           }
           .ai-template-number-input:hover .ant-input-number-handler,
           .ai-template-number-input:focus-within .ant-input-number-handler {
-            color: rgba(255, 255, 255, 0.88);
+            color: rgba(255, 255, 255, 0.9);
+          }
+          .ai-template-number-input:hover .ant-input-number-handler-wrap,
+          .ai-template-number-input:focus-within .ant-input-number-handler-wrap {
+            border-color: rgba(255, 255, 255, 0.3) !important;
+            background: rgba(255, 255, 255, 0.08) !important;
           }
           .ai-template-number-input .ant-input-number-handler:hover {
             color: rgba(255, 255, 255, 1);
-            background: rgba(255, 255, 255, 0.12) !important;
+            background: rgba(255, 255, 255, 0.1) !important;
           }
           .ai-template-field-value .ant-select-single.ant-select-sm .ant-select-selector,
           .ai-template-field-value .ant-select-single .ant-select-selector {
@@ -5946,29 +5731,46 @@ const AICollect: React.FC = () => {
             font-size: 12px;
             line-height: 22px !important;
           }
+          .ai-template-field-value .ant-select-selector {
+            border: 1px solid rgba(255, 255, 255, 0.14) !important;
+            border-radius: 4px !important;
+            background: rgba(255, 255, 255, 0.025) !important;
+            padding-inline: 6px !important;
+          }
+          .ai-template-field-value .ant-select:hover .ant-select-selector,
+          .ai-template-field-value .ant-select-focused .ant-select-selector {
+            border-color: rgba(255, 255, 255, 0.3) !important;
+            box-shadow: none !important;
+          }
+          .ai-template-field-value .ant-select-arrow {
+            color: rgba(255, 255, 255, 0.45);
+          }
           .ai-template-field-value.is-rich .ant-input-textarea textarea {
             min-height: 70px !important;
             border: 1px solid rgba(255, 255, 255, 0.08) !important;
             border-radius: 10px !important;
             background: rgba(13, 16, 22, 0.24) !important;
+            line-height: 1.6 !important;
+            overflow-y: hidden !important;
+            resize: none;
+          }
+          .ai-template-site-description textarea {
+            min-height: 160px !important;
+            max-height: none !important;
           }
           .ai-template-boolean-control {
             min-height: 22px;
             display: inline-flex;
             align-items: center;
-            gap: 10px;
-          }
-          .ai-template-boolean-control span {
-            color: ${aura.subtle};
-            font-size: 12px;
-            line-height: 1;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           }
           .ai-template-bool-switch.ant-switch {
-            min-width: 34px;
+            min-width: 36px;
             height: 20px;
+            padding: 1px;
             background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: none;
+            transition: background 160ms ease, border-color 160ms ease;
           }
           .ai-template-bool-switch.ant-switch .ant-switch-handle {
             top: 1px;
@@ -5978,12 +5780,12 @@ const AICollect: React.FC = () => {
           }
           .ai-template-bool-switch.ant-switch .ant-switch-handle::before {
             border-radius: 50%;
-            background: linear-gradient(180deg, rgba(235, 239, 248, 0.96), rgba(188, 196, 210, 0.9));
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+            background: rgba(255, 255, 255, 0.92);
+            box-shadow: none;
           }
           .ai-template-bool-switch.ant-switch.ant-switch-checked {
-            background: rgba(129, 216, 208, 0.18);
-            border-color: rgba(129, 216, 208, 0.34);
+            background: rgba(129, 216, 208, 0.52);
+            border-color: rgba(129, 216, 208, 0.68);
           }
           .ai-template-bool-switch.ant-switch.ant-switch-checked .ant-switch-handle::before {
             background: linear-gradient(180deg, rgba(186, 255, 247, 0.98), rgba(129, 216, 208, 0.92));
