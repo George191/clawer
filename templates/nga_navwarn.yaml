@@ -1,0 +1,86 @@
+name: nga_navwarn
+display_name: "NGA - 海事航行警告采集"
+base_url: "https://msi.nga.mil"
+data_type: navwarn
+adapter: nga_navwarn
+anti_crawl_enabled: false
+description: >
+  采集 NGA (National Geospatial-Intelligence Agency) 海事航行警告页面数据。
+  页面为服务器端渲染 HTML，包含全球各区域的航行警告信息。
+
+response_type: html
+
+list_page: "/NavWarnings"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+  encoding: utf-8
+
+dedup_fields:
+  - warning_no
+
+list_fields:
+  - name: warning_no
+    selector: "table.nav-warning-table tr td:first-child"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "警告编号, 如 001-26"
+
+  - name: area
+    selector: "table.nav-warning-table tr td:nth-child(2)"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "海域/区域名称"
+
+  - name: subject
+    selector: "table.nav-warning-table tr td:nth-child(3)"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "警告主题"
+
+  - name: issue_time
+    selector: "table.nav-warning-table tr td:nth-child(4)"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "发布时间"
+
+  - name: effective_time
+    selector: "table.nav-warning-table tr td:nth-child(5)"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "生效时间"
+
+  - name: message_url
+    selector: "table.nav-warning-table tr td a"
+    selector_type: css
+    field_type: href
+    required: false
+    description: "详情页链接"
+
+  - name: message_text
+    selector: "table.nav-warning-table tr td:nth-child(3)"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "消息摘要"
+
+list_pagination:
+  type: page_number
+  page_param: page
+  start_page: 1
+  max_pages: 0
+  results_per_page: 50
