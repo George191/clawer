@@ -1076,7 +1076,6 @@ const AICollect: React.FC = () => {
   const analyzeStreamRef = useRef<EventSource | null>(null);
   const simulationTimerRef = useRef<number | null>(null);
   const promptGenerationTimerRef = useRef<number | null>(null);
-  const referenceEditCanceledRef = useRef(false);
   const accountDisplayName = 'Blank George';
   const currentUserName = accountDisplayName.split(/\s+/)[0] || accountDisplayName;
   const [mode, setMode] = useState<WorkMode>('explore');
@@ -1098,8 +1097,6 @@ const AICollect: React.FC = () => {
   const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
   const [taskDraft, setTaskDraft] = useState('');
   const [submittedPrompt, setSubmittedPrompt] = useState('');
-  const [referenceEditing, setReferenceEditing] = useState(false);
-  const [referenceDraft, setReferenceDraft] = useState('');
   const [workflowPhase, setWorkflowPhase] = useState<SessionWorkflowPhase>('analyzing-template');
   const [expandedStep, setExpandedStep] = useState<WorkMode>('explore');
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
@@ -1901,8 +1898,6 @@ const AICollect: React.FC = () => {
     const normalizedPrompt = sourcePrompt || targetUrl;
     setSubmittedPrompt(normalizedPrompt);
     setTaskDraft('');
-    setReferenceEditing(false);
-    setReferenceDraft('');
     setIntent(normalizedPrompt);
     if (promptUrl && promptUrl !== url) {
       setUrl(promptUrl);
@@ -1967,8 +1962,6 @@ const AICollect: React.FC = () => {
     setStreamError('');
     setSubmittedPrompt('');
     setTaskDraft('');
-    setReferenceEditing(false);
-    setReferenceDraft('');
     message.info('已取消当前分析');
   }, [finishPromptGeneration, message]);
 
@@ -2214,36 +2207,6 @@ const AICollect: React.FC = () => {
     }
     handleAnalyze();
   }, [finishPromptGeneration, handleAnalyze, handleGuideSubmit, hasSession, promptGenerating]);
-
-  const commitReferenceEdit = useCallback(() => {
-    if (referenceEditCanceledRef.current) {
-      referenceEditCanceledRef.current = false;
-      return;
-    }
-
-    const nextReference = referenceDraft.trim();
-    setReferenceEditing(false);
-    if (!nextReference) return;
-
-    setSubmittedPrompt(nextReference);
-    setIntent(nextReference);
-    const promptUrl = extractUrlFromPrompt(nextReference);
-    if (promptUrl) {
-      setUrl(promptUrl);
-    }
-  }, [extractUrlFromPrompt, referenceDraft]);
-
-  const handleReferenceKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      commitReferenceEdit();
-    }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      referenceEditCanceledRef.current = true;
-      setReferenceEditing(false);
-    }
-  }, [commitReferenceEdit]);
 
   const handleWorkspacePanelToggle = useCallback((panel: WorkspacePanel) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -3838,38 +3801,9 @@ const AICollect: React.FC = () => {
   );
 
   const renderDockedPrompt = () => {
-    const referenceText = submittedPrompt || url || '目标源站待识别';
-
     return (
       <section className="ai-session-prompt">
         <div className="ai-session-prompt-shell">
-          <div className="ai-session-reference">
-          <span className="ai-session-reference-icon"><LinkOutlined /></span>
-          {referenceEditing ? (
-            <Input
-              className="ai-reference-input"
-              value={referenceDraft}
-              autoFocus
-              onChange={(event) => setReferenceDraft(event.target.value)}
-              onBlur={commitReferenceEdit}
-              onKeyDown={handleReferenceKeyDown}
-            />
-          ) : (
-            <>
-              <em title={referenceText}>{referenceText}</em>
-              <Button
-                className="ai-reference-edit"
-                type="text"
-                icon={<EditOutlined />}
-                aria-label="编辑引用"
-                onClick={() => {
-                  setReferenceDraft(referenceText);
-                  setReferenceEditing(true);
-                }}
-              />
-            </>
-          )}
-        </div>
           <div className="ai-session-prompt-main">
           <span className="ai-session-leading-icon" aria-hidden="true"><GlobalOutlined /></span>
           <TextArea
@@ -4310,83 +4244,6 @@ const AICollect: React.FC = () => {
             pointer-events: none;
             z-index: 0;
           }
-          .ai-session-reference {
-            --prompt-surface: rgba(29, 33, 41);
-            height: 28px;
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            align-self: flex-start;
-            padding: 0 8px 0 10px;
-            border-radius: 14px 14px 0 0;
-            background: var(--prompt-surface);
-            border: 1px solid ${aura.border};
-            border-bottom: none;
-            color: ${aura.text};
-            font-size: 12px;
-            font-weight: 400;
-            max-width: min(100%, 560px);
-            position: relative;
-            z-index: 1;
-            backdrop-filter: ${aura.backdrop};
-            box-shadow: 0 20px 48px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(255, 255, 255, 0.02);
-          }
-          .ai-session-reference-icon {
-            width: 17px;
-            height: 17px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 5px;
-            color: ${aura.text};
-            font-size: 11px;
-          }
-          .ai-session-reference em {
-            max-width: 360px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            color: ${aura.subtle};
-            font-size: 12px;
-            font-style: normal;
-            transition: max-width 160ms ease;
-          }
-          .ai-reference-edit {
-            width: 0 !important;
-            height: 22px !important;
-            min-width: 0 !important;
-            border: none !important;
-            border-radius: 50% !important;
-            background: transparent !important;
-            color: ${aura.muted} !important;
-            box-shadow: none !important;
-            opacity: 0;
-            padding: 0 !important;
-            overflow: hidden;
-            pointer-events: none;
-            transition: width 140ms ease, min-width 140ms ease, opacity 140ms ease, background 140ms ease, color 140ms ease;
-          }
-          .ai-session-reference:hover em {
-            max-width: 336px;
-          }
-          .ai-session-reference:hover .ai-reference-edit,
-          .ai-reference-edit:focus-visible {
-            width: 22px !important;
-            min-width: 22px !important;
-            opacity: 1;
-            pointer-events: auto;
-          }
-          .ai-collect-workbench .ai-reference-input.ant-input {
-            height: 24px !important;
-            min-height: 24px !important;
-            padding: 0 !important;
-            background: transparent !important;
-            border-color: transparent !important;
-            box-shadow: none !important;
-            color: ${aura.text} !important;
-            font-size: 12px;
-            line-height: 24px;
-          }
           .ai-session-prompt-main {
             --prompt-surface: rgba(29, 33, 41);
             display: grid;
@@ -4395,7 +4252,7 @@ const AICollect: React.FC = () => {
             gap: 8px;
             min-height: 58px;
             padding: 0 14px 0 16px;
-            border-radius: 0 18px 18px 18px;
+            border-radius: 18px;
             border: 1px solid ${aura.border};
             box-shadow: 0 34px 78px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.03);
             position: relative;
@@ -8126,16 +7983,10 @@ const AICollect: React.FC = () => {
               bottom: var(--ai-session-prompt-bottom);
               width: calc(100% - 24px);
             }
-            .ai-session-reference {
-              max-width: calc(100% - 12px);
-            }
-            .ai-session-reference em {
-              max-width: 52vw;
-            }
             .ai-session-prompt-main {
               grid-template-columns: 20px minmax(0, 1fr) 28px 28px;
               min-height: 52px;
-              border-radius: 0 14px 14px 14px;
+              border-radius: 14px;
             }
             .ai-stage-headline {
               flex-direction: column;

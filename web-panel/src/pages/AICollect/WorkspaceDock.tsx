@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Input, InputNumber, Segmented, Select, Switch, Tooltip, Typography } from 'antd';
 import {
   BellOutlined,
@@ -36,9 +36,6 @@ import type {
 const { Text } = Typography;
 const { TextArea } = Input;
 const aura = workspacePalette;
-const mobileDockBreakpoint = 767;
-const dockPanelEdgePadding = 12;
-const dockPanelAnchorOffset = 16;
 const listPageSize = 4;
 const listLoadThreshold = 56;
 
@@ -105,12 +102,6 @@ interface SiteProfile {
   brand: string;
   logo: string;
   hue: string;
-}
-
-interface TemplateInsight {
-  tableName: string;
-  currentCount: number;
-  yesterdayGrowth: number;
 }
 
 interface TaskTemplateParameterDraft {
@@ -232,11 +223,6 @@ const formatCompactNumber = (value: number) => {
   return `${value}`;
 };
 
-const formatSignedCompactNumber = (value: number) => {
-  if (value === 0) return '0';
-  return `${value > 0 ? '+' : '-'}${formatCompactNumber(Math.abs(value))}`;
-};
-
 const togglePinnedState = (prev: Record<string, true>, key: string) => {
   const next = { ...prev };
   if (next[key]) {
@@ -248,11 +234,6 @@ const togglePinnedState = (prev: Record<string, true>, key: string) => {
 };
 
 const normalizeTemplateKey = (value: string) => value.replace(/@.*$/, '');
-
-const toTableName = (value: string) => `ods_${normalizeTemplateKey(value)
-  .replace(/[^a-zA-Z0-9]+/g, '_')
-  .replace(/^_+|_+$/g, '')
-  .toLowerCase()}`;
 
 const createHistory = (recordsValue: number) => {
   const span = Math.max(420, Math.round(recordsValue * 0.12));
@@ -484,51 +465,6 @@ const TaskPulseGlyph: React.FC<{ kind: SiteKind; active?: boolean; className?: s
   </span>
 );
 
-const DockTemplateGlyph: React.FC = () => (
-  <span className="workspace-glyph" aria-hidden="true">
-    <svg
-      viewBox="0 0 480 511.65"
-      width="16"
-      height="17"
-      xmlns="http://www.w3.org/2000/svg"
-      shapeRendering="geometricPrecision"
-      textRendering="geometricPrecision"
-      imageRendering="optimizeQuality"
-      fillRule="evenodd"
-      clipRule="evenodd"
-      aria-hidden="true"
-    >
-      <path
-        fill="currentColor"
-        d="M84.68 237.33H375.8v-81.86h-86.02c-9.02 0-21.62-4.88-27.56-10.83-5.95-5.95-9.6-16.68-9.6-25.7V31.81H33.92c-.77 0-1.34.39-1.72.77-.58.38-.77.96-.77 1.73v443.23c0 .58.38 1.34.77 1.73.38.57 1.15.77 1.72.77h339.39c.76 0 .72-.39 1.1-.77.58-.39 1.39-1.15 1.39-1.73v-46.46H84.68c-17.25 0-31.47-14.16-31.47-31.47V268.79c0-17.31 14.16-31.46 31.47-31.46zm1.86 52.82h29.79l17.57 29.23 17.48-29.23h29.63l-33.71 50.47v36.36h-26.92v-36.36l-33.84-50.47zm143.04 72.52h-30.4l-4.36 14.31h-27.39l32.68-86.83h29.37l32.54 86.83h-28.09l-4.35-14.31zm-5.68-18.79-9.48-31.21-9.52 31.21h19zm44.32-53.73h35.4l13.48 52.84 13.52-52.84h35.23v86.83H343.9v-66.19l-16.94 66.19h-19.89l-16.9-66.19v66.19h-21.95v-86.83zm109.98 0H405v65.49h41.96v21.34H378.2v-86.83zm28.98-52.82h41.36c17.3 0 31.46 14.2 31.46 31.46v130.82c0 17.26-14.2 31.47-31.46 31.47h-41.36v56.4c0 6.72-2.69 12.66-7.1 17.08-4.41 4.41-10.36 7.09-17.07 7.09H24.17c-6.71 0-12.66-2.68-17.07-7.09C2.69 500.14 0 494.2 0 487.48V24.37C0 17.65 2.69 11.7 7.1 7.29 11.51 2.88 17.65.19 24.17.19h244.49c.58-.19 1.16-.19 1.73-.19 2.69 0 5.37 1.15 7.29 2.88h.38c.39.19.58.38.96.77l124.9 126.43c2.11 2.1 3.64 4.98 3.64 8.24 0 .96-.19 1.73-.38 2.69v96.32zM281.13 116.45V37.22l89.22 90.36h-78.09c-3.07 0-5.75-1.34-7.86-3.26-1.92-1.92-3.27-4.8-3.27-7.87z"
-      />
-    </svg>
-  </span>
-);
-
-const DockTaskGlyph: React.FC<{ active?: boolean }> = ({ active = false }) => (
-  <span className={`workspace-glyph workspace-task-glyph ${active ? 'is-active' : ''}`} aria-hidden="true">
-    <svg
-      viewBox="0 0 415 512.161"
-      width="15"
-      height="18"
-      xmlns="http://www.w3.org/2000/svg"
-      shapeRendering="geometricPrecision"
-      textRendering="geometricPrecision"
-      imageRendering="optimizeQuality"
-      fillRule="evenodd"
-      clipRule="evenodd"
-      aria-hidden="true"
-    >
-      <path
-        fill="currentColor"
-        d="M329.42 341.001c47.265 0 85.58 38.316 85.58 85.58 0 47.265-38.315 85.58-85.58 85.58s-85.58-38.315-85.58-85.58c0-47.264 38.315-85.58 85.58-85.58zm-254.44-80.12c-4.851 0-8.793-3.94-8.793-8.791 0-4.852 3.942-8.792 8.793-8.792h226.159c4.851 0 8.792 3.94 8.792 8.792 0 4.851-3.941 8.791-8.792 8.791H74.98zm0 53.161c-4.851 0-8.793-3.941-8.793-8.793 0-4.851 3.942-8.792 8.793-8.792h179.142c4.852 0 8.793 3.941 8.793 8.792 0 4.852-3.941 8.793-8.793 8.793H74.98zm0 53.153c-4.851 0-8.793-3.941-8.793-8.792s3.942-8.793 8.793-8.793h172.265a113.04 113.04 0 00-13.497 17.585H74.98zm0 53.16c-4.851 0-8.793-3.941-8.793-8.793 0-4.851 3.942-8.791 8.793-8.791h144.366a111.824 111.824 0 00-2.355 17.584H74.98zm38.241-221.877H74.322v-60.783h19.453v45.224h19.446v15.559zm5.351-30.342c0-11.089 2.079-19.177 6.226-24.269 4.152-5.086 11.64-7.635 22.465-7.635 10.83 0 18.319 2.549 22.471 7.635 4.147 5.092 6.22 13.18 6.22 24.269 0 5.509-.434 10.144-1.31 13.908-.881 3.76-2.384 7.037-4.522 9.82-2.143 2.79-5.092 4.834-8.857 6.126-3.759 1.299-8.422 1.95-14.002 1.95-5.574 0-10.243-.651-14.002-1.95-3.764-1.292-6.713-3.336-8.852-6.126-2.137-2.783-3.647-6.06-4.521-9.82-.876-3.764-1.316-8.399-1.316-13.908zm20.915-10.114v25.285h8.07c2.655 0 4.586-.312 5.785-.929 1.204-.61 1.797-2.026 1.797-4.228v-25.285h-8.169c-2.59 0-4.488.312-5.686.923-1.198.616-1.797 2.026-1.797 4.234zm60.689 40.456h-20.521l15.751-60.783h30.055l15.758 60.783h-20.522l-2.237-9.626h-16.052l-2.232 9.626zm7.641-43.417l-3.207 19.63h11.554l-3.107-19.63h-5.24zm75.708 43.417l-14.884-21.591c-.516-.71-.846-2.266-.974-4.669h-.388v26.26h-19.453v-60.783h18.291l14.877 21.59c.516.71.839 2.268.968 4.669h.394v-26.259h19.453v60.783h-18.284zM25.027 47.339h60.008l-2.608 24.38H42.071c-11.299 0-21.126 9.832-21.126 21.121v354.362c0 11.23 9.52 21.132 21.126 21.132h182.75a112.453 112.453 0 0011.364 21.385H25.027C11.354 489.719 0 478.471 0 464.693V72.366c0-13.767 11.259-25.027 25.027-25.027zm330.088 269.609V92.84c0-11.595-9.827-21.121-21.126-21.121h-42.9v-24.38h60.009c13.766 0 25.02 11.377 25.02 25.027v251.777a111.454 111.454 0 00-21.003-7.195zM119.694 34.953h28.361C150.447 15.241 166.358 0 185.651 0c19.159 0 34.988 15.036 37.548 34.542l33.196.411a4.164 4.164 0 014.177 4.169v44.819a4.165 4.165 0 01-4.177 4.171H119.728c-2.266 0-4.169-1.862-4.169-4.171V39.122c-.042-2.308 1.82-4.169 4.135-4.169zm50.422 17.137c2.561 3.513 6.232 6.984 10.126 8.764 3.171.951 6.643 1.039 9.861.158 5.046-2.308 9.674-7.882 11.817-12.552.247-1.32.423-2.684.423-4.175 0-9.873-7.565-17.885-16.903-17.885-9.333 0-16.904 8.012-16.904 17.885.053 2.972.587 5.615 1.58 7.805zM319.36 393.449c0-13.13 20.01-13.15 20.01.026v35.861l22.614 11.963c.114.06.222.127.322.202l.2.134c10.495 6.885.733 23.421-10.493 16.926l-.045-.027-27.351-14.636c-3.209-1.715-5.283-5.11-5.283-8.754l.009-.001.017-41.694z"
-      />
-    </svg>
-    <i />
-  </span>
-);
-
 const SiteLogoMark: React.FC<{ site: SiteProfile }> = ({ site }) => (
   <i className="workspace-dock-meta-logo" style={{ '--brand-hue': site.hue } as React.CSSProperties} aria-hidden="true">
     {site.logo}
@@ -566,11 +502,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   onToggle,
   onClose,
 }) => {
-  const shellRef = useRef<HTMLDivElement | null>(null);
-  const panelRef = useRef<HTMLElement | null>(null);
   const bodyScrollRef = useRef<HTMLDivElement | null>(null);
-  const templateTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const taskTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
@@ -605,7 +537,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     stopConsecutivePages: 2,
     maxEmptyPages: 2,
   });
-  const [panelAnchorStyle, setPanelAnchorStyle] = useState<React.CSSProperties>({});
   const [bodyScrollState, setBodyScrollState] = useState({ canScroll: false, isAtBottom: true });
 
   const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplateDraft>>(() => Object.fromEntries(
@@ -765,40 +696,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       (taskItem) => normalizeTemplateKey(taskItem.template) === normalizeTemplateKey(item.name),
     ).length]),
   ) as Record<string, number>, [taskItems]);
-  const hasRunningTask = useMemo(
-    () => Object.values(taskRuntime).some((runtime) => runtime.status === 'running' && runtime.controlState !== 'canceled'),
-    [taskRuntime],
-  );
-  const templateInsights = useMemo<Record<string, TemplateInsight>>(() => Object.fromEntries(
-    templates.map((item) => {
-      const linkedTasks = allTaskRows.filter((row) => normalizeTemplateKey(row.template) === normalizeTemplateKey(item.name));
-      const currentCount = linkedTasks.reduce((sum, row) => sum + row.runtime.recordsValue, 0)
-        || (item.status === 'deprecated' ? 0 : Math.max(item.fields * Math.max(item.taskCount, 1) * 28, item.taskCount * 120));
-      const yesterdayGrowth = linkedTasks.length
-        ? linkedTasks.reduce((sum, row) => sum + (
-          row.runtime.status === 'running'
-            ? Math.max(row.runtime.lastDelta * 36, 120)
-            : row.runtime.status === 'completed'
-              ? Math.max(Math.round(row.runtime.recordsValue * 0.024), 48)
-              : row.runtime.status === 'paused'
-                ? Math.max(Math.round(row.runtime.recordsValue * 0.008), 8)
-                : row.runtime.status === 'failed'
-                  ? Math.max(Math.round(row.runtime.recordsValue * 0.004), 4)
-                  : 0
-        ), 0)
-        : item.status === 'active'
-          ? Math.max(Math.round(currentCount * 0.08), currentCount > 0 ? 12 : 0)
-          : item.status === 'draft'
-            ? Math.max(Math.round(currentCount * 0.02), currentCount > 0 ? 4 : 0)
-            : 0;
-
-      return [item.key, {
-        tableName: toTableName(item.name),
-        currentCount,
-        yesterdayGrowth,
-      }];
-    }),
-  ) as Record<string, TemplateInsight>, [allTaskRows]);
   const visibleTemplateRows = useMemo(
     () => templateRows.slice(0, templateVisibleCount),
     [templateRows, templateVisibleCount],
@@ -862,86 +759,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         : { canScroll, isAtBottom }
     ));
   }, []);
-
-  const syncPanelAnchor = useCallback(() => {
-    if (!activePanel || !shellRef.current || !panelRef.current) {
-      setPanelAnchorStyle({});
-      return;
-    }
-
-    if (window.innerWidth <= mobileDockBreakpoint) {
-      setPanelAnchorStyle({});
-      return;
-    }
-
-    const trigger = activePanel === 'templates'
-      ? templateTriggerRef.current
-      : taskTriggerRef.current;
-    if (!trigger) {
-      setPanelAnchorStyle({});
-      return;
-    }
-
-    const shellRect = shellRef.current.getBoundingClientRect();
-    const triggerRect = trigger.getBoundingClientRect();
-    const panelRect = panelRef.current.getBoundingClientRect();
-
-    const maxLeft = Math.max(dockPanelEdgePadding, shellRect.width - panelRect.width - dockPanelEdgePadding);
-    const preferredLeft = triggerRect.left - shellRect.left - 18;
-    const left = Math.min(Math.max(preferredLeft, dockPanelEdgePadding), maxLeft);
-
-    const maxBottom = Math.max(dockPanelAnchorOffset, shellRect.height - panelRect.height - dockPanelEdgePadding);
-    const preferredBottom = shellRect.bottom - triggerRect.top + dockPanelAnchorOffset;
-    const bottom = Math.min(preferredBottom, maxBottom);
-
-    const anchorX = Math.min(
-      Math.max(triggerRect.left - shellRect.left + (triggerRect.width / 2) - left, 26),
-      Math.max(panelRect.width - 26, 26),
-    );
-
-    setPanelAnchorStyle({
-      left: `${left}px`,
-      right: 'auto',
-      bottom: `${bottom}px`,
-      transformOrigin: `${anchorX}px calc(100% + ${dockPanelAnchorOffset}px)`,
-    });
-  }, [activePanel]);
-
-  useLayoutEffect(() => {
-    syncPanelAnchor();
-  }, [syncPanelAnchor, activePanel, hasDetail, sessionActive, taskComposerOpen, templateDetailMode]);
-
-  useEffect(() => {
-    if (!activePanel) {
-      setPanelAnchorStyle({});
-      return undefined;
-    }
-
-    const sync = () => {
-      window.requestAnimationFrame(() => {
-        syncPanelAnchor();
-      });
-    };
-
-    const observer = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(() => {
-        sync();
-      })
-      : null;
-
-    const observedNodes = [shellRef.current, panelRef.current, templateTriggerRef.current, taskTriggerRef.current]
-      .filter((node): node is HTMLElement => node !== null);
-    observedNodes.forEach((node) => observer?.observe(node));
-
-    window.addEventListener('resize', sync);
-    window.addEventListener('scroll', sync, true);
-
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener('resize', sync);
-      window.removeEventListener('scroll', sync, true);
-    };
-  }, [activePanel, syncPanelAnchor]);
 
   useEffect(() => {
     const container = bodyScrollRef.current;
@@ -1235,7 +1052,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         const isSelected = selectedTemplateKey === item.key;
         const isPinned = Boolean(pinnedTemplateKeys[item.key]);
         const site = resolveSiteProfile(item.name);
-        const insight = templateInsights[item.key];
         const linkedTaskCount = templateTaskCounts[item.key] ?? item.taskCount;
 
         return (
@@ -1275,15 +1091,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
             <div className="workspace-dock-card-meta">
               <span><SiteLogoMark site={site} />{item.domain}</span>
-              <span>{item.version}</span>
-              <span>{item.fields} fields</span>
-              <span>{linkedTaskCount} tasks</span>
+              <span>{item.version} · {item.fields} 字段</span>
             </div>
 
-            <div className="workspace-dock-card-analytics">
-              <span className="is-table">{insight.tableName}</span>
-              <span className="is-current">now {formatCompactNumber(insight.currentCount)}</span>
-              <span className="is-growth">yday {formatSignedCompactNumber(insight.yesterdayGrowth)}</span>
+            <div className="workspace-dock-card-footer">
+              <span>{draft.savedAt}</span>
+              <span className={linkedTaskCount ? 'is-linked' : ''}>
+                {linkedTaskCount ? `${linkedTaskCount} 个任务` : '未调度'}
+              </span>
             </div>
 
             <div className="workspace-dock-card-bar">
@@ -1292,7 +1107,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           </button>
         );
       })}
-      {!templateRows.length && <div className="workspace-dock-empty">No templates matched</div>}
+      {!templateRows.length && <div className="workspace-dock-empty">没有符合条件的模板</div>}
     </div>
   );
 
@@ -1344,9 +1159,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
             <div className="workspace-dock-card-meta">
               <span><SiteLogoMark site={item.site} />{stripDecorativeSuffix(item.area)}</span>
-              <span>{formatCompactNumber(item.runtime.recordsValue)} records</span>
-              <span>{item.nextRun}</span>
+              <span>{formatCompactNumber(item.runtime.recordsValue)}</span>
               <span>{item.owner}</span>
+            </div>
+
+            <div className="workspace-dock-card-footer">
+              <span>下次 {item.nextRun}</span>
+              <span className={item.runtime.status === 'failed' || item.runtime.status === 'paused' ? 'is-alert' : ''}>
+                延迟 {item.lag}
+              </span>
             </div>
 
             <div className={`workspace-dock-card-bar ${item.display.isRunning ? 'is-running' : ''}`}>
@@ -1355,7 +1176,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           </button>
         );
       })}
-      {!taskRows.length && <div className="workspace-dock-empty">No tasks matched</div>}
+      {!taskRows.length && <div className="workspace-dock-empty">没有符合条件的调度任务</div>}
     </div>
   );
 
@@ -2423,44 +2244,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           opacity: 0.94;
           animation: workspaceTaskPulse 1.2s ease-in-out infinite;
         }
-                .workspace-dock-rail {
-          position: absolute;
-          left: 68px;
-          bottom: 34px;
-          display: flex;
-          flex-direction: row;
-          align-items: center;
-          gap: 18px;
-          pointer-events: auto;
-          z-index: 2;
-        }
-        .workspace-dock-trigger {
-          border: none;
-          background: transparent;
-          color: rgba(255, 255, 255, 0.72);
-          opacity: 0.82;
-          padding: 0;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-          transition: color 160ms ease, transform 160ms ease, opacity 160ms ease, filter 160ms ease;
-        }
-        .workspace-dock-trigger:hover,
-        .workspace-dock-trigger.is-active {
-          opacity: 1;
-          color: ${aura.text};
-          transform: scale(1.03);
-          filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.22));
-        }
-        .workspace-dock-trigger .workspace-glyph {
-          width: 21px;
-          height: 21px;
-        }
         .workspace-dock-panel {
-          position: absolute;
-          left: max(22px, calc(50% - 468px));
-          bottom: 74px;
+          position: fixed;
+          top: 64px;
+          right: 18px;
           width: min(396px, calc(100vw - 48px));
           height: min(488px, calc(100vh - 140px));
           max-height: min(488px, calc(100vh - 140px));
@@ -2475,7 +2262,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           flex-direction: column;
           opacity: 0;
-          transform: translateY(16px);
+          transform: translateY(-8px);
           transition: opacity 200ms ease, transform 220ms ease;
           pointer-events: none;
         }
@@ -2754,34 +2541,26 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-card-meta span {
           gap: 6px;
         }
-        .workspace-dock-card-analytics {
+        .workspace-dock-card-footer {
           margin-top: 8px;
-          display: grid;
-          grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 1fr));
-          gap: 6px;
-        }
-        .workspace-dock-card-analytics span {
-          min-height: 18px;
-          padding: 0 7px;
-          border-radius: 999px;
-          display: inline-flex;
+          display: flex;
           align-items: center;
-          justify-content: center;
-          font-size: 9px;
-          line-height: 1;
-          background: rgba(255, 255, 255, 0.04);
+          justify-content: space-between;
+          gap: 10px;
+          color: ${aura.subtle};
+          font-size: 10px;
+          line-height: 1.3;
         }
-        .workspace-dock-card-analytics .is-table {
-          color: #97B8FF;
-          justify-content: flex-start;
+        .workspace-dock-card-footer span {
+          min-width: 0;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .workspace-dock-card-analytics .is-current {
-          color: #8FDEC2;
+        .workspace-dock-card-footer .is-linked {
+          color: #97B8FF;
         }
-        .workspace-dock-card-analytics .is-growth {
+        .workspace-dock-card-footer .is-alert {
           color: #F6C35B;
         }
         .workspace-dock-meta-logo {
@@ -3541,26 +3320,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           }
         }
         @media (max-width: 767px) {
-          .workspace-dock-rail,
-          .workspace-dock-shell.is-session .workspace-dock-rail {
-            left: 18px;
-            bottom: var(--ai-session-dock-rail-bottom);
-            gap: 12px;
-          }
           .workspace-dock-panel,
           .workspace-dock-shell.is-session .workspace-dock-panel {
             left: 12px;
             right: 12px;
             width: auto;
-            bottom: 126px;
-            height: min(74vh, calc(100vh - 132px));
-            max-height: min(74vh, calc(100vh - 132px));
+            top: 64px;
+            bottom: auto;
+            height: min(74vh, calc(100vh - 76px));
+            max-height: min(74vh, calc(100vh - 76px));
           }
           .workspace-dock-form-grid,
           .workspace-dock-metric-grid {
-            grid-template-columns: 1fr;
-          }
-          .workspace-dock-card-analytics {
             grid-template-columns: 1fr;
           }
           .workspace-dock-detail-actions {
@@ -3570,44 +3341,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
       `}</style>
 
-      <div
-        ref={shellRef}
-        className={`workspace-dock-shell ${activePanel ? 'is-open' : ''} ${sessionActive ? 'is-session' : ''}`}
-      >
+      <div className={`workspace-dock-shell ${activePanel ? 'is-open' : ''} ${sessionActive ? 'is-session' : ''}`}>
         <div
           className={`workspace-dock-hitbox ${activePanel ? 'is-open' : ''}`}
           onClick={onClose}
           aria-hidden={!activePanel}
         />
 
-        <div className="workspace-dock-rail">
-          <Tooltip title="Templates" placement="top">
-            <button
-              ref={templateTriggerRef}
-              type="button"
-              aria-label="Templates"
-              className={`workspace-dock-trigger ${activePanel === 'templates' ? 'is-active' : ''}`}
-              onClick={() => onToggle('templates')}
-            >
-              <DockTemplateGlyph />
-            </button>
-          </Tooltip>
-          <Tooltip title="Tasks" placement="top">
-            <button
-              ref={taskTriggerRef}
-              type="button"
-              aria-label="Tasks"
-              className={`workspace-dock-trigger ${activePanel === 'tasks' ? 'is-active' : ''}`}
-              onClick={() => onToggle('tasks')}
-            >
-              <DockTaskGlyph active={hasRunningTask} />
-            </button>
-          </Tooltip>
-        </div>
-
         <aside
-          ref={panelRef}
-          style={panelAnchorStyle}
           className={`workspace-dock-panel ${activePanel ? 'is-open' : ''} ${hasDetail ? 'is-detail' : ''}`}
         >
           {activePanel ? (

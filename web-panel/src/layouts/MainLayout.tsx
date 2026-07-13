@@ -252,6 +252,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const routedProject = useMemo(() => resolveProjectByPath(location.pathname), [location.pathname]);
   const activeProjectKey = routedProject ?? currentProject;
   const activeProject = projectConfigs[activeProjectKey];
+  const activeAiWorkspacePanel = activeProjectKey === 'ai-collect'
+    ? new URLSearchParams(location.search).get('panel')
+    : null;
   const hideSidebar = activeProjectKey === 'ai-collect';
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
@@ -335,6 +338,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     if (isMobile) {
       setManualCollapsed(true);
     }
+  };
+
+  const openAiWorkspacePanel = (panel: 'templates' | 'tasks') => {
+    navigate(`/ai-collect?panel=${panel}`);
   };
 
   const handlePinToggle = () => {
@@ -626,6 +633,49 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         </div>
 
         <Space size={4} align="center">
+          {activeProjectKey === 'ai-collect' ? (
+            <Space
+              size={2}
+              style={{
+                marginRight: 6,
+                paddingRight: 8,
+                borderRight: `1px solid ${palette.border}`,
+              }}
+            >
+              <Button
+                type="text"
+                icon={<CodeOutlined />}
+                aria-label="模板管理"
+                title="模板管理"
+                onClick={() => openAiWorkspacePanel('templates')}
+                style={{
+                  height: 34,
+                  color: activeAiWorkspacePanel === 'templates' ? activeProject.accent : palette.secondary,
+                  background: activeAiWorkspacePanel === 'templates' ? `${activeProject.accent}14` : 'transparent',
+                  border: 'none',
+                  fontSize: 13,
+                }}
+              >
+                {!isMobile && '模板'}
+              </Button>
+              <Button
+                type="text"
+                icon={<ScheduleOutlined />}
+                aria-label="任务调度"
+                title="任务调度"
+                onClick={() => openAiWorkspacePanel('tasks')}
+                style={{
+                  height: 34,
+                  color: activeAiWorkspacePanel === 'tasks' ? activeProject.accent : palette.secondary,
+                  background: activeAiWorkspacePanel === 'tasks' ? `${activeProject.accent}14` : 'transparent',
+                  border: 'none',
+                  fontSize: 13,
+                }}
+              >
+                {!isMobile && '调度'}
+              </Button>
+            </Space>
+          ) : null}
           <Dropdown
             trigger={['click']}
             placement="bottomRight"
