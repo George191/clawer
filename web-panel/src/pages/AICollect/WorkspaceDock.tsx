@@ -2615,7 +2615,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           align-items: center;
           justify-content: center;
           color: rgba(255, 255, 255, 0.34);
-          transition: color 160ms ease, transform 160ms ease;
+          opacity: 0;
+          pointer-events: none;
+          transition: color 160ms ease, opacity 160ms ease, transform 160ms ease;
+        }
+        .workspace-dock-card:hover .workspace-dock-card-pin,
+        .workspace-dock-card:focus-visible .workspace-dock-card-pin {
+          opacity: 1;
+          pointer-events: auto;
         }
         .workspace-dock-card-pin:hover {
           color: ${aura.text};
