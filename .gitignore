@@ -10,4 +10,4 @@ logs/
 .codex/
 .pytest.cache/
 *.log
-models_/
+models/
