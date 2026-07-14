@@ -975,7 +975,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   });
 
   const renderTemplateList = () => (
-    <div className="workspace-dock-list">
+    <div className="workspace-dock-list is-templates">
       {visibleTemplateRows.map((item) => {
         const status = templateStatusMeta[item.status];
         const draft = templateDrafts[item.key];
@@ -1042,7 +1042,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   );
 
   const renderTaskList = () => (
-    <div className="workspace-dock-list">
+    <div className="workspace-dock-list is-tasks">
       {visibleTaskRows.map((item) => {
         const isSelected = selectedTaskKey === item.key;
         const isPinned = Boolean(pinnedTaskKeys[item.key]);
@@ -2328,6 +2328,35 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           flex-direction: column;
           gap: 6px;
           padding: 10px 16px 76px;
+        }
+        .workspace-dock-list.is-templates {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, 272px);
+          align-content: start;
+          gap: 12px;
+        }
+        .workspace-dock-list.is-templates .workspace-dock-card {
+          height: 188px;
+          padding: 12px;
+          overflow: hidden;
+        }
+        .workspace-dock-list.is-templates .workspace-dock-card-footer {
+          margin-top: 7px;
+        }
+        .workspace-dock-list.is-tasks {
+          gap: 8px;
+        }
+        .workspace-dock-list.is-tasks .workspace-dock-card {
+          min-height: 112px;
+          padding: 12px 14px;
+          border-left: 3px solid rgba(138, 180, 255, 0.28);
+          border-radius: 8px;
+        }
+        .workspace-dock-list.is-tasks .workspace-dock-card-row {
+          align-items: center;
+        }
+        .workspace-dock-list.is-tasks .workspace-dock-card-meta {
+          margin-top: 10px;
         }
         .workspace-dock-card {
           width: 100%;

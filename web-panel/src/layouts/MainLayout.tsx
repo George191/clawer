@@ -251,9 +251,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const routedProject = useMemo(() => resolveProjectByPath(location.pathname), [location.pathname]);
   const activeProjectKey = routedProject ?? currentProject;
   const activeProject = projectConfigs[activeProjectKey];
-  const activeAiWorkspacePanel = activeProjectKey === 'ai-collect'
-    ? new URLSearchParams(location.search).get('panel')
-    : null;
+  const activeAiWorkspacePanel = location.pathname === '/templates'
+    ? 'templates'
+    : location.pathname === '/tasks'
+      ? 'tasks'
+      : null;
   const hideSidebar = activeProjectKey === 'ai-collect';
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
@@ -337,24 +339,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     if (isMobile) {
       setManualCollapsed(true);
     }
-  };
-
-  const openAiWorkspacePanel = (panel: 'templates' | 'tasks') => {
-    navigate(`/ai-collect?panel=${panel}`);
-  };
-
-  const aiWorkspaceLabel = activeAiWorkspacePanel === 'templates'
-    ? '模板管理'
-    : activeAiWorkspacePanel === 'tasks'
-      ? '任务调度'
-      : '智能采集';
-
-  const selectAiWorkspace = (key: string) => {
-    if (key === 'collect') {
-      navigate('/ai-collect');
-      return;
-    }
-    openAiWorkspacePanel(key as 'templates' | 'tasks');
   };
 
   const handlePinToggle = () => {
@@ -637,60 +621,30 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   <DownOutlined style={{ color: palette.secondary, fontSize: 10 }} />
                 </button>
               </Dropdown>
-              {activeProjectKey === 'ai-collect' ? (
-                <Dropdown
-                  trigger={['click']}
-                  menu={{
-                    selectedKeys: [activeAiWorkspacePanel ?? 'collect'],
-                    onClick: ({ key }) => selectAiWorkspace(key),
-                    items: [
-                      { key: 'collect', icon: <RobotOutlined />, label: '智能采集' },
-                      { key: 'templates', icon: <CodeOutlined />, label: '模板管理' },
-                      { key: 'tasks', icon: <ScheduleOutlined />, label: '任务调度' },
-                    ],
-                  }}
-                >
-                  <button
-                    type="button"
-                    style={{
-                      border: 'none',
-                      background: 'transparent',
-                      color: palette.text,
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      padding: '3px 6px',
-                      borderRadius: 6,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
-                  >
-                    {aiWorkspaceLabel}
-                    <DownOutlined style={{ color: palette.secondary, fontSize: 10 }} />
-                  </button>
-                </Dropdown>
-              ) : null}
             </div>
           )}
         </div>
 
         <Space size={4} align="center">
-          {isMobile && activeProjectKey === 'ai-collect' ? (
-            <Dropdown
-              trigger={['click']}
-              menu={{
-                selectedKeys: [activeAiWorkspacePanel ?? 'collect'],
-                onClick: ({ key }) => selectAiWorkspace(key),
-                items: [
-                  { key: 'collect', icon: <RobotOutlined />, label: '智能采集' },
-                  { key: 'templates', icon: <CodeOutlined />, label: '模板管理' },
-                  { key: 'tasks', icon: <ScheduleOutlined />, label: '任务调度' },
-                ],
-              }}
-            >
-              <Button type="text" icon={<DownOutlined />} aria-label="切换 AI 智能采集功能" style={{ width: 34, height: 34, color: palette.secondary }} />
-            </Dropdown>
+          {activeProjectKey === 'ai-collect' ? (
+            <Space size={2} style={{ marginRight: 6, paddingRight: 8, borderRight: `1px solid ${palette.border}` }}>
+              <Button
+                type="text"
+                icon={<CodeOutlined />}
+                aria-label="模板管理"
+                title="模板管理"
+                onClick={() => navigate('/templates')}
+                style={{ width: 34, height: 34, color: activeAiWorkspacePanel === 'templates' ? activeProject.accent : palette.secondary, border: 'none' }}
+              />
+              <Button
+                type="text"
+                icon={<ScheduleOutlined />}
+                aria-label="任务调度"
+                title="任务调度"
+                onClick={() => navigate('/tasks')}
+                style={{ width: 34, height: 34, color: activeAiWorkspacePanel === 'tasks' ? activeProject.accent : palette.secondary, border: 'none' }}
+              />
+            </Space>
           ) : null}
           <Dropdown
             trigger={['click']}

@@ -44,7 +44,6 @@ import {
   ThunderboltOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
-import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import {
   type DryRunResponse,
@@ -53,7 +52,6 @@ import {
   dryRun as dryRunApi,
   generateTemplate as generateTemplateApi,
 } from '@/services/aiApi';
-import WorkspaceDock, { type WorkspacePanel } from './WorkspaceDock';
 import workspacePalette from './palette';
 
 const { Text } = Typography;
@@ -1072,7 +1070,6 @@ const aura = workspacePalette;
 
 const AICollect: React.FC = () => {
   const { message } = App.useApp();
-  const [searchParams, setSearchParams] = useSearchParams();
   const analyzeStreamRef = useRef<EventSource | null>(null);
   const simulationTimerRef = useRef<number | null>(null);
   const promptGenerationTimerRef = useRef<number | null>(null);
@@ -1276,10 +1273,6 @@ const AICollect: React.FC = () => {
     () => sessionInspectorTabs.find((tab) => tab.id === activeInspectorTabId) ?? sessionInspectorTabs[sessionInspectorTabs.length - 1] ?? null,
     [activeInspectorTabId, sessionInspectorTabs],
   );
-  const activeWorkspacePanel = useMemo<WorkspacePanel | null>(() => {
-    const panel = searchParams.get('panel');
-    return panel === 'templates' || panel === 'tasks' ? panel : null;
-  }, [searchParams]);
   const templateStages = useMemo(() => {
     const stageSet = new Set(templateDraftEntries.map((entry) => entry.stageId));
     return templateStageOrder.filter((stageId) => stageSet.has(stageId));
@@ -2207,23 +2200,6 @@ const AICollect: React.FC = () => {
     }
     handleAnalyze();
   }, [finishPromptGeneration, handleAnalyze, handleGuideSubmit, hasSession, promptGenerating]);
-
-  const handleWorkspacePanelToggle = useCallback((panel: WorkspacePanel) => {
-    const nextParams = new URLSearchParams(searchParams);
-    if (activeWorkspacePanel === panel) {
-      nextParams.delete('panel');
-    } else {
-      nextParams.set('panel', panel);
-    }
-    setSearchParams(nextParams);
-  }, [activeWorkspacePanel, searchParams, setSearchParams]);
-
-  const handleWorkspacePanelClose = useCallback(() => {
-    if (!activeWorkspacePanel) return;
-    const nextParams = new URLSearchParams(searchParams);
-    nextParams.delete('panel');
-    setSearchParams(nextParams);
-  }, [activeWorkspacePanel, searchParams, setSearchParams]);
 
   const renderMissionPanel = (variant: 'hero' | 'compact') => {
     if (variant === 'hero') {
@@ -8062,12 +8038,6 @@ const AICollect: React.FC = () => {
             </div>
           )}
         </div>
-        <WorkspaceDock
-          activePanel={activeWorkspacePanel}
-          sessionActive={hasSession}
-          onToggle={handleWorkspacePanelToggle}
-          onClose={handleWorkspacePanelClose}
-        />
       </div>
     </ErrorBoundary>
   );
