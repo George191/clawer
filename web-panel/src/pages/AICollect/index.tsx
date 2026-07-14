@@ -54,6 +54,7 @@ import {
   generateTemplate as generateTemplateApi,
 } from '@/services/aiApi';
 import workspacePalette from './palette';
+import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import WorkspaceDock, { type WorkspacePanel } from './WorkspaceDock';
 
 const { Text } = Typography;
@@ -166,29 +167,6 @@ const ChevronRightIcon: React.FC<{ className?: string }> = ({ className }) => (
       strokeWidth="1.35"
       strokeLinecap="round"
       strokeLinejoin="round"
-    />
-  </svg>
-);
-
-const ReleaseDraftIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg viewBox="0 0 412 511.87" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path
-      fill="currentColor"
-      fillRule="nonzero"
-      d="M35.7 32.95h33.54V11.18C69.24 5.01 74.25 0 80.43 0c6.17 0 11.18 5.01 11.18 11.18v21.77h49.21V11.18c0-6.17 5.01-11.18 11.19-11.18 6.17 0 11.18 5.01 11.18 11.18v21.77h49.21V11.18C212.4 5.01 217.41 0 223.59 0c6.17 0 11.18 5.01 11.18 11.18v21.77h49.21V11.18c0-6.17 5.01-11.18 11.19-11.18 6.17 0 11.18 5.01 11.18 11.18v21.77h34.55c9.83 0 18.76 4.03 25.21 10.49 5.36 5.35 9.04 12.4 10.15 20.23h.04c9.82 0 18.76 4.03 25.21 10.48C407.98 80.62 412 89.56 412 99.37v376.8c0 9.77-4.04 18.7-10.49 25.17-6.51 6.5-15.45 10.53-25.21 10.53H67.71c-9.81 0-18.75-4.02-25.22-10.49-6.14-6.14-10.09-14.53-10.45-23.8-8.36-.86-15.9-4.66-21.55-10.31C4.03 460.82 0 451.89 0 442.06V68.65c0-9.83 4.03-18.77 10.48-25.22 6.45-6.45 15.39-10.48 25.22-10.48zm340.9 51.06v358.05c0 9.8-4.03 18.74-10.49 25.2-6.47 6.47-15.41 10.5-25.21 10.5H52.43c.39 3.59 2.01 6.82 4.44 9.25 2.79 2.79 6.64 4.53 10.84 4.53H376.3c4.22 0 8.07-1.74 10.85-4.52 2.78-2.78 4.52-6.63 4.52-10.85V99.37c0-4.2-1.74-8.05-4.54-10.84a15.334 15.334 0 0 0-10.53-4.52zm-294 302.37c-5.74 0-10.4-4.86-10.4-10.85 0-5.99 4.66-10.85 10.4-10.85h214.78c5.74 0 10.41 4.86 10.41 10.85 0 5.99-4.67 10.85-10.41 10.85H82.6zm0-71.58c-5.74 0-10.4-4.86-10.4-10.85 0-5.99 4.66-10.85 10.4-10.85h214.78c5.74 0 10.41 4.86 10.41 10.85 0 5.99-4.67 10.85-10.41 10.85H82.6zm0-71.58c-5.74 0-10.4-4.86-10.4-10.85 0-5.99 4.66-10.85 10.4-10.85h214.78c5.74 0 10.41 4.86 10.41 10.85 0 5.99-4.67 10.85-10.41 10.85H82.6zm0-71.58c-5.74 0-10.4-4.86-10.4-10.85 0-5.99 4.66-10.85 10.4-10.85h214.78c5.74 0 10.41 4.86 10.41 10.85 0 5.99-4.67 10.85-10.41 10.85H82.6zM306.35 53.28v21.77c0 6.17-5.01 11.18-11.18 11.18-6.18 0-11.19-5.01-11.19-11.18V53.28h-49.21v21.77c0 6.17-5.01 11.18-11.18 11.18-6.18 0-11.19-5.01-11.19-11.18V53.28h-49.21v21.77c0 6.17-5.01 11.18-11.18 11.18-6.18 0-11.19-5.01-11.19-11.18V53.28H91.61v21.77c0 6.17-5.01 11.18-11.18 11.18-6.18 0-11.19-5.01-11.19-11.18V53.28H35.7c-4.22 0-8.07 1.75-10.85 4.52-2.77 2.78-4.52 6.63-4.52 10.85v373.41c0 4.2 1.75 8.05 4.53 10.84 2.8 2.79 6.65 4.53 10.84 4.53h305.2c4.19 0 8.03-1.75 10.83-4.54 2.79-2.8 4.54-6.65 4.54-10.83V68.65c0-4.19-1.74-8.04-4.53-10.84-2.79-2.78-6.64-4.53-10.84-4.53h-34.55z"
-    />
-  </svg>
-);
-
-const ReleaseArchiveIcon: React.FC<{ className?: string }> = ({ className }) => (
-  <svg viewBox="0 0 128.889 116.15" className={className} fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path
-      d="M4.213 3.005c-.328 0-.614.103-.84.348-.246.246-.368.532-.368.84v28.446c0 .308.122.573.368.778.226.205.512.308.84.308h120.463c.328 0 .614-.103.84-.308.246-.205.368-.471.368-.778V4.192c0-.308-.122-.594-.368-.84-.226-.245-.512-.348-.84-.348H4.213zM10.213 33.798c-.235 0-.471.103-.675.307-.185.205-.287.44-.287.656v77.442c0 .216.103.451.287.655.204.206.43.287.675.287h108.462c.246 0 .472-.081.676-.287.185-.204.287-.43.287-.655V34.761c0-.226-.103-.451-.287-.656-.204-.204-.439-.307-.676-.307H10.213zM47.999 52.228H80.89c1.762 0 3.257.614 4.485 1.844 1.249 1.249 1.863 2.744 1.863 4.505 0 1.761-.614 3.277-1.863 4.567-1.229 1.27-2.725 1.925-4.485 1.925H47.999c-1.761 0-3.257-.655-4.485-1.925-1.249-1.29-1.863-2.807-1.863-4.567 0-1.761.614-3.256 1.863-4.505 1.228-1.23 2.723-1.844 4.485-1.844z"
-      stroke="currentColor"
-      strokeWidth="6.0092"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeMiterlimit="2.6131"
     />
   </svg>
 );
@@ -1127,6 +1105,8 @@ const AICollect: React.FC = () => {
   const [releaseScheduleKind, setReleaseScheduleKind] = useState<ReleaseScheduleKind>('once');
   const [releaseDailyTime, setReleaseDailyTime] = useState('09:00');
   const [releaseIntervalMinutes, setReleaseIntervalMinutes] = useState(60);
+  const [releaseIntervalUnit, setReleaseIntervalUnit] = useState<'minute' | 'hour'>('minute');
+  const [releaseEmptyPageLimit, setReleaseEmptyPageLimit] = useState(2);
   const [releaseIncremental, setReleaseIncremental] = useState(false);
   const [releaseBatchInput, setReleaseBatchInput] = useState(false);
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
@@ -3608,11 +3588,11 @@ const AICollect: React.FC = () => {
               <section className="ai-session-task-create">
                 <div className="ai-session-task-scheduler">
                     <div className="ai-session-task-scheduler-row">
-                      <label className="ai-session-task-control is-wide">
+                      <label className="ai-session-task-control ai-session-task-schedule-control">
                         <span>Run schedule</span>
                         <Segmented
+                          className="ai-session-task-run-schedule"
                           size="small"
-                          block
                           value={releaseScheduleKind}
                           onChange={(value) => setReleaseScheduleKind(value as ReleaseScheduleKind)}
                           options={[
@@ -3622,36 +3602,55 @@ const AICollect: React.FC = () => {
                           ]}
                         />
                       </label>
+                      <label className="ai-session-task-control ai-session-task-concurrency-control">
+                        <span>Concurrency</span>
+                        <InputNumber min={1} max={50} value={concurrency} onChange={(value) => setConcurrency(value ?? 4)} />
+                      </label>
+                    </div>
+                    <div className="ai-session-task-schedule-options">
                       {releaseScheduleKind === 'daily' ? (
-                        <label className="ai-session-task-control">
-                          <span>Run at</span>
-                          <TimePicker
-                            allowClear={false}
-                            value={dayjs(releaseDailyTime, 'HH:mm')}
-                            format="HH:mm"
-                            minuteStep={5}
-                            needConfirm
-                            popupClassName="ai-session-time-picker-dropdown"
-                            onChange={(_, value) => setReleaseDailyTime((value as string) || '09:00')}
-                          />
-                        </label>
+                        <>
+                          <label className="ai-session-task-control">
+                            <span>Run at</span>
+                            <TimePicker
+                              allowClear={false}
+                              value={dayjs(releaseDailyTime, 'HH:mm')}
+                              format="HH:mm"
+                              minuteStep={5}
+                              needConfirm
+                              popupClassName="ai-session-time-picker-dropdown"
+                              onChange={(_, value) => setReleaseDailyTime((value as string) || '09:00')}
+                            />
+                          </label>
+                          <label className="ai-session-task-control">
+                            <span>Empty page limit</span>
+                            <InputNumber min={1} max={20} value={releaseEmptyPageLimit} onChange={(value) => setReleaseEmptyPageLimit(value ?? 2)} />
+                          </label>
+                        </>
                       ) : releaseScheduleKind === 'interval' ? (
-                        <label className="ai-session-task-control">
-                          <span>Every (min)</span>
-                          <InputNumber min={5} max={1440} value={releaseIntervalMinutes} onChange={(value) => setReleaseIntervalMinutes(value ?? 60)} />
-                        </label>
+                        <>
+                          <label className="ai-session-task-control">
+                            <span>Interval</span>
+                            <InputNumber min={5} max={720} value={releaseIntervalMinutes} onChange={(value) => setReleaseIntervalMinutes(value ?? 60)} />
+                          </label>
+                          <label className="ai-session-task-control">
+                            <span>Unit</span>
+                            <Select
+                              value={releaseIntervalUnit}
+                              options={[
+                                { value: 'minute', label: 'Minute' },
+                                { value: 'hour', label: 'Hour' },
+                              ]}
+                              onChange={(value) => setReleaseIntervalUnit(value as 'minute' | 'hour')}
+                            />
+                          </label>
+                        </>
                       ) : (
                         <label className="ai-session-task-control">
                           <span>First run</span>
                           <Input value="After publish" disabled />
                         </label>
                       )}
-                    </div>
-                    <div className="ai-session-task-scheduler-row is-limits">
-                      <label className="ai-session-task-control">
-                        <span>Concurrency</span>
-                        <InputNumber min={1} max={50} value={concurrency} onChange={(value) => setConcurrency(value ?? 4)} />
-                      </label>
                     </div>
                     {(visibleTaskParams.length || releaseBatchConfig) ? (
                       <section className="ai-session-task-template-params">
@@ -3660,7 +3659,11 @@ const AICollect: React.FC = () => {
                           {releaseBatchConfig ? (
                             <label>
                               <span>Batch input</span>
-                              <Switch checked={releaseBatchInput} onChange={setReleaseBatchInput} size="small" />
+                              <Checkbox
+                                className="ai-session-task-checkbox"
+                                checked={releaseBatchInput}
+                                onChange={(event) => setReleaseBatchInput(event.target.checked)}
+                              />
                             </label>
                           ) : null}
                         </div>
@@ -3760,15 +3763,27 @@ const AICollect: React.FC = () => {
                     <div className="ai-session-task-policies">
                       <label>
                         <span><strong>Incremental</strong><small>{releaseIncremental ? 'Continue from last boundary' : 'Collect full scope'}</small></span>
-                        <Switch checked={releaseIncremental} onChange={setReleaseIncremental} />
+                        <Checkbox
+                          className="ai-session-task-checkbox"
+                          checked={releaseIncremental}
+                          onChange={(event) => setReleaseIncremental(event.target.checked)}
+                        />
                       </label>
                       <label>
                         <span><strong>Robots policy</strong><small>Honor source limits</small></span>
-                        <Switch checked={respectRobots} onChange={setRespectRobots} />
+                        <Checkbox
+                          className="ai-session-task-checkbox"
+                          checked={respectRobots}
+                          onChange={(event) => setRespectRobots(event.target.checked)}
+                        />
                       </label>
                       <label>
                         <span><strong>Drift guard</strong><small>Pause on structural change</small></span>
-                        <Switch checked={enableDriftGuard} onChange={setEnableDriftGuard} />
+                        <Checkbox
+                          className="ai-session-task-checkbox"
+                          checked={enableDriftGuard}
+                          onChange={(event) => setEnableDriftGuard(event.target.checked)}
+                        />
                       </label>
                     </div>
                 </div>
@@ -5166,14 +5181,31 @@ const AICollect: React.FC = () => {
             gap: 10px;
           }
           .ai-session-task-scheduler-row {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) 140px;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
             gap: 10px;
             min-height: 54px;
           }
-          .ai-session-task-scheduler-row.is-limits {
-            grid-template-columns: 82px;
-            justify-content: start;
+          .ai-session-task-schedule-control,
+          .ai-session-task-run-schedule {
+            width: fit-content;
+          }
+          .ai-session-task-concurrency-control {
+            width: 82px;
+            flex: none;
+          }
+          .ai-session-task-schedule-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+          }
+          .ai-session-task-schedule-options .ai-session-task-control {
+            width: 132px;
+            flex: none;
+          }
+          .ai-session-task-schedule-options .ant-select {
+            width: 100%;
           }
           .ai-session-task-control {
             min-width: 0;
@@ -5212,15 +5244,34 @@ const AICollect: React.FC = () => {
             height: 30px;
           }
           .ai-session-task-control .ant-segmented-item-label {
-            min-width: 58px;
+            min-width: 0;
+            padding-inline: 10px;
             line-height: 30px;
             white-space: nowrap;
+          }
+          .ai-session-task-run-schedule .ant-segmented-item-label {
+            font-size: 10px;
           }
           .ai-session-task-control .ant-input-number {
             width: 100%;
           }
           .ai-session-task-control .ant-segmented {
             background: rgba(255, 255, 255, 0.045);
+          }
+          .ai-session-task-checkbox {
+            flex: none;
+            line-height: 1;
+          }
+          .ai-session-task-checkbox .ant-checkbox-inner {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            border-color: ${aura.border};
+            background: rgba(255, 255, 255, 0.04);
+          }
+          .ai-session-task-checkbox .ant-checkbox-checked .ant-checkbox-inner {
+            border-color: rgba(129, 216, 208, 0.68);
+            background: ${tiffanyAccent};
           }
           .ai-session-task-template-params {
             padding: 10px 0;
@@ -7970,8 +8021,16 @@ const AICollect: React.FC = () => {
             .ai-session-adapter-grid {
               grid-template-columns: 1fr;
             }
-            .ai-session-task-scheduler-row,
-            .ai-session-task-scheduler-row.is-limits,
+            .ai-session-task-scheduler-row {
+              align-items: stretch;
+              flex-direction: column;
+            }
+            .ai-session-task-concurrency-control {
+              width: 100%;
+            }
+            .ai-session-task-schedule-options .ai-session-task-control {
+              width: 100%;
+            }
             .ai-session-task-policies {
               grid-template-columns: 1fr;
             }
