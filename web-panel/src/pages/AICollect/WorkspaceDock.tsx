@@ -1,14 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Input, InputNumber, Pagination, Segmented, Select, Switch, Tooltip, Typography } from 'antd';
+import { Button, Input, InputNumber, Pagination, Segmented, Select, Switch, Tooltip, Typography, Upload } from 'antd';
 import {
   BellOutlined,
   CaretRightOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
+  CloudUploadOutlined,
   CloseCircleOutlined,
   CloseOutlined,
   CodeOutlined,
   DeploymentUnitOutlined,
+  DownOutlined,
   DownloadOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -17,14 +19,13 @@ import {
   PushpinOutlined,
   RadarChartOutlined,
   ReadOutlined,
-  SaveOutlined,
   SearchOutlined,
   StopOutlined,
   SyncOutlined,
-  UndoOutlined,
+  UploadOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { templates, tasks } from '@/pages/CollectConsole/shared/mockData';
+import { templates as sourceTemplates, tasks as sourceTasks } from '@/pages/CollectConsole/shared/mockData';
 import workspacePalette from './palette';
 import type {
   CollectTask,
@@ -36,7 +37,25 @@ import type {
 const { Text } = Typography;
 const { TextArea } = Input;
 const aura = workspacePalette;
-const listPageSize = 4;
+const defaultPageSize = 10;
+const templates = Array.from({ length: 220 }, (_, index) => {
+  const source = sourceTemplates[index % sourceTemplates.length];
+  const sequence = index + 1;
+  return {
+    ...source,
+    key: `${source.key}-mock-${sequence}`,
+    title: `${source.title} · ${String(sequence).padStart(3, '0')}`,
+  };
+});
+const tasks = Array.from({ length: 220 }, (_, index) => {
+  const source = sourceTasks[index % sourceTasks.length];
+  const sequence = index + 1;
+  return {
+    ...source,
+    key: `${source.key}-mock-${sequence}`,
+    name: `${source.name} · ${String(sequence).padStart(3, '0')}`,
+  };
+});
 
 export type WorkspacePanel = 'templates' | 'tasks';
 
@@ -45,6 +64,16 @@ interface WorkspaceDockProps {
   sessionActive?: boolean;
   onToggle: (panel: WorkspacePanel) => void;
   onClose: () => void;
+  analysisTemplate?: { yaml: string; adapter: string };
+  templateSources?: Record<string, { yaml: string; adapter: string }>;
+  onTemplateApply?: (draft: { yaml: string; adapter: string }) => void;
+  releaseTaskDefaults?: {
+    concurrency: number;
+    respectRobots: boolean;
+    driftGuard: boolean;
+    params: Array<{ name: string; description: string; defaultValue: string; required: boolean }>;
+    batch?: { paramName: string; batchSize: string; startLine: string; limit: string; delay: string } | null;
+  };
 }
 
 type TemplateFilter = 'all' | TemplateStatus;
@@ -139,18 +168,32 @@ const templateStatusMeta: Record<TemplateStatus, { label: string; color: string 
   deprecated: { label: '归档', color: aura.subtle },
 };
 
-const fieldHints = [
-  'title',
-  'source_url',
-  'publish_time',
-  'summary',
-  'attachment_url',
-  'category',
-  'author',
-  'abstract',
-  'region_code',
-  'detail_html',
-] as const;
+const extractListFields = (yaml: string) => {
+  const lines = yaml.replace(/\r\n/g, '\n').split('\n');
+  const rootIndex = lines.findIndex((line) => /^\s*list_fields\s*:/.test(line));
+  if (rootIndex < 0) return [];
+
+  const rootLine = lines[rootIndex];
+  const inlineValue = rootLine.replace(/^\s*list_fields\s*:\s*/, '').trim();
+  if (inlineValue.startsWith('[') && inlineValue.endsWith(']')) {
+    return inlineValue.slice(1, -1).split(',').map((item) => item.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+  }
+
+  const rootIndent = rootLine.match(/^\s*/)?.[0].length ?? 0;
+  const fields: string[] = [];
+  for (let index = rootIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim()) continue;
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    if (indent <= rootIndent) break;
+
+    const listMatch = line.trim().match(/^-\s*(?:name\s*:\s*)?([^:#]+?)(?:\s*:)?$/);
+    const mapMatch = indent === rootIndent + 2 ? line.trim().match(/^([^:#]+):/) : null;
+    const value = (listMatch?.[1] ?? mapMatch?.[1] ?? '').trim().replace(/^['"]|['"]$/g, '');
+    if (value && !fields.includes(value)) fields.push(value);
+  }
+  return fields;
+};
 
 const taskComposerModeMeta: Record<TaskComposerMode, { label: string }> = {
   once: { label: '一次性任务' },
@@ -500,16 +543,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   sessionActive = false,
   onToggle,
   onClose,
+  analysisTemplate,
+  templateSources,
+  onTemplateApply,
+  releaseTaskDefaults,
 }) => {
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
+  const [taskTemplateFilter, setTaskTemplateFilter] = useState<string | null>(null);
   const [templateDetailMode, setTemplateDetailMode] = useState<TemplateDetailMode>('overview');
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
-  const [templateEditSnapshot, setTemplateEditSnapshot] = useState<TemplateDraft | null>(null);
   const [templatePage, setTemplatePage] = useState(1);
   const [taskPage, setTaskPage] = useState(1);
+  const [pageSize, setPageSize] = useState(defaultPageSize);
   const [pinnedTemplateKeys, setPinnedTemplateKeys] = useState<Record<string, true>>({});
   const [pinnedTaskKeys, setPinnedTaskKeys] = useState<Record<string, true>>({});
   const [taskComposerOpen, setTaskComposerOpen] = useState(false);
@@ -535,6 +583,43 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     stopConsecutivePages: 2,
     maxEmptyPages: 2,
   });
+  const [taskConcurrency, setTaskConcurrency] = useState(releaseTaskDefaults?.concurrency ?? 4);
+  const [taskRespectRobots, setTaskRespectRobots] = useState(releaseTaskDefaults?.respectRobots ?? true);
+  const [taskDriftGuard, setTaskDriftGuard] = useState(releaseTaskDefaults?.driftGuard ?? true);
+  const [taskBatchInput, setTaskBatchInput] = useState(false);
+  const [taskBatchFile, setTaskBatchFile] = useState('');
+  const [taskBatchParam, setTaskBatchParam] = useState(releaseTaskDefaults?.batch?.paramName ?? '');
+  const [taskBatchSize, setTaskBatchSize] = useState(Number(releaseTaskDefaults?.batch?.batchSize) || 1);
+  const [taskBatchStartLine, setTaskBatchStartLine] = useState(Number(releaseTaskDefaults?.batch?.startLine) || 0);
+  const [taskBatchLimit, setTaskBatchLimit] = useState<number | null>(() => {
+    const limit = Number(releaseTaskDefaults?.batch?.limit);
+    return Number.isFinite(limit) && limit > 0 ? limit : null;
+  });
+  const [taskBatchDelay, setTaskBatchDelay] = useState(Number(releaseTaskDefaults?.batch?.delay) || 0);
+
+  useEffect(() => {
+    if (!releaseTaskDefaults) return;
+    setTaskConcurrency(releaseTaskDefaults.concurrency);
+    setTaskRespectRobots(releaseTaskDefaults.respectRobots);
+    setTaskDriftGuard(releaseTaskDefaults.driftGuard);
+    if (releaseTaskDefaults.batch) {
+      setTaskBatchParam(releaseTaskDefaults.batch.paramName);
+      setTaskBatchSize(Number(releaseTaskDefaults.batch.batchSize) || 1);
+      setTaskBatchStartLine(Number(releaseTaskDefaults.batch.startLine) || 0);
+      const limit = Number(releaseTaskDefaults.batch.limit);
+      setTaskBatchLimit(Number.isFinite(limit) && limit > 0 ? limit : null);
+      setTaskBatchDelay(Number(releaseTaskDefaults.batch.delay) || 0);
+    }
+  }, [
+    releaseTaskDefaults?.batch?.batchSize,
+    releaseTaskDefaults?.batch?.delay,
+    releaseTaskDefaults?.batch?.limit,
+    releaseTaskDefaults?.batch?.paramName,
+    releaseTaskDefaults?.batch?.startLine,
+    releaseTaskDefaults?.concurrency,
+    releaseTaskDefaults?.driftGuard,
+    releaseTaskDefaults?.respectRobots,
+  ]);
 
   const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplateDraft>>(() => Object.fromEntries(
     templates.map((item) => [item.key, {
@@ -597,17 +682,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    if (activePanel !== 'templates') {
-      setSelectedTemplateKey(null);
-      setTemplateDetailMode('overview');
-    }
-    if (activePanel !== 'tasks') {
-      setSelectedTaskKey(null);
-      setTaskComposerOpen(false);
-    }
-  }, [activePanel]);
-
   const templateRows = useMemo(() => templates
     .filter((item) => {
       const matchFilter = templateFilter === 'all' || item.status === templateFilter;
@@ -636,32 +710,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const taskRows = useMemo(() => allTaskRows
     .filter((item) => {
       const matchFilter = taskFilter === 'all' || item.runtime.status === taskFilter;
+      const matchTemplate = !taskTemplateFilter || normalizeTemplateKey(item.template) === taskTemplateFilter;
       const matchKeyword = !keyword
         || `${item.name} ${item.template} ${item.area} ${item.owner}`.toLowerCase().includes(keyword.toLowerCase());
-      return matchFilter && matchKeyword;
+      return matchFilter && matchTemplate && matchKeyword;
     })
     .sort((left, right) => {
       const leftPinned = Boolean(pinnedTaskKeys[left.key]);
       const rightPinned = Boolean(pinnedTaskKeys[right.key]);
       if (leftPinned === rightPinned) return 0;
       return leftPinned ? -1 : 1;
-    }), [allTaskRows, keyword, pinnedTaskKeys, taskFilter]);
-
-  useEffect(() => {
-    if (selectedTemplateKey && !templateRows.some((item) => item.key === selectedTemplateKey)) {
-      setSelectedTemplateKey(null);
-    }
-  }, [selectedTemplateKey, templateRows]);
+    }), [allTaskRows, keyword, pinnedTaskKeys, taskFilter, taskTemplateFilter]);
 
   useEffect(() => {
     setTemplatePage(1);
   }, [keyword, templateFilter]);
-
-  useEffect(() => {
-    if (selectedTaskKey && !taskRows.some((item) => item.key === selectedTaskKey)) {
-      setSelectedTaskKey(null);
-    }
-  }, [selectedTaskKey, taskRows]);
 
   useEffect(() => {
     setTaskPage(1);
@@ -684,8 +747,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     [],
   );
   const selectedTask = useMemo(
-    () => taskRows.find((item) => item.key === selectedTaskKey) ?? null,
-    [selectedTaskKey, taskRows],
+    () => allTaskRows.find((item) => item.key === selectedTaskKey) ?? null,
+    [allTaskRows, selectedTaskKey],
   );
   const selectedTemplateDraft = selectedTemplate ? templateDrafts[selectedTemplate.key] : null;
   const templateTaskCounts = useMemo<Record<string, number>>(() => Object.fromEntries(
@@ -694,18 +757,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     ).length]),
   ) as Record<string, number>, [taskItems]);
   const visibleTemplateRows = useMemo(
-    () => templateRows.slice((templatePage - 1) * listPageSize, templatePage * listPageSize),
-    [templatePage, templateRows],
+    () => templateRows.slice((templatePage - 1) * pageSize, templatePage * pageSize),
+    [pageSize, templatePage, templateRows],
   );
   const visibleTaskRows = useMemo(
-    () => taskRows.slice((taskPage - 1) * listPageSize, taskPage * listPageSize),
-    [taskPage, taskRows],
+    () => taskRows.slice((taskPage - 1) * pageSize, taskPage * pageSize),
+    [pageSize, taskPage, taskRows],
   );
 
   const hasDetail = activePanel === 'templates'
-    ? Boolean(selectedTemplate)
+    ? Boolean(selectedTemplate) || taskComposerOpen
     : activePanel === 'tasks'
-      ? Boolean(selectedTask) || taskComposerOpen
+      ? Boolean(selectedTask)
       : false;
   const taskInsertedLines = selectedTask ? Math.max(selectedTask.runtime.lastDelta, 24) : 0;
   const taskUpdatedLines = selectedTask ? Math.max(Math.round(selectedTask.runtime.lastDelta * 0.42), 12) : 0;
@@ -722,12 +785,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       : Math.max(selectedTask.runtime.recordsValue - Math.round(selectedTask.runtime.lastDelta * 0.24), 0))
     : 0;
 
-  useEffect(() => {
-    if (!selectedTemplate || templateDetailMode === 'overview') {
-      setTemplateEditSnapshot(null);
-    }
-  }, [selectedTemplate, templateDetailMode]);
-
   const updateTemplateDraft = (templateKey: string, patch: Partial<TemplateDraft>) => {
     setTemplateDrafts((prev) => ({
       ...prev,
@@ -736,6 +793,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         ...patch,
       },
     }));
+    if (templateKey === selectedTemplateKey && onTemplateApply && ('yaml' in patch || 'adapter' in patch)) {
+      const current = templateDrafts[templateKey];
+      onTemplateApply({
+        yaml: patch.yaml ?? analysisTemplate?.yaml ?? current.yaml,
+        adapter: patch.adapter ?? analysisTemplate?.adapter ?? current.adapter,
+      });
+    }
   };
 
   const toggleTemplatePinned = useCallback((templateKey: string) => {
@@ -758,6 +822,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     toggleTaskPinned(taskKey);
   }, [toggleTaskPinned]);
 
+  const openLinkedTasks = useCallback((event: React.SyntheticEvent<HTMLElement>, templateName: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setTaskTemplateFilter(normalizeTemplateKey(templateName));
+    setTaskFilter('all');
+    setKeyword('');
+    setTaskPage(1);
+    onToggle('tasks');
+  }, [onToggle]);
+
   const buildTaskComposerDraft = useCallback((patch?: Partial<TaskComposerDraft>): TaskComposerDraft => {
     const fallbackTemplate = taskTemplateOptions[0]?.value ?? 'generic';
     const template = patch?.template ?? fallbackTemplate;
@@ -772,7 +846,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       dailyTime: '09:00',
       intervalValue: 30,
       intervalUnit: 'minute' as TaskIntervalUnit,
-      templateParams: buildTaskTemplateParameterDrafts(template),
+      templateParams: releaseTaskDefaults?.params.length
+        ? releaseTaskDefaults.params.map((param) => ({
+          key: param.name,
+          label: `${param.name}${param.required ? ' *' : ''}`,
+          value: param.defaultValue,
+          placeholder: param.description || param.name,
+        }))
+        : buildTaskTemplateParameterDrafts(template),
       incremental: scheduleMode === 'recurring',
       incrementalMode: 'time_window' as TaskIncrementalMode,
       incrementalField: defaultField,
@@ -786,7 +867,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       maxEmptyPages: 2,
       ...patch,
     };
-  }, [taskTemplateOptions]);
+  }, [releaseTaskDefaults?.params, taskTemplateOptions]);
 
   const resetTaskComposer = useCallback((patch?: Partial<TaskComposerDraft>) => {
     setTaskComposerDraft(buildTaskComposerDraft(patch));
@@ -816,12 +897,19 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskComposerDraft((prev) => ({
       ...prev,
       template: templateValue,
-      templateParams: buildTaskTemplateParameterDrafts(templateValue),
+      templateParams: releaseTaskDefaults?.params.length
+        ? releaseTaskDefaults.params.map((param) => ({
+          key: param.name,
+          label: `${param.name}${param.required ? ' *' : ''}`,
+          value: param.defaultValue,
+          placeholder: param.description || param.name,
+        }))
+        : buildTaskTemplateParameterDrafts(templateValue),
       incrementalField: inferIncrementalField(templateValue),
       stopField: inferIncrementalField(templateValue),
       ...patch,
     }));
-  }, []);
+  }, [releaseTaskDefaults?.params]);
 
   const updateTaskComposerParameter = useCallback((index: number, value: string) => {
     setTaskComposerDraft((prev) => ({
@@ -862,6 +950,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       avatar: toAvatarLabel(matchedTemplate?.owner || 'AI Collect'),
       comments: [
         `${taskComposerModeMeta[taskComposerDraft.scheduleMode].label} / ${formatIncrementalSummary(taskComposerDraft)}`,
+        `concurrency=${taskConcurrency}; robots=${taskRespectRobots}; drift_guard=${taskDriftGuard}${taskBatchInput ? `; batch=${taskBatchFile || 'pending'}:${taskBatchParam}` : ''}`,
       ],
       subIssues: [],
     };
@@ -880,7 +969,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       template: normalizedTemplate,
       templateLocked: taskComposerDraft.templateLocked,
     });
-  }, [resetTaskComposer, selectedTemplate, taskComposerDraft, taskTemplateOptions]);
+  }, [resetTaskComposer, selectedTemplate, taskBatchFile, taskBatchInput, taskBatchParam, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
 
   const updateTaskState = (
     taskKey: string,
@@ -990,6 +1079,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             key={item.key}
             className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''} ${isPinned ? 'is-pinned' : ''}`}
             onClick={() => {
+              const source = templateSources?.[item.name] ?? templateSources?.[item.name.replace(/_contract$/, '')];
+              if (source) {
+                setTemplateDrafts((prev) => ({
+                  ...prev,
+                  [item.key]: { ...prev[item.key], yaml: source.yaml, adapter: source.adapter },
+                }));
+              }
               setSelectedTemplateKey(item.key);
               setTemplateDetailMode('overview');
             }}
@@ -1026,14 +1122,19 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
             <div className="workspace-dock-card-footer">
               <span>{draft.savedAt}</span>
-              <span className={linkedTaskCount ? 'is-linked' : ''}>
-                {linkedTaskCount ? `${linkedTaskCount} 个任务` : '未调度'}
+              <span
+                className={`workspace-dock-linked-tasks ${linkedTaskCount ? 'is-linked' : ''}`}
+                role={linkedTaskCount ? 'link' : undefined}
+                tabIndex={linkedTaskCount ? 0 : undefined}
+                onClick={linkedTaskCount ? (event) => openLinkedTasks(event, item.name) : undefined}
+                onKeyDown={linkedTaskCount ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') openLinkedTasks(event, item.name);
+                } : undefined}
+              >
+                {linkedTaskCount ? <>linked <b>{linkedTaskCount}</b> task{linkedTaskCount === 1 ? '' : 's'}</> : 'linked 0 tasks'}
               </span>
             </div>
 
-            <div className="workspace-dock-card-bar">
-              <i style={{ width: `${item.quality}%`, background: aura.accent }} />
-            </div>
           </button>
         );
       })}
@@ -1292,7 +1393,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               onChange={(checked) => updateTaskComposerDraft({ incremental: checked })}
             />
           </div>
-
           {taskComposerDraft.incremental ? (
             <div className="workspace-dock-progress-panel">
               <div className="workspace-dock-progress-meta">
@@ -1524,35 +1624,29 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           </label>
 
           <label className="workspace-dock-form-block">
-            <span>Run Mode</span>
+            <span>Run Schedule</span>
             <Segmented
               block
               size="small"
-              value={taskComposerDraft.scheduleMode}
-              onChange={(value) => handleTaskComposerModeChange(value as TaskComposerMode)}
+              value={taskComposerDraft.scheduleMode === 'once' ? 'once' : taskComposerDraft.recurringMode}
+              onChange={(value) => {
+                if (value === 'once') {
+                  handleTaskComposerModeChange('once');
+                } else {
+                  handleTaskComposerModeChange('recurring');
+                  updateTaskComposerDraft({ recurringMode: value as TaskRecurringMode });
+                }
+              }}
               options={[
-                { label: 'One-time', value: 'once' },
-                { label: 'Recurring', value: 'recurring' },
+                { label: 'Once', value: 'once' },
+                { label: 'Daily', value: 'daily' },
+                { label: 'Interval', value: 'interval' },
               ]}
             />
           </label>
 
           {taskComposerDraft.scheduleMode === 'recurring' ? (
             <>
-              <label className="workspace-dock-form-block">
-                <span>Recurring Strategy</span>
-                <Segmented
-                  block
-                  size="small"
-                  value={taskComposerDraft.recurringMode}
-                  onChange={(value) => updateTaskComposerDraft({ recurringMode: value as TaskRecurringMode })}
-                  options={[
-                    { label: 'Daily At', value: 'daily' },
-                    { label: 'Every', value: 'interval' },
-                  ]}
-                />
-              </label>
-
               {taskComposerDraft.recurringMode === 'daily' ? (
                 <div className="workspace-dock-form-grid">
                   <label>
@@ -1600,6 +1694,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </>
           ) : null}
 
+          <label className="workspace-dock-form-block">
+            <span>Concurrency</span>
+            <InputNumber min={1} max={50} value={taskConcurrency} onChange={(value) => setTaskConcurrency(value ?? 4)} />
+          </label>
+
           <div className="workspace-dock-note-panel">
             <small>Run Summary</small>
             <p>{composerSummary}</p>
@@ -1624,6 +1723,59 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           </div>
 
+          {releaseTaskDefaults?.batch ? (
+            <div className="workspace-dock-progress-panel">
+              <div className="workspace-dock-switch-row">
+                <div>
+                  <strong>Batch Input</strong>
+                  <small>Inject values from a TXT or CSV file into a template parameter.</small>
+                </div>
+                <Switch checked={taskBatchInput} onChange={setTaskBatchInput} />
+              </div>
+              {taskBatchInput ? (
+                <>
+                  <label className="workspace-dock-form-block" style={{ marginTop: 10 }}>
+                    <span>List File *</span>
+                    <Upload
+                      accept=".txt,.csv"
+                      showUploadList={false}
+                      beforeUpload={() => false}
+                      onChange={({ file }) => setTaskBatchFile(file.name || '')}
+                    >
+                      <Button size="small" icon={<UploadOutlined />}>{taskBatchFile || 'Choose'}</Button>
+                    </Upload>
+                  </label>
+                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
+                    <label>
+                      <span>Inject Into *</span>
+                      <Select
+                        value={taskBatchParam || undefined}
+                        options={releaseTaskDefaults.params.map((param) => ({ value: param.name, label: param.name }))}
+                        onChange={setTaskBatchParam}
+                      />
+                    </label>
+                    <label>
+                      <span>Batch Size</span>
+                      <InputNumber min={1} value={taskBatchSize} onChange={(value) => setTaskBatchSize(value ?? 1)} />
+                    </label>
+                    <label>
+                      <span>Start Line</span>
+                      <InputNumber min={0} value={taskBatchStartLine} onChange={(value) => setTaskBatchStartLine(value ?? 0)} />
+                    </label>
+                    <label>
+                      <span>Limit</span>
+                      <InputNumber min={1} placeholder="No limit" value={taskBatchLimit} onChange={setTaskBatchLimit} />
+                    </label>
+                    <label>
+                      <span>Delay (sec)</span>
+                      <InputNumber min={0} value={taskBatchDelay} onChange={(value) => setTaskBatchDelay(value ?? 0)} />
+                    </label>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="workspace-dock-switch-row">
             <div>
               <strong>Incremental Collect</strong>
@@ -1633,6 +1785,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               checked={taskComposerDraft.incremental}
               onChange={(checked) => updateTaskComposerDraft({ incremental: checked })}
             />
+          </div>
+          <div className="workspace-dock-switch-row">
+            <div>
+              <strong>Robots Policy</strong>
+              <small>Honor source limits and robots directives.</small>
+            </div>
+            <Switch checked={taskRespectRobots} onChange={setTaskRespectRobots} />
+          </div>
+          <div className="workspace-dock-switch-row">
+            <div>
+              <strong>Drift Guard</strong>
+              <small>Pause the task when the source structure changes.</small>
+            </div>
+            <Switch checked={taskDriftGuard} onChange={setTaskDriftGuard} />
           </div>
 
           {taskComposerDraft.incremental ? (
@@ -1789,6 +1955,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
     const templatePinned = Boolean(pinnedTemplateKeys[selectedTemplate.key]);
     const linkedTaskCount = templateTaskCounts[selectedTemplate.key] ?? selectedTemplate.taskCount;
+    const templateListFields = extractListFields(selectedTemplateDraft.yaml);
 
     return (
       <section className="workspace-dock-detail">
@@ -1801,54 +1968,24 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           </div>
           <div className="workspace-dock-detail-head-actions">
-            {templateDetailMode === 'overview' ? (
-              <Tooltip title="编辑模板" placement="top">
-                <button
-                  type="button"
-                  className="workspace-dock-detail-icon-btn"
-                  aria-label="编辑模板"
-                  onClick={() => {
-                    setTemplateEditSnapshot(selectedTemplateDraft);
+            <Tooltip title="编辑模板" placement="top">
+              <button
+                type="button"
+                className={`workspace-dock-detail-icon-btn ${templateDetailMode === 'edit' ? 'is-pinned' : ''}`}
+                aria-label="编辑模板"
+                aria-pressed={templateDetailMode === 'edit'}
+                onClick={() => {
+                  if (templateDetailMode === 'overview') {
+                    onTemplateApply?.({ yaml: selectedTemplateDraft.yaml, adapter: selectedTemplateDraft.adapter });
                     setTemplateDetailMode('edit');
-                  }}
-                >
-                  <EditOutlined />
-                </button>
-              </Tooltip>
-            ) : (
-              <>
-                <Tooltip title="撤销修改" placement="top">
-                  <button
-                    type="button"
-                    className="workspace-dock-detail-icon-btn"
-                    aria-label="撤销修改"
-                    onClick={() => {
-                      if (templateEditSnapshot) {
-                        setTemplateDrafts((prev) => ({
-                          ...prev,
-                          [selectedTemplate.key]: templateEditSnapshot,
-                        }));
-                      }
-                    }}
-                  >
-                    <UndoOutlined />
-                  </button>
-                </Tooltip>
-                <Tooltip title="保存模板" placement="top">
-                  <button
-                    type="button"
-                    className="workspace-dock-detail-icon-btn"
-                    aria-label="保存模板"
-                    onClick={() => {
-                      updateTemplateDraft(selectedTemplate.key, { savedAt: nowLabel() });
-                      setTemplateDetailMode('overview');
-                    }}
-                  >
-                    <SaveOutlined />
-                  </button>
-                </Tooltip>
-              </>
-            )}
+                  } else {
+                    setTemplateDetailMode('overview');
+                  }
+                }}
+              >
+                <EditOutlined />
+              </button>
+            </Tooltip>
             <button
               type="button"
               className="workspace-dock-detail-close"
@@ -1869,17 +2006,24 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               <span className="is-domain">域名 {selectedTemplate.domain}</span>
               <span className="is-version">版本 {selectedTemplate.version}</span>
               <span className="is-field">字段 {selectedTemplate.fields}</span>
-              <span className="is-asset">资源 {linkedTaskCount}</span>
+              <span
+                className="is-asset workspace-dock-linked-tasks is-linked"
+                role="link"
+                tabIndex={0}
+                onClick={(event) => openLinkedTasks(event, selectedTemplate.name)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') openLinkedTasks(event, selectedTemplate.name);
+                }}
+              >
+                linked <b>{linkedTaskCount}</b> task{linkedTaskCount === 1 ? '' : 's'}
+              </span>
               <span className="is-quality">质量 {selectedTemplate.quality}%</span>
             </div>
 
             <div className="workspace-dock-chip-row">
-              {fieldHints.slice(0, Math.min(selectedTemplate.fields, 6)).map((field) => (
+              {templateListFields.map((field) => (
                 <span key={field} className="workspace-dock-mini-chip">{field}</span>
               ))}
-              {selectedTemplate.fields > 6 ? (
-                <span className="workspace-dock-mini-chip">+{selectedTemplate.fields - 6}</span>
-              ) : null}
             </div>
 
             <div className="workspace-dock-code-panel">
@@ -1893,11 +2037,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
 
             <div className="workspace-dock-detail-actions">
-              <span>已关联 {linkedTaskCount} 个任务</span>
+              <span>Template Release</span>
               <div className="workspace-dock-action-row">
                 <button
                   type="button"
-                  className="workspace-dock-inline-action is-primary"
+                  className="workspace-dock-inline-action is-primary workspace-dock-publish-task"
                   onClick={() => {
                     openTaskComposer({
                       name: `${selectedTemplate.title} task`,
@@ -1905,11 +2049,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                       templateLocked: true,
                       scheduleMode: 'recurring',
                     });
-                    onToggle('tasks');
                   }}
                 >
-                  <PlusOutlined />
-                  New Task
+                  <CloudUploadOutlined />
+                  Publish & Create Task
                 </button>
               </div>
             </div>
@@ -1923,7 +2066,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   value={selectedTemplateDraft.adapter}
                   onChange={(event) => updateTemplateDraft(selectedTemplate.key, {
                     adapter: event.target.value,
-                    yaml: buildTemplateYaml(selectedTemplate, event.target.value),
                   })}
                 />
               </label>
@@ -1971,7 +2113,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const taskPinned = Boolean(pinnedTaskKeys[selectedTask.key]);
 
     return (
-      <section className="workspace-dock-detail">
+      <section className="workspace-dock-detail is-task-log-only">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
             <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={selectedTask.site.kind} active={display.isRunning} /></span>
@@ -2130,10 +2272,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     <>
       <style>{`
         .workspace-dock-shell {
-          position: fixed;
-          inset: 52px 0 0;
+          position: absolute;
+          inset: 0;
           pointer-events: none;
-          z-index: 100;
+          z-index: 16;
         }
         .workspace-dock-hitbox {
           position: absolute;
@@ -2176,33 +2318,34 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-panel {
           position: absolute;
-          top: 18px;
-          left: 50%;
-          width: min(1180px, calc(100vw - 48px));
-          height: calc(100% - 36px);
+          top: 12px;
+          right: 12px;
+          bottom: 12px;
+          width: min(420px, calc(100% - 24px));
+          height: auto;
           max-height: none;
           border-radius: 14px;
           border: 1px solid ${aura.border};
           background:
-            linear-gradient(180deg, rgba(31, 36, 48, 0.9), rgba(20, 24, 34, 0.88)),
-            rgba(18, 22, 31, 0.92);
-          box-shadow: 0 22px 54px rgba(0, 0, 0, 0.34);
+            linear-gradient(180deg, rgba(31, 36, 48, 0.96), rgba(20, 24, 34, 0.95)),
+            rgba(18, 22, 31, 0.96);
+          box-shadow: -18px 20px 52px rgba(0, 0, 0, 0.34);
           backdrop-filter: ${aura.backdrop};
           overflow: hidden;
           display: flex;
           flex-direction: column;
           opacity: 0;
-          transform: translate(-50%, -8px);
+          transform: translateX(28px);
           transition: opacity 180ms ease, transform 200ms ease;
           pointer-events: none;
         }
         .workspace-dock-panel.is-open {
           opacity: 1;
-          transform: translate(-50%, 0);
+          transform: translateX(0);
           pointer-events: auto;
         }
         .workspace-dock-panel.is-detail {
-          width: auto;
+          width: min(860px, calc(100% - 24px));
         }
         .workspace-dock-stack {
           flex: 1;
@@ -2279,6 +2422,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-toolbar .ant-input {
           background: transparent !important;
         }
+        .workspace-dock-toolbar .ant-input::placeholder {
+          font-size: 11px;
+        }
         .workspace-dock-toolbar .ant-segmented {
           padding: 3px;
         }
@@ -2299,25 +2445,83 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-pagination {
           position: absolute;
-          right: 18px;
-          bottom: 16px;
+          left: 50%;
+          bottom: 22px;
           z-index: 2;
-          padding: 6px 8px;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          transform: translateX(-50%);
+          color: ${aura.subtle};
+          font-size: 10px;
+          white-space: nowrap;
+          flex-wrap: nowrap;
+          min-height: 32px;
+          padding: 4px 10px;
           border: 1px solid ${aura.border};
-          border-radius: 10px;
-          background: rgba(20, 24, 34, 0.92);
-          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+          border-radius: 18px;
+          background: rgba(29, 33, 41, 0.98);
+          box-shadow: 0 18px 42px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(255, 255, 255, 0.02);
+          max-width: calc(100% - 16px);
+          box-sizing: border-box;
+        }
+        .workspace-dock-panel.is-detail .workspace-dock-pagination {
+          left: 198px;
+        }
+        .workspace-dock-pagination .ant-pagination {
+          display: flex;
+          align-items: center;
+          flex-wrap: nowrap;
+          white-space: nowrap;
+          font-size: 10px;
+        }
+        .workspace-dock-pagination .ant-pagination-item,
+        .workspace-dock-pagination .ant-pagination-prev,
+        .workspace-dock-pagination .ant-pagination-next {
+          min-width: 18px;
+          height: 22px;
+          margin-inline-end: 0;
+          line-height: 22px;
+        }
+        .workspace-dock-pagination .ant-pagination-total-text,
+        .workspace-dock-pagination .ant-pagination-options {
+          white-space: nowrap;
+        }
+        .workspace-dock-page-size {
+          display: inline-flex;
+          align-items: center;
+          gap: 1px;
+        }
+        .workspace-dock-page-size .ant-select {
+          width: 34px;
+          font-size: inherit;
+        }
+        .workspace-dock-page-size .ant-select-selector {
+          height: 22px !important;
+          padding: 0 !important;
+          border: none !important;
+          background: transparent !important;
+          box-shadow: none !important;
+        }
+        .workspace-dock-page-size .ant-select-selection-item {
+          padding-inline-end: 10px !important;
+          font-size: 10px;
+          line-height: 22px !important;
+        }
+        .workspace-dock-page-size .ant-select-arrow {
+          inset-inline-end: 0;
+          font-size: 8px;
         }
         .workspace-dock-pagination .ant-pagination-item,
         .workspace-dock-pagination .ant-pagination-prev button,
         .workspace-dock-pagination .ant-pagination-next button {
-          border-color: ${aura.border};
-          background: rgba(255, 255, 255, 0.035);
+          border-color: transparent;
+          background: transparent;
           color: ${aura.subtle};
         }
         .workspace-dock-pagination .ant-pagination-item-active {
-          border-color: rgba(138, 180, 255, 0.42);
-          background: ${aura.accentSoft};
+          border-color: transparent;
+          background: transparent;
         }
         .workspace-dock-pagination .ant-pagination-item-active a {
           color: ${aura.text};
@@ -2327,28 +2531,30 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           flex-direction: column;
           gap: 6px;
-          padding: 10px 16px 76px;
+          padding: 4px 8px 70px;
         }
         .workspace-dock-list.is-templates {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, 272px);
-          align-content: start;
-          gap: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
         }
         .workspace-dock-list.is-templates .workspace-dock-card {
-          height: 188px;
-          padding: 12px;
+          width: 100%;
+          min-height: 118px;
+          height: auto;
+          padding: 8px 10px;
           overflow: hidden;
         }
         .workspace-dock-list.is-templates .workspace-dock-card-footer {
-          margin-top: 7px;
+          margin-top: 5px;
         }
         .workspace-dock-list.is-tasks {
-          gap: 8px;
+          gap: 6px;
         }
         .workspace-dock-list.is-tasks .workspace-dock-card {
-          min-height: 112px;
-          padding: 12px 14px;
+          width: 100%;
+          min-height: 104px;
+          padding: 8px 10px;
           border-left: 3px solid rgba(138, 180, 255, 0.28);
           border-radius: 8px;
         }
@@ -2543,6 +2749,41 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-card-footer .is-linked {
           color: #97B8FF;
+        }
+        .workspace-dock-linked-tasks.is-linked,
+        .workspace-dock-detail-linked {
+          cursor: pointer;
+        }
+        .workspace-dock-linked-tasks b,
+        .workspace-dock-detail-linked b {
+          color: inherit;
+          font-weight: 600;
+          text-decoration: none;
+        }
+        .workspace-dock-linked-tasks:hover b,
+        .workspace-dock-linked-tasks:focus-visible b,
+        .workspace-dock-detail-linked:hover b,
+        .workspace-dock-detail-linked:focus-visible b {
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+        .workspace-dock-detail-linked,
+        .workspace-dock-template-filter {
+          border: none;
+          background: transparent;
+          color: #97B8FF;
+          font: inherit;
+        }
+        .workspace-dock-template-filter {
+          width: max-content;
+          max-width: 100%;
+          padding: 0;
+          color: ${aura.subtle};
+          font-size: 10px;
+          cursor: pointer;
+        }
+        .workspace-dock-publish-task {
+          gap: 7px;
         }
         .workspace-dock-card-footer .is-alert {
           color: #F6C35B;
@@ -2789,6 +3030,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           min-height: 0;
           display: flex;
           flex-direction: column;
+        }
+        .workspace-dock-detail.is-task-log-only .workspace-dock-detail-icon-btn {
+          display: none;
+        }
+        .workspace-dock-detail.is-task-log-only .workspace-dock-log-panel {
+          height: 100%;
+          border: none;
+          background: transparent;
         }
         .workspace-dock-metric-card span,
         .workspace-dock-history-head span,
@@ -3099,6 +3348,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-progress-meta.is-subtle {
           margin-top: 8px;
+          background: transparent;
         }
         .workspace-dock-progress-meta.is-subtle span {
           display: inline;
@@ -3180,11 +3430,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           gap: 6px;
         }
         .workspace-dock-log-list.is-detail {
-          flex: 1;
+          flex: 1 1 auto;
+          width: 100%;
+          height: 100%;
           min-height: 0;
           overflow: auto;
+          background: transparent;
           scrollbar-width: none;
-          overscroll-behavior: contain;
         }
         .workspace-dock-log-list.is-detail::-webkit-scrollbar {
           display: none;
@@ -3295,11 +3547,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           }
         }
         @media (max-width: 767px) {
+          .workspace-dock-panel.is-detail .workspace-dock-pagination {
+            left: 50%;
+          }
           .workspace-dock-panel,
           .workspace-dock-shell.is-session .workspace-dock-panel {
-            top: 10px;
-            width: calc(100vw - 24px);
-            height: calc(100% - 20px);
+            top: 8px;
+            right: 8px;
+            bottom: 8px;
+            width: calc(100% - 16px);
+            height: auto;
             max-height: none;
           }
           .workspace-dock-form-grid,
@@ -3335,20 +3592,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                       onChange={(event) => setKeyword(event.target.value)}
                       placeholder={activePanel === 'templates' ? '搜索模板、域名或适配器' : '搜索任务或模板'}
                     />
-                    {activePanel === 'tasks' ? (
-                      <div className="workspace-dock-toolbar-actions">
-                        <button
-                          type="button"
-                          className="workspace-dock-toolbar-action-btn"
-                          aria-label="New Task"
-                          title="New Task"
-                          onClick={() => openTaskComposer()}
-                        >
-                          <PlusOutlined />
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
+                  {activePanel === 'tasks' && taskTemplateFilter ? (
+                    <button type="button" className="workspace-dock-template-filter" onClick={() => setTaskTemplateFilter(null)}>
+                      template: {taskTemplateFilter} <CloseOutlined />
+                    </button>
+                  ) : null}
                   {activePanel === 'templates' ? (
                     <Segmented
                       block
@@ -3384,21 +3633,23 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               </section>
 
               {activePanel === 'templates'
-                ? renderTemplateDetail()
+                ? (taskComposerOpen ? renderTaskComposerClean() : renderTemplateDetail())
                 : activePanel === 'tasks'
-                  ? (taskComposerOpen ? renderTaskComposerClean() : renderTaskDetail())
+                  ? renderTaskDetail()
                   : null}
             </div>
           ) : null}
-          {activePanel && !hasDetail ? (
-            <div className="workspace-dock-pagination">
+          {activePanel ? (
+            <div className={`workspace-dock-pagination ${hasDetail ? 'is-detail' : ''}`}>
               <Pagination
                 size="small"
+                showLessItems
                 current={activePanel === 'templates' ? templatePage : taskPage}
-                pageSize={listPageSize}
+                pageSize={pageSize}
                 total={activePanel === 'templates' ? templateRows.length : taskRows.length}
                 showSizeChanger={false}
-                onChange={(page) => {
+                onChange={(page, nextPageSize) => {
+                  setPageSize(nextPageSize);
                   if (activePanel === 'templates') {
                     setTemplatePage(page);
                   } else {
@@ -3406,6 +3657,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   }
                 }}
               />
+              <span className="workspace-dock-page-size">
+                results / page ·
+                <Select
+                  variant="borderless"
+                  suffixIcon={<DownOutlined />}
+                  value={pageSize}
+                  options={[10, 20, 50].map((value) => ({ value, label: value }))}
+                  onChange={(value) => {
+                    setPageSize(value);
+                    setTemplatePage(1);
+                    setTaskPage(1);
+                  }}
+                />
+              </span>
+              <span>total {(activePanel === 'templates' ? templateRows.length : taskRows.length).toLocaleString()} results</span>
             </div>
           ) : null}
         </aside>

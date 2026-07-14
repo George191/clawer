@@ -44,6 +44,7 @@ import {
   ThunderboltOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import {
   type DryRunResponse,
@@ -53,6 +54,7 @@ import {
   generateTemplate as generateTemplateApi,
 } from '@/services/aiApi';
 import workspacePalette from './palette';
+import WorkspaceDock, { type WorkspacePanel } from './WorkspaceDock';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -272,6 +274,7 @@ type TemplateCatalogItem = {
   fileName: string;
   displayName: string;
   entries: TemplateEntry[];
+  raw: string;
 };
 
 const pythonPreviewKeywords = new Set([
@@ -932,6 +935,7 @@ const templateCatalog: TemplateCatalogItem[] = Object.entries(templateSourceModu
       fileName,
       displayName: stripYamlQuotes(name),
       entries,
+      raw,
     };
   })
   .sort((left, right) => left.id.localeCompare(right.id));
@@ -1070,6 +1074,7 @@ const aura = workspacePalette;
 
 const AICollect: React.FC = () => {
   const { message } = App.useApp();
+  const [searchParams, setSearchParams] = useSearchParams();
   const analyzeStreamRef = useRef<EventSource | null>(null);
   const simulationTimerRef = useRef<number | null>(null);
   const promptGenerationTimerRef = useRef<number | null>(null);
@@ -1125,6 +1130,8 @@ const AICollect: React.FC = () => {
   const [releaseIncremental, setReleaseIncremental] = useState(false);
   const [releaseBatchInput, setReleaseBatchInput] = useState(false);
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
+  const [workspaceAdapterFile, setWorkspaceAdapterFile] = useState('');
+  const [workspaceTemplateYaml, setWorkspaceTemplateYaml] = useState('');
   const [sessionInspectorTabs, setSessionInspectorTabs] = useState<SessionInspectorTab[]>([]);
   const [activeInspectorTabId, setActiveInspectorTabId] = useState<string | null>(null);
   const [inspectorMounted, setInspectorMounted] = useState(false);
@@ -1139,7 +1146,7 @@ const AICollect: React.FC = () => {
   const qualityScore = mode === 'publish' ? 94 : mode === 'dryrun' ? 86 : mode === 'contract' ? 88 : 92;
   const activeStepIndex = processStepOrder.indexOf(activeProcessStep);
   const activeTemplate = useMemo(() => {
-    if (!templateCatalog.length) return { id: 'empty', fileName: 'empty.yaml', displayName: 'Template', entries: [] };
+    if (!templateCatalog.length) return { id: 'empty', fileName: 'empty.yaml', displayName: 'Template', entries: [], raw: '' };
 
     const signal = `${templateId} ${submittedPrompt} ${intent} ${url}`.toLowerCase();
     return templateCatalog.find((template) => signal.includes(template.id.toLowerCase()))
@@ -1147,6 +1154,12 @@ const AICollect: React.FC = () => {
       ?? templateCatalog.find((template) => template.id === 'google_patent')
       ?? templateCatalog[0];
   }, [intent, submittedPrompt, templateId, url]);
+  const workspaceTemplateSources = useMemo(() => Object.fromEntries(
+    templateCatalog.flatMap((template) => {
+      const source = { yaml: template.raw, adapter: `app/adapters/${template.id}.py` };
+      return [[template.id, source], [`${template.id}_contract`, source]];
+    }),
+  ), []);
   const releaseTemplateParams = useMemo<ReleaseTemplateParam[]>(() => {
     const getEntryValue = (key: string) => {
       const entry = templateDraftEntries.find((item) => item.key === key);
@@ -1222,8 +1235,8 @@ const AICollect: React.FC = () => {
     return title || fallbackTitle;
   }, [activeTemplate.displayName, browserPreviewHost]);
   const adapterFileName = useMemo(
-    () => `app/adapters/${activeTemplate.id === 'empty' ? 'generated_adapter' : activeTemplate.id}.py`,
-    [activeTemplate.id],
+    () => workspaceAdapterFile || `app/adapters/${activeTemplate.id === 'empty' ? 'generated_adapter' : activeTemplate.id}.py`,
+    [activeTemplate.id, workspaceAdapterFile],
   );
   const browserPreviewFavicon = useMemo(
     () => (browserPreviewHost ? `https://www.google.com/s2/favicons?sz=64&domain_url=https://${browserPreviewHost}` : ''),
@@ -1273,6 +1286,10 @@ const AICollect: React.FC = () => {
     () => sessionInspectorTabs.find((tab) => tab.id === activeInspectorTabId) ?? sessionInspectorTabs[sessionInspectorTabs.length - 1] ?? null,
     [activeInspectorTabId, sessionInspectorTabs],
   );
+  const activeWorkspacePanel = useMemo<WorkspacePanel | null>(() => {
+    const panel = searchParams.get('panel');
+    return panel === 'templates' || panel === 'tasks' ? panel : null;
+  }, [searchParams]);
   const templateStages = useMemo(() => {
     const stageSet = new Set(templateDraftEntries.map((entry) => entry.stageId));
     return templateStageOrder.filter((stageId) => stageSet.has(stageId));
@@ -2200,6 +2217,30 @@ const AICollect: React.FC = () => {
     }
     handleAnalyze();
   }, [finishPromptGeneration, handleAnalyze, handleGuideSubmit, hasSession, promptGenerating]);
+
+  const handleWorkspacePanelToggle = useCallback((panel: WorkspacePanel) => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (activeWorkspacePanel === panel) {
+      nextParams.delete('panel');
+    } else {
+      nextParams.set('panel', panel);
+    }
+    setSearchParams(nextParams);
+  }, [activeWorkspacePanel, searchParams, setSearchParams]);
+
+  const handleWorkspacePanelClose = useCallback(() => {
+    if (!activeWorkspacePanel) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('panel');
+    setSearchParams(nextParams);
+  }, [activeWorkspacePanel, searchParams, setSearchParams]);
+
+  const handleWorkspaceTemplateApply = useCallback((draft: { yaml: string; adapter: string }) => {
+    setWorkspaceTemplateYaml(draft.yaml);
+    setWorkspaceAdapterFile(draft.adapter);
+    setTemplateDraftEntries(parseTemplateEntries(draft.yaml));
+    setTemplateValueDrafts({});
+  }, []);
 
   const renderMissionPanel = (variant: 'hero' | 'compact') => {
     if (variant === 'hero') {
@@ -3412,9 +3453,10 @@ const AICollect: React.FC = () => {
     return (
       <section className={`ai-session-main-shell is-adapter ${expandingPinnedPanel === 'adapter' ? 'is-restoring-from-tab' : ''}`}>
         {renderWorkflowHeader()}
-        <div className="ai-session-adapter-scroll">
-          <div className="ai-session-adapter-shell">
-            {renderPinnedTabs()}
+        <div className="ai-session-scroll-frame">
+          {renderPinnedTabs()}
+          <div className="ai-session-adapter-scroll">
+            <div className="ai-session-adapter-shell">
             <div className="ai-session-adapter-overview">
               <div className="ai-session-adapter-copy">
                 <Text className="ai-session-fixed-eyebrow">Adapter Build</Text>
@@ -3476,9 +3518,10 @@ const AICollect: React.FC = () => {
                 );
               })}
             </div>
-          </div>
-          <div className="ai-session-template-tail" aria-hidden="true">
-            <div className="ai-session-template-divider" />
+            </div>
+            <div className="ai-session-template-tail" aria-hidden="true">
+              <div className="ai-session-template-divider" />
+            </div>
           </div>
         </div>
       </section>
@@ -3505,9 +3548,10 @@ const AICollect: React.FC = () => {
     return (
       <section className="ai-session-main-shell is-release">
         {renderWorkflowHeader()}
-        <div className="ai-session-release-scroll">
-          <div className="ai-session-release-shell">
-            {renderPinnedTabs()}
+        <div className="ai-session-scroll-frame">
+          {renderPinnedTabs()}
+          <div className="ai-session-release-scroll">
+            <div className="ai-session-release-shell">
             <div className="ai-session-release-head">
               <div className="ai-session-release-heading">
                 <div className="ai-session-task-create-title">
@@ -3742,9 +3786,10 @@ const AICollect: React.FC = () => {
                 {hasTaskComposer ? taskPublishMeta.launch.desc : releaseActionMeta[selectedReleaseAction].desc}
               </Text>
             </div>
-          </div>
-          <div className="ai-session-template-tail" aria-hidden="true">
-            <div className="ai-session-template-divider" />
+            </div>
+            <div className="ai-session-template-tail" aria-hidden="true">
+              <div className="ai-session-template-divider" />
+            </div>
           </div>
         </div>
       </section>
@@ -4589,6 +4634,18 @@ const AICollect: React.FC = () => {
             isolation: isolate;
             border-radius: 18px;
             background: transparent;
+          }
+          .ai-session-scroll-frame {
+            width: 100%;
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            position: relative;
+            overflow: visible;
+          }
+          .ai-session-scroll-frame > .ai-session-pinned-tab-stack {
+            left: max(-18px, calc(50% - 406px));
+            top: 16px;
           }
           .ai-session-adapter-scroll {
             width: 100%;
@@ -8038,6 +8095,22 @@ const AICollect: React.FC = () => {
             </div>
           )}
         </div>
+        <WorkspaceDock
+          activePanel={activeWorkspacePanel}
+          sessionActive={hasSession}
+          onToggle={handleWorkspacePanelToggle}
+          onClose={handleWorkspacePanelClose}
+          analysisTemplate={{ yaml: workspaceTemplateYaml || activeTemplate.raw, adapter: adapterFileName }}
+          templateSources={workspaceTemplateSources}
+          onTemplateApply={handleWorkspaceTemplateApply}
+          releaseTaskDefaults={{
+            concurrency,
+            respectRobots,
+            driftGuard: enableDriftGuard,
+            params: releaseTemplateParams,
+            batch: releaseBatchConfig,
+          }}
+        />
       </div>
     </ErrorBoundary>
   );
