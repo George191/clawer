@@ -11,4 +11,3 @@ logs/
 .pytest.cache/
 *.log
 models/
-models_/
