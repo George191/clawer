@@ -500,15 +500,15 @@ Port 4173 is in use, trying another one...
 [2m14:22:28[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
 [2m14:22:28[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
 [2m14:22:28[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
-m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m17:53:42[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:05:47[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:06:40[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:07:06[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:08:54[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:08:57[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:09:18[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:10:05[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
+[2m15:46:58[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m15:46:58[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m15:51:10[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m15:53:11[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m16:01:34[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m16:01:43[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m16:02:17[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m16:02:33[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
 [2m18:10:07[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
 [2m18:10:10[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
 [2m18:14:36[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
@@ -535,3 +535,11 @@ m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
 [2m14:22:28[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
 [2m14:22:28[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
 [2m14:22:28[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m15:46:58[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m15:46:58[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m15:51:10[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m15:53:11[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m16:01:34[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m16:01:43[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m16:02:17[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m16:02:33[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m

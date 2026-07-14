@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Input, InputNumber, Segmented, Select, Switch, Tooltip, Typography } from 'antd';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Input, InputNumber, Pagination, Segmented, Select, Switch, Tooltip, Typography } from 'antd';
 import {
   BellOutlined,
   CaretRightOutlined,
@@ -2200,10 +2200,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     <>
       <style>{`
         .workspace-dock-shell {
-          position: absolute;
-          inset: 0;
+          position: fixed;
+          inset: 52px 0 0;
           pointer-events: none;
-          z-index: 16;
+          z-index: 100;
         }
         .workspace-dock-hitbox {
           position: absolute;
@@ -2211,7 +2211,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           pointer-events: none;
         }
         .workspace-dock-hitbox.is-open {
-          pointer-events: auto;
+          pointer-events: none;
         }
         .workspace-glyph {
           width: 18px;
@@ -2245,14 +2245,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           animation: workspaceTaskPulse 1.2s ease-in-out infinite;
         }
         .workspace-dock-panel {
-          position: fixed;
-          top: 64px;
-          right: 18px;
-          width: min(396px, calc(100vw - 48px));
-          height: min(488px, calc(100vh - 140px));
-          max-height: min(488px, calc(100vh - 140px));
-          border-radius: 12px;
-          border: 1px solid ${aura.border};
+          position: absolute;
+          inset: 0;
+          width: auto;
+          height: auto;
+          max-height: none;
+          border-radius: 0;
+          border: none;
           background:
             linear-gradient(180deg, rgba(31, 36, 48, 0.9), rgba(20, 24, 34, 0.88)),
             rgba(18, 22, 31, 0.92);
@@ -2262,17 +2261,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           flex-direction: column;
           opacity: 0;
-          transform: translateY(-8px);
-          transition: opacity 200ms ease, transform 220ms ease;
+          transform: none;
+          transition: opacity 180ms ease;
           pointer-events: none;
         }
         .workspace-dock-panel.is-open {
           opacity: 1;
-          transform: translateY(0);
           pointer-events: auto;
         }
         .workspace-dock-panel.is-detail {
-          width: min(812px, calc(100vw - 48px));
+          width: auto;
         }
         .workspace-dock-stack {
           flex: 1;
@@ -2297,10 +2295,25 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           border-right-color: ${aura.borderSoft};
         }
         .workspace-dock-toolbar {
-          padding: 10px 12px;
+          padding: 18px 24px 14px;
           display: grid;
           gap: 8px;
           border-bottom: 1px solid ${aura.borderSoft};
+        }
+        .workspace-dock-page-heading {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .workspace-dock-page-heading strong {
+          color: ${aura.text};
+          font-size: 18px;
+          line-height: 1.3;
+        }
+        .workspace-dock-page-heading span {
+          color: ${aura.subtle};
+          font-size: 12px;
         }
         .workspace-dock-toolbar-search-row {
           display: flex;
@@ -2372,7 +2385,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           flex-direction: column;
           gap: 6px;
-          padding: 8px 10px 10px;
+          padding: 12px 24px 24px;
         }
         .workspace-dock-card {
           width: 100%;
@@ -3322,13 +3335,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         @media (max-width: 767px) {
           .workspace-dock-panel,
           .workspace-dock-shell.is-session .workspace-dock-panel {
-            left: 12px;
-            right: 12px;
+            inset: 0;
             width: auto;
-            top: 64px;
-            bottom: auto;
-            height: min(74vh, calc(100vh - 76px));
-            max-height: min(74vh, calc(100vh - 76px));
+            height: auto;
+            max-height: none;
           }
           .workspace-dock-form-grid,
           .workspace-dock-metric-grid {
@@ -3355,6 +3365,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className="workspace-dock-stack">
               <section className="workspace-dock-master">
                 <div className="workspace-dock-toolbar">
+                  <div className="workspace-dock-page-heading">
+                    <strong>{activePanel === 'templates' ? '模板管理' : '任务调度'}</strong>
+                    <span>{activePanel === 'templates' ? '采集模板与适配器资产' : '采集任务与运行编排'}</span>
+                  </div>
                   <div className="workspace-dock-toolbar-search-row">
                     <Input
                       allowClear

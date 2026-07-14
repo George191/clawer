@@ -29,6 +29,7 @@ from app.web.routes.tasks import router as tasks_router
 from app.web.routes.templates import router as templates_router
 from app.web.routes.ai_collect import router as ai_collect_router
 from app.web.routes.scheduler import router as scheduler_router
+from app.web.routes.socket import router as socket_router
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ def create_app() -> FastAPI:
             },
         )
 
-    # ── 注册路由 ─────────────────────────────────────────────────────────
+    # ── 注册路由 ─────────────────────────────────────────────────────────────────
     appy.include_router(dashboard_router, prefix="/api")
     appy.include_router(etl_router, prefix="/api")
     appy.include_router(tasks_router, prefix="/api")
@@ -107,6 +108,7 @@ def create_app() -> FastAPI:
     appy.include_router(monitor_router, prefix="/api")
     appy.include_router(ai_collect_router, prefix="/api")
     appy.include_router(scheduler_router, prefix="/api")
+    appy.include_router(socket_router)
 
     # ── 健康检查 ─────────────────────────────────────────────────────────
     @appy.get("/api/health")
