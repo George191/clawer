@@ -508,11 +508,11 @@ Port 4173 is in use, trying another one...
 [2m16:01:43[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
 [2m16:02:17[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
 [2m16:02:33[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
-22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:10:07[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:10:10[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:14:36[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
-[2m18:18:52[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
+[2m16:03:05[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m16:03:49[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m16:05:55[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m16:07:43[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+2m/src/pages/AICollect/index.tsx[22m
 [2m18:21:40[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
 [2m18:22:45[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
 [2m18:22:59[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/index.tsx[22m
@@ -543,3 +543,7 @@ Port 4173 is in use, trying another one...
 [2m16:01:43[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
 [2m16:02:17[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
 [2m16:02:33[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/layouts/MainLayout.tsx[22m
+[2m16:03:05[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m16:03:49[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m16:05:55[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m
+[2m16:07:43[22m [36m[1m[vite][22m[39m [32mhmr update [39m[2m/src/pages/AICollect/WorkspaceDock.tsx[22m

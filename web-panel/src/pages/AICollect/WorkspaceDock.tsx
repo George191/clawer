@@ -37,7 +37,6 @@ const { Text } = Typography;
 const { TextArea } = Input;
 const aura = workspacePalette;
 const listPageSize = 4;
-const listLoadThreshold = 56;
 
 export type WorkspacePanel = 'templates' | 'tasks';
 
@@ -502,7 +501,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   onToggle,
   onClose,
 }) => {
-  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
@@ -510,8 +508,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
   const [templateEditSnapshot, setTemplateEditSnapshot] = useState<TemplateDraft | null>(null);
-  const [templateVisibleCount, setTemplateVisibleCount] = useState(listPageSize);
-  const [taskVisibleCount, setTaskVisibleCount] = useState(listPageSize);
+  const [templatePage, setTemplatePage] = useState(1);
+  const [taskPage, setTaskPage] = useState(1);
   const [pinnedTemplateKeys, setPinnedTemplateKeys] = useState<Record<string, true>>({});
   const [pinnedTaskKeys, setPinnedTaskKeys] = useState<Record<string, true>>({});
   const [taskComposerOpen, setTaskComposerOpen] = useState(false);
@@ -537,7 +535,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     stopConsecutivePages: 2,
     maxEmptyPages: 2,
   });
-  const [bodyScrollState, setBodyScrollState] = useState({ canScroll: false, isAtBottom: true });
 
   const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplateDraft>>(() => Object.fromEntries(
     templates.map((item) => [item.key, {
@@ -657,7 +654,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, [selectedTemplateKey, templateRows]);
 
   useEffect(() => {
-    setTemplateVisibleCount(listPageSize);
+    setTemplatePage(1);
   }, [keyword, templateFilter]);
 
   useEffect(() => {
@@ -667,7 +664,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, [selectedTaskKey, taskRows]);
 
   useEffect(() => {
-    setTaskVisibleCount(listPageSize);
+    setTaskPage(1);
   }, [keyword, taskFilter]);
 
   const selectedTemplate = useMemo(
@@ -697,16 +694,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     ).length]),
   ) as Record<string, number>, [taskItems]);
   const visibleTemplateRows = useMemo(
-    () => templateRows.slice(0, templateVisibleCount),
-    [templateRows, templateVisibleCount],
+    () => templateRows.slice((templatePage - 1) * listPageSize, templatePage * listPageSize),
+    [templatePage, templateRows],
   );
   const visibleTaskRows = useMemo(
-    () => taskRows.slice(0, taskVisibleCount),
-    [taskRows, taskVisibleCount],
+    () => taskRows.slice((taskPage - 1) * listPageSize, taskPage * listPageSize),
+    [taskPage, taskRows],
   );
-  const templateHasMore = visibleTemplateRows.length < templateRows.length;
-  const taskHasMore = visibleTaskRows.length < taskRows.length;
-  const showBodyFade = bodyScrollState.canScroll && !bodyScrollState.isAtBottom;
 
   const hasDetail = activePanel === 'templates'
     ? Boolean(selectedTemplate)
@@ -733,70 +727,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       setTemplateEditSnapshot(null);
     }
   }, [selectedTemplate, templateDetailMode]);
-
-  const loadMoreRows = useCallback(() => {
-    if (activePanel === 'templates' && templateHasMore) {
-      setTemplateVisibleCount((prev) => Math.min(prev + listPageSize, templateRows.length));
-    }
-    if (activePanel === 'tasks' && taskHasMore) {
-      setTaskVisibleCount((prev) => Math.min(prev + listPageSize, taskRows.length));
-    }
-  }, [activePanel, taskHasMore, taskRows.length, templateHasMore, templateRows.length]);
-
-  const syncBodyScrollState = useCallback(() => {
-    const container = bodyScrollRef.current;
-    if (!container) {
-      setBodyScrollState({ canScroll: false, isAtBottom: true });
-      return;
-    }
-
-    const canScroll = container.scrollHeight - container.clientHeight > 6;
-    const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 18;
-
-    setBodyScrollState((prev) => (
-      prev.canScroll === canScroll && prev.isAtBottom === isAtBottom
-        ? prev
-        : { canScroll, isAtBottom }
-    ));
-  }, []);
-
-  useEffect(() => {
-    const container = bodyScrollRef.current;
-    if (!container) return undefined;
-
-    const handleScroll = () => {
-      if (container.scrollHeight - container.scrollTop - container.clientHeight <= listLoadThreshold) {
-        loadMoreRows();
-      }
-      window.requestAnimationFrame(() => {
-        syncBodyScrollState();
-      });
-    };
-
-    const observer = typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(() => {
-        window.requestAnimationFrame(() => {
-          syncBodyScrollState();
-        });
-      })
-      : null;
-
-    observer?.observe(container);
-    if (container.firstElementChild) {
-      observer?.observe(container.firstElementChild);
-    }
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    window.requestAnimationFrame(() => {
-      handleScroll();
-      syncBodyScrollState();
-    });
-
-    return () => {
-      observer?.disconnect();
-      container.removeEventListener('scroll', handleScroll);
-    };
-  }, [activePanel, loadMoreRows, syncBodyScrollState, visibleTaskRows.length, visibleTemplateRows.length]);
 
   const updateTemplateDraft = (templateKey: string, patch: Partial<TemplateDraft>) => {
     setTemplateDrafts((prev) => ({
@@ -944,7 +874,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       [nextTask.key]: buildTaskRuntimeItem(nextTask, 0),
     }));
     setSelectedTaskKey(nextTask.key);
-    setTaskVisibleCount((prev) => Math.max(prev, listPageSize));
+    setTaskPage(1);
     setTaskComposerOpen(false);
     resetTaskComposer({
       template: normalizedTemplate,
@@ -2246,12 +2176,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-panel {
           position: absolute;
-          inset: 0;
-          width: auto;
-          height: auto;
+          top: 18px;
+          left: 50%;
+          width: min(1180px, calc(100vw - 48px));
+          height: calc(100% - 36px);
           max-height: none;
-          border-radius: 0;
-          border: none;
+          border-radius: 14px;
+          border: 1px solid ${aura.border};
           background:
             linear-gradient(180deg, rgba(31, 36, 48, 0.9), rgba(20, 24, 34, 0.88)),
             rgba(18, 22, 31, 0.92);
@@ -2261,12 +2192,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           flex-direction: column;
           opacity: 0;
-          transform: none;
-          transition: opacity 180ms ease;
+          transform: translate(-50%, -8px);
+          transition: opacity 180ms ease, transform 200ms ease;
           pointer-events: none;
         }
         .workspace-dock-panel.is-open {
           opacity: 1;
+          transform: translate(-50%, 0);
           pointer-events: auto;
         }
         .workspace-dock-panel.is-detail {
@@ -2295,25 +2227,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           border-right-color: ${aura.borderSoft};
         }
         .workspace-dock-toolbar {
-          padding: 18px 24px 14px;
+          padding: 14px 16px;
           display: grid;
           gap: 8px;
           border-bottom: 1px solid ${aura.borderSoft};
-        }
-        .workspace-dock-page-heading {
-          display: flex;
-          align-items: baseline;
-          justify-content: space-between;
-          gap: 12px;
-        }
-        .workspace-dock-page-heading strong {
-          color: ${aura.text};
-          font-size: 18px;
-          line-height: 1.3;
-        }
-        .workspace-dock-page-heading span {
-          color: ${aura.subtle};
-          font-size: 12px;
         }
         .workspace-dock-toolbar-search-row {
           display: flex;
@@ -2380,12 +2297,37 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           position: relative;
           overflow: auto;
         }
+        .workspace-dock-pagination {
+          position: absolute;
+          right: 18px;
+          bottom: 16px;
+          z-index: 2;
+          padding: 6px 8px;
+          border: 1px solid ${aura.border};
+          border-radius: 10px;
+          background: rgba(20, 24, 34, 0.92);
+          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+        }
+        .workspace-dock-pagination .ant-pagination-item,
+        .workspace-dock-pagination .ant-pagination-prev button,
+        .workspace-dock-pagination .ant-pagination-next button {
+          border-color: ${aura.border};
+          background: rgba(255, 255, 255, 0.035);
+          color: ${aura.subtle};
+        }
+        .workspace-dock-pagination .ant-pagination-item-active {
+          border-color: rgba(138, 180, 255, 0.42);
+          background: ${aura.accentSoft};
+        }
+        .workspace-dock-pagination .ant-pagination-item-active a {
+          color: ${aura.text};
+        }
         
         .workspace-dock-list {
           display: flex;
           flex-direction: column;
           gap: 6px;
-          padding: 12px 24px 24px;
+          padding: 10px 16px 76px;
         }
         .workspace-dock-card {
           width: 100%;
@@ -2631,15 +2573,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-empty.workspace-dock-empty-compact {
           min-height: 72px;
-        }
-        .workspace-dock-bottom-fade {
-          position: sticky;
-          bottom: 0;
-          margin-top: -26px;
-          height: 20px;
-          background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(125, 125, 126, 0.32) 100%);
-          pointer-events: none;
-          z-index: 2;
         }
         .workspace-dock-detail {
           min-width: 0;
@@ -3335,9 +3268,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         @media (max-width: 767px) {
           .workspace-dock-panel,
           .workspace-dock-shell.is-session .workspace-dock-panel {
-            inset: 0;
-            width: auto;
-            height: auto;
+            top: 10px;
+            width: calc(100vw - 24px);
+            height: calc(100% - 20px);
             max-height: none;
           }
           .workspace-dock-form-grid,
@@ -3365,10 +3298,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className="workspace-dock-stack">
               <section className="workspace-dock-master">
                 <div className="workspace-dock-toolbar">
-                  <div className="workspace-dock-page-heading">
-                    <strong>{activePanel === 'templates' ? '模板管理' : '任务调度'}</strong>
-                    <span>{activePanel === 'templates' ? '采集模板与适配器资产' : '采集任务与运行编排'}</span>
-                  </div>
                   <div className="workspace-dock-toolbar-search-row">
                     <Input
                       allowClear
@@ -3420,11 +3349,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   )}
                 </div>
 
-                <div ref={bodyScrollRef} className="workspace-dock-body">
+                <div className="workspace-dock-body">
                   {activePanel === 'templates' ? renderTemplateList() : renderTaskList()}
-                  {showBodyFade ? (
-                    <div className="workspace-dock-bottom-fade" aria-hidden="true" />
-                  ) : null}
                 </div>
               </section>
 
@@ -3433,6 +3359,24 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 : activePanel === 'tasks'
                   ? (taskComposerOpen ? renderTaskComposerClean() : renderTaskDetail())
                   : null}
+            </div>
+          ) : null}
+          {activePanel && !hasDetail ? (
+            <div className="workspace-dock-pagination">
+              <Pagination
+                size="small"
+                current={activePanel === 'templates' ? templatePage : taskPage}
+                pageSize={listPageSize}
+                total={activePanel === 'templates' ? templateRows.length : taskRows.length}
+                showSizeChanger={false}
+                onChange={(page) => {
+                  if (activePanel === 'templates') {
+                    setTemplatePage(page);
+                  } else {
+                    setTaskPage(page);
+                  }
+                }}
+              />
             </div>
           ) : null}
         </aside>
