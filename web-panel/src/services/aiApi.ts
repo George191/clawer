@@ -270,8 +270,9 @@ export const dryRun = (
 export const generateAdapter = (
   url: string,
   siteType = 'default',
+  templateId?: string,
 ): Promise<AdapterResponse> =>
-  client.post('/ai/generate-adapter', { url, siteType }).then((r) => r.data);
+  client.post('/ai/generate-adapter', { url, siteType, templateId }).then((r) => r.data);
 
 export const fetchPlatformOverview = (): Promise<PlatformOverview> =>
   client.get('/ai/platform/overview').then((r) => r.data);

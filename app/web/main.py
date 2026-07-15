@@ -51,7 +51,11 @@ async def lifespan(appy: FastAPI):
     logger.info("  MongoDB:       %s", "enabled" if settings.db_url else "disabled")
     logger.info("  Kafka:         %s", "enabled" if settings.kafka_brokers else "disabled")
     logger.info("=" * 50)
+    from app.web.services.ai_collect_store import ai_collect_store
+    await ai_collect_store.initialize()
     yield
+    from app.storage.postgres_client import get_pg_client
+    await get_pg_client().close()
     logger.info("Web API shutting down")
 
 

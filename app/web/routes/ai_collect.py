@@ -70,6 +70,7 @@ class DryRunRequest(BaseModel):
 class GenerateAdapterRequest(BaseModel):
     url: str = Field(..., description="特殊站点 URL")
     siteType: str = Field(default="default", alias="siteType")
+    templateId: str | None = Field(default=None, alias="templateId")
 
 
 class WorkspaceTemplateUpdateRequest(BaseModel):
@@ -488,6 +489,19 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
 @router.post("/ai/generate-adapter")
 async def generate_adapter(body: GenerateAdapterRequest):
     _validate_target_url(body.url)
+
+    if body.templateId:
+        analysis = await ai_collect_store.get_analysis(body.templateId)
+        if analysis is None:
+            raise HTTPException(status_code=404, detail=f"Analysis '{body.templateId}' not found")
+        code = str(analysis.get("adapter_code") or "")
+        _validate_generated_adapter(code)
+        return {
+            "adapterId": f"adp_{body.templateId}",
+            "code": code,
+            "language": "python",
+            "testResult": {"passed": True, "sampleCount": len(analysis.get("sample_items") or [])},
+        }
 
     from urllib.parse import urlparse
 
