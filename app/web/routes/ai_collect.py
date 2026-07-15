@@ -13,7 +13,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config.settings import settings
+from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.platform_overview import build_platform_overview
+from app.web.services.site_analyzer import SiteAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,41 @@ class GenerateAdapterRequest(BaseModel):
     siteType: str = Field(default="default", alias="siteType")
 
 
+class WorkspaceTemplateUpdateRequest(BaseModel):
+    yaml_content: str
+    adapter: str = ""
+    description: str = ""
+    output_tag: str = ""
+
+
+class WorkspaceTaskRequest(BaseModel):
+    name: str
+    template_name: str
+    template_version: str = "v1.0"
+    schedule: dict[str, Any] = Field(default_factory=dict)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    policies: dict[str, Any] = Field(default_factory=dict)
+    owner: str = "AI Collect"
+
+
+class WorkspaceReleaseRequest(BaseModel):
+    name: str
+    version: str = "v1.0"
+    title: str
+    domain: str = ""
+    status: str
+    yaml_content: str
+    adapter: str = ""
+    description: str = ""
+    output_tag: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    task: WorkspaceTaskRequest | None = None
+
+
+class WorkspaceTaskActionRequest(BaseModel):
+    action: str
+
+
 def _load_ai_collect_scope() -> dict[str, Any]:
     scope = json.loads(json.dumps(DEFAULT_AI_COLLECT_SCOPE))
     if not AI_COLLECT_SCOPE_PATH.exists():
@@ -91,6 +128,65 @@ def _load_ai_collect_scope() -> dict[str, Any]:
 
 
 AI_COLLECT_SCOPE = _load_ai_collect_scope()
+
+
+async def _analyze_live(url: str) -> dict[str, Any]:
+    analyzer = SiteAnalyzer()
+    try:
+        result = await analyzer.analyze(url)
+    finally:
+        await analyzer.close()
+
+    template_id = f"tpl_{int(time.time() * 1000)}"
+    payload = {
+        "template_id": template_id,
+        "source_url": url,
+        "template_name": result.template_name,
+        "template_yaml": result.template_yaml,
+        "adapter_code": result.adapter_code,
+        "fields": result.fields_payload(),
+        "pagination": result.pagination.response_dict(),
+        "sample_items": result.sample_items,
+    }
+    await ai_collect_store.save_analysis(payload)
+    return {
+        "templateId": template_id,
+        "name": result.template_name,
+        "domain": result.domain,
+        "yaml": result.template_yaml,
+        "adapter": result.adapter_code,
+        "adapterPath": f"app/adapters/{result.template_name}.py" if result.adapter_code else "",
+        "fields": payload["fields"],
+        "pagination": payload["pagination"],
+        "sampleItems": result.sample_items,
+        "warnings": result.warnings,
+        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+async def _analyze_stream_live(url: str) -> AsyncGenerator[str, None]:
+    def event(name: str, data: dict[str, Any]) -> str:
+        return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    try:
+        yield event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
+        result = await _analyze_live(url)
+        yield event("step", {"step": "fetch_page", "label": "Fetch page", "status": "done"})
+        yield event("fields", {"fields": result["fields"]})
+        yield event("pagination", result["pagination"])
+        yield event("complete", {
+            "templateId": result["templateId"],
+            "templateYaml": result["yaml"],
+            "adapterCode": result["adapter"],
+            "adapterPath": result["adapterPath"],
+            "fields": result["fields"],
+            "pagination": result["pagination"],
+        })
+    except asyncio.CancelledError:
+        logger.info("SSE connection cancelled for %s", url)
+    except Exception as exc:
+        logger.exception("SSE analysis error for %s", url)
+        yield event("error", {"code": "ANALYZE_ERROR", "message": str(exc)})
 
 
 def _scope_limit(name: str, default: int) -> int:
@@ -293,7 +389,7 @@ async def analyze_stream(url: str, request: Request):
     _validate_target_url(url)
 
     async def _generator():
-        async for chunk in _analyze_stream(url):
+        async for chunk in _analyze_stream_live(url):
             if await request.is_disconnected():
                 break
             yield chunk
@@ -317,6 +413,7 @@ async def platform_overview():
 @router.post("/ai/generate-template")
 async def generate_template(body: GenerateTemplateRequest):
     _validate_target_url(body.url)
+    return await _analyze_live(body.url)
 
     from urllib.parse import urlparse
 
@@ -361,6 +458,20 @@ async def generate_template(body: GenerateTemplateRequest):
 
 @router.post("/ai/dry-run")
 async def dry_run(body: DryRunRequest):
+    limit = _clamp_positive(body.limit, "max_dry_run_limit", 100)
+    analysis = await ai_collect_store.get_analysis(body.templateId)
+    if analysis is None:
+        raise HTTPException(status_code=404, detail=f"Analysis '{body.templateId}' not found")
+    sample_items = list(analysis.get("sample_items") or [])[:limit]
+    return {
+        "totalPages": max(1, (len(sample_items) + 9) // 10),
+        "totalItems": len(sample_items),
+        "sampleItems": sample_items,
+        "columns": list(sample_items[0].keys()) if sample_items else [],
+        "duration": 0,
+        "errors": [],
+    }
+
     if not body.templateId:
         raise HTTPException(status_code=400, detail="缺少 templateId")
 
@@ -384,6 +495,58 @@ async def dry_run(body: DryRunRequest):
         "duration": 2.3,
         "errors": [],
     }
+
+
+@router.get("/ai/workspace/templates")
+async def workspace_templates():
+    return {"items": await ai_collect_store.list_templates()}
+
+
+@router.post("/ai/workspace/templates/release")
+async def workspace_template_release(body: WorkspaceReleaseRequest):
+    if body.status not in {"active", "draft", "deprecated"}:
+        raise HTTPException(status_code=400, detail="Invalid template status")
+    template = await ai_collect_store.release_template(body.model_dump(exclude={"task"}))
+    task = await ai_collect_store.create_task(body.task.model_dump()) if body.task else None
+    return {"template": template, "task": task}
+
+
+@router.put("/ai/workspace/templates/{template_id}")
+async def workspace_template_update(template_id: str, body: WorkspaceTemplateUpdateRequest):
+    template = await ai_collect_store.update_template(template_id, body.model_dump())
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+
+@router.get("/ai/workspace/tasks")
+async def workspace_tasks():
+    return {"items": await ai_collect_store.list_tasks()}
+
+
+@router.post("/ai/workspace/tasks")
+async def workspace_task_create(body: WorkspaceTaskRequest):
+    return await ai_collect_store.create_task(body.model_dump())
+
+
+@router.post("/ai/workspace/tasks/{task_id}/action")
+async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
+    actions: dict[str, tuple[dict[str, Any], str, str]] = {
+        "pause": ({"status": "paused", "control_state": None, "download_state": None, "sync_state": None}, "warn", "operator paused task"),
+        "resume": ({"status": "running", "control_state": None, "download_state": None, "sync_state": None}, "ok", "operator resumed task"),
+        "cancel": ({"status": "failed", "control_state": "canceled", "download_state": "paused", "sync_state": "canceled"}, "warn", "operator canceled task"),
+        "start_download": ({"status": None, "control_state": None, "download_state": "running", "sync_state": None}, "ok", "download lane started"),
+        "pause_download": ({"status": None, "control_state": None, "download_state": "paused", "sync_state": None}, "warn", "download lane paused"),
+        "start_sync": ({"status": None, "control_state": None, "download_state": None, "sync_state": "running"}, "ok", "sync lane started"),
+        "cancel_sync": ({"status": None, "control_state": None, "download_state": None, "sync_state": "canceled"}, "warn", "sync lane canceled"),
+    }
+    action = actions.get(body.action)
+    if action is None:
+        raise HTTPException(status_code=400, detail="Invalid task action")
+    task = await ai_collect_store.update_task(task_id, *action)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
 
 
 @router.post("/ai/generate-adapter")

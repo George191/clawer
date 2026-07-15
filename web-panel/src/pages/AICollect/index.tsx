@@ -52,6 +52,7 @@ import {
   createAnalyzeStream,
   dryRun as dryRunApi,
   generateTemplate as generateTemplateApi,
+  releaseWorkspaceTemplate,
 } from '@/services/aiApi';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
@@ -1915,23 +1916,29 @@ const AICollect: React.FC = () => {
     });
 
     es.addEventListener('complete', (event: MessageEvent) => {
-      const data: { templateId: string } = JSON.parse(event.data);
+      const data: { templateId: string; templateYaml?: string; adapterPath?: string } = JSON.parse(event.data);
       setTemplateId(data.templateId);
+      if (data.templateYaml) {
+        setWorkspaceTemplateYaml(data.templateYaml);
+        setTemplateDraftEntries(parseTemplateEntries(data.templateYaml));
+        setTemplateValueDrafts({});
+      }
+      if (data.adapterPath) setWorkspaceAdapterFile(data.adapterPath);
       pushLiveLog('服务端合约草案已生成，等待前端确认');
       es.close();
       analyzeStreamRef.current = null;
     });
 
     es.addEventListener('error', () => {
-      setStreamError('分析服务暂不可用，当前展示前端预览合约。');
-      pushLiveLog('分析服务暂不可用，切换为前端模拟流程');
+      setStreamError('分析服务暂不可用，请检查服务端日志后重试。');
+      pushLiveLog('分析服务返回错误，已停止当前流程');
       es.close();
       analyzeStreamRef.current = null;
     });
 
     es.onerror = () => {
-      setStreamError('SSE 连接已断开，当前展示前端预览合约。');
-      pushLiveLog('SSE 连接断开，继续前端模拟流程');
+      setStreamError('SSE 连接已断开，请重新发起分析。');
+      pushLiveLog('SSE 连接断开，当前流程已停止');
       es.close();
       analyzeStreamRef.current = null;
     };
@@ -2081,18 +2088,59 @@ const AICollect: React.FC = () => {
 
     pushLiveLog(`release action: ${releaseLabel.toLowerCase()} | task: ${taskLabel.toLowerCase()}`);
 
-    if (selectedReleaseAction === 'publish') {
-      await handleSave(false);
-      message.success(selectedTaskPublishMode === 'launch'
-        ? 'Template published and crawl task created'
-        : 'Template published');
-    } else {
+    try {
+      const status = selectedReleaseAction === 'publish'
+        ? 'active'
+        : selectedReleaseAction === 'archive'
+          ? 'deprecated'
+          : 'draft';
+      const parameters = Object.fromEntries(releaseTemplateParams.map((param) => [
+        param.name,
+        releaseTaskParamValues[param.name] ?? param.defaultValue,
+      ]));
+      await releaseWorkspaceTemplate({
+        name: activeTemplate.id === 'empty' ? templateId : activeTemplate.id,
+        version: 'v1.0',
+        title: browserPreviewTitle,
+        domain: browserPreviewHost,
+        status,
+        yaml_content: workspaceTemplateYaml || activeTemplate.raw,
+        adapter: adapterFileName,
+        description: releaseActionMeta[selectedReleaseAction].desc,
+        output_tag: outputTarget,
+        metadata: { field_count: selectedCount },
+        task: createsTask ? {
+          name: `${browserPreviewTitle} task`,
+          template_name: activeTemplate.id === 'empty' ? templateId : activeTemplate.id,
+          template_version: 'v1.0',
+          schedule: {
+            mode: releaseScheduleKind,
+            daily_time: releaseDailyTime,
+            interval_value: releaseIntervalMinutes,
+            interval_unit: releaseIntervalUnit,
+          },
+          parameters,
+          policies: {
+            concurrency,
+            incremental: releaseIncremental,
+            respect_robots: respectRobots,
+            drift_guard: enableDriftGuard,
+            empty_page_limit: releaseEmptyPageLimit,
+            batch_input: releaseBatchInput,
+          },
+          owner: 'AI Collect',
+        } : undefined,
+      });
       setRunStatus('completed');
-      message.success(`${releaseLabel} ready`);
+      message.success(createsTask
+        ? 'Template published and crawl task created'
+        : `${releaseLabel} ready`);
+      playReleaseCompletionAnimation(createsTask);
+    } catch (error) {
+      message.error('Release failed; no template or task was saved');
+      pushLiveLog(`release failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    playReleaseCompletionAnimation(createsTask);
-  }, [handleSave, message, playReleaseCompletionAnimation, pushLiveLog, selectedReleaseAction, selectedTaskPublishMode]);
+  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, message, outputTarget, playReleaseCompletionAnimation, pushLiveLog, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
 
   const handleReleaseActionSelect = useCallback((action: ReleaseAction) => {
     setSelectedReleaseAction(action);

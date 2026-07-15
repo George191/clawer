@@ -131,9 +131,6 @@ class HttpClient:
                         self._leased_proxies[task_id] = proxy_url
 
         self._last_proxy_url = proxy_url
-        use_proxy = proxy_url is not None
-
-        logger.info("Requesting %s with proxy: %s", url, proxy_url or "None")
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
         async with await self._create_client(proxy_url) as client:

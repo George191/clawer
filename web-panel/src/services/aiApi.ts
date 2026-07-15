@@ -172,6 +172,76 @@ export interface SSECompleteEvent {
   templateId: string;
   fields: FieldDef[];
   pagination: PaginationStrategy;
+  adapterCode?: string;
+}
+
+export interface WorkspaceTemplate {
+  id: string;
+  name: string;
+  version: string;
+  title: string;
+  domain: string;
+  status: 'active' | 'draft' | 'deprecated';
+  yaml_content: string;
+  adapter: string;
+  description: string;
+  output_tag: string;
+  owner: string;
+  metadata: Record<string, unknown>;
+  task_count: number;
+  updated_at: string;
+}
+
+export interface WorkspaceTaskLog {
+  level: 'info' | 'ok' | 'warn';
+  message: string;
+  created_at: string;
+}
+
+export interface WorkspaceTask {
+  id: string;
+  name: string;
+  template_name: string;
+  template_version: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'paused';
+  progress: number;
+  records: number;
+  throughput: number;
+  control_state: 'canceled' | null;
+  download_state: 'idle' | 'running' | 'paused';
+  sync_state: 'idle' | 'running' | 'canceled';
+  schedule: Record<string, unknown>;
+  parameters: Record<string, unknown>;
+  policies: Record<string, unknown>;
+  owner: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string;
+  logs: WorkspaceTaskLog[];
+}
+
+export interface WorkspaceTaskPayload {
+  name: string;
+  template_name: string;
+  template_version: string;
+  schedule: Record<string, unknown>;
+  parameters: Record<string, unknown>;
+  policies: Record<string, unknown>;
+  owner?: string;
+}
+
+export interface WorkspaceReleasePayload {
+  name: string;
+  version: string;
+  title: string;
+  domain: string;
+  status: 'active' | 'draft' | 'deprecated';
+  yaml_content: string;
+  adapter: string;
+  description?: string;
+  output_tag?: string;
+  metadata?: Record<string, unknown>;
+  task?: WorkspaceTaskPayload;
 }
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -205,3 +275,29 @@ export const generateAdapter = (
 
 export const fetchPlatformOverview = (): Promise<PlatformOverview> =>
   client.get('/ai/platform/overview').then((r) => r.data);
+
+export const fetchWorkspaceTemplates = (): Promise<WorkspaceTemplate[]> =>
+  client.get('/ai/workspace/templates').then((r) => r.data.items);
+
+export const updateWorkspaceTemplate = (
+  templateId: string,
+  data: Pick<WorkspaceTemplate, 'yaml_content' | 'adapter' | 'description' | 'output_tag'>,
+): Promise<WorkspaceTemplate> =>
+  client.put(`/ai/workspace/templates/${templateId}`, data).then((r) => r.data);
+
+export const releaseWorkspaceTemplate = (
+  data: WorkspaceReleasePayload,
+): Promise<{ template: WorkspaceTemplate; task: WorkspaceTask | null }> =>
+  client.post('/ai/workspace/templates/release', data).then((r) => r.data);
+
+export const fetchWorkspaceTasks = (): Promise<WorkspaceTask[]> =>
+  client.get('/ai/workspace/tasks').then((r) => r.data.items);
+
+export const createWorkspaceTask = (data: WorkspaceTaskPayload): Promise<WorkspaceTask> =>
+  client.post('/ai/workspace/tasks', data).then((r) => r.data);
+
+export const runWorkspaceTaskAction = (
+  taskId: string,
+  action: 'pause' | 'resume' | 'cancel' | 'start_download' | 'pause_download' | 'start_sync' | 'cancel_sync',
+): Promise<WorkspaceTask> =>
+  client.post(`/ai/workspace/tasks/${taskId}/action`, { action }).then((r) => r.data);

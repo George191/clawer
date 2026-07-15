@@ -23,7 +23,15 @@ import {
   UploadOutlined,
   WarningOutlined,
 } from '@ant-design/icons';
-import { templates as sourceTemplates, tasks as sourceTasks } from '@/pages/CollectConsole/shared/mockData';
+import {
+  createWorkspaceTask,
+  fetchWorkspaceTasks,
+  fetchWorkspaceTemplates,
+  runWorkspaceTaskAction,
+  updateWorkspaceTemplate,
+  type WorkspaceTask,
+  type WorkspaceTemplate,
+} from '@/services/aiApi';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import type {
@@ -38,24 +46,6 @@ const { TextArea } = Input;
 const aura = workspacePalette;
 const defaultPageSize = 10;
 const listLoadThreshold = 56;
-const templates = Array.from({ length: 220 }, (_, index) => {
-  const source = sourceTemplates[index % sourceTemplates.length];
-  const sequence = index + 1;
-  return {
-    ...source,
-    key: `${source.key}-mock-${sequence}`,
-    title: `${source.title} · ${String(sequence).padStart(3, '0')}`,
-  };
-});
-const tasks = Array.from({ length: 220 }, (_, index) => {
-  const source = sourceTasks[index % sourceTasks.length];
-  const sequence = index + 1;
-  return {
-    ...source,
-    key: `${source.key}-mock-${sequence}`,
-    name: `${source.name} · ${String(sequence).padStart(3, '0')}`,
-  };
-});
 
 export type WorkspacePanel = 'templates' | 'tasks';
 
@@ -351,6 +341,58 @@ const buildTaskRuntimeItem = (item: CollectTask, index: number): TaskRuntimeItem
   };
 };
 
+const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
+  key: item.id,
+  name: item.name,
+  title: item.title,
+  domain: item.domain,
+  adapter: item.adapter,
+  version: item.version,
+  status: item.status,
+  fields: extractListFields(item.yaml_content).length,
+  quality: Number(item.metadata?.quality ?? 0),
+  lastRun: item.updated_at,
+  owner: item.owner,
+  description: item.description,
+  action: 'Open template',
+  icon: 'code',
+  taskCount: item.task_count,
+});
+
+const mapWorkspaceTask = (item: WorkspaceTask): CollectTask => ({
+  key: item.id,
+  name: item.name,
+  template: `${item.template_name}@${item.template_version}`,
+  group: 'prototype',
+  area: `${item.template_name.replace(/_/g, ' ')} workspace`,
+  status: item.status,
+  progress: item.progress,
+  records: String(item.records),
+  lag: item.status === 'running' ? 'live' : '-',
+  nextRun: String(item.schedule?.label ?? (item.status === 'running' ? 'Continuous' : 'Waiting')),
+  owner: item.owner,
+  avatar: toAvatarLabel(item.owner),
+  comments: [],
+  subIssues: [],
+});
+
+const mapWorkspaceTaskRuntime = (item: WorkspaceTask): TaskRuntimeItem => ({
+  status: item.status,
+  progress: item.progress,
+  recordsValue: item.records,
+  throughput: item.throughput,
+  lastDelta: 0,
+  history: createHistory(item.records),
+  logs: item.logs.map((log) => ({
+    time: new Date(log.created_at).toLocaleTimeString('en-GB', { hour12: false }),
+    level: log.level,
+    message: log.message,
+  })),
+  controlState: item.control_state,
+  downloadState: item.download_state,
+  syncState: item.sync_state,
+});
+
 const toAvatarLabel = (value: string) => {
   const initials = value
     .split(/[\s_-]+/)
@@ -567,11 +609,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   onToggle,
   onClose,
   analysisTemplate,
-  templateSources,
   onTemplateApply,
   releaseTaskDefaults,
 }) => {
   const bodyScrollRef = useRef<HTMLDivElement>(null);
+  const templateSaveTimerRef = useRef<number | null>(null);
+  const [templates, setTemplates] = useState<TemplateAsset[]>([]);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
@@ -645,66 +688,47 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     releaseTaskDefaults?.respectRobots,
   ]);
 
-  const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplateDraft>>(() => Object.fromEntries(
-    templates.map((item) => [item.key, {
-      adapter: item.adapter,
-      outputTag: `${item.domain} / ${item.version}`,
-      notes: item.description,
-      yaml: buildTemplateYaml(item, item.adapter),
-      savedAt: item.lastRun,
-    }]),
-  ) as Record<string, TemplateDraft>);
-  const [taskItems, setTaskItems] = useState<CollectTask[]>(tasks);
+  const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplateDraft>>({});
+  const [taskItems, setTaskItems] = useState<CollectTask[]>([]);
+  const [taskRuntime, setTaskRuntime] = useState<Record<string, TaskRuntimeItem>>({});
 
-  const [taskRuntime, setTaskRuntime] = useState<Record<string, TaskRuntimeItem>>(() => Object.fromEntries(
-    tasks.map((item, index) => [item.key, buildTaskRuntimeItem(item, index)]),
-  ) as Record<string, TaskRuntimeItem>);
+  const applyWorkspaceTasks = useCallback((items: WorkspaceTask[]) => {
+    setTaskItems(items.map(mapWorkspaceTask));
+    setTaskRuntime(Object.fromEntries(items.map((item) => [item.id, mapWorkspaceTaskRuntime(item)])));
+  }, []);
+
+  const refreshWorkspaceTasks = useCallback(async () => {
+    applyWorkspaceTasks(await fetchWorkspaceTasks());
+  }, [applyWorkspaceTasks]);
 
   useEffect(() => {
-    let cycle = 0;
+    let active = true;
+    Promise.all([fetchWorkspaceTemplates(), fetchWorkspaceTasks()])
+      .then(([templateItems, taskItemsResponse]) => {
+        if (!active) return;
+        setTemplates(templateItems.map(mapWorkspaceTemplate));
+        setTemplateDrafts(Object.fromEntries(templateItems.map((item) => [item.id, {
+          adapter: item.adapter,
+          outputTag: item.output_tag,
+          notes: item.description,
+          yaml: item.yaml_content,
+          savedAt: item.updated_at,
+        }])));
+        applyWorkspaceTasks(taskItemsResponse);
+      })
+      .catch((error) => console.error('Failed to load AI Collect workspace', error));
+    return () => {
+      active = false;
+    };
+  }, [applyWorkspaceTasks]);
 
+  useEffect(() => {
+    if (activePanel !== 'tasks') return undefined;
     const timer = window.setInterval(() => {
-      cycle += 1;
-      setTaskRuntime((prev) => {
-        let changed = false;
-        const next = Object.fromEntries(Object.entries(prev).map(([taskKey, runtime], index) => {
-          if (runtime.status !== 'running' || runtime.controlState === 'canceled') {
-            return [taskKey, runtime];
-          }
-
-          changed = true;
-          const delta = 84 + ((cycle + index) % 4) * 18;
-          const progressBump = runtime.progress >= 98 ? 0 : 1 + ((cycle + index) % 2);
-          const nextProgress = Math.min(runtime.progress + progressBump, 99);
-          const nextRecordsValue = runtime.recordsValue + delta;
-          const nextThroughput = Math.max(14, runtime.throughput + (((cycle + index) % 3) - 1) * 2);
-          const nextHistory = [...runtime.history.slice(-11), nextRecordsValue];
-          const messagePool = [
-            'list worker accepted another page window',
-            'detail parser returned new records batch',
-            'attachment queue drained without retries',
-            'field drift baseline remains within tolerance',
-          ];
-
-          return [taskKey, {
-            ...runtime,
-            progress: nextProgress,
-            recordsValue: nextRecordsValue,
-            throughput: nextThroughput,
-            lastDelta: delta,
-            history: nextHistory,
-            logs: cycle % 2 === 0
-              ? pushTaskLog(runtime.logs, cycle % 4 === 0 ? 'ok' : 'info', messagePool[(cycle + index) % messagePool.length])
-              : runtime.logs,
-          }];
-        }));
-
-        return changed ? next as Record<string, TaskRuntimeItem> : prev;
-      });
-    }, 1400);
-
+      void refreshWorkspaceTasks().catch((error) => console.error('Failed to refresh tasks', error));
+    }, 5000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [activePanel, refreshWorkspaceTasks]);
 
   const templateRows = useMemo(() => templates
     .filter((item) => {
@@ -718,7 +742,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       const rightPinned = Boolean(pinnedTemplateKeys[right.key]);
       if (leftPinned === rightPinned) return 0;
       return leftPinned ? -1 : 1;
-    }), [keyword, pinnedTemplateKeys, templateFilter]);
+    }), [keyword, pinnedTemplateKeys, templateFilter, templates]);
 
   const allTaskRows = useMemo<TaskRow[]>(() => taskItems.map((item, index) => {
     const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item, index);
@@ -756,7 +780,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const selectedTemplate = useMemo(
     () => templates.find((item) => item.key === selectedTemplateKey) ?? null,
-    [selectedTemplateKey],
+    [selectedTemplateKey, templates],
   );
   const taskTemplateOptions = useMemo(
     () => templates
@@ -768,7 +792,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         version: item.version,
         site: resolveSiteProfile(item.name),
       })),
-    [],
+    [templates],
   );
   const selectedTask = useMemo(
     () => allTaskRows.find((item) => item.key === selectedTaskKey) ?? null,
@@ -779,7 +803,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     templates.map((item) => [item.key, taskItems.filter(
       (taskItem) => normalizeTemplateKey(taskItem.template) === normalizeTemplateKey(item.name),
     ).length]),
-  ) as Record<string, number>, [taskItems]);
+  ) as Record<string, number>, [taskItems, templates]);
   const visibleTemplateRows = useMemo(
     () => templateRows.slice(0, templateVisibleCount),
     [templateRows, templateVisibleCount],
@@ -880,6 +904,34 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       });
     }
   };
+
+  useEffect(() => {
+    if (templateDetailMode !== 'edit' || !selectedTemplate || !selectedTemplateDraft) return undefined;
+    if (templateSaveTimerRef.current) window.clearTimeout(templateSaveTimerRef.current);
+    templateSaveTimerRef.current = window.setTimeout(() => {
+      void updateWorkspaceTemplate(selectedTemplate.key, {
+        yaml_content: selectedTemplateDraft.yaml,
+        adapter: selectedTemplateDraft.adapter,
+        description: selectedTemplateDraft.notes,
+        output_tag: selectedTemplateDraft.outputTag,
+      }).then((updated) => {
+        setTemplateDrafts((prev) => ({
+          ...prev,
+          [selectedTemplate.key]: { ...prev[selectedTemplate.key], savedAt: updated.updated_at },
+        }));
+      }).catch((error) => console.error('Failed to update template', error));
+    }, 500);
+    return () => {
+      if (templateSaveTimerRef.current) window.clearTimeout(templateSaveTimerRef.current);
+    };
+  }, [
+    selectedTemplate?.key,
+    selectedTemplateDraft?.adapter,
+    selectedTemplateDraft?.notes,
+    selectedTemplateDraft?.outputTag,
+    selectedTemplateDraft?.yaml,
+    templateDetailMode,
+  ]);
 
   const toggleTemplatePinned = useCallback((templateKey: string) => {
     setPinnedTemplateKeys((prev) => togglePinnedState(prev, templateKey));
@@ -1005,7 +1057,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     }));
   }, []);
 
-  const handleCreateTask = useCallback(() => {
+  const handleCreateTask = useCallback(async () => {
     const normalizedTemplate = taskComposerDraft.template
       || (selectedTemplate ? `${selectedTemplate.name}@${selectedTemplate.version}` : '')
       || taskTemplateOptions[0]?.value
@@ -1034,113 +1086,76 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       subIssues: [],
     };
 
-    setKeyword('');
-    setTaskFilter('all');
-    setTaskItems((prev) => [nextTask, ...prev]);
-    setTaskRuntime((prev) => ({
-      ...prev,
-      [nextTask.key]: buildTaskRuntimeItem(nextTask, 0),
-    }));
-    setSelectedTaskKey(nextTask.key);
-    setTaskVisibleCount(defaultPageSize);
-    setTaskComposerOpen(false);
-    resetTaskComposer({
-      template: normalizedTemplate,
-      templateLocked: taskComposerDraft.templateLocked,
-    });
-  }, [resetTaskComposer, selectedTemplate, taskBatchFile, taskBatchInput, taskBatchParam, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
+    const [templateName, templateVersion = 'v1.0'] = normalizedTemplate.split('@');
+    try {
+      const created = await createWorkspaceTask({
+        name: nextTask.name,
+        template_name: templateName,
+        template_version: templateVersion,
+        schedule: {
+          mode: taskComposerDraft.scheduleMode,
+          recurring_mode: taskComposerDraft.recurringMode,
+          daily_time: taskComposerDraft.dailyTime,
+          interval_value: taskComposerDraft.intervalValue,
+          interval_unit: taskComposerDraft.intervalUnit,
+          label: formatTaskNextRun(taskComposerDraft),
+        },
+        parameters: Object.fromEntries(taskComposerDraft.templateParams.map((item) => [item.key, item.value])),
+        policies: {
+          concurrency: taskConcurrency,
+          incremental: taskComposerDraft.incremental,
+          incremental_mode: taskComposerDraft.incrementalMode,
+          respect_robots: taskRespectRobots,
+          drift_guard: taskDriftGuard,
+          batch: taskBatchInput ? {
+            file: taskBatchFile,
+            parameter: taskBatchParam,
+            size: taskBatchSize,
+            start_line: taskBatchStartLine,
+            limit: taskBatchLimit,
+            delay: taskBatchDelay,
+          } : null,
+        },
+        owner: nextTask.owner,
+      });
+      const createdTask = mapWorkspaceTask(created);
+      setKeyword('');
+      setTaskFilter('all');
+      setTaskItems((prev) => [createdTask, ...prev.filter((item) => item.key !== createdTask.key)]);
+      setTaskRuntime((prev) => ({ ...prev, [created.id]: mapWorkspaceTaskRuntime(created) }));
+      setSelectedTaskKey(created.id);
+      setTaskVisibleCount(defaultPageSize);
+      setTaskComposerOpen(false);
+      resetTaskComposer({
+        template: normalizedTemplate,
+        templateLocked: taskComposerDraft.templateLocked,
+      });
+    } catch (error) {
+      console.error('Failed to create task', error);
+    }
+  }, [resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchParam, taskBatchSize, taskBatchStartLine, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
 
-  const updateTaskState = (
+  const handleWorkspaceTaskAction = useCallback(async (
     taskKey: string,
-    updater: (current: TaskRuntimeItem) => TaskRuntimeItem,
-    logEntry?: { level: TaskLogLevel; message: string },
+    action: Parameters<typeof runWorkspaceTaskAction>[1],
   ) => {
-    setTaskRuntime((prev) => {
-      const current = prev[taskKey];
-      if (!current) return prev;
-      const next = updater(current);
-      return {
-        ...prev,
-        [taskKey]: logEntry
-          ? { ...next, logs: pushTaskLog(next.logs, logEntry.level, logEntry.message) }
-          : next,
-      };
-    });
-  };
+    try {
+      const updated = await runWorkspaceTaskAction(taskKey, action);
+      const mappedTask = mapWorkspaceTask(updated);
+      setTaskItems((prev) => prev.map((item) => (item.key === taskKey ? mappedTask : item)));
+      setTaskRuntime((prev) => ({ ...prev, [taskKey]: mapWorkspaceTaskRuntime(updated) }));
+    } catch (error) {
+      console.error(`Failed to run task action: ${action}`, error);
+    }
+  }, []);
 
-  const handlePauseTask = (taskKey: string) => updateTaskState(taskKey, (current) => ({
-    ...current,
-    status: 'paused',
-    throughput: 0,
-    lastDelta: 0,
-  }), {
-    level: 'warn',
-    message: 'operator paused task; workers entered hold state',
-  });
-
-  const handleResumeTask = (taskKey: string) => updateTaskState(taskKey, (current) => ({
-    ...current,
-    status: 'running',
-    controlState: null,
-    throughput: Math.max(current.throughput, 18),
-    lastDelta: Math.max(current.lastDelta, 96),
-  }), {
-    level: 'ok',
-    message: 'task resumed and scheduler returned to live crawl',
-  });
-
-  const handleCancelTask = (taskKey: string) => updateTaskState(taskKey, (current) => ({
-    ...current,
-    status: 'failed',
-    controlState: 'canceled',
-    throughput: 0,
-    lastDelta: 0,
-    downloadState: 'paused',
-    syncState: 'canceled',
-  }), {
-    level: 'warn',
-    message: 'task canceled by operator; current queue is being drained',
-  });
-
-  const handleStartDownload = (taskKey: string) => updateTaskState(taskKey, (current) => ({
-    ...(current.controlState === 'canceled' ? current : {
-      ...current,
-      downloadState: 'running',
-    }),
-  }), {
-    level: 'ok',
-    message: 'download lane activated; attachment workers resumed dispatch',
-  });
-
-  const handlePauseDownload = (taskKey: string) => updateTaskState(taskKey, (current) => ({
-    ...(current.controlState === 'canceled' ? current : {
-      ...current,
-      downloadState: 'paused',
-    }),
-  }), {
-    level: 'warn',
-    message: 'download lane paused; current attachment queue is held',
-  });
-
-  const handleStartSync = (taskKey: string) => updateTaskState(taskKey, (current) => ({
-    ...(current.controlState === 'canceled' ? current : {
-      ...current,
-      syncState: 'running',
-    }),
-  }), {
-    level: 'ok',
-    message: 'sync lane activated; downstream dataset writer resumed commit',
-  });
-
-  const handleCancelSync = (taskKey: string) => updateTaskState(taskKey, (current) => ({
-    ...(current.controlState === 'canceled' ? current : {
-      ...current,
-      syncState: 'canceled',
-    }),
-  }), {
-    level: 'warn',
-    message: 'sync lane canceled; downstream commit window has been stopped',
-  });
+  const handlePauseTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'pause');
+  const handleResumeTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'resume');
+  const handleCancelTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'cancel');
+  const handleStartDownload = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start_download');
+  const handlePauseDownload = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'pause_download');
+  const handleStartSync = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start_sync');
+  const handleCancelSync = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'cancel_sync');
 
   const renderTemplateList = () => (
     <div className="workspace-dock-list is-templates">
@@ -1163,13 +1178,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             key={item.key}
             className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''} ${isPinned ? 'is-pinned' : ''}`}
             onClick={() => {
-              const source = templateSources?.[item.name] ?? templateSources?.[item.name.replace(/_contract$/, '')];
-              if (source) {
-                setTemplateDrafts((prev) => ({
-                  ...prev,
-                  [item.key]: { ...prev[item.key], yaml: source.yaml, adapter: source.adapter },
-                }));
-              }
               setSelectedTemplateKey(item.key);
               setTemplateDetailMode('overview');
             }}
