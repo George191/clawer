@@ -415,46 +415,6 @@ async def generate_template(body: GenerateTemplateRequest):
     _validate_target_url(body.url)
     return await _analyze_live(body.url)
 
-    from urllib.parse import urlparse
-
-    domain = urlparse(body.url).hostname or "unknown"
-    name = domain.replace(".", "_")
-    template_id = f"tpl_{int(time.time())}"
-
-    fields = [
-        {"name": "title", "selector": "h2.title a", "type": "text", "sample": "示例", "required": True},
-        {"name": "price", "selector": "span.price", "type": "number", "sample": "99.00", "required": False},
-        {"name": "link", "selector": "h2.title a", "type": "url", "sample": "https://...", "required": True},
-        {"name": "date", "selector": "time.date", "type": "date", "sample": "2026-06-10", "required": False},
-    ]
-    pagination = {
-        "type": "click",
-        "selector": ".pagination .next",
-        "maxPages": _scope_limit("max_template_pages", 100),
-        "params": {"pageParam": "page", "startPage": 1, "pageSize": 20},
-    }
-
-    if body.options and body.options.fieldOverrides:
-        override_map = {override.name: override.rename for override in body.options.fieldOverrides if override.rename}
-        for field in fields:
-            if field["name"] in override_map:
-                field["name"] = override_map[field["name"]]
-
-    max_pages = body.options.maxPages if body.options else pagination["maxPages"]
-    max_pages = _clamp_positive(max_pages, "max_template_pages", 100)
-    pagination["maxPages"] = max_pages
-    yaml_content = _build_yaml_template(body.url, fields, pagination, max_pages)
-
-    return {
-        "templateId": template_id,
-        "name": name,
-        "domain": domain,
-        "yaml": yaml_content,
-        "fields": fields,
-        "pagination": pagination,
-        "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-
 
 @router.post("/ai/dry-run")
 async def dry_run(body: DryRunRequest):
@@ -469,30 +429,6 @@ async def dry_run(body: DryRunRequest):
         "sampleItems": sample_items,
         "columns": list(sample_items[0].keys()) if sample_items else [],
         "duration": 0,
-        "errors": [],
-    }
-
-    if not body.templateId:
-        raise HTTPException(status_code=400, detail="缺少 templateId")
-
-    limit = _clamp_positive(body.limit, "max_dry_run_limit", 100)
-    sample_items = [
-        {
-            "title": f"示例项目 {index + 1}",
-            "price": f"{50 + index * 1.5:.2f}",
-            "link": f"https://example.com/item/{index + 1}",
-            "date": "2026-06-10",
-        }
-        for index in range(min(limit, 45))
-    ]
-    columns = list(sample_items[0].keys()) if sample_items else []
-
-    return {
-        "totalPages": max(1, (len(sample_items) + 9) // 10),
-        "totalItems": len(sample_items),
-        "sampleItems": sample_items,
-        "columns": columns,
-        "duration": 2.3,
         "errors": [],
     }
 

@@ -55,7 +55,6 @@ interface WorkspaceDockProps {
   onToggle: (panel: WorkspacePanel) => void;
   onClose: () => void;
   analysisTemplate?: { yaml: string; adapter: string };
-  templateSources?: Record<string, { yaml: string; adapter: string }>;
   onTemplateApply?: (draft: { yaml: string; adapter: string }) => void;
   releaseTaskDefaults?: {
     concurrency: number;
@@ -252,18 +251,6 @@ const siteProfileRegistry: Record<string, SiteProfile> = {
   market_data_contract: { kind: 'intelligence', brand: 'Market Data', logo: 'MD', hue: '#5FA8FF' },
 };
 
-const nowLabel = () => new Date().toLocaleTimeString('zh-CN', {
-  hour12: false,
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-});
-
-const pushTaskLog = (logs: TaskLog[], level: TaskLogLevel, message: string) => [
-  { time: nowLabel(), level, message },
-  ...logs,
-].slice(0, 14);
-
 const parseCompactNumber = (value: string) => {
   const normalized = value.trim().toUpperCase();
   if (normalized === '-' || normalized === 'BLOCKED' || normalized === 'MANUAL') return 0;
@@ -295,17 +282,6 @@ const createHistory = (recordsValue: number) => {
   const start = Math.max(recordsValue - span, 0);
   return Array.from({ length: 12 }, (_, index) => Math.round(start + ((recordsValue - start) * (index + 1)) / 12));
 };
-
-const buildTemplateYaml = (item: TemplateAsset, adapter: string) => [
-  `template: ${item.name}`,
-  `title: ${item.title}`,
-  `source: ${item.domain}`,
-  `adapter: ${adapter}`,
-  `version: ${item.version}`,
-  `fields: ${item.fields}`,
-  `quality_gate: ${item.quality}`,
-  `dispatch_mode: task-center`,
-].join('\n');
 
 const buildInitialTaskLogs = (item: CollectTask): TaskLog[] => [
   {

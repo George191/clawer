@@ -1137,12 +1137,6 @@ const AICollect: React.FC = () => {
       ?? templateCatalog.find((template) => template.id === 'google_patent')
       ?? templateCatalog[0];
   }, [intent, submittedPrompt, templateId, url]);
-  const workspaceTemplateSources = useMemo(() => Object.fromEntries(
-    templateCatalog.flatMap((template) => {
-      const source = { yaml: template.raw, adapter: `app/adapters/${template.id}.py` };
-      return [[template.id, source], [`${template.id}_contract`, source]];
-    }),
-  ), []);
   const releaseTemplateParams = useMemo<ReleaseTemplateParam[]>(() => {
     const getEntryValue = (key: string) => {
       const entry = templateDraftEntries.find((item) => item.key === key);
@@ -8297,7 +8291,6 @@ const AICollect: React.FC = () => {
           onToggle={handleWorkspacePanelToggle}
           onClose={handleWorkspacePanelClose}
           analysisTemplate={{ yaml: workspaceTemplateYaml || activeTemplate.raw, adapter: adapterFileName }}
-          templateSources={workspaceTemplateSources}
           onTemplateApply={handleWorkspaceTemplateApply}
           releaseTaskDefaults={{
             concurrency,
