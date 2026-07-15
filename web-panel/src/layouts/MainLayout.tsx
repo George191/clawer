@@ -650,6 +650,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 return (
                   <Button
                     key={item.panel}
+                    data-ai-workspace-panel={item.panel}
                     type="text"
                     icon={item.icon}
                     aria-label={item.label}

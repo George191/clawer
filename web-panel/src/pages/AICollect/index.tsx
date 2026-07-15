@@ -1112,6 +1112,7 @@ const AICollect: React.FC = () => {
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
   const [workspaceAdapterFile, setWorkspaceAdapterFile] = useState('');
   const [workspaceTemplateYaml, setWorkspaceTemplateYaml] = useState('');
+  const [releaseExit, setReleaseExit] = useState<{ x: number; y: number; scale: number } | null>(null);
   const [sessionInspectorTabs, setSessionInspectorTabs] = useState<SessionInspectorTab[]>([]);
   const [activeInspectorTabId, setActiveInspectorTabId] = useState<string | null>(null);
   const [inspectorMounted, setInspectorMounted] = useState(false);
@@ -1120,6 +1121,7 @@ const AICollect: React.FC = () => {
   const templateScrollRef = useRef<HTMLDivElement | null>(null);
   const templateStageSectionRefs = useRef<Partial<Record<TemplateStageId, HTMLElement | null>>>({});
   const inspectorTransitionTimerRef = useRef<number | null>(null);
+  const releaseExitTimerRef = useRef<number | null>(null);
 
   const hasSession = runStatus !== 'idle';
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
@@ -1547,6 +1549,9 @@ const AICollect: React.FC = () => {
     if (inspectorTransitionTimerRef.current) {
       window.clearTimeout(inspectorTransitionTimerRef.current);
     }
+    if (releaseExitTimerRef.current) {
+      window.clearTimeout(releaseExitTimerRef.current);
+    }
   }, []);
 
   useEffect(() => {
@@ -1576,6 +1581,7 @@ const AICollect: React.FC = () => {
       setReleaseIncremental(false);
       setReleaseBatchInput(false);
       setReleaseTaskParamValues({});
+      setReleaseExit(null);
       if (inspectorTransitionTimerRef.current) {
         window.clearTimeout(inspectorTransitionTimerRef.current);
         inspectorTransitionTimerRef.current = null;
@@ -2017,9 +2023,61 @@ const AICollect: React.FC = () => {
     pushLiveLog('template contract confirmed; adapter generation started');
   }, [pushLiveLog, templateReadyForConfirm]);
 
+  const playReleaseCompletionAnimation = useCallback((includeTask: boolean) => {
+    if (releaseExitTimerRef.current) return;
+
+    const sessionShell = document.querySelector<HTMLElement>('.ai-session-shell');
+    const templateButton = document.querySelector<HTMLElement>('[data-ai-workspace-panel="templates"]');
+
+    const finish = () => {
+      const attentionFrames: Keyframe[] = [
+        { transform: 'translateX(0) rotate(0deg) scale(1)' },
+        { transform: 'translateX(-3px) rotate(-8deg) scale(1.08)' },
+        { transform: 'translateX(3px) rotate(8deg) scale(1.08)' },
+        { transform: 'translateX(-2px) rotate(-5deg) scale(1.04)' },
+        { transform: 'translateX(2px) rotate(5deg) scale(1.04)' },
+        { transform: 'translateX(0) rotate(0deg) scale(1)' },
+      ];
+      const attentionOptions: KeyframeAnimationOptions = {
+        duration: 620,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      };
+
+      templateButton?.animate(attentionFrames, attentionOptions);
+      if (includeTask) {
+        document.querySelector<HTMLElement>('[data-ai-workspace-panel="tasks"]')
+          ?.animate(attentionFrames, attentionOptions);
+      }
+
+      if (activeWorkspacePanel) {
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('panel');
+        setSearchParams(nextParams);
+      }
+      setRunStatus('idle');
+      setReleaseExit(null);
+      releaseExitTimerRef.current = null;
+    };
+
+    if (!sessionShell || !templateButton) {
+      finish();
+      return;
+    }
+
+    const shellRect = sessionShell.getBoundingClientRect();
+    const targetRect = templateButton.getBoundingClientRect();
+    const x = targetRect.left + targetRect.width / 2 - (shellRect.left + shellRect.width / 2);
+    const y = targetRect.top + targetRect.height / 2 - (shellRect.top + shellRect.height / 2);
+    const scale = Math.min(0.06, 30 / Math.max(shellRect.width, shellRect.height));
+
+    setReleaseExit({ x, y, scale });
+    releaseExitTimerRef.current = window.setTimeout(finish, 680);
+  }, [activeWorkspacePanel, searchParams, setSearchParams]);
+
   const handleApplyReleaseAction = useCallback(async () => {
     const releaseLabel = releaseActionMeta[selectedReleaseAction].title;
     const taskLabel = taskPublishMeta[selectedTaskPublishMode].title;
+    const createsTask = selectedReleaseAction === 'publish' && selectedTaskPublishMode === 'launch';
 
     pushLiveLog(`release action: ${releaseLabel.toLowerCase()} | task: ${taskLabel.toLowerCase()}`);
 
@@ -2028,12 +2086,13 @@ const AICollect: React.FC = () => {
       message.success(selectedTaskPublishMode === 'launch'
         ? 'Template published and crawl task created'
         : 'Template published');
-      return;
+    } else {
+      setRunStatus('completed');
+      message.success(`${releaseLabel} ready`);
     }
 
-    setRunStatus('completed');
-    message.success(`${releaseLabel} ready`);
-  }, [handleSave, message, pushLiveLog, selectedReleaseAction, selectedTaskPublishMode]);
+    playReleaseCompletionAnimation(createsTask);
+  }, [handleSave, message, playReleaseCompletionAnimation, pushLiveLog, selectedReleaseAction, selectedTaskPublishMode]);
 
   const handleReleaseActionSelect = useCallback((action: ReleaseAction) => {
     setSelectedReleaseAction(action);
@@ -4158,6 +4217,12 @@ const AICollect: React.FC = () => {
             min-height: 0;
             display: flex;
             justify-content: center;
+          }
+          .ai-session-shell.is-releasing {
+            pointer-events: none;
+            transform-origin: center center;
+            will-change: transform, opacity, filter;
+            animation: aiReleaseToTemplate 680ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
           }
           .ai-collect-panel {
             padding: 14px;
@@ -7733,6 +7798,23 @@ const AICollect: React.FC = () => {
               transform: translateY(0) scale(1);
             }
           }
+          @keyframes aiReleaseToTemplate {
+            0% {
+              opacity: 1;
+              filter: blur(0);
+              transform: translate3d(0, 0, 0) scale(1);
+            }
+            48% {
+              opacity: 0.96;
+              filter: blur(0);
+              transform: translate3d(0, 0, 0) scale(0.72);
+            }
+            100% {
+              opacity: 0.08;
+              filter: blur(1px);
+              transform: translate3d(var(--release-exit-x), var(--release-exit-y), 0) scale(var(--release-exit-scale));
+            }
+          }
           @keyframes aiWorkbenchIn {
             from {
               opacity: 0;
@@ -8126,7 +8208,14 @@ const AICollect: React.FC = () => {
           {!hasSession ? (
             renderMissionPanel('hero')
           ) : (
-            <div className="ai-session-shell">
+            <div
+              className={`ai-session-shell ${releaseExit ? 'is-releasing' : ''}`}
+              style={releaseExit ? ({
+                '--release-exit-x': `${releaseExit.x}px`,
+                '--release-exit-y': `${releaseExit.y}px`,
+                '--release-exit-scale': releaseExit.scale,
+              } as React.CSSProperties) : undefined}
+            >
               {renderWorkflowLayout()}
               {false && (
               <main className="ai-collect-panel ai-stage-shell ai-stage-shell-full" style={panelStyle}>

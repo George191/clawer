@@ -55,7 +55,6 @@ class FileTooLargeError(DownloadError):
 
 class HttpClient:
     def __init__(self) -> None:
-        self._client: curl_requests.AsyncSession | None = None
         self._last_proxy_url: str | None = None
         # 协程级代理分配：每个协程独立租用一个代理 IP
         self._leased_proxies: dict[int, str] = {}
@@ -63,22 +62,18 @@ class HttpClient:
 
     async def _get_lease_lock(self) -> asyncio.Lock:
         if self._lease_lock is None:
-            import asyncio
             self._lease_lock = asyncio.Lock()
         return self._lease_lock
 
-    async def _get_client(self) -> curl_requests.AsyncSession:
-        if self._client is None or self._client.acurl is None:
-            proxy = settings.http_proxy or None
-            self._client = curl_requests.AsyncSession(
-                impersonate="chrome120",
-                proxy=proxy,
-                timeout=settings.http_request_timeout,
-                headers={"User-Agent": settings.http_user_agent},
-                verify=settings.http_verify_ssl,
-                allow_redirects=True,
-            )
-        return self._client
+    async def _create_client(self, proxy_url: str | None = None) -> curl_requests.AsyncSession:
+        return curl_requests.AsyncSession(
+            impersonate="chrome120",
+            proxy=proxy_url,
+            timeout=settings.http_request_timeout,
+            headers={"User-Agent": settings.http_user_agent},
+            verify=settings.http_verify_ssl,
+            allow_redirects=True,
+        )
 
     async def request_page(
         self,
@@ -97,7 +92,6 @@ class HttpClient:
             响应文本。
         """
         config = config or RequestConfig()
-        client = await self._get_client()
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)
@@ -127,7 +121,6 @@ class HttpClient:
         if settings.tunnel_proxy_url:
             proxy_url = settings.tunnel_proxy_url
         elif _proxy_pool is not None and _proxy_pool.enabled and use_anti_crawl:
-            # 协程级代理分配：每个协程独立租用一个代理 IP
             lock = await self._get_lease_lock()
             async with lock:
                 if task_id in self._leased_proxies:
@@ -138,48 +131,48 @@ class HttpClient:
                         self._leased_proxies[task_id] = proxy_url
 
         self._last_proxy_url = proxy_url
-
         use_proxy = proxy_url is not None
 
-        try:
-            request_kwargs = dict(
-                method=config.method,
-                url=url,
-                headers=headers,
-                params=config.params,
-                cookies=cookies,
-            )
-            if config.method.upper() == "POST":
-                request_kwargs["data"] = config.form_data
+        logger.info("Requesting %s with proxy: %s", url, proxy_url or "None")
 
-            if use_proxy and proxy_url:
-                request_kwargs["proxy"] = proxy_url
-            
-            response = await client.request(**request_kwargs)
+        # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
+        async with await self._create_client(proxy_url) as client:
+            try:
+                request_kwargs = dict(
+                    method=config.method,
+                    url=url,
+                    headers=headers,
+                    params=config.params,
+                    cookies=cookies,
+                )
+                if config.method.upper() == "POST":
+                    request_kwargs["data"] = config.form_data
 
-            if response.status_code in settings.http_retry_on_statuses:
-                raise DownloadError(url, response.status_code, "Retryable status code")
+                response = await client.request(**request_kwargs)
 
-            response.raise_for_status()
+                if response.status_code in settings.http_retry_on_statuses:
+                    raise DownloadError(url, response.status_code, "Retryable status code")
 
-            if _proxy_pool is not None and proxy_url:
-                await _proxy_pool.mark_success(proxy_url)
+                response.raise_for_status()
 
-            if config.encoding:
-                response.encoding = config.encoding
+                if _proxy_pool is not None and proxy_url:
+                    await _proxy_pool.mark_success(proxy_url)
 
-            return response.text
+                if config.encoding:
+                    response.encoding = config.encoding
 
-        except curl_requests.errors.RequestsError as e:
-            if _proxy_pool is not None and proxy_url:
-                await _proxy_pool.mark_failure(proxy_url)
-                await self._release_failed_proxy(task_id, proxy_url)
-            raise
-        except Exception as e:
-            if _proxy_pool is not None and proxy_url:
-                await _proxy_pool.mark_failure(proxy_url)
-                await self._release_failed_proxy(task_id, proxy_url)
-            raise
+                return response.text
+
+            except curl_requests.errors.RequestsError as e:
+                if _proxy_pool is not None and proxy_url:
+                    await _proxy_pool.mark_failure(proxy_url)
+                    await self._release_failed_proxy(task_id, proxy_url)
+                raise
+            except Exception as e:
+                if _proxy_pool is not None and proxy_url:
+                    await _proxy_pool.mark_failure(proxy_url)
+                    await self._release_failed_proxy(task_id, proxy_url)
+                raise
 
     async def _release_failed_proxy(self, task_id: int, proxy_url: str) -> None:
         """释放失效的协程代理并尝试获取新代理。"""
@@ -200,7 +193,6 @@ class HttpClient:
         config: RequestConfig | None = None,
     ) -> bytes:
         config = config or RequestConfig()
-        client = await self._get_client()
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)
@@ -221,69 +213,75 @@ class HttpClient:
 
         # ── 代理选择：隧道代理 > 代理池 ──────────────────────────
         proxy_url = None
-        # if settings.tunnel_proxy_url:
-        #     proxy_url = settings.tunnel_proxy_url
-            
-        # elif _proxy_pool is not None and _proxy_pool.enabled:
-        #     proxy_url = await _proxy_pool.get_proxy()
+        task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
+
+        if settings.tunnel_proxy_url:
+            proxy_url = settings.tunnel_proxy_url
+        elif _proxy_pool is not None and _proxy_pool.enabled:
+            lock = await self._get_lease_lock()
+            async with lock:
+                if task_id in self._leased_proxies:
+                    proxy_url = self._leased_proxies[task_id]
+                else:
+                    proxy_url = await _proxy_pool.lease_proxy(task_id)
+                    if proxy_url:
+                        self._leased_proxies[task_id] = proxy_url
 
         use_proxy = proxy_url is not None
-        # if _fallback is not None and _fallback.enabled:
-        #     mode = await _fallback.get_mode(url)
-        #     use_proxy = use_proxy and (mode == "proxy")
 
-        logger.info("Downloading bytes: %s", url)
+        logger.info("Downloading bytes: %s with proxy: %s", url, proxy_url or "None")
 
-        try:
-            stream_kwargs = dict(
-                method=config.method or "GET",
-                url=url,
-                headers=headers,
-                params=config.params,
-                cookies=cookies,
-                timeout=settings.http_download_timeout,
-            )
-            if use_proxy and proxy_url:
-                stream_kwargs["proxy"] = proxy_url
+        # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
+        async with await self._create_client(proxy_url) as client:
+            try:
+                stream_kwargs = dict(
+                    method=config.method or "GET",
+                    url=url,
+                    headers=headers,
+                    params=config.params,
+                    cookies=cookies,
+                    timeout=settings.http_download_timeout,
+                )
 
-            async with client.stream(**stream_kwargs) as response:
-                if response.status_code in settings.http_retry_on_statuses:
-                    raise DownloadError(url, response.status_code, "Retryable status code")
+                async with client.stream(**stream_kwargs) as response:
+                    if response.status_code in settings.http_retry_on_statuses:
+                        raise DownloadError(url, response.status_code, "Retryable status code")
 
-                response.raise_for_status()
+                    response.raise_for_status()
 
-                chunks: list[bytes] = []
-                total_size = 0
-                async for chunk in response.aiter_content(
-                    chunk_size=settings.download_chunk_size
-                ):
-                    total_size += len(chunk)
-                    if total_size > settings.download_max_file_size:
-                        raise FileTooLargeError(
-                            url, total_size, settings.download_max_file_size
-                        )
-                    chunks.append(chunk)
+                    chunks: list[bytes] = []
+                    total_size = 0
+                    async for chunk in response.aiter_content(
+                        chunk_size=settings.download_chunk_size
+                    ):
+                        total_size += len(chunk)
+                        if total_size > settings.download_max_file_size:
+                            raise FileTooLargeError(
+                                url, total_size, settings.download_max_file_size
+                            )
+                        chunks.append(chunk)
 
-            data = b"".join(chunks)
-            logger.info("Download complete: %s (%d bytes)", url, total_size)
+                data = b"".join(chunks)
+                logger.info("Download complete: %s (%d bytes)", url, total_size)
 
-            if _proxy_pool is not None and proxy_url:
-                await _proxy_pool.mark_success(proxy_url)
+                if _proxy_pool is not None and proxy_url:
+                    await _proxy_pool.mark_success(proxy_url)
 
-            return data
+                return data
 
-        except Exception as e:
-            if _proxy_pool is not None and proxy_url:
-                await _proxy_pool.mark_failure(proxy_url)
-            raise
+            except Exception as e:
+                if _proxy_pool is not None and proxy_url:
+                    await _proxy_pool.mark_failure(proxy_url)
+                    await self._release_failed_proxy(task_id, proxy_url)
+                raise
 
     async def close(self) -> None:
-        if self._client and self._client.acurl is not None:
-            try:
-                await self._client.close()
-            except TypeError:
-                pass
-            self._client = None
+        """关闭HTTP客户端资源。
+        
+        由于每次请求都创建新的AsyncSession并通过上下文管理器自动关闭，
+        这里主要用于清理协程级代理租约。
+        """
+        self._leased_proxies.clear()
     
     async def mark_last_proxy_failed(self) -> None:
         """标记最后使用的代理为失败并释放协程租约，这样下次请求会使用新代理。"""
