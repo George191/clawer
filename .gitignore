@@ -11,3 +11,4 @@ logs/
 .pytest.cache/
 *.log
 models/
+.venv
