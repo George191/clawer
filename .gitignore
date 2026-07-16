@@ -5,7 +5,6 @@
 .venv
 .vscode/
 .trae/
-.trae_/
 .agents/
 .codex/
 .pytest_cache/
