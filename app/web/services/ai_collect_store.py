@@ -35,7 +35,7 @@ ALTER TABLE public.ai_collect_templates
     ADD COLUMN IF NOT EXISTS favicon_url text NOT NULL DEFAULT '';
 UPDATE public.ai_collect_templates
 SET favicon_url = 'https://' || domain || '/favicon.ico'
-WHERE favicon_url = '' AND domain ~ '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$';
+WHERE favicon_url = '' AND domain ~ '^[A-Za-z0-9.-]+[.][A-Za-z]{2,}$';
 CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,

@@ -23,8 +23,8 @@ export interface TemplateAsset {
   action: string;
   icon: TemplateIcon;
   taskCount: number;
-  faviconUrl: string;
-  dataType: string;
+  faviconUrl?: string;
+  dataType?: string;
 }
 
 export interface CollectTask {

@@ -735,7 +735,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     return {
       ...item,
       runtime,
-      site: template ? { ...site, kind: inferSiteKind(template.dataType), faviconUrl: template.faviconUrl } : site,
+      site: template ? { ...site, kind: inferSiteKind(template.dataType || template.name), faviconUrl: template.faviconUrl } : site,
       display: getTaskDisplay(runtime),
     };
   }), [taskItems, taskRuntime, templates]);
@@ -1169,7 +1169,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           >
             <div className="workspace-dock-card-row">
               <div className="workspace-dock-card-main">
-                <span className="workspace-dock-card-icon"><TemplateGlyph kind={inferSiteKind(item.dataType)} /></span>
+                <span className="workspace-dock-card-icon"><TemplateGlyph kind={inferSiteKind(item.dataType || item.name)} /></span>
                 <div className="workspace-dock-card-copy">
                   <div className="workspace-dock-card-titleline">
                     <Text strong>{item.title}</Text>
@@ -1939,7 +1939,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       <section className="workspace-dock-detail">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
-            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={inferSiteKind(selectedTemplate.dataType)} /></span>
+            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={inferSiteKind(selectedTemplate.dataType || selectedTemplate.name)} /></span>
             <div>
               <Text strong className="workspace-dock-detail-title">{selectedTemplate.title}</Text>
               <Text type="secondary">{selectedTemplate.name}</Text>

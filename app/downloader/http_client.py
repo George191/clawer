@@ -116,7 +116,7 @@ class HttpClient:
                 tunnel = await client.request("GET", "api.ip.cc", proxy=proxy_url, timeout=5)
                 if tunnel.status_code == 200:
                     tunnel_json = tunnel.json()
-                    tunnel_info = f"{tunnel_json.get("country", "Unknown")}/{tunnel_json.get("province", "")}/{tunnel_json.get("city", "")}({tunnel_json.get("ip", "")})"
+                    tunnel_info = f"{tunnel_json.get('country', 'Unknown')}/{tunnel_json.get('province', '')}/{tunnel_json.get('city', '')}({tunnel_json.get('ip', '')})"
                     logger.debug("Proxy exit IP: %s", tunnel_info)
             except Exception as e:
                 logger.debug("Failed to detect proxy IP: %s", e)
