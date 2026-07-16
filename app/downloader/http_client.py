@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse, quote
 
 from app.config.settings import settings
 from app.models.template import RequestConfig
@@ -38,36 +37,6 @@ def _init_anti_crawl():
     if settings.anti_crawl_enabled and _proxy_pool is None:
         from app.anti_crawl.proxy_pool import get_proxy_pool
         _proxy_pool = get_proxy_pool()
-
-
-def _encode_proxy_url(proxy_url: str) -> str:
-    """编码代理URL中的特殊字符，特别是用户名和密码部分。
-    
-    Args:
-        proxy_url: 原始代理URL，如 http://user:pass@host:port
-    
-    Returns:
-        编码后的代理URL
-    """
-    if not proxy_url:
-        return proxy_url
-    
-    parsed = urlparse(proxy_url)
-    if not parsed.hostname:
-        return proxy_url
-    
-    encoded_parts = list(parsed)
-    
-    if parsed.username:
-        encoded_parts[1] = quote(parsed.username, safe="")
-        if parsed.password:
-            encoded_parts[1] += ":" + quote(parsed.password, safe="")
-        if parsed.hostname:
-            encoded_parts[1] += "@" + parsed.hostname
-            if parsed.port:
-                encoded_parts[1] += ":" + str(parsed.port)
-    
-    return urlunparse(encoded_parts)
 
 
 class DownloadError(Exception):
@@ -158,7 +127,7 @@ class HttpClient:
         if force_direct:
             proxy_url = None
         elif settings.tunnel_proxy_url:
-            proxy_url = _encode_proxy_url(settings.tunnel_proxy_url)
+            proxy_url = settings.tunnel_proxy_url
         elif _proxy_pool is not None and _proxy_pool.enabled and use_anti_crawl:
             lock = await self._get_lease_lock()
             async with lock:
@@ -167,7 +136,6 @@ class HttpClient:
                 else:
                     proxy_url = await _proxy_pool.lease_proxy(task_id)
                     if proxy_url:
-                        proxy_url = _encode_proxy_url(proxy_url)
                         self._leased_proxies[task_id] = proxy_url
 
         self._last_proxy_url = proxy_url
@@ -276,7 +244,7 @@ class HttpClient:
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
 
         if settings.tunnel_proxy_url:
-            proxy_url = _encode_proxy_url(settings.tunnel_proxy_url)
+            proxy_url = settings.tunnel_proxy_url
         elif _proxy_pool is not None and _proxy_pool.enabled:
             lock = await self._get_lease_lock()
             async with lock:
@@ -285,7 +253,6 @@ class HttpClient:
                 else:
                     proxy_url = await _proxy_pool.lease_proxy(task_id)
                     if proxy_url:
-                        proxy_url = _encode_proxy_url(proxy_url)
                         self._leased_proxies[task_id] = proxy_url
 
         use_proxy = proxy_url is not None

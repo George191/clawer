@@ -122,7 +122,7 @@ class TemplateAdapterAgent:
 
     async def preflight(self, url: str) -> PreflightResult:
         try:
-            normalized, host = await self._validate_url(url)
+            normalized, host, dns_resolved = await self._validate_url(url)
         except ValueError as exc:
             return PreflightResult(
                 ok=False,
@@ -137,6 +137,8 @@ class TemplateAdapterAgent:
         proxy_mode = "direct"
         try:
             try:
+                if not dns_resolved:
+                    raise RuntimeError("The URL host requires proxy-side DNS resolution")
                 page_html = await client.request_page(normalized, force_direct=True)
             except Exception as direct_error:
                 if not self._proxy_configured():
@@ -260,7 +262,7 @@ class TemplateAdapterAgent:
             "adapter": adapter_path.as_posix() if adapter_code else "",
         }
 
-    async def _validate_url(self, url: str) -> tuple[str, str]:
+    async def _validate_url(self, url: str) -> tuple[str, str, bool]:
         value = url.strip()
         parsed = urlparse(value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -269,6 +271,7 @@ class TemplateAdapterAgent:
             raise ValueError("Credentials are not allowed in target URLs")
 
         host = parsed.hostname.rstrip(".").lower()
+        dns_resolved = True
         try:
             address = ipaddress.ip_address(host)
             self._assert_public_ip(address)
@@ -284,15 +287,18 @@ class TemplateAdapterAgent:
                     lambda: socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM),
                 )
             except socket.gaierror as exc:
-                raise ValueError("The URL host cannot be resolved") from exc
+                if not self._proxy_configured():
+                    raise ValueError("The URL host cannot be resolved") from exc
+                dns_resolved = False
+                records = []
             addresses = {record[4][0] for record in records}
-            if not addresses:
+            if dns_resolved and not addresses:
                 raise ValueError("The URL host cannot be resolved") from None
             for resolved in addresses:
                 self._assert_public_ip(ipaddress.ip_address(resolved))
 
         normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path or "/", parsed.params, parsed.query, ""))
-        return normalized, host
+        return normalized, host, dns_resolved
 
     @staticmethod
     def _assert_public_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
