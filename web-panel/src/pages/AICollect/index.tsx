@@ -3379,11 +3379,16 @@ const AICollect: React.FC = () => {
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
               <div className="ai-session-inspector-browser-frame">
-                {activeInspectorTab.subtitle.startsWith('http') ? (
-                  <iframe src={activeInspectorTab.subtitle} title={activeInspectorTab.title} />
+                {urlPreflight?.previewHtml ? (
+                  <iframe
+                    sandbox=""
+                    referrerPolicy="no-referrer"
+                    srcDoc={urlPreflight.previewHtml}
+                    title={activeInspectorTab.title}
+                  />
                 ) : (
                   <div className="ai-session-inspector-empty">
-                    <strong>No embeddable browser target</strong>
+                    <strong>No verified browser snapshot</strong>
                     <span>{activeInspectorTab.subtitle}</span>
                   </div>
                 )}
