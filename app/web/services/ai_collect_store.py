@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -36,24 +35,6 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
 );
 ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS template text NOT NULL DEFAULT '';
 ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS icon text NOT NULL DEFAULT '';
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='ai_collect_templates' AND column_name='template_object_key') THEN
-        EXECUTE 'UPDATE public.ai_collect_templates SET template = template_object_key WHERE template = ''''';
-    END IF;
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='ai_collect_templates' AND column_name='favicon_object_key') THEN
-        EXECUTE 'UPDATE public.ai_collect_templates SET icon = favicon_object_key WHERE icon = ''''';
-    END IF;
-END $$;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_data;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_url;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_mime;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_sha256;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_size;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS template_object_key;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS template_sha256;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS template_size;
-ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS yaml_content;
 CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
@@ -108,9 +89,52 @@ class AICollectStore:
         if self._initialized:
             return
         await self._pg.init_schema([_DDL])
+        await self._migrate_artifact_columns()
         await self._import_local_templates()
         await self._sync_minio_artifacts()
         self._initialized = True
+
+    async def _migrate_artifact_columns(self) -> None:
+        rows = await self._pg.fetch_all(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'ai_collect_templates'
+            """
+        )
+        columns = {str(row["column_name"]) for row in rows}
+        if "template_object_key" in columns:
+            await self._pg.execute(
+                """
+                UPDATE public.ai_collect_templates
+                SET template = template_object_key
+                WHERE template = '' AND template_object_key <> ''
+                """
+            )
+        if "favicon_object_key" in columns:
+            await self._pg.execute(
+                """
+                UPDATE public.ai_collect_templates
+                SET icon = favicon_object_key
+                WHERE icon = '' AND favicon_object_key <> ''
+                """
+            )
+        for column in (
+            "favicon_data",
+            "favicon_url",
+            "favicon_mime",
+            "favicon_sha256",
+            "favicon_size",
+            "favicon_object_key",
+            "template_object_key",
+            "template_sha256",
+            "template_size",
+            "yaml_content",
+        ):
+            await self._pg.execute(
+                f"ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS {column}"
+            )
 
     @staticmethod
     def _resolved_template_base_url(raw: dict[str, Any]) -> str:
@@ -125,7 +149,7 @@ class AICollectStore:
         return base_url
 
     async def _sync_minio_artifacts(self, template_id: Any | None = None) -> None:
-        if not settings.minio_endpoint or not settings.minio_bucket:
+        if not settings.minio_endpoint or not settings.business_metadata_minio_bucket:
             raise RuntimeError("MinIO is required for AI Collect template artifacts")
         templates_by_name: dict[str, dict[str, Any]] = {}
         template_content_by_name: dict[str, bytes] = {}
@@ -250,19 +274,13 @@ class AICollectStore:
                 title = str(raw.get("display_name") or name.replace("_", " ").title())
                 base_url = str(raw.get("base_url") or "")
                 domain = urlparse(base_url).hostname or base_url
-                parsed_base_url = urlparse(base_url)
-                favicon_url = (
-                    f"{parsed_base_url.scheme}://{parsed_base_url.netloc}/favicon.ico"
-                    if parsed_base_url.scheme and parsed_base_url.netloc
-                    else ""
-                )
                 adapter_path = Path("app/adapters") / f"{name}.py"
                 await self._pg.execute(
                     """
                     INSERT INTO public.ai_collect_templates
-                        (name, version, title, domain, favicon_url, status, yaml_content, adapter, description, output_tag)
+                        (name, version, title, domain, status, adapter, description, output_tag)
                     VALUES
-                        (:name, :version, :title, :domain, :favicon_url, 'active', :yaml, :adapter, :description, :output_tag)
+                        (:name, :version, :title, :domain, 'active', :adapter, :description, :output_tag)
                     ON CONFLICT (name, version) DO NOTHING
                     """,
                     {
@@ -270,8 +288,6 @@ class AICollectStore:
                         "version": version,
                         "title": title,
                         "domain": domain,
-                        "favicon_url": favicon_url,
-                        "yaml": content,
                         "adapter": adapter_path.as_posix() if adapter_path.exists() else "",
                         "description": str(raw.get("description") or ""),
                         "output_tag": str(raw.get("data_type") or "other"),
@@ -314,9 +330,50 @@ class AICollectStore:
             {"template_id": template_id},
         )
 
+    @staticmethod
+    def _artifact_prefix(name: str, version: str) -> str:
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._") or "template"
+        safe_version = re.sub(r"[^A-Za-z0-9_.-]+", "_", version).strip("._") or "v1"
+        return f"collection/templates/{safe_name}/{safe_version}"
+
+    async def _upload_template_yaml(self, name: str, version: str, yaml_content: str) -> str:
+        object_key = f"{self._artifact_prefix(name, version)}/template.yaml"
+        await get_business_metadata_minio_client().upload_bytes_to_key(
+            yaml_content.encode("utf-8"),
+            object_key,
+            "application/yaml",
+        )
+        return object_key
+
+    async def _upload_favicon(self, name: str, version: str, source_url: str) -> str:
+        if not source_url.startswith(("http://", "https://")):
+            return ""
+        try:
+            async with curl_requests.AsyncSession(
+                impersonate="chrome120",
+                timeout=30,
+                verify=settings.http_verify_ssl,
+                allow_redirects=True,
+            ) as client:
+                response = await client.get(source_url)
+                response.raise_for_status()
+                content = response.content
+                if not content or len(content) > 1024 * 1024:
+                    return ""
+                object_key = f"{self._artifact_prefix(name, version)}/favicon.ico"
+                content_type = response.headers.get("content-type", "image/x-icon").split(";", 1)[0].strip()
+                await get_business_metadata_minio_client().upload_bytes_to_key(
+                    content,
+                    object_key,
+                    content_type if content_type.startswith("image/") else "image/x-icon",
+                )
+                return object_key
+        except Exception:
+            return ""
+
     async def list_templates(self) -> list[dict[str, Any]]:
         await self.initialize()
-        return await self._pg.fetch_all(
+        rows = await self._pg.fetch_all(
             """
             SELECT t.*,
                    COALESCE((SELECT count(*) FROM public.ai_collect_tasks task
@@ -325,13 +382,30 @@ class AICollectStore:
             ORDER BY t.updated_at DESC
             """
         )
+        minio = get_business_metadata_minio_client()
+        for row in rows:
+            template_bytes = await minio.get_object_bytes(str(row.get("template") or ""))
+            row["yaml_content"] = template_bytes.decode("utf-8") if template_bytes else ""
+            row["favicon_url"] = f"{_ICON_URL_PREFIX}/{row['name']}.ico" if row.get("icon") else ""
+        return rows
 
     async def update_template(self, template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         await self.initialize()
+        current = await self._pg.fetch_one(
+            "SELECT name, version FROM public.ai_collect_templates WHERE id = CAST(:id AS uuid)",
+            {"id": template_id},
+        )
+        if current is None:
+            return None
+        template_key = await self._upload_template_yaml(
+            str(current["name"]),
+            str(current["version"]),
+            str(payload["yaml_content"]),
+        )
         row = await self._pg.fetch_one(
             """
             UPDATE public.ai_collect_templates SET
-                yaml_content = :yaml_content,
+                template = :template,
                 adapter = :adapter,
                 description = :description,
                 output_tag = :output_tag,
@@ -339,31 +413,42 @@ class AICollectStore:
             WHERE id = CAST(:id AS uuid)
             RETURNING *
             """,
-            {"id": template_id, **payload},
+            {"id": template_id, "template": template_key, **payload},
         )
         if row is not None:
-            await self._sync_minio_artifacts(template_id)
-            row = await self._pg.fetch_one(
-                "SELECT * FROM public.ai_collect_templates WHERE id = CAST(:id AS uuid)",
-                {"id": template_id},
-            )
+            row["yaml_content"] = payload["yaml_content"]
+            row["favicon_url"] = f"{_ICON_URL_PREFIX}/{row['name']}.ico" if row.get("icon") else ""
         return row
 
     async def release_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()
+        template_key = await self._upload_template_yaml(
+            str(payload["name"]),
+            str(payload["version"]),
+            str(payload["yaml_content"]),
+        )
+        existing = await self._pg.fetch_one(
+            "SELECT icon FROM public.ai_collect_templates WHERE name = :name AND version = :version",
+            {"name": payload["name"], "version": payload["version"]},
+        )
+        icon_key = await self._upload_favicon(
+            str(payload["name"]),
+            str(payload["version"]),
+            str(payload.get("favicon_url") or ""),
+        ) or str(existing.get("icon") if existing else "")
         row = await self._pg.fetch_one(
             """
             INSERT INTO public.ai_collect_templates
-                (name, version, title, domain, favicon_url, status, yaml_content, adapter, description, output_tag, metadata)
+                (name, version, title, domain, template, icon, status, adapter, description, output_tag, metadata)
             VALUES
-                (:name, :version, :title, :domain, :favicon_url, :status, :yaml_content, :adapter,
+                (:name, :version, :title, :domain, :template, :icon, :status, :adapter,
                  :description, :output_tag, CAST(:metadata AS jsonb))
             ON CONFLICT (name, version) DO UPDATE SET
                 title = EXCLUDED.title,
                 domain = EXCLUDED.domain,
-                favicon_url = EXCLUDED.favicon_url,
+                template = EXCLUDED.template,
+                icon = EXCLUDED.icon,
                 status = EXCLUDED.status,
-                yaml_content = EXCLUDED.yaml_content,
                 adapter = EXCLUDED.adapter,
                 description = EXCLUDED.description,
                 output_tag = EXCLUDED.output_tag,
@@ -371,16 +456,18 @@ class AICollectStore:
                 updated_at = now()
             RETURNING *
             """,
-            {**payload, "metadata": json.dumps(payload.get("metadata", {}), ensure_ascii=False)},
+            {
+                **payload,
+                "template": template_key,
+                "icon": icon_key,
+                "metadata": json.dumps(payload.get("metadata", {}), ensure_ascii=False),
+            },
         )
         if row is None:
             raise RuntimeError("Template release did not return a row")
-        await self._sync_minio_artifacts(row["id"])
-        synced = await self._pg.fetch_one(
-            "SELECT * FROM public.ai_collect_templates WHERE id = :id",
-            {"id": row["id"]},
-        )
-        return synced or row
+        row["yaml_content"] = payload["yaml_content"]
+        row["favicon_url"] = f"{_ICON_URL_PREFIX}/{row['name']}.ico" if row.get("icon") else ""
+        return row
 
     async def list_tasks(self) -> list[dict[str, Any]]:
         await self.initialize()

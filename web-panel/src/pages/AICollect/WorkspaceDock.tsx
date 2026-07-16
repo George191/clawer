@@ -2434,7 +2434,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           flex-direction: column;
           gap: 6px;
-          padding: 4px 8px 24px;
+          padding: 8px;
         }
         .workspace-dock-list.is-templates {
           display: flex;

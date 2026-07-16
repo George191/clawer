@@ -4,6 +4,7 @@ import logging
 import re
 import sys
 from pathlib import Path
+from typing import Dict
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _LOG_DIR = _REPO_ROOT / "logs"
@@ -19,6 +20,7 @@ _ADAPTER_LOGGER_NAMES = (
 )
 _STREAM_HANDLER_MARKER = "_spider_adapter_stream_handler"
 _FILE_HANDLER_MARKER = "_spider_adapter_file_handler"
+_ADAPTER_FILE_HANDLERS: Dict[str, logging.FileHandler] = {}
 
 
 class AdapterContextFilter(logging.Filter):
@@ -57,8 +59,23 @@ def get_adapter_logger(
     adapter_name: str,
     adapter_kind: str = "site",
 ) -> logging.LoggerAdapter:
+    logger = logging.getLogger(module_name)
+    
+    if adapter_name not in _ADAPTER_FILE_HANDLERS:
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = _LOG_DIR / f"adapter_{adapter_name}.log"
+        formatter = logging.Formatter(_ADAPTER_LOG_FORMAT, datefmt=_DATE_FORMAT)
+        handler = logging.FileHandler(file_path, encoding="utf-8")
+        handler.setLevel(logging.DEBUG)
+        handler.setFormatter(formatter)
+        handler.addFilter(AdapterContextFilter())
+        _ADAPTER_FILE_HANDLERS[adapter_name] = handler
+        logger.addHandler(handler)
+    
+    logger.setLevel(logging.DEBUG)
+    
     return logging.LoggerAdapter(
-        logging.getLogger(module_name),
+        logger,
         {
             "adapter_name": adapter_name,
             "adapter_kind": adapter_kind,
@@ -90,20 +107,24 @@ def configure_adapter_logging(level: int) -> None:
         logger = logging.getLogger(logger_name)
         logger.setLevel(level)
         logger.propagate = False
-        _replace_handler(
-            logger,
-            marker_name=_STREAM_HANDLER_MARKER,
-            handler=_build_handler(logging.StreamHandler(sys.stdout), formatter, level),
+
+        stream_handler = _build_handler(logging.StreamHandler(sys.stdout), formatter, level)
+        setattr(stream_handler, _STREAM_HANDLER_MARKER, True)
+        logger.addHandler(stream_handler)
+
+        file_handler = _build_handler(
+            logging.FileHandler(_ADAPTER_LOG_PATH, encoding="utf-8"),
+            formatter,
+            level,
         )
-        _replace_handler(
-            logger,
-            marker_name=_FILE_HANDLER_MARKER,
-            handler=_build_handler(
-                logging.FileHandler(_ADAPTER_LOG_PATH, encoding="utf-8"),
-                formatter,
-                level,
-            ),
-        )
+        setattr(file_handler, _FILE_HANDLER_MARKER, True)
+        logger.addHandler(file_handler)
+
+    for name in logging.root.manager.loggerDict:
+        if name.startswith("app.adapters") or name.startswith("app.anti_crawl.adapters"):
+            logger = logging.getLogger(name)
+            logger.setLevel(level)
+            logger.propagate = True
 
 
 def _build_handler(
