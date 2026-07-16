@@ -114,7 +114,6 @@ class SpiderEngine:
                 record["_meta_search_params"] = search_params
         await self._storage.save_records(template.name, template.data_type, template.dedup_fields, records)
         result.records.extend(records)
-        logger.info("Saved %d records, cumulative: %d", len(records), len(result.records))
 
     async def crawl(self, template: SiteTemplate) -> CrawlResult:
         return await self.crawl_from_page(template, None)
@@ -205,7 +204,11 @@ class SpiderEngine:
                     await adapter.on_before_page(current_page, is_first)
 
                     url = template.get_full_list_url(current_page, results_per_page)
-                    html = await self._client.request_page(url, template.list_request, anti_crawl_enabled=template.effective_anti_crawl_enabled)
+                    html = await self._client.request_page(
+                        url, template.list_request,
+                        anti_crawl_enabled=template.effective_anti_crawl_enabled,
+                        page=current_page, attempt=attempt
+                    )
                     records = self._parser.parse_list(html, template.list_fields)
 
                     records = await adapter.on_after_page(current_page, records)
@@ -428,6 +431,7 @@ class SpiderEngine:
                 text = await self._client.request_page(
                     url, list_request,
                     anti_crawl_enabled=template.effective_anti_crawl_enabled,
+                    page=page, attempt=attempt
                 )
 
                 if not text:
@@ -460,45 +464,25 @@ class SpiderEngine:
                     if api_pages_val is not None:
                         try:
                             total_pages_from_api = int(api_pages_val)
-                            logger.debug(
-                                "[Page %d] Total pages from API: %d",
-                                page, total_pages_from_api
-                            )
                         except (ValueError, TypeError):
                             pass
 
                 page_succeeded = True
                 break
 
-            except json.JSONDecodeError as e:
-                logger.error(
-                    "[Page %d attempt %d] JSON decode error: %s, response: %s",
-                    page, attempt, str(e), text[:200] if text else "empty"
-                )
+            except json.JSONDecodeError:
                 await self._client.mark_last_proxy_failed()
 
             except Exception as e:
-                logger.error(
-                    "[Page %d attempt %d] Error: %s (%s)",
-                    page, attempt, str(e), type(e).__name__
-                )
 
                 adapter_action = await adapter.on_error(e, page, attempt)
                 if adapter_action == "abort":
                     result.errors.append(f"List page {page}: {e}")
                     return page, [], None, None, True
                 elif adapter_action == "reset_session":
-                    logger.info(
-                        "[Page %d attempt %d] Resetting session and retrying",
-                        page, attempt
-                    )
                     await adapter.on_before_crawl(template)
                     continue
                 elif adapter_action == "skip":
-                    logger.info(
-                        "[Page %d attempt %d] Skipping page per adapter",
-                        page, attempt
-                    )
                     page_skipped = True
                     page_succeeded = True
                     break

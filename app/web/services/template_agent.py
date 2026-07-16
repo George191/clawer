@@ -143,10 +143,10 @@ class TemplateAdapterAgent:
             except Exception as direct_error:
                 if not self._proxy_configured():
                     raise RuntimeError(f"Website cannot be opened directly: {direct_error}") from direct_error
+                requires_proxy = True
+                proxy_mode = "configured_proxy"
                 try:
                     page_html = await client.request_page(normalized, anti_crawl_enabled=True)
-                    requires_proxy = True
-                    proxy_mode = "configured_proxy"
                 except Exception as proxy_error:
                     raise RuntimeError(
                         f"Website cannot be opened directly or through the configured proxy: {proxy_error}"
@@ -156,6 +156,8 @@ class TemplateAdapterAgent:
                 ok=False,
                 normalized_url=normalized,
                 host=host,
+                requires_proxy=requires_proxy,
+                proxy_mode=proxy_mode,
                 error_code="PAGE_UNREACHABLE",
                 error_message=str(exc),
                 checked_at=time.time(),
@@ -168,6 +170,8 @@ class TemplateAdapterAgent:
                 ok=False,
                 normalized_url=normalized,
                 host=host,
+                requires_proxy=requires_proxy,
+                proxy_mode=proxy_mode,
                 error_code="EMPTY_PAGE",
                 error_message="The website returned no usable page content",
                 checked_at=time.time(),

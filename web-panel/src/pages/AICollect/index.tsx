@@ -41,7 +41,6 @@ import {
   SaveOutlined,
   SearchOutlined,
   StopOutlined,
-  SyncOutlined,
   ThunderboltOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
@@ -2399,7 +2398,7 @@ const AICollect: React.FC = () => {
 
           <div className="ai-prompt-shell">
             <span className="ai-prompt-leading-icon" aria-hidden="true">
-              {preflightLoading ? <SyncOutlined spin /> : <GlobalOutlined />}
+              <GlobalOutlined spin={preflightLoading} />
             </span>
             <TextArea
               className="ai-prompt-input"
@@ -2411,9 +2410,6 @@ const AICollect: React.FC = () => {
             />
             <Button className="ai-prompt-icon" shape="circle" icon={<AudioOutlined />} aria-label="语音输入" disabled />
           </div>
-          {preflightLoading ? (
-            <Text className="ai-prompt-preflight-status">Agent 正在验证网址、连接与代理需求…</Text>
-          ) : null}
         </section>
       );
     }
@@ -7051,11 +7047,6 @@ const AICollect: React.FC = () => {
             font-size: 18px;
             position: relative;
             z-index: 1;
-          }
-          .ai-prompt-preflight-status {
-            margin-top: 12px;
-            color: ${aura.subtle} !important;
-            font-size: 12px;
           }
           .ai-prompt-icon {
             width: 34px !important;

@@ -245,7 +245,6 @@ class MongoStorage(StorageBackend):
 
         if operations:
             await collection.bulk_write(operations, ordered=False)
-        logger.info("Saved %d records to MongoDB for %s/%s", len(ids), template_name, data_type)
         return ids
 
     async def update_file_status(

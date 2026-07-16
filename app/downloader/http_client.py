@@ -85,6 +85,8 @@ class HttpClient:
         config: RequestConfig | None = None,
         anti_crawl_enabled: bool | None = None,
         force_direct: bool = False,
+        page: int = 0,
+        attempt: int = 0,
     ) -> str:
         """请求页面并返回文本内容。
 
@@ -93,6 +95,8 @@ class HttpClient:
             config: 请求配置。
             anti_crawl_enabled: 模板级反爬开关。None=使用全局配置, True/False=覆盖全局。
             force_direct: 强制绕过隧道代理和代理池，仅用于连接预检。
+            page: 当前页码，用于日志记录。
+            attempt: 当前尝试次数，用于日志记录。
 
         Returns:
             响应文本。
@@ -141,10 +145,6 @@ class HttpClient:
         self._last_proxy_url = proxy_url
 
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
-        logger.info(
-            "[REQUEST] %s %s | proxy=%s | anti_crawl=%s | task=%d",
-            config.method, url_display, proxy_url or "DIRECT", use_anti_crawl, task_id
-        )
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
         async with await self._create_client(proxy_url) as client:
@@ -164,16 +164,7 @@ class HttpClient:
                 if config.encoding:
                     response.encoding = config.encoding
 
-                logger.debug(
-                    "[RESPONSE] %s | status=%d | content_length=%d",
-                    url_display, response.status_code, len(response.text) if response.text else 0
-                )
-
                 if response.status_code in settings.http_retry_on_statuses:
-                    logger.warning(
-                        "[RESPONSE] Retryable status code %d for %s",
-                        response.status_code, url_display
-                    )
                     raise DownloadError(url_display, response.status_code, "Retryable status code")
 
                 response.raise_for_status()
@@ -181,22 +172,18 @@ class HttpClient:
                 if _proxy_pool is not None and proxy_url:
                     await _proxy_pool.mark_success(proxy_url)
 
+                logger.info(
+                    "[Page %d attempt %d] %s %s | status_code=%d | anti_crawl=%s | task=%d",
+                    page, attempt, config.method, url_display, response.status_code, use_anti_crawl, task_id
+                )
                 return response.text
 
             except curl_requests.errors.RequestsError as e:
-                logger.error(
-                    "[REQUEST_ERROR] curl_cffi error for %s: %s",
-                    url_display, str(e)
-                )
                 if _proxy_pool is not None and proxy_url:
                     await _proxy_pool.mark_failure(proxy_url)
                     await self._release_failed_proxy(task_id, proxy_url)
                 raise
             except Exception as e:
-                logger.error(
-                    "[REQUEST_ERROR] %s error for %s: %s",
-                    type(e).__name__, url_display, str(e)
-                )
                 if _proxy_pool is not None and proxy_url:
                     await _proxy_pool.mark_failure(proxy_url)
                     await self._release_failed_proxy(task_id, proxy_url)
@@ -254,8 +241,6 @@ class HttpClient:
                     proxy_url = await _proxy_pool.lease_proxy(task_id)
                     if proxy_url:
                         self._leased_proxies[task_id] = proxy_url
-
-        use_proxy = proxy_url is not None
 
         logger.info("Downloading bytes: %s with proxy: %s", url, proxy_url or "None")
 
