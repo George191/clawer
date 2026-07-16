@@ -226,6 +226,23 @@ const parseTemplatePreviewEntries = (raw: string): TemplatePreviewEntry[] => {
   const lines = raw.replace(/\r\n/g, '\n').split('\n');
   const pathStack: Array<{ indent: number; path: string }> = [];
   const listIndexes = new Map<string, number>();
+  const collectBlockValue = (startIndex: number, parentIndent: number) => {
+    const blockLines: string[] = [];
+    let nextIndex = startIndex;
+    while (nextIndex < lines.length) {
+      const nextLine = lines[nextIndex];
+      if (!nextLine.trim()) {
+        blockLines.push('');
+        nextIndex += 1;
+        continue;
+      }
+      const nextIndent = nextLine.match(/^\s*/)?.[0].length ?? 0;
+      if (nextIndent <= parentIndent) break;
+      blockLines.push(nextLine.slice(Math.min(nextLine.length, parentIndent + 2)));
+      nextIndex += 1;
+    }
+    return { nextIndex: nextIndex - 1, value: blockLines.join('\n').trimEnd() || 'null' };
+  };
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -254,17 +271,23 @@ const parseTemplatePreviewEntries = (raw: string): TemplatePreviewEntry[] => {
           stage: inferTemplatePreviewStage(parentPath.split('.').pop() ?? parentPath, itemPath),
         });
         const childPath = `${itemPath}.${childMatch[1]}`;
-        const childValue = (childMatch[2] ?? '').trim();
+        const rawChildValue = (childMatch[2] ?? '').trim();
+        let childValue = rawChildValue;
+        if (rawChildValue === '|' || rawChildValue === '>') {
+          const block = collectBlockValue(index + 1, indent);
+          childValue = block.value;
+          index = block.nextIndex;
+        }
         entries.push({
           id: childPath,
           key: childPath,
           value: childValue || 'null',
           depth: depth + 1,
-          group: !childValue,
+          group: !rawChildValue,
           stage: inferTemplatePreviewStage(childMatch[1], childPath),
         });
         pathStack.push({ indent, path: itemPath });
-        if (!childValue) pathStack.push({ indent: indent + 2, path: childPath });
+        if (!rawChildValue) pathStack.push({ indent: indent + 2, path: childPath });
       } else {
         entries.push({
           id: itemPath,
@@ -281,17 +304,23 @@ const parseTemplatePreviewEntries = (raw: string): TemplatePreviewEntry[] => {
     const keyMatch = trimmed.match(/^([A-Za-z_][\w-]*):(?:\s*(.*))?$/);
     if (!keyMatch) continue;
     const key = keyMatch[1];
-    const value = (keyMatch[2] ?? '').trim();
+    const rawValue = (keyMatch[2] ?? '').trim();
+    let value = rawValue;
+    if (rawValue === '|' || rawValue === '>') {
+      const block = collectBlockValue(index + 1, indent);
+      value = block.value;
+      index = block.nextIndex;
+    }
     const path = parentPath ? `${parentPath}.${key}` : key;
     entries.push({
       id: path,
       key: path,
       value: value || 'null',
       depth,
-      group: !value,
+      group: !rawValue,
       stage: inferTemplatePreviewStage(key, path),
     });
-    if (!value) pathStack.push({ indent, path });
+    if (!rawValue) pathStack.push({ indent, path });
   }
 
   return entries;

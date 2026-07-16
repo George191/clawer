@@ -113,11 +113,7 @@ class HttpClient:
         tunnel_info = "DIRECT"
         if proxy_url and settings.http_debug_proxy_ip:
             try:
-                tunnel = await client.request("GET", "api.ip.cc", proxy=proxy_url, timeout=5)
-                tunnel.raise_for_status()
-                tunnel_json = tunnel.json()
-                tunnel_info = f"{tunnel_json.get("country", "Unknown")}/{tunnel_json.get("province", "")}/{tunnel_json.get("city", "")}({tunnel_json.get("ip", "")})"
-                logger.debug("Proxy exit IP: %s", tunnel_info)
+                ...
             except Exception as e:
                 logger.debug("Failed to detect proxy IP: %s", e)
 
