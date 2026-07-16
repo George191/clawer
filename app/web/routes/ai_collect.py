@@ -3,16 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config.settings import settings
+from app.storage.minio_client import get_minio_client
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.platform_overview import build_platform_overview
 from app.web.services.template_agent import template_adapter_agent
@@ -448,6 +450,23 @@ async def dry_run(body: DryRunRequest):
 @router.get("/ai/workspace/templates")
 async def workspace_templates():
     return {"items": await ai_collect_store.list_templates()}
+
+
+@router.get("/ai/workspace/template-icons/{filename}")
+async def workspace_template_icon(filename: str):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
+        raise HTTPException(status_code=404, detail="Template icon not found")
+    icon = await ai_collect_store.get_template_icon(filename)
+    if icon is None or not icon.get("favicon_object_key"):
+        raise HTTPException(status_code=404, detail="Template icon not found")
+    content = await get_minio_client().get_object_bytes(str(icon["favicon_object_key"]))
+    if not content:
+        raise HTTPException(status_code=404, detail="Template icon not found")
+    return Response(
+        content=content,
+        media_type=str(icon.get("favicon_mime") or "image/x-icon"),
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @router.post("/ai/workspace/templates/release")

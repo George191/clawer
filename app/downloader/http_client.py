@@ -118,8 +118,14 @@ class HttpClient:
                     tunnel_json = tunnel.json()
                     tunnel_info = f"{tunnel_json.get('country', 'Unknown')}/{tunnel_json.get('province', '')}/{tunnel_json.get('city', '')}({tunnel_json.get('ip', '')})"
                     logger.debug("Proxy exit IP: %s", tunnel_info)
+                else:
+                    tunnel_info = "PROXY(unknown)"
+                    logger.debug("Proxy IP detection returned status %d", tunnel.status_code)
             except Exception as e:
+                tunnel_info = "PROXY(detect-failed)"
                 logger.debug("Failed to detect proxy IP: %s", e)
+        elif proxy_url:
+            tunnel_info = "PROXY(debug-off)"
 
         logger.info(
             "[Page %d attempt %d] %s %s | tunnel=%s | anti_crawl=%s | task=%d",

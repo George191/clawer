@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import yaml
+from curl_cffi import requests as curl_requests
 
 from app.config.settings import settings
+from app.storage.minio_client import get_minio_client
 from app.storage.postgres_client import get_pg_client
 
 
@@ -20,6 +24,13 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
     title text NOT NULL,
     domain text NOT NULL DEFAULT '',
     favicon_url text NOT NULL DEFAULT '',
+    template_object_key text NOT NULL DEFAULT '',
+    template_sha256 text NOT NULL DEFAULT '',
+    template_size integer NOT NULL DEFAULT 0,
+    favicon_object_key text NOT NULL DEFAULT '',
+    favicon_mime text NOT NULL DEFAULT '',
+    favicon_sha256 text NOT NULL DEFAULT '',
+    favicon_size integer NOT NULL DEFAULT 0,
     status text NOT NULL DEFAULT 'draft' CHECK (status IN ('active', 'draft', 'deprecated')),
     yaml_content text NOT NULL,
     adapter text NOT NULL DEFAULT '',
@@ -33,6 +44,22 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
 );
 ALTER TABLE public.ai_collect_templates
     ADD COLUMN IF NOT EXISTS favicon_url text NOT NULL DEFAULT '';
+ALTER TABLE public.ai_collect_templates
+    ADD COLUMN IF NOT EXISTS template_object_key text NOT NULL DEFAULT '';
+ALTER TABLE public.ai_collect_templates
+    ADD COLUMN IF NOT EXISTS template_sha256 text NOT NULL DEFAULT '';
+ALTER TABLE public.ai_collect_templates
+    ADD COLUMN IF NOT EXISTS template_size integer NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_templates
+    ADD COLUMN IF NOT EXISTS favicon_object_key text NOT NULL DEFAULT '';
+ALTER TABLE public.ai_collect_templates
+    ADD COLUMN IF NOT EXISTS favicon_mime text NOT NULL DEFAULT '';
+ALTER TABLE public.ai_collect_templates
+    ADD COLUMN IF NOT EXISTS favicon_sha256 text NOT NULL DEFAULT '';
+ALTER TABLE public.ai_collect_templates
+    ADD COLUMN IF NOT EXISTS favicon_size integer NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_templates
+    DROP COLUMN IF EXISTS favicon_data;
 UPDATE public.ai_collect_templates
 SET favicon_url = 'https://' || domain || '/favicon.ico'
 WHERE favicon_url = '' AND domain ~ '^[A-Za-z0-9.-]+[.][A-Za-z]{2,}$';
@@ -78,6 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_collect_templates_status ON public.ai_collect_
 CREATE INDEX IF NOT EXISTS idx_ai_collect_tasks_status ON public.ai_collect_tasks(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_task ON public.ai_collect_task_logs(task_id, created_at DESC);
 """
+_ICON_URL_PREFIX = "/api/ai/workspace/template-icons"
 
 
 class AICollectStore:
@@ -90,7 +118,122 @@ class AICollectStore:
             return
         await self._pg.init_schema([_DDL])
         await self._import_local_templates()
+        await self._sync_minio_artifacts()
         self._initialized = True
+
+    @staticmethod
+    def _resolved_template_base_url(raw: dict[str, Any]) -> str:
+        base_url = str(raw.get("base_url") or "")
+        for param in raw.get("params") or []:
+            if not isinstance(param, dict):
+                continue
+            name = str(param.get("name") or "")
+            default = str(param.get("default") or "")
+            if name and default:
+                base_url = base_url.replace(f"{{{name}}}", default)
+        return base_url
+
+    async def _sync_minio_artifacts(self, template_id: Any | None = None) -> None:
+        if not settings.minio_endpoint or not settings.minio_bucket:
+            raise RuntimeError("MinIO is required for AI Collect template artifacts")
+        templates_by_name: dict[str, dict[str, Any]] = {}
+        template_dir = Path(settings.template_dir)
+        for path in [*template_dir.glob("*.yaml"), *template_dir.glob("*.yml")]:
+            try:
+                raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(raw, dict):
+                templates_by_name[str(raw.get("name") or path.stem)] = raw
+
+        query = "SELECT * FROM public.ai_collect_templates"
+        params: dict[str, Any] = {}
+        if template_id is not None:
+            query += " WHERE id = CAST(:id AS uuid)"
+            params["id"] = template_id
+        rows = await self._pg.fetch_all(query, params)
+        minio = get_minio_client()
+        async with curl_requests.AsyncSession(
+            impersonate="chrome120",
+            timeout=30,
+            verify=settings.http_verify_ssl,
+            allow_redirects=True,
+        ) as client:
+            for row in rows:
+                safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row["name"])).strip("._") or "template"
+                safe_version = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row["version"])).strip("._") or "v1"
+                object_prefix = f"ai-collect/templates/{safe_name}/{safe_version}"
+                template_bytes = str(row["yaml_content"]).encode("utf-8")
+                template_key = f"{object_prefix}/template.yaml"
+                await minio.upload_bytes_to_key(template_bytes, template_key, "application/yaml")
+                local_url = f"{_ICON_URL_PREFIX}/{safe_name}.ico"
+                raw = templates_by_name.get(str(row["name"]), {})
+                resolved_base_url = self._resolved_template_base_url(raw)
+                parsed_base_url = urlparse(resolved_base_url)
+                source_url = str(row.get("favicon_url") or "")
+                favicon_bytes: bytes | None = None
+                favicon_mime = str(row.get("favicon_mime") or "image/x-icon")
+                existing_local_path = Path(settings.template_dir) / "favicons" / f"{safe_name}.ico"
+                if existing_local_path.is_file():
+                    favicon_bytes = existing_local_path.read_bytes()
+                if favicon_bytes is None and row.get("favicon_object_key"):
+                    favicon_bytes = await minio.get_object_bytes(str(row["favicon_object_key"]))
+                if not source_url.startswith(("http://", "https://")) or "{" in source_url:
+                    if parsed_base_url.scheme and parsed_base_url.netloc:
+                        source_url = f"{parsed_base_url.scheme}://{parsed_base_url.netloc}/favicon.ico"
+                    elif row.get("domain") and "{" not in str(row["domain"]):
+                        source_url = f"https://{row['domain']}/favicon.ico"
+                if favicon_bytes is None and source_url.startswith(("http://", "https://")):
+                    try:
+                        response = await client.get(source_url)
+                        response.raise_for_status()
+                        favicon_bytes = response.content
+                        favicon_mime = response.headers.get("content-type", "image/x-icon").split(";", 1)[0].strip()
+                    except Exception:
+                        favicon_bytes = None
+                favicon_key = str(row.get("favicon_object_key") or "")
+                if favicon_bytes and len(favicon_bytes) <= 1024 * 1024:
+                    if not favicon_mime.startswith("image/"):
+                        favicon_mime = "image/x-icon"
+                    favicon_key = f"{object_prefix}/favicon.ico"
+                    await minio.upload_bytes_to_key(favicon_bytes, favicon_key, favicon_mime)
+                await self._pg.execute(
+                    """
+                    UPDATE public.ai_collect_templates
+                    SET favicon_url = :favicon_url,
+                        template_object_key = :template_object_key,
+                        template_sha256 = :template_sha256,
+                        template_size = :template_size,
+                        favicon_object_key = :favicon_object_key,
+                        favicon_mime = :favicon_mime,
+                        favicon_sha256 = :favicon_sha256,
+                        favicon_size = :favicon_size
+                    WHERE id = :id
+                    """,
+                    {
+                        "id": row["id"],
+                        "favicon_url": local_url if favicon_key else "",
+                        "template_object_key": template_key,
+                        "template_sha256": hashlib.sha256(template_bytes).hexdigest(),
+                        "template_size": len(template_bytes),
+                        "favicon_object_key": favicon_key,
+                        "favicon_mime": favicon_mime if favicon_key else "",
+                        "favicon_sha256": hashlib.sha256(favicon_bytes).hexdigest() if favicon_bytes else "",
+                        "favicon_size": len(favicon_bytes) if favicon_bytes else 0,
+                    },
+                )
+
+    async def get_template_icon(self, filename: str) -> dict[str, Any] | None:
+        return await self._pg.fetch_one(
+            """
+            SELECT favicon_object_key, favicon_mime
+            FROM public.ai_collect_templates
+            WHERE favicon_url = :favicon_url AND favicon_object_key <> ''
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            {"favicon_url": f"{_ICON_URL_PREFIX}/{filename}"},
+        )
 
     async def _import_local_templates(self) -> None:
         template_dir = Path(settings.template_dir)
