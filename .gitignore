@@ -11,6 +11,8 @@
 static/
 logs/
 models/
+data/
+data_/
 node_modules/
 
 __pycache__/
