@@ -260,9 +260,10 @@ export interface WorkspaceReleasePayload {
 // ── API ────────────────────────────────────────────────────────────────────
 
 /** SSE 流式分析（返回 EventSource，调用方负责关闭） */
-export function createAnalyzeStream(url: string): EventSource {
+export function createAnalyzeStream(url: string, prompt: string): EventSource {
+  const params = new URLSearchParams({ url, prompt });
   return new EventSource(
-    `/api/ai/analyze-stream?url=${encodeURIComponent(url)}`,
+    `/api/ai/analyze-stream?${params.toString()}`,
   );
 }
 

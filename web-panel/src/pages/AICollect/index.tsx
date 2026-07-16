@@ -1952,7 +1952,7 @@ const AICollect: React.FC = () => {
     setRunStatus('running');
     setMode('explore');
     setExpandedStep('explore');
-    const es = createAnalyzeStream(verifiedUrl);
+    const es = createAnalyzeStream(verifiedUrl, normalizedPrompt);
     analyzeStreamRef.current = es;
 
     es.addEventListener('fields', (event: MessageEvent) => {

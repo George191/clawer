@@ -136,8 +136,8 @@ def _load_ai_collect_scope() -> dict[str, Any]:
 AI_COLLECT_SCOPE = _load_ai_collect_scope()
 
 
-async def _analyze_live(url: str) -> dict[str, Any]:
-    result, agent_meta = await template_adapter_agent.generate(url)
+async def _analyze_live(url: str, prompt: str = "") -> dict[str, Any]:
+    result, agent_meta = await template_adapter_agent.generate(url, prompt)
 
     template_id = f"tpl_{int(time.time() * 1000)}"
     payload = {
@@ -167,13 +167,13 @@ async def _analyze_live(url: str) -> dict[str, Any]:
     }
 
 
-async def _analyze_stream_live(url: str) -> AsyncGenerator[str, None]:
+async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str, None]:
     def event(name: str, data: dict[str, Any]) -> str:
         return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     try:
         yield event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
-        result = await _analyze_live(url)
+        result = await _analyze_live(url, prompt)
         yield event("step", {"step": "fetch_page", "label": "Fetch page", "status": "done"})
         yield event("fields", {"fields": result["fields"]})
         yield event("pagination", result["pagination"])
@@ -391,14 +391,14 @@ async def preflight_url(body: UrlPreflightRequest):
 
 
 @router.get("/ai/analyze-stream")
-async def analyze_stream(url: str, request: Request):
+async def analyze_stream(url: str, request: Request, prompt: str = ""):
     if not url:
         raise HTTPException(status_code=400, detail="缺少 url 参数")
 
     _validate_target_url(url)
 
     async def _generator():
-        async for chunk in _analyze_stream_live(url):
+        async for chunk in _analyze_stream_live(url, prompt.strip()[:2000]):
             if await request.is_disconnected():
                 break
             yield chunk

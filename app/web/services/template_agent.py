@@ -111,8 +111,8 @@ class LocalQwenPolicy:
             raise RuntimeError("Qwen produced a non-finite artifact boundary score")
         return decision
 
-    async def decide(self, result: AnalysisResult) -> dict[str, Any]:
-        return await asyncio.to_thread(self._decide_sync, result)
+    async def decide(self, result: AnalysisResult, prompt: str = "") -> dict[str, Any]:
+        return await asyncio.to_thread(self._decide_sync, result, prompt)
 
 
 class TemplateAdapterAgent:
