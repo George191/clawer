@@ -4,7 +4,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import yaml
 from curl_cffi import requests as curl_requests
@@ -84,6 +84,27 @@ class AICollectStore:
     def __init__(self) -> None:
         self._pg = get_pg_client()
         self._initialized = False
+
+    @staticmethod
+    def _is_image_content(content: bytes) -> bool:
+        stripped = content.lstrip()
+        return (
+            content.startswith(b"\x00\x00\x01\x00")
+            or content.startswith(b"\x89PNG\r\n\x1a\n")
+            or content.startswith(b"\xff\xd8\xff")
+            or content.startswith((b"GIF87a", b"GIF89a"))
+            or (content.startswith(b"RIFF") and content[8:12] == b"WEBP")
+            or (len(content) >= 12 and content[4:12] in {b"ftypavif", b"ftypavis"})
+            or stripped.startswith(b"<svg")
+            or (stripped.startswith(b"<?xml") and b"<svg" in stripped[:512])
+        )
+
+    @staticmethod
+    def _template_icon_url(row: dict[str, Any]) -> str:
+        if not row.get("icon"):
+            return ""
+        revision = quote(str(row.get("updated_at") or row.get("version") or "1"), safe="")
+        return f"{_ICON_URL_PREFIX}/{row['name']}.ico?v={revision}"
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -196,6 +217,8 @@ class AICollectStore:
                 favicon_key = str(row.get("icon") or "")
                 if favicon_key:
                     favicon_bytes = await minio.get_object_bytes(favicon_key)
+                    if favicon_bytes and not self._is_image_content(favicon_bytes):
+                        favicon_bytes = None
                 cache_key = parsed_base_url.hostname or str(row.get("domain") or "")
                 if favicon_bytes is None and cache_key in favicon_cache:
                     favicon_bytes, favicon_mime = favicon_cache[cache_key]
@@ -219,7 +242,11 @@ class AICollectStore:
                             response = await client.get(candidate)
                             response.raise_for_status()
                             candidate_bytes = response.content
-                            if not candidate_bytes or len(candidate_bytes) > 1024 * 1024:
+                            if (
+                                not candidate_bytes
+                                or len(candidate_bytes) > 1024 * 1024
+                                or not self._is_image_content(candidate_bytes)
+                            ):
                                 continue
                             favicon_bytes = candidate_bytes
                             favicon_mime = response.headers.get("content-type", "image/x-icon").split(";", 1)[0].strip()
@@ -358,7 +385,7 @@ class AICollectStore:
                 response = await client.get(source_url)
                 response.raise_for_status()
                 content = response.content
-                if not content or len(content) > 1024 * 1024:
+                if not content or len(content) > 1024 * 1024 or not self._is_image_content(content):
                     return ""
                 object_key = f"{self._artifact_prefix(name, version)}/favicon.ico"
                 content_type = response.headers.get("content-type", "image/x-icon").split(";", 1)[0].strip()
@@ -386,7 +413,7 @@ class AICollectStore:
         for row in rows:
             template_bytes = await minio.get_object_bytes(str(row.get("template") or ""))
             row["yaml_content"] = template_bytes.decode("utf-8") if template_bytes else ""
-            row["favicon_url"] = f"{_ICON_URL_PREFIX}/{row['name']}.ico" if row.get("icon") else ""
+            row["favicon_url"] = self._template_icon_url(row)
         return rows
 
     async def update_template(self, template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -417,7 +444,7 @@ class AICollectStore:
         )
         if row is not None:
             row["yaml_content"] = payload["yaml_content"]
-            row["favicon_url"] = f"{_ICON_URL_PREFIX}/{row['name']}.ico" if row.get("icon") else ""
+            row["favicon_url"] = self._template_icon_url(row)
         return row
 
     async def release_template(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -466,7 +493,7 @@ class AICollectStore:
         if row is None:
             raise RuntimeError("Template release did not return a row")
         row["yaml_content"] = payload["yaml_content"]
-        row["favicon_url"] = f"{_ICON_URL_PREFIX}/{row['name']}.ico" if row.get("icon") else ""
+        row["favicon_url"] = self._template_icon_url(row)
         return row
 
     async def list_tasks(self) -> list[dict[str, Any]]:

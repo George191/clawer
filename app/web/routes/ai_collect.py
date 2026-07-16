@@ -465,7 +465,7 @@ async def workspace_template_icon(filename: str):
     return Response(
         content=content,
         media_type="image/x-icon",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "no-cache, must-revalidate"},
     )
 
 

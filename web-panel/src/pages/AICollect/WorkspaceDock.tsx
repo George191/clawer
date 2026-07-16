@@ -332,7 +332,11 @@ const renderCompactTemplatePreview = (yaml: string) => {
     <div className="workspace-dock-template-preview">
       {templatePreviewStages.map((stage) => {
         const stageEntries = entries.filter((entry) => entry.stage === stage.id);
-        if (!stageEntries.length) return null;
+        const valueEntries = stageEntries.filter((entry) => !entry.group);
+        const displayEntries = stageEntries.filter(
+          (entry) => !entry.group || entry.key === 'params' || entry.key === 'batch_params',
+        );
+        if (!valueEntries.length) return null;
         return (
           <section className="ai-template-stage-section" key={stage.id}>
             <div className="ai-template-stage-head">
@@ -341,21 +345,29 @@ const renderCompactTemplatePreview = (yaml: string) => {
                 <small>{stage.description}</small>
               </div>
               <div className="ai-template-stage-actions">
-                <span>{stageEntries.filter((entry) => !entry.group).length}</span>
+                <span>{valueEntries.length}</span>
               </div>
             </div>
             <div className="ai-template-stage-body">
-              {stageEntries.map((entry) => {
-                const label = entry.key.split('.').pop()?.replace(/^([a-z_]+)\[(\d+)\]$/, '$1 $2') ?? entry.key;
+              {displayEntries.map((entry, index) => {
+                const rawLabel = entry.key.split('.').pop() ?? entry.key;
+                const label = /^dedup_fields\[\d+\]$/.test(entry.key)
+                  ? 'field'
+                  : rawLabel.replace(/^([a-z_]+)\[(\d+)\]$/, '$1 $2');
+                const listItemKey = entry.key.match(/^(params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+                const previousListItemKey = displayEntries[index - 1]?.key.match(/^(params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+                const showListDash = Boolean(listItemKey && listItemKey !== previousListItemKey);
                 return (
                   <div
-                    className={`ai-template-field ${entry.group ? 'is-group' : ''}`}
+                    className={`ai-template-field ${entry.group ? 'is-group is-root-group' : ''} ${listItemKey ? 'is-yaml-list-item' : ''} ${showListDash ? 'has-yaml-dash' : ''}`}
                     key={entry.id}
-                    style={{ ['--ai-template-depth' as string]: String(entry.depth) }}
                   >
-                    <div className="ai-template-field-key"><span>{label}</span></div>
+                    <div className="ai-template-field-key">
+                      {listItemKey ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
+                      <span>{label}</span>
+                    </div>
                     {entry.group ? null : (
-                      <div className={`ai-template-field-value ${label === 'description' ? 'is-rich' : ''}`}>
+                      <div className={`ai-template-field-value ${entry.key === 'description' ? 'is-rich' : ''}`}>
                         <pre>{entry.value.replace(/^['"]|['"]$/g, '')}</pre>
                       </div>
                     )}
@@ -508,7 +520,7 @@ const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
   adapter: item.adapter,
   version: item.version,
   status: item.status,
-  fields: extractListFields(item.yaml_content).length,
+  fields: extractListFields(item.yaml_content ?? '').length,
   quality: Number(item.metadata?.quality ?? 0),
   lastRun: item.updated_at,
   owner: item.owner,
@@ -517,7 +529,7 @@ const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
   icon: 'code',
   taskCount: item.task_count,
   faviconUrl: item.favicon_url,
-  dataType: extractTemplateDataType(item.yaml_content),
+  dataType: extractTemplateDataType(item.yaml_content ?? ''),
 });
 
 const mapWorkspaceTask = (item: WorkspaceTask): CollectTask => ({
@@ -876,7 +888,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           adapter: item.adapter,
           outputTag: item.output_tag,
           notes: item.description,
-          yaml: item.yaml_content,
+          yaml: item.yaml_content ?? '',
           savedAt: item.updated_at,
         }])));
         applyWorkspaceTasks(taskItemsResponse);
@@ -2881,10 +2893,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           width: 14px;
           height: 14px;
           border-radius: 4px;
-          background:
-            linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0) 48%),
-            var(--brand-hue);
-          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -3175,50 +3183,69 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-template-preview {
           display: flex;
           flex-direction: column;
-          gap: 8px;
-          padding: 10px;
-          border-radius: 9px;
-          border: 1px solid ${aura.borderSoft};
-          background: rgba(255, 255, 255, 0.025);
+          gap: 10px;
+          padding: 16px;
+          border-radius: 16px;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          background:
+            linear-gradient(180deg, rgba(44, 49, 60, 0.98), rgba(34, 39, 49, 0.98)),
+            rgba(28, 33, 42, 0.98);
+          box-shadow: 0 20px 52px rgba(0, 0, 0, 0.24);
         }
         .workspace-dock-template-preview .ai-template-stage-section {
-          gap: 5px;
-          padding-bottom: 7px;
+          gap: 8px;
+          padding-bottom: 10px;
+          border-bottom: 1px dashed rgba(255, 255, 255, 0.18);
+        }
+        .workspace-dock-template-preview .ai-template-stage-section:last-child {
+          padding-bottom: 0;
+          border-bottom: none;
         }
         .workspace-dock-template-preview .ai-template-stage-copy {
-          gap: 1px;
+          gap: 3px;
         }
         .workspace-dock-template-preview .ai-template-stage-title {
-          font-size: 10px;
+          font-size: 12px;
+          line-height: 1.3;
         }
         .workspace-dock-template-preview .ai-template-stage-copy small,
         .workspace-dock-template-preview .ai-template-stage-actions {
-          font-size: 8px;
+          font-size: 10px;
+          line-height: 1.45;
         }
         .workspace-dock-template-preview .ai-template-stage-body {
-          gap: 3px;
-          padding: 2px 4px;
+          gap: 0;
+          padding: 4px 6px;
+          border-radius: 12px;
         }
         .workspace-dock-template-preview .ai-template-field {
-          --ai-template-indent: calc(var(--ai-template-depth, 0) * 8px);
-          grid-template-columns: minmax(104px, 132px) minmax(0, 1fr);
-          gap: 4px 7px;
-          padding: 1px 4px 1px 0;
-          padding-left: var(--ai-template-indent);
+          display: grid;
+          grid-template-columns: minmax(120px, 156px) minmax(0, 1fr);
+          gap: 8px 10px;
+          align-items: start;
+          padding: 6px 4px;
+        }
+        .workspace-dock-template-preview .ai-template-field:last-child {
+          border-bottom: none;
         }
         .workspace-dock-template-preview .ai-template-field.is-group {
-          padding-left: var(--ai-template-indent);
+          display: block;
+          margin-top: 6px;
+          padding: 4px 4px 2px;
+          border-bottom: none;
+        }
+        .workspace-dock-template-preview .ai-template-field.is-group:first-child {
+          margin-top: 0;
         }
         .workspace-dock-template-preview .ai-template-field-key span,
-        .workspace-dock-template-preview .ai-template-field-value pre,
-        .workspace-dock-template-preview .ai-template-field.is-group .ai-template-field-key span {
-          font-size: 9px;
-          line-height: 1.35;
+        .workspace-dock-template-preview .ai-template-field-value pre {
+          font-size: 12px;
+          line-height: 1.45;
         }
         .workspace-dock-template-preview .ai-template-field-value {
           min-height: 16px;
         }
-                .workspace-dock-code-panel pre {
+        .workspace-dock-code-panel pre {
           margin: 8px 0 0;
           color: ${aura.text};
           font-size: 11px;

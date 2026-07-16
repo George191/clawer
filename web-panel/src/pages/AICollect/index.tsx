@@ -1129,6 +1129,7 @@ const AICollect: React.FC = () => {
   const templateScrollRef = useRef<HTMLDivElement | null>(null);
   const templateStageSectionRefs = useRef<Partial<Record<TemplateStageId, HTMLElement | null>>>({});
   const browserFollowViewportRef = useRef<HTMLDivElement | null>(null);
+  const browserFollowIframeRef = useRef<HTMLIFrameElement | null>(null);
   const inspectorTransitionTimerRef = useRef<number | null>(null);
   const releaseExitTimerRef = useRef<number | null>(null);
 
@@ -1139,6 +1140,20 @@ const AICollect: React.FC = () => {
   const browserFollowRatio = Math.max(0, activeStepIndex) / (processStepOrder.length - 1);
   const scrollBrowserPreviewToAnalysis = useCallback((behavior: ScrollBehavior = 'smooth') => {
     window.requestAnimationFrame(() => {
+      const iframe = browserFollowIframeRef.current;
+      const iframeWindow = iframe?.contentWindow;
+      const iframeDocument = iframe?.contentDocument;
+      if (iframeWindow && iframeDocument) {
+        const pageHeight = Math.max(
+          iframeDocument.documentElement.scrollHeight,
+          iframeDocument.body?.scrollHeight ?? 0,
+        );
+        iframeWindow.scrollTo({
+          top: Math.max(0, pageHeight - iframe.clientHeight) * browserFollowRatio,
+          behavior,
+        });
+        return;
+      }
       const viewport = browserFollowViewportRef.current;
       if (!viewport) return;
       const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
@@ -1593,10 +1608,14 @@ const AICollect: React.FC = () => {
   }, [mode]);
 
   useEffect(() => {
-    if (sideInspectorOpen && activeInspectorTab?.kind === 'browser' && urlPreflight?.previewImage) {
+    if (
+      sideInspectorOpen
+      && activeInspectorTab?.kind === 'browser'
+      && (urlPreflight?.previewHtml || urlPreflight?.previewImage)
+    ) {
       scrollBrowserPreviewToAnalysis();
     }
-  }, [activeInspectorTab?.kind, scrollBrowserPreviewToAnalysis, sideInspectorOpen, urlPreflight?.previewImage]);
+  }, [activeInspectorTab?.kind, scrollBrowserPreviewToAnalysis, sideInspectorOpen, urlPreflight?.previewHtml, urlPreflight?.previewImage]);
 
   useEffect(() => {
     if (!hasSession) {
@@ -3418,23 +3437,27 @@ const AICollect: React.FC = () => {
           ))}
         </div>
 
-        <div className="ai-session-inspector-body">
+        <div className={`ai-session-inspector-body ${activeInspectorTab.kind === 'browser' ? 'is-browser' : ''}`}>
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
               <div className="ai-session-inspector-browser-frame" ref={browserFollowViewportRef}>
-                {urlPreflight?.previewImage ? (
+                {urlPreflight?.previewHtml ? (
+                  <iframe
+                    ref={browserFollowIframeRef}
+                    sandbox="allow-same-origin"
+                    referrerPolicy="no-referrer"
+                    srcDoc={urlPreflight.previewHtml}
+                    title={activeInspectorTab.title}
+                    tabIndex={-1}
+                    onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
+                  />
+                ) : urlPreflight?.previewImage ? (
                   <img
                     className="ai-browser-render-image"
                     src={urlPreflight.previewImage}
                     alt={`${activeInspectorTab.title} Chrome 页面预览`}
+                    draggable={false}
                     onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
-                  />
-                ) : urlPreflight?.previewHtml ? (
-                  <iframe
-                    sandbox=""
-                    referrerPolicy="no-referrer"
-                    srcDoc={urlPreflight.previewHtml}
-                    title={activeInspectorTab.title}
                   />
                 ) : (
                   <div className="ai-session-inspector-empty">
@@ -5983,6 +6006,9 @@ const AICollect: React.FC = () => {
             flex-direction: column;
             padding: 12px;
           }
+          .ai-session-inspector-body.is-browser {
+            padding: 0;
+          }
           .ai-session-inspector-browser,
           .ai-session-inspector-editor {
             flex: 1;
@@ -6002,16 +6028,22 @@ const AICollect: React.FC = () => {
           }
           .ai-session-inspector-browser-frame {
             flex: 1 1 auto;
-            min-height: 420px;
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+            border: none;
+            border-radius: 0;
             overflow-x: hidden;
             overflow-y: auto;
-            scrollbar-gutter: stable;
           }
           .ai-session-inspector-browser-frame iframe {
+            display: block;
             width: 100%;
             height: 100%;
             border: none;
             background: #fff;
+            pointer-events: none;
+            user-select: none;
           }
           .ai-session-inspector-empty {
             width: 100%;
