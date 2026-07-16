@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+import random
 
 from app.config.settings import settings
 from app.models.template import RequestConfig
@@ -153,6 +154,7 @@ class HttpClient:
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
+        await asyncio.sleep(random.uniform(0.35, 0.7))
         async with await self._create_client(proxy_url, no_timeout=no_timeout) as client:
             try:
                 request_kwargs = dict(

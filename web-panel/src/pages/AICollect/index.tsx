@@ -3285,7 +3285,13 @@ const AICollect: React.FC = () => {
             <strong>{browserPreviewHost || 'source.local'}</strong>
           </div>
         <div className="ai-side-browser-viewport">
-          {urlPreflight?.previewHtml ? (
+          {urlPreflight?.previewImage ? (
+            <img
+              className="ai-browser-render-image"
+              src={urlPreflight.previewImage}
+              alt={`${browserPreviewTitle} Chrome 页面预览`}
+            />
+          ) : urlPreflight?.previewHtml ? (
             <iframe
               className="ai-side-browser-frame"
               title={`${browserPreviewTitle} 页面预览`}
@@ -3399,7 +3405,13 @@ const AICollect: React.FC = () => {
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
               <div className="ai-session-inspector-browser-frame">
-                {urlPreflight?.previewHtml ? (
+                {urlPreflight?.previewImage ? (
+                  <img
+                    className="ai-browser-render-image"
+                    src={urlPreflight.previewImage}
+                    alt={`${activeInspectorTab.title} Chrome 页面预览`}
+                  />
+                ) : urlPreflight?.previewHtml ? (
                   <iframe
                     sandbox=""
                     referrerPolicy="no-referrer"
@@ -6236,6 +6248,15 @@ const AICollect: React.FC = () => {
             height: 100%;
             min-height: 0;
             border: 0;
+            background: #fff;
+          }
+          .ai-browser-render-image {
+            display: block;
+            width: 100%;
+            height: auto;
+            min-height: 100%;
+            object-fit: cover;
+            object-position: top center;
             background: #fff;
           }
           .ai-side-browser-empty {

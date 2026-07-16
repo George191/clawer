@@ -25,6 +25,7 @@ aiofiles>=23.2
 openpyxl>=3.1
 websockets>=12
 anyio>=4.3
+playwright>=1.55,<2
 
 # ── Runtime: Anti-Crawl & Dedup ──
 redis>=5.0

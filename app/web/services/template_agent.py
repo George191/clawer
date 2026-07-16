@@ -19,6 +19,7 @@ from lxml import html as lxml_html
 from app.config.settings import settings
 from app.downloader.http_client import HttpClient
 from app.models.template import SiteTemplate
+from app.web.services.browser_renderer import browser_renderer
 from app.web.services.site_analyzer import AnalysisResult, SiteAnalyzer
 
 _MODEL_PATH = Path(__file__).resolve().parents[3] / "models" / "Qwen2.5-0.5B"
@@ -43,6 +44,9 @@ class PreflightResult:
     requires_proxy: bool = False
     proxy_mode: str = "direct"
     preview_html: str = ""
+    preview_image: str = ""
+    rendered_by: str = "http"
+    network_endpoints: list[str] | None = None
     error_code: str = ""
     error_message: str = ""
     html: str = ""
@@ -57,6 +61,9 @@ class PreflightResult:
             "requiresProxy": self.requires_proxy,
             "proxyMode": self.proxy_mode,
             "previewHtml": self.preview_html,
+            "previewImage": self.preview_image,
+            "renderedBy": self.rendered_by,
+            "networkEndpoints": self.network_endpoints or [],
             "errorCode": self.error_code,
             "errorMessage": self.error_message,
         }
@@ -137,6 +144,10 @@ class TemplateAdapterAgent:
         client = HttpClient()
         requires_proxy = False
         proxy_mode = "direct"
+        browser_title = ""
+        preview_image = ""
+        rendered_by = "http"
+        network_endpoints: list[str] = []
         try:
             try:
                 if not dns_resolved:
@@ -166,6 +177,25 @@ class TemplateAdapterAgent:
             )
         finally:
             await client.close()
+
+        if browser_renderer.available():
+            browser_result = None
+            try:
+                browser_result = await browser_renderer.render(normalized)
+            except Exception:
+                if self._proxy_configured():
+                    try:
+                        browser_result = await browser_renderer.render(normalized, use_proxy=True)
+                        requires_proxy = True
+                        proxy_mode = "configured_proxy"
+                    except Exception:
+                        browser_result = None
+            if browser_result is not None and urlparse(browser_result.url).hostname == host:
+                page_html = browser_result.html
+                browser_title = browser_result.title
+                preview_image = browser_result.screenshot_data_url
+                network_endpoints = browser_result.json_endpoints
+                rendered_by = "chrome"
 
         if not page_html or len(page_html.strip()) < 80:
             return PreflightResult(
@@ -197,10 +227,13 @@ class TemplateAdapterAgent:
             ok=True,
             normalized_url=normalized,
             host=host,
-            title=title or host,
+            title=browser_title or title or host,
             requires_proxy=requires_proxy,
             proxy_mode=proxy_mode,
             preview_html=preview_html,
+            preview_image=preview_image,
+            rendered_by=rendered_by,
+            network_endpoints=network_endpoints,
             html=page_html,
             checked_at=time.time(),
         )
@@ -337,10 +370,14 @@ class TemplateAdapterAgent:
         except Exception as exc:
             raise ValueError("The response is not valid HTML") from exc
         title = " ".join(tree.xpath("//title[1]//text()") or []).strip()
-        for node in tree.xpath("//script|//style|//link|//meta|//base|//form|//iframe|//object|//embed"):
+        for node in tree.xpath("//script|//meta|//base|//form|//iframe|//object|//embed|//link[not(contains(translate(@rel, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'stylesheet'))]"):
             parent = node.getparent()
             if parent is not None:
                 parent.remove(node)
+        head = next(iter(tree.xpath("//head")), None)
+        if head is not None:
+            base = lxml_html.Element("base", href=url)
+            head.insert(0, base)
         for node in tree.iter():
             for attr in list(node.attrib):
                 if attr.lower().startswith("on") or attr.lower() in {"srcdoc", "action", "formaction"}:

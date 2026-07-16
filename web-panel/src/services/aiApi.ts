@@ -183,6 +183,9 @@ export interface UrlPreflightResponse {
   requiresProxy: boolean;
   proxyMode: 'direct' | 'configured_proxy';
   previewHtml: string;
+  previewImage: string;
+  renderedBy: 'http' | 'chrome';
+  networkEndpoints: string[];
   errorCode: string;
   errorMessage: string;
 }
