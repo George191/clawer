@@ -153,3 +153,161 @@ export interface Alert {
   time: string;
   status: 'active' | 'resolved';
 }
+
+// ==================== AI Collect ====================
+export interface FieldOverride {
+  name: string;
+  rename?: string;
+}
+
+export interface GenerateOptions {
+  maxPages?: number;
+  fieldOverrides?: FieldOverride[];
+}
+
+export interface GenerateTemplateRequest {
+  url: string;
+  options?: GenerateOptions;
+}
+
+export interface UrlPreflightRequest {
+  url: string;
+}
+
+export interface DryRunRequest {
+  templateId: string;
+  limit?: number;
+}
+
+export interface GenerateAdapterRequest {
+  url: string;
+  siteType?: string;
+  templateId?: string;
+}
+
+export interface WorkspaceTemplateUpdateRequest {
+  yaml_content: string;
+  adapter?: string;
+  description?: string;
+  output_tag?: string;
+}
+
+export interface WorkspaceTaskRequest {
+  name: string;
+  template_name: string;
+  template_version?: string;
+  schedule?: Record<string, unknown>;
+  parameters?: Record<string, unknown>;
+  policies?: Record<string, unknown>;
+  owner?: string;
+}
+
+export interface WorkspaceReleaseRequest {
+  analysisId?: string;
+  name: string;
+  version?: string;
+  title: string;
+  domain?: string;
+  favicon_url?: string;
+  status: string;
+  yaml_content: string;
+  adapter?: string;
+  description?: string;
+  output_tag?: string;
+  metadata?: Record<string, unknown>;
+  task?: WorkspaceTaskRequest;
+}
+
+export interface WorkspaceTaskActionRequest {
+  action: string;
+}
+
+export interface AnalysisField {
+  name: string;
+  selector: string;
+  type: string;
+  sample?: string;
+  required?: boolean;
+}
+
+export interface PaginationInfo {
+  type: string;
+  selector?: string;
+  maxPages: number;
+  params?: Record<string, unknown>;
+}
+
+export interface AnalysisResult {
+  templateId: string;
+  name: string;
+  domain: string;
+  yaml: string;
+  adapter: string;
+  adapterPath: string;
+  fields: AnalysisField[];
+  pagination: PaginationInfo;
+  sampleItems: Record<string, unknown>[];
+  warnings: string[];
+  acquisition: Record<string, unknown>;
+  agent: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface DryRunResult {
+  totalPages: number;
+  totalItems: number;
+  sampleItems: Record<string, unknown>[];
+  columns: string[];
+  duration: number;
+  errors: string[];
+}
+
+export interface WorkspaceTemplate {
+  id: string;
+  name: string;
+  version: string;
+  title: string;
+  domain: string;
+  template: string;
+  icon: string;
+  status: 'active' | 'draft' | 'deprecated';
+  adapter: string;
+  description: string;
+  output_tag: string;
+  owner: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  yaml_content: string;
+  favicon_url: string;
+  task_count?: number;
+}
+
+export interface WorkspaceTask {
+  id: string;
+  name: string;
+  template_name: string;
+  template_version: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'paused';
+  progress: number;
+  records: number;
+  throughput: number;
+  control_state?: string;
+  download_state: string;
+  sync_state: string;
+  schedule: Record<string, unknown>;
+  parameters: Record<string, unknown>;
+  policies: Record<string, unknown>;
+  owner: string;
+  created_at: string;
+  updated_at: string;
+  started_at?: string;
+  logs?: { level: string; message: string; created_at: string }[];
+}
+
+export interface AdapterResult {
+  adapterId: string;
+  code: string;
+  language: string;
+  testResult: { passed: boolean; sampleCount: number };
+}
