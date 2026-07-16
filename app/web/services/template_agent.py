@@ -139,14 +139,14 @@ class TemplateAdapterAgent:
             try:
                 if not dns_resolved:
                     raise RuntimeError("The URL host requires proxy-side DNS resolution")
-                page_html = await client.request_page(normalized, force_direct=True)
+                page_html = await client.request_page(normalized, force_direct=True, no_timeout=True)
             except Exception as direct_error:
                 if not self._proxy_configured():
                     raise RuntimeError(f"Website cannot be opened directly: {direct_error}") from direct_error
                 requires_proxy = True
                 proxy_mode = "configured_proxy"
                 try:
-                    page_html = await client.request_page(normalized, anti_crawl_enabled=True)
+                    page_html = await client.request_page(normalized, anti_crawl_enabled=True, no_timeout=True)
                 except Exception as proxy_error:
                     raise RuntimeError(
                         f"Website cannot be opened directly or through the configured proxy: {proxy_error}"

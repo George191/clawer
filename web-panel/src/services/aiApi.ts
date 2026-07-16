@@ -267,7 +267,7 @@ export function createAnalyzeStream(url: string): EventSource {
 }
 
 export const preflightUrl = (url: string): Promise<UrlPreflightResponse> =>
-  client.post('/ai/preflight', { url }).then((r) => r.data);
+  client.post('/ai/preflight', { url }, { timeout: 0 }).then((r) => r.data);
 
 /** 生成模板 */
 export const generateTemplate = (

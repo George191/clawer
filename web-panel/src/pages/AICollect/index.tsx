@@ -2396,18 +2396,25 @@ const AICollect: React.FC = () => {
             <h1 className="ai-prompt-title">嗨，<span className="ai-prompt-name">{currentUserName}</span>，又有新灵感了吗？</h1>
           </div>
 
-          <div className="ai-prompt-shell">
+          <div className={`ai-prompt-shell ${preflightLoading ? 'is-preflighting' : ''}`}>
             <span className="ai-prompt-leading-icon" aria-hidden="true">
-              <GlobalOutlined spin={preflightLoading} />
+              <GlobalOutlined />
             </span>
             <TextArea
               className="ai-prompt-input"
               value={intent}
+              disabled={preflightLoading}
               onChange={(event) => setIntent(event.target.value)}
               onKeyDown={handlePromptKeyDown}
               autoSize={{ minRows: 1, maxRows: 3 }}
               placeholder="输入目标网址、采集意图或数据范围"
             />
+            {preflightLoading ? (
+              <span className="ai-prompt-preflight-copy" aria-hidden="true">
+                <span className="ai-prompt-preflight-copy-base"><GlobalOutlined />{intent}</span>
+                <span className="ai-prompt-preflight-copy-sweep"><GlobalOutlined />{intent}</span>
+              </span>
+            ) : null}
             <Button className="ai-prompt-icon" shape="circle" icon={<AudioOutlined />} aria-label="语音输入" disabled />
           </div>
         </section>
@@ -7048,6 +7055,50 @@ const AICollect: React.FC = () => {
             position: relative;
             z-index: 1;
           }
+          .ai-prompt-shell.is-preflighting .ai-prompt-leading-icon,
+          .ai-prompt-shell.is-preflighting .ai-prompt-input {
+            opacity: 0;
+          }
+          .ai-prompt-preflight-copy {
+            position: absolute;
+            left: 24px;
+            right: 80px;
+            top: 50%;
+            height: 34px;
+            transform: translateY(-50%);
+            overflow: hidden;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 2;
+          }
+          .ai-prompt-preflight-copy-base,
+          .ai-prompt-preflight-copy-sweep {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            overflow: hidden;
+            color: rgba(255, 255, 255, 0.68);
+            font-size: 15px;
+            line-height: 34px;
+            text-overflow: ellipsis;
+          }
+          .ai-prompt-preflight-copy-base .anticon,
+          .ai-prompt-preflight-copy-sweep .anticon {
+            flex: 0 0 24px;
+            font-size: 18px;
+          }
+          .ai-prompt-preflight-copy-sweep {
+            color: rgba(255, 255, 255, 0.98);
+            -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 48%, transparent 100%);
+            mask-image: linear-gradient(90deg, transparent 0%, #000 48%, transparent 100%);
+            -webkit-mask-size: 34% 100%;
+            mask-size: 34% 100%;
+            -webkit-mask-repeat: no-repeat;
+            mask-repeat: no-repeat;
+            animation: aiPromptPreflightSweep 4.2s ease-in-out infinite;
+          }
           .ai-prompt-icon {
             width: 34px !important;
             height: 34px !important;
@@ -7985,6 +8036,16 @@ const AICollect: React.FC = () => {
             }
             to {
               background-position: 220% 0;
+            }
+          }
+          @keyframes aiPromptPreflightSweep {
+            from {
+              -webkit-mask-position: -52% 0;
+              mask-position: -52% 0;
+            }
+            to {
+              -webkit-mask-position: 152% 0;
+              mask-position: 152% 0;
             }
           }
           @keyframes aiSidePanelIn {

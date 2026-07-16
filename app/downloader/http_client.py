@@ -65,11 +65,15 @@ class HttpClient:
             self._lease_lock = asyncio.Lock()
         return self._lease_lock
 
-    async def _create_client(self, proxy_url: str | None = None) -> curl_requests.AsyncSession:
+    async def _create_client(
+        self,
+        proxy_url: str | None = None,
+        no_timeout: bool = False,
+    ) -> curl_requests.AsyncSession:
         session_kwargs: dict = {
             "impersonate": "chrome120",
             "proxy": proxy_url,
-            "timeout": settings.http_request_timeout,
+            "timeout": None if no_timeout else settings.http_request_timeout,
             "headers": {"User-Agent": settings.http_user_agent},
             "verify": settings.http_verify_ssl,
             "allow_redirects": True,
@@ -87,6 +91,7 @@ class HttpClient:
         force_direct: bool = False,
         page: int = 0,
         attempt: int = 0,
+        no_timeout: bool = False,
     ) -> str:
         """请求页面并返回文本内容。
 
@@ -97,6 +102,7 @@ class HttpClient:
             force_direct: 强制绕过隧道代理和代理池，仅用于连接预检。
             page: 当前页码，用于日志记录。
             attempt: 当前尝试次数，用于日志记录。
+            no_timeout: 不设置连接或响应超时，仅用于交互式网站预检。
 
         Returns:
             响应文本。
@@ -147,7 +153,7 @@ class HttpClient:
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
-        async with await self._create_client(proxy_url) as client:
+        async with await self._create_client(proxy_url, no_timeout=no_timeout) as client:
             try:
                 request_kwargs = dict(
                     method=config.method,
