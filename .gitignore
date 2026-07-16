@@ -14,6 +14,12 @@ models/
 data/
 data_/
 node_modules/
+certificate/
+certificate_/
+DMIT-Rcbx3LcMXQ-ed25519_/
+
+
+
 
 __pycache__/
 
