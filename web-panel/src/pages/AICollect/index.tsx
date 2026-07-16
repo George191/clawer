@@ -1078,6 +1078,7 @@ const AICollect: React.FC = () => {
   const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set(sampleFields.map((field) => field.name)));
   const [streamError, setStreamError] = useState('');
   const [preflightLoading, setPreflightLoading] = useState(false);
+  const [landingUrlToken, setLandingUrlToken] = useState<string | null>(null);
   const [urlPreflight, setUrlPreflight] = useState<UrlPreflightResponse | null>(null);
   const [templateId, setTemplateId] = useState('ai-contract-preview');
   const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
@@ -1897,23 +1898,29 @@ const AICollect: React.FC = () => {
     return '';
   }, []);
 
-  const extractUrlFromPrompt = useCallback((value: string) => {
-    const match = value.match(/https?:\/\/[^\s，。；,]+/i);
-    return match?.[0].replace(/[)\]}>。；,，]+$/, '') ?? '';
-  }, []);
+  const commitLandingUrl = useCallback(() => {
+    const candidate = intent.trim();
+    if (!validateUrl(candidate)) setLandingUrlToken(candidate);
+  }, [intent, validateUrl]);
+
+  const handleLandingUrlPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const candidate = event.clipboardData.getData('text').trim();
+    if (validateUrl(candidate)) return;
+    event.preventDefault();
+    setIntent(candidate);
+    setLandingUrlToken(candidate);
+  }, [validateUrl]);
 
   const handleAnalyze = useCallback(async () => {
     if (preflightLoading) return;
     const draftPrompt = taskDraft.trim();
-    const currentReference = (submittedPrompt || intent || url).trim();
-    const sourcePrompt = hasSession && draftPrompt
-      ? `${currentReference} ${draftPrompt}`.trim()
-      : (draftPrompt || currentReference).trim();
-    const promptUrl = extractUrlFromPrompt(sourcePrompt);
-    const targetUrl = promptUrl || url;
+    const targetUrl = hasSession
+      ? (urlPreflight?.normalizedUrl || url || submittedPrompt).trim()
+      : (landingUrlToken || intent).trim();
+    const agentPrompt = hasSession ? draftPrompt : '';
     const error = validateUrl(targetUrl);
     if (error) {
-      const errorMessage = targetUrl ? error : '请在问题中包含目标 URL';
+      const errorMessage = targetUrl ? error : '请输入目标 URL';
       message.error(errorMessage);
       return;
     }
@@ -1942,17 +1949,17 @@ const AICollect: React.FC = () => {
     setWorkspaceAdapterFile('');
     setGeneratedAdapterRequired(false);
 
-    const normalizedPrompt = sourcePrompt || verifiedUrl;
-    setSubmittedPrompt(normalizedPrompt);
+    setSubmittedPrompt(verifiedUrl);
     setTaskDraft('');
-    setIntent(normalizedPrompt);
+    setIntent(verifiedUrl);
+    setLandingUrlToken(verifiedUrl);
     analyzeStreamRef.current?.close();
     resetSimulation();
     setStreamError('');
     setRunStatus('running');
     setMode('explore');
     setExpandedStep('explore');
-    const es = createAnalyzeStream(verifiedUrl, normalizedPrompt);
+    const es = createAnalyzeStream(verifiedUrl, agentPrompt);
     analyzeStreamRef.current = es;
 
     es.addEventListener('fields', (event: MessageEvent) => {
@@ -1997,7 +2004,7 @@ const AICollect: React.FC = () => {
       es.close();
       analyzeStreamRef.current = null;
     };
-  }, [extractUrlFromPrompt, hasSession, intent, message, preflightLoading, resetSimulation, submittedPrompt, taskDraft, url, validateUrl]);
+  }, [hasSession, intent, landingUrlToken, message, preflightLoading, resetSimulation, submittedPrompt, taskDraft, url, urlPreflight?.normalizedUrl, validateUrl]);
 
   const handlePauseAnalysis = useCallback(() => {
     analyzeStreamRef.current?.close();
@@ -2337,10 +2344,10 @@ const AICollect: React.FC = () => {
         ? 'adapter hint'
         : 'template hint';
     pushLiveLog(`${guideLabel}: ${guide}`);
-    setTaskDraft('');
     setScanPulse((prev) => prev + 1);
     triggerPromptGeneration();
-  }, [displayWorkflowPhase, pushLiveLog, taskDraft, triggerPromptGeneration]);
+    void handleAnalyze();
+  }, [displayWorkflowPhase, handleAnalyze, pushLiveLog, taskDraft, triggerPromptGeneration]);
 
   const handleSessionSparkleAction = useCallback(() => {
     if (promptGenerating) {
@@ -2361,8 +2368,9 @@ const AICollect: React.FC = () => {
       handleGuideSubmit();
       return;
     }
+    commitLandingUrl();
     handleAnalyze();
-  }, [finishPromptGeneration, handleAnalyze, handleGuideSubmit, hasSession, promptGenerating]);
+  }, [commitLandingUrl, finishPromptGeneration, handleAnalyze, handleGuideSubmit, hasSession, promptGenerating]);
 
   const handleWorkspacePanelToggle = useCallback((panel: WorkspacePanel) => {
     const nextParams = new URLSearchParams(searchParams);
@@ -2397,18 +2405,33 @@ const AICollect: React.FC = () => {
           </div>
 
           <div className={`ai-prompt-shell ${preflightLoading ? 'is-preflighting' : ''}`}>
-            <span className="ai-prompt-leading-icon" aria-hidden="true">
-              <GlobalOutlined />
-            </span>
-            <TextArea
-              className="ai-prompt-input"
-              value={intent}
-              disabled={preflightLoading}
-              onChange={(event) => setIntent(event.target.value)}
-              onKeyDown={handlePromptKeyDown}
-              autoSize={{ minRows: 1, maxRows: 3 }}
-              placeholder="输入目标网址、采集意图或数据范围"
-            />
+            {landingUrlToken ? (
+              <Tag
+                className="ai-prompt-url-tag"
+                icon={<GlobalOutlined />}
+                closable={!preflightLoading}
+                onClose={() => setLandingUrlToken(null)}
+              >
+                {landingUrlToken}
+              </Tag>
+            ) : (
+              <>
+                <span className="ai-prompt-leading-icon" aria-hidden="true">
+                  <GlobalOutlined />
+                </span>
+                <TextArea
+                  className="ai-prompt-input"
+                  value={intent}
+                  disabled={preflightLoading}
+                  onChange={(event) => setIntent(event.target.value)}
+                  onBlur={commitLandingUrl}
+                  onPaste={handleLandingUrlPaste}
+                  onKeyDown={handlePromptKeyDown}
+                  autoSize={{ minRows: 1, maxRows: 1 }}
+                  placeholder="输入 HTTP/HTTPS 网址"
+                />
+              </>
+            )}
             {preflightLoading ? (
               <span className="ai-prompt-preflight-copy" aria-hidden="true">
                 <span className="ai-prompt-preflight-copy-base"><GlobalOutlined />{intent}</span>
@@ -7056,8 +7079,31 @@ const AICollect: React.FC = () => {
             z-index: 1;
           }
           .ai-prompt-shell.is-preflighting .ai-prompt-leading-icon,
-          .ai-prompt-shell.is-preflighting .ai-prompt-input {
+          .ai-prompt-shell.is-preflighting .ai-prompt-input,
+          .ai-prompt-shell.is-preflighting .ai-prompt-url-tag {
             opacity: 0;
+          }
+          .ai-prompt-url-tag {
+            grid-column: 1 / 3;
+            justify-self: start;
+            max-width: 100%;
+            height: 32px;
+            margin: 0;
+            padding: 0 10px;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            overflow: hidden;
+            color: rgba(245, 247, 247, 0.9);
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 999px;
+            font-size: 13px;
+            line-height: 30px;
+          }
+          .ai-prompt-url-tag .ant-tag-close-icon {
+            margin-left: 4px;
+            color: rgba(245, 247, 247, 0.58);
           }
           .ai-prompt-preflight-copy {
             position: absolute;

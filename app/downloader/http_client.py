@@ -111,7 +111,7 @@ class HttpClient:
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)
-
+                
         # 解析最终反爬开关：模板 > 全局
         use_anti_crawl = (anti_crawl_enabled if anti_crawl_enabled is not None
                           else settings.anti_crawl_enabled)

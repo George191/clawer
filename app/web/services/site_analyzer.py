@@ -402,7 +402,7 @@ class SiteAnalyzer:
         scalar_keys = [
             str(key)
             for key, value in records[0].items()
-            if value is None or isinstance(value, (str, int, float, bool))
+            if value is None or isinstance(value, str | int | float | bool)
         ][:20]
         requested_names = self._requested_field_names(prompt)
         if requested_names:
@@ -424,7 +424,7 @@ class SiteAnalyzer:
         fields: list[InferredField] = []
         for index, key in enumerate(scalar_keys):
             sample = records[0].get(key)
-            field_type = "boolean" if isinstance(sample, bool) else "number" if isinstance(sample, (int, float)) else "text"
+            field_type = "boolean" if isinstance(sample, bool) else "number" if isinstance(sample, int | float) else "text"
             fields.append(InferredField(
                 name=re.sub(r"[^a-zA-Z0-9_]+", "_", key).strip("_") or f"field_{index + 1}",
                 field_type=field_type,
@@ -472,6 +472,14 @@ class SiteAnalyzer:
             verified_pages=1,
             max_pages=1,
         )
+        sample_items = [
+            {
+                field.name: record.get(field.relative_selector or "")
+                for field in fields
+                if record.get(field.relative_selector or "") is not None
+            }
+            for record in records[:20]
+        ]
         return AnalysisResult(
             url=url,
             base_url=self._build_base_url(url),
@@ -480,7 +488,7 @@ class SiteAnalyzer:
             display_name=display_name,
             root_selector=acquisition.json_item_path,
             fields=fields,
-            sample_items=records[:20],
+            sample_items=sample_items,
             pagination=pagination,
             mode="generic_template",
             template_dict=template_dict,
