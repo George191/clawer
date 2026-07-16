@@ -22,16 +22,9 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
     version text NOT NULL DEFAULT 'v1.0',
     title text NOT NULL,
     domain text NOT NULL DEFAULT '',
-    favicon_url text NOT NULL DEFAULT '',
-    template_object_key text NOT NULL DEFAULT '',
-    template_sha256 text NOT NULL DEFAULT '',
-    template_size integer NOT NULL DEFAULT 0,
-    favicon_object_key text NOT NULL DEFAULT '',
-    favicon_mime text NOT NULL DEFAULT '',
-    favicon_sha256 text NOT NULL DEFAULT '',
-    favicon_size integer NOT NULL DEFAULT 0,
+    template text NOT NULL DEFAULT '',
+    icon text NOT NULL DEFAULT '',
     status text NOT NULL DEFAULT 'draft' CHECK (status IN ('active', 'draft', 'deprecated')),
-    yaml_content text NOT NULL,
     adapter text NOT NULL DEFAULT '',
     description text NOT NULL DEFAULT '',
     output_tag text NOT NULL DEFAULT '',
@@ -41,27 +34,26 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (name, version)
 );
-ALTER TABLE public.ai_collect_templates
-    ADD COLUMN IF NOT EXISTS favicon_url text NOT NULL DEFAULT '';
-ALTER TABLE public.ai_collect_templates
-    ADD COLUMN IF NOT EXISTS template_object_key text NOT NULL DEFAULT '';
-ALTER TABLE public.ai_collect_templates
-    ADD COLUMN IF NOT EXISTS template_sha256 text NOT NULL DEFAULT '';
-ALTER TABLE public.ai_collect_templates
-    ADD COLUMN IF NOT EXISTS template_size integer NOT NULL DEFAULT 0;
-ALTER TABLE public.ai_collect_templates
-    ADD COLUMN IF NOT EXISTS favicon_object_key text NOT NULL DEFAULT '';
-ALTER TABLE public.ai_collect_templates
-    ADD COLUMN IF NOT EXISTS favicon_mime text NOT NULL DEFAULT '';
-ALTER TABLE public.ai_collect_templates
-    ADD COLUMN IF NOT EXISTS favicon_sha256 text NOT NULL DEFAULT '';
-ALTER TABLE public.ai_collect_templates
-    ADD COLUMN IF NOT EXISTS favicon_size integer NOT NULL DEFAULT 0;
-ALTER TABLE public.ai_collect_templates
-    DROP COLUMN IF EXISTS favicon_data;
-UPDATE public.ai_collect_templates
-SET favicon_url = 'https://' || domain || '/favicon.ico'
-WHERE favicon_url = '' AND domain ~ '^[A-Za-z0-9.-]+[.][A-Za-z]{2,}$';
+ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS template text NOT NULL DEFAULT '';
+ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS icon text NOT NULL DEFAULT '';
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='ai_collect_templates' AND column_name='template_object_key') THEN
+        EXECUTE 'UPDATE public.ai_collect_templates SET template = template_object_key WHERE template = ''''';
+    END IF;
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='ai_collect_templates' AND column_name='favicon_object_key') THEN
+        EXECUTE 'UPDATE public.ai_collect_templates SET icon = favicon_object_key WHERE icon = ''''';
+    END IF;
+END $$;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_data;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_url;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_mime;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_sha256;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS favicon_size;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS template_object_key;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS template_sha256;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS template_size;
+ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS yaml_content;
 CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
@@ -136,14 +128,18 @@ class AICollectStore:
         if not settings.minio_endpoint or not settings.minio_bucket:
             raise RuntimeError("MinIO is required for AI Collect template artifacts")
         templates_by_name: dict[str, dict[str, Any]] = {}
+        template_content_by_name: dict[str, bytes] = {}
         template_dir = Path(settings.template_dir)
         for path in [*template_dir.glob("*.yaml"), *template_dir.glob("*.yml")]:
             try:
-                raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+                content = path.read_bytes()
+                raw = yaml.safe_load(content.decode("utf-8"))
             except Exception:
                 continue
             if isinstance(raw, dict):
-                templates_by_name[str(raw.get("name") or path.stem)] = raw
+                template_name = str(raw.get("name") or path.stem)
+                templates_by_name[template_name] = raw
+                template_content_by_name[template_name] = content
 
         query = "SELECT * FROM public.ai_collect_templates"
         params: dict[str, Any] = {}
@@ -163,32 +159,26 @@ class AICollectStore:
                 safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row["name"])).strip("._") or "template"
                 safe_version = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row["version"])).strip("._") or "v1"
                 object_prefix = f"collection/templates/{safe_name}/{safe_version}"
-                template_bytes = str(row["yaml_content"]).encode("utf-8")
-                template_key = f"{object_prefix}/template.yaml"
-                await minio.upload_bytes_to_key(template_bytes, template_key, "application/yaml")
-                local_url = f"{_ICON_URL_PREFIX}/{safe_name}.ico"
+                template_key = str(row.get("template") or f"{object_prefix}/template.yaml")
+                template_bytes = template_content_by_name.get(str(row["name"]))
+                if template_bytes is not None:
+                    template_key = f"{object_prefix}/template.yaml"
+                    await minio.upload_bytes_to_key(template_bytes, template_key, "application/yaml")
                 raw = templates_by_name.get(str(row["name"]), {})
                 resolved_base_url = self._resolved_template_base_url(raw)
                 parsed_base_url = urlparse(resolved_base_url)
-                source_url = str(row.get("favicon_url") or "")
                 favicon_bytes: bytes | None = None
-                favicon_mime = str(row.get("favicon_mime") or "image/x-icon")
-                existing_local_path = Path(settings.template_dir) / "favicons" / f"{safe_name}.ico"
-                if existing_local_path.is_file():
-                    favicon_bytes = existing_local_path.read_bytes()
-                if favicon_bytes is None and row.get("favicon_object_key"):
-                    favicon_bytes = await minio.get_object_bytes(str(row["favicon_object_key"]))
+                favicon_mime = "image/x-icon"
+                favicon_key = str(row.get("icon") or "")
+                if favicon_key:
+                    favicon_bytes = await minio.get_object_bytes(favicon_key)
                 cache_key = parsed_base_url.hostname or str(row.get("domain") or "")
                 if favicon_bytes is None and cache_key in favicon_cache:
                     favicon_bytes, favicon_mime = favicon_cache[cache_key]
-                if not source_url.startswith(("http://", "https://")) or "{" in source_url:
-                    if parsed_base_url.scheme and parsed_base_url.netloc:
-                        source_url = f"{parsed_base_url.scheme}://{parsed_base_url.netloc}/favicon.ico"
-                    elif row.get("domain") and "{" not in str(row["domain"]):
-                        source_url = f"https://{row['domain']}/favicon.ico"
                 if favicon_bytes is None:
-                    candidates = [source_url] if source_url.startswith(("http://", "https://")) else []
+                    candidates: list[str] = []
                     if parsed_base_url.scheme and parsed_base_url.netloc:
+                        candidates.append(f"{parsed_base_url.scheme}://{parsed_base_url.netloc}/favicon.ico")
                         try:
                             page_response = await client.get(resolved_base_url)
                             page_response.raise_for_status()
@@ -214,7 +204,6 @@ class AICollectStore:
                             break
                         except Exception:
                             continue
-                favicon_key = str(row.get("favicon_object_key") or "")
                 if favicon_bytes and len(favicon_bytes) <= 1024 * 1024:
                     if not favicon_mime.startswith("image/"):
                         favicon_mime = "image/x-icon"
@@ -223,39 +212,27 @@ class AICollectStore:
                 await self._pg.execute(
                     """
                     UPDATE public.ai_collect_templates
-                    SET favicon_url = :favicon_url,
-                        template_object_key = :template_object_key,
-                        template_sha256 = :template_sha256,
-                        template_size = :template_size,
-                        favicon_object_key = :favicon_object_key,
-                        favicon_mime = :favicon_mime,
-                        favicon_sha256 = :favicon_sha256,
-                        favicon_size = :favicon_size
+                    SET template = :template,
+                        icon = :icon
                     WHERE id = :id
                     """,
                     {
                         "id": row["id"],
-                        "favicon_url": local_url if favicon_key else "",
-                        "template_object_key": template_key,
-                        "template_sha256": hashlib.sha256(template_bytes).hexdigest(),
-                        "template_size": len(template_bytes),
-                        "favicon_object_key": favicon_key,
-                        "favicon_mime": favicon_mime if favicon_key else "",
-                        "favicon_sha256": hashlib.sha256(favicon_bytes).hexdigest() if favicon_bytes else "",
-                        "favicon_size": len(favicon_bytes) if favicon_bytes else 0,
+                        "template": template_key,
+                        "icon": favicon_key,
                     },
                 )
 
     async def get_template_icon(self, filename: str) -> dict[str, Any] | None:
         return await self._pg.fetch_one(
             """
-            SELECT favicon_object_key, favicon_mime
+            SELECT icon
             FROM public.ai_collect_templates
-            WHERE favicon_url = :favicon_url AND favicon_object_key <> ''
+            WHERE name = :name AND icon <> ''
             ORDER BY updated_at DESC
             LIMIT 1
             """,
-            {"favicon_url": f"{_ICON_URL_PREFIX}/{filename}"},
+            {"name": filename.removesuffix(".ico")},
         )
 
     async def _import_local_templates(self) -> None:

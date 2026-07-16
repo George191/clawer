@@ -457,14 +457,14 @@ async def workspace_template_icon(filename: str):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
         raise HTTPException(status_code=404, detail="Template icon not found")
     icon = await ai_collect_store.get_template_icon(filename)
-    if icon is None or not icon.get("favicon_object_key"):
+    if icon is None or not icon.get("icon"):
         raise HTTPException(status_code=404, detail="Template icon not found")
-    content = await get_business_metadata_minio_client().get_object_bytes(str(icon["favicon_object_key"]))
+    content = await get_business_metadata_minio_client().get_object_bytes(str(icon["icon"]))
     if not content:
         raise HTTPException(status_code=404, detail="Template icon not found")
     return Response(
         content=content,
-        media_type=str(icon.get("favicon_mime") or "image/x-icon"),
+        media_type="image/x-icon",
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
