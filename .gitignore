@@ -6,7 +6,7 @@
 .vscode/
 .agents/
 .codex/
-.pytest.cache/
+.pytest_cache/
 
 static/
 logs/
