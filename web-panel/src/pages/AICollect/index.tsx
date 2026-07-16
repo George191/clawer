@@ -1078,7 +1078,6 @@ const AICollect: React.FC = () => {
   const [fields, setFields] = useState<FieldDef[]>(sampleFields);
   const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set(sampleFields.map((field) => field.name)));
   const [streamError, setStreamError] = useState('');
-  const [landingError, setLandingError] = useState('');
   const [preflightLoading, setPreflightLoading] = useState(false);
   const [urlPreflight, setUrlPreflight] = useState<UrlPreflightResponse | null>(null);
   const [templateId, setTemplateId] = useState('ai-contract-preview');
@@ -1916,19 +1915,16 @@ const AICollect: React.FC = () => {
     const error = validateUrl(targetUrl);
     if (error) {
       const errorMessage = targetUrl ? error : '请在问题中包含目标 URL';
-      setLandingError(errorMessage);
       message.error(errorMessage);
       return;
     }
 
-    setLandingError('');
     setPreflightLoading(true);
     let preflight: UrlPreflightResponse;
     try {
       preflight = await preflightUrl(targetUrl);
     } catch (preflightError) {
       const errorMessage = preflightError instanceof Error ? preflightError.message : 'URL 预检服务不可用';
-      setLandingError(errorMessage);
       message.error(errorMessage);
       return;
     } finally {
@@ -1936,7 +1932,6 @@ const AICollect: React.FC = () => {
     }
     if (!preflight.ok) {
       const errorMessage = preflight.errorMessage || '目标网页无法访问';
-      setLandingError(errorMessage);
       message.error(errorMessage);
       return;
     }
@@ -2419,7 +2414,6 @@ const AICollect: React.FC = () => {
           {preflightLoading ? (
             <Text className="ai-prompt-preflight-status">Agent 正在验证网址、连接与代理需求…</Text>
           ) : null}
-          {landingError ? <Alert className="ai-prompt-error" type="error" showIcon message={landingError} /> : null}
         </section>
       );
     }
@@ -7062,13 +7056,6 @@ const AICollect: React.FC = () => {
             margin-top: 12px;
             color: ${aura.subtle} !important;
             font-size: 12px;
-          }
-          .ai-prompt-error {
-            width: min(680px, calc(100% - 32px));
-            margin-top: 12px;
-            border-radius: 12px;
-            background: rgba(120, 32, 42, 0.2);
-            border-color: rgba(248, 113, 113, 0.28);
           }
           .ai-prompt-icon {
             width: 34px !important;

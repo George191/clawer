@@ -42,6 +42,7 @@ class AppSettings(BaseSettings):
     )
     http_proxy: str = Field(default="", description="HTTP代理地址")
     http_verify_ssl: bool = Field(default=False, description="是否验证SSL证书")
+    http_interface: str = Field(default="", description="绑定的网络接口名称或IP地址, 如 eth0, eth1, 192.168.1.100")
 
     download_chunk_size: int = Field(
         default=8192, description="文件下载流式写入块大小(bytes)"
@@ -94,8 +95,8 @@ class AppSettings(BaseSettings):
     proxy_max_failures: int = Field(default=3, description="代理连续失败多少次后摘除")
 
     # Request Delay
-    request_delay_min: float = Field(default=1.0, description="请求最小延迟(秒)")
-    request_delay_max: float = Field(default=3.0, description="请求最大延迟(秒)")
+    request_delay_min: float = Field(default=0.0, description="请求最小延迟(秒)")
+    request_delay_max: float = Field(default=0.0, description="请求最大延迟(秒)")
     domain_rate_limit: dict[str, float] = Field(
         default_factory=dict,
         description="域名速率限制, 如 {\"patents.google.com\": 5.0}",

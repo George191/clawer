@@ -425,20 +425,9 @@ class SpiderEngine:
                     "headers": {**template.list_request.headers, **extra_headers}
                 }) if extra_headers else template.list_request
 
-                url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
-                logger.debug(
-                    "[Page %d attempt %d] Fetching URL: %s",
-                    page, attempt, url_display
-                )
-
                 text = await self._client.request_page(
                     url, list_request,
                     anti_crawl_enabled=template.effective_anti_crawl_enabled,
-                )
-
-                logger.debug(
-                    "[Page %d attempt %d] Response received: %d chars",
-                    page, attempt, len(text) if text else 0
                 )
 
                 if not text:
@@ -450,20 +439,10 @@ class SpiderEngine:
 
                 json_data = json.loads(text)
 
-                logger.debug(
-                    "[Page %d attempt %d] JSON parsed successfully",
-                    page, attempt
-                )
-
                 records = self._parser.parse_list_json(
                     json_data, item_path, template.list_fields
                 )
                 records = await adapter.on_after_page(page, records)
-
-                logger.info(
-                    "[Page %d attempt %d] Parsed %d records",
-                    page, attempt, len(records)
-                )
 
                 # 仅第一页提取分页元数据
                 if is_first and template.json_total_path:
@@ -471,10 +450,6 @@ class SpiderEngine:
                     if total_val is not None:
                         try:
                             total_records = int(total_val)
-                            logger.debug(
-                                "[Page %d] Total records from API: %d",
-                                page, total_records
-                            )
                         except (ValueError, TypeError):
                             pass
 
