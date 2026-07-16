@@ -47,6 +47,7 @@ class PreflightResult:
     preview_image: str = ""
     rendered_by: str = "http"
     network_endpoints: list[str] | None = None
+    favicon_url: str = ""
     error_code: str = ""
     error_message: str = ""
     html: str = ""
@@ -64,6 +65,7 @@ class PreflightResult:
             "previewImage": self.preview_image,
             "renderedBy": self.rendered_by,
             "networkEndpoints": self.network_endpoints or [],
+            "faviconUrl": self.favicon_url,
             "errorCode": self.error_code,
             "errorMessage": self.error_message,
         }
@@ -148,6 +150,7 @@ class TemplateAdapterAgent:
         preview_image = ""
         rendered_by = "http"
         network_endpoints: list[str] = []
+        favicon_url = ""
         try:
             try:
                 if not dns_resolved:
@@ -195,6 +198,7 @@ class TemplateAdapterAgent:
                 browser_title = browser_result.title
                 preview_image = browser_result.screenshot_data_url
                 network_endpoints = browser_result.json_endpoints
+                favicon_url = browser_result.favicon_url
                 rendered_by = "chrome"
 
         if not page_html or len(page_html.strip()) < 80:
@@ -234,6 +238,7 @@ class TemplateAdapterAgent:
             preview_image=preview_image,
             rendered_by=rendered_by,
             network_endpoints=network_endpoints,
+            favicon_url=favicon_url,
             html=page_html,
             checked_at=time.time(),
         )

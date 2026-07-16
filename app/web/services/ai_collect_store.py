@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
     version text NOT NULL DEFAULT 'v1.0',
     title text NOT NULL,
     domain text NOT NULL DEFAULT '',
+    favicon_url text NOT NULL DEFAULT '',
     status text NOT NULL DEFAULT 'draft' CHECK (status IN ('active', 'draft', 'deprecated')),
     yaml_content text NOT NULL,
     adapter text NOT NULL DEFAULT '',
@@ -30,6 +31,11 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (name, version)
 );
+ALTER TABLE public.ai_collect_templates
+    ADD COLUMN IF NOT EXISTS favicon_url text NOT NULL DEFAULT '';
+UPDATE public.ai_collect_templates
+SET favicon_url = 'https://' || domain || '/favicon.ico'
+WHERE favicon_url = '' AND domain ~ '^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$';
 CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
@@ -101,13 +107,19 @@ class AICollectStore:
                 title = str(raw.get("display_name") or name.replace("_", " ").title())
                 base_url = str(raw.get("base_url") or "")
                 domain = urlparse(base_url).hostname or base_url
+                parsed_base_url = urlparse(base_url)
+                favicon_url = (
+                    f"{parsed_base_url.scheme}://{parsed_base_url.netloc}/favicon.ico"
+                    if parsed_base_url.scheme and parsed_base_url.netloc
+                    else ""
+                )
                 adapter_path = Path("app/adapters") / f"{name}.py"
                 await self._pg.execute(
                     """
                     INSERT INTO public.ai_collect_templates
-                        (name, version, title, domain, status, yaml_content, adapter, description, output_tag)
+                        (name, version, title, domain, favicon_url, status, yaml_content, adapter, description, output_tag)
                     VALUES
-                        (:name, :version, :title, :domain, 'active', :yaml, :adapter, :description, :output_tag)
+                        (:name, :version, :title, :domain, :favicon_url, 'active', :yaml, :adapter, :description, :output_tag)
                     ON CONFLICT (name, version) DO NOTHING
                     """,
                     {
@@ -115,6 +127,7 @@ class AICollectStore:
                         "version": version,
                         "title": title,
                         "domain": domain,
+                        "favicon_url": favicon_url,
                         "yaml": content,
                         "adapter": adapter_path.as_posix() if adapter_path.exists() else "",
                         "description": str(raw.get("description") or ""),
@@ -191,13 +204,14 @@ class AICollectStore:
         row = await self._pg.fetch_one(
             """
             INSERT INTO public.ai_collect_templates
-                (name, version, title, domain, status, yaml_content, adapter, description, output_tag, metadata)
+                (name, version, title, domain, favicon_url, status, yaml_content, adapter, description, output_tag, metadata)
             VALUES
-                (:name, :version, :title, :domain, :status, :yaml_content, :adapter,
+                (:name, :version, :title, :domain, :favicon_url, :status, :yaml_content, :adapter,
                  :description, :output_tag, CAST(:metadata AS jsonb))
             ON CONFLICT (name, version) DO UPDATE SET
                 title = EXCLUDED.title,
                 domain = EXCLUDED.domain,
+                favicon_url = EXCLUDED.favicon_url,
                 status = EXCLUDED.status,
                 yaml_content = EXCLUDED.yaml_content,
                 adapter = EXCLUDED.adapter,

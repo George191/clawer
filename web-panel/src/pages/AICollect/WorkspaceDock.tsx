@@ -119,6 +119,7 @@ interface SiteProfile {
   brand: string;
   logo: string;
   hue: string;
+  faviconUrl?: string;
 }
 
 interface TaskTemplateParameterDraft {
@@ -184,6 +185,10 @@ const extractListFields = (yaml: string) => {
   return fields;
 };
 
+const extractTemplateDataType = (yaml: string) => (
+  yaml.match(/^\s*data_type\s*:\s*['"]?([^'"\r\n#]+)['"]?/m)?.[1]?.trim() || 'other'
+);
+
 const taskComposerModeMeta: Record<TaskComposerMode, { label: string }> = {
   once: { label: '一次性任务' },
   recurring: { label: '周期任务' },
@@ -204,14 +209,11 @@ const lookbackUnitMeta: Array<{ value: TaskLookbackUnit; label: string }> = [
   { value: 'day', label: '天' },
 ];
 
-const formatRelativeTime = (value: string) => {
-  const match = value.match(/^(\d+)\s*(分钟|小时|天)前$/);
-  if (!match) return value;
-
-  const [, amount, unit] = match;
-  const label = unit === '分钟' ? 'min' : unit === '小时' ? 'hr' : 'day';
-  const suffix = unit === '天' && amount !== '1' ? 's' : '';
-  return `${amount} ${label}${suffix} ago`;
+const formatDateTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
 const formatTemplateDomain = (value: string) => ({
@@ -333,6 +335,8 @@ const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
   action: 'Open template',
   icon: 'code',
   taskCount: item.task_count,
+  faviconUrl: item.favicon_url,
+  dataType: extractTemplateDataType(item.yaml_content),
 });
 
 const mapWorkspaceTask = (item: WorkspaceTask): CollectTask => ({
@@ -360,7 +364,7 @@ const mapWorkspaceTaskRuntime = (item: WorkspaceTask): TaskRuntimeItem => ({
   lastDelta: 0,
   history: createHistory(item.records),
   logs: item.logs.map((log) => ({
-    time: new Date(log.created_at).toLocaleTimeString('en-GB', { hour12: false }),
+    time: formatDateTime(log.created_at),
     level: log.level,
     message: log.message,
   })),
@@ -548,9 +552,9 @@ const TaskPulseGlyph: React.FC<{ kind: SiteKind; active?: boolean; className?: s
   </span>
 );
 
-const SiteLogoMark: React.FC<{ site: SiteProfile }> = ({ site }) => (
+const SiteLogoMark: React.FC<{ site: SiteProfile; faviconUrl?: string }> = ({ site, faviconUrl }) => (
   <i className="workspace-dock-meta-logo" style={{ '--brand-hue': site.hue } as React.CSSProperties} aria-hidden="true">
-    {site.logo}
+    {(faviconUrl || site.faviconUrl) ? <img src={faviconUrl || site.faviconUrl} alt="" /> : site.logo}
   </i>
 );
 
@@ -723,13 +727,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const allTaskRows = useMemo<TaskRow[]>(() => taskItems.map((item, index) => {
     const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item, index);
     const site = resolveSiteProfile(item.template);
+    const template = templates.find((candidate) => normalizeTemplateKey(candidate.name) === normalizeTemplateKey(item.template));
     return {
       ...item,
       runtime,
-      site,
+      site: template ? { ...site, kind: inferSiteKind(template.dataType), faviconUrl: template.faviconUrl } : site,
       display: getTaskDisplay(runtime),
     };
-  }), [taskItems, taskRuntime]);
+  }), [taskItems, taskRuntime, templates]);
 
   const taskRows = useMemo(() => allTaskRows
     .filter((item) => {
@@ -1160,7 +1165,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           >
             <div className="workspace-dock-card-row">
               <div className="workspace-dock-card-main">
-                <span className="workspace-dock-card-icon"><TemplateGlyph kind={site.kind} /></span>
+                <span className="workspace-dock-card-icon"><TemplateGlyph kind={inferSiteKind(item.dataType)} /></span>
                 <div className="workspace-dock-card-copy">
                   <div className="workspace-dock-card-titleline">
                     <Text strong>{item.title}</Text>
@@ -1192,12 +1197,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
 
             <div className="workspace-dock-card-meta">
-              <span><SiteLogoMark site={site} />{formatTemplateDomain(item.domain)}</span>
+              <span><SiteLogoMark site={site} faviconUrl={item.faviconUrl} />{formatTemplateDomain(item.domain)}</span>
               <span>{item.version} · {item.fields} fields</span>
             </div>
 
             <div className="workspace-dock-card-footer">
-              <span>{formatRelativeTime(draft.savedAt)}</span>
+              <span>{formatDateTime(draft.savedAt)}</span>
               <span className="workspace-dock-linked-tasks">
                 <span
                   className={`workspace-dock-linked-task-count ${linkedTaskCount ? 'is-link' : ''}`}
@@ -1930,7 +1935,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       <section className="workspace-dock-detail">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
-            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={resolveSiteProfile(selectedTemplate.name).kind} /></span>
+            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={inferSiteKind(selectedTemplate.dataType)} /></span>
             <div>
               <Text strong className="workspace-dock-detail-title">{selectedTemplate.title}</Text>
               <Text type="secondary">{selectedTemplate.name}</Text>
@@ -2009,7 +2014,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
 
             <div className="workspace-dock-detail-actions">
-              <span>Last modified {formatRelativeTime(selectedTemplateDraft.savedAt)}</span>
+              <span>Last modified {formatDateTime(selectedTemplateDraft.savedAt)}</span>
               <div className="workspace-dock-action-row">
                 <button
                   type="button"
@@ -2069,7 +2074,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </label>
 
             <div className="workspace-dock-detail-actions">
-              <span>Last saved {formatRelativeTime(selectedTemplateDraft.savedAt)}</span>
+              <span>Last saved {formatDateTime(selectedTemplateDraft.savedAt)}</span>
             </div>
           </div>
         )}

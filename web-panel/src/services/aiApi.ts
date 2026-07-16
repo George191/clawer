@@ -186,6 +186,7 @@ export interface UrlPreflightResponse {
   previewImage: string;
   renderedBy: 'http' | 'chrome';
   networkEndpoints: string[];
+  faviconUrl: string;
   errorCode: string;
   errorMessage: string;
 }
@@ -196,6 +197,7 @@ export interface WorkspaceTemplate {
   version: string;
   title: string;
   domain: string;
+  favicon_url: string;
   status: 'active' | 'draft' | 'deprecated';
   yaml_content: string;
   adapter: string;
@@ -251,6 +253,7 @@ export interface WorkspaceReleasePayload {
   version: string;
   title: string;
   domain: string;
+  favicon_url?: string;
   status: 'active' | 'draft' | 'deprecated';
   yaml_content: string;
   adapter: string;

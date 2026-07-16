@@ -100,6 +100,7 @@ class WorkspaceReleaseRequest(BaseModel):
     version: str = "v1.0"
     title: str
     domain: str = ""
+    favicon_url: str = ""
     status: str
     yaml_content: str
     adapter: str = ""

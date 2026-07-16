@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import async_playwright
 
@@ -23,6 +23,7 @@ class BrowserRenderResult:
     title: str
     html: str
     screenshot_data_url: str
+    favicon_url: str = ""
     json_endpoints: list[str] = field(default_factory=list)
 
 
@@ -82,12 +83,14 @@ class BrowserRenderer:
                 if urlparse(final_url).scheme not in {"http", "https"}:
                     raise ValueError("Browser navigation escaped the HTTP/HTTPS boundary")
                 html = await page.content()
+                favicon_href = await page.locator('link[rel~="icon"]').last.get_attribute("href") if await page.locator('link[rel~="icon"]').count() else ""
                 screenshot = await page.screenshot(type="jpeg", quality=78, full_page=False)
                 return BrowserRenderResult(
                     url=final_url,
                     title=await page.title(),
                     html=html,
                     screenshot_data_url="data:image/jpeg;base64," + base64.b64encode(screenshot).decode("ascii"),
+                    favicon_url=urljoin(final_url, favicon_href) if favicon_href else urljoin(final_url, "/favicon.ico"),
                     json_endpoints=json_endpoints[:50],
                 )
             finally:

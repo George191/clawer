@@ -2169,6 +2169,7 @@ const AICollect: React.FC = () => {
         version: 'v1.0',
         title: browserPreviewTitle,
         domain: browserPreviewHost,
+        favicon_url: urlPreflight?.faviconUrl || browserPreviewFavicon,
         status,
         yaml_content: workspaceTemplateYaml || activeTemplate.raw,
         adapter: generatedAdapterRequired ? adapterFileName : '',
