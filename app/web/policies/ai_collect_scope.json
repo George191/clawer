@@ -16,7 +16,7 @@
     "max_preview_html_bytes": 120000
   },
   "agent_output": {
-    "model_path": "models/Qwen2.5-0.5B",
+    "model_path": "models/Qwen/2.5-0.5B-Instruct",
     "allowed_artifacts": ["template_yaml", "adapter_python"],
     "allowed_template_path": "templates/{name}.yaml",
     "allowed_adapter_path": "app/adapters/{name}.py",

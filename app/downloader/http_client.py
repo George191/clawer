@@ -84,6 +84,82 @@ class HttpClient:
             logger.debug("Binding to network interface: %s", settings.http_interface)
         return curl_requests.AsyncSession(**session_kwargs)
 
+    async def _before_request(
+        self,
+        client: curl_requests.AsyncSession,
+        proxy_url: str | None,
+        url_display: str,
+        page: int,
+        attempt: int,
+        method: str,
+        use_anti_crawl: bool,
+        task_id: int,
+    ) -> str:
+        """请求前处理：检测代理出口IP并记录日志。
+
+        Args:
+            client: AsyncSession 实例。
+            proxy_url: 代理URL。
+            url_display: 显示用的URL。
+            page: 当前页码。
+            attempt: 当前尝试次数。
+            method: 请求方法。
+            use_anti_crawl: 是否启用反爬。
+            task_id: 任务ID。
+
+        Returns:
+            代理出口信息字符串。
+        """
+        tunnel_info = "DIRECT"
+        if proxy_url and settings.http_debug_proxy_ip:
+            try:
+                tunnel = await client.request("GET", "api.ip.cc", proxy=proxy_url, timeout=5)
+                if tunnel.status_code == 200:
+                    tunnel_json = tunnel.json()
+                    tunnel_info = f"{tunnel_json.get("country", "Unknown")}/{tunnel_json.get("province", "")}/{tunnel_json.get("city", "")}({tunnel_json.get("ip", "")})"
+                    logger.debug("Proxy exit IP: %s", tunnel_info)
+            except Exception as e:
+                logger.debug("Failed to detect proxy IP: %s", e)
+
+        logger.info(
+            "[Page %d attempt %d] %s %s | tunnel=%s | anti_crawl=%s | task=%d",
+            page, attempt, method, url_display, tunnel_info, use_anti_crawl, task_id
+        )
+        return tunnel_info
+
+    async def _after_request(
+        self,
+        response: curl_requests.Response,
+        proxy_url: str | None,
+        url_display: str,
+        page: int,
+        attempt: int,
+        method: str,
+        tunnel_info: str,
+        use_anti_crawl: bool,
+        task_id: int,
+    ) -> None:
+        """请求后处理：记录响应日志并标记代理状态。
+
+        Args:
+            response: HTTP响应对象。
+            proxy_url: 代理URL。
+            url_display: 显示用的URL。
+            page: 当前页码。
+            attempt: 当前尝试次数。
+            method: 请求方法。
+            tunnel_info: 代理出口信息。
+            use_anti_crawl: 是否启用反爬。
+            task_id: 任务ID。
+        """
+        logger.info(
+            "[Page %d attempt %d] %s %s | tunnel=%s | status_code=%d | anti_crawl=%s | task=%d",
+            page, attempt, method, url_display, tunnel_info, response.status_code, use_anti_crawl, task_id
+        )
+
+        if _proxy_pool is not None and proxy_url:
+            await _proxy_pool.mark_success(proxy_url)
+
     async def request_page(
         self,
         url: str,
@@ -154,7 +230,6 @@ class HttpClient:
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
-        await asyncio.sleep(random.uniform(0.35, 0.7))
         async with await self._create_client(proxy_url, no_timeout=no_timeout) as client:
             try:
                 request_kwargs = dict(
@@ -166,7 +241,18 @@ class HttpClient:
                 )
                 if config.method.upper() == "POST":
                     request_kwargs["data"] = config.form_data
-
+        
+                tunnel_info = await self._before_request(
+                    client=client,
+                    proxy_url=proxy_url,
+                    url_display=url_display,
+                    page=page,
+                    attempt=attempt,
+                    method=config.method,
+                    use_anti_crawl=use_anti_crawl,
+                    task_id=task_id,
+                )
+                
                 response = await client.request(**request_kwargs)
 
                 if config.encoding:
@@ -177,13 +263,18 @@ class HttpClient:
 
                 response.raise_for_status()
 
-                if _proxy_pool is not None and proxy_url:
-                    await _proxy_pool.mark_success(proxy_url)
-
-                logger.info(
-                    "[Page %d attempt %d] %s %s | status_code=%d | anti_crawl=%s | task=%d",
-                    page, attempt, config.method, url_display, response.status_code, use_anti_crawl, task_id
+                await self._after_request(
+                    response=response,
+                    proxy_url=proxy_url,
+                    url_display=url_display,
+                    page=page,
+                    attempt=attempt,
+                    method=config.method,
+                    tunnel_info=tunnel_info,
+                    use_anti_crawl=use_anti_crawl,
+                    task_id=task_id,
                 )
+
                 return response.text
 
             except curl_requests.errors.RequestsError as e:

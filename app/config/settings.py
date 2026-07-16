@@ -43,6 +43,7 @@ class AppSettings(BaseSettings):
     http_proxy: str = Field(default="", description="HTTP代理地址")
     http_verify_ssl: bool = Field(default=False, description="是否验证SSL证书")
     http_interface: str = Field(default="", description="绑定的网络接口名称或IP地址, 如 eth0, eth1, 192.168.1.100")
+    http_debug_proxy_ip: bool = Field(default=False, description="是否在每次请求前检测代理出口IP并记录日志, 仅用于调试")
 
     download_chunk_size: int = Field(
         default=8192, description="文件下载流式写入块大小(bytes)"

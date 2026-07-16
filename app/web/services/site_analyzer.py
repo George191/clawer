@@ -198,26 +198,29 @@ class SiteAnalyzer:
         html = await self.fetch_listing_page(url)
         return await self.analyze_html(url, html, prompt)
 
-    async def analyze_html(self, url: str, html_text: str, prompt: str = "") -> AnalysisResult:
+    async def analyze_html(
+        self,
+        url: str,
+        html_text: str,
+        prompt: str = "",
+        network_endpoints: list[str] | None = None,
+    ) -> AnalysisResult:
         barrier = self.detect_page_barrier(html_text)
         if barrier:
             raise ValueError(barrier)
         tree = lxml_html.fromstring(html_text, base_url=url)
-        acquisition = await self._analyze_acquisition(url, html_text, tree)
+        acquisition = await self._analyze_acquisition(url, html_text, tree, network_endpoints)
         if acquisition.mode == "api":
             return self._build_api_result(url, prompt, acquisition)
         root_selector, root_nodes = self._detect_root_selector(tree)
         if not root_selector or not root_nodes:
             if acquisition.mode == "javascript":
-                raise ValueError(
-                    "The page is populated by JavaScript, but no verifiable JSON endpoint was found; "
-                    "browser network capture is required"
-                )
-            raise ValueError("Unable to detect a repeated record container from the page")
+                return self._build_link_page_result(url, tree, prompt, acquisition)
+            return self._build_link_page_result(url, tree, prompt, acquisition)
 
         fields, sample_items = self._infer_fields(tree, root_selector, root_nodes, url)
         if not sample_items:
-            raise ValueError("Unable to extract any sample records from the detected container")
+            return self._build_link_page_result(url, tree, prompt, acquisition)
         fields = self._apply_prompt_intent(fields, prompt)
         selected_names = {field.name for field in fields}
         sample_items = [
@@ -298,7 +301,13 @@ class SiteAnalyzer:
         structural = {"title", "url"}
         return [field for field in fields if field.name in structural or field.name in requested]
 
-    async def _analyze_acquisition(self, url: str, html_text: str, tree) -> AcquisitionAnalysis:
+    async def _analyze_acquisition(
+        self,
+        url: str,
+        html_text: str,
+        tree,
+        network_endpoints: list[str] | None = None,
+    ) -> AcquisitionAnalysis:
         script_text = "\n".join(tree.xpath("//script[not(@src)]/text()"))
         candidate_values: list[str] = []
         for pattern in (
@@ -310,7 +319,7 @@ class SiteAnalyzer:
 
         page_host = (urlparse(url).hostname or "").lower()
         candidates: list[str] = []
-        for raw in candidate_values:
+        for raw in [*(network_endpoints or []), *candidate_values]:
             candidate = urljoin(url, raw.replace("\\/", "/"))
             parsed = urlparse(candidate)
             if parsed.scheme not in {"http", "https"} or (parsed.hostname or "").lower() != page_host:
@@ -495,6 +504,118 @@ class SiteAnalyzer:
             template_yaml=yaml.safe_dump(template_dict, allow_unicode=True, sort_keys=False),
             adapter_code="",
             warnings=["Verified JSON API selected instead of DOM parsing", "API pagination was not inferred"],
+            detail_fields=[],
+            acquisition=acquisition,
+        )
+
+    def _build_link_page_result(
+        self,
+        url: str,
+        tree,
+        prompt: str,
+        acquisition: AcquisitionAnalysis,
+    ) -> AnalysisResult:
+        anchors: list[tuple[Any, str, str]] = []
+        intent = prompt.casefold().strip()
+        for anchor in tree.cssselect("a[href]"):
+            text = self._normalize_text(anchor.text_content())
+            href = self._normalize_text(anchor.get("href", ""))
+            if len(text) < 2 or not href or href.startswith(("#", "javascript:")):
+                continue
+            absolute_url = urljoin(url, href)
+            if urlparse(absolute_url).scheme not in {"http", "https"}:
+                continue
+            anchors.append((anchor, text, absolute_url))
+
+        matched = [item for item in anchors if intent and item[1].casefold() in intent]
+        selected = matched or anchors
+        if not selected:
+            raise ValueError("The rendered page contains no analyzable links or record content")
+
+        selector = "a[href]"
+        if matched:
+            matched_url = urlparse(matched[0][2])
+            fragment = matched_url.hostname or ""
+            if fragment:
+                selector = f'a[href*="{fragment}"]'
+        selected_nodes = tree.cssselect(selector)
+        selected_lookup = {id(node): (text, href) for node, text, href in selected}
+        sample_items: list[dict[str, Any]] = []
+        for node in selected_nodes:
+            text = self._normalize_text(node.text_content())
+            href = urljoin(url, node.get("href", ""))
+            if matched and id(node) not in selected_lookup and not any(item[1] == text for item in matched):
+                continue
+            if text and href:
+                sample_items.append({"title": text, "url": href})
+            if len(sample_items) >= 20:
+                break
+        if not sample_items:
+            sample_items = [
+                {"title": text, "url": href}
+                for _, text, href in selected[:20]
+            ]
+
+        fields = [
+            InferredField(
+                name="title",
+                field_type="text",
+                relative_selector=selector,
+                sample=sample_items[0]["title"],
+                required=True,
+                global_selector=selector,
+                generic_supported=True,
+                adapter_supported=True,
+            ),
+            InferredField(
+                name="url",
+                field_type="href",
+                relative_selector=selector,
+                sample=sample_items[0]["url"],
+                required=True,
+                global_selector=selector,
+                generic_supported=True,
+                adapter_supported=True,
+            ),
+        ]
+        pagination = PaginationAnalysis(
+            type="page_number",
+            list_page=self._current_list_page(url),
+            start_page=1,
+            results_per_page=len(sample_items),
+            verified_pages=1,
+            max_pages=1,
+        )
+        template_name = self._build_template_name(url)
+        display_name = self._build_display_name(url)
+        template_dict = self._build_template_dict(
+            template_name=template_name,
+            display_name=display_name,
+            base_url=self._build_base_url(url),
+            list_page=pagination.list_page,
+            fields=fields,
+            detail_fields=[],
+            pagination=pagination,
+            mode="generic",
+        )
+        warnings = ["No repeated article container was found; generated a page-level link analysis"]
+        if matched:
+            warnings.append(f"Prompt matched navigation target: {matched[0][1]}")
+        return AnalysisResult(
+            url=url,
+            base_url=self._build_base_url(url),
+            domain=urlparse(url).hostname or "",
+            template_name=template_name,
+            display_name=display_name,
+            root_selector=selector,
+            fields=fields,
+            sample_items=sample_items,
+            pagination=pagination,
+            mode="generic_template",
+            template_dict=template_dict,
+            template_yaml=yaml.safe_dump(template_dict, allow_unicode=True, sort_keys=False),
+            adapter_code="",
+            warnings=warnings,
             detail_fields=[],
             acquisition=acquisition,
         )

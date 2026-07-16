@@ -22,7 +22,7 @@ from app.models.template import SiteTemplate
 from app.web.services.browser_renderer import browser_renderer
 from app.web.services.site_analyzer import AnalysisResult, SiteAnalyzer
 
-_MODEL_PATH = Path(__file__).resolve().parents[3] / "models" / "Qwen2.5-0.5B"
+_MODEL_PATH = Path(__file__).resolve().parents[3] / "models" / "Qwen" / "2.5-0.5B-Instruct"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 _ALLOWED_IMPORTS = {
     "__future__",
@@ -249,7 +249,12 @@ class TemplateAdapterAgent:
 
         analyzer = SiteAnalyzer()
         try:
-            result = await analyzer.analyze_html(preflight.normalized_url, preflight.html, prompt)
+            result = await analyzer.analyze_html(
+                preflight.normalized_url,
+                preflight.html,
+                prompt,
+                preflight.network_endpoints,
+            )
         finally:
             await analyzer.close()
 
@@ -258,7 +263,7 @@ class TemplateAdapterAgent:
         self._validate_template(result.template_yaml, preflight.host)
         self._validate_adapter(result.adapter_code, result.template_name)
         return result, {
-            "model": "Qwen2.5-0.5B",
+            "model": "Qwen2.5-0.5B-Instruct",
             "decision": decision,
             "requiresProxy": preflight.requires_proxy,
             "proxyMode": preflight.proxy_mode,
