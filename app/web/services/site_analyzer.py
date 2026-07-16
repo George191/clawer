@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import time
@@ -55,6 +56,13 @@ _DEFAULT_HEADERS = {
 }
 _MAX_PROBE_PAGE = 4096
 _PROBE_PAGES = (2, 3, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 3000, 4096)
+_PROMPT_FIELD_HINTS = {
+    "title": ("标题", "名称", "名字", "title", "name"),
+    "url": ("链接", "网址", "地址", "link", "url"),
+    "date": ("日期", "时间", "发布时间", "date", "time", "published"),
+    "summary": ("摘要", "简介", "描述", "正文", "内容", "summary", "description", "content"),
+    "thumbnail": ("图片", "封面", "缩略图", "image", "thumbnail", "cover"),
+}
 
 
 @dataclass
@@ -132,6 +140,27 @@ class PaginationAnalysis:
 
 
 @dataclass
+class AcquisitionAnalysis:
+    mode: str
+    recommended_transport: str
+    endpoint: str = ""
+    json_item_path: str = ""
+    evidence: list[str] = field(default_factory=list)
+    candidates: list[str] = field(default_factory=list)
+    sample_records: list[dict[str, Any]] = field(default_factory=list, repr=False)
+
+    def response_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "recommendedTransport": self.recommended_transport,
+            "endpoint": self.endpoint,
+            "jsonItemPath": self.json_item_path,
+            "evidence": self.evidence,
+            "candidates": self.candidates,
+        }
+
+
+@dataclass
 class AnalysisResult:
     url: str
     base_url: str
@@ -148,6 +177,7 @@ class AnalysisResult:
     adapter_code: str
     warnings: list[str]
     detail_fields: list[dict[str, Any]]
+    acquisition: AcquisitionAnalysis
     analyzed_at: float = field(default_factory=time.time)
 
     def fields_payload(self) -> list[dict[str, Any]]:
@@ -164,19 +194,36 @@ class SiteAnalyzer:
     async def fetch_listing_page(self, url: str) -> str:
         return await self._client.request_page(url, self._default_request())
 
-    async def analyze(self, url: str) -> AnalysisResult:
+    async def analyze(self, url: str, prompt: str = "") -> AnalysisResult:
         html = await self.fetch_listing_page(url)
-        return await self.analyze_html(url, html)
+        return await self.analyze_html(url, html, prompt)
 
-    async def analyze_html(self, url: str, html_text: str) -> AnalysisResult:
+    async def analyze_html(self, url: str, html_text: str, prompt: str = "") -> AnalysisResult:
+        barrier = self.detect_page_barrier(html_text)
+        if barrier:
+            raise ValueError(barrier)
         tree = lxml_html.fromstring(html_text, base_url=url)
+        acquisition = await self._analyze_acquisition(url, html_text, tree)
+        if acquisition.mode == "api":
+            return self._build_api_result(url, prompt, acquisition)
         root_selector, root_nodes = self._detect_root_selector(tree)
         if not root_selector or not root_nodes:
+            if acquisition.mode == "javascript":
+                raise ValueError(
+                    "The page is populated by JavaScript, but no verifiable JSON endpoint was found; "
+                    "browser network capture is required"
+                )
             raise ValueError("Unable to detect a repeated record container from the page")
 
         fields, sample_items = self._infer_fields(tree, root_selector, root_nodes, url)
         if not sample_items:
             raise ValueError("Unable to extract any sample records from the detected container")
+        fields = self._apply_prompt_intent(fields, prompt)
+        selected_names = {field.name for field in fields}
+        sample_items = [
+            {name: value for name, value in item.items() if name in selected_names}
+            for item in sample_items
+        ]
 
         detail_fields = await self._infer_detail_fields(sample_items)
         pagination = await self._detect_pagination(url, tree, root_selector, root_nodes)
@@ -214,6 +261,234 @@ class SiteAnalyzer:
             adapter_code=adapter_code,
             warnings=warnings,
             detail_fields=detail_fields,
+            acquisition=acquisition,
+        )
+
+    @staticmethod
+    def detect_page_barrier(html_text: str) -> str | None:
+        lowered = html_text.lower()
+        if "aliyunwaf_" in lowered or ('id="renderdata"' in lowered and "var arg1=" in lowered):
+            return (
+                "The site returned an Aliyun WAF challenge instead of page content; "
+                "browser rendering with an available proxy is required"
+            )
+        if "cf-chl-" in lowered or "challenge-platform" in lowered:
+            return (
+                "The site returned a Cloudflare challenge instead of page content; "
+                "browser rendering with an available proxy is required"
+            )
+        return None
+
+    @staticmethod
+    def _requested_field_names(prompt: str) -> set[str]:
+        intent = prompt.casefold().strip()
+        if not intent:
+            return set()
+        return {
+            name
+            for name, hints in _PROMPT_FIELD_HINTS.items()
+            if any(hint.casefold() in intent for hint in hints)
+        }
+
+    @classmethod
+    def _apply_prompt_intent(cls, fields: list[InferredField], prompt: str) -> list[InferredField]:
+        requested = cls._requested_field_names(prompt)
+        if not requested:
+            return fields
+        structural = {"title", "url"}
+        return [field for field in fields if field.name in structural or field.name in requested]
+
+    async def _analyze_acquisition(self, url: str, html_text: str, tree) -> AcquisitionAnalysis:
+        script_text = "\n".join(tree.xpath("//script[not(@src)]/text()"))
+        candidate_values: list[str] = []
+        for pattern in (
+            r"fetch\s*\(\s*['\"]([^'\"]+)['\"]",
+            r"axios\.(?:get|post)\s*\(\s*['\"]([^'\"]+)['\"]",
+            r"['\"](\/[^'\"\s]*(?:api|graphql)[^'\"\s]*)['\"]",
+        ):
+            candidate_values.extend(re.findall(pattern, script_text, flags=re.IGNORECASE))
+
+        page_host = (urlparse(url).hostname or "").lower()
+        candidates: list[str] = []
+        for raw in candidate_values:
+            candidate = urljoin(url, raw.replace("\\/", "/"))
+            parsed = urlparse(candidate)
+            if parsed.scheme not in {"http", "https"} or (parsed.hostname or "").lower() != page_host:
+                continue
+            if any(token in candidate for token in ("{", "}", "<", ">")):
+                continue
+            if candidate not in candidates:
+                candidates.append(candidate)
+
+        request = RequestConfig(
+            method="GET",
+            headers={**_DEFAULT_HEADERS, "Accept": "application/json, text/plain, */*", "Referer": url},
+            encoding="utf-8",
+        )
+        for candidate in candidates[:5]:
+            try:
+                response_text = await self._client.request_page(candidate, request, no_timeout=True)
+                payload = json.loads(response_text)
+            except Exception as exc:
+                logger.debug("Skip acquisition candidate %s: %s", candidate, exc)
+                continue
+            item_path, records = self._find_record_list(payload)
+            if records:
+                return AcquisitionAnalysis(
+                    mode="api",
+                    recommended_transport="json_api",
+                    endpoint=candidate,
+                    json_item_path=item_path,
+                    evidence=["Verified JSON response", f"Detected {len(records)} sample records"],
+                    candidates=candidates[:5],
+                    sample_records=records[:20],
+                )
+
+        embedded_json = bool(
+            tree.xpath("//script[@type='application/json' or @id='__NEXT_DATA__' or @id='__NUXT_DATA__']")
+        )
+        visible_text = self._normalize_text(tree.text_content())
+        script_count = len(tree.xpath("//script"))
+        if embedded_json:
+            return AcquisitionAnalysis(
+                mode="embedded_json",
+                recommended_transport="html_with_hydration_state",
+                evidence=["Detected framework hydration JSON in the HTML response"],
+                candidates=candidates[:5],
+            )
+        if script_count >= 3 and len(visible_text) < 200:
+            return AcquisitionAnalysis(
+                mode="javascript",
+                recommended_transport="browser_network_capture",
+                evidence=[f"Only {len(visible_text)} visible characters with {script_count} scripts"],
+                candidates=candidates[:5],
+            )
+        return AcquisitionAnalysis(
+            mode="static_html",
+            recommended_transport="html",
+            evidence=["Repeated record content is present in the initial HTML response"],
+            candidates=candidates[:5],
+        )
+
+    @classmethod
+    def _find_record_list(
+        cls,
+        value: Any,
+        path: str = "",
+        depth: int = 0,
+    ) -> tuple[str, list[dict[str, Any]]]:
+        if depth > 6:
+            return "", []
+        if isinstance(value, list) and len(value) >= 2 and all(isinstance(item, dict) for item in value[:5]):
+            return path, value
+        if not isinstance(value, dict):
+            return "", []
+        best_path = ""
+        best_records: list[dict[str, Any]] = []
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else str(key)
+            found_path, records = cls._find_record_list(child, child_path, depth + 1)
+            if len(records) > len(best_records):
+                best_path, best_records = found_path, records
+        return best_path, best_records
+
+    def _build_api_result(
+        self,
+        url: str,
+        prompt: str,
+        acquisition: AcquisitionAnalysis,
+    ) -> AnalysisResult:
+        records = acquisition.sample_records
+        scalar_keys = [
+            str(key)
+            for key, value in records[0].items()
+            if value is None or isinstance(value, (str, int, float, bool))
+        ][:20]
+        requested_names = self._requested_field_names(prompt)
+        if requested_names:
+            matching = [
+                key for key in scalar_keys
+                if any(
+                    hint.casefold() in key.casefold()
+                    for name in requested_names
+                    for hint in _PROMPT_FIELD_HINTS[name]
+                )
+            ]
+            if matching:
+                identity = [key for key in scalar_keys if key.casefold() in {"id", "url", "link", "title", "name"}]
+                scalar_keys = list(dict.fromkeys(identity + matching))
+        scalar_keys = scalar_keys[:12]
+        if not scalar_keys:
+            raise ValueError("The verified JSON endpoint did not expose scalar record fields")
+
+        fields: list[InferredField] = []
+        for index, key in enumerate(scalar_keys):
+            sample = records[0].get(key)
+            field_type = "boolean" if isinstance(sample, bool) else "number" if isinstance(sample, (int, float)) else "text"
+            fields.append(InferredField(
+                name=re.sub(r"[^a-zA-Z0-9_]+", "_", key).strip("_") or f"field_{index + 1}",
+                field_type=field_type,
+                relative_selector=key,
+                sample=None if sample is None else str(sample)[:200],
+                required=index == 0,
+                global_selector=key,
+                generic_supported=True,
+            ))
+
+        template_name = self._build_template_name(url)
+        display_name = self._build_display_name(url)
+        dedup_name = next((field.name for field in fields if field.name.casefold() in {"id", "url", "link"}), fields[0].name)
+        template_dict: dict[str, Any] = {
+            "name": template_name,
+            "display_name": display_name,
+            "base_url": self._build_base_url(url),
+            "data_type": "other",
+            "description": f"Auto-generated JSON API template for {display_name}",
+            "response_type": "json",
+            "json_item_path": acquisition.json_item_path,
+            "list_page": acquisition.endpoint,
+            "list_request": {
+                "method": "GET",
+                "headers": {**_DEFAULT_HEADERS, "Accept": "application/json, text/plain, */*", "Referer": url},
+                "encoding": "utf-8",
+            },
+            "dedup_fields": [dedup_name],
+            "list_fields": [
+                {
+                    "name": field.name,
+                    "selector": field.relative_selector,
+                    "selector_type": "json",
+                    "field_type": field.field_type,
+                    "required": field.required,
+                }
+                for field in fields
+            ],
+        }
+        pagination = PaginationAnalysis(
+            type="page_number",
+            list_page=acquisition.endpoint,
+            start_page=1,
+            results_per_page=len(records),
+            verified_pages=1,
+            max_pages=1,
+        )
+        return AnalysisResult(
+            url=url,
+            base_url=self._build_base_url(url),
+            domain=urlparse(url).hostname or "",
+            template_name=template_name,
+            display_name=display_name,
+            root_selector=acquisition.json_item_path,
+            fields=fields,
+            sample_items=records[:20],
+            pagination=pagination,
+            mode="generic_template",
+            template_dict=template_dict,
+            template_yaml=yaml.safe_dump(template_dict, allow_unicode=True, sort_keys=False),
+            adapter_code="",
+            warnings=["Verified JSON API selected instead of DOM parsing", "API pagination was not inferred"],
+            detail_fields=[],
+            acquisition=acquisition,
         )
 
     @staticmethod

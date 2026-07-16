@@ -162,6 +162,7 @@ async def _analyze_live(url: str, prompt: str = "") -> dict[str, Any]:
         "pagination": payload["pagination"],
         "sampleItems": result.sample_items,
         "warnings": result.warnings,
+        "acquisition": result.acquisition.response_dict(),
         "agent": agent_meta,
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -184,6 +185,7 @@ async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str
             "adapterPath": result["adapterPath"],
             "fields": result["fields"],
             "pagination": result["pagination"],
+            "acquisition": result["acquisition"],
             "agent": result["agent"],
         })
     except asyncio.CancelledError:

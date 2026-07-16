@@ -89,7 +89,7 @@ class LocalQwenPolicy:
             )
             self._model.eval()
 
-    def _decide_sync(self, result: AnalysisResult) -> dict[str, Any]:
+    def _decide_sync(self, result: AnalysisResult, prompt: str = "") -> dict[str, Any]:
         self._load()
         import torch
 
@@ -98,13 +98,15 @@ class LocalQwenPolicy:
             "response_type": result.template_dict.get("response_type", "html"),
             "requires_adapter": bool(result.adapter_code),
         }
-        prompt = (
+        model_prompt = (
             "Crawler artifact boundary review. Only template YAML and one matching Python adapter are allowed.\n"
+            f"User collection intent: {prompt.strip()[:1000] or 'not specified'}\n"
             f"Observed domain: {result.domain}\n"
+            f"Observed acquisition: {json.dumps(result.acquisition.response_dict(), ensure_ascii=False, sort_keys=True)}\n"
             f"Observed fields: {', '.join(field.name for field in result.fields)}\n"
             f"Closed decision: {json.dumps(decision, ensure_ascii=False, sort_keys=True)}"
         )
-        encoded = self._tokenizer(prompt, return_tensors="pt")
+        encoded = self._tokenizer(model_prompt, return_tensors="pt")
         with torch.inference_mode():
             scored = self._model(**encoded, labels=encoded["input_ids"])
         if not torch.isfinite(scored.loss):
@@ -177,6 +179,19 @@ class TemplateAdapterAgent:
                 checked_at=time.time(),
             )
 
+        barrier = SiteAnalyzer.detect_page_barrier(page_html)
+        if barrier:
+            return PreflightResult(
+                ok=False,
+                normalized_url=normalized,
+                host=host,
+                requires_proxy=requires_proxy,
+                proxy_mode=proxy_mode,
+                error_code="BROWSER_RENDER_REQUIRED",
+                error_message=barrier,
+                checked_at=time.time(),
+            )
+
         title, preview_html = self._build_preview(page_html, normalized)
         result = PreflightResult(
             ok=True,
@@ -192,7 +207,7 @@ class TemplateAdapterAgent:
         self._preflight_cache[normalized] = result
         return result
 
-    async def generate(self, url: str) -> tuple[AnalysisResult, dict[str, Any]]:
+    async def generate(self, url: str, prompt: str = "") -> tuple[AnalysisResult, dict[str, Any]]:
         preflight = self._preflight_cache.get(url)
         if preflight is None or not preflight.ok or time.time() - preflight.checked_at > 300:
             preflight = await self.preflight(url)
@@ -201,11 +216,11 @@ class TemplateAdapterAgent:
 
         analyzer = SiteAnalyzer()
         try:
-            result = await analyzer.analyze_html(preflight.normalized_url, preflight.html)
+            result = await analyzer.analyze_html(preflight.normalized_url, preflight.html, prompt)
         finally:
             await analyzer.close()
 
-        decision = await self._policy.decide(result)
+        decision = await self._policy.decide(result, prompt)
         self._validate_model_decision(result, decision)
         self._validate_template(result.template_yaml, preflight.host)
         self._validate_adapter(result.adapter_code, result.template_name)
@@ -215,6 +230,8 @@ class TemplateAdapterAgent:
             "requiresProxy": preflight.requires_proxy,
             "proxyMode": preflight.proxy_mode,
             "pageTitle": preflight.title,
+            "prompt": prompt.strip()[:2000],
+            "acquisition": result.acquisition.response_dict(),
         }
 
     def validate_template_document(self, template_yaml: str) -> dict[str, Any]:
