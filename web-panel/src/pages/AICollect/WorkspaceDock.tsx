@@ -552,11 +552,15 @@ const TaskPulseGlyph: React.FC<{ kind: SiteKind; active?: boolean; className?: s
   </span>
 );
 
-const SiteLogoMark: React.FC<{ site: SiteProfile; faviconUrl?: string }> = ({ site, faviconUrl }) => (
-  <i className="workspace-dock-meta-logo" style={{ '--brand-hue': site.hue } as React.CSSProperties} aria-hidden="true">
-    {(faviconUrl || site.faviconUrl) ? <img src={faviconUrl || site.faviconUrl} alt="" /> : site.logo}
-  </i>
-);
+const SiteLogoMark: React.FC<{ site: SiteProfile; faviconUrl?: string }> = ({ site, faviconUrl }) => {
+  const [failed, setFailed] = useState(false);
+  const source = faviconUrl || site.faviconUrl;
+  return (
+    <i className="workspace-dock-meta-logo" style={{ '--brand-hue': site.hue } as React.CSSProperties} aria-hidden="true">
+      {source && !failed ? <img src={source} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : site.logo}
+    </i>
+  );
+};
 
 const getTaskDisplay = (runtime: TaskRuntimeItem) => {
   if (runtime.controlState === 'canceled') {
@@ -2727,6 +2731,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           line-height: 1;
           letter-spacing: 0;
           flex-shrink: 0;
+        }
+        .workspace-dock-meta-logo img {
+          width: 100%;
+          height: 100%;
+          display: block;
+          object-fit: contain;
+          border-radius: inherit;
         }
         .workspace-dock-card-bar,
         .workspace-dock-marquee {
