@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 from io import BytesIO
 from pathlib import Path
-from typing import Any
 
 from app.config.settings import settings
 
@@ -19,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class MinioClient:
-    def __init__(self) -> None:
+    def __init__(self, bucket: str | None = None) -> None:
         self._client = None
-        self._bucket = settings.minio_bucket
+        self._bucket = bucket or settings.minio_bucket
 
     async def _ensure_connection(self) -> None:
         if self._client is not None:
@@ -199,3 +198,13 @@ def get_minio_client() -> MinioClient:
     if _minio_client is None:
         _minio_client = MinioClient()
     return _minio_client
+
+
+_business_metadata_minio_client: MinioClient | None = None
+
+
+def get_business_metadata_minio_client() -> MinioClient:
+    global _business_metadata_minio_client
+    if _business_metadata_minio_client is None:
+        _business_metadata_minio_client = MinioClient(settings.business_metadata_minio_bucket)
+    return _business_metadata_minio_client

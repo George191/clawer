@@ -14,7 +14,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config.settings import settings
-from app.storage.minio_client import get_minio_client
+from app.storage.minio_client import get_business_metadata_minio_client
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.platform_overview import build_platform_overview
 from app.web.services.template_agent import template_adapter_agent
@@ -459,7 +459,7 @@ async def workspace_template_icon(filename: str):
     icon = await ai_collect_store.get_template_icon(filename)
     if icon is None or not icon.get("favicon_object_key"):
         raise HTTPException(status_code=404, detail="Template icon not found")
-    content = await get_minio_client().get_object_bytes(str(icon["favicon_object_key"]))
+    content = await get_business_metadata_minio_client().get_object_bytes(str(icon["favicon_object_key"]))
     if not content:
         raise HTTPException(status_code=404, detail="Template icon not found")
     return Response(

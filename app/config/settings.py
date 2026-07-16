@@ -60,6 +60,7 @@ class AppSettings(BaseSettings):
     minio_access_key: str = Field(default="", description="MinIO Access Key")
     minio_secret_key: str = Field(default="", description="MinIO Secret Key")
     minio_bucket: str = Field(default="", description="MinIO存储桶名称")
+    business_metadata_minio_bucket: str = Field(default="business-metadata", description="业务元数据与制品存储桶")
     minio_secure: bool = Field(default=False, description="MinIO是否使用HTTPS")
 
     kafka_brokers: str = Field(default="", description="Kafka Broker地址, 多个以逗号分隔")

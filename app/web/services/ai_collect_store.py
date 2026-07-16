@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import yaml
 from curl_cffi import requests as curl_requests
+from lxml import html as lxml_html
 
 from app.config.settings import settings
-from app.storage.minio_client import get_minio_client
+from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
-
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
@@ -152,7 +151,8 @@ class AICollectStore:
             query += " WHERE id = CAST(:id AS uuid)"
             params["id"] = template_id
         rows = await self._pg.fetch_all(query, params)
-        minio = get_minio_client()
+        minio = get_business_metadata_minio_client()
+        favicon_cache: dict[str, tuple[bytes, str]] = {}
         async with curl_requests.AsyncSession(
             impersonate="chrome120",
             timeout=30,
@@ -162,7 +162,7 @@ class AICollectStore:
             for row in rows:
                 safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row["name"])).strip("._") or "template"
                 safe_version = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row["version"])).strip("._") or "v1"
-                object_prefix = f"ai-collect/templates/{safe_name}/{safe_version}"
+                object_prefix = f"collection/templates/{safe_name}/{safe_version}"
                 template_bytes = str(row["yaml_content"]).encode("utf-8")
                 template_key = f"{object_prefix}/template.yaml"
                 await minio.upload_bytes_to_key(template_bytes, template_key, "application/yaml")
@@ -178,19 +178,42 @@ class AICollectStore:
                     favicon_bytes = existing_local_path.read_bytes()
                 if favicon_bytes is None and row.get("favicon_object_key"):
                     favicon_bytes = await minio.get_object_bytes(str(row["favicon_object_key"]))
+                cache_key = parsed_base_url.hostname or str(row.get("domain") or "")
+                if favicon_bytes is None and cache_key in favicon_cache:
+                    favicon_bytes, favicon_mime = favicon_cache[cache_key]
                 if not source_url.startswith(("http://", "https://")) or "{" in source_url:
                     if parsed_base_url.scheme and parsed_base_url.netloc:
                         source_url = f"{parsed_base_url.scheme}://{parsed_base_url.netloc}/favicon.ico"
                     elif row.get("domain") and "{" not in str(row["domain"]):
                         source_url = f"https://{row['domain']}/favicon.ico"
-                if favicon_bytes is None and source_url.startswith(("http://", "https://")):
-                    try:
-                        response = await client.get(source_url)
-                        response.raise_for_status()
-                        favicon_bytes = response.content
-                        favicon_mime = response.headers.get("content-type", "image/x-icon").split(";", 1)[0].strip()
-                    except Exception:
-                        favicon_bytes = None
+                if favicon_bytes is None:
+                    candidates = [source_url] if source_url.startswith(("http://", "https://")) else []
+                    if parsed_base_url.scheme and parsed_base_url.netloc:
+                        try:
+                            page_response = await client.get(resolved_base_url)
+                            page_response.raise_for_status()
+                            tree = lxml_html.fromstring(page_response.text, base_url=resolved_base_url)
+                            icon_href = next(iter(tree.xpath("//link[contains(translate(@rel, 'ICON', 'icon'), 'icon')]/@href")), "")
+                            if icon_href:
+                                candidates.insert(0, urljoin(resolved_base_url, icon_href))
+                        except Exception:
+                            pass
+                    if cache_key:
+                        candidates.append(f"https://icon.horse/icon/{cache_key}")
+                    for candidate in dict.fromkeys(candidates):
+                        try:
+                            response = await client.get(candidate)
+                            response.raise_for_status()
+                            candidate_bytes = response.content
+                            if not candidate_bytes or len(candidate_bytes) > 1024 * 1024:
+                                continue
+                            favicon_bytes = candidate_bytes
+                            favicon_mime = response.headers.get("content-type", "image/x-icon").split(";", 1)[0].strip()
+                            if cache_key:
+                                favicon_cache[cache_key] = (favicon_bytes, favicon_mime)
+                            break
+                        except Exception:
+                            continue
                 favicon_key = str(row.get("favicon_object_key") or "")
                 if favicon_bytes and len(favicon_bytes) <= 1024 * 1024:
                     if not favicon_mime.startswith("image/"):
@@ -328,7 +351,7 @@ class AICollectStore:
 
     async def update_template(self, template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         await self.initialize()
-        return await self._pg.fetch_one(
+        row = await self._pg.fetch_one(
             """
             UPDATE public.ai_collect_templates SET
                 yaml_content = :yaml_content,
@@ -341,6 +364,13 @@ class AICollectStore:
             """,
             {"id": template_id, **payload},
         )
+        if row is not None:
+            await self._sync_minio_artifacts(template_id)
+            row = await self._pg.fetch_one(
+                "SELECT * FROM public.ai_collect_templates WHERE id = CAST(:id AS uuid)",
+                {"id": template_id},
+            )
+        return row
 
     async def release_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()
@@ -368,7 +398,12 @@ class AICollectStore:
         )
         if row is None:
             raise RuntimeError("Template release did not return a row")
-        return row
+        await self._sync_minio_artifacts(row["id"])
+        synced = await self._pg.fetch_one(
+            "SELECT * FROM public.ai_collect_templates WHERE id = :id",
+            {"id": row["id"]},
+        )
+        return synced or row
 
     async def list_tasks(self) -> list[dict[str, Any]]:
         await self.initialize()

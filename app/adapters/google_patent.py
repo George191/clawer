@@ -47,15 +47,15 @@ class GooglePatentAdapter(BaseSiteAdapter):
             http_client=self._client,
             site=self.adapter_name,
         )
-        # self._session = PageSession()
+        self._session = PageSession()
 
-    # @property
-    # def emitter(self) -> BrowserEventEmitter:
-    #     return self._emitter
+    @property
+    def emitter(self) -> BrowserEventEmitter:
+        return self._emitter
 
-    # @property
-    # def session(self) -> PageSession:
-    #     return self._session
+    @property
+    def session(self) -> PageSession:
+        return self._session
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。参数值已在 main.py 中组装完毕（+OR+ 拼接），无需额外处理。"""
@@ -68,20 +68,19 @@ class GooglePatentAdapter(BaseSiteAdapter):
         - 首页：已在 on_before_crawl 发送
         - 翻页：URL_CHANGE → PAGE_CHANGE
         """
-        # if is_first:
-        #     return
+        if is_first:
+            return
 
-        # # 1. SPA pushState → URL 变化事件
-        # await self._emitter.emit_url_change(self._session)
-        # # 2. 翻页操作信令
-        # await self._emitter.emit_page_change(self._session)
-        # logger.debug(
-        #     "[GooglePatentAdapter] Page %d events sent: peid=%s, eid=%s",
-        #     page,
-        #     self._session.peid[:20],
-        #     self._session.eid[:20],
-        # )
-        ...
+        # 1. SPA pushState → URL 变化事件
+        await self._emitter.emit_url_change(self._session)
+        # 2. 翻页操作信令
+        await self._emitter.emit_page_change(self._session)
+        logger.debug(
+            "[GooglePatentAdapter] Page %d events sent: peid=%s, eid=%s",
+            page,
+            self._session.peid[:20],
+            self._session.eid[:20],
+        )
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """每页数据返回后：过滤相似文档。"""
@@ -100,13 +99,12 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     def on_page_advance(self) -> None:
         """翻页状态推进：peid 继承 eid，生成新 eid。"""
-        # self._session.advance_page()
-        # logger.debug(
-        #     "[GooglePatentAdapter] Page advanced: new peid=%s, new eid=%s",
-        #     self._session.peid[:20],
-        #     self._session.eid[:20],
-        # )
-        ...
+        self._session.advance_page()
+        logger.debug(
+            "[GooglePatentAdapter] Page advanced: new peid=%s, new eid=%s",
+            self._session.peid[:20],
+            self._session.eid[:20],
+        )
 
     def on_request_headers(self, page: int) -> dict[str, str]:
         """注入 Google Patents 特有请求头。"""
@@ -130,7 +128,7 @@ class GooglePatentAdapter(BaseSiteAdapter):
                 "Rate limited on page %d; resetting session",
                 page,
             )
-            # self._session = PageSession()
+            self._session = PageSession()
             return "reset_session"
         if "captcha" in error_str.lower():
             logger.error(
@@ -142,8 +140,7 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     async def close(self) -> None:
         """释放 emitter 资源。"""
-        # await self._emitter.close()
-        ...
+        await self._emitter.close()
 
     @classmethod
     def build_batch_param_value(cls, batch_data: list[str], param_name: str = "") -> str:
