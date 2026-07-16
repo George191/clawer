@@ -1128,6 +1128,7 @@ const AICollect: React.FC = () => {
   const [inspectorAnimating, setInspectorAnimating] = useState(false);
   const templateScrollRef = useRef<HTMLDivElement | null>(null);
   const templateStageSectionRefs = useRef<Partial<Record<TemplateStageId, HTMLElement | null>>>({});
+  const browserFollowViewportRef = useRef<HTMLDivElement | null>(null);
   const inspectorTransitionTimerRef = useRef<number | null>(null);
   const releaseExitTimerRef = useRef<number | null>(null);
 
@@ -1135,6 +1136,15 @@ const AICollect: React.FC = () => {
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
   const qualityScore = mode === 'publish' ? 94 : mode === 'dryrun' ? 86 : mode === 'contract' ? 88 : 92;
   const activeStepIndex = processStepOrder.indexOf(activeProcessStep);
+  const browserFollowRatio = Math.max(0, activeStepIndex) / (processStepOrder.length - 1);
+  const scrollBrowserPreviewToAnalysis = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    window.requestAnimationFrame(() => {
+      const viewport = browserFollowViewportRef.current;
+      if (!viewport) return;
+      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      viewport.scrollTo({ top: maxScrollTop * browserFollowRatio, behavior });
+    });
+  }, [browserFollowRatio]);
   const activeTemplate = useMemo(() => {
     if (!templateCatalog.length) return { id: 'empty', fileName: 'empty.yaml', displayName: 'Template', entries: [], raw: '' };
 
@@ -1581,6 +1591,12 @@ const AICollect: React.FC = () => {
   useEffect(() => {
     setExpandedStep(mode);
   }, [mode]);
+
+  useEffect(() => {
+    if (sideInspectorOpen && activeInspectorTab?.kind === 'browser' && urlPreflight?.previewImage) {
+      scrollBrowserPreviewToAnalysis();
+    }
+  }, [activeInspectorTab?.kind, scrollBrowserPreviewToAnalysis, sideInspectorOpen, urlPreflight?.previewImage]);
 
   useEffect(() => {
     if (!hasSession) {
@@ -3405,12 +3421,13 @@ const AICollect: React.FC = () => {
         <div className="ai-session-inspector-body">
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
-              <div className="ai-session-inspector-browser-frame">
+              <div className="ai-session-inspector-browser-frame" ref={browserFollowViewportRef}>
                 {urlPreflight?.previewImage ? (
                   <img
                     className="ai-browser-render-image"
                     src={urlPreflight.previewImage}
                     alt={`${activeInspectorTab.title} Chrome 页面预览`}
+                    onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
                   />
                 ) : urlPreflight?.previewHtml ? (
                   <iframe
@@ -5986,6 +6003,9 @@ const AICollect: React.FC = () => {
           .ai-session-inspector-browser-frame {
             flex: 1 1 auto;
             min-height: 420px;
+            overflow-x: hidden;
+            overflow-y: auto;
+            scrollbar-gutter: stable;
           }
           .ai-session-inspector-browser-frame iframe {
             width: 100%;
@@ -6242,7 +6262,8 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             gap: 10px;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: auto;
           }
           .ai-side-browser-frame {
             width: 100%;
@@ -6255,8 +6276,8 @@ const AICollect: React.FC = () => {
             display: block;
             width: 100%;
             height: auto;
-            min-height: 100%;
-            object-fit: cover;
+            max-width: 100%;
+            object-fit: contain;
             object-position: top center;
             background: #fff;
           }

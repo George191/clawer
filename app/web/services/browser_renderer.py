@@ -84,7 +84,7 @@ class BrowserRenderer:
                     raise ValueError("Browser navigation escaped the HTTP/HTTPS boundary")
                 html = await page.content()
                 favicon_href = await page.locator('link[rel~="icon"]').last.get_attribute("href") if await page.locator('link[rel~="icon"]').count() else ""
-                screenshot = await page.screenshot(type="jpeg", quality=78, full_page=False)
+                screenshot = await page.screenshot(type="jpeg", quality=78, full_page=True)
                 return BrowserRenderResult(
                     url=final_url,
                     title=await page.title(),

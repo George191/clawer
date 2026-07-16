@@ -189,6 +189,158 @@ const extractTemplateDataType = (yaml: string) => (
   yaml.match(/^\s*data_type\s*:\s*['"]?([^'"\r\n#]+)['"]?/m)?.[1]?.trim() || 'other'
 );
 
+type TemplatePreviewStage = 'site' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
+
+interface TemplatePreviewEntry {
+  id: string;
+  key: string;
+  value: string;
+  depth: number;
+  group: boolean;
+  stage: TemplatePreviewStage;
+}
+
+const templatePreviewStages: Array<{ id: TemplatePreviewStage; title: string; description: string }> = [
+  { id: 'site', title: 'Site', description: 'base url, source identity and crawler baseline' },
+  { id: 'request', title: 'Request', description: 'request method, query params and fetch contract' },
+  { id: 'response', title: 'Response', description: 'response type and result path resolution' },
+  { id: 'pagination', title: 'Pagination', description: 'page turning strategy and continuation cursor' },
+  { id: 'fields', title: 'Fields', description: 'list/detail fields, selectors and output schema' },
+  { id: 'dedup', title: 'Dedup', description: 'unique fields and record identity contract' },
+  { id: 'download', title: 'Download', description: 'asset selectors, file types and download policy' },
+];
+
+const inferTemplatePreviewStage = (key: string, path: string): TemplatePreviewStage => {
+  if (path === 'batch_params' || path.startsWith('batch_params.') || path === 'params' || path.startsWith('params') || key === 'list_page' || path.startsWith('list_request')) return 'request';
+  if (path === 'list_pagination' || path.startsWith('list_pagination.')) return 'pagination';
+  if (path === 'dedup_fields' || path.startsWith('dedup_fields')) return 'dedup';
+  if (path === 'download' || path.startsWith('download')) return 'download';
+  if (path === 'list_fields' || path.startsWith('list_fields')) return 'fields';
+  if (['name', 'display_name', 'base_url', 'data_type', 'adapter', 'anti_crawl_enabled', 'description'].includes(path)) return 'site';
+  if (['response_type', 'json_item_path', 'json_total_path', 'json_page_path', 'json_total_num_pages'].includes(key)) return 'response';
+  return 'fields';
+};
+
+const parseTemplatePreviewEntries = (raw: string): TemplatePreviewEntry[] => {
+  const entries: TemplatePreviewEntry[] = [];
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const pathStack: Array<{ indent: number; path: string }> = [];
+  const listIndexes = new Map<string, number>();
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    while (pathStack.length && pathStack[pathStack.length - 1].indent >= indent) pathStack.pop();
+    const parentPath = pathStack[pathStack.length - 1]?.path ?? '';
+    const depth = Math.max(0, Math.floor(indent / 2));
+
+    if (trimmed.startsWith('- ')) {
+      const listKey = `${parentPath}@${indent}`;
+      const itemIndex = (listIndexes.get(listKey) ?? -1) + 1;
+      const itemPath = `${parentPath || 'list'}[${itemIndex}]`;
+      listIndexes.set(listKey, itemIndex);
+      const itemValue = trimmed.slice(2).trim();
+      const childMatch = itemValue.match(/^([A-Za-z_][\w-]*):(?:\s*(.*))?$/);
+      if (childMatch) {
+        entries.push({
+          id: itemPath,
+          key: itemPath,
+          value: '',
+          depth,
+          group: true,
+          stage: inferTemplatePreviewStage(parentPath.split('.').pop() ?? parentPath, itemPath),
+        });
+        const childPath = `${itemPath}.${childMatch[1]}`;
+        const childValue = (childMatch[2] ?? '').trim();
+        entries.push({
+          id: childPath,
+          key: childPath,
+          value: childValue || 'null',
+          depth: depth + 1,
+          group: !childValue,
+          stage: inferTemplatePreviewStage(childMatch[1], childPath),
+        });
+        pathStack.push({ indent, path: itemPath });
+        if (!childValue) pathStack.push({ indent: indent + 2, path: childPath });
+      } else {
+        entries.push({
+          id: itemPath,
+          key: itemPath,
+          value: itemValue || 'null',
+          depth,
+          group: false,
+          stage: inferTemplatePreviewStage(parentPath.split('.').pop() ?? parentPath, itemPath),
+        });
+      }
+      continue;
+    }
+
+    const keyMatch = trimmed.match(/^([A-Za-z_][\w-]*):(?:\s*(.*))?$/);
+    if (!keyMatch) continue;
+    const key = keyMatch[1];
+    const value = (keyMatch[2] ?? '').trim();
+    const path = parentPath ? `${parentPath}.${key}` : key;
+    entries.push({
+      id: path,
+      key: path,
+      value: value || 'null',
+      depth,
+      group: !value,
+      stage: inferTemplatePreviewStage(key, path),
+    });
+    if (!value) pathStack.push({ indent, path });
+  }
+
+  return entries;
+};
+
+const renderCompactTemplatePreview = (yaml: string) => {
+  const entries = parseTemplatePreviewEntries(yaml);
+  return (
+    <div className="workspace-dock-template-preview">
+      {templatePreviewStages.map((stage) => {
+        const stageEntries = entries.filter((entry) => entry.stage === stage.id);
+        if (!stageEntries.length) return null;
+        return (
+          <section className="ai-template-stage-section" key={stage.id}>
+            <div className="ai-template-stage-head">
+              <div className="ai-template-stage-copy">
+                <span className="ai-template-stage-title">{stage.title}</span>
+                <small>{stage.description}</small>
+              </div>
+              <div className="ai-template-stage-actions">
+                <span>{stageEntries.filter((entry) => !entry.group).length}</span>
+              </div>
+            </div>
+            <div className="ai-template-stage-body">
+              {stageEntries.map((entry) => {
+                const label = entry.key.split('.').pop()?.replace(/^([a-z_]+)\[(\d+)\]$/, '$1 $2') ?? entry.key;
+                return (
+                  <div
+                    className={`ai-template-field ${entry.group ? 'is-group' : ''}`}
+                    key={entry.id}
+                    style={{ ['--ai-template-depth' as string]: String(entry.depth) }}
+                  >
+                    <div className="ai-template-field-key"><span>{label}</span></div>
+                    {entry.group ? null : (
+                      <div className={`ai-template-field-value ${label === 'description' ? 'is-rich' : ''}`}>
+                        <pre>{entry.value.replace(/^['"]|['"]$/g, '')}</pre>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+};
+
 const taskComposerModeMeta: Record<TaskComposerMode, { label: string }> = {
   once: { label: '一次性任务' },
   recurring: { label: '周期任务' },
@@ -2007,15 +2159,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               ))}
             </div>
 
-            <div className="workspace-dock-code-panel">
-              <small>YAML</small>
-              <pre>{selectedTemplateDraft.yaml}</pre>
-            </div>
-
-            <div className="workspace-dock-note-panel">
-              <small>Description</small>
-              <p>{selectedTemplateDraft.notes}</p>
-            </div>
+            {renderCompactTemplatePreview(selectedTemplateDraft.yaml)}
 
             <div className="workspace-dock-detail-actions">
               <span>Last modified {formatDateTime(selectedTemplateDraft.savedAt)}</span>
@@ -2065,15 +2209,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 value={selectedTemplateDraft.yaml}
                 onChange={(event) => updateTemplateDraft(selectedTemplate.key, { yaml: event.target.value })}
                 autoSize={{ minRows: 6, maxRows: 10 }}
-              />
-            </label>
-
-            <label className="workspace-dock-form-block">
-              <span>Description</span>
-              <TextArea
-                value={selectedTemplateDraft.notes}
-                onChange={(event) => updateTemplateDraft(selectedTemplate.key, { notes: event.target.value })}
-                autoSize={{ minRows: 3, maxRows: 6 }}
               />
             </label>
 
@@ -3007,6 +3142,52 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           flex-wrap: wrap;
           gap: 6px;
+        }
+        .workspace-dock-template-preview {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 10px;
+          border-radius: 9px;
+          border: 1px solid ${aura.borderSoft};
+          background: rgba(255, 255, 255, 0.025);
+        }
+        .workspace-dock-template-preview .ai-template-stage-section {
+          gap: 5px;
+          padding-bottom: 7px;
+        }
+        .workspace-dock-template-preview .ai-template-stage-copy {
+          gap: 1px;
+        }
+        .workspace-dock-template-preview .ai-template-stage-title {
+          font-size: 10px;
+        }
+        .workspace-dock-template-preview .ai-template-stage-copy small,
+        .workspace-dock-template-preview .ai-template-stage-actions {
+          font-size: 8px;
+        }
+        .workspace-dock-template-preview .ai-template-stage-body {
+          gap: 3px;
+          padding: 2px 4px;
+        }
+        .workspace-dock-template-preview .ai-template-field {
+          --ai-template-indent: calc(var(--ai-template-depth, 0) * 8px);
+          grid-template-columns: minmax(104px, 132px) minmax(0, 1fr);
+          gap: 4px 7px;
+          padding: 1px 4px 1px 0;
+          padding-left: var(--ai-template-indent);
+        }
+        .workspace-dock-template-preview .ai-template-field.is-group {
+          padding-left: var(--ai-template-indent);
+        }
+        .workspace-dock-template-preview .ai-template-field-key span,
+        .workspace-dock-template-preview .ai-template-field-value pre,
+        .workspace-dock-template-preview .ai-template-field.is-group .ai-template-field-key span {
+          font-size: 9px;
+          line-height: 1.35;
+        }
+        .workspace-dock-template-preview .ai-template-field-value {
+          min-height: 16px;
         }
                 .workspace-dock-code-panel pre {
           margin: 8px 0 0;
