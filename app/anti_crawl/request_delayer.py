@@ -59,10 +59,16 @@ class RequestDelayer:
         if not self.enabled:
             return
 
+        domain = urlparse(url).hostname if url else None
+
         # 1. 随机延迟
         if self.delay_min > 0 or self.delay_max > 0:
             sleep_time = random.uniform(self.delay_min, max(self.delay_min, self.delay_max))
             if sleep_time > 0:
+                logger.debug(
+                    "[DELAY] Random delay for %s: %.2fs (min=%.2f, max=%.2f)",
+                    domain or "unknown", sleep_time, self.delay_min, self.delay_max
+                )
                 await asyncio.sleep(sleep_time)
 
         # 2. 域名级限速
@@ -90,12 +96,12 @@ class RequestDelayer:
         if rate is None or rate <= 0:
             return
 
+        wait_time: float | None = None
         now = time.monotonic()
         async with self._lock:
             bucket = self._buckets.get(domain)
 
             if bucket is None:
-                # 初始化令牌桶：容量 = rate，满桶启动
                 bucket = {
                     "tokens": float(rate),
                     "last_refill": now,
@@ -104,7 +110,6 @@ class RequestDelayer:
                 }
                 self._buckets[domain] = bucket
 
-            # 补充令牌
             elapsed = now - bucket["last_refill"]
             bucket["tokens"] = min(
                 bucket["capacity"],
@@ -112,21 +117,16 @@ class RequestDelayer:
             )
             bucket["last_refill"] = now
 
-            # 消耗令牌
             if bucket["tokens"] >= 1.0:
                 bucket["tokens"] -= 1.0
             else:
-                # 需要等待：计算等待时间 (token 不足 1 个)
                 wait_time = (1.0 - bucket["tokens"]) / bucket["rate"]
                 bucket["tokens"] = 0.0
-                # 释放锁后等待
-                pass
 
-        if "wait_time" in dir() and isinstance(wait_time, float) and wait_time > 0:
+        if wait_time is not None and wait_time > 0:
             logger.debug("Rate limiting %s: waiting %.2fs", domain, wait_time)
             await asyncio.sleep(wait_time)
 
-            # 等待后重新消耗令牌
             now = time.monotonic()
             async with self._lock:
                 bucket = self._buckets[domain]

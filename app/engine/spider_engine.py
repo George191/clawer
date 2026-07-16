@@ -425,16 +425,45 @@ class SpiderEngine:
                     "headers": {**template.list_request.headers, **extra_headers}
                 }) if extra_headers else template.list_request
 
+                url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
+                logger.debug(
+                    "[Page %d attempt %d] Fetching URL: %s",
+                    page, attempt, url_display
+                )
+
                 text = await self._client.request_page(
                     url, list_request,
                     anti_crawl_enabled=template.effective_anti_crawl_enabled,
                 )
+
+                logger.debug(
+                    "[Page %d attempt %d] Response received: %d chars",
+                    page, attempt, len(text) if text else 0
+                )
+
+                if not text:
+                    logger.warning(
+                        "[Page %d attempt %d] Empty response received",
+                        page, attempt
+                    )
+                    raise ValueError("Empty response")
+
                 json_data = json.loads(text)
+
+                logger.debug(
+                    "[Page %d attempt %d] JSON parsed successfully",
+                    page, attempt
+                )
 
                 records = self._parser.parse_list_json(
                     json_data, item_path, template.list_fields
                 )
                 records = await adapter.on_after_page(page, records)
+
+                logger.info(
+                    "[Page %d attempt %d] Parsed %d records",
+                    page, attempt, len(records)
+                )
 
                 # 仅第一页提取分页元数据
                 if is_first and template.json_total_path:
@@ -442,6 +471,10 @@ class SpiderEngine:
                     if total_val is not None:
                         try:
                             total_records = int(total_val)
+                            logger.debug(
+                                "[Page %d] Total records from API: %d",
+                                page, total_records
+                            )
                         except (ValueError, TypeError):
                             pass
 
@@ -452,25 +485,45 @@ class SpiderEngine:
                     if api_pages_val is not None:
                         try:
                             total_pages_from_api = int(api_pages_val)
+                            logger.debug(
+                                "[Page %d] Total pages from API: %d",
+                                page, total_pages_from_api
+                            )
                         except (ValueError, TypeError):
                             pass
 
                 page_succeeded = True
                 break
 
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
+                logger.error(
+                    "[Page %d attempt %d] JSON decode error: %s, response: %s",
+                    page, attempt, str(e), text[:200] if text else "empty"
+                )
                 await self._client.mark_last_proxy_failed()
 
             except Exception as e:
+                logger.error(
+                    "[Page %d attempt %d] Error: %s (%s)",
+                    page, attempt, str(e), type(e).__name__
+                )
 
                 adapter_action = await adapter.on_error(e, page, attempt)
                 if adapter_action == "abort":
                     result.errors.append(f"List page {page}: {e}")
                     return page, [], None, None, True
                 elif adapter_action == "reset_session":
+                    logger.info(
+                        "[Page %d attempt %d] Resetting session and retrying",
+                        page, attempt
+                    )
                     await adapter.on_before_crawl(template)
                     continue
                 elif adapter_action == "skip":
+                    logger.info(
+                        "[Page %d attempt %d] Skipping page per adapter",
+                        page, attempt
+                    )
                     page_skipped = True
                     page_succeeded = True
                     break
@@ -478,7 +531,7 @@ class SpiderEngine:
 
         if not page_succeeded:
             logger.error(
-                "Page %d failed after %d attempts, skipping",
+                "[Page %d] Failed after %d attempts, skipping",
                 page, settings.http_max_retries,
             )
             result.errors.append(f"List page {page}: exceeded retries")

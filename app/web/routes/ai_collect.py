@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from app.config.settings import settings
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.platform_overview import build_platform_overview
-from app.web.services.site_analyzer import SiteAnalyzer
+from app.web.services.template_agent import template_adapter_agent
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,10 @@ class GenerateTemplateRequest(BaseModel):
     options: GenerateOptions | None = None
 
 
+class UrlPreflightRequest(BaseModel):
+    url: str
+
+
 class DryRunRequest(BaseModel):
     templateId: str = Field(..., alias="templateId")
     limit: int = Field(default=20)
@@ -91,6 +95,7 @@ class WorkspaceTaskRequest(BaseModel):
 
 
 class WorkspaceReleaseRequest(BaseModel):
+    analysisId: str | None = None
     name: str
     version: str = "v1.0"
     title: str
@@ -132,11 +137,7 @@ AI_COLLECT_SCOPE = _load_ai_collect_scope()
 
 
 async def _analyze_live(url: str) -> dict[str, Any]:
-    analyzer = SiteAnalyzer()
-    try:
-        result = await analyzer.analyze(url)
-    finally:
-        await analyzer.close()
+    result, agent_meta = await template_adapter_agent.generate(url)
 
     template_id = f"tpl_{int(time.time() * 1000)}"
     payload = {
@@ -161,6 +162,7 @@ async def _analyze_live(url: str) -> dict[str, Any]:
         "pagination": payload["pagination"],
         "sampleItems": result.sample_items,
         "warnings": result.warnings,
+        "agent": agent_meta,
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
@@ -182,6 +184,7 @@ async def _analyze_stream_live(url: str) -> AsyncGenerator[str, None]:
             "adapterPath": result["adapterPath"],
             "fields": result["fields"],
             "pagination": result["pagination"],
+            "agent": result["agent"],
         })
     except asyncio.CancelledError:
         logger.info("SSE connection cancelled for %s", url)
@@ -382,6 +385,11 @@ async def _analyze_stream(url: str) -> AsyncGenerator[str, None]:
         yield _event("error", {"code": "AI_ERROR", "message": str(e)})
 
 
+@router.post("/ai/preflight")
+async def preflight_url(body: UrlPreflightRequest):
+    return (await template_adapter_agent.preflight(body.url)).public_payload()
+
+
 @router.get("/ai/analyze-stream")
 async def analyze_stream(url: str, request: Request):
     if not url:
@@ -443,13 +451,42 @@ async def workspace_templates():
 async def workspace_template_release(body: WorkspaceReleaseRequest):
     if body.status not in {"active", "draft", "deprecated"}:
         raise HTTPException(status_code=400, detail="Invalid template status")
-    template = await ai_collect_store.release_template(body.model_dump(exclude={"task"}))
+    try:
+        template_adapter_agent.validate_release_artifacts(
+            body.yaml_content,
+            body.name,
+            body.domain,
+            body.adapter,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    artifacts: dict[str, str] | None = None
+    if body.status == "active":
+        if not body.analysisId:
+            raise HTTPException(status_code=400, detail="Published artifacts require analysisId")
+        analysis = await ai_collect_store.get_analysis(body.analysisId)
+        if analysis is None or analysis.get("template_name") != body.name:
+            raise HTTPException(status_code=400, detail="Release does not match its analyzed artifact")
+        adapter_code = str(analysis.get("adapter_code") or "")
+        if bool(adapter_code) != bool(body.adapter):
+            raise HTTPException(status_code=400, detail="Adapter path does not match analyzed adapter output")
+        try:
+            artifacts = template_adapter_agent.publish_artifacts(body.yaml_content, adapter_code)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    template = await ai_collect_store.release_template(
+        body.model_dump(exclude={"task", "analysisId"})
+    )
     task = await ai_collect_store.create_task(body.task.model_dump()) if body.task else None
-    return {"template": template, "task": task}
+    return {"template": template, "task": task, "artifacts": artifacts}
 
 
 @router.put("/ai/workspace/templates/{template_id}")
 async def workspace_template_update(template_id: str, body: WorkspaceTemplateUpdateRequest):
+    try:
+        template_adapter_agent.validate_template_document(body.yaml_content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     template = await ai_collect_store.update_template(template_id, body.model_dump())
     if template is None:
         raise HTTPException(status_code=404, detail="Template not found")

@@ -175,6 +175,18 @@ export interface SSECompleteEvent {
   adapterCode?: string;
 }
 
+export interface UrlPreflightResponse {
+  ok: boolean;
+  normalizedUrl: string;
+  host: string;
+  title: string;
+  requiresProxy: boolean;
+  proxyMode: 'direct' | 'configured_proxy';
+  previewHtml: string;
+  errorCode: string;
+  errorMessage: string;
+}
+
 export interface WorkspaceTemplate {
   id: string;
   name: string;
@@ -231,6 +243,7 @@ export interface WorkspaceTaskPayload {
 }
 
 export interface WorkspaceReleasePayload {
+  analysisId?: string;
   name: string;
   version: string;
   title: string;
@@ -252,6 +265,9 @@ export function createAnalyzeStream(url: string): EventSource {
     `/api/ai/analyze-stream?url=${encodeURIComponent(url)}`,
   );
 }
+
+export const preflightUrl = (url: string): Promise<UrlPreflightResponse> =>
+  client.post('/ai/preflight', { url }).then((r) => r.data);
 
 /** 生成模板 */
 export const generateTemplate = (
@@ -288,7 +304,7 @@ export const updateWorkspaceTemplate = (
 
 export const releaseWorkspaceTemplate = (
   data: WorkspaceReleasePayload,
-): Promise<{ template: WorkspaceTemplate; task: WorkspaceTask | null }> =>
+): Promise<{ template: WorkspaceTemplate; task: WorkspaceTask | null; artifacts: { template: string; adapter: string } | null }> =>
   client.post('/ai/workspace/templates/release', data).then((r) => r.data);
 
 export const fetchWorkspaceTasks = (): Promise<WorkspaceTask[]> =>

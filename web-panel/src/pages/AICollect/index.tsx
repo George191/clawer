@@ -41,6 +41,7 @@ import {
   SaveOutlined,
   SearchOutlined,
   StopOutlined,
+  SyncOutlined,
   ThunderboltOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
@@ -49,10 +50,12 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import {
   type DryRunResponse,
   type FieldDef,
+  type UrlPreflightResponse,
   createAnalyzeStream,
   dryRun as dryRunApi,
   generateAdapter as generateAdapterApi,
   generateTemplate as generateTemplateApi,
+  preflightUrl,
   releaseWorkspaceTemplate,
 } from '@/services/aiApi';
 import workspacePalette from './palette';
@@ -1075,6 +1078,9 @@ const AICollect: React.FC = () => {
   const [fields, setFields] = useState<FieldDef[]>(sampleFields);
   const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set(sampleFields.map((field) => field.name)));
   const [streamError, setStreamError] = useState('');
+  const [landingError, setLandingError] = useState('');
+  const [preflightLoading, setPreflightLoading] = useState(false);
+  const [urlPreflight, setUrlPreflight] = useState<UrlPreflightResponse | null>(null);
   const [templateId, setTemplateId] = useState('ai-contract-preview');
   const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
   const [taskDraft, setTaskDraft] = useState('');
@@ -1114,6 +1120,7 @@ const AICollect: React.FC = () => {
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
   const [workspaceAdapterFile, setWorkspaceAdapterFile] = useState('');
   const [workspaceTemplateYaml, setWorkspaceTemplateYaml] = useState('');
+  const [generatedAdapterRequired, setGeneratedAdapterRequired] = useState(false);
   const [releaseExit, setReleaseExit] = useState<{ x: number; y: number; scale: number } | null>(null);
   const [sessionInspectorTabs, setSessionInspectorTabs] = useState<SessionInspectorTab[]>([]);
   const [activeInspectorTabId, setActiveInspectorTabId] = useState<string | null>(null);
@@ -1132,12 +1139,31 @@ const AICollect: React.FC = () => {
   const activeTemplate = useMemo(() => {
     if (!templateCatalog.length) return { id: 'empty', fileName: 'empty.yaml', displayName: 'Template', entries: [], raw: '' };
 
+    if (workspaceTemplateYaml) {
+      const generatedName = workspaceTemplateYaml.match(/^name:\s*["']?([^\s"']+)/m)?.[1] ?? 'generated_template';
+      const generatedTitle = workspaceTemplateYaml.match(/^display_name:\s*["']?([^\r\n"']+)/m)?.[1]
+        ?? urlPreflight?.title
+        ?? generatedName.replace(/_/g, ' ');
+      return {
+        id: generatedName,
+        fileName: `${generatedName}.yaml`,
+        displayName: generatedTitle,
+        entries: parseTemplateEntries(workspaceTemplateYaml),
+        raw: workspaceTemplateYaml,
+      };
+    }
+
     const signal = `${templateId} ${submittedPrompt} ${intent} ${url}`.toLowerCase();
-    return templateCatalog.find((template) => signal.includes(template.id.toLowerCase()))
-      ?? (signal.includes('patent') ? templateCatalog.find((template) => template.id === 'google_patent') : undefined)
-      ?? templateCatalog.find((template) => template.id === 'google_patent')
-      ?? templateCatalog[0];
-  }, [intent, submittedPrompt, templateId, url]);
+    const matchedTemplate = templateCatalog.find((template) => signal.includes(template.id.toLowerCase()));
+    if (matchedTemplate) return matchedTemplate;
+    return {
+      id: 'generated_template',
+      fileName: 'generated_template.yaml',
+      displayName: urlPreflight?.title || urlPreflight?.host || 'Generated Template',
+      entries: [],
+      raw: '',
+    };
+  }, [intent, submittedPrompt, templateCatalog, templateId, url, urlPreflight, workspaceTemplateYaml]);
   const releaseTemplateParams = useMemo<ReleaseTemplateParam[]>(() => {
     const getEntryValue = (key: string) => {
       const entry = templateDraftEntries.find((item) => item.key === key);
@@ -1174,6 +1200,7 @@ const AICollect: React.FC = () => {
     };
   }, [templateDraftEntries, templateValueDrafts]);
   const browserPreviewHost = useMemo(() => {
+    if (urlPreflight?.host) return urlPreflight.host;
     const candidate = url || submittedPrompt.match(/https?:\/\/[^\s，。；,]+/i)?.[0] || '';
     if (!candidate) return '';
 
@@ -1183,8 +1210,9 @@ const AICollect: React.FC = () => {
     } catch {
       return candidate.replace(/^https?:\/\//i, '').split('/')[0] ?? candidate;
     }
-  }, [submittedPrompt, url]);
+  }, [submittedPrompt, url, urlPreflight?.host]);
   const browserPreviewUrl = useMemo(() => {
+    if (urlPreflight?.normalizedUrl) return urlPreflight.normalizedUrl;
     const candidate = url || submittedPrompt.match(/https?:\/\/[^\s锛屻€傦紱,]+/i)?.[0] || '';
     if (!candidate) return '';
 
@@ -1194,8 +1222,9 @@ const AICollect: React.FC = () => {
     } catch {
       return '';
     }
-  }, [submittedPrompt, url]);
+  }, [submittedPrompt, url, urlPreflight?.normalizedUrl]);
   const browserPreviewTitle = useMemo(() => {
+    if (urlPreflight?.title) return urlPreflight.title;
     const normalizedHost = browserPreviewHost.replace(/^www\./i, '').split(':')[0];
     const fallbackTitle = activeTemplate.displayName || 'Website';
 
@@ -1211,7 +1240,7 @@ const AICollect: React.FC = () => {
       .join(' ');
 
     return title || fallbackTitle;
-  }, [activeTemplate.displayName, browserPreviewHost]);
+  }, [activeTemplate.displayName, browserPreviewHost, urlPreflight?.title]);
   const adapterFileName = useMemo(
     () => workspaceAdapterFile || `app/adapters/${activeTemplate.id === 'empty' ? 'generated_adapter' : activeTemplate.id}.py`,
     [activeTemplate.id, workspaceAdapterFile],
@@ -1556,6 +1585,7 @@ const AICollect: React.FC = () => {
 
   useEffect(() => {
     if (!hasSession) {
+      setUrlPreflight(null);
       setHoveredStageGuideStep(null);
       setActiveTemplateStage(null);
       setTemplateStageVisibility({});
@@ -1577,6 +1607,7 @@ const AICollect: React.FC = () => {
       setReleaseIncremental(false);
       setReleaseBatchInput(false);
       setReleaseTaskParamValues({});
+      setGeneratedAdapterRequired(false);
       setReleaseExit(null);
       if (inspectorTransitionTimerRef.current) {
         window.clearTimeout(inspectorTransitionTimerRef.current);
@@ -1873,7 +1904,8 @@ const AICollect: React.FC = () => {
     return match?.[0].replace(/[)\]}>。；,，]+$/, '') ?? '';
   }, []);
 
-  const handleAnalyze = useCallback(() => {
+  const handleAnalyze = useCallback(async () => {
+    if (preflightLoading) return;
     const draftPrompt = taskDraft.trim();
     const currentReference = (submittedPrompt || intent || url).trim();
     const sourcePrompt = hasSession && draftPrompt
@@ -1883,24 +1915,50 @@ const AICollect: React.FC = () => {
     const targetUrl = promptUrl || url;
     const error = validateUrl(targetUrl);
     if (error) {
-      message.error(targetUrl ? error : '请在问题中包含目标 URL');
+      const errorMessage = targetUrl ? error : '请在问题中包含目标 URL';
+      setLandingError(errorMessage);
+      message.error(errorMessage);
       return;
     }
 
-    const normalizedPrompt = sourcePrompt || targetUrl;
+    setLandingError('');
+    setPreflightLoading(true);
+    let preflight: UrlPreflightResponse;
+    try {
+      preflight = await preflightUrl(targetUrl);
+    } catch (preflightError) {
+      const errorMessage = preflightError instanceof Error ? preflightError.message : 'URL 预检服务不可用';
+      setLandingError(errorMessage);
+      message.error(errorMessage);
+      return;
+    } finally {
+      setPreflightLoading(false);
+    }
+    if (!preflight.ok) {
+      const errorMessage = preflight.errorMessage || '目标网页无法访问';
+      setLandingError(errorMessage);
+      message.error(errorMessage);
+      return;
+    }
+
+    const verifiedUrl = preflight.normalizedUrl;
+    setUrlPreflight(preflight);
+    setUrl(verifiedUrl);
+    setWorkspaceTemplateYaml('');
+    setWorkspaceAdapterFile('');
+    setGeneratedAdapterRequired(false);
+
+    const normalizedPrompt = sourcePrompt || verifiedUrl;
     setSubmittedPrompt(normalizedPrompt);
     setTaskDraft('');
     setIntent(normalizedPrompt);
-    if (promptUrl && promptUrl !== url) {
-      setUrl(promptUrl);
-    }
     analyzeStreamRef.current?.close();
     resetSimulation();
     setStreamError('');
     setRunStatus('running');
     setMode('explore');
     setExpandedStep('explore');
-    const es = createAnalyzeStream(targetUrl);
+    const es = createAnalyzeStream(verifiedUrl);
     analyzeStreamRef.current = es;
 
     es.addEventListener('fields', (event: MessageEvent) => {
@@ -1911,7 +1969,12 @@ const AICollect: React.FC = () => {
     });
 
     es.addEventListener('complete', (event: MessageEvent) => {
-      const data: { templateId: string; templateYaml?: string; adapterPath?: string } = JSON.parse(event.data);
+      const data: {
+        templateId: string;
+        templateYaml?: string;
+        adapterPath?: string;
+        agent?: { decision?: { requires_adapter?: boolean } };
+      } = JSON.parse(event.data);
       setTemplateId(data.templateId);
       if (data.templateYaml) {
         setWorkspaceTemplateYaml(data.templateYaml);
@@ -1919,6 +1982,7 @@ const AICollect: React.FC = () => {
         setTemplateValueDrafts({});
       }
       if (data.adapterPath) setWorkspaceAdapterFile(data.adapterPath);
+      setGeneratedAdapterRequired(Boolean(data.agent?.decision?.requires_adapter));
       pushLiveLog('服务端合约草案已生成，等待前端确认');
       es.close();
       analyzeStreamRef.current = null;
@@ -1939,7 +2003,7 @@ const AICollect: React.FC = () => {
       es.close();
       analyzeStreamRef.current = null;
     };
-  }, [extractUrlFromPrompt, hasSession, intent, message, resetSimulation, submittedPrompt, taskDraft, url, validateUrl]);
+  }, [extractUrlFromPrompt, hasSession, intent, message, preflightLoading, resetSimulation, submittedPrompt, taskDraft, url, validateUrl]);
 
   const handlePauseAnalysis = useCallback(() => {
     analyzeStreamRef.current?.close();
@@ -2099,13 +2163,14 @@ const AICollect: React.FC = () => {
         releaseTaskParamValues[param.name] ?? param.defaultValue,
       ]));
       await releaseWorkspaceTemplate({
+        analysisId: templateId,
         name: activeTemplate.id === 'empty' ? templateId : activeTemplate.id,
         version: 'v1.0',
         title: browserPreviewTitle,
         domain: browserPreviewHost,
         status,
         yaml_content: workspaceTemplateYaml || activeTemplate.raw,
-        adapter: adapterFileName,
+        adapter: generatedAdapterRequired ? adapterFileName : '',
         description: releaseActionMeta[selectedReleaseAction].desc,
         output_tag: outputTarget,
         metadata: { field_count: selectedCount },
@@ -2140,7 +2205,7 @@ const AICollect: React.FC = () => {
       message.error('Release failed; no template or task was saved');
       pushLiveLog(`release failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, message, outputTarget, playReleaseCompletionAnimation, pushLiveLog, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
+  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, outputTarget, playReleaseCompletionAnimation, pushLiveLog, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
 
   const handleReleaseActionSelect = useCallback((action: ReleaseAction) => {
     setSelectedReleaseAction(action);
@@ -2338,7 +2403,9 @@ const AICollect: React.FC = () => {
           </div>
 
           <div className="ai-prompt-shell">
-            <span className="ai-prompt-leading-icon" aria-hidden="true"><GlobalOutlined /></span>
+            <span className="ai-prompt-leading-icon" aria-hidden="true">
+              {preflightLoading ? <SyncOutlined spin /> : <GlobalOutlined />}
+            </span>
             <TextArea
               className="ai-prompt-input"
               value={intent}
@@ -2349,6 +2416,10 @@ const AICollect: React.FC = () => {
             />
             <Button className="ai-prompt-icon" shape="circle" icon={<AudioOutlined />} aria-label="语音输入" disabled />
           </div>
+          {preflightLoading ? (
+            <Text className="ai-prompt-preflight-status">Agent 正在验证网址、连接与代理需求…</Text>
+          ) : null}
+          {landingError ? <Alert className="ai-prompt-error" type="error" showIcon message={landingError} /> : null}
         </section>
       );
     }
@@ -3194,12 +3265,17 @@ const AICollect: React.FC = () => {
             <strong>{browserPreviewHost || 'source.local'}</strong>
           </div>
         <div className="ai-side-browser-viewport">
-          {[browserPreviewHost || 'source.local', `${visibleTemplateStages.length}/${Math.max(templateStages.length, 1)} template stages mapped`, ...liveLogs.slice(0, 4)].map((note, index) => (
-            <div className="ai-side-browser-row" key={`${index}-${note}`}>
-              <span />
-              <strong>{note}</strong>
-            </div>
-          ))}
+          {urlPreflight?.previewHtml ? (
+            <iframe
+              className="ai-side-browser-frame"
+              title={`${browserPreviewTitle} 页面预览`}
+              sandbox=""
+              referrerPolicy="no-referrer"
+              srcDoc={urlPreflight.previewHtml}
+            />
+          ) : (
+            <div className="ai-side-browser-empty">暂无经过服务端验证的页面快照</div>
+          )}
           </div>
         </div>
       ) : (
@@ -6120,7 +6196,7 @@ const AICollect: React.FC = () => {
           .ai-side-browser-viewport {
             flex: 1;
             min-height: 0;
-            padding: 14px;
+            padding: 0;
             border-radius: 16px;
             background:
               linear-gradient(180deg, rgba(40, 45, 54, 0.98), rgba(24, 28, 36, 0.98));
@@ -6128,6 +6204,19 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             gap: 10px;
+            overflow: hidden;
+          }
+          .ai-side-browser-frame {
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+            border: 0;
+            background: #fff;
+          }
+          .ai-side-browser-empty {
+            padding: 16px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
           }
           .ai-side-browser-row,
           .ai-side-code-row {
@@ -6963,6 +7052,18 @@ const AICollect: React.FC = () => {
             font-size: 18px;
             position: relative;
             z-index: 1;
+          }
+          .ai-prompt-preflight-status {
+            margin-top: 12px;
+            color: ${aura.subtle} !important;
+            font-size: 12px;
+          }
+          .ai-prompt-error {
+            width: min(680px, calc(100% - 32px));
+            margin-top: 12px;
+            border-radius: 12px;
+            background: rgba(120, 32, 42, 0.2);
+            border-color: rgba(248, 113, 113, 0.28);
           }
           .ai-prompt-icon {
             width: 34px !important;

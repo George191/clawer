@@ -33,7 +33,8 @@ batch_params:
   batch_size: 5
   start_line: 0
   limit: null
-  delay: 0
+  # Google Patent 要求批次间隔至少3秒
+  delay: 3
 
 params:
   - name: query

@@ -9,7 +9,20 @@
   "limits": {
     "max_template_pages": 100,
     "max_dry_run_limit": 100,
-    "max_generated_adapter_lines": 500
+    "max_generated_adapter_lines": 500,
+    "max_generated_template_bytes": 65536,
+    "max_generated_adapter_bytes": 65536,
+    "max_generated_fields": 100,
+    "max_preview_html_bytes": 120000
+  },
+  "agent_output": {
+    "model_path": "models/Qwen2.5-0.5B",
+    "allowed_artifacts": ["template_yaml", "adapter_python"],
+    "allowed_template_path": "templates/{name}.yaml",
+    "allowed_adapter_path": "app/adapters/{name}.py",
+    "allow_extra_files": false,
+    "allow_commands": false,
+    "allow_network_from_generated_code": false
   },
   "adapter_rules": {
     "forbidden_patterns": [
