@@ -1078,7 +1078,7 @@ const AICollect: React.FC = () => {
   const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set(sampleFields.map((field) => field.name)));
   const [streamError, setStreamError] = useState('');
   const [preflightLoading, setPreflightLoading] = useState(false);
-  const [landingUrlToken, setLandingUrlToken] = useState<string | null>(null);
+
   const [urlPreflight, setUrlPreflight] = useState<UrlPreflightResponse | null>(null);
   const [templateId, setTemplateId] = useState('ai-contract-preview');
   const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
@@ -1935,7 +1935,8 @@ const AICollect: React.FC = () => {
 
   const commitLandingUrl = useCallback(() => {
     const candidate = intent.trim();
-    if (!validateUrl(candidate)) setLandingUrlToken(candidate);
+    if (!validateUrl(candidate)) {
+    }
   }, [intent, validateUrl]);
 
   const handleLandingUrlPaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1943,7 +1944,6 @@ const AICollect: React.FC = () => {
     if (validateUrl(candidate)) return;
     event.preventDefault();
     setIntent(candidate);
-    setLandingUrlToken(candidate);
   }, [validateUrl]);
 
   const handleAnalyze = useCallback(async () => {
@@ -1951,7 +1951,7 @@ const AICollect: React.FC = () => {
     const draftPrompt = taskDraft.trim();
     const targetUrl = hasSession
       ? (urlPreflight?.normalizedUrl || url || submittedPrompt).trim()
-      : (landingUrlToken || intent).trim();
+      : intent.trim();
     const agentPrompt = hasSession ? draftPrompt : '';
     const error = validateUrl(targetUrl);
     if (error) {
@@ -1987,7 +1987,6 @@ const AICollect: React.FC = () => {
     setSubmittedPrompt(verifiedUrl);
     setTaskDraft('');
     setIntent(verifiedUrl);
-    setLandingUrlToken(verifiedUrl);
     analyzeStreamRef.current?.close();
     resetSimulation();
     setStreamError('');
@@ -2039,7 +2038,7 @@ const AICollect: React.FC = () => {
       es.close();
       analyzeStreamRef.current = null;
     };
-  }, [hasSession, intent, landingUrlToken, message, preflightLoading, resetSimulation, submittedPrompt, taskDraft, url, urlPreflight?.normalizedUrl, validateUrl]);
+  }, [hasSession, intent, message, preflightLoading, resetSimulation, submittedPrompt, taskDraft, url, urlPreflight?.normalizedUrl, validateUrl]);
 
   const handlePauseAnalysis = useCallback(() => {
     analyzeStreamRef.current?.close();
@@ -2441,33 +2440,20 @@ const AICollect: React.FC = () => {
           </div>
 
           <div className={`ai-prompt-shell ${preflightLoading ? 'is-preflighting' : ''}`}>
-            {landingUrlToken ? (
-              <Tag
-                className="ai-prompt-url-tag"
-                icon={<GlobalOutlined />}
-                closable={!preflightLoading}
-                onClose={() => setLandingUrlToken(null)}
-              >
-                {landingUrlToken}
-              </Tag>
-            ) : (
-              <>
-                <span className="ai-prompt-leading-icon" aria-hidden="true">
-                  <GlobalOutlined />
-                </span>
-                <TextArea
-                  className="ai-prompt-input"
-                  value={intent}
-                  disabled={preflightLoading}
-                  onChange={(event) => setIntent(event.target.value)}
-                  onBlur={commitLandingUrl}
-                  onPaste={handleLandingUrlPaste}
-                  onKeyDown={handlePromptKeyDown}
-                  autoSize={{ minRows: 1, maxRows: 1 }}
-                  placeholder="输入 HTTP/HTTPS 网址"
-                />
-              </>
-            )}
+            <span className="ai-prompt-leading-icon" aria-hidden="true">
+              <GlobalOutlined />
+            </span>
+            <TextArea
+              className="ai-prompt-input"
+              value={intent}
+              disabled={preflightLoading}
+              onChange={(event) => setIntent(event.target.value)}
+              onBlur={commitLandingUrl}
+              onPaste={handleLandingUrlPaste}
+              onKeyDown={handlePromptKeyDown}
+              autoSize={{ minRows: 1, maxRows: 1 }}
+              placeholder="输入 HTTP/HTTPS 网址"
+            />
             {preflightLoading ? (
               <span className="ai-prompt-preflight-copy" aria-hidden="true">
                 <span className="ai-prompt-preflight-copy-base"><GlobalOutlined />{intent}</span>
@@ -7249,8 +7235,8 @@ const AICollect: React.FC = () => {
             border-radius: 0 !important;
             box-shadow: none !important;
             resize: none;
-            font-size: 15px;
-            line-height: 34px;
+            font-size: 13px;
+            line-height: 30px;
             color: ${aura.text} !important;
             font-family: inherit;
             font-weight: 400;
