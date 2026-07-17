@@ -440,6 +440,10 @@ async def handle_start_analyze(connection: ClientConnection, message: dict[str, 
     url = message.get("url")
     prompt = str(message.get("prompt") or "").strip()[:2000]
     request_id = str(message.get("request_id") or uuid.uuid4())
+    try:
+        viewport_width = max(320, min(int(message.get("viewport_width") or 1440), 3840))
+    except (TypeError, ValueError):
+        viewport_width = 1440
     if not url:
         await connection.send({"type": "analyze_error", "request_id": request_id, "data": {"code": "MISSING_URL", "message": "缺少url参数"}})
         return
@@ -454,7 +458,7 @@ async def handle_start_analyze(connection: ClientConnection, message: dict[str, 
         connection.analyze_task.cancel()
 
     connection.analyze_task = asyncio.create_task(
-        _stream_analyze_results(connection, url, prompt, request_id)
+        _stream_analyze_results(connection, url, prompt, request_id, viewport_width)
     )
     connection.active_tasks.add("analyze")
     await connection.send({"type": "analyze_started", "request_id": request_id, "data": {"url": url}})
@@ -474,10 +478,11 @@ async def _stream_analyze_results(
     url: str,
     prompt: str,
     request_id: str,
+    viewport_width: int,
 ) -> None:
     """流式发送分析结果到客户端."""
     try:
-        async for event_type, data in _analyze_events(url, prompt):
+        async for event_type, data in _analyze_events(url, prompt, viewport_width):
             await connection.send(
                 {
                     "type": f"analyze_{event_type}",

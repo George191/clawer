@@ -54,7 +54,7 @@ class BrowserRenderer:
             config["password"] = parsed.password
         return config
 
-    def _render_sync(self, url: str, use_proxy: bool) -> BrowserRenderResult:
+    def _render_sync(self, url: str, use_proxy: bool, viewport_width: int) -> BrowserRenderResult:
         json_endpoints: list[str] = []
         proxy = self._proxy_config(settings.tunnel_proxy_url) if use_proxy else None
         with sync_playwright() as playwright:
@@ -65,7 +65,7 @@ class BrowserRenderer:
             )
             try:
                 context = browser.new_context(
-                    viewport={"width": 1440, "height": 1000},
+                    viewport={"width": viewport_width, "height": 1000},
                     user_agent=settings.http_user_agent,
                     ignore_https_errors=not settings.http_verify_ssl,
                     locale="zh-CN",
@@ -113,8 +113,14 @@ class BrowserRenderer:
         
         return html
 
-    async def render(self, url: str, use_proxy: bool = False) -> BrowserRenderResult:
-        return await asyncio.to_thread(self._render_sync, url, use_proxy)
+    async def render(
+        self,
+        url: str,
+        use_proxy: bool = False,
+        viewport_width: int = 1440,
+    ) -> BrowserRenderResult:
+        safe_viewport_width = max(320, min(int(viewport_width), 3840))
+        return await asyncio.to_thread(self._render_sync, url, use_proxy, safe_viewport_width)
 
 
 browser_renderer = BrowserRenderer()

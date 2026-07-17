@@ -173,11 +173,15 @@ class UrlPreflightResponse:
         }
 
 
-async def _preflight(url: str, max_retries: int = 3) -> UrlPreflightResponse:
+async def _preflight(
+    url: str,
+    max_retries: int = 3,
+    viewport_width: int = 1440,
+) -> UrlPreflightResponse:
     last_error = None
     for attempt in range(max_retries):
         try:
-            result = await browser_renderer.render(url)
+            result = await browser_renderer.render(url, viewport_width=viewport_width)
             logger.info("Preflight succeeded on attempt %d/%d for %s", attempt + 1, max_retries, url)
             return UrlPreflightResponse(
                 url=url,
@@ -270,10 +274,17 @@ async def _forward_model_events(
             next_event.cancel()
 
 
-async def _analyze_events(url: str, prompt: str = "") -> AsyncGenerator[AnalysisStreamEvent, None]:
+async def _analyze_events(
+    url: str,
+    prompt: str = "",
+    viewport_width: int = 1440,
+) -> AsyncGenerator[AnalysisStreamEvent, None]:
     try:
         yield _analysis_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
-        preflight = await asyncio.wait_for(_preflight(url), timeout=60.0)
+        preflight = await asyncio.wait_for(
+            _preflight(url, viewport_width=viewport_width),
+            timeout=60.0,
+        )
         if not preflight.ok:
             raise RuntimeError(preflight.error_message or "Page preflight failed")
         

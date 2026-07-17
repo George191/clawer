@@ -2212,6 +2212,7 @@ const AICollect: React.FC = () => {
       request_id: requestId,
       url: targetUrl,
       prompt: agentPrompt,
+      viewport_width: Math.round(window.innerWidth),
     }));
     if (!sent) {
       analyzeRequestRef.current = null;
@@ -4946,7 +4947,6 @@ const AICollect: React.FC = () => {
             min-height: 32px;
             padding: 0;
             border: 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
             background: transparent;
             color: rgba(255, 255, 255, 0.62);
             display: flex;
