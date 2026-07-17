@@ -6474,6 +6474,11 @@ const AICollect: React.FC = () => {
             pointer-events: none;
             user-select: none;
           }
+          .ai-session-inspector-browser-frame > .ai-browser-render-image {
+            min-height: 100%;
+            object-fit: contain;
+            object-position: top center;
+          }
           .ai-session-inspector-empty {
             width: 100%;
             height: 100%;

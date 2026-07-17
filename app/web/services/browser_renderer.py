@@ -86,6 +86,20 @@ class BrowserRenderer:
                 html = page.content()
                 html = self._make_absolute_paths(html, final_url)
                 favicon_href = page.locator('link[rel~="icon"]').last.get_attribute("href") if page.locator('link[rel~="icon"]').count() else ""
+                page.evaluate(
+                    """
+                    () => {
+                        const root = document.documentElement;
+                        const bodyWidth = document.body?.scrollWidth ?? 0;
+                        const contentWidth = Math.max(root.scrollWidth, bodyWidth);
+                        const viewportWidth = root.clientWidth;
+                        if (contentWidth > viewportWidth) {
+                            root.style.zoom = String(Math.max(0.1, viewportWidth / contentWidth));
+                        }
+                    }
+                    """
+                )
+                page.wait_for_timeout(250)
                 screenshot = page.screenshot(type="jpeg", quality=78, full_page=True)
                 return BrowserRenderResult(
                     url=final_url,
