@@ -16,8 +16,9 @@ from pydantic import BaseModel, Field
 from app.config.settings import settings
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.web.services.ai_collect_store import ai_collect_store
-from app.web.services.platform_overview import build_platform_overview
-from app.web.services.template_agent import template_adapter_agent
+
+from app.web.agents.template_agent import template_adapter_agent
+from app.web.agents.prompt_agent import prompt_agent
 from app.web.utils.sse import sse_event, sse_wrapper
 from app.web.utils.validation import (
     validate_target_url,
@@ -133,22 +134,87 @@ async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str
     """Stream analysis results using SSE."""
     try:
         yield sse_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
-        result = await _analyze_live(url, prompt)
+        try:
+            preflight = await asyncio.wait_for(
+                template_adapter_agent.preflight(url),
+                timeout=60.0
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError("Failed to fetch page: timeout")
+        
+        if not preflight.ok:
+            raise RuntimeError(f"Failed to fetch page: {preflight.error_message}")
+        
         yield sse_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "done"})
-        yield sse_event("fields", {"fields": result["fields"]})
-        yield sse_event("pagination", result["pagination"])
+        yield sse_event("step", {"step": "analyze", "label": "Analyze page", "status": "running"})
+        
+        try:
+            result = await asyncio.wait_for(
+                prompt_agent.analyze_html(
+                    preflight.normalized_url,
+                    preflight.html,
+                    prompt,
+                    preflight.network_endpoints,
+                ),
+                timeout=180.0
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError("Failed to analyze page: timeout")
+        
+        yield sse_event("step", {"step": "analyze", "label": "Analyze page", "status": "done"})
+        yield sse_event("step", {"step": "generate", "label": "Generate template", "status": "running"})
+        
+        try:
+            decision = await asyncio.wait_for(
+                template_adapter_agent._policy.decide(result, prompt),
+                timeout=30.0
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError("Failed to generate template: timeout")
+        
+        template_adapter_agent._validate_model_decision(result, decision)
+        template_adapter_agent._validate_template(result.template_yaml, preflight.host)
+        template_adapter_agent._validate_adapter(result.adapter_code, result.template_name)
+        
+        yield sse_event("step", {"step": "generate", "label": "Generate template", "status": "done"})
+        yield sse_event("fields", {"fields": result.fields_payload()})
+        yield sse_event("pagination", result.pagination.response_dict())
+        
+        template_id = f"tpl_{int(time.time() * 1000)}"
+        payload = {
+            "template_id": template_id,
+            "source_url": url,
+            "template_name": result.template_name,
+            "template_yaml": result.template_yaml,
+            "adapter_code": result.adapter_code,
+            "fields": result.fields_payload(),
+            "pagination": result.pagination.response_dict(),
+            "sample_items": result.sample_items,
+        }
+        await ai_collect_store.save_analysis(payload)
+        
         yield sse_event("complete", {
-            "templateId": result["templateId"],
-            "templateYaml": result["yaml"],
-            "adapterCode": result["adapter"],
-            "adapterPath": result["adapterPath"],
-            "fields": result["fields"],
-            "pagination": result["pagination"],
-            "acquisition": result["acquisition"],
-            "agent": result["agent"],
+            "templateId": template_id,
+            "templateYaml": result.template_yaml,
+            "adapterCode": result.adapter_code,
+            "adapterPath": f"app/adapters/{result.template_name}.py" if result.adapter_code else "",
+            "fields": result.fields_payload(),
+            "pagination": result.pagination.response_dict(),
+            "acquisition": result.acquisition.response_dict(),
+            "agent": {
+                "model": "Qwen2.5-0.5B-Instruct",
+                "decision": decision,
+                "requiresProxy": preflight.requires_proxy,
+                "proxyMode": preflight.proxy_mode,
+                "pageTitle": preflight.title,
+                "prompt": prompt.strip()[:2000],
+            },
         })
     except asyncio.CancelledError:
         logger.info("SSE connection cancelled for %s", url)
+    except Exception as exc:
+        yield sse_event("error", {"error": str(exc)})
+        logger.exception("Analysis failed for %s", url)
 
 
 async def _build_yaml_template(
@@ -298,11 +364,6 @@ async def analyze_stream(url: str, request: Request, prompt: str = ""):
             "X-Accel-Buffering": "no",
         },
     )
-
-
-@router.get("/ai/platform/overview")
-async def platform_overview():
-    return await build_platform_overview()
 
 
 @router.post("/ai/generate-template")

@@ -20,9 +20,8 @@ from app.config.settings import settings
 from app.downloader.http_client import HttpClient
 from app.models.template import SiteTemplate
 from app.web.services.browser_renderer import browser_renderer
-from app.web.services.site_analyzer import AnalysisResult, SiteAnalyzer
+from app.web.agents.prompt_agent import AnalysisResult, prompt_agent
 
-_MODEL_PATH = Path(__file__).resolve().parents[3] / "models" / "Qwen" / "2.5-0.5B-Instruct"
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{2,63}$")
 _ALLOWED_IMPORTS = {
     "__future__",
@@ -78,6 +77,7 @@ class LocalQwenPolicy:
         self._model: Any = None
         self._tokenizer: Any = None
         self._load_lock = threading.Lock()
+        self._model_path = Path(__file__).resolve().parents[3] / "models" / "Qwen" / "2.5-0.5B-Instruct"
 
     def _load(self) -> None:
         if self._model is not None:
@@ -85,18 +85,22 @@ class LocalQwenPolicy:
         with self._load_lock:
             if self._model is not None:
                 return
-            if not (_MODEL_PATH / "model.safetensors").is_file():
-                raise RuntimeError(f"Local Qwen model is incomplete: {_MODEL_PATH}")
+            if not (self._model_path / "model.safetensors").is_file():
+                raise RuntimeError(f"Local Qwen model is incomplete: {self._model_path}")
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            self._tokenizer = AutoTokenizer.from_pretrained(_MODEL_PATH, local_files_only=True)
+            self._tokenizer = AutoTokenizer.from_pretrained(str(self._model_path), local_files_only=True)
             self._model = AutoModelForCausalLM.from_pretrained(
-                _MODEL_PATH,
+                str(self._model_path),
                 local_files_only=True,
                 dtype="auto",
                 low_cpu_mem_usage=True,
             )
             self._model.eval()
+            self._model.generation_config.do_sample = False
+            self._model.generation_config.temperature = None
+            self._model.generation_config.top_p = None
+            self._model.generation_config.top_k = None
 
     def _decide_sync(self, result: AnalysisResult, prompt: str = "") -> dict[str, Any]:
         self._load()
@@ -213,7 +217,7 @@ class TemplateAdapterAgent:
                 checked_at=time.time(),
             )
 
-        barrier = SiteAnalyzer.detect_page_barrier(page_html)
+        barrier = self._detect_page_barrier(page_html)
         if barrier:
             return PreflightResult(
                 ok=False,
@@ -252,16 +256,12 @@ class TemplateAdapterAgent:
         if not preflight.ok:
             raise ValueError(preflight.error_message or "URL preflight failed")
 
-        analyzer = SiteAnalyzer()
-        try:
-            result = await analyzer.analyze_html(
-                preflight.normalized_url,
-                preflight.html,
-                prompt,
-                preflight.network_endpoints,
-            )
-        finally:
-            await analyzer.close()
+        result = await prompt_agent.analyze_html(
+            preflight.normalized_url,
+            preflight.html,
+            prompt,
+            preflight.network_endpoints,
+        )
 
         decision = await self._policy.decide(result, prompt)
         self._validate_model_decision(result, decision)
@@ -372,6 +372,21 @@ class TemplateAdapterAgent:
     @staticmethod
     def _proxy_configured() -> bool:
         return bool(settings.tunnel_proxy_url or settings.proxy_pool_file or settings.proxy_pool_api_url)
+
+    @staticmethod
+    def _detect_page_barrier(html_text: str) -> str | None:
+        lowered = html_text.lower()
+        if "aliyunwaf_" in lowered or ('id="renderdata"' in lowered and "var arg1=" in lowered):
+            return (
+                "The site returned an Aliyun WAF challenge instead of page content; "
+                "browser rendering with an available proxy is required"
+            )
+        if "cf-chl-" in lowered or "challenge-platform" in lowered:
+            return (
+                "The site returned a Cloudflare challenge instead of page content; "
+                "browser rendering with an available proxy is required"
+            )
+        return None
 
     @staticmethod
     def _build_preview(page_html: str, url: str) -> tuple[str, str]:
