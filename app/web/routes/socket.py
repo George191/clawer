@@ -37,8 +37,10 @@ from pydantic import BaseModel, Field
 from app.web.routes.ai_collect import (
     _analyze_stream,
     _build_yaml_template,
-    _scope_limit,
-    _validate_target_url,
+)
+from app.web.utils.validation import (
+    validate_target_url,
+    scope_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -413,7 +415,7 @@ async def handle_start_analyze(connection: ClientConnection, message: dict[str, 
         return
 
     try:
-        _validate_target_url(url)
+        validate_target_url(url)
     except Exception as e:
         await connection.send({"type": "error", "code": "INVALID_URL", "message": str(e)})
         return
@@ -464,7 +466,7 @@ async def handle_start_dry_run(connection: ClientConnection, message: dict[str, 
         await connection.send({"type": "error", "code": "MISSING_TEMPLATE_ID", "message": "缺少template_id参数"})
         return
 
-    limit = max(1, min(limit, _scope_limit("max_dry_run_limit", 100)))
+    limit = max(1, min(limit, scope_limit("max_dry_run_limit", 100)))
 
     dry_run_task = asyncio.create_task(_stream_dry_run_results(connection, template_id, limit))
     connection.active_tasks.add("dry_run")
@@ -546,7 +548,7 @@ async def handle_generate_template(connection: ClientConnection, message: dict[s
         return
 
     try:
-        _validate_target_url(url)
+        validate_target_url(url)
     except Exception as e:
         await connection.send({"type": "error", "code": "INVALID_URL", "message": str(e)})
         return
@@ -589,7 +591,7 @@ async def _stream_template_generation(connection: ClientConnection, url: str) ->
         pagination = {
             "type": "click",
             "selector": ".pagination .next",
-            "maxPages": _scope_limit("max_template_pages", 100),
+            "maxPages": scope_limit("max_template_pages", 100),
         }
 
         yaml_content = _build_yaml_template(url, fields, pagination, pagination["maxPages"])
@@ -635,7 +637,7 @@ async def handle_generate_adapter(connection: ClientConnection, message: dict[st
         return
 
     try:
-        _validate_target_url(url)
+        validate_target_url(url)
     except Exception as e:
         await connection.send({"type": "error", "code": "INVALID_URL", "message": str(e)})
         return

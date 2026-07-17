@@ -1,12 +1,12 @@
+"""AI Collect API routes."""
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
 from collections.abc import AsyncGenerator
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -18,35 +18,15 @@ from app.storage.minio_client import get_business_metadata_minio_client
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.platform_overview import build_platform_overview
 from app.web.services.template_agent import template_adapter_agent
+from app.web.utils.sse import sse_event, sse_wrapper
+from app.web.utils.validation import (
+    validate_target_url,
+    clamp_positive,
+    validate_generated_adapter,
+)
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter()
-TEMPLATE_DIR = Path(settings.template_dir)
-AI_COLLECT_SCOPE_PATH = Path(__file__).resolve().parent.parent / "policies" / "ai_collect_scope.json"
-DEFAULT_AI_COLLECT_SCOPE: dict[str, Any] = {
-    "url_rules": {
-        "allowed_schemes": ["http", "https"],
-        "blocked_exact_hosts": ["localhost", "127.0.0.1", "0.0.0.0", "::1"],
-        "blocked_prefix_hosts": ["10.", "192.168."],
-        "blocked_172_range": [16, 31],
-    },
-    "limits": {
-        "max_template_pages": 100,
-        "max_dry_run_limit": 100,
-        "max_generated_adapter_lines": 500,
-    },
-    "adapter_rules": {
-        "forbidden_patterns": [
-            "eval(",
-            "child_process",
-            "process.env",
-            "/etc/",
-            "/proc/",
-            "/.ssh/",
-        ],
-    },
-}
 
 
 class FieldOverride(BaseModel):
@@ -116,30 +96,8 @@ class WorkspaceTaskActionRequest(BaseModel):
     action: str
 
 
-def _load_ai_collect_scope() -> dict[str, Any]:
-    scope = json.loads(json.dumps(DEFAULT_AI_COLLECT_SCOPE))
-    if not AI_COLLECT_SCOPE_PATH.exists():
-        return scope
-
-    try:
-        loaded = json.loads(AI_COLLECT_SCOPE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        logger.exception("Failed to load AI collect scope file: %s", AI_COLLECT_SCOPE_PATH)
-        return scope
-
-    for key, default_value in scope.items():
-        loaded_value = loaded.get(key)
-        if isinstance(default_value, dict) and isinstance(loaded_value, dict):
-            scope[key] = {**default_value, **loaded_value}
-        elif loaded_value is not None:
-            scope[key] = loaded_value
-    return scope
-
-
-AI_COLLECT_SCOPE = _load_ai_collect_scope()
-
-
 async def _analyze_live(url: str, prompt: str = "") -> dict[str, Any]:
+    """Analyze a URL and generate template/adapter using AI."""
     result, agent_meta = await template_adapter_agent.generate(url, prompt)
 
     template_id = f"tpl_{int(time.time() * 1000)}"
@@ -172,16 +130,14 @@ async def _analyze_live(url: str, prompt: str = "") -> dict[str, Any]:
 
 
 async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str, None]:
-    def event(name: str, data: dict[str, Any]) -> str:
-        return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
+    """Stream analysis results using SSE."""
     try:
-        yield event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
+        yield sse_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
         result = await _analyze_live(url, prompt)
-        yield event("step", {"step": "fetch_page", "label": "Fetch page", "status": "done"})
-        yield event("fields", {"fields": result["fields"]})
-        yield event("pagination", result["pagination"])
-        yield event("complete", {
+        yield sse_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "done"})
+        yield sse_event("fields", {"fields": result["fields"]})
+        yield sse_event("pagination", result["pagination"])
+        yield sse_event("complete", {
             "templateId": result["templateId"],
             "templateYaml": result["yaml"],
             "adapterCode": result["adapter"],
@@ -193,83 +149,15 @@ async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str
         })
     except asyncio.CancelledError:
         logger.info("SSE connection cancelled for %s", url)
-    except Exception as exc:
-        logger.exception("SSE analysis error for %s", url)
-        yield event("error", {"code": "ANALYZE_ERROR", "message": str(exc)})
 
 
-def _scope_limit(name: str, default: int) -> int:
-    raw = AI_COLLECT_SCOPE.get("limits", {}).get(name, default)
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return default
-    return max(1, value)
-
-
-def _clamp_positive(value: int, limit_name: str, default: int) -> int:
-    return max(1, min(value, _scope_limit(limit_name, default)))
-
-
-def _adapter_forbidden_patterns() -> list[str]:
-    patterns = AI_COLLECT_SCOPE.get("adapter_rules", {}).get("forbidden_patterns", [])
-    return [str(pattern) for pattern in patterns if str(pattern).strip()]
-
-
-def _validate_generated_adapter(code: str) -> None:
-    max_lines = _scope_limit("max_generated_adapter_lines", 500)
-    line_count = len(code.splitlines())
-    errors: list[str] = []
-
-    if line_count > max_lines:
-        errors.append(f"代码行数超限 ({line_count} > {max_lines})")
-
-    for forbidden in _adapter_forbidden_patterns():
-        if forbidden in code:
-            errors.append(f"检测到禁止模式: {forbidden}")
-
-    if errors:
-        raise HTTPException(status_code=400, detail=f"安全校验失败: {'; '.join(errors)}")
-
-
-def _validate_target_url(url: str) -> None:
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    url_rules = AI_COLLECT_SCOPE.get("url_rules", {})
-    allowed_schemes = set(url_rules.get("allowed_schemes", ["http", "https"]))
-    if parsed.scheme not in allowed_schemes:
-        raise HTTPException(status_code=400, detail=f"不支持的协议: {parsed.scheme}")
-
-    hostname = parsed.hostname or ""
-    if hostname in set(url_rules.get("blocked_exact_hosts", [])):
-        raise HTTPException(status_code=400, detail="禁止访问本地地址")
-
-    if any(hostname.startswith(prefix) for prefix in url_rules.get("blocked_prefix_hosts", [])):
-        raise HTTPException(status_code=400, detail="禁止访问内网地址")
-
-    if hostname.startswith("172."):
-        try:
-            second = int(hostname.split(".")[1])
-            blocked_172_range = url_rules.get("blocked_172_range", [16, 31])
-            range_start = int(blocked_172_range[0])
-            range_end = int(blocked_172_range[1])
-            if range_start <= second <= range_end:
-                raise HTTPException(status_code=400, detail="禁止访问内网地址")
-        except (IndexError, TypeError, ValueError):
-            pass
-
-
-def _validate_target_url_with_scope(url: str) -> None:
-    _validate_target_url(url)
-
-
-def _build_yaml_template(
+async def _build_yaml_template(
     url: str,
     fields: list[dict[str, Any]],
     pagination: dict[str, Any],
     max_pages: int = 50,
 ) -> str:
+    """Build YAML template from analysis results."""
     from urllib.parse import urlparse
 
     domain = urlparse(url).hostname or "unknown"
@@ -311,28 +199,26 @@ def _build_yaml_template(
 
 
 async def _analyze_stream(url: str) -> AsyncGenerator[str, None]:
-    def _event(name: str, data: dict[str, Any]) -> str:
-        return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
+    """Generate mock analysis stream for demonstration."""
     try:
-        yield _event("step", {"step": "fetch_page", "label": "获取页面", "status": "running"})
-        yield _event("thinking", {"content": f"正在请求 {url} ..."})
+        yield sse_event("step", {"step": "fetch_page", "label": "获取页面", "status": "running"})
+        yield sse_event("thinking", {"content": f"正在请求 {url} ..."})
         await asyncio.sleep(0.3)
-        yield _event("step", {"step": "fetch_page", "label": "获取页面", "status": "done"})
+        yield sse_event("step", {"step": "fetch_page", "label": "获取页面", "status": "done"})
 
-        yield _event("step", {"step": "parse_dom", "label": "解析 DOM 结构", "status": "running"})
-        yield _event("thinking", {"content": "正在解析页面 DOM，识别列表结构..."})
+        yield sse_event("step", {"step": "parse_dom", "label": "解析 DOM 结构", "status": "running"})
+        yield sse_event("thinking", {"content": "正在解析页面 DOM，识别列表结构..."})
         await asyncio.sleep(0.3)
-        yield _event("step", {"step": "parse_dom", "label": "解析 DOM 结构", "status": "done"})
+        yield sse_event("step", {"step": "parse_dom", "label": "解析 DOM 结构", "status": "done"})
 
-        yield _event("step", {"step": "detect_list", "label": "识别列表容器", "status": "running"})
-        yield _event("thinking", {"content": "正在定位重复的列表项容器..."})
+        yield sse_event("step", {"step": "detect_list", "label": "识别列表容器", "status": "running"})
+        yield sse_event("thinking", {"content": "正在定位重复的列表项容器..."})
         await asyncio.sleep(0.5)
-        yield _event("step", {"step": "detect_list", "label": "识别列表容器", "status": "done"})
-        yield _event("thinking", {"content": "检测到列表容器，包含约 25 个项目"})
+        yield sse_event("step", {"step": "detect_list", "label": "识别列表容器", "status": "done"})
+        yield sse_event("thinking", {"content": "检测到列表容器，包含约 25 个项目"})
 
-        yield _event("step", {"step": "detect_fields", "label": "识别字段", "status": "running"})
-        yield _event("thinking", {"content": "正在分析列表项内的字段结构..."})
+        yield sse_event("step", {"step": "detect_fields", "label": "识别字段", "status": "running"})
+        yield sse_event("thinking", {"content": "正在分析列表项内的字段结构..."})
         await asyncio.sleep(0.8)
 
         fields = [
@@ -348,33 +234,33 @@ async def _analyze_stream(url: str) -> AsyncGenerator[str, None]:
             {"name": "date", "selector": "time.date", "type": "date", "sample": "2026-06-10", "required": False},
         ]
 
-        yield _event("step", {"step": "detect_fields", "label": "识别字段", "status": "done"})
-        yield _event("fields", {"fields": fields})
-        yield _event("thinking", {"content": f"识别到 {len(fields)} 个字段：{', '.join(field['name'] for field in fields)}"})
+        yield sse_event("step", {"step": "detect_fields", "label": "识别字段", "status": "done"})
+        yield sse_event("fields", {"fields": fields})
+        yield sse_event("thinking", {"content": f"识别到 {len(fields)} 个字段：{', '.join(field['name'] for field in fields)}"})
 
         pagination = {
             "type": "click",
             "selector": ".pagination .next",
-            "maxPages": _scope_limit("max_template_pages", 100),
+            "maxPages": clamp_positive(100, "max_template_pages", 100),
             "params": {"pageParam": "page", "startPage": 1, "pageSize": 20},
         }
 
-        yield _event("step", {"step": "detect_pagination", "label": "检测分页策略", "status": "running"})
-        yield _event("thinking", {"content": "正在检测翻页方式..."})
+        yield sse_event("step", {"step": "detect_pagination", "label": "检测分页策略", "status": "running"})
+        yield sse_event("thinking", {"content": "正在检测翻页方式..."})
         await asyncio.sleep(0.5)
-        yield _event("step", {"step": "detect_pagination", "label": "检测分页策略", "status": "done"})
-        yield _event("pagination", pagination)
-        yield _event("thinking", {"content": f"分页类型：{pagination['type']}，最大页数：{pagination['maxPages']}"})
+        yield sse_event("step", {"step": "detect_pagination", "label": "检测分页策略", "status": "done"})
+        yield sse_event("pagination", pagination)
+        yield sse_event("thinking", {"content": f"分页类型：{pagination['type']}，最大页数：{pagination['maxPages']}"})
 
-        yield _event("step", {"step": "generate_template", "label": "生成模板", "status": "running"})
-        yield _event("thinking", {"content": "正在生成 YAML 采集模板..."})
+        yield sse_event("step", {"step": "generate_template", "label": "生成模板", "status": "running"})
+        yield sse_event("thinking", {"content": "正在生成 YAML 采集模板..."})
         await asyncio.sleep(0.5)
 
-        yaml_content = _build_yaml_template(url, fields, pagination, pagination["maxPages"])
+        yaml_content = await _build_yaml_template(url, fields, pagination, pagination["maxPages"])
         template_id = f"tpl_{int(time.time())}"
 
-        yield _event("step", {"step": "generate_template", "label": "生成模板", "status": "done"})
-        yield _event(
+        yield sse_event("step", {"step": "generate_template", "label": "生成模板", "status": "done"})
+        yield sse_event(
             "complete",
             {
                 "templateYaml": yaml_content,
@@ -385,9 +271,6 @@ async def _analyze_stream(url: str) -> AsyncGenerator[str, None]:
         )
     except asyncio.CancelledError:
         logger.info("SSE connection cancelled for %s", url)
-    except Exception as e:
-        logger.exception("SSE analysis error for %s", url)
-        yield _event("error", {"code": "AI_ERROR", "message": str(e)})
 
 
 @router.post("/ai/preflight")
@@ -400,12 +283,10 @@ async def analyze_stream(url: str, request: Request, prompt: str = ""):
     if not url:
         raise HTTPException(status_code=400, detail="缺少 url 参数")
 
-    _validate_target_url(url)
+    validate_target_url(url)
 
     async def _generator():
-        async for chunk in _analyze_stream_live(url, prompt.strip()[:2000]):
-            if await request.is_disconnected():
-                break
+        async for chunk in sse_wrapper(_analyze_stream_live(url, prompt.strip()[:2000]), request, "analyze_stream"):
             yield chunk
 
     return StreamingResponse(
@@ -426,13 +307,13 @@ async def platform_overview():
 
 @router.post("/ai/generate-template")
 async def generate_template(body: GenerateTemplateRequest):
-    _validate_target_url(body.url)
+    validate_target_url(body.url)
     return await _analyze_live(body.url)
 
 
 @router.post("/ai/dry-run")
 async def dry_run(body: DryRunRequest):
-    limit = _clamp_positive(body.limit, "max_dry_run_limit", 100)
+    limit = clamp_positive(body.limit, "max_dry_run_limit", 100)
     analysis = await ai_collect_store.get_analysis(body.templateId)
     if analysis is None:
         raise HTTPException(status_code=404, detail=f"Analysis '{body.templateId}' not found")
@@ -547,14 +428,14 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
 
 @router.post("/ai/generate-adapter")
 async def generate_adapter(body: GenerateAdapterRequest):
-    _validate_target_url(body.url)
+    validate_target_url(body.url)
 
     if body.templateId:
         analysis = await ai_collect_store.get_analysis(body.templateId)
         if analysis is None:
             raise HTTPException(status_code=404, detail=f"Analysis '{body.templateId}' not found")
         code = str(analysis.get("adapter_code") or "")
-        _validate_generated_adapter(code)
+        validate_generated_adapter(code)
         return {
             "adapterId": f"adp_{body.templateId}",
             "code": code,
@@ -603,7 +484,7 @@ async def generate_adapter(body: GenerateAdapterRequest):
         "};\n"
     )
 
-    _validate_generated_adapter(code)
+    validate_generated_adapter(code)
 
     return {
         "adapterId": adapter_id,

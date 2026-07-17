@@ -13,6 +13,19 @@ import type {
   SchedulerItem,
   Alert,
   MonitorStats,
+  UrlPreflightRequest,
+  GenerateTemplateRequest,
+  DryRunRequest,
+  GenerateAdapterRequest,
+  WorkspaceTemplateUpdateRequest,
+  WorkspaceTaskRequest,
+  WorkspaceReleaseRequest,
+  WorkspaceTaskActionRequest,
+  AnalysisResult,
+  DryRunResult,
+  WorkspaceTemplate,
+  WorkspaceTask,
+  AdapterResult,
 } from './types';
 
 // ── 全局 Loading 状态 ──
@@ -239,5 +252,53 @@ export const fetchMonitorStats = (): Promise<MonitorStats> =>
 export const MONITOR_WS_URL = `${
   location.protocol === 'https:' ? 'wss:' : 'ws:'
 }//${location.host}/api/monitor/ws`;
+
+// ============================================================
+//  AI Collect
+// ============================================================
+export const aiPreflightUrl = (body: UrlPreflightRequest): Promise<Record<string, unknown>> =>
+  client.post('/ai/preflight', body).then((r) => unwrap<Record<string, unknown>>(r.data));
+
+export const aiGenerateTemplate = (body: GenerateTemplateRequest): Promise<AnalysisResult> =>
+  client.post('/ai/generate-template', body).then((r) => unwrap<AnalysisResult>(r.data));
+
+export const aiDryRun = (body: DryRunRequest): Promise<DryRunResult> =>
+  client.post('/ai/dry-run', body).then((r) => unwrap<DryRunResult>(r.data));
+
+export const aiGenerateAdapter = (body: GenerateAdapterRequest): Promise<AdapterResult> =>
+  client.post('/ai/generate-adapter', body).then((r) => unwrap<AdapterResult>(r.data));
+
+export const aiFetchWorkspaceTemplates = (): Promise<{ items: WorkspaceTemplate[] }> =>
+  client.get('/ai/workspace/templates').then((r) => unwrap<{ items: WorkspaceTemplate[] }>(r.data));
+
+export const aiFetchWorkspaceTasks = (): Promise<{ items: WorkspaceTask[] }> =>
+  client.get('/ai/workspace/tasks').then((r) => unwrap<{ items: WorkspaceTask[] }>(r.data));
+
+export const aiCreateWorkspaceTask = (body: WorkspaceTaskRequest): Promise<WorkspaceTask> =>
+  client.post('/ai/workspace/tasks', body).then((r) => unwrap<WorkspaceTask>(r.data));
+
+export const aiUpdateWorkspaceTemplate = (
+  templateId: string,
+  body: WorkspaceTemplateUpdateRequest,
+): Promise<WorkspaceTemplate> =>
+  client.put(`/ai/workspace/templates/${templateId}`, body).then((r) => unwrap<WorkspaceTemplate>(r.data));
+
+export const aiReleaseWorkspaceTemplate = (body: WorkspaceReleaseRequest): Promise<{
+  template: WorkspaceTemplate;
+  task?: WorkspaceTask;
+  artifacts?: Record<string, string>;
+}> =>
+  client.post('/ai/workspace/templates/release', body).then((r) => unwrap(r.data));
+
+export const aiTaskAction = (
+  taskId: string,
+  body: WorkspaceTaskActionRequest,
+): Promise<WorkspaceTask> =>
+  client.post(`/ai/workspace/tasks/${taskId}/action`, body).then((r) => unwrap<WorkspaceTask>(r.data));
+
+export const aiFetchPlatformOverview = (): Promise<Record<string, unknown>> =>
+  client.get('/ai/platform/overview').then((r) => unwrap<Record<string, unknown>>(r.data));
+
+export const AI_ANALYZE_STREAM_URL = `${BASE_URL}/ai/analyze-stream`;
 
 export default client;
