@@ -47,19 +47,19 @@ class GooglePatentAdapter(BaseSiteAdapter):
             http_client=self._client,
             site=self.adapter_name,
         )
-        self._session = PageSession()
+    #     self._session = PageSession()
 
-    @property
-    def emitter(self) -> BrowserEventEmitter:
-        return self._emitter
+    # @property
+    # def emitter(self) -> BrowserEventEmitter:
+    #     return self._emitter
 
-    @property
-    def session(self) -> PageSession:
-        return self._session
+    # @property
+    # def session(self) -> PageSession:
+    #     return self._session
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。参数值已在 main.py 中组装完毕（+OR+ 拼接），无需额外处理。"""
-        pass
+        return 
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前：发送翻页信令。
@@ -68,44 +68,47 @@ class GooglePatentAdapter(BaseSiteAdapter):
         - 首页：已在 on_before_crawl 发送
         - 翻页：URL_CHANGE → PAGE_CHANGE
         """
-        if is_first:
-            return
+        # if is_first:
+        #     return
 
-        # 1. SPA pushState → URL 变化事件
-        await self._emitter.emit_url_change(self._session)
-        # 2. 翻页操作信令
-        await self._emitter.emit_page_change(self._session)
-        logger.debug(
-            "[GooglePatentAdapter] Page %d events sent: peid=%s, eid=%s",
-            page,
-            self._session.peid[:20],
-            self._session.eid[:20],
-        )
+        # # 1. SPA pushState → URL 变化事件
+        # await self._emitter.emit_url_change(self._session)
+        # # 2. 翻页操作信令
+        # await self._emitter.emit_page_change(self._session)
+        # logger.debug(
+        #     "[GooglePatentAdapter] Page %d events sent: peid=%s, eid=%s",
+        #     page,
+        #     self._session.peid[:20],
+        #     self._session.eid[:20],
+        # )
+        return
 
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """每页数据返回后：过滤相似文档。"""
         # Google Patents 返回的 is_similar_document=True 记录通常是噪音
-        filtered = [
-            r for r in records
-            if not r.get("is_similar_document", False)
-        ]
-        if len(filtered) < len(records):
-            logger.info(
-                "Filtered %d similar documents on page %d",
-                len(records) - len(filtered),
-                page,
-            )
-        return filtered
+        # filtered = [
+        #     r for r in records
+        #     if not r.get("is_similar_document", False)
+        # ]
+        # if len(filtered) < len(records):
+        #     logger.info(
+        #         "Filtered %d similar documents on page %d",
+        #         len(records) - len(filtered),
+        #         page,
+        #     )
+        # return filtered
+        return records
 
     def on_page_advance(self) -> None:
         """翻页状态推进：peid 继承 eid，生成新 eid。"""
-        self._session.advance_page()
-        logger.debug(
-            "[GooglePatentAdapter] Page advanced: new peid=%s, new eid=%s",
-            self._session.peid[:20],
-            self._session.eid[:20],
-        )
-
+        # self._session.advance_page()
+        # logger.debug(
+        #     "[GooglePatentAdapter] Page advanced: new peid=%s, new eid=%s",
+        #     self._session.peid[:20],
+        #     self._session.eid[:20],
+        # )
+        return 
+    
     def on_request_headers(self, page: int) -> dict[str, str]:
         """注入 Google Patents 特有请求头。"""
         return {
@@ -136,11 +139,12 @@ class GooglePatentAdapter(BaseSiteAdapter):
                 page,
             )
             return "abort"
-        return None
+        return
 
     async def close(self) -> None:
         """释放 emitter 资源。"""
-        await self._emitter.close()
+        # await self._emitter.close()
+        return
 
     @classmethod
     def build_batch_param_value(cls, batch_data: list[str], param_name: str = "") -> str:
