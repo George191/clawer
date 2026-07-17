@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 
 /**
  * 轮询 hook — 按指定间隔调用回调
@@ -14,14 +14,27 @@ export function usePolling(
   const savedCallback = useRef(callback);
   savedCallback.current = callback;
 
-  const poll = useCallback(() => {
-    savedCallback.current();
-  }, []);
-
   useEffect(() => {
     if (!enabled) return;
-    poll();
-    const id = setInterval(poll, interval);
-    return () => clearInterval(id);
-  }, [interval, enabled, poll]);
+
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      try {
+        await savedCallback.current();
+      } finally {
+        if (active) timer = setTimeout(poll, interval);
+      }
+    };
+
+    // Let StrictMode clean up its probe mount before sending the first request.
+    // Recursive timeouts also guarantee that slow requests never overlap.
+    timer = setTimeout(poll, 0);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [interval, enabled]);
 }

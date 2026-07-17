@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Badge, Button, Result, Space, Spin, Typography } from 'antd';
 import {
   ApiOutlined,
@@ -23,12 +23,7 @@ const { Title, Text } = Typography;
 const aura = workspacePalette;
 
 const Dashboard: React.FC = () => {
-  const { metrics, loading, error, fetchMetrics, fetchAlerts } = useDashboardStore();
-
-  useEffect(() => {
-    fetchMetrics();
-    fetchAlerts();
-  }, [fetchMetrics, fetchAlerts]);
+  const { metrics, loading, error, fetchMetrics } = useDashboardStore();
 
   usePolling(fetchMetrics, 5000);
 

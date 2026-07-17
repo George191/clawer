@@ -46,11 +46,12 @@ import {
 } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import { useWebSocket } from '@/hooks/useWebSocket';
 import {
+  AI_ANALYZE_WS_URL,
   type DryRunResponse,
   type FieldDef,
   type UrlPreflightResponse,
-  createAnalyzeStream,
   dryRun as dryRunApi,
   generateAdapter as generateAdapterApi,
   generateTemplate as generateTemplateApi,
@@ -64,6 +65,21 @@ import WorkspaceDock, { type WorkspacePanel } from './WorkspaceDock';
 const { Text } = Typography;
 const { TextArea } = Input;
 const tiffanyAccent = '#81D8D0';
+
+type AnalysisFeedItem = {
+  id: number;
+  createdAt: number;
+  kind: 'step' | 'thinking' | 'status' | 'error';
+  content: string;
+  step?: string;
+  status?: string;
+};
+
+type AnalyzeSocketMessage = {
+  type: string;
+  request_id?: string;
+  data?: Record<string, unknown>;
+};
 const SessionStatusIcon: React.FC<{ className?: string }> = ({ className }) => (
   <svg
     viewBox="0 0 24 24"
@@ -1057,7 +1073,9 @@ const aura = workspacePalette;
 const AICollect: React.FC = () => {
   const { message } = App.useApp();
   const [searchParams, setSearchParams] = useSearchParams();
-  const analyzeStreamRef = useRef<EventSource | null>(null);
+  const analyzeRequestRef = useRef<{ requestId: string; url: string; prompt: string } | null>(null);
+  const analyzeStepRef = useRef('prepare');
+  const analysisFeedIdRef = useRef(0);
   const simulationTimerRef = useRef<number | null>(null);
   const promptGenerationTimerRef = useRef<number | null>(null);
   const accountDisplayName = 'Blank George';
@@ -1101,6 +1119,9 @@ const AICollect: React.FC = () => {
   const [selectedLogStep, setSelectedLogStep] = useState<ProcessStepKey>('prepare');
   const [scanPulse, setScanPulse] = useState(0);
   const [liveLogs, setLiveLogs] = useState<string[]>(['等待采集目标']);
+  const [analysisFeed, setAnalysisFeed] = useState<AnalysisFeedItem[]>([]);
+  const [expandedAnalysisSteps, setExpandedAnalysisSteps] = useState<Set<string>>(new Set());
+  const [analysisClock, setAnalysisClock] = useState(() => Date.now());
   const [promptGenerating, setPromptGenerating] = useState(false);
 
   const [templateValueDrafts, setTemplateValueDrafts] = useState<Record<string, string>>({});
@@ -1588,7 +1609,6 @@ const AICollect: React.FC = () => {
   ]);
 
   useEffect(() => () => {
-    analyzeStreamRef.current?.close();
     if (simulationTimerRef.current) {
       window.clearTimeout(simulationTimerRef.current);
     }
@@ -1662,6 +1682,165 @@ const AICollect: React.FC = () => {
   const pushLiveLog = useCallback((log: string) => {
     setLiveLogs((prev) => [log, ...prev].slice(0, 8));
   }, []);
+
+  const appendAnalysisFeed = useCallback((item: Omit<AnalysisFeedItem, 'id' | 'createdAt'>) => {
+    analysisFeedIdRef.current += 1;
+    setAnalysisFeed((prev) => [...prev, { ...item, id: analysisFeedIdRef.current, createdAt: Date.now() }]);
+  }, []);
+
+  const handleAnalyzeSocketMessage = useCallback((raw: string) => {
+    let messagePayload: AnalyzeSocketMessage;
+    try {
+      messagePayload = JSON.parse(raw) as AnalyzeSocketMessage;
+    } catch {
+      appendAnalysisFeed({ kind: 'error', content: '收到无法解析的分析消息' });
+      return;
+    }
+
+    const activeRequest = analyzeRequestRef.current;
+    if (!activeRequest || messagePayload.request_id !== activeRequest.requestId) return;
+    const data = messagePayload.data ?? {};
+
+    if (messagePayload.type === 'analyze_started') {
+      appendAnalysisFeed({ kind: 'status', step: 'prepare', content: '分析任务已开始' });
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_step') {
+      const step = String(data.step ?? 'analysis');
+      const label = String(data.label ?? step);
+      const status = String(data.status ?? 'running');
+      analyzeStepRef.current = step;
+      appendAnalysisFeed({ kind: 'step', step, status, content: label });
+      pushLiveLog(`[${step}] ${label}: ${status}`);
+
+      const processStepByAnalyzeStep: Record<string, ProcessStepKey> = {
+        fetch_page: 'entry',
+        analyze_structure: 'structure',
+        generate_template: 'contract',
+        validate: 'contract',
+      };
+      const processStep = processStepByAnalyzeStep[step];
+      if (processStep) {
+        const processIndex = processStepOrder.indexOf(processStep);
+        setVisibleProcessSteps(processStepOrder.slice(0, processIndex + 1));
+        setActiveProcessStep(processStep);
+        setSelectedLogStep(processStep);
+        if (status === 'done') {
+          setCompletedProcessSteps((prev) => new Set(prev).add(processStep));
+        }
+      }
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_thinking') {
+      const content = String(data.content ?? '');
+      appendAnalysisFeed({ kind: 'thinking', step: analyzeStepRef.current, content });
+      pushLiveLog(content);
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_model') {
+      const content = typeof data.content === 'string'
+        ? data.content
+        : JSON.stringify(data);
+      appendAnalysisFeed({
+        kind: data.kind === 'retry' ? 'status' : 'thinking',
+        step: analyzeStepRef.current,
+        content,
+      });
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_preflight') {
+      const preflight = data as unknown as UrlPreflightResponse;
+      setUrlPreflight(preflight);
+      setUrl(preflight.normalizedUrl);
+      setPreflightLoading(false);
+      appendAnalysisFeed({
+        kind: 'status',
+        step: analyzeStepRef.current,
+        content: `已验证页面：${preflight.title || preflight.url}`,
+      });
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_fields') {
+      const nextFields = Array.isArray(data.fields) ? data.fields as FieldDef[] : [];
+      setFields(nextFields);
+      setSelectedFields(new Set(nextFields.map((field) => field.name)));
+      appendAnalysisFeed({
+        kind: 'status',
+        step: analyzeStepRef.current,
+        content: `已生成 ${nextFields.length} 个字段候选`,
+      });
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_pagination') {
+      appendAnalysisFeed({
+        kind: 'status',
+        step: analyzeStepRef.current,
+        content: `已生成分页策略：${String(data.type ?? 'none')}`,
+      });
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_complete') {
+      const templateYaml = typeof data.templateYaml === 'string' ? data.templateYaml : '';
+      const adapterPath = typeof data.adapterPath === 'string' ? data.adapterPath : '';
+      const agent = data.agent as { decision?: { requires_adapter?: boolean } } | undefined;
+      setTemplateId(String(data.templateId ?? ''));
+      if (templateYaml) {
+        setWorkspaceTemplateYaml(templateYaml);
+        setTemplateDraftEntries(parseTemplateEntries(templateYaml));
+        setTemplateValueDrafts({});
+      }
+      if (adapterPath) setWorkspaceAdapterFile(adapterPath);
+      setGeneratedAdapterRequired(Boolean(agent?.decision?.requires_adapter));
+      setPreflightLoading(false);
+      appendAnalysisFeed({ kind: 'status', step: 'complete', content: '模板合约已生成' });
+      pushLiveLog('服务端合约草案已生成，等待前端确认');
+      analyzeRequestRef.current = null;
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_error') {
+      const errorMessage = String(data.message ?? data.error ?? '分析服务暂不可用');
+      appendAnalysisFeed({ kind: 'error', content: errorMessage });
+      setPreflightLoading(false);
+      setStreamError(errorMessage);
+      setRunStatus('completed');
+      analyzeRequestRef.current = null;
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_raw') {
+      appendAnalysisFeed({ kind: 'thinking', step: analyzeStepRef.current, content: String(data.content ?? '') });
+    }
+  }, [appendAnalysisFeed, pushLiveLog]);
+
+  const { connected: analyzeSocketConnected, send: sendAnalyzeSocketMessage } = useWebSocket(
+    AI_ANALYZE_WS_URL,
+    {
+      onMessage: handleAnalyzeSocketMessage,
+      onClose: () => {
+        if (!analyzeRequestRef.current) return;
+        appendAnalysisFeed({ kind: 'error', content: '分析连接已断开，请重新发起分析' });
+        setPreflightLoading(false);
+        setStreamError('分析连接已断开，请重新发起分析。');
+        setRunStatus('completed');
+        analyzeRequestRef.current = null;
+      },
+    },
+  );
+
+  useEffect(() => {
+    if (runStatus !== 'running') return undefined;
+    setAnalysisClock(Date.now());
+    const timer = window.setInterval(() => setAnalysisClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [runStatus]);
 
   const clearInspectorTransitionTimer = useCallback(() => {
     if (inspectorTransitionTimerRef.current) {
@@ -1789,6 +1968,7 @@ const AICollect: React.FC = () => {
 
   useEffect(() => {
     if (runStatus !== 'running') return undefined;
+    if (analyzeRequestRef.current) return undefined;
     if (processStepMeta[activeProcessStep].needConfirm) return undefined;
 
     const currentIndex = processStepOrder.indexOf(activeProcessStep);
@@ -1948,6 +2128,10 @@ const AICollect: React.FC = () => {
 
   const handleAnalyze = useCallback(async () => {
     if (preflightLoading) return;
+    if (!analyzeSocketConnected) {
+      message.warning('分析连接正在建立，请稍后重试');
+      return;
+    }
     const draftPrompt = taskDraft.trim();
     const targetUrl = hasSession
       ? (urlPreflight?.normalizedUrl || url || submittedPrompt).trim()
@@ -1968,102 +2152,62 @@ const AICollect: React.FC = () => {
     setSubmittedPrompt(targetUrl);
     setTaskDraft('');
     setIntent(targetUrl);
-    analyzeStreamRef.current?.close();
     resetSimulation();
+    setAnalysisFeed([]);
+    setExpandedAnalysisSteps(new Set());
+    analysisFeedIdRef.current = 0;
+    analyzeStepRef.current = 'prepare';
     setStreamError('');
     setRunStatus('running');
     setMode('explore');
     setExpandedStep('explore');
-    const es = createAnalyzeStream(targetUrl, agentPrompt);
-    analyzeStreamRef.current = es;
-
-    es.addEventListener('step', (event: MessageEvent) => {
-      const data: { step: string; label: string; status: string } = JSON.parse(event.data);
-      pushLiveLog(`[${data.step}] ${data.label}: ${data.status}`);
-    });
-
-    es.addEventListener('thinking', (event: MessageEvent) => {
-      const data: { content: string } = JSON.parse(event.data);
-      pushLiveLog(`思考: ${data.content}`);
-    });
-
-    es.addEventListener('preflight', (event: MessageEvent) => {
-      const data: UrlPreflightResponse = JSON.parse(event.data);
-      setUrlPreflight(data);
-      setUrl(data.normalizedUrl);
+    const requestId = globalThis.crypto?.randomUUID?.()
+      ?? `analyze-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    analyzeRequestRef.current = { requestId, url: targetUrl, prompt: agentPrompt };
+    const sent = sendAnalyzeSocketMessage(JSON.stringify({
+      type: 'start_analyze',
+      request_id: requestId,
+      url: targetUrl,
+      prompt: agentPrompt,
+    }));
+    if (!sent) {
+      analyzeRequestRef.current = null;
       setPreflightLoading(false);
-      pushLiveLog(`页面预检完成: ${data.title || data.url}`);
-    });
-
-    es.addEventListener('fields', (event: MessageEvent) => {
-      const data: { fields: FieldDef[] } = JSON.parse(event.data);
-      setFields(data.fields);
-      setSelectedFields(new Set(data.fields.map((field) => field.name)));
-      pushLiveLog('服务端字段候选已同步');
-    });
-
-    es.addEventListener('complete', (event: MessageEvent) => {
-      const data: {
-        templateId: string;
-        templateYaml?: string;
-        adapterPath?: string;
-        agent?: { decision?: { requires_adapter?: boolean } };
-      } = JSON.parse(event.data);
-      setTemplateId(data.templateId);
-      if (data.templateYaml) {
-        setWorkspaceTemplateYaml(data.templateYaml);
-        setTemplateDraftEntries(parseTemplateEntries(data.templateYaml));
-        setTemplateValueDrafts({});
-      }
-      if (data.adapterPath) setWorkspaceAdapterFile(data.adapterPath);
-      setGeneratedAdapterRequired(Boolean(data.agent?.decision?.requires_adapter));
-      pushLiveLog('服务端合约草案已生成，等待前端确认');
-      es.close();
-      analyzeStreamRef.current = null;
-    });
-
-    es.addEventListener('error', () => {
-      setPreflightLoading(false);
-      setStreamError('分析服务暂不可用，请检查服务端日志后重试。');
       setRunStatus('completed');
-      pushLiveLog('分析服务返回错误，已停止当前流程');
-      es.close();
-      analyzeStreamRef.current = null;
-    });
-
-    es.onerror = () => {
-      setPreflightLoading(false);
-      setStreamError('SSE 连接已断开，请重新发起分析。');
-      setRunStatus('completed');
-      pushLiveLog('SSE 连接断开，当前流程已停止');
-      es.close();
-      analyzeStreamRef.current = null;
-    };
-  }, [hasSession, intent, message, preflightLoading, resetSimulation, submittedPrompt, taskDraft, url, urlPreflight?.normalizedUrl, validateUrl]);
+      setStreamError('分析连接尚未就绪，请重新发起分析。');
+    }
+  }, [analyzeSocketConnected, hasSession, intent, message, preflightLoading, resetSimulation, sendAnalyzeSocketMessage, submittedPrompt, taskDraft, url, urlPreflight?.normalizedUrl, validateUrl]);
 
   const handlePauseAnalysis = useCallback(() => {
-    analyzeStreamRef.current?.close();
-    analyzeStreamRef.current = null;
+    const request = analyzeRequestRef.current;
+    if (request) {
+      sendAnalyzeSocketMessage(JSON.stringify({ type: 'cancel_analyze', request_id: request.requestId }));
+      analyzeRequestRef.current = null;
+    }
     setRunStatus('paused');
     message.info('已暂停当前分析');
-  }, [message]);
+  }, [message, sendAnalyzeSocketMessage]);
 
   const handleResumeAnalysis = useCallback(() => {
-    setRunStatus('running');
-    message.success('已继续当前分析');
-  }, [message]);
+    void handleAnalyze();
+  }, [handleAnalyze]);
 
   const handleCancelAnalysis = useCallback(() => {
-    analyzeStreamRef.current?.close();
-    analyzeStreamRef.current = null;
+    const request = analyzeRequestRef.current;
+    if (request) {
+      sendAnalyzeSocketMessage(JSON.stringify({ type: 'cancel_analyze', request_id: request.requestId }));
+      analyzeRequestRef.current = null;
+    }
     finishPromptGeneration();
     setRunStatus('idle');
     setMode('explore');
     setStreamError('');
     setSubmittedPrompt('');
     setTaskDraft('');
+    setAnalysisFeed([]);
+    setExpandedAnalysisSteps(new Set());
     message.info('已取消当前分析');
-  }, [finishPromptGeneration, message]);
+  }, [finishPromptGeneration, message, sendAnalyzeSocketMessage]);
 
   const handleDryRun = useCallback(async () => {
     setRunStatus('running');
@@ -3124,6 +3268,10 @@ const AICollect: React.FC = () => {
             );
           })}
         </div>
+        <div className="ai-template-stage-complete">
+          <CheckCircleOutlined aria-hidden="true" />
+          <span>Completed</span>
+        </div>
       </section>
     );
   }, [getTemplateEntryDisplayMeta, templateValueDrafts, visibleTemplateEntries]);
@@ -3644,33 +3792,124 @@ const AICollect: React.FC = () => {
     );
   };
 
+  const renderAnalysisFeed = () => {
+    const groups = analysisFeed.reduce<Array<{ step: string; items: AnalysisFeedItem[] }>>((result, item) => {
+      const rawStep = item.step ?? 'analysis';
+      const step = rawStep === 'validate' || rawStep === 'complete' ? 'generate_template' : rawStep;
+      const current = result[result.length - 1];
+      if (current?.step === step) {
+        current.items.push(item);
+      } else {
+        result.push({ step, items: [item] });
+      }
+      return result;
+    }, []);
+    const templateStagesByAnalyzeStep: Partial<Record<string, TemplateStageId[]>> = {
+      fetch_page: ['site', 'request', 'response'],
+      analyze_structure: ['pagination', 'fields', 'dedup'],
+      generate_template: ['download'],
+    };
+    const modelGroups = groups.filter((group) => group.step in templateStagesByAnalyzeStep);
+    const formatDuration = (durationMs: number) => {
+      const totalSeconds = Math.max(1, Math.floor(durationMs / 1000));
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
+    };
+
+    return (
+      <section className="ai-analysis-feed" aria-live="polite">
+        <div className="ai-analysis-feed-body">
+        {modelGroups.length ? modelGroups.map((group) => {
+          const generatedStages = (templateStagesByAnalyzeStep[group.step] ?? [])
+            .filter((stageId) => visibleTemplateStages.includes(stageId));
+          const isActive = Boolean(
+            analyzeRequestRef.current
+            && (
+              analyzeStepRef.current === group.step
+              || (group.step === 'generate_template' && analyzeStepRef.current === 'validate')
+            )
+          );
+          const startedAt = group.items[0].createdAt;
+          const finishedAt = isActive ? analysisClock : group.items[group.items.length - 1].createdAt;
+          const expanded = expandedAnalysisSteps.has(group.step);
+          return (
+            <div className="ai-analysis-feed-group" key={`${group.step}-${group.items[0].id}`}>
+              <button
+                type="button"
+                className="ai-analysis-worked-row"
+                aria-expanded={expanded}
+                onClick={() => setExpandedAnalysisSteps((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(group.step)) next.delete(group.step);
+                  else next.add(group.step);
+                  return next;
+                })}
+              >
+                <span>{isActive ? 'Working for' : 'Worked for'} {formatDuration(finishedAt - startedAt)}</span>
+                <i className={expanded ? 'is-expanded' : ''} aria-hidden="true">›</i>
+              </button>
+              {expanded ? (
+                <div className="ai-analysis-feed-details">
+                  {group.items.map((item) => (
+                    <div className={`ai-analysis-feed-item is-${item.kind}`} key={item.id}>
+                      <span className={`ai-analysis-feed-marker ${item.kind === 'step' && item.status === 'done' ? 'is-complete' : ''}`} aria-hidden="true">
+                        {item.kind === 'step' && item.status === 'done' ? <CheckCircleOutlined /> : null}
+                      </span>
+                      <div>
+                        {item.kind === 'step' ? (
+                          <small>{item.status === 'done' ? 'Completed' : 'Working'} · {item.step}</small>
+                        ) : item.step ? <small>{item.step}</small> : null}
+                        <small className="ai-analysis-feed-content">{item.content}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {generatedStages.length ? (
+                <div className="ai-analysis-generated-stage">
+                  <div className="ai-analysis-artifact-label">
+                    <span>Generated</span>
+                    <strong>{activeTemplate.fileName}</strong>
+                  </div>
+                  {generatedStages.map(renderTemplateStageSection)}
+                </div>
+              ) : null}
+            </div>
+          );
+        }) : visibleTemplateStages.length ? (
+          <div className="ai-analysis-generated-stage">
+            {visibleTemplateStages.map(renderTemplateStageSection)}
+          </div>
+        ) : null}
+        </div>
+      </section>
+    );
+  };
+
   const renderWorkflowTemplatePanel = () => (
     <section className={`ai-session-main-shell is-template ${expandingPinnedPanel === 'template' ? 'is-restoring-from-tab' : ''}`}>
       {renderWorkflowHeader()}
       <div className="ai-session-template-scroll" ref={templateScrollRef}>
+        {renderAnalysisFeed()}
         {streamError ? (
           <Alert className="ai-session-inline-alert" type="warning" showIcon message={streamError} />
         ) : null}
-        <article className="ai-template-sheet">
-          <div className="ai-template-sheet-body">
-            {visibleTemplateStages.map(renderTemplateStageSection)}
-          </div>
-          {templateReadyForConfirm ? (
-            <div className="ai-template-confirm-bar">
-              <div className="ai-template-confirm-copy">
-                <strong>Confirm template</strong>
-                <span>Lock the YAML contract before adapter generation.</span>
-              </div>
-              <Button
-                type="primary"
-                className="ai-template-confirm-btn"
-                onClick={handleConfirmTemplate}
-              >
-                Confirm Template
-              </Button>
+        {templateReadyForConfirm ? (
+          <div className="ai-template-confirm-bar">
+            <div className="ai-template-confirm-copy">
+              <strong>Confirm template</strong>
+              <span>Lock the YAML contract before adapter generation.</span>
             </div>
-          ) : null}
-        </article>
+            <Button
+              type="primary"
+              className="ai-template-confirm-btn"
+              onClick={handleConfirmTemplate}
+            >
+              Confirm Template
+            </Button>
+          </div>
+        ) : null}
         <div className="ai-session-template-tail" aria-hidden="true">
           <div className="ai-session-template-divider" />
         </div>
@@ -4641,6 +4880,146 @@ const AICollect: React.FC = () => {
             position: relative;
             transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition), transform var(--ai-session-split-transition);
           }
+          .ai-analysis-feed {
+            width: 100%;
+            align-self: stretch;
+            margin: 0 0 18px;
+          }
+          .ai-analysis-feed-body {
+            width: 100%;
+            display: grid;
+            gap: 24px;
+          }
+          .ai-analysis-feed-group {
+            width: 100%;
+            display: grid;
+            gap: 12px;
+          }
+          .ai-analysis-worked-row {
+            width: 100%;
+            height: 32px;
+            min-height: 32px;
+            padding: 0;
+            border: 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            background: transparent;
+            color: rgba(255, 255, 255, 0.62);
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 5px;
+            text-align: left;
+            cursor: pointer;
+            font: inherit;
+            font-size: 12px;
+            line-height: 16px;
+          }
+          .ai-analysis-worked-row:hover {
+            color: rgba(255, 255, 255, 0.82);
+          }
+          .ai-analysis-worked-row i {
+            width: 14px;
+            height: 14px;
+            flex: 0 0 14px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.45);
+            font-size: 14px;
+            font-style: normal;
+            line-height: 1;
+            transform: rotate(0deg);
+            transition: transform 160ms ease;
+          }
+          .ai-analysis-worked-row i.is-expanded {
+            transform: rotate(90deg);
+          }
+          .ai-analysis-feed-details {
+            display: grid;
+            gap: 6px;
+            padding: 1px 0 4px;
+          }
+          .ai-analysis-feed-item {
+            display: grid;
+            grid-template-columns: 10px minmax(0, 1fr);
+            gap: 6px;
+            color: ${aura.muted};
+          }
+          .ai-analysis-feed-marker {
+            width: 5px;
+            height: 5px;
+            margin: 6px 0 0 2px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.22);
+            color: ${aura.success};
+            font-size: 10px;
+          }
+          .ai-analysis-feed-item.is-step .ai-analysis-feed-marker {
+            background: ${aura.accent};
+            box-shadow: 0 0 0 4px rgba(138, 180, 255, 0.1);
+          }
+          .ai-analysis-feed-item.is-step .ai-analysis-feed-marker.is-complete {
+            width: auto;
+            height: auto;
+            margin: 3px 0 0;
+            background: transparent;
+            box-shadow: none;
+          }
+          .ai-analysis-feed-item.is-error .ai-analysis-feed-marker {
+            background: ${aura.danger};
+          }
+          .ai-analysis-feed-item small {
+            display: block;
+            margin: 0;
+            color: ${aura.subtle};
+            font-size: 10px;
+            font-weight: 400;
+            line-height: 1.4;
+          }
+          .ai-analysis-feed-item .ai-analysis-feed-content {
+            margin-top: 1px;
+            color: ${aura.muted};
+            font-size: 11px;
+            font-weight: 400;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+          }
+          .ai-analysis-feed-item.is-step .ai-analysis-feed-content,
+          .ai-analysis-feed-item.is-status .ai-analysis-feed-content {
+            color: ${aura.text};
+            font-weight: 400;
+          }
+          .ai-analysis-feed-item.is-error .ai-analysis-feed-content {
+            color: ${aura.danger};
+          }
+          .ai-analysis-artifact-label {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin: 2px 4px 10px;
+          }
+          .ai-analysis-generated-stage {
+            width: calc(100% - 18px);
+            max-width: 776px;
+            display: grid;
+            gap: 12px;
+            margin: 2px auto 6px;
+          }
+          .ai-analysis-generated-stage .ai-analysis-artifact-label {
+            margin-bottom: 0;
+          }
+          .ai-analysis-artifact-label span {
+            color: ${aura.accent};
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+          }
+          .ai-analysis-artifact-label strong {
+            color: ${aura.text};
+            font-size: 13px;
+          }
           .ai-session-main-shell.is-restoring-from-tab .ai-session-template-scroll,
           .ai-session-main-shell.is-restoring-from-tab .ai-session-adapter-scroll,
           .ai-session-main-shell.is-restoring-from-tab .ai-session-release-scroll {
@@ -5037,6 +5416,20 @@ const AICollect: React.FC = () => {
             padding: 4px 6px;
             border-radius: 12px;
             transition: background 160ms ease, box-shadow 160ms ease;
+          }
+          .ai-template-stage-complete {
+            min-height: 26px;
+            padding: 7px 6px 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.07);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: ${aura.success};
+            font-size: 10px;
+            line-height: 1.2;
+          }
+          .ai-template-stage-complete .anticon {
+            font-size: 11px;
           }
           .ai-template-stage-section:hover .ai-template-stage-body,
           .ai-template-stage-section:focus-within .ai-template-stage-body {

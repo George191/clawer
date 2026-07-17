@@ -299,6 +299,4 @@ export const aiTaskAction = (
 export const aiFetchPlatformOverview = (): Promise<Record<string, unknown>> =>
   client.get('/ai/platform/overview').then((r) => unwrap<Record<string, unknown>>(r.data));
 
-export const AI_ANALYZE_STREAM_URL = `${BASE_URL}/ai/analyze-stream`;
-
 export default client;

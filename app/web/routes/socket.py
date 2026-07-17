@@ -9,7 +9,8 @@ WebSocket 消息协议:
         {"type": "command", "action": "pause_task", "task_id": "..."}
         {"type": "command", "action": "resume_task", "task_id": "..."}
         {"type": "command", "action": "cancel_task", "task_id": "..."}
-        {"type": "start_analyze", "url": "...", "options": {...}}
+        {"type": "start_analyze", "request_id": "...", "url": "...", "prompt": "..."}
+        {"type": "cancel_analyze", "request_id": "..."}
 
     服务端推送 -> 客户端:
         {"type": "task_status", "task_id": "...", "data": {...}}
@@ -35,7 +36,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from app.web.routes.ai_collect import (
-    _analyze_stream,
+    _analyze_events,
     _build_yaml_template,
 )
 from app.web.utils.validation import (
@@ -57,20 +58,34 @@ class ClientConnection:
         self.client_id = client_id
         self.subscriptions: set[str] = set()
         self.active_tasks: set[str] = set()
+        self._send_lock = asyncio.Lock()
+        self._closed = False
+        self.analyze_task: asyncio.Task[None] | None = None
 
-    async def send(self, message: dict[str, Any]) -> None:
+    async def send(self, message: dict[str, Any]) -> bool:
         """发送消息到客户端."""
-        try:
-            await self.websocket.send_text(json.dumps(message, ensure_ascii=False))
-        except Exception as e:
-            logger.warning("Failed to send message to %s: %s", self.client_id, e)
+        async with self._send_lock:
+            if self._closed:
+                return False
+            try:
+                await self.websocket.send_text(json.dumps(message, ensure_ascii=False))
+                return True
+            except Exception as e:
+                logger.warning("Failed to send message to %s: %s", self.client_id, e)
+                return False
 
     async def close(self) -> None:
         """关闭连接."""
-        try:
-            await self.websocket.close()
-        except Exception:
-            pass
+        if self.analyze_task and not self.analyze_task.done():
+            self.analyze_task.cancel()
+        async with self._send_lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                await self.websocket.close()
+            except Exception:
+                pass
 
 
 class ConnectionManager:
@@ -97,8 +112,13 @@ class ConnectionManager:
             connection = self.active_connections.pop(client_id, None)
             if connection:
                 for channel in connection.subscriptions:
-                    self.channel_subscribers.get(channel, set()).discard(client_id)
-                await connection.close()
+                    subscribers = self.channel_subscribers.get(channel)
+                    if subscribers:
+                        subscribers.discard(client_id)
+                        if not subscribers:
+                            self.channel_subscribers.pop(channel, None)
+        if connection:
+            await connection.close()
         logger.info("WebSocket client disconnected: %s", client_id)
 
     async def subscribe(self, client_id: str, channel: str) -> None:
@@ -117,23 +137,30 @@ class ConnectionManager:
             connection = self.active_connections.get(client_id)
             if connection:
                 connection.subscriptions.discard(channel)
-                self.channel_subscribers.get(channel, set()).discard(client_id)
+                subscribers = self.channel_subscribers.get(channel)
+                if subscribers:
+                    subscribers.discard(client_id)
+                    if not subscribers:
+                        self.channel_subscribers.pop(channel, None)
 
     async def broadcast(self, channel: str, message: dict[str, Any]) -> None:
         """向频道订阅者广播消息."""
         async with self._lock:
             subscriber_ids = self.channel_subscribers.get(channel, set()).copy()
-            for subscriber_id in subscriber_ids:
-                connection = self.active_connections.get(subscriber_id)
-                if connection:
-                    await connection.send(message)
+            connections = [
+                self.active_connections[subscriber_id]
+                for subscriber_id in subscriber_ids
+                if subscriber_id in self.active_connections
+            ]
+        if connections:
+            await asyncio.gather(*(connection.send(message) for connection in connections))
 
     async def send_to(self, client_id: str, message: dict[str, Any]) -> None:
         """向特定客户端发送消息."""
         async with self._lock:
             connection = self.active_connections.get(client_id)
-            if connection:
-                await connection.send(message)
+        if connection:
+            await connection.send(message)
 
 
 manager = ConnectionManager()
@@ -315,6 +342,7 @@ async def handle_client_message(connection: ClientConnection, raw_message: str) 
         "unsubscribe": handle_unsubscribe,
         "command": handle_command,
         "start_analyze": handle_start_analyze,
+        "cancel_analyze": handle_cancel_analyze,
         "start_dry_run": handle_start_dry_run,
         "generate_template": handle_generate_template,
         "generate_adapter": handle_generate_adapter,
@@ -410,51 +438,62 @@ async def handle_command(connection: ClientConnection, message: dict[str, Any]) 
 async def handle_start_analyze(connection: ClientConnection, message: dict[str, Any]) -> None:
     """处理启动分析请求."""
     url = message.get("url")
+    prompt = str(message.get("prompt") or "").strip()[:2000]
+    request_id = str(message.get("request_id") or uuid.uuid4())
     if not url:
-        await connection.send({"type": "error", "code": "MISSING_URL", "message": "缺少url参数"})
+        await connection.send({"type": "analyze_error", "request_id": request_id, "data": {"code": "MISSING_URL", "message": "缺少url参数"}})
         return
 
     try:
         validate_target_url(url)
     except Exception as e:
-        await connection.send({"type": "error", "code": "INVALID_URL", "message": str(e)})
+        await connection.send({"type": "analyze_error", "request_id": request_id, "data": {"code": "INVALID_URL", "message": str(e)}})
         return
 
-    analyze_task = asyncio.create_task(_stream_analyze_results(connection, url))
+    if connection.analyze_task and not connection.analyze_task.done():
+        connection.analyze_task.cancel()
+
+    connection.analyze_task = asyncio.create_task(
+        _stream_analyze_results(connection, url, prompt, request_id)
+    )
     connection.active_tasks.add("analyze")
+    await connection.send({"type": "analyze_started", "request_id": request_id, "data": {"url": url}})
 
 
-async def _stream_analyze_results(connection: ClientConnection, url: str) -> None:
+async def handle_cancel_analyze(connection: ClientConnection, message: dict[str, Any]) -> None:
+    """取消当前连接正在执行的分析任务."""
+    request_id = str(message.get("request_id") or "")
+    task = connection.analyze_task
+    if task and not task.done():
+        task.cancel()
+        await connection.send({"type": "analyze_cancelled", "request_id": request_id, "data": {}})
+
+
+async def _stream_analyze_results(
+    connection: ClientConnection,
+    url: str,
+    prompt: str,
+    request_id: str,
+) -> None:
     """流式发送分析结果到客户端."""
     try:
-        async for chunk in _analyze_stream(url):
-            if chunk.startswith("event:"):
-                lines = chunk.strip().split("\n")
-                event_type = ""
-                event_data = ""
-                for line in lines:
-                    if line.startswith("event:"):
-                        event_type = line[6:].strip()
-                    elif line.startswith("data:"):
-                        event_data = line[5:].strip()
-
-                if event_type and event_data:
-                    try:
-                        data = json.loads(event_data)
-                        await connection.send({"type": f"analyze_{event_type}", "data": data})
-                    except json.JSONDecodeError:
-                        await connection.send({"type": "analyze_raw", "data": {"event": event_type, "content": event_data}})
-            else:
-                await connection.send({"type": "analyze_raw", "data": {"content": chunk}})
-
-        await connection.send({"type": "analyze_complete", "data": {"url": url}})
+        async for event_type, data in _analyze_events(url, prompt):
+            await connection.send(
+                {
+                    "type": f"analyze_{event_type}",
+                    "request_id": request_id,
+                    "data": data,
+                }
+            )
     except asyncio.CancelledError:
         logger.info("Analyze stream cancelled for %s", url)
     except Exception as e:
         logger.exception("Analyze stream error for %s", url)
-        await connection.send({"type": "analyze_error", "data": {"code": "ANALYZE_ERROR", "message": str(e)}})
+        await connection.send({"type": "analyze_error", "request_id": request_id, "data": {"code": "ANALYZE_ERROR", "message": str(e)}})
     finally:
         connection.active_tasks.discard("analyze")
+        if connection.analyze_task is asyncio.current_task():
+            connection.analyze_task = None
 
 
 async def handle_start_dry_run(connection: ClientConnection, message: dict[str, Any]) -> None:

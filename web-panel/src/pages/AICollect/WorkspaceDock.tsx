@@ -882,37 +882,50 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     applyWorkspaceTasks(await fetchWorkspaceTasks());
   }, [applyWorkspaceTasks]);
 
-  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
-
   useEffect(() => {
-    if (workspaceLoaded) return;
     let active = true;
-    setWorkspaceLoaded(true);
-    Promise.all([fetchWorkspaceTemplates(), fetchWorkspaceTasks()])
-      .then(([templateItems, taskItemsResponse]) => {
-        if (!active) return;
-        setTemplates(templateItems.map(mapWorkspaceTemplate));
-        setTemplateDrafts(Object.fromEntries(templateItems.map((item) => [item.id, {
-          adapter: item.adapter,
-          outputTag: item.output_tag,
-          notes: item.description,
-          yaml: item.yaml_content ?? '',
-          savedAt: item.updated_at,
-        }])));
-        applyWorkspaceTasks(taskItemsResponse);
-      })
-      .catch((error) => console.error('Failed to load AI Collect workspace', error));
+    const timer = window.setTimeout(() => {
+      Promise.all([fetchWorkspaceTemplates(), fetchWorkspaceTasks()])
+        .then(([templateItems, taskItemsResponse]) => {
+          if (!active) return;
+          setTemplates(templateItems.map(mapWorkspaceTemplate));
+          setTemplateDrafts(Object.fromEntries(templateItems.map((item) => [item.id, {
+            adapter: item.adapter,
+            outputTag: item.output_tag,
+            notes: item.description,
+            yaml: item.yaml_content ?? '',
+            savedAt: item.updated_at,
+          }])));
+          applyWorkspaceTasks(taskItemsResponse);
+        })
+        .catch((error) => console.error('Failed to load AI Collect workspace', error));
+    }, 0);
     return () => {
       active = false;
+      window.clearTimeout(timer);
     };
-  }, [applyWorkspaceTasks, workspaceLoaded]);
+  }, [applyWorkspaceTasks]);
 
   useEffect(() => {
     if (activePanel !== 'tasks') return undefined;
-    const timer = window.setInterval(() => {
-      void refreshWorkspaceTasks().catch((error) => console.error('Failed to refresh tasks', error));
-    }, 5000);
-    return () => window.clearInterval(timer);
+
+    let active = true;
+    let timer: number;
+    const refresh = async () => {
+      try {
+        await refreshWorkspaceTasks();
+      } catch (error) {
+        console.error('Failed to refresh tasks', error);
+      } finally {
+        if (active) timer = window.setTimeout(refresh, 5000);
+      }
+    };
+    timer = window.setTimeout(refresh, 5000);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, [activePanel, refreshWorkspaceTasks]);
 
   const templateRows = useMemo(() => templates

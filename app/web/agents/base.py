@@ -58,6 +58,7 @@ class BaseAgent:
         
         encoded = self._tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096)
         encoded = {k: v.to(self._model.device) for k, v in encoded.items()}
+        input_length = encoded["input_ids"].shape[-1]
         
         with torch.inference_mode():
             outputs = self._model.generate(
@@ -67,11 +68,18 @@ class BaseAgent:
                 do_sample=False,
             )
         
-        return self._tokenizer.decode(outputs[0], skip_special_tokens=True).strip()
+        return self._tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True).strip()
 
-    async def generate_complete_json(self, prompt: str, max_retries: int = 3) -> Dict[str, Any]:
+    async def generate_complete_json(
+        self,
+        prompt: str,
+        max_retries: int = 3,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> Dict[str, Any]:
         for attempt in range(max_retries):
             response = await self.generate(prompt, max_tokens=8192)
+            if on_event:
+                on_event({"kind": "output", "attempt": attempt + 1, "content": response})
             parsed = self._parse_json(response)
             
             if parsed and self._is_valid_json_structure(parsed):
@@ -79,12 +87,16 @@ class BaseAgent:
                 return parsed
             
             logger.warning("JSON generation attempt %d/%d failed, retrying...", attempt + 1, max_retries)
+            if on_event and attempt < max_retries - 1:
+                on_event({"kind": "retry", "attempt": attempt + 2, "reason": "invalid_model_output"})
             await asyncio.sleep(1)
         
         logger.error("JSON generation failed after %d attempts", max_retries)
         return {"data_type": "list", "fields": [], "pagination": {"type": "none"}, "api_endpoints": [], "download_fields": [], "dedup_fields": [], "description": ""}
 
     def _is_valid_json_structure(self, data: Dict[str, Any]) -> bool:
+        if data.get("_parse_failed"):
+            return False
         required_keys = ["data_type", "fields", "pagination"]
         for key in required_keys:
             if key not in data:
@@ -125,7 +137,7 @@ class BaseAgent:
                 return json.loads(fixed)
             except json.JSONDecodeError:
                 logger.error("Failed to fix JSON, returning default")
-                return {"data_type": "list", "fields": [], "pagination": {"type": "none"}, "api_endpoints": [], "download_fields": [], "dedup_fields": [], "description": ""}
+                return {"_parse_failed": True}
 
     def _fix_incomplete_json(self, text: str) -> str:
         text = text.strip()

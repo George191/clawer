@@ -11,18 +11,16 @@ from collections.abc import AsyncGenerator
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from app.config.settings import settings
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.browser_renderer import browser_renderer
 
 from app.web.agents.adapter import adapter_agent
-from app.web.agents.template import template_agent, AnalysisResult, FieldDef, PaginationAnalysis, AcquisitionConfig
-from app.web.utils.sse import sse_event, sse_wrapper
+from app.web.agents.template import AnalysisResult, template_agent
 from app.web.utils.validation import (
     validate_target_url,
     clamp_positive,
@@ -202,110 +200,40 @@ async def _build_yaml_template(
     return "\n".join(lines)
 
 
-async def _analyze_stream(url: str) -> AsyncGenerator[str, None]:
+AnalysisStreamEvent = tuple[str, dict[str, Any]]
+
+
+def _analysis_event(event_type: str, data: dict[str, Any]) -> AnalysisStreamEvent:
+    return event_type, data
+
+
+async def _forward_model_events(
+    task: asyncio.Task[Any],
+    queue: asyncio.Queue[dict[str, Any]],
+) -> AsyncGenerator[AnalysisStreamEvent, None]:
+    while not task.done() or not queue.empty():
+        if not queue.empty():
+            yield _analysis_event("model", queue.get_nowait())
+            continue
+
+        next_event = asyncio.create_task(queue.get())
+        done, _ = await asyncio.wait({task, next_event}, return_when=asyncio.FIRST_COMPLETED)
+        if next_event in done:
+            yield _analysis_event("model", next_event.result())
+        else:
+            next_event.cancel()
+
+
+async def _analyze_events(url: str, prompt: str = "") -> AsyncGenerator[AnalysisStreamEvent, None]:
     try:
-        yield sse_event("step", {"step": "fetch_page", "label": "获取页面", "status": "running"})
-        yield sse_event("thinking", {"content": f"正在请求 {url} ..."})
-        await asyncio.sleep(0.3)
-        yield sse_event("step", {"step": "fetch_page", "label": "获取页面", "status": "done"})
-
-        yield sse_event("step", {"step": "parse_dom", "label": "解析 DOM 结构", "status": "running"})
-        yield sse_event("thinking", {"content": "正在解析页面 DOM，识别列表结构..."})
-        await asyncio.sleep(0.3)
-        yield sse_event("step", {"step": "parse_dom", "label": "解析 DOM 结构", "status": "done"})
-
-        yield sse_event("step", {"step": "detect_list", "label": "识别列表容器", "status": "running"})
-        yield sse_event("thinking", {"content": "正在定位重复的列表项容器..."})
-        await asyncio.sleep(0.5)
-        yield sse_event("step", {"step": "detect_list", "label": "识别列表容器", "status": "done"})
-        yield sse_event("thinking", {"content": "检测到列表容器，包含约 25 个项目"})
-
-        yield sse_event("step", {"step": "detect_fields", "label": "识别字段", "status": "running"})
-        yield sse_event("thinking", {"content": "正在分析列表项内的字段结构..."})
-        await asyncio.sleep(0.8)
-
-        fields = [
-            {"name": "title", "selector": "h2.title a", "type": "text", "sample": "示例标题", "required": True},
-            {"name": "price", "selector": "span.price", "type": "number", "sample": "99.00", "required": False},
-            {
-                "name": "link",
-                "selector": "h2.title a",
-                "type": "url",
-                "sample": "https://example.com/item/1",
-                "required": True,
-            },
-            {"name": "date", "selector": "time.date", "type": "date", "sample": "2026-06-10", "required": False},
-        ]
-
-        yield sse_event("step", {"step": "detect_fields", "label": "识别字段", "status": "done"})
-        yield sse_event("fields", {"fields": fields})
-        yield sse_event("thinking", {"content": f"识别到 {len(fields)} 个字段：{', '.join(field['name'] for field in fields)}"})
-
-        pagination = {
-            "type": "click",
-            "selector": ".pagination .next",
-            "maxPages": 100,
-            "params": {"pageParam": "page", "startPage": 1, "pageSize": 20},
-        }
-
-        yield sse_event("step", {"step": "detect_pagination", "label": "检测分页策略", "status": "running"})
-        yield sse_event("thinking", {"content": "正在检测翻页方式..."})
-        await asyncio.sleep(0.5)
-        yield sse_event("step", {"step": "detect_pagination", "label": "检测分页策略", "status": "done"})
-        yield sse_event("pagination", pagination)
-        yield sse_event("thinking", {"content": f"分页类型：{pagination['type']}，最大页数：{pagination['maxPages']}"})
-
-        yield sse_event("step", {"step": "generate_template", "label": "生成模板", "status": "running"})
-        yield sse_event("thinking", {"content": "正在生成 YAML 采集模板..."})
-        await asyncio.sleep(0.5)
-
-        yaml_content = await _build_yaml_template(url, fields, pagination, pagination["maxPages"])
-        template_id = f"tpl_{int(time.time())}"
-
-        yield sse_event("step", {"step": "generate_template", "label": "生成模板", "status": "done"})
-        yield sse_event(
-            "complete",
-            {
-                "templateYaml": yaml_content,
-                "templateId": template_id,
-                "fields": fields,
-                "pagination": pagination,
-            },
-        )
-    except asyncio.CancelledError:
-        logger.info("SSE connection cancelled for %s", url)
-
-
-async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str, None]:
-    try:
-        yield sse_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
-        yield sse_event("thinking", {"content": f"开始获取页面: {url}"})
+        yield _analysis_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
+        preflight = await asyncio.wait_for(_preflight(url), timeout=60.0)
+        if not preflight.ok:
+            raise RuntimeError(preflight.error_message or "Page preflight failed")
         
-        preflight = None
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                yield sse_event("thinking", {"content": f"尝试连接 ({attempt + 1}/{max_retries})..."})
-                preflight = await asyncio.wait_for(_preflight(url, max_retries=1), timeout=60.0)
-                if preflight.ok:
-                    yield sse_event("thinking", {"content": f"连接成功，页面标题: {preflight.title}"})
-                    break
-            except asyncio.TimeoutError:
-                yield sse_event("thinking", {"content": f"尝试 {attempt + 1} 超时，正在重试..."})
-            except Exception as e:
-                yield sse_event("thinking", {"content": f"尝试 {attempt + 1} 失败: {str(e)[:100]}，正在重试..."})
-            
-            if attempt < max_retries - 1:
-                yield sse_event("thinking", {"content": f"等待 {2 ** attempt} 秒后重试..."})
-                await asyncio.sleep(2 ** attempt)
+        yield _analysis_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "done"})
         
-        if not preflight or not preflight.ok:
-            error_msg = preflight.error_message if preflight else "Unknown error"
-            raise RuntimeError(f"Failed to fetch page after {max_retries} attempts: {error_msg}")
-        
-        yield sse_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "done"})
-        
-        yield sse_event("preflight", {
+        yield _analysis_event("preflight", {
             "url": preflight.normalized_url,
             "normalizedUrl": preflight.normalized_url,
             "host": preflight.host,
@@ -321,66 +249,49 @@ async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str
             "errorMessage": "",
         })
         
-        yield sse_event("step", {"step": "analyze_structure", "label": "Analyze page structure", "status": "running"})
-        yield sse_event("thinking", {"content": "开始分析页面结构..."})
+        yield _analysis_event("step", {"step": "analyze_structure", "label": "Analyze page structure", "status": "running"})
+        analysis_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        analysis_task = asyncio.create_task(
+            asyncio.wait_for(
+                template_agent.analyze_page(
+                    preflight.normalized_url,
+                    preflight.html,
+                    preflight.network_endpoints,
+                    on_event=analysis_events.put_nowait,
+                ),
+                timeout=120.0,
+            )
+        )
+        async for event in _forward_model_events(analysis_task, analysis_events):
+            yield event
+        analysis_result = await analysis_task
         
-        analysis_result = None
-        for attempt in range(max_retries):
-            try:
-                yield sse_event("thinking", {"content": f"分析尝试 ({attempt + 1}/{max_retries})..."})
-                analysis_result = await asyncio.wait_for(
-                    template_agent.analyze_page(
-                        preflight.normalized_url,
-                        preflight.html,
-                        preflight.network_endpoints,
-                    ),
-                    timeout=120.0
-                )
-                yield sse_event("thinking", {"content": f"分析成功，识别到 {len(analysis_result.get('fields', []))} 个字段"})
-                break
-            except asyncio.TimeoutError:
-                yield sse_event("thinking", {"content": f"分析尝试 {attempt + 1} 超时，正在重试..."})
-            except Exception as e:
-                yield sse_event("thinking", {"content": f"分析尝试 {attempt + 1} 失败: {str(e)[:100]}，正在重试..."})
-            
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
+        yield _analysis_event("step", {"step": "analyze_structure", "label": "Analyze page structure", "status": "done"})
         
-        if not analysis_result:
-            raise RuntimeError("Failed to analyze page structure after {} attempts".format(max_retries))
-        
-        yield sse_event("step", {"step": "analyze_structure", "label": "Analyze page structure", "status": "done"})
-        
-        yield sse_event("step", {"step": "generate_template", "label": "Generate template", "status": "running"})
-        yield sse_event("thinking", {"content": "开始生成模板..."})
-        
-        template_yaml = None
-        for attempt in range(max_retries):
-            try:
-                yield sse_event("thinking", {"content": f"生成模板尝试 ({attempt + 1}/{max_retries})..."})
-                template_yaml = await asyncio.wait_for(
-                    template_agent.generate_template(preflight.normalized_url, analysis_result),
-                    timeout=120.0
-                )
-                yield sse_event("thinking", {"content": "模板生成成功"})
-                break
-            except asyncio.TimeoutError:
-                yield sse_event("thinking", {"content": f"生成尝试 {attempt + 1} 超时，正在重试..."})
-            except Exception as e:
-                yield sse_event("thinking", {"content": f"生成尝试 {attempt + 1} 失败: {str(e)[:100]}，正在重试..."})
-            
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)
-        
+        yield _analysis_event("step", {"step": "generate_template", "label": "Generate template", "status": "running"})
+        template_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        template_task = asyncio.create_task(
+            asyncio.wait_for(
+                template_agent.generate_template(
+                    preflight.normalized_url,
+                    analysis_result,
+                    on_event=template_events.put_nowait,
+                ),
+                timeout=120.0,
+            )
+        )
+        async for event in _forward_model_events(template_task, template_events):
+            yield event
+        template_yaml = await template_task
         if not template_yaml:
-            raise RuntimeError("Failed to generate template after {} attempts".format(max_retries))
+            raise RuntimeError("Model returned an empty template")
         
         template_name = template_agent._build_template_name(preflight.normalized_url)
         try:
             template_dict = yaml.safe_load(template_yaml)
         except yaml.YAMLError:
             template_dict = {}
-        yield sse_event("step", {"step": "generate_template", "label": "Generate template", "status": "done"})
+        yield _analysis_event("step", {"step": "generate_template", "label": "Generate template", "status": "done"})
         
         fields = template_agent._build_inferred_fields(analysis_result)
         sample_items = template_agent._build_sample_items(fields, analysis_result)
@@ -406,11 +317,11 @@ async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str
             acquisition=acquisition,
         )
         
-        yield sse_event("step", {"step": "validate", "label": "Validate artifacts", "status": "running"})
+        yield _analysis_event("step", {"step": "validate", "label": "Validate artifacts", "status": "running"})
         await asyncio.sleep(1)
-        yield sse_event("step", {"step": "validate", "label": "Validate artifacts", "status": "done"})
-        yield sse_event("fields", {"fields": [f.__dict__ for f in fields]})
-        yield sse_event("pagination", pagination.__dict__)
+        yield _analysis_event("step", {"step": "validate", "label": "Validate artifacts", "status": "done"})
+        yield _analysis_event("fields", {"fields": [f.__dict__ for f in fields]})
+        yield _analysis_event("pagination", pagination.__dict__)
         
         template_id = f"tpl_{int(time.time() * 1000)}"
         payload = {
@@ -425,7 +336,7 @@ async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str
         }
         await ai_collect_store.save_analysis(payload)
         
-        yield sse_event("complete", {
+        yield _analysis_event("complete", {
             "templateId": template_id,
             "templateYaml": result.template_yaml,
             "adapterCode": "",
@@ -442,9 +353,9 @@ async def _analyze_stream_live(url: str, prompt: str = "") -> AsyncGenerator[str
             },
         })
     except asyncio.CancelledError:
-        logger.info("SSE connection cancelled for %s", url)
+        logger.info("Analysis cancelled for %s", url)
     except Exception as exc:
-        yield sse_event("error", {"error": str(exc)})
+        yield _analysis_event("error", {"error": str(exc)})
         logger.exception("Analysis failed for %s", url)
 
 
@@ -487,28 +398,6 @@ async def _generate_adapter_for_template(template_id: str) -> dict[str, Any]:
 async def preflight_url(body: UrlPreflightRequest):
     validate_target_url(body.url)
     return (await _preflight(body.url)).public_payload()
-
-
-@router.get("/ai/analyze-stream")
-async def analyze_stream(url: str, request: Request, prompt: str = ""):
-    if not url:
-        raise HTTPException(status_code=400, detail="缺少 url 参数")
-    
-    validate_target_url(url)
-    
-    async def _generator():
-        async for chunk in sse_wrapper(_analyze_stream_live(url, prompt.strip()[:2000]), request, "analyze_stream"):
-            yield chunk
-    
-    return StreamingResponse(
-        _generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 @router.post("/ai/generate-adapter")

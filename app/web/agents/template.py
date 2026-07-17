@@ -5,7 +5,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 import yaml
@@ -131,7 +131,11 @@ class TemplateAgent(BaseAgent):
         )
 
     async def analyze_page(
-        self, url: str, html_text: str, network_endpoints: List[str] = None
+        self,
+        url: str,
+        html_text: str,
+        network_endpoints: List[str] = None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
         page_title = self._extract_title(html_text)
         page_summary = self._extract_summary(html_text)
@@ -145,14 +149,19 @@ class TemplateAgent(BaseAgent):
             page_summary=page_summary,
         )
 
-        result = await self.generate_complete_json(prompt)
+        result = await self.generate_complete_json(prompt, on_event=on_event)
 
         if network_endpoints:
             result.setdefault("api_endpoints", []).extend(network_endpoints[:10])
 
         return result
 
-    async def generate_template(self, url: str, analysis_result: Dict[str, Any]) -> str:
+    async def generate_template(
+        self,
+        url: str,
+        analysis_result: Dict[str, Any],
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+    ) -> str:
         analysis_json = json.dumps(analysis_result, ensure_ascii=False, indent=2)
 
         prompt = self.render_prompt(
@@ -161,6 +170,8 @@ class TemplateAgent(BaseAgent):
         )
 
         response = await self.generate(prompt, max_tokens=8192)
+        if on_event:
+            on_event({"kind": "output", "attempt": 1, "content": response})
         return self._extract_yaml(response)
 
     def _extract_title(self, html_text: str) -> str:

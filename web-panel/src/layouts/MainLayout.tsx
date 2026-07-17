@@ -51,7 +51,7 @@ const SIDER_TRANSITION_MS = 200;
 const PROJECT_LOGO_SIZE = 28;
 const PROJECT_LOGO_EXPANDED_X = 26;
 const PROJECT_LOGO_COLLAPSED_X = (SIDER_COLLAPSED - PROJECT_LOGO_SIZE) / 2;
-const PRODUCT_NAME_ZH = '星穹智数中台';
+const PRODUCT_NAME_ZH = 'Asiral Helio';
 type ProjectKey = 'ai-collect' | 'data-lake' | 'etl-pipeline';
 
 const TemplateNavIcon: React.FC = () => (

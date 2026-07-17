@@ -146,35 +146,6 @@ export interface PlatformOverview {
   recommendations: PlatformRecommendation[];
 }
 
-// ── SSE 事件类型 ────────────────────────────────────────────────────────────
-
-export type SSEEventType =
-  | 'thinking'
-  | 'step'
-  | 'fields'
-  | 'pagination'
-  | 'complete'
-  | 'error';
-
-export interface SSEStepEvent {
-  step: string;
-  label: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-  error?: string;
-}
-
-export interface SSEFieldsEvent {
-  fields: FieldDef[];
-}
-
-export interface SSECompleteEvent {
-  templateYaml: string;
-  templateId: string;
-  fields: FieldDef[];
-  pagination: PaginationStrategy;
-  adapterCode?: string;
-}
-
 export interface UrlPreflightResponse {
   ok: boolean;
   url: string;
@@ -266,13 +237,9 @@ export interface WorkspaceReleasePayload {
 
 // ── API ────────────────────────────────────────────────────────────────────
 
-/** SSE 流式分析（返回 EventSource，调用方负责关闭） */
-export function createAnalyzeStream(url: string, prompt: string): EventSource {
-  const params = new URLSearchParams({ url, prompt });
-  return new EventSource(
-    `/api/ai/analyze-stream?${params.toString()}`,
-  );
-}
+export const AI_ANALYZE_WS_URL = `${
+  location.protocol === 'https:' ? 'wss:' : 'ws:'
+}//${location.host}/ws`;
 
 export const preflightUrl = (url: string): Promise<UrlPreflightResponse> =>
   client.post('/ai/preflight', { url }, { timeout: 0 }).then((r) => r.data);
