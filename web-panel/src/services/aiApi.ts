@@ -177,6 +177,7 @@ export interface SSECompleteEvent {
 
 export interface UrlPreflightResponse {
   ok: boolean;
+  url: string;
   normalizedUrl: string;
   host: string;
   title: string;

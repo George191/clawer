@@ -882,8 +882,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     applyWorkspaceTasks(await fetchWorkspaceTasks());
   }, [applyWorkspaceTasks]);
 
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
+
   useEffect(() => {
+    if (workspaceLoaded) return;
     let active = true;
+    setWorkspaceLoaded(true);
     Promise.all([fetchWorkspaceTemplates(), fetchWorkspaceTasks()])
       .then(([templateItems, taskItemsResponse]) => {
         if (!active) return;
@@ -901,7 +905,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     return () => {
       active = false;
     };
-  }, [applyWorkspaceTasks]);
+  }, [applyWorkspaceTasks, workspaceLoaded]);
 
   useEffect(() => {
     if (activePanel !== 'tasks') return undefined;

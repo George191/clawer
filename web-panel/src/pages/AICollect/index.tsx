@@ -1961,40 +1961,39 @@ const AICollect: React.FC = () => {
     }
 
     setPreflightLoading(true);
-    let preflight: UrlPreflightResponse;
-    try {
-      preflight = await preflightUrl(targetUrl);
-    } catch (preflightError) {
-      const errorMessage = preflightError instanceof Error ? preflightError.message : 'URL 预检服务不可用';
-      message.error(errorMessage);
-      return;
-    } finally {
-      setPreflightLoading(false);
-    }
-    if (!preflight.ok) {
-      const errorMessage = preflight.errorMessage || '目标网页无法访问';
-      message.error(errorMessage);
-      return;
-    }
-
-    const verifiedUrl = preflight.normalizedUrl;
-    setUrlPreflight(preflight);
-    setUrl(verifiedUrl);
     setWorkspaceTemplateYaml('');
     setWorkspaceAdapterFile('');
     setGeneratedAdapterRequired(false);
 
-    setSubmittedPrompt(verifiedUrl);
+    setSubmittedPrompt(targetUrl);
     setTaskDraft('');
-    setIntent(verifiedUrl);
+    setIntent(targetUrl);
     analyzeStreamRef.current?.close();
     resetSimulation();
     setStreamError('');
     setRunStatus('running');
     setMode('explore');
     setExpandedStep('explore');
-    const es = createAnalyzeStream(verifiedUrl, agentPrompt);
+    const es = createAnalyzeStream(targetUrl, agentPrompt);
     analyzeStreamRef.current = es;
+
+    es.addEventListener('step', (event: MessageEvent) => {
+      const data: { step: string; label: string; status: string } = JSON.parse(event.data);
+      pushLiveLog(`[${data.step}] ${data.label}: ${data.status}`);
+    });
+
+    es.addEventListener('thinking', (event: MessageEvent) => {
+      const data: { content: string } = JSON.parse(event.data);
+      pushLiveLog(`思考: ${data.content}`);
+    });
+
+    es.addEventListener('preflight', (event: MessageEvent) => {
+      const data: UrlPreflightResponse = JSON.parse(event.data);
+      setUrlPreflight(data);
+      setUrl(data.normalizedUrl);
+      setPreflightLoading(false);
+      pushLiveLog(`页面预检完成: ${data.title || data.url}`);
+    });
 
     es.addEventListener('fields', (event: MessageEvent) => {
       const data: { fields: FieldDef[] } = JSON.parse(event.data);
@@ -2024,6 +2023,7 @@ const AICollect: React.FC = () => {
     });
 
     es.addEventListener('error', () => {
+      setPreflightLoading(false);
       setStreamError('分析服务暂不可用，请检查服务端日志后重试。');
       setRunStatus('completed');
       pushLiveLog('分析服务返回错误，已停止当前流程');
@@ -2032,6 +2032,7 @@ const AICollect: React.FC = () => {
     });
 
     es.onerror = () => {
+      setPreflightLoading(false);
       setStreamError('SSE 连接已断开，请重新发起分析。');
       setRunStatus('completed');
       pushLiveLog('SSE 连接断开，当前流程已停止');
@@ -3186,6 +3187,8 @@ const AICollect: React.FC = () => {
       });
     };
 
+    if (visibleTemplateStages.length === 0) return null;
+
     return (
       <aside
         className="ai-session-stage-float"
@@ -3499,6 +3502,8 @@ const AICollect: React.FC = () => {
 
       setGuidePreviewPhase(workflowPhase === 'release-template' ? null : 'release-template');
     };
+
+    if (sessionGuideSteps.length === 0) return null;
 
     return (
       <aside
@@ -6288,7 +6293,7 @@ const AICollect: React.FC = () => {
             height: 100%;
             min-height: 0;
             border: 0;
-            background: #fff;
+            background: #1a1d23;
           }
           .ai-browser-render-image {
             display: block;

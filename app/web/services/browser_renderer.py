@@ -84,6 +84,7 @@ class BrowserRenderer:
                 if urlparse(final_url).scheme not in {"http", "https"}:
                     raise ValueError("Browser navigation escaped the HTTP/HTTPS boundary")
                 html = page.content()
+                html = self._make_absolute_paths(html, final_url)
                 favicon_href = page.locator('link[rel~="icon"]').last.get_attribute("href") if page.locator('link[rel~="icon"]').count() else ""
                 screenshot = page.screenshot(type="jpeg", quality=78, full_page=True)
                 return BrowserRenderResult(
@@ -96,6 +97,21 @@ class BrowserRenderer:
                 )
             finally:
                 browser.close()
+
+    def _make_absolute_paths(self, html: str, base_url: str) -> str:
+        import re
+        
+        def make_absolute(match):
+            attr = match.group(1)
+            path = match.group(2)
+            if path.startswith('data:') or path.startswith('http://') or path.startswith('https://'):
+                return match.group(0)
+            return f'{attr}="{urljoin(base_url, path)}"'
+        
+        html = re.sub(r'(href|src|action)=["\']([^"\']+)["\']', make_absolute, html)
+        html = re.sub(r'url\(["\']?([^"\')]+)["\']?\)', lambda m: f'url("{urljoin(base_url, m.group(1))}")' if not m.group(1).startswith(('data:', 'http://', 'https://')) else m.group(0), html)
+        
+        return html
 
     async def render(self, url: str, use_proxy: bool = False) -> BrowserRenderResult:
         return await asyncio.to_thread(self._render_sync, url, use_proxy)
