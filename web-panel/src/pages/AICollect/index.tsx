@@ -69,6 +69,7 @@ const tiffanyAccent = '#81D8D0';
 type AnalysisFeedItem = {
   id: number;
   createdAt: number;
+  updatedAt: number;
   kind: 'step' | 'thinking' | 'status' | 'error';
   content: string;
   step?: string;
@@ -1162,18 +1163,26 @@ const AICollect: React.FC = () => {
   const scrollBrowserPreviewToAnalysis = useCallback((behavior: ScrollBehavior = 'smooth') => {
     window.requestAnimationFrame(() => {
       const iframe = browserFollowIframeRef.current;
-      const iframeWindow = iframe?.contentWindow;
-      const iframeDocument = iframe?.contentDocument;
-      if (iframeWindow && iframeDocument) {
-        const pageHeight = Math.max(
-          iframeDocument.documentElement.scrollHeight,
-          iframeDocument.body?.scrollHeight ?? 0,
-        );
-        iframeWindow.scrollTo({
-          top: Math.max(0, pageHeight - iframe.clientHeight) * browserFollowRatio,
-          behavior,
-        });
-        return;
+      if (iframe) {
+        try {
+          const iframeWindow = iframe.contentWindow;
+          const iframeDocument = iframe.contentDocument;
+          const documentElement = iframeDocument?.documentElement;
+          const body = iframeDocument?.body;
+          if (iframeWindow && (documentElement || body)) {
+            const pageHeight = Math.max(
+              documentElement?.scrollHeight ?? 0,
+              body?.scrollHeight ?? 0,
+            );
+            iframeWindow.scrollTo({
+              top: Math.max(0, pageHeight - iframe.clientHeight) * browserFollowRatio,
+              behavior,
+            });
+            return;
+          }
+        } catch {
+          // The iframe may navigate or unmount between scheduling and execution.
+        }
       }
       const viewport = browserFollowViewportRef.current;
       if (!viewport) return;
@@ -1291,8 +1300,9 @@ const AICollect: React.FC = () => {
     [activeTemplate.id, workspaceAdapterFile],
   );
   const browserPreviewFavicon = useMemo(
-    () => (browserPreviewHost ? `https://www.google.com/s2/favicons?sz=64&domain_url=https://${browserPreviewHost}` : ''),
-    [browserPreviewHost],
+    () => urlPreflight?.faviconUrl
+      || (browserPreviewHost ? `https://www.google.com/s2/favicons?sz=64&domain_url=https://${browserPreviewHost}` : ''),
+    [browserPreviewHost, urlPreflight?.faviconUrl],
   );
   const adapterFileLabel = useMemo(
     () => adapterFileName.split('/').pop() ?? adapterFileName,
@@ -1683,9 +1693,43 @@ const AICollect: React.FC = () => {
     setLiveLogs((prev) => [log, ...prev].slice(0, 8));
   }, []);
 
-  const appendAnalysisFeed = useCallback((item: Omit<AnalysisFeedItem, 'id' | 'createdAt'>) => {
+  const appendAnalysisFeed = useCallback((item: Omit<AnalysisFeedItem, 'id' | 'createdAt' | 'updatedAt'>) => {
     analysisFeedIdRef.current += 1;
-    setAnalysisFeed((prev) => [...prev, { ...item, id: analysisFeedIdRef.current, createdAt: Date.now() }]);
+    const timestamp = Date.now();
+    setAnalysisFeed((prev) => [...prev, {
+      ...item,
+      id: analysisFeedIdRef.current,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }]);
+  }, []);
+
+  const upsertAnalysisStep = useCallback((
+    step: string,
+    updates: Pick<AnalysisFeedItem, 'content' | 'status'>,
+  ) => {
+    setAnalysisFeed((prev) => {
+      let index = prev.length - 1;
+      while (index >= 0 && !(prev[index].kind === 'step' && prev[index].step === step)) {
+        index -= 1;
+      }
+      const timestamp = Date.now();
+      if (index < 0) {
+        analysisFeedIdRef.current += 1;
+        return [...prev, {
+          id: analysisFeedIdRef.current,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          kind: 'step',
+          step,
+          ...updates,
+        }];
+      }
+
+      const next = [...prev];
+      next[index] = { ...next[index], ...updates, updatedAt: timestamp };
+      return next;
+    });
   }, []);
 
   const handleAnalyzeSocketMessage = useCallback((raw: string) => {
@@ -1711,7 +1755,7 @@ const AICollect: React.FC = () => {
       const label = String(data.label ?? step);
       const status = String(data.status ?? 'running');
       analyzeStepRef.current = step;
-      appendAnalysisFeed({ kind: 'step', step, status, content: label });
+      upsertAnalysisStep(step, { status, content: label });
       pushLiveLog(`[${step}] ${label}: ${status}`);
 
       const processStepByAnalyzeStep: Record<string, ProcessStepKey> = {
@@ -1757,9 +1801,8 @@ const AICollect: React.FC = () => {
       setUrlPreflight(preflight);
       setUrl(preflight.normalizedUrl);
       setPreflightLoading(false);
-      appendAnalysisFeed({
-        kind: 'status',
-        step: analyzeStepRef.current,
+      upsertAnalysisStep('fetch_page', {
+        status: 'done',
         content: `已验证页面：${preflight.title || preflight.url}`,
       });
       return;
@@ -1818,7 +1861,7 @@ const AICollect: React.FC = () => {
     if (messagePayload.type === 'analyze_raw') {
       appendAnalysisFeed({ kind: 'thinking', step: analyzeStepRef.current, content: String(data.content ?? '') });
     }
-  }, [appendAnalysisFeed, pushLiveLog]);
+  }, [appendAnalysisFeed, pushLiveLog, upsertAnalysisStep]);
 
   const { connected: analyzeSocketConnected, send: sendAnalyzeSocketMessage } = useWebSocket(
     AI_ANALYZE_WS_URL,
@@ -3578,7 +3621,15 @@ const AICollect: React.FC = () => {
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
               <div className="ai-session-inspector-browser-frame" ref={browserFollowViewportRef}>
-                {urlPreflight?.previewHtml ? (
+                {urlPreflight?.previewImage ? (
+                  <img
+                    className="ai-browser-render-image"
+                    src={urlPreflight.previewImage}
+                    alt={`${activeInspectorTab.title} Chrome 页面预览`}
+                    draggable={false}
+                    onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
+                  />
+                ) : urlPreflight?.previewHtml ? (
                   <iframe
                     ref={browserFollowIframeRef}
                     sandbox="allow-same-origin"
@@ -3586,14 +3637,6 @@ const AICollect: React.FC = () => {
                     srcDoc={urlPreflight.previewHtml}
                     title={activeInspectorTab.title}
                     tabIndex={-1}
-                    onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
-                  />
-                ) : urlPreflight?.previewImage ? (
-                  <img
-                    className="ai-browser-render-image"
-                    src={urlPreflight.previewImage}
-                    alt={`${activeInspectorTab.title} Chrome 页面预览`}
-                    draggable={false}
                     onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
                   />
                 ) : (
@@ -3831,7 +3874,9 @@ const AICollect: React.FC = () => {
             )
           );
           const startedAt = group.items[0].createdAt;
-          const finishedAt = isActive ? analysisClock : group.items[group.items.length - 1].createdAt;
+          const finishedAt = isActive
+            ? analysisClock
+            : Math.max(...group.items.map((item) => item.updatedAt));
           const expanded = expandedAnalysisSteps.has(group.step);
           return (
             <div className="ai-analysis-feed-group" key={`${group.step}-${group.items[0].id}`}>

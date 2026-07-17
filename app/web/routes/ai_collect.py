@@ -8,6 +8,7 @@ import re
 import time
 import yaml
 from collections.abc import AsyncGenerator
+from lxml import etree, html as lxml_html
 from typing import Any
 from urllib.parse import urlparse
 
@@ -29,6 +30,36 @@ from app.web.utils.validation import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _sanitize_preview_html(source: str) -> str:
+    """Remove executable content before placing captured HTML in a sandboxed srcDoc."""
+    if not source:
+        return ""
+
+    try:
+        document = lxml_html.document_fromstring(source)
+    except (etree.ParserError, ValueError):
+        return ""
+
+    for element in document.xpath("//*[local-name()='script' or local-name()='iframe' or local-name()='object' or local-name()='embed']"):
+        element.drop_tree()
+    for element in document.xpath(
+        "//*[local-name()='meta' and "
+        "translate(@http-equiv, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')='refresh']"
+    ):
+        element.drop_tree()
+
+    for element in document.iter():
+        for attribute, value in list(element.attrib.items()):
+            normalized_attribute = attribute.lower()
+            normalized_value = value.strip().lower()
+            if normalized_attribute.startswith("on"):
+                del element.attrib[attribute]
+            elif normalized_attribute in {"href", "src", "action", "formaction"} and normalized_value.startswith("javascript:"):
+                del element.attrib[attribute]
+
+    return lxml_html.tostring(document, encoding="unicode", method="html")
 
 
 class FieldOverride(BaseModel):
@@ -99,13 +130,26 @@ class WorkspaceTaskActionRequest(BaseModel):
 
 
 class UrlPreflightResponse:
-    def __init__(self, url: str, html: str, title: str, network_endpoints: list[str], host: str, normalized_url: str):
+    def __init__(
+        self,
+        url: str,
+        html: str,
+        title: str,
+        network_endpoints: list[str],
+        host: str,
+        normalized_url: str,
+        preview_image: str = "",
+        favicon_url: str = "",
+    ):
         self.url = url
         self.html = html
+        self.preview_html = _sanitize_preview_html(html)
         self.title = title
         self.network_endpoints = network_endpoints
         self.host = host
         self.normalized_url = normalized_url
+        self.preview_image = preview_image
+        self.favicon_url = favicon_url
         self.ok = True
         self.error_message = ""
         self.requires_proxy = False
@@ -121,11 +165,11 @@ class UrlPreflightResponse:
             "proxyMode": self.proxy_mode,
             "ok": self.ok,
             "errorMessage": self.error_message,
-            "previewHtml": self.html,
-            "previewImage": "",
+            "previewHtml": self.preview_html,
+            "previewImage": self.preview_image,
             "renderedBy": "chrome",
             "networkEndpoints": self.network_endpoints,
-            "faviconUrl": "",
+            "faviconUrl": self.favicon_url,
         }
 
 
@@ -142,6 +186,8 @@ async def _preflight(url: str, max_retries: int = 3) -> UrlPreflightResponse:
                 network_endpoints=result.json_endpoints,
                 host=urlparse(url).hostname or "",
                 normalized_url=result.url,
+                preview_image=result.screenshot_data_url,
+                favicon_url=result.favicon_url,
             )
         except Exception as e:
             last_error = e
@@ -240,11 +286,11 @@ async def _analyze_events(url: str, prompt: str = "") -> AsyncGenerator[Analysis
             "title": preflight.title,
             "requiresProxy": preflight.requires_proxy,
             "proxyMode": preflight.proxy_mode,
-            "previewHtml": preflight.html,
-            "previewImage": "",
+            "previewHtml": preflight.preview_html,
+            "previewImage": preflight.preview_image,
             "renderedBy": "chrome",
             "networkEndpoints": preflight.network_endpoints,
-            "faviconUrl": "",
+            "faviconUrl": preflight.favicon_url,
             "ok": True,
             "errorMessage": "",
         })
