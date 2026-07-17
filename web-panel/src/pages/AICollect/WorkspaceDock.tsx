@@ -354,13 +354,17 @@ const renderCompactTemplatePreview = (yaml: string) => {
                 const label = /^dedup_fields\[\d+\]$/.test(entry.key)
                   ? 'field'
                   : rawLabel.replace(/^([a-z_]+)\[(\d+)\]$/, '$1 $2');
-                const listItemKey = entry.key.match(/^(params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
-                const previousListItemKey = displayEntries[index - 1]?.key.match(/^(params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+                const listItemKey = entry.key.match(/^(params|batch_params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+                const previousListItemKey = displayEntries[index - 1]?.key.match(/^(params|batch_params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
                 const showListDash = Boolean(listItemKey && listItemKey !== previousListItemKey);
+                const isRootGroup = entry.group && (entry.key === 'params' || entry.key === 'batch_params');
+                const isYamlListItem = Boolean(listItemKey);
+                const displayDepth = entry.depth - (isYamlListItem ? 1 : 0);
                 return (
                   <div
-                    className={`ai-template-field ${entry.group ? 'is-group is-root-group' : ''} ${listItemKey ? 'is-yaml-list-item' : ''} ${showListDash ? 'has-yaml-dash' : ''}`}
+                    className={`ai-template-field ${entry.group ? 'is-group' : ''} ${isRootGroup ? 'is-root-group' : ''} ${isYamlListItem ? 'is-yaml-list-item' : ''} ${showListDash ? 'has-yaml-dash' : ''}`}
                     key={entry.id}
+                    style={{ ['--ai-template-depth' as string]: String(displayDepth) }}
                   >
                     <div className="ai-template-field-key">
                       {listItemKey ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
@@ -3223,7 +3227,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           grid-template-columns: minmax(120px, 156px) minmax(0, 1fr);
           gap: 8px 10px;
           align-items: start;
-          padding: 6px 4px;
+          --ai-template-indent: calc(var(--ai-template-depth, 0) * 12px);
         }
         .workspace-dock-template-preview .ai-template-field:last-child {
           border-bottom: none;
