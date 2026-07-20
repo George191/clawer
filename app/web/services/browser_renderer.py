@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from app.config.settings import settings
+
+logger = logging.getLogger(__name__)
 
 _CHROME_PATHS = (
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
@@ -79,7 +83,40 @@ class BrowserRenderer:
 
                 page.on("response", track_response)
                 page.goto(url, wait_until="domcontentloaded", timeout=0)
-                page.wait_for_timeout(1500)
+                try:
+                    page.wait_for_load_state("load", timeout=10_000)
+                except PlaywrightTimeoutError:
+                    logger.warning("Page load did not settle before capture: %s", url)
+                page.evaluate(
+                    """
+                    async () => {
+                        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                        for (let step = 0; step < 80; step += 1) {
+                            const maxScroll = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+                            const nextScroll = Math.min(maxScroll, (step + 1) * Math.max(1, innerHeight * 0.8));
+                            scrollTo(0, nextScroll);
+                            await delay(75);
+                            if (nextScroll >= maxScroll) break;
+                        }
+                        scrollTo(0, 0);
+
+                        const imagesReady = Promise.all(
+                            Array.from(document.images)
+                                .filter((image) => !image.complete)
+                                .map((image) => new Promise((resolve) => {
+                                    image.addEventListener('load', resolve, { once: true });
+                                    image.addEventListener('error', resolve, { once: true });
+                                }))
+                        );
+                        const fontsReady = document.fonts?.ready ?? Promise.resolve();
+                        await Promise.race([
+                            Promise.all([imagesReady, fontsReady]),
+                            delay(5_000),
+                        ]);
+                    }
+                    """
+                )
+                page.wait_for_timeout(250)
                 final_url = page.url
                 if urlparse(final_url).scheme not in {"http", "https"}:
                     raise ValueError("Browser navigation escaped the HTTP/HTTPS boundary")
