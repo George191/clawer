@@ -29,6 +29,9 @@ class AcquisitionConfig:
     mode: str = "ai_analysis"
     api_endpoints: List[str] = field(default_factory=list)
     network_requests: List[str] = field(default_factory=list)
+    network_responses: List[Dict[str, Any]] = field(default_factory=list)
+    page_warnings: List[str] = field(default_factory=list)
+    fallback_endpoints: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -69,66 +72,71 @@ class TemplateAgent(BaseAgent):
     def _register_default_prompts(self) -> None:
         self.register_prompt(
             "analyze_page",
-            """你是一个专业的网页数据采集分析专家。请分析以下网页内容，识别数据采集所需的关键信息。
+            """You analyze web pages for this project's template-driven crawler.
 
-            网页URL: {url}
-            网页标题: {page_title}
-            网页摘要: {page_summary}
+Target URL: {url}
+Page title: {page_title}
+Page summary: {page_summary}
+Observed network evidence: {network_evidence}
+Preflight warnings: {page_warnings}
 
-            请分析以下内容：
-            1. 数据类型（list列表页/detail详情页/form表单页）
-            2. 主要数据字段（名称、类型、选择器）
-            3. 分页机制（page_number页码/scroll滚动/next_button下一页按钮/none无）
-            4. API接口（如果存在动态加载）
-            5. 需要下载的资源（图片/文件等）
-            6. 数据去重字段
+Work in this order:
+1. API discovery: inspect successful XHR/fetch evidence first. If a verified API supplies the records, select it as the primary source. Analyze rendered HTML only when no usable API exists. A page URL ending in query/results may be only a JavaScript shell.
+2. Source validation: require a successful status, plausible content type, a record container and at least one real sample. Reject maintenance, CAPTCHA, login and WAF bodies. HTML from an endpoint is valid only when it contains the intended records, not an error shell.
+3. Data-type field contract: infer data_type before selecting fields. Keep the smallest set that can identify and reconstruct the business record. Preserve content, event/publication time, status, classification and location only when meaningful for that data type. For news consider title, canonical URL, publication time, author, summary/body and media. For navwarn consider warning number, issue time, category/region/status and full warning text. For patents consider publication number, title, parties, dates, abstract/claims and document resources. For intelligence preserve the stable identity, time, geometry/location and substantive content.
+4. Exclusions: remove transport/UI/internal fields such as request IDs, row IDs, component IDs, ranks and duplicated aliases unless they are the only stable business identity. Never keep two fields with the same meaning (for example navArea/usNavArea/msgType or msgSqncNumber/sequenceNumber); choose one canonical snake_case output name and document the source field.
+5. Deduplication: prove the smallest stable business key. Prefer one immutable field such as canonical URL, publication number or warning number scoped by area. Use multiple fields only when one field is not unique; do not add redundant backup fields to a unique key.
+6. Resources: identify downloadable or media values separately. Classify cover/thumbnail, body image/figure, attachment/document, gallery/slide, video/audio and dataset/archive fields. State whether each comes from list, detail or API and whether adapter enrichment is required.
+7. Acquisition details: convert variable path/query values into required params, infer pagination only from verified evidence, and record an official fallback only when evidence supports it. Zero verified records is a warning, not collection success.
 
-            请输出严格的JSON格式分析结果，不要使用|符号：
-            {{
-                "data_type": "list",
-                "fields": [
-                    {{
-                        "name": "title",
-                        "type": "text",
-                        "selector": "h2.title",
-                        "description": "标题",
-                        "sample_value": "示例标题",
-                        "required": true
-                    }}
-                ],
-                "pagination": {{
-                    "type": "page_number",
-                    "page_param": "page",
-                    "list_page": "{url}",
-                    "start_page": 1,
-                    "results_per_page": 20
-                }},
-                "api_endpoints": [],
-                "download_fields": [],
-                "dedup_fields": ["url"],
-                "description": "模板描述"
-            }}
-            """,
+Return strict JSON without markdown:
+{{
+  "data_type": "news|navwarn|patent|intelligence|other",
+  "source_kind": "api|html|text|dynamic_shell|unavailable",
+  "selected_endpoint": "",
+  "json_item_path": "",
+  "verified_record_count": 0,
+  "fields": [{{"name":"title","source_field":"title","type":"text","selector":"title","business_role":"content","description":"Title","sample_value":"","required":true}}],
+  "excluded_fields": [{{"source_field":"rowId","reason":"internal UI identifier","duplicate_of":""}}],
+  "dedup_analysis": {{"fields":[],"reason":"","uniqueness_scope":""}},
+  "pagination": {{"type":"none","page_param":"page","list_page":"{url}","start_page":1,"results_per_page":0}},
+  "api_endpoints": [],
+  "fallback_endpoints": [],
+  "response_evidence": [],
+  "warnings": [],
+  "resource_fields": [{{"name":"thumbnail","asset_type":"thumbnail","source":"list|detail|api","selector":"","multiple":false,"requires_adapter":false}}],
+  "adapter_requirements": [],
+  "download_fields": [],
+  "dedup_fields": [],
+  "description": ""
+}}
+""",
         )
 
         self.register_prompt(
             "generate_template",
-            """你是一个专业的爬虫模板生成专家。请根据分析结果生成完整的YAML采集模板。
+            """Generate a complete YAML template for this project's SiteTemplate schema.
 
-            要求：
-            1. 模板必须符合YAML语法规范
-            2. 包含完整的采集配置
-            3. 正确配置请求参数、响应解析、字段提取
-            4. 配置分页策略
-            5. 配置数据去重
-            6. 配置资源下载
-            7. 模板必须可被适配器解析和执行
+Rules:
+1. Use selected_endpoint when it is a verified API; use the rendered page only when analysis found no usable API. Match response_type, json_item_path and selector_type to the selected response.
+2. Generate list_fields from the approved fields only. Do not reintroduce excluded transport/UI IDs or duplicate aliases. Output canonical snake_case names while selectors retain observed source names.
+3. Set dedup_fields to exactly the minimal fields in dedup_analysis/dedup_fields. Every dedup field must be produced by list_fields or adapter normalization. Use a composite key only when its stated scope requires it.
+4. Convert variable URL/query values into params and mark inputs required unless evidence proves a safe default. Preserve request method, required headers, pagination and verified official fallback behavior.
+5. Translate every resource_fields/download_fields entry into a valid download item with selector_type, link_type and asset_type. If a resource requires detail/API enrichment, add detail_page/detail_fields where generic parsing is enough; otherwise set adapter and explain the exact required output field in description. News templates must account for available cover/thumbnail, body images and attachments without duplicating the cover in images.
+6. Keep business record fields separate from resources. A source media ID used only to resolve a URL is adapter input, not a final resource selector; the adapter must output the actual URL/list expected by download.selector.
+7. Use max_pages=1 for non-paginated API or text snapshots. If verified_record_count is zero or source_kind is unavailable, do not fabricate selectors or samples; retain warnings and require guarded adapter validation.
+8. Use only SiteTemplate schema fields: name, display_name, base_url, data_type, adapter, anti_crawl_enabled, description, params/batch_params, response_type/json paths, list_page/list_request/list_fields/dedup_fields/list_pagination, detail_page/detail_request/detail_fields and download.
 
-            分析结果：
-            {analysis_json}
+Existing same data-type template conventions:
+{reference_templates}
 
-            请输出完整的YAML模板，使用```yaml和```包裹：
-            """,
+Use references only for project naming and schema conventions. Current verified evidence wins. Never copy a reference endpoint, selector, field or composite dedup key unless the current analysis independently supports it.
+
+Analysis result:
+{analysis_json}
+
+Return only a fenced ```yaml block.
+""",
         )
 
     async def analyze_page(
@@ -136,24 +144,54 @@ class TemplateAgent(BaseAgent):
         url: str,
         html_text: str,
         network_endpoints: List[str] = None,
+        network_responses: List[Dict[str, Any]] | None = None,
+        page_warnings: List[str] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
         page_title = self._extract_title(html_text)
         page_summary = self._extract_summary(html_text)
 
         network_endpoints = network_endpoints or []
+        network_responses = network_responses or []
+        page_warnings = page_warnings or []
+        prioritized_responses = sorted(
+            network_responses,
+            key=lambda response: (
+                not bool(response.get("recordFields")),
+                int(response.get("status") or 0) >= 400,
+                str(response.get("resourceType") or "") not in {"xhr", "fetch"},
+            ),
+        )
+        prompt_evidence = [
+            {
+                "url": response.get("url"),
+                "status": response.get("status"),
+                "contentType": response.get("contentType"),
+                "resourceType": response.get("resourceType"),
+                "jsonItemPath": response.get("jsonItemPath"),
+                "recordFields": list(response.get("recordFields") or [])[:100],
+                "sampleRecord": self._compact_value(response.get("sampleRecord") or {}),
+                "bodyPreview": str(response.get("bodyPreview") or "")[:1000],
+                "links": list(response.get("links") or [])[:5],
+            }
+            for response in prioritized_responses[:6]
+        ]
 
         prompt = self.render_prompt(
             "analyze_page",
             url=url,
             page_title=page_title,
             page_summary=page_summary,
+            network_evidence=json.dumps(prompt_evidence, ensure_ascii=False),
+            page_warnings=json.dumps(page_warnings, ensure_ascii=False),
         )
 
         result = await self.generate_complete_json(prompt, on_event=on_event)
 
         if network_endpoints:
             result.setdefault("api_endpoints", []).extend(network_endpoints[:10])
+        result.setdefault("response_evidence", []).extend(network_responses[:30])
+        result.setdefault("warnings", []).extend(page_warnings)
 
         return result
 
@@ -163,17 +201,99 @@ class TemplateAgent(BaseAgent):
         analysis_result: Dict[str, Any],
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> str:
-        analysis_json = json.dumps(analysis_result, ensure_ascii=False, indent=2)
+        analysis_context = dict(analysis_result)
+        analysis_context["response_evidence"] = [
+            {
+                "url": response.get("url"),
+                "status": response.get("status"),
+                "contentType": response.get("contentType"),
+                "jsonItemPath": response.get("jsonItemPath"),
+                "recordFields": list(response.get("recordFields") or [])[:100],
+            }
+            for response in (analysis_result.get("response_evidence") or [])[:6]
+            if isinstance(response, dict)
+        ]
+        analysis_json = json.dumps(analysis_context, ensure_ascii=False, indent=2)
+        reference_templates = self._reference_template_summaries(
+            str(analysis_result.get("data_type") or "other")
+        )
 
         prompt = self.render_prompt(
             "generate_template",
             analysis_json=analysis_json,
+            reference_templates=json.dumps(reference_templates, ensure_ascii=False, indent=2),
         )
 
         response = await self.generate(prompt, max_tokens=8192)
         if on_event:
             on_event({"kind": "output", "attempt": 1, "content": response})
         return self._extract_yaml(response)
+
+    @staticmethod
+    def _reference_template_summaries(data_type: str) -> list[dict[str, Any]]:
+        template_dir = Path(__file__).parents[3] / "templates"
+        summaries: list[dict[str, Any]] = []
+        for path in sorted(template_dir.glob("*.y*ml")):
+            try:
+                template = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                continue
+            if not isinstance(template, dict) or str(template.get("data_type")) != data_type:
+                continue
+
+            def field_names(values: Any) -> list[str]:
+                if not isinstance(values, list):
+                    return []
+                return [
+                    str(item.get("name"))
+                    for item in values
+                    if isinstance(item, dict) and item.get("name")
+                ]
+
+            downloads = template.get("download") or []
+            if isinstance(downloads, dict):
+                downloads = [downloads]
+            summaries.append(
+                {
+                    "name": template.get("name"),
+                    "adapter": template.get("adapter"),
+                    "response_type": template.get("response_type", "html"),
+                    "params": [
+                        {
+                            "name": item.get("name"),
+                            "required": item.get("required", True),
+                            "has_default": item.get("default") is not None,
+                        }
+                        for item in (template.get("params") or [])
+                        if isinstance(item, dict)
+                    ],
+                    "list_fields": field_names(template.get("list_fields") or []),
+                    "detail_fields": field_names(template.get("detail_fields") or []),
+                    "dedup_fields": list(template.get("dedup_fields") or []),
+                    "resources": [
+                        {
+                            "selector": item.get("selector"),
+                            "asset_type": item.get("asset_type", "asset"),
+                        }
+                        for item in downloads
+                        if isinstance(item, dict)
+                    ],
+                }
+            )
+        return summaries[:8]
+
+    @classmethod
+    def _compact_value(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value[:160]
+        if isinstance(value, list):
+            return [cls._compact_value(item) for item in value[:3]]
+        if isinstance(value, dict):
+            return {
+                str(key): cls._compact_value(item)
+                for key, item in list(value.items())[:40]
+            }
+        return value
 
     def _extract_title(self, html_text: str) -> str:
         match = re.search(r"<title[^>]*>([^<]+)</title>", html_text, re.IGNORECASE)
@@ -260,6 +380,9 @@ class TemplateAgent(BaseAgent):
         return AcquisitionConfig(
             mode="ai_analysis",
             api_endpoints=analysis_result.get("api_endpoints", []),
+            network_responses=analysis_result.get("response_evidence", []),
+            page_warnings=analysis_result.get("warnings", []),
+            fallback_endpoints=analysis_result.get("fallback_endpoints", []),
         )
 
 

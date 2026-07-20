@@ -28,7 +28,7 @@ from typing import Any, Generator, Optional
 from app.config.settings import settings
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
-from app.logging_utils import setup_service_logging
+from app.logger import setup_service_logging
 from app.models.template import SiteTemplate
 from app.adapters import get_adapter_class
 from app.adapters import GenericAdapter
@@ -308,7 +308,7 @@ async def run_from_list_file_stream(
     # 预加载模板以获取适配器类（用于批次参数拼接）
     adapter_cls = GenericAdapter
     try:
-        tmpl_meta = loader.load(template_name)
+        tmpl_meta = loader.load(template_name, validate_params=False)
         adapter_cls = get_adapter_class(tmpl_meta.adapter)
         logger.info(f"预加载模板 '{template_name}'，适配器: {adapter_cls.__name__}")
     except FileNotFoundError:

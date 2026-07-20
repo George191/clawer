@@ -158,6 +158,18 @@ export interface UrlPreflightResponse {
   previewImage: string;
   renderedBy: 'http' | 'chrome';
   networkEndpoints: string[];
+  networkResponses: Array<{
+    url: string;
+    status: number;
+    contentType: string;
+    resourceType: string;
+    bodyPreview?: string;
+    links?: string[];
+    jsonItemPath?: string;
+    recordFields?: string[];
+    sampleRecord?: Record<string, unknown>;
+  }>;
+  pageWarnings: string[];
   faviconUrl: string;
   errorCode: string;
   errorMessage: string;

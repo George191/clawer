@@ -13,7 +13,7 @@ import logging
 import sys
 
 from app.config.settings import settings
-from app.logging_utils import setup_service_logging
+from app.logger import setup_service_logging
 from app.downloader.worker import DownloadWorker
 
 logger = logging.getLogger(__name__)

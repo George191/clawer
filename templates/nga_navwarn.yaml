@@ -1,86 +1,98 @@
 name: nga_navwarn
-display_name: "NGA - 海事航行警告采集"
+display_name: "NGA - {navarea_id} active navigational warnings"
 base_url: "https://msi.nga.mil"
 data_type: navwarn
 adapter: nga_navwarn
-anti_crawl_enabled: true
+anti_crawl_enabled: false
 description: >
-  采集 NGA (National Geospatial-Intelligence Agency) 海事航行警告页面数据。
-  页面为服务器端渲染 HTML，包含全球各区域的航行警告信息。
+  Collect active NGA SMAPS navigational warnings. The adapter requests the
+  current JSON API first and switches to NGA's official DailyMem text snapshot
+  when the MSI portal is under maintenance.
 
+batch_params:
+  file_path: "data/nga_navarea_ids.txt"
+  param_name: "navarea_id"
+  batch_size: 1
+  start_line: 0
+  limit: null
+  delay: 3
+
+params:
+  - name: navarea_id
+    description: "NGA message area: 4, 12, A, P, or C"
+    required: true
+
+# The queryResults URL is only a React shell. This is its real data endpoint.
 response_type: html
-
-list_page: "/NavWarnings"
+list_page: "/api/publications/smaps?navArea={navarea_id}&status=active&category=14&output=html"
 list_request:
   method: GET
   headers:
-    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    Accept-Language: "en-US,en;q=0.9"
+    Accept: "application/json, text/plain, */*"
+    Referer: "https://msi.nga.mil/queryResults?publications/smaps"
+    Cache-Control: "no-cache"
     Connection: "close"
   encoding: utf-8
 
 dedup_fields:
+  - navarea
   - warning_no
 
+# Parsing is implemented by NgaNavwarnAdapter because the primary response is
+# JSON while the maintenance fallback is structured plain text.
 list_fields:
   - name: warning_no
-    selector: "table.nav-warning-table tr td:first-child"
-    selector_type: css
+    selector: "warning_no"
+    selector_type: json
     field_type: text
     required: true
-    transform: strip
-    description: "警告编号, 如 001-26"
-
-  - name: area
-    selector: "table.nav-warning-table tr td:nth-child(2)"
-    selector_type: css
+  - name: category
+    selector: "category"
+    selector_type: json
     field_type: text
     required: false
-    transform: strip
-    description: "海域/区域名称"
-
-  - name: subject
-    selector: "table.nav-warning-table tr td:nth-child(3)"
-    selector_type: css
+  - name: dnc_region
+    selector: "dnc_region"
+    selector_type: json
+    field_type: text
+    required: false
+  - name: navarea
+    selector: "navarea"
+    selector_type: json
     field_type: text
     required: true
-    transform: strip
-    description: "警告主题"
-
-  - name: issue_time
-    selector: "table.nav-warning-table tr td:nth-child(4)"
-    selector_type: css
+  - name: oceans
+    selector: "oceans"
+    selector_type: json
     field_type: text
     required: false
-    transform: strip
-    description: "发布时间"
-
-  - name: effective_time
-    selector: "table.nav-warning-table tr td:nth-child(5)"
-    selector_type: css
+  - name: subregion
+    selector: "subregion"
+    selector_type: json
     field_type: text
     required: false
-    transform: strip
-    description: "生效时间"
-
-  - name: message_url
-    selector: "table.nav-warning-table tr td a"
-    selector_type: css
-    field_type: href
-    required: false
-    description: "详情页链接"
-
+  - name: status
+    selector: "status"
+    selector_type: json
+    field_type: text
+    required: true
   - name: message_text
-    selector: "table.nav-warning-table tr td:nth-child(3)"
-    selector_type: css
+    selector: "message_text"
+    selector_type: json
     field_type: text
-    required: false
-    transform: strip
-    description: "消息摘要"
+    required: true
+  - name: issue_time
+    selector: "issue_time"
+    selector_type: json
+    field_type: text
+    required: true
 
 list_pagination:
   type: page_number
   page_param: page
   start_page: 1
-  max_pages: 0
-  results_per_page: 50
+  max_pages: 1
+  results_per_page: 1000
+
+# All supported areas:
+# python -m app.crawler.main --template-name nga_navwarn --list-file data/nga_navarea_ids.txt --list-param navarea_id --batch-size 1 --delay 3

@@ -3,11 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_datetime, safe_str
-
 
 _NAVAREA_PREFIX_RE = re.compile(r"^(NAVAREA\s+[IVXLC\d]+)\b[\s\-:,.]*", re.IGNORECASE)
 _WARNING_SLASH_RE = re.compile(r"(?P<serial>\d{1,4})\s*/\s*(?P<year>\d{2,4})")
@@ -134,7 +134,13 @@ def _classify_hazard_type(text: str | None) -> str | None:
 
 
 def _parse_issue_time(time_str: str | None):
-    return safe_datetime(time_str)
+    parsed = safe_datetime(time_str)
+    if parsed or not time_str:
+        return parsed
+    try:
+        return datetime.strptime(time_str.strip(), "%d%H%MZ %b %Y").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
@@ -142,7 +148,7 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     quality_flags: list[str] = []
 
     message_id = safe_str(record.get("message_id"))
-    region = safe_str(record.get("region") or record.get("sea_name"))
+    region = safe_str(record.get("region") or record.get("sea_name") or record.get("navarea"))
     warning_no, region, serial_number, warning_year = _normalize_warning_number(
         record.get("warning_no"),
         region,
@@ -153,6 +159,8 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     issued_at = _parse_issue_time(issue_time_raw)
     coordinates = _extract_coordinates(message_text)
     hazard_type = _classify_hazard_type(message_text)
+    navarea_id_raw = record.get("navarea_id") or (meta.get("search_params") or {}).get("navarea_id")
+    navarea_id = int(navarea_id_raw) if str(navarea_id_raw or "").isdigit() else None
 
     meta_record_id = safe_str(meta.get("record_id") or record.get("record_id"))
     if meta_record_id:
@@ -185,7 +193,7 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
         "data_source": record.get("data_source") or meta.get("data_source") or meta.get("template") or "sealagom_navwarn",
         "data_type": record.get("data_type") or "navwarn",
         "record_id": record_id,
-        "navarea_id": record.get("navarea_id"),
+        "navarea_id": navarea_id,
         "warning_no": warning_no,
         "serial_number": serial_number,
         "warning_year": warning_year,
@@ -198,3 +206,4 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
         "quality_flags": json.dumps(quality_flags, ensure_ascii=False),
     }
 register_normalizer("navwarn", "sealagom_navwarn", normalize_sealagom_navwarn)
+register_normalizer("navwarn", "nga_navwarn", normalize_sealagom_navwarn)

@@ -24,7 +24,7 @@ import sys
 
 from app.config.settings import settings
 from app.etl.base import ETLBase
-from app.logging_utils import setup_service_logging
+from app.logger import setup_service_logging
 from app.etl.ts_rds import TsRds
 from app.etl.ts_ods import TsOds
 from app.etl.ts_task import TsTask

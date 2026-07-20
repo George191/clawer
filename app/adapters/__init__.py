@@ -16,7 +16,7 @@ import pkgutil
 from typing import Any
 
 from app.downloader.http_client import HttpClient
-from app.logging_utils import get_adapter_logger
+from app.logger import get_adapter_logger
 
 logger = get_adapter_logger(__name__, "registry")
 
@@ -105,6 +105,14 @@ class BaseSiteAdapter:
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """每页数据返回后。子类覆盖。"""
         return records
+
+    async def parse_list_response(
+        self,
+        page: int,
+        content: str,
+    ) -> list[dict] | None:
+        """解析站点特有的列表响应；返回 None 时使用模板解析器。"""
+        return None
 
     def on_page_advance(self) -> None:
         """翻页状态推进。子类覆盖。"""

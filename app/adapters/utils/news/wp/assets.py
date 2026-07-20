@@ -13,7 +13,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, stop_never
 
 from app.adapters.utils.news import NewsBaseAdapter
 from app.downloader.http_client import HttpClient
-from app.logging_utils import get_adapter_logger
+from app.logger import get_adapter_logger
 from app.models.template import RequestConfig
 
 logger = get_adapter_logger(__name__, "wp_assets")

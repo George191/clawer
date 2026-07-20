@@ -210,7 +210,9 @@ class SpiderEngine:
                         adapter_name=template.adapter,
                         page=current_page, attempt=attempt
                     )
-                    records = self._parser.parse_list(html, template.list_fields)
+                    records = await adapter.parse_list_response(current_page, html)
+                    if records is None:
+                        records = self._parser.parse_list(html, template.list_fields)
 
                     records = await adapter.on_after_page(current_page, records)
 

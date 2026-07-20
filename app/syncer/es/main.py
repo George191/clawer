@@ -21,7 +21,7 @@ import logging
 import sys
 
 from app.config.settings import settings
-from app.logging_utils import setup_service_logging
+from app.logger import setup_service_logging
 from app.syncer.es.config import SyncConfig
 from app.syncer.es.worker import EsSyncWorker
 

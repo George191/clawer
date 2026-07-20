@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.storage.minio_client import get_business_metadata_minio_client
+from app.models.template import SiteTemplate
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.browser_renderer import browser_renderer
 
@@ -140,6 +141,8 @@ class UrlPreflightResponse:
         normalized_url: str,
         preview_image: str = "",
         favicon_url: str = "",
+        network_responses: list[dict[str, Any]] | None = None,
+        page_warnings: list[str] | None = None,
     ):
         self.url = url
         self.html = html
@@ -150,6 +153,8 @@ class UrlPreflightResponse:
         self.normalized_url = normalized_url
         self.preview_image = preview_image
         self.favicon_url = favicon_url
+        self.network_responses = network_responses or []
+        self.page_warnings = page_warnings or []
         self.ok = True
         self.error_message = ""
         self.requires_proxy = False
@@ -169,8 +174,136 @@ class UrlPreflightResponse:
             "previewImage": self.preview_image,
             "renderedBy": "chrome",
             "networkEndpoints": self.network_endpoints,
+            "networkResponses": self.network_responses,
+            "pageWarnings": self.page_warnings,
             "faviconUrl": self.favicon_url,
         }
+
+
+def _detect_page_warnings(
+    html: str,
+    network_responses: list[dict[str, Any]],
+) -> list[str]:
+    warnings: list[str] = []
+    response_text = " ".join(
+        str(response.get("bodyPreview") or "")
+        for response in network_responses
+    )
+    lowered = re.sub(r"\s+", " ", f"{html} {response_text}").lower()
+
+    maintenance_markers = (
+        "currently under maintenance",
+        "portal is currently unavailable",
+        "service unavailable",
+    )
+    if any(marker in lowered for marker in maintenance_markers):
+        warnings.append("The captured page is a maintenance or service-unavailable response.")
+    if "loading, please wait" in lowered:
+        warnings.append("The visible page is a dynamic loading shell; static HTML selectors are not sufficient.")
+
+    failed = [
+        response
+        for response in network_responses
+        if int(response.get("status") or 0) >= 400
+    ]
+    if failed:
+        summary = ", ".join(
+            f"{response.get('status')} {response.get('url')}"
+            for response in failed[:5]
+        )
+        warnings.append(f"Dynamic data requests failed: {summary}")
+
+    unexpected_html = [
+        response
+        for response in network_responses
+        if "/api/" in str(response.get("url") or "")
+        and "html" in str(response.get("contentType") or "").lower()
+        and not response.get("recordFields")
+    ]
+    if unexpected_html:
+        warnings.append("An API request returned HTML instead of structured data; validate maintenance/WAF responses.")
+
+    return warnings
+
+
+def _validate_generated_template(
+    template_yaml: str,
+    source_url: str,
+    page_warnings: list[str],
+    analysis_result: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    try:
+        template_dict = yaml.safe_load(template_yaml)
+    except yaml.YAMLError as exc:
+        raise RuntimeError(f"Generated template is invalid YAML: {exc}") from exc
+    if not isinstance(template_dict, dict):
+        raise RuntimeError("Generated template must be a YAML mapping")
+
+    try:
+        SiteTemplate(**template_dict)
+    except Exception as exc:
+        raise RuntimeError(f"Generated template does not match SiteTemplate schema: {exc}") from exc
+
+    warnings = list(page_warnings)
+    list_page = str(template_dict.get("list_page") or "")
+    response_type = str(template_dict.get("response_type") or "html").lower()
+    if page_warnings and response_type == "html" and list_page in {source_url, urlparse(source_url).path}:
+        warnings.append("Generated template still targets the rendered shell; verify or replace it with the observed data endpoint.")
+    if not template_dict.get("dedup_fields"):
+        warnings.append("Generated template has no stable dedup_fields.")
+    if not template_dict.get("list_fields"):
+        warnings.append("Generated template has no verified list_fields.")
+
+    field_names = {
+        str(field.get("name"))
+        for section in ("list_fields", "detail_fields")
+        for field in (template_dict.get(section) or [])
+        if isinstance(field, dict) and field.get("name")
+    }
+
+    def is_produced(field_path: str) -> bool:
+        return field_path in field_names or field_path.split(".", 1)[0] in field_names
+
+    missing_dedup = [
+        str(field)
+        for field in (template_dict.get("dedup_fields") or [])
+        if not is_produced(str(field))
+    ]
+    if missing_dedup:
+        warnings.append(
+            "Dedup fields are not produced by list/detail fields: " + ", ".join(missing_dedup)
+        )
+
+    download = template_dict.get("download") or []
+    if isinstance(download, dict):
+        download = [download]
+    unresolved_resources = [
+        str(item.get("selector"))
+        for item in download
+        if isinstance(item, dict)
+        and item.get("selector")
+        and not is_produced(str(item.get("selector")))
+    ]
+    if unresolved_resources and not template_dict.get("adapter"):
+        warnings.append(
+            "Resource selectors require adapter output but adapter is not set: "
+            + ", ".join(unresolved_resources)
+        )
+
+    if analysis_result and analysis_result.get("source_kind") == "api":
+        selected_endpoint = str(analysis_result.get("selected_endpoint") or "")
+        selected_path = urlparse(selected_endpoint).path if selected_endpoint else ""
+        template_path = urlparse(list_page).path
+        selected_parts = selected_path.strip("/").split("/")
+        template_parts = template_path.strip("/").split("/")
+        path_matches = len(selected_parts) == len(template_parts) and all(
+            template_part == selected_part
+            or (template_part.startswith("{") and template_part.endswith("}"))
+            for selected_part, template_part in zip(selected_parts, template_parts, strict=True)
+        )
+        if selected_path and not path_matches:
+            warnings.append("Generated template does not target the API selected by page analysis.")
+    return template_dict, list(dict.fromkeys(warnings))
 
 
 async def _preflight(
@@ -192,6 +325,8 @@ async def _preflight(
                 normalized_url=result.url,
                 preview_image=result.screenshot_data_url,
                 favicon_url=result.favicon_url,
+                network_responses=result.network_responses,
+                page_warnings=_detect_page_warnings(result.html, result.network_responses),
             )
         except Exception as e:
             last_error = e
@@ -301,6 +436,8 @@ async def _analyze_events(
             "previewImage": preflight.preview_image,
             "renderedBy": "chrome",
             "networkEndpoints": preflight.network_endpoints,
+            "networkResponses": preflight.network_responses,
+            "pageWarnings": preflight.page_warnings,
             "faviconUrl": preflight.favicon_url,
             "ok": True,
             "errorMessage": "",
@@ -314,6 +451,8 @@ async def _analyze_events(
                     preflight.normalized_url,
                     preflight.html,
                     preflight.network_endpoints,
+                    network_responses=preflight.network_responses,
+                    page_warnings=preflight.page_warnings,
                     on_event=analysis_events.put_nowait,
                 ),
                 timeout=120.0,
@@ -344,10 +483,12 @@ async def _analyze_events(
             raise RuntimeError("Model returned an empty template")
         
         template_name = template_agent._build_template_name(preflight.normalized_url)
-        try:
-            template_dict = yaml.safe_load(template_yaml)
-        except yaml.YAMLError:
-            template_dict = {}
+        template_dict, validation_warnings = _validate_generated_template(
+            template_yaml,
+            preflight.normalized_url,
+            preflight.page_warnings,
+            analysis_result,
+        )
         yield _analysis_event("step", {"step": "generate_template", "label": "Generate template", "status": "done"})
         
         fields = template_agent._build_inferred_fields(analysis_result)
@@ -369,7 +510,7 @@ async def _analyze_events(
             template_dict=template_dict,
             template_yaml=template_yaml,
             adapter_code="",
-            warnings=[],
+            warnings=validation_warnings,
             detail_fields=[],
             acquisition=acquisition,
         )
@@ -390,6 +531,7 @@ async def _analyze_events(
             "fields": [f.__dict__ for f in fields],
             "pagination": pagination.__dict__,
             "sample_items": result.sample_items,
+            "warnings": result.warnings,
         }
         await ai_collect_store.save_analysis(payload)
         
@@ -401,6 +543,7 @@ async def _analyze_events(
             "fields": [f.__dict__ for f in fields],
             "pagination": pagination.__dict__,
             "acquisition": acquisition.__dict__,
+            "warnings": result.warnings,
             "agent": {
                 "model": template_agent.model_name,
                 "requiresProxy": preflight.requires_proxy,
@@ -521,9 +664,17 @@ async def generate_template(body: GenerateTemplateRequest):
         preflight.normalized_url,
         preflight.html,
         preflight.network_endpoints,
+        network_responses=preflight.network_responses,
+        page_warnings=preflight.page_warnings,
     )
     
     template_yaml = await template_agent.generate_template(preflight.normalized_url, analysis_result)
+    _, warnings = _validate_generated_template(
+        template_yaml,
+        preflight.normalized_url,
+        preflight.page_warnings,
+        analysis_result,
+    )
     template_name = template_agent._build_template_name(preflight.normalized_url)
     
     fields = template_agent._build_inferred_fields(analysis_result)
@@ -553,7 +704,7 @@ async def generate_template(body: GenerateTemplateRequest):
         "fields": [f.__dict__ for f in fields],
         "pagination": pagination.__dict__,
         "sampleItems": [],
-        "warnings": [],
+        "warnings": warnings,
         "acquisition": acquisition.__dict__,
         "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }

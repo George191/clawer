@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def setup_logging(service: str, log_level: str = "INFO") -> None:
     """Setup logging for a service."""
-    from app.logging_utils import setup_service_logging
+    from app.logger import setup_service_logging
     import logging as std_logging
 
     setup_service_logging(

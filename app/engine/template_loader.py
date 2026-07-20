@@ -24,12 +24,18 @@ class TemplateLoader:
     def __init__(self, template_dir: str | None = None) -> None:
         self._template_dir = Path(template_dir or settings.template_dir)
 
-    def load(self, name: str, param_values: dict[str, str] | None = None) -> SiteTemplate:
+    def load(
+        self,
+        name: str,
+        param_values: dict[str, str] | None = None,
+        *,
+        validate_params: bool = True,
+    ) -> SiteTemplate:
         file_path = self._resolve_template_file(name)
         raw = self._read_yaml(file_path)
         raw = self._normalize_download_config(raw)
         template = SiteTemplate(**raw)
-        if template.params and param_values:
+        if template.params and (param_values is not None or validate_params):
             template.apply_params(param_values)
         return template
 

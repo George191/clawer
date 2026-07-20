@@ -18,7 +18,7 @@ from app.adapters import register_adapter
 from app.adapters.utils.news import NewsBaseAdapter
 from app.adapters.utils.news.wp import assets as wp_assets
 from app.downloader.http_client import HttpClient
-from app.logging_utils import get_adapter_logger
+from app.logger import get_adapter_logger
 
 logger = get_adapter_logger(__name__, "satellite_today")
 

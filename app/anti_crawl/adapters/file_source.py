@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
-from app.logging_utils import get_adapter_logger
+from app.logger import get_adapter_logger
 
 logger = get_adapter_logger(__name__, "file_source", "proxy")
 

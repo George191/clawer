@@ -25,7 +25,7 @@ from typing import Any
 
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
-from app.logging_utils import get_adapter_logger
+from app.logger import get_adapter_logger
 from app.parser.template_parser import TemplateParser
 
 logger = get_adapter_logger(__name__, "planet")

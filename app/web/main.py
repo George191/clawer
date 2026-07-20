@@ -30,7 +30,7 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config.settings import settings
-from app.logging_utils import configure_adapter_logging
+from app.logger import configure_adapter_logging
 from app.web.routes.dashboard import router as dashboard_router
 from app.web.routes.etl import router as etl_router
 from app.web.routes.monitor import router as monitor_router
@@ -243,4 +243,3 @@ def create_app() -> FastAPI:
 # ── 应用实例 ─────────────────────────────────────────────────────────────────
 
 app = create_app()
-

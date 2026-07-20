@@ -1805,6 +1805,20 @@ const AICollect: React.FC = () => {
         status: 'done',
         content: `已验证页面：${preflight.title || preflight.url}`,
       });
+      (preflight.networkResponses ?? []).slice(0, 8).forEach((response) => {
+        const fieldSummary = response.recordFields?.length
+          ? ` | fields: ${response.recordFields.slice(0, 12).join(', ')}`
+          : '';
+        appendAnalysisFeed({
+          kind: response.status >= 400 ? 'error' : 'status',
+          step: 'fetch_page',
+          content: `${response.status} ${response.resourceType.toUpperCase()} ${response.contentType || 'unknown content-type'} · ${response.url}${fieldSummary}`,
+        });
+      });
+      (preflight.pageWarnings ?? []).forEach((warning) => {
+        appendAnalysisFeed({ kind: 'error', step: 'fetch_page', content: warning });
+        pushLiveLog(`[preflight warning] ${warning}`);
+      });
       return;
     }
 
@@ -3502,19 +3516,19 @@ const AICollect: React.FC = () => {
             <strong>{browserPreviewHost || 'source.local'}</strong>
           </div>
         <div className="ai-side-browser-viewport">
-          {urlPreflight?.previewImage ? (
-            <img
-              className="ai-browser-render-image"
-              src={urlPreflight.previewImage}
-              alt={`${browserPreviewTitle} Chrome 页面预览`}
-            />
-          ) : urlPreflight?.previewHtml ? (
+          {urlPreflight?.previewHtml ? (
             <iframe
               className="ai-side-browser-frame"
               title={`${browserPreviewTitle} 页面预览`}
               sandbox=""
               referrerPolicy="no-referrer"
               srcDoc={urlPreflight.previewHtml}
+            />
+          ) : urlPreflight?.previewImage ? (
+            <img
+              className="ai-browser-render-image"
+              src={urlPreflight.previewImage}
+              alt={`${browserPreviewTitle} Chrome 页面预览`}
             />
           ) : (
             <div className="ai-side-browser-empty">暂无经过服务端验证的页面快照</div>
@@ -3622,15 +3636,7 @@ const AICollect: React.FC = () => {
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
               <div className="ai-session-inspector-browser-frame" ref={browserFollowViewportRef}>
-                {urlPreflight?.previewImage ? (
-                  <img
-                    className="ai-browser-render-image"
-                    src={urlPreflight.previewImage}
-                    alt={`${activeInspectorTab.title} Chrome 页面预览`}
-                    draggable={false}
-                    onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
-                  />
-                ) : urlPreflight?.previewHtml ? (
+                {urlPreflight?.previewHtml ? (
                   <iframe
                     ref={browserFollowIframeRef}
                     sandbox="allow-same-origin"
@@ -3638,6 +3644,14 @@ const AICollect: React.FC = () => {
                     srcDoc={urlPreflight.previewHtml}
                     title={activeInspectorTab.title}
                     tabIndex={-1}
+                    onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
+                  />
+                ) : urlPreflight?.previewImage ? (
+                  <img
+                    className="ai-browser-render-image"
+                    src={urlPreflight.previewImage}
+                    alt={`${activeInspectorTab.title} Chrome 页面预览`}
+                    draggable={false}
                     onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
                   />
                 ) : (
@@ -6740,9 +6754,9 @@ const AICollect: React.FC = () => {
           }
           .ai-browser-render-image {
             display: block;
-            width: 100%;
+            width: max(100%, 720px);
             height: auto;
-            max-width: 100%;
+            max-width: none;
             object-fit: contain;
             object-position: top center;
             background: #fff;

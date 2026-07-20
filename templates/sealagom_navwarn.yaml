@@ -11,7 +11,7 @@ description: >
   核心选择器均返回 N 个元素(每条消息1个), 保证行对齐。
 
 batch_params:
-  file_path: "data/navarea_ids.txt"
+  file_path: "data/sealagom_navarea_ids.txt"
   param_name: "navarea_id"
   batch_size: 1
   start_line: 0

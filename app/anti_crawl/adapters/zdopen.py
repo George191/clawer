@@ -12,7 +12,7 @@ from typing import Any
 from curl_cffi import requests as curl_requests
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
-from app.logging_utils import get_adapter_logger
+from app.logger import get_adapter_logger
 
 logger = get_adapter_logger(__name__, "zdopen_api", "proxy")
 
@@ -147,50 +147,38 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                 }
             }
 
-        也支持直接数组格式和其他嵌套格式，自动递归查找。
-
         Args:
             data: API 响应的解析结果。
 
         Returns:
             代理字典列表。如果响应指示错误或无法解析，返回空列表。
         """
-        if isinstance(data, list):
-            return data
+        if not isinstance(data, dict):
+            logger.warning("Unexpected response format: %s", type(data))
+            return []
 
-        if isinstance(data, dict):
-            # 检查是否是错误响应
-            code = data.get("code", "")
-            if code and code != "10001":
-                msg = data.get("msg", "Unknown error")
-                logger.warning("ZdopenAPI returned error code=%s: %s", code, msg)
-                return []
+        code = data.get("code")
+        if code != "10001":
+            logger.warning(
+                "ZdopenAPI returned error code=%s: %s",
+                code,
+                data.get("msg", "Unknown error"),
+            )
+            return []
 
-            # 直接查找包含 ip 字段的列表
-            for key, value in data.items():
-                if isinstance(value, list) and value:
-                    first = value[0]
-                    if isinstance(first, dict) and "ip" in first:
-                        logger.debug("Found proxy list in response key '%s'", key)
-                        return value
+        response_data = data.get("data")
+        if not isinstance(response_data, dict):
+            logger.warning("Unexpected response data format: %s", type(response_data))
+            return []
 
-            # 递归查找嵌套结构，如 {"data": {"proxy_list": [...]}}
-            for key, value in data.items():
-                if isinstance(value, dict):
-                    result = self._extract_proxy_list(value)
-                    if result:
-                        return result
-                elif isinstance(value, list):
-                    for item in value:
-                        if isinstance(item, dict):
-                            result = self._extract_proxy_list(item)
-                            if result:
-                                return result
+        proxy_list = response_data.get("proxy_list")
+        if not isinstance(proxy_list, list) or not all(
+            isinstance(item, dict) for item in proxy_list
+        ):
+            logger.warning("Unexpected proxy_list format: %s", type(proxy_list))
+            return []
 
-        logger.warning("Unexpected response format: %s", type(data))
-        if isinstance(data, dict):
-            logger.debug("Response keys: %s", list(data.keys()))
-        return []
+        return proxy_list
 
     def _parse_proxy_items(self, items: list[dict]) -> list[ProxyInfo]:
         """将代理字典列表转换为 ProxyInfo 列表。
