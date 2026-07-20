@@ -61,6 +61,7 @@ export interface LayerNode {
   status: 'running' | 'stopped' | 'error';
   rate: number;
   lag: number;
+  tables?: number;
 }
 
 export interface LayerTable {

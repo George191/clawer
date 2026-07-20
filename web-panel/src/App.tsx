@@ -9,6 +9,7 @@ import { lightTheme } from './theme/light';
 
 import CommandCenter from '@/pages/CommandCenter';
 import Dashboard from '@/pages/Dashboard';
+import DataLake from '@/pages/DataLake';
 import DataExplorer from '@/pages/DataExplorer';
 import Monitoring from '@/pages/Monitoring';
 import Pipeline from '@/pages/Pipeline';
@@ -61,7 +62,7 @@ const App: React.FC = () => {
             <Route path="/source-strategy" element={<AICollectGovernance />} />
             <Route path="/anti-crawl" element={<AICollectGovernance />} />
             <Route path="/field-mapping" element={<AICollectGovernance />} />
-            <Route path="/lake/catalog" element={<WorkspacePage />} />
+            <Route path="/lake/catalog" element={<DataLake />} />
             <Route path="/lake/metadata" element={<WorkspacePage />} />
             <Route path="/lake/quality" element={<WorkspacePage />} />
             <Route path="/lake/lineage" element={<WorkspacePage />} />
