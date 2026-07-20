@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 _TRANSFORM_REGISTRY: dict[str, Any] = {}
 
 
+def _is_empty_json_value(value: Any) -> bool:
+    return value is None or (
+        isinstance(value, str)
+        and (not value.strip() or value.strip().lower() == "null")
+    )
+
+
 def register_transform(name: str):
     def decorator(func):
         _TRANSFORM_REGISTRY[name] = func
@@ -225,23 +232,30 @@ class TemplateParser:
                 logger.warning("Failed to extract JSON field '%s': %s", field.name, e)
                 value = field.default
 
+            if _is_empty_json_value(value):
+                value = None
+
             if value is None:
                 if field.required and field.default is None:
                     logger.warning("Required JSON field '%s' is missing, skipping row", field.name)
                     return None
                 value = field.default
 
-            if value is not None:
-                has_any_data = True
-
-            if field.required and value is not None:
-                has_required_data = True
-
             if field.transform and value is not None:
                 try:
                     value = apply_transform(value, field.transform)
                 except Exception as e:
                     logger.warning("Transform '%s' failed for field '%s': %s", field.transform, field.name, e)
+
+            if _is_empty_json_value(value):
+                if field.required:
+                    logger.warning("Required JSON field '%s' is empty, skipping row", field.name)
+                    return None
+                continue
+
+            has_any_data = True
+            if field.required:
+                has_required_data = True
 
             row[field.name] = value
 

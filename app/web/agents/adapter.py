@@ -27,35 +27,39 @@ class AdapterResult:
 
 class AdapterAgent(BaseAgent):
     def __init__(self):
-        model_path = Path(__file__).parents[3] / "models" / "Qwen" / "2.5-Coder-1.5B-Instruct"
+        model_path = (
+            Path(__file__).parents[3] / "models" / "Qwen" / "2.5-Coder-1.5B-Instruct"
+        )
         super().__init__(str(model_path))
         self._register_default_prompts()
 
     def _register_default_prompts(self) -> None:
         self.register_prompt(
             "generate_adapter",
-            """Generate a Python site adapter for the supplied YAML template.
+            """
+                Generate a Python site adapter for the supplied YAML template.
 
-Project constraints:
-1. Treat the YAML as the complete contract. Emit exactly its business fields and adapter-produced resource fields; do not restore source IDs, duplicate aliases or metadata that the template deliberately omitted.
-2. Import BaseSiteAdapter/register_adapter from app.adapters and use the injected HttpClient. For data_type=news, prefer the existing NewsBaseAdapter and its URL/media dedupe helpers when applicable. Do not introduce requests, aiohttp, clients, dependencies or standalone crawler code.
-3. Implement only site-specific hooks the YAML requires: parse_list_response, on_before_crawl, on_after_page, on_error, on_request_headers, on_page_advance or build_batch_param_value. Leave selectors and ordinary parsing to the template engine.
-4. For a dynamic page, parse the configured verified API rather than the rendered shell. Validate response shape, item container and required fields. Maintenance, CAPTCHA, login, WAF and unexpected error HTML must raise or activate only a YAML-documented official fallback; zero parsed records from a non-empty unexpected body is not success.
-5. Preserve required params without silent defaults. Normalize only fields needed by list_fields, dedup_fields and download selectors. The YAML dedup_fields are authoritative: ensure each is non-empty and stable, and do not add backup fields when one key is unique.
-6. Fulfil every download item. Output actual absolute HTTP(S) URLs under the declared selector. For news, resolve cover/thumbnail metadata, extract body images separately, exclude the cover from images, extract document attachments (PDF/DOC/XLS/PPT/ZIP and declared types), retain useful labels/alt text, and deduplicate by normalized URL. Follow detail_page only when resources or reconstructive content are absent from the list/API.
-7. For patents preserve declared PDF/figure/thumbnail resources; for intelligence preserve declared document/dataset resources; for navwarn do not invent assets. Never treat an internal numeric media ID as a downloadable URL—resolve it through a verified endpoint when the YAML requires adapter enrichment.
-8. Keep retries bounded and use the shared proxy failure/rotation path through HttpClient. Generate valid complete Python, use project logging, and add no unrelated framework code.
+                Project constraints:
+                1. Treat the YAML as the complete contract. Emit exactly its business fields and adapter-produced resource fields; do not restore source IDs, duplicate aliases or metadata that the template deliberately omitted.
+                2. Import BaseSiteAdapter/register_adapter from app.adapters and use the injected HttpClient. For data_type=news, prefer the existing NewsBaseAdapter and its URL/media dedupe helpers when applicable. Do not introduce requests, aiohttp, clients, dependencies or standalone crawler code.
+                3. Implement only site-specific hooks the YAML requires: parse_list_response, on_before_crawl, on_after_page, on_error, on_request_headers, on_page_advance or build_batch_param_value. Leave selectors and ordinary parsing to the template engine. One adapter targets one verified site schema: never hardcode multi-key field fallbacks (such as first_value across aliases) or repeat source-to-output mappings already declared by YAML selectors. The collection layer must preserve source values exactly; do not synthesize, concatenate, normalize or reinterpret business fields. If a custom mixed-format response hook is explicitly required, reuse TemplateParser with the YAML list_fields.
+                4. Match the response contract exactly. For response_type=json, let the engine decode JSON and use json_item_path/list_fields; do not inspect prefixes, call startswith/lower on response content, parse HTML/text, or switch sources. For response_type=html/text, parse only the verified format. A fallback is allowed only when explicitly documented by YAML evidence.
+                5. Preserve required params without silent defaults. If the verified API is not paginated, omit list_pagination; the engine will fetch exactly one page. Never invent page loops or page parameters. The YAML dedup_fields are authoritative and must be stable source/identity fields produced by list_fields.
+                6. Optional null, empty-string and whitespace fields must be omitted from records; required empty fields must reject the record. Do not add null placeholders merely to mirror the schema.
+                6. Fulfil every download item. Output actual absolute HTTP(S) URLs under the declared selector. For news, resolve cover/thumbnail metadata, extract body images separately, exclude the cover from images, extract document attachments (PDF/DOC/XLS/PPT/ZIP and declared types), retain useful labels/alt text, and deduplicate by normalized URL. Follow detail_page only when resources or reconstructive content are absent from the list/API.
+                7. For patents preserve declared PDF/figure/thumbnail resources; for intelligence preserve declared document/dataset resources; for navwarn do not invent assets. Never treat an internal numeric media ID as a downloadable URL—resolve it through a verified endpoint when the YAML requires adapter enrichment.
+                8. Keep retries bounded and use the shared proxy failure/rotation path through HttpClient. Generate valid complete Python, use project logging, and add no unrelated framework code.
 
-Same data-type project conventions:
-{reference_adapters}
+                Same data-type project conventions:
+                {reference_adapters}
 
-References describe reusable project patterns only. The supplied YAML wins; never copy another site's URLs, selectors, constants or fields.
+                References describe reusable project patterns only. The supplied YAML wins; never copy another site's URLs, selectors, constants or fields.
 
-YAML template:
-{template_yaml}
+                YAML template:
+                {template_yaml}
 
-Return only a fenced ```python block.
-""",
+                Return only a fenced ```python block.
+            """,
         )
 
     async def generate_adapter(
@@ -88,7 +92,11 @@ Return only a fenced ```python block.
             template = yaml.safe_load(template_yaml)
         except yaml.YAMLError:
             return "other"
-        return str(template.get("data_type") or "other") if isinstance(template, dict) else "other"
+        return (
+            str(template.get("data_type") or "other")
+            if isinstance(template, dict)
+            else "other"
+        )
 
     @staticmethod
     def _reference_adapter_summaries(data_type: str) -> list[dict[str, Any]]:
@@ -99,7 +107,10 @@ Return only a fenced ```python block.
                 template = yaml.safe_load(path.read_text(encoding="utf-8"))
             except (OSError, yaml.YAMLError):
                 continue
-            if not isinstance(template, dict) or str(template.get("data_type")) != data_type:
+            if (
+                not isinstance(template, dict)
+                or str(template.get("data_type")) != data_type
+            ):
                 continue
 
             adapter_name = str(template.get("adapter") or "")
@@ -123,7 +134,11 @@ Return only a fenced ```python block.
                 {
                     "template": template.get("name"),
                     "adapter": adapter_name,
-                    "base_class": class_match.group(1).strip() if class_match else "BaseSiteAdapter",
+                    "base_class": (
+                        class_match.group(1).strip()
+                        if class_match
+                        else "BaseSiteAdapter"
+                    ),
                     "hooks": list(dict.fromkeys(hooks)),
                     "params": [
                         item.get("name")
@@ -165,7 +180,8 @@ Return only a fenced ```python block.
 
         return response.strip()
 
-    def _validate_code(self, code: str) -> list[str]:
+    @staticmethod
+    def _validate_code(code: str) -> list[str]:
         warnings = []
 
         if not code:
@@ -178,6 +194,20 @@ Return only a fenced ```python block.
         if "def " not in code:
             warnings.append("Missing method definition")
 
+        if re.search(r"(?:_first_value|\bfirst_value)\s*\(", code):
+            warnings.append("Avoid multi-key field fallback helpers; use YAML selectors for one verified source field")
+
+        if "parse_list_response" in code and (
+            "startswith(" in code or ".lower()" in code or "content[:" in code
+        ):
+            warnings.append("Do not sniff response content in parse_list_response; follow the YAML response_type")
+
+        if re.search(
+            r"warning_no\s*=\s*f[\"']|[\"']warning_no[\"']\s*:\s*f[\"']|f[\"'][^\n]*warning_no",
+            code,
+        ):
+            warnings.append("Do not synthesize warning_no in the collection adapter; preserve the source value")
+
         if (
             not code.strip().endswith(")")
             and not code.strip().endswith(":")
@@ -187,4 +217,6 @@ Return only a fenced ```python block.
             warnings.append("Code may be truncated")
 
         return warnings
+
+
 adapter_agent = AdapterAgent()

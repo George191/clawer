@@ -297,9 +297,9 @@ class SpiderEngine:
     ) -> list[dict[str, Any]]:
         all_records: list[dict[str, Any]] = []
         start_page = resume_page if resume_page is not None else (
-            template.list_pagination.start_page if template.list_pagination else 0
+            template.list_pagination.start_page if template.list_pagination else 1
         )
-        config_max_pages = template.list_pagination.max_pages if template.list_pagination else 0
+        config_max_pages = template.list_pagination.max_pages if template.list_pagination else 1
         results_per_page = template.list_pagination.results_per_page if template.list_pagination else 100
         item_path = template.json_item_path or ""
         page_concurrency = (
@@ -356,7 +356,7 @@ class SpiderEngine:
 
         logger.info(
             "Page %d/%s: found %d records%s (cumulative: %d)",
-            start_page + 1, dynamic_pages,
+            1, dynamic_pages,
             len(records1), total_for_log, len(all_records),
         )
 
@@ -364,21 +364,24 @@ class SpiderEngine:
         if not records1:
             await adapter.close()
             return all_records
+        if template.list_pagination is None:
+            await adapter.close()
+            return all_records
         if len(records1) < results_per_page:
             await adapter.close()
             return all_records
 
         # ── Phase 2: 并行获取剩余页面 ───────────────────────────────
-        known_total = isinstance(dynamic_pages, int) and dynamic_pages > start_page + 1
+        known_total = isinstance(dynamic_pages, int) and dynamic_pages > 1
 
         if known_total:
             # 已知总页数：一次性计算所有剩余页面并分批并行获取
-            remaining_pages = list(range(start_page + 1, int(dynamic_pages)))
+            remaining_pages = list(range(start_page + 1, start_page + int(dynamic_pages)))
             for batch_start in range(0, len(remaining_pages), page_concurrency):
                 batch = remaining_pages[batch_start:batch_start + page_concurrency]
                 await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
-                    dynamic_pages, result, all_records
+                    start_page, dynamic_pages, result, all_records
                 )
         else:
             # 未知总页数：逐批并行获取，遇空页或不足一页时终止
@@ -387,7 +390,7 @@ class SpiderEngine:
                 batch = list(range(current, current + page_concurrency))
                 should_stop = await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
-                    dynamic_pages, result, all_records
+                    start_page, dynamic_pages, result, all_records
                 )
                 if should_stop:
                     break
@@ -511,6 +514,7 @@ class SpiderEngine:
         adapter: Any,
         results_per_page: int,
         item_path: str,
+        start_page: int,
         dynamic_pages: int | float,
         result: CrawlResult,
         all_records: list[dict],
@@ -540,7 +544,7 @@ class SpiderEngine:
 
             logger.info(
                 "Page %d/%s: found %d records (cumulative: %d)",
-                p + 1, dynamic_pages, len(records), len(all_records),
+                p - start_page + 1, dynamic_pages, len(records), len(all_records),
             )
 
             if not records or len(records) < results_per_page:

@@ -72,71 +72,73 @@ class TemplateAgent(BaseAgent):
     def _register_default_prompts(self) -> None:
         self.register_prompt(
             "analyze_page",
-            """You analyze web pages for this project's template-driven crawler.
+            """
+                You analyze web pages for this project's template-driven crawler.
 
-Target URL: {url}
-Page title: {page_title}
-Page summary: {page_summary}
-Observed network evidence: {network_evidence}
-Preflight warnings: {page_warnings}
+                Target URL: {url}
+                Page title: {page_title}
+                Page summary: {page_summary}
+                Observed network evidence: {network_evidence}
+                Preflight warnings: {page_warnings}
 
-Work in this order:
-1. API discovery: inspect successful XHR/fetch evidence first. If a verified API supplies the records, select it as the primary source. Analyze rendered HTML only when no usable API exists. A page URL ending in query/results may be only a JavaScript shell.
-2. Source validation: require a successful status, plausible content type, a record container and at least one real sample. Reject maintenance, CAPTCHA, login and WAF bodies. HTML from an endpoint is valid only when it contains the intended records, not an error shell.
-3. Data-type field contract: infer data_type before selecting fields. Keep the smallest set that can identify and reconstruct the business record. Preserve content, event/publication time, status, classification and location only when meaningful for that data type. For news consider title, canonical URL, publication time, author, summary/body and media. For navwarn consider warning number, issue time, category/region/status and full warning text. For patents consider publication number, title, parties, dates, abstract/claims and document resources. For intelligence preserve the stable identity, time, geometry/location and substantive content.
-4. Exclusions: remove transport/UI/internal fields such as request IDs, row IDs, component IDs, ranks and duplicated aliases unless they are the only stable business identity. Never keep two fields with the same meaning (for example navArea/usNavArea/msgType or msgSqncNumber/sequenceNumber); choose one canonical snake_case output name and document the source field.
-5. Deduplication: prove the smallest stable business key. Prefer one immutable field such as canonical URL, publication number or warning number scoped by area. Use multiple fields only when one field is not unique; do not add redundant backup fields to a unique key.
-6. Resources: identify downloadable or media values separately. Classify cover/thumbnail, body image/figure, attachment/document, gallery/slide, video/audio and dataset/archive fields. State whether each comes from list, detail or API and whether adapter enrichment is required.
-7. Acquisition details: convert variable path/query values into required params, infer pagination only from verified evidence, and record an official fallback only when evidence supports it. Zero verified records is a warning, not collection success.
+                Work in this order:
+                1. API discovery: inspect successful XHR/fetch evidence first. If a verified API supplies the records, select it as the primary source. Analyze rendered HTML only when no usable API exists. A page URL ending in query/results may be only a JavaScript shell.
+                2. Source validation: require a successful status, plausible content type, a record container and at least one real sample. Reject maintenance, CAPTCHA, login and WAF bodies. HTML from an endpoint is valid only when it contains the intended records, not an error shell.
+                3. Data-type field contract: infer data_type before selecting fields. Keep the smallest set that can identify and reconstruct the business record. Preserve source values exactly at collection time; do not synthesize derived values in the template or adapter. For navwarn consider the source warning number, source issue time, category/region/status, location coordinates and full warning text. Treat ingest/transport timestamps separately from business issue time.
+                4. Exclusions: remove transport/UI/internal fields such as request IDs, row IDs, component IDs, ranks and duplicated aliases unless they are the only stable business identity. Never keep two fields with the same meaning (for example navArea/usNavArea/msgType or msgSqncNumber/sequenceNumber); choose one canonical snake_case output name and document exactly one verified source field. A template targets one verified site schema: do not propose runtime alias lists or fallback source keys. If the source schema changes, require new evidence and update the selector.
+                5. Deduplication: prove the smallest stable business key. Prefer one immutable field such as canonical URL, publication number or warning number scoped by area. Use multiple fields only when one field is not unique; do not add redundant backup fields to a unique key.
+                6. Resources: identify downloadable or media values separately. Classify cover/thumbnail, body image/figure, attachment/document, gallery/slide, video/audio and dataset/archive fields. State whether each comes from list, detail or API and whether adapter enrichment is required.
+                7. Acquisition details: convert variable path/query values into required params. Set pagination to none when the verified API returns the complete collection; do not fabricate page parameters or page loops. Record an official fallback only when evidence supports it. Zero verified records is a warning, not collection success.
 
-Return strict JSON without markdown:
-{{
-  "data_type": "news|navwarn|patent|intelligence|other",
-  "source_kind": "api|html|text|dynamic_shell|unavailable",
-  "selected_endpoint": "",
-  "json_item_path": "",
-  "verified_record_count": 0,
-  "fields": [{{"name":"title","source_field":"title","type":"text","selector":"title","business_role":"content","description":"Title","sample_value":"","required":true}}],
-  "excluded_fields": [{{"source_field":"rowId","reason":"internal UI identifier","duplicate_of":""}}],
-  "dedup_analysis": {{"fields":[],"reason":"","uniqueness_scope":""}},
-  "pagination": {{"type":"none","page_param":"page","list_page":"{url}","start_page":1,"results_per_page":0}},
-  "api_endpoints": [],
-  "fallback_endpoints": [],
-  "response_evidence": [],
-  "warnings": [],
-  "resource_fields": [{{"name":"thumbnail","asset_type":"thumbnail","source":"list|detail|api","selector":"","multiple":false,"requires_adapter":false}}],
-  "adapter_requirements": [],
-  "download_fields": [],
-  "dedup_fields": [],
-  "description": ""
-}}
-""",
+                Return strict JSON without markdown:
+                {{
+                    "data_type": "news|navwarn|patent|intelligence|other",
+                    "source_kind": "api|html|text|dynamic_shell|unavailable",
+                    "selected_endpoint": "",
+                    "json_item_path": "",
+                    "verified_record_count": 0,
+                    "fields": [{{"name":"title","source_field":"title","type":"text","selector":"title","business_role":"content","description":"Title","sample_value":"","required":true}}],
+                    "excluded_fields": [{{"source_field":"rowId","reason":"internal UI identifier","duplicate_of":""}}],
+                    "dedup_analysis": {{"fields":[],"reason":"","uniqueness_scope":""}},
+                    "pagination": {{"type":"none","page_param":"page","list_page":"{url}","start_page":1,"results_per_page":0}},
+                    "api_endpoints": [],
+                    "fallback_endpoints": [],
+                    "response_evidence": [],
+                    "warnings": [],
+                    "resource_fields": [{{"name":"thumbnail","asset_type":"thumbnail","source":"list|detail|api","selector":"","multiple":false,"requires_adapter":false}}],
+                    "adapter_requirements": [],
+                    "download_fields": [],
+                    "dedup_fields": [],
+                    "description": ""
+                }}
+            """,
         )
 
         self.register_prompt(
             "generate_template",
-            """Generate a complete YAML template for this project's SiteTemplate schema.
+            """
+                Generate a complete YAML template for this project's SiteTemplate schema.
 
-Rules:
-1. Use selected_endpoint when it is a verified API; use the rendered page only when analysis found no usable API. Match response_type, json_item_path and selector_type to the selected response.
-2. Generate list_fields from the approved fields only. Do not reintroduce excluded transport/UI IDs or duplicate aliases. Output canonical snake_case names while selectors retain observed source names.
-3. Set dedup_fields to exactly the minimal fields in dedup_analysis/dedup_fields. Every dedup field must be produced by list_fields or adapter normalization. Use a composite key only when its stated scope requires it.
-4. Convert variable URL/query values into params and mark inputs required unless evidence proves a safe default. Preserve request method, required headers, pagination and verified official fallback behavior.
-5. Translate every resource_fields/download_fields entry into a valid download item with selector_type, link_type and asset_type. If a resource requires detail/API enrichment, add detail_page/detail_fields where generic parsing is enough; otherwise set adapter and explain the exact required output field in description. News templates must account for available cover/thumbnail, body images and attachments without duplicating the cover in images.
-6. Keep business record fields separate from resources. A source media ID used only to resolve a URL is adapter input, not a final resource selector; the adapter must output the actual URL/list expected by download.selector.
-7. Use max_pages=1 for non-paginated API or text snapshots. If verified_record_count is zero or source_kind is unavailable, do not fabricate selectors or samples; retain warnings and require guarded adapter validation.
-8. Use only SiteTemplate schema fields: name, display_name, base_url, data_type, adapter, anti_crawl_enabled, description, params/batch_params, response_type/json paths, list_page/list_request/list_fields/dedup_fields/list_pagination, detail_page/detail_request/detail_fields and download.
+                Rules:
+                1. Use selected_endpoint when it is a verified API; use the rendered page only when analysis found no usable API. Match response_type, json_item_path and selector_type to the selected response.
+                2. Generate list_fields from the approved fields only. Do not reintroduce excluded transport/UI IDs or duplicate aliases. Output canonical snake_case names while each selector retains exactly one observed source field. Never put source-field fallback, alias guessing or derived-value synthesis in adapter code.
+                3. Set dedup_fields to exactly the minimal stable source/identity fields in dedup_analysis/dedup_fields. Every dedup field must be produced directly by list_fields; do not depend on downstream ODS normalization. Use a composite key only when its stated scope requires it.
+                4. Convert variable URL/query values into params and mark inputs required unless evidence proves a safe default. Preserve request method, required headers, pagination and verified official fallback behavior.
+                5. Translate every resource_fields/download_fields entry into a valid download item with selector_type, link_type and asset_type. If a resource requires detail/API enrichment, add detail_page/detail_fields where generic parsing is enough; otherwise set adapter and explain the exact required output field in description. News templates must account for available cover/thumbnail, body images and attachments without duplicating the cover in images.
+                6. Keep business record fields separate from resources. A source media ID used only to resolve a URL is adapter input, not a final resource selector; the adapter must output the actual URL/list expected by download.selector.
+                7. For a verified non-paginated API, omit list_pagination entirely. For a verified paginated API, include only the observed page parameter and bounds. If verified_record_count is zero or source_kind is unavailable, do not fabricate selectors or samples; retain warnings and require guarded adapter validation.
+                8. Use only SiteTemplate schema fields: name, display_name, base_url, data_type, adapter, anti_crawl_enabled, description, params/batch_params, response_type/json paths, list_page/list_request/list_fields/dedup_fields/list_pagination, detail_page/detail_request/detail_fields and download.
 
-Existing same data-type template conventions:
-{reference_templates}
+                Existing same data-type template conventions:
+                {reference_templates}
 
-Use references only for project naming and schema conventions. Current verified evidence wins. Never copy a reference endpoint, selector, field or composite dedup key unless the current analysis independently supports it.
+                Use references only for project naming and schema conventions. Current verified evidence wins. Never copy a reference endpoint, selector, field or composite dedup key unless the current analysis independently supports it.
 
-Analysis result:
-{analysis_json}
+                Analysis result:
+                {analysis_json}
 
-Return only a fenced ```yaml block.
-""",
+                Return only a fenced ```yaml block.
+            """,
         )
 
     async def analyze_page(
