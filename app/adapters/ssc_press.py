@@ -66,7 +66,7 @@ class SscPressAdapter(NewsBaseAdapter):
                 }
             )
             html_content = await self._client.request_page(
-                url, cfg, anti_crawl_enabled=False,
+                url, cfg, anti_crawl_enabled=False, adapter_name=self.adapter_name,
             )
             self._press_links = self._parse_media_room(html_content)
             logger.info(
@@ -233,7 +233,7 @@ class SscPressAdapter(NewsBaseAdapter):
                 }
             )
             html = await self._client.request_page(
-                detail_url, cfg, anti_crawl_enabled=False,
+                detail_url, cfg, anti_crawl_enabled=False, adapter_name=self.adapter_name,
             )
         except Exception as e:
             logger.warning(

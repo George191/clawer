@@ -3,7 +3,7 @@ display_name: "NGA - 海事航行警告采集"
 base_url: "https://msi.nga.mil"
 data_type: navwarn
 adapter: nga_navwarn
-anti_crawl_enabled: false
+anti_crawl_enabled: true
 description: >
   采集 NGA (National Geospatial-Intelligence Agency) 海事航行警告页面数据。
   页面为服务器端渲染 HTML，包含全球各区域的航行警告信息。

@@ -72,6 +72,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                 self._base_url,
                 pending_media,
                 self._media_cache,
+                adapter_name=self.adapter_name,
             )
 
         for record in records:
@@ -118,6 +119,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
             self._client,
             f"{self._base_url}/wp-json/wp/v2/categories"
             "?per_page=100&page=1&_fields=id,name,slug",
+            adapter_name=self.adapter_name,
         )
 
         if not isinstance(data, list):
@@ -151,6 +153,7 @@ class SatelliteTodayAdapter(NewsBaseAdapter):
                 f"{self._base_url}/wp-json/wp/v2/tags"
                 f"?include={','.join(str(tid) for tid in batch)}"
                 f"&per_page={len(batch)}&_fields=id,name,slug",
+                adapter_name=self.adapter_name,
             )
 
             if not isinstance(data, list):

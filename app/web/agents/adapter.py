@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.web.agents.base import BaseAgent
@@ -23,7 +24,8 @@ class AdapterResult:
 
 class AdapterAgent(BaseAgent):
     def __init__(self):
-        super().__init__()
+        model_path = Path(__file__).parents[3] / "models" / "Qwen" / "2.5-Coder-1.5B-Instruct"
+        super().__init__(str(model_path))
         self._register_default_prompts()
 
     def _register_default_prompts(self) -> None:

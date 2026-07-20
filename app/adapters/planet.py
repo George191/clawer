@@ -158,6 +158,7 @@ class PlanetAdapter(BaseSiteAdapter):
                 sub_dir_url,
                 self._template.list_request,
                 anti_crawl_enabled=self._template.effective_anti_crawl_enabled,
+                adapter_name=self.adapter_name,
             )
         except Exception as e:
             logger.warning(

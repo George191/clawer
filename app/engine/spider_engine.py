@@ -207,6 +207,7 @@ class SpiderEngine:
                     html = await self._client.request_page(
                         url, template.list_request,
                         anti_crawl_enabled=template.effective_anti_crawl_enabled,
+                        adapter_name=template.adapter,
                         page=current_page, attempt=attempt
                     )
                     records = self._parser.parse_list(html, template.list_fields)
@@ -431,6 +432,7 @@ class SpiderEngine:
                 text = await self._client.request_page(
                     url, list_request,
                     anti_crawl_enabled=template.effective_anti_crawl_enabled,
+                    adapter_name=template.adapter,
                     page=page, attempt=attempt
                 )
 
@@ -471,7 +473,7 @@ class SpiderEngine:
                 break
 
             except json.JSONDecodeError:
-                await self._client.mark_last_proxy_failed()
+                await self._client.mark_last_proxy_failed(template.adapter)
 
             except Exception as e:
 

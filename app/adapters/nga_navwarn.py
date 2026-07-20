@@ -237,7 +237,7 @@ class NgaNavwarnAdapter(BaseSiteAdapter):
             proxy_switched = False
             if self._client is not None:
                 try:
-                    await self._client.mark_last_proxy_failed()
+                    await self._client.mark_last_proxy_failed(self.adapter_name)
                     proxy_switched = True
                 except Exception:
                     pass

@@ -200,10 +200,15 @@ async def process_content_html(
 async def wp_request_json(
     client: HttpClient,
     url: str,
-    anti_crawl_enabled=True
+    anti_crawl_enabled: bool = True,
+    adapter_name: str | None = None,
 ) -> Any:
     """Request JSON from a WordPress REST endpoint."""
-    text = await client.request_page(url, anti_crawl_enabled=anti_crawl_enabled)
+    text = await client.request_page(
+        url,
+        anti_crawl_enabled=anti_crawl_enabled,
+        adapter_name=adapter_name,
+    )
     return json.loads(text)
 
 
@@ -212,6 +217,7 @@ async def fetch_wp_media_url(
     base_url: str,
     media_id: int,
     cache: dict[int, str],
+    adapter_name: str | None = None,
 ) -> str:
     """Fetch a WordPress media URL by ID."""
     if not media_id:
@@ -223,7 +229,12 @@ async def fetch_wp_media_url(
         f"{base_url}/wp-json/wp/v2/media/{media_id}"
         f"?_fields=source_url,media_details.sizes.full.source_url"
     )
-    return await wp_request_json(client, url, anti_crawl_enabled=False)
+    return await wp_request_json(
+        client,
+        url,
+        anti_crawl_enabled=False,
+        adapter_name=adapter_name,
+    )
 
 
 async def enrich_cover_images_batch(
@@ -231,6 +242,7 @@ async def enrich_cover_images_batch(
     base_url: str,
     records: list[dict[str, Any]],
     cache: dict[int, str],
+    adapter_name: str | None = None,
 ) -> None:
     """Fetch cover image URLs and write the configured cover aliases."""
     pending = [
@@ -242,7 +254,13 @@ async def enrich_cover_images_batch(
         return
 
     async def _fetch_one(record: dict[str, Any], media_id: int) -> None:
-        cover_url = await fetch_wp_media_url(client, base_url, media_id, cache)
+        cover_url = await fetch_wp_media_url(
+            client,
+            base_url,
+            media_id,
+            cache,
+            adapter_name,
+        )
         if cover_url:
             record["featured_media"] = cover_url
 

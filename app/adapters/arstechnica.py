@@ -130,6 +130,7 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
                 rss_url,
                 None,
                 anti_crawl_enabled=False,
+                adapter_name=self.adapter_name,
             )
         except Exception as exc:
             logger.warning("Failed to fetch RSS metadata: %s", exc)
@@ -216,6 +217,7 @@ class ArsTechnicaAdapter(NewsBaseAdapter):
             html = await self._client.request_page(
                 url,
                 self._detail_request(),
+                adapter_name=self.adapter_name,
                 anti_crawl_enabled=(
                     self._template.effective_anti_crawl_enabled
                     if self._template is not None

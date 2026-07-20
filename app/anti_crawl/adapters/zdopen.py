@@ -118,10 +118,10 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
             code = data.get("code", "")
             if code == ERROR_CODE_IP_IN_USE:
                 msg = data.get("msg", "Unknown error")
-                logger.warning("ZdopenAPI returned error code=%s: %s", code, msg)
+                logger.debug("ZdopenAPI returned error code=%s: %s", code, msg)
                 
                 retries += 1
-                logger.info("Waiting %ds before retry %d", wait_seconds, retries)
+                logger.debug("Waiting %ds before retry %d", wait_seconds, retries)
                 await asyncio.sleep(wait_seconds)
                 continue
 

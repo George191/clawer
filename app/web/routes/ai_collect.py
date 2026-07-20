@@ -402,7 +402,7 @@ async def _analyze_events(
             "pagination": pagination.__dict__,
             "acquisition": acquisition.__dict__,
             "agent": {
-                "model": "Qwen2.5-0.5B-Instruct",
+                "model": template_agent.model_name,
                 "requiresProxy": preflight.requires_proxy,
                 "proxyMode": preflight.proxy_mode,
                 "pageTitle": preflight.title,

@@ -50,6 +50,7 @@ class BlackSkyPostsAdapter(NewsBaseAdapter):
             self._base_url,
             records,
             self._media_cache,
+            adapter_name=self.adapter_name,
         )
 
         for record in records:

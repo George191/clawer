@@ -18,11 +18,20 @@ logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
-    def __init__(self, model_path: str = None):
-        self._model_path = model_path or str(Path(__file__).parent.parent.parent.parent / "models" / "Qwen" / "2.5-0.5B-Instruct")
+    def __init__(self, model_path: str | None = None):
+        self._model_path = model_path or str(
+            Path(__file__).parent.parent.parent.parent
+            / "models"
+            / "Qwen"
+            / "2.5-0.5B-Instruct"
+        )
         self._model = None
         self._tokenizer = None
         self._prompts: Dict[str, str] = {}
+
+    @property
+    def model_name(self) -> str:
+        return Path(self._model_path).name
 
     async def _ensure_model(self) -> None:
         if self._model is None:
@@ -55,8 +64,18 @@ class BaseAgent:
 
     async def generate(self, prompt: str, max_tokens: int = 8192) -> str:
         await self._ensure_model()
-        
-        encoded = self._tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096)
+
+        model_input = self._tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        encoded = self._tokenizer(
+            model_input,
+            return_tensors="pt",
+            truncation=True,
+            max_length=4096,
+        )
         encoded = {k: v.to(self._model.device) for k, v in encoded.items()}
         input_length = encoded["input_ids"].shape[-1]
         

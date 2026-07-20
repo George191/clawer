@@ -56,7 +56,8 @@ class FileTooLargeError(DownloadError):
 
 class HttpClient:
     def __init__(self) -> None:
-        self._last_proxy_url: str | None = None
+        # 按协程缓存最近使用的代理，避免并发模板互相标记对方的代理。
+        self._last_proxy_urls: dict[int, str] = {}
         # 协程级代理分配：每个协程独立租用一个代理 IP
         self._leased_proxies: dict[int, str] = {}
         self._lease_lock: asyncio.Lock | None = None
@@ -161,6 +162,7 @@ class HttpClient:
         page: int = 0,
         attempt: int = 0,
         no_timeout: bool = False,
+        adapter_name: str | None = None,
     ) -> str:
         """请求页面并返回文本内容。
 
@@ -168,6 +170,7 @@ class HttpClient:
             url: 请求 URL。
             config: 请求配置。
             anti_crawl_enabled: 模板级反爬开关。None=使用全局配置, True/False=覆盖全局。
+            adapter_name: 当前模板适配器名称，用于隔离代理失败记录。
             force_direct: 强制绕过隧道代理和代理池，仅用于连接预检。
             page: 当前页码，用于日志记录。
             attempt: 当前尝试次数，用于日志记录。
@@ -213,11 +216,14 @@ class HttpClient:
                 if task_id in self._leased_proxies:
                     proxy_url = self._leased_proxies[task_id]
                 else:
-                    proxy_url = await _proxy_pool.lease_proxy(task_id)
+                    proxy_url = await _proxy_pool.lease_proxy(task_id, adapter_name)
                     if proxy_url:
                         self._leased_proxies[task_id] = proxy_url
 
-        self._last_proxy_url = proxy_url
+        if proxy_url:
+            self._last_proxy_urls[task_id] = proxy_url
+        else:
+            self._last_proxy_urls.pop(task_id, None)
 
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
@@ -271,27 +277,35 @@ class HttpClient:
 
             except curl_requests.errors.RequestsError as e:
                 if _proxy_pool is not None and proxy_url:
-                    await _proxy_pool.mark_failure(proxy_url)
-                    await self._release_failed_proxy(task_id, proxy_url)
+                    await _proxy_pool.mark_failure(proxy_url, adapter_name)
+                    await self._release_failed_proxy(task_id, proxy_url, adapter_name)
                 raise
             except Exception as e:
                 if _proxy_pool is not None and proxy_url:
-                    await _proxy_pool.mark_failure(proxy_url)
-                    await self._release_failed_proxy(task_id, proxy_url)
+                    await _proxy_pool.mark_failure(proxy_url, adapter_name)
+                    await self._release_failed_proxy(task_id, proxy_url, adapter_name)
                 raise
 
-    async def _release_failed_proxy(self, task_id: int, proxy_url: str) -> None:
+    async def _release_failed_proxy(
+        self,
+        task_id: int,
+        proxy_url: str,
+        adapter_name: str | None = None,
+    ) -> None:
         """释放失效的协程代理并尝试获取新代理。"""
         lock = await self._get_lease_lock()
         async with lock:
             if self._leased_proxies.get(task_id) == proxy_url:
                 del self._leased_proxies[task_id]
+                if self._last_proxy_urls.get(task_id) == proxy_url:
+                    del self._last_proxy_urls[task_id]
+                await _proxy_pool.release_proxy(task_id)
                 # 尝试为该协程分配新代理
                 if _proxy_pool is not None and _proxy_pool.enabled:
-                    new_proxy = await _proxy_pool.lease_proxy(task_id)
+                    new_proxy = await _proxy_pool.lease_proxy(task_id, adapter_name)
                     if new_proxy:
                         self._leased_proxies[task_id] = new_proxy
-                        logger.info(f"[{new_proxy}] Replaced failed proxy {proxy_url} for task {task_id}")
+                        logger.debug(f"[{new_proxy}] Replaced failed proxy {proxy_url} for task {task_id}")
                         
     async def download_bytes(
         self,
@@ -385,11 +399,20 @@ class HttpClient:
         由于每次请求都创建新的AsyncSession并通过上下文管理器自动关闭，
         这里主要用于清理协程级代理租约。
         """
+        if _proxy_pool is not None:
+            for task_id in list(self._leased_proxies):
+                await _proxy_pool.release_proxy(task_id)
         self._leased_proxies.clear()
+        self._last_proxy_urls.clear()
     
-    async def mark_last_proxy_failed(self) -> None:
+    async def mark_last_proxy_failed(self, adapter_name: str | None = None) -> None:
         """标记最后使用的代理为失败并释放协程租约，这样下次请求会使用新代理。"""
-        if self._last_proxy_url and _proxy_pool is not None and _proxy_pool.enabled:
-            await _proxy_pool.mark_failure(self._last_proxy_url)
-            task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
-            await self._release_failed_proxy(task_id, self._last_proxy_url)
+        task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
+        proxy_url = self._last_proxy_urls.get(task_id)
+        if proxy_url and _proxy_pool is not None and _proxy_pool.enabled:
+            await _proxy_pool.mark_failure(proxy_url, adapter_name)
+            await self._release_failed_proxy(
+                task_id,
+                proxy_url,
+                adapter_name,
+            )

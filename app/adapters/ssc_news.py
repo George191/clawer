@@ -66,6 +66,7 @@ class SscNewsAdapter(NewsBaseAdapter):
                 detail_url,
                 self._detail_request(),
                 anti_crawl_enabled=self._template.effective_anti_crawl_enabled,
+                adapter_name=self.adapter_name,
             )
         except Exception as e:
             logger.warning(

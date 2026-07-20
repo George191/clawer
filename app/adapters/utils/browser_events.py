@@ -192,6 +192,7 @@ class BrowserEventEmitter:
             await self._client.request_page(
                 url,
                 self._build_request_config(headers),
+                adapter_name=self._site,
             )
             logger.debug("gen_204 OK (204 expected)")
         except Exception as e:

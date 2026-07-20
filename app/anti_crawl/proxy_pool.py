@@ -67,6 +67,9 @@ class ProxyPool:
         # 代理指标统计
         self._metrics: dict[str, dict] = {}  # proxy_url -> {success, failure, last_used, last_check}
 
+        # 按模板适配器记录代理失败，避免单个源失败就全局删除代理。
+        self._adapter_failures: dict[str, set[str]] = {}
+
     # ── 适配器管理 ──────────────────────────────────────────────────────────
 
     def register_adapter(self, adapter: ProxySourceAdapter) -> None:
@@ -275,7 +278,7 @@ class ProxyPool:
 
     # ── 协程级代理分配 ──────────────────────────────────────────────────────
 
-    async def lease_proxy(self, task_id: int) -> str | None:
+    async def lease_proxy(self, task_id: int, adapter_name: str | None = None) -> str | None:
         """为指定协程分配独立代理 IP。
 
         同一 task_id 在整个生命周期内保持相同代理（除非代理失效）。
@@ -283,6 +286,7 @@ class ProxyPool:
 
         Args:
             task_id: 协程标识（asyncio.Task id）。
+            adapter_name: 当前模板适配器名称。
 
         Returns:
             代理 URL 字符串，如果无可用代理则返回 None。
@@ -296,7 +300,8 @@ class ProxyPool:
             # 如果该协程已有租约且代理健康，直接返回
             if task_id in self._leases:
                 leased = self._leases[task_id]
-                if leased in self._healthy:
+                failed_adapters = self._adapter_failures.get(leased.url, set())
+                if leased in self._healthy and adapter_name not in failed_adapters:
                     logger.debug("Task %d reusing leased proxy: %s", task_id, leased.url)
                     return leased.url
                 else:
@@ -304,7 +309,7 @@ class ProxyPool:
                     del self._leases[task_id]
 
             # 分配新的独立代理
-            proxy = await self._allocate_unique_proxy(task_id)
+            proxy = await self._allocate_unique_proxy(task_id, adapter_name)
             if proxy:
                 self._leases[task_id] = proxy
                 proxy.last_used = time.time()
@@ -324,7 +329,11 @@ class ProxyPool:
                 proxy = self._leases.pop(task_id)
                 logger.debug("Task %d released proxy: %s", task_id, proxy.url)
 
-    async def _allocate_unique_proxy(self, task_id: int) -> ProxyInfo | None:
+    async def _allocate_unique_proxy(
+        self,
+        task_id: int,
+        adapter_name: str | None = None,
+    ) -> ProxyInfo | None:
         """为协程分配一个未被其他协程使用的代理。
 
         策略：
@@ -349,8 +358,15 @@ class ProxyPool:
             p.url for tid, p in self._leases.items() if tid != task_id
         }
 
+        # 同一代理对某个模板适配器失败后，仅对该适配器跳过。
+        candidates = [
+            p
+            for p in self._healthy
+            if adapter_name not in self._adapter_failures.get(p.url, set())
+        ]
+
         # 优先选择未被其他协程使用的健康代理
-        available = [p for p in self._healthy if p.url not in in_use]
+        available = [p for p in candidates if p.url not in in_use]
         if available:
             strategy = settings.proxy_rotation.lower()
             if strategy == "random":
@@ -361,39 +377,52 @@ class ProxyPool:
             return chosen
 
         # 所有代理都在使用中，回退到轮询（同一代理可能被多协程共享）
+        if not candidates:
+            logger.warning(
+                "No proxy available for adapter %s after adapter-specific failures",
+                adapter_name or "<unknown>",
+            )
+            return None
+
         logger.debug("All proxies are leased, falling back to shared allocation for task %d", task_id)
         strategy = settings.proxy_rotation.lower()
         if strategy == "random":
-            return random.choice(self._healthy)
+            return random.choice(candidates)
         else:
-            proxy = self._healthy[self._index % len(self._healthy)]
-            self._index = (self._index + 1) % len(self._healthy)
+            proxy = candidates[self._index % len(candidates)]
+            self._index = (self._index + 1) % len(candidates)
             return proxy
 
     # ── 故障管理 ────────────────────────────────────────────────────────────
 
-    async def mark_failure(self, proxy_url: str) -> None:
-        """标记代理请求失败，直接从代理池中移除。
+    async def mark_failure(
+        self,
+        proxy_url: str,
+        adapter_name: str | None = None,
+    ) -> None:
+        """标记代理请求失败。
+
+        已知模板适配器时仅记录该适配器的失败，保留代理给其他适配器复用。
+        未提供适配器时保留原有的全局移除行为。
 
         Args:
             proxy_url: 失败的代理 URL。
+            adapter_name: 当前模板适配器名称。
         """
         if not self.enabled:
             return
 
         async with self._lock:
-            # 如果这是当前粘性代理，清除粘性
-            if self._current_proxy and self._current_proxy.url == proxy_url:
-                logger.debug("Clearing sticky proxy due to failure: %s", proxy_url)
-                self._current_proxy = None
-            
-            # 从所有列表中移除该代理
-            # removed = False
-            for proxy_list in [self._proxies, self._healthy, self._unhealthy]:
-                to_remove = [p for p in proxy_list if p.url == proxy_url]
-                if to_remove:
-                    for p in to_remove:
-                        proxy_list.remove(p)
+            if adapter_name:
+                self._adapter_failures.setdefault(proxy_url, set()).add(adapter_name)
+            else:
+                # 无适配器上下文的调用继续按全局代理故障处理。
+                if self._current_proxy and self._current_proxy.url == proxy_url:
+                    logger.debug("Clearing sticky proxy due to failure: %s", proxy_url)
+                    self._current_proxy = None
+
+                for proxy_list in [self._proxies, self._healthy, self._unhealthy]:
+                    proxy_list[:] = [p for p in proxy_list if p.url != proxy_url]
                 
             # 更新指标
             m = self._metrics.setdefault(proxy_url, {"success": 0, "failure": 0, "last_used": 0, "last_check": 0})
@@ -459,6 +488,10 @@ class ProxyPool:
             "adapters": [a.name for a in self._adapters],
             "healthy_proxies": [p.url for p in self._healthy],
             "leases": {str(k): v.url for k, v in self._leases.items()},
+            "adapter_failures": {
+                url: sorted(adapter_names)
+                for url, adapter_names in self._adapter_failures.items()
+            },
             "metrics": self.get_metrics(),
         }
 

@@ -95,7 +95,7 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
 
         try:
             html_content = await self._client.request_page(
-                url, cfg, anti_crawl_enabled=False,
+                url, cfg, anti_crawl_enabled=False, adapter_name=self.adapter_name,
             )
         except Exception as e:
             logger.debug("Failed to fetch HTML page %d: %s", page, str(e)[:80])
@@ -134,7 +134,9 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
     async def _fetch_source_map(self) -> None:
         """通过 WP REST API 动态获取 sources 分类的 ID→名称映射。"""
         url = f"{self._base_url}/wp-json/wp/v2/sources?per_page=100&_fields=id,name"
-        items = await wp_assets.wp_request_json(self._client, url)
+        items = await wp_assets.wp_request_json(
+            self._client, url, adapter_name=self.adapter_name
+        )
         for item in items:
             self._source_map[item["id"]] = item["name"]
         logger.info(
@@ -154,6 +156,7 @@ class BlackSkyNewsAdapter(NewsBaseAdapter):
             self._base_url,
             records,
             self._media_cache,
+            adapter_name=self.adapter_name,
         )
 
         for record in records:

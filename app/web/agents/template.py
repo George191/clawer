@@ -62,7 +62,8 @@ class AnalysisResult:
 
 class TemplateAgent(BaseAgent):
     def __init__(self):
-        super().__init__()
+        model_path = Path(__file__).parents[3] / "models" / "Qwen" / "2.5-3B-Instruct"
+        super().__init__(str(model_path))
         self._register_default_prompts()
 
     def _register_default_prompts(self) -> None:
