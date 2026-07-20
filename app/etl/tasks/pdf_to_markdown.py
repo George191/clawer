@@ -17,15 +17,15 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from app.etl.tasks import register_task
 from app.etl.tasks.base import BaseTask, TaskResult
 from app.etl.tasks.converters import get_converter
+from app.logger import get_logger
 from app.storage.minio_client import MinioClient, get_minio_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PdfToMarkdownTask(BaseTask):

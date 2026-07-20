@@ -7,17 +7,17 @@ Celery task 内部通过 asyncio.run() 桥接到 async 采集逻辑。
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from app.logger import get_logger
 from app.scheduler.celery_app import app
 from app.scheduler.tasks.google_patent.crawler import (
     GooglePatentCrawler,
     get_yesterday_utc,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @app.task(

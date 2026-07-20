@@ -9,15 +9,16 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from app.logger import get_logger
+
 if TYPE_CHECKING:
     from app.storage.postgres_client import PostgresClient
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── ETL Schema 列表 ──────────────────────────────────────────
 _ETL_SCHEMAS = ["ts_rds", "ts_ods", "ts_task", "ts_dwd", "ts_dws", "ts_dim"]

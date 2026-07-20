@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
 from typing import Any, Callable
 
 from app.etl.normalizers.base import normalize_generic
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _NORMALIZER_REGISTRY: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
 
@@ -34,7 +34,9 @@ def get_normalizer(
     return normalize_generic
 
 
-from app.etl.normalizers import intelligence  # noqa: E402, F401
-from app.etl.normalizers import navwarn  # noqa: E402, F401
-from app.etl.normalizers import news  # noqa: E402, F401
-from app.etl.normalizers import patent  # noqa: E402, F401
+from app.etl.normalizers import (
+    intelligence,  # noqa: E402, F401
+    navwarn,  # noqa: E402, F401
+    news,  # noqa: E402, F401
+    patent,  # noqa: E402, F401
+)

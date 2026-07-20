@@ -19,15 +19,15 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from app.config.settings import settings
 from app.etl.base import ETLBase
 from app.etl.tasks import get_tasks
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 TASK_PATENT_INSERT = """
 INSERT INTO ts_task.task_patent (

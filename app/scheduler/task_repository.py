@@ -9,14 +9,14 @@ BeatScheduleRegistry 通过本模块从数据库加载任务配置。
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.logger import get_logger
 from app.storage.postgres_client import PostgresClient, get_pg_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 TABLE_NAME = "public.scheduler_tasks"
 _DDL_PATH = Path(__file__).resolve().parent.parent.parent.parent / "scripts" / "init_scheduler_tasks.sql"
@@ -62,7 +62,8 @@ class TaskConfig:
 
     def to_beat_entry(self) -> dict[str, Any]:
         """转换为 Celery beat_schedule entry 格式。"""
-        from celery.schedules import crontab, schedule as interval_schedule
+        from celery.schedules import crontab
+        from celery.schedules import schedule as interval_schedule
 
         if self.schedule_type == "interval":
             entry_schedule = interval_schedule(run_every=self.interval_seconds or 60)

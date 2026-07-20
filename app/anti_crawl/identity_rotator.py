@@ -5,15 +5,15 @@ User-Agent 池管理、Referer 伪造、Cookie 轮换。
 
 from __future__ import annotations
 
-import logging
 import random
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 内置 UA 池（最新主流浏览器 UA，2024-2025）
 _FALLBACK_UA_POOL: list[str] = [

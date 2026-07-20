@@ -14,15 +14,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from app.logger import get_logger, setup_service_logging
 from app.scheduler.beat_schedule import BeatScheduleRegistry
 from app.scheduler.task_store import TaskStore, get_task_store
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -239,9 +239,5 @@ async def print_health_report() -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [MONITOR] %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    setup_service_logging("monitor", "INFO")
     asyncio.run(print_health_report())

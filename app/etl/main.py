@@ -19,27 +19,23 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 
 from app.config.settings import settings
 from app.etl.base import ETLBase
-from app.logger import setup_service_logging
-from app.etl.ts_rds import TsRds
-from app.etl.ts_ods import TsOds
-from app.etl.ts_task import TsTask
+from app.etl.ts_dim import TsDim
 from app.etl.ts_dwd import TsDwd
 from app.etl.ts_dws import TsDws
-from app.etl.ts_dim import TsDim
+from app.etl.ts_ods import TsOds
+from app.etl.ts_rds import TsRds
+from app.etl.ts_task import TsTask
+from app.logger import get_logger, setup_service_logging
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def setup_logging(service: str = "etl") -> None:
-    setup_service_logging(
-        service,
-        getattr(logging, settings.log_level.upper(), logging.INFO),
-    )
+    setup_service_logging(service, settings.log_level)
 
 def _mask_url(url: str) -> str:
     import re

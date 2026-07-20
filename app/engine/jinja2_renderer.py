@@ -6,12 +6,12 @@
 from __future__ import annotations
 
 import json
-import logging
-from typing import Any, Callable, Optional, Awaitable
+from typing import Any, Awaitable, Callable, Optional
 
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 预处理钩子类型
 PreHook = Callable[..., Awaitable[dict[str, Any]]]
@@ -41,7 +41,7 @@ class Jinja2Renderer:
             return
 
         try:
-            from jinja2 import Environment, BaseLoader
+            from jinja2 import BaseLoader, Environment
 
             self._env = Environment(
                 loader=BaseLoader(),

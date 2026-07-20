@@ -11,12 +11,11 @@
 
 from __future__ import annotations
 
-import logging
-
 from app.config.settings import settings
 from app.etl.base import ETLBase
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TsDws(ETLBase):

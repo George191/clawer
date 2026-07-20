@@ -17,15 +17,20 @@
 
 from __future__ import annotations
 
-import logging
 from io import BytesIO
 
 from docling.datamodel.base_models import DocumentStream, InputFormat
+from docling.datamodel.pipeline_options import (
+    AcceleratorDevice,
+    AcceleratorOptions,
+    PdfPipelineOptions,
+)
 from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice
-from app.etl.tasks.converters.base import BaseConverter, ConvertResult
 
-logger = logging.getLogger(__name__)
+from app.etl.tasks.converters.base import BaseConverter, ConvertResult
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 pipeline_options = PdfPipelineOptions(

@@ -9,21 +9,17 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 
 from app.config.settings import settings
-from app.logger import setup_service_logging
 from app.downloader.worker import DownloadWorker
+from app.logger import get_logger, setup_service_logging
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def setup_logging(service: str = "downloader") -> None:
-    setup_service_logging(
-        service,
-        getattr(logging, settings.log_level.upper(), logging.INFO),
-    )
+    setup_service_logging(service, settings.log_level)
 
 
 async def run() -> None:

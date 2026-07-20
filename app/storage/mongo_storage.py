@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -21,10 +20,11 @@ from typing import Any
 from pymongo import ReplaceOne
 
 from app.config.settings import settings
+from app.logger import get_logger
 from app.storage.file_storage import StorageBackend
 from app.utils.path import get_nested_value
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DOWNLOAD_CLAIM_TIMEOUT = timedelta(hours=2)
 

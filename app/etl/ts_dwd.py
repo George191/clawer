@@ -26,14 +26,14 @@
 from __future__ import annotations
 
 import json
-import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from app.config.settings import settings
 from app.etl.base import ETLBase
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DWD_PATENT_UPDATE_ODS = """
 UPDATE ts_dwd.dwd_patent SET

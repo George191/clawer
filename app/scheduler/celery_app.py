@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-import logging
 import pkgutil
 
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── Celery 导入（延迟处理，允许未安装时模块仍可被 import 检查） ──
 
@@ -175,7 +175,7 @@ class CeleryAppFactory:
 
         数据库不可用时自动回退到内存默认配置。
         """
-        from celery.signals import worker_init, beat_init
+        from celery.signals import beat_init, worker_init
 
         @worker_init.connect
         def _on_worker_init(**kwargs: object) -> None:

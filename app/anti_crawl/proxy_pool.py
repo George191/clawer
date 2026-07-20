@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
 import time
 from typing import Optional
@@ -23,8 +22,9 @@ from curl_cffi import requests as curl_requests
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ProxyPool:

@@ -13,13 +13,13 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import traceback
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
 from app.config.settings import settings
+from app.logger import get_logger
 from app.models.workflow import (
     ExportFormat,
     StepResult,
@@ -30,7 +30,7 @@ from app.models.workflow import (
     WorkflowStep,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class WorkflowEngine:
@@ -262,8 +262,8 @@ async def _handle_crawl(
 ) -> dict[str, Any]:
     """执行模板采集 (SpiderEngine)。"""
     from app.config.settings import settings
-    from app.engine.template_loader import TemplateLoader
     from app.engine.spider_engine import SpiderEngine
+    from app.engine.template_loader import TemplateLoader
 
     logger.info("Step '%s' (crawl): template=%s", step.id, step.template)
 

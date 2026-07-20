@@ -18,12 +18,13 @@ Celery worker 启动时，CeleryAppFactory 会调用 load_from_db() 从数据库
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from celery.schedules import crontab
 
-logger = logging.getLogger(__name__)
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class BeatScheduleRegistry:

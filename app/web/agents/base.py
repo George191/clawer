@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import os
+
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import asyncio
 import json
-import logging
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class BaseAgent:
@@ -27,6 +26,8 @@ class BaseAgent:
         )
         self._model = None
         self._tokenizer = None
+        self._torch = None
+        self._model_lock = asyncio.Lock()
         self._prompts: Dict[str, str] = {}
 
     @property
@@ -34,10 +35,21 @@ class BaseAgent:
         return Path(self._model_path).name
 
     async def _ensure_model(self) -> None:
-        if self._model is None:
-            await asyncio.to_thread(self._load_model)
+        if self._model is not None:
+            return
+        async with self._model_lock:
+            if self._model is None:
+                await asyncio.to_thread(self._load_model)
 
     def _load_model(self) -> None:
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+        except ImportError as exc:
+            raise RuntimeError(
+                "Local AI model dependencies are unavailable; install torch and transformers"
+            ) from exc
+
         logger.info("Loading model from: %s", self._model_path)
         self._tokenizer = AutoTokenizer.from_pretrained(self._model_path, trust_remote_code=True)
         self._model = AutoModelForCausalLM.from_pretrained(
@@ -46,6 +58,7 @@ class BaseAgent:
             trust_remote_code=True,
             dtype=torch.float16,
         )
+        self._torch = torch
         self._model.generation_config.do_sample = False
         self._model.generation_config.temperature = None
         self._model.generation_config.top_p = None
@@ -79,7 +92,7 @@ class BaseAgent:
         encoded = {k: v.to(self._model.device) for k, v in encoded.items()}
         input_length = encoded["input_ids"].shape[-1]
         
-        with torch.inference_mode():
+        with self._torch.inference_mode():
             outputs = self._model.generate(
                 **encoded,
                 max_new_tokens=max_tokens,

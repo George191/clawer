@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import re
 from contextlib import asynccontextmanager
@@ -15,7 +14,8 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError, DBAPIError, InterfaceError, TimeoutError as SATimeoutError
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
+from sqlalchemy.exc import TimeoutError as SATimeoutError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -24,8 +24,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 PG_CONNECT_RETRY_WAIT = 3
 PG_CONNECT_MAX_RETRY = 30

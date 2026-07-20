@@ -6,15 +6,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import random
 import time
 from typing import Optional
 from urllib.parse import urlparse
 
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RequestDelayer:

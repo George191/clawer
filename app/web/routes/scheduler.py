@@ -12,15 +12,15 @@ Endpoints:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from app.logger import get_logger
 from app.scheduler.task_repository import TaskConfig, TaskRepository
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 

@@ -14,12 +14,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Type
 
 from app.etl.tasks.converters.base import BaseConverter
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _CONVERTER_REGISTRY: dict[str, BaseConverter] = {}
 _DEFAULT = "pymupdf"
@@ -40,9 +40,11 @@ def get_converter(name: str | None = None) -> BaseConverter:
     return converter
 
 
-from app.etl.tasks.converters import docling  # noqa: E402, F401
-from app.etl.tasks.converters import pymupdf4llm  # noqa: E402, F401
-from app.etl.tasks.converters import pymupdf  # noqa: E402, F401
+from app.etl.tasks.converters import (
+    docling,  # noqa: E402, F401
+    pymupdf,  # noqa: E402, F401
+    pymupdf4llm,  # noqa: E402, F401
+)
 
 _register(docling.DoclingConverter)
 _register(pymupdf4llm.PyMuPDF4LLMConverter)

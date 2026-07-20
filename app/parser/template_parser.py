@@ -6,22 +6,22 @@
 
 from __future__ import annotations
 
-from app.utils.path import get_nested_value
-
 import json
-import logging
 import re
 from typing import Any
 
-from lxml import etree, html as lxml_html
+from lxml import etree
+from lxml import html as lxml_html
 
+from app.logger import get_logger
 from app.models.template import (
     FieldMapping,
     FieldType,
     SelectorType,
 )
+from app.utils.path import get_nested_value
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _TRANSFORM_REGISTRY: dict[str, Any] = {}
 

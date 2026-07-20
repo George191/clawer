@@ -8,16 +8,16 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from app.config.settings import settings
+from app.logger import get_logger
 from app.models.template import SiteTemplate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TemplateLoader:

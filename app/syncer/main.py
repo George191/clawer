@@ -9,23 +9,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 
 from app.base.kafka import KafkaProducer
 from app.base.mongo import MongoClient
 from app.config.settings import settings
-from app.logger import setup_service_logging
+from app.logger import get_logger, setup_service_logging
 from app.syncer.worker import SyncWorker
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def setup_logging(service: str = "syncer") -> None:
-    setup_service_logging(
-        service,
-        getattr(logging, settings.log_level.upper(), logging.INFO),
-    )
+    setup_service_logging(service, settings.log_level)
 
 
 async def run() -> None:

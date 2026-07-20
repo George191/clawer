@@ -11,16 +11,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from pathlib import Path
 import random
-
-from app.config.settings import settings
-from app.models.template import RequestConfig
+from pathlib import Path
 
 from curl_cffi import requests as curl_requests
 
-logger = logging.getLogger(__name__)
+from app.config.settings import settings
+from app.logger import get_logger
+from app.models.template import RequestConfig
+
+logger = get_logger(__name__)
 
 # 反爬层（延迟导入避免循环依赖）
 _proxy_pool = None
@@ -31,8 +31,8 @@ def _init_anti_crawl():
     """延迟初始化反爬各组件。"""
     global _proxy_pool, _delayer, _rotator
     if _rotator is None:
-        from app.anti_crawl.request_delayer import get_delayer
         from app.anti_crawl.identity_rotator import get_identity_rotator
+        from app.anti_crawl.request_delayer import get_delayer
         _delayer = get_delayer()
         _rotator = get_identity_rotator()
     if settings.anti_crawl_enabled and _proxy_pool is None:

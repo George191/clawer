@@ -24,19 +24,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from datetime import datetime
 from typing import Any
 
 from app.config.settings import settings
+from app.logger import get_logger
 from app.storage.elasticsearch_storage import ElasticsearchStorage
 from app.storage.postgres_client import PostgresClient, get_pg_client
 from app.syncer.es.config import SyncConfig, TableSyncConfig, build_doc_from_row
 from app.syncer.es.metrics import SyncMetrics
 from app.syncer.es.watermark import WatermarkStore
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EsSyncWorker:

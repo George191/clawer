@@ -10,15 +10,15 @@ Endpoints:
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter
 
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 
@@ -232,6 +232,7 @@ async def _get_kafka_lag() -> dict[str, Any]:
 
     try:
         from aiokafka.admin import AIOKafkaAdminClient
+
         from app.base.kafka_config import build_admin_client_kwargs
 
         admin = AIOKafkaAdminClient(**build_admin_client_kwargs())

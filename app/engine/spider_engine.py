@@ -20,12 +20,12 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
-import logging
 from typing import Any
 
+from app.adapters import get_adapter
 from app.config.settings import settings
 from app.downloader.http_client import HttpClient
-from app.adapters import get_adapter
+from app.logger import get_logger
 from app.models.template import (
     PaginationType,
     ResponseType,
@@ -35,7 +35,7 @@ from app.parser.template_parser import TemplateParser
 from app.storage.file_storage import FileStorage, StorageBackend
 from app.utils.path import get_nested_value
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # 增强模块（延迟导入避免循环依赖）
 _renderer = None

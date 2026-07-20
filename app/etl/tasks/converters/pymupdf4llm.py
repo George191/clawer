@@ -17,14 +17,13 @@
 
 from __future__ import annotations
 
-import logging
-
 import fitz
 import pymupdf4llm
 
 from app.etl.tasks.converters.base import BaseConverter, ConvertResult
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PyMuPDF4LLMConverter(BaseConverter):

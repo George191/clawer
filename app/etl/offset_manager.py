@@ -25,13 +25,13 @@ Redis Key 设计：
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from typing import Any
 
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 REDIS_KEY_PREFIX = "etl:offset"
 OFFSET_TTL_SECONDS = 30 * 24 * 3600

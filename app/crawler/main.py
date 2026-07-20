@@ -20,20 +20,18 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import logging
 import sys
 from pathlib import Path
 from typing import Any, Generator, Optional
 
+from app.adapters import GenericAdapter, get_adapter_class
 from app.config.settings import settings
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
-from app.logger import setup_service_logging
+from app.logger import get_logger, setup_service_logging
 from app.models.template import SiteTemplate
-from app.adapters import get_adapter_class
-from app.adapters import GenericAdapter
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class BatchParamReader:
@@ -517,28 +515,24 @@ async def run_from_command_line(
 
 def setup_logging(service: str = "crawler") -> None:
     """设置日志。"""
-    setup_service_logging(
-        service,
-        getattr(logging, settings.log_level.upper(), logging.INFO),
-        force=True,
-    )
+    setup_service_logging(service, settings.log_level, force=True)
     
 def log_infra_status() -> None:
-    logging.info("=" * 60)
-    logging.info("Infrastructure Status")
-    logging.info("=" * 60)
-    logging.info("  Storage:    %s", "MongoDB" if settings.db_url else "File (local)")
-    logging.info("  File Store: %s", "MinIO" if settings.minio_endpoint else "Local filesystem")
-    logging.info("  Messaging:  %s", "Kafka" if settings.kafka_brokers else "Disabled")
-    logging.info("  Templates:  %s", settings.template_dir)
-    logging.info("  Output:     %s", settings.output_dir)
-    logging.info("  Concurrency: %d", settings.max_concurrent_tasks)
-    logging.info("-" * 60)
-    logging.info("Enhanced Modules:")
-    logging.info("  Anti-Crawl:   %s", "ON" if settings.anti_crawl_enabled else "OFF (default)")
-    logging.info("  Scheduler:    %s", "ON" if settings.scheduler_enabled else "OFF (default)")
-    logging.info("  Jinja2 Tpl:   %s", "ON" if settings.jinja2_enabled else "OFF (default)")
-    logging.info("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Infrastructure Status")
+    logger.info("=" * 60)
+    logger.info("  Storage:    %s", "MongoDB" if settings.db_url else "File (local)")
+    logger.info("  File Store: %s", "MinIO" if settings.minio_endpoint else "Local filesystem")
+    logger.info("  Messaging:  %s", "Kafka" if settings.kafka_brokers else "Disabled")
+    logger.info("  Templates:  %s", settings.template_dir)
+    logger.info("  Output:     %s", settings.output_dir)
+    logger.info("  Concurrency: %d", settings.max_concurrent_tasks)
+    logger.info("-" * 60)
+    logger.info("Enhanced Modules:")
+    logger.info("  Anti-Crawl:   %s", "ON" if settings.anti_crawl_enabled else "OFF (default)")
+    logger.info("  Scheduler:    %s", "ON" if settings.scheduler_enabled else "OFF (default)")
+    logger.info("  Jinja2 Tpl:   %s", "ON" if settings.jinja2_enabled else "OFF (default)")
+    logger.info("=" * 60)
 
 def main() -> None:
     """主函数。"""

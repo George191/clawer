@@ -17,23 +17,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import sys
 
 from app.config.settings import settings
-from app.logger import setup_service_logging
+from app.logger import get_logger, setup_service_logging
 from app.syncer.es.config import SyncConfig
 from app.syncer.es.worker import EsSyncWorker
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def setup_logging(service: str = "es-syncer") -> None:
     """配置日志（与 syncer/main.py 一致）。"""
-    setup_service_logging(
-        service,
-        getattr(logging, settings.log_level.upper(), logging.INFO),
-    )
+    setup_service_logging(service, settings.log_level)
 
 
 def _parse_args() -> dict:

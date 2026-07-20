@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from datetime import datetime, timezone
 from typing import Any
 
 from app.base.kafka_config import build_producer_kwargs
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 KAFKA_CONNECT_RETRY_WAIT = 3
 KAFKA_CONNECT_MAX_RETRY_DELAY = 600
@@ -37,8 +37,8 @@ class KafkaProducer:
 
         from aiokafka import AIOKafkaProducer
         from aiokafka.errors import (
-            NodeNotReadyError,
             KafkaConnectionError,
+            NodeNotReadyError,
             RequestTimedOutError,
         )
 

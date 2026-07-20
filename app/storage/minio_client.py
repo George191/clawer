@@ -8,23 +8,31 @@
 
 from __future__ import annotations
 
-import logging
+import asyncio
 from io import BytesIO
 from pathlib import Path
 
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MinioClient:
     def __init__(self, bucket: str | None = None) -> None:
         self._client = None
         self._bucket = bucket or settings.minio_bucket
+        self._connection_lock = asyncio.Lock()
 
     async def _ensure_connection(self) -> None:
         if self._client is not None:
             return
+        async with self._connection_lock:
+            if self._client is not None:
+                return
+            await asyncio.to_thread(self._connect)
+
+    def _connect(self) -> None:
         try:
             from minio import Minio
 
@@ -74,7 +82,8 @@ class MinioClient:
 
         file_size = file_path.stat().st_size
 
-        self._client.fput_object(
+        await asyncio.to_thread(
+            self._client.fput_object,
             bucket_name=self._bucket,
             object_name=object_key,
             file_path=str(file_path),
@@ -105,7 +114,8 @@ class MinioClient:
             content_type = self._guess_content_type(filename)
 
         data_stream = BytesIO(data)
-        self._client.put_object(
+        await asyncio.to_thread(
+            self._client.put_object,
             bucket_name=self._bucket,
             object_name=object_key,
             data=data_stream,
@@ -125,7 +135,8 @@ class MinioClient:
         await self._ensure_connection()
 
         data_stream = BytesIO(data)
-        self._client.put_object(
+        await asyncio.to_thread(
+            self._client.put_object,
             bucket_name=self._bucket,
             object_name=object_key,
             data=data_stream,
@@ -138,12 +149,17 @@ class MinioClient:
 
     async def get_object_bytes(self, object_key: str) -> bytes | None:
         await self._ensure_connection()
-        try:
+
+        def read_object() -> bytes:
             response = self._client.get_object(self._bucket, object_key)
-            data = response.read()
-            response.close()
-            response.release_conn()
-            return data
+            try:
+                return response.read()
+            finally:
+                response.close()
+                response.release_conn()
+
+        try:
+            return await asyncio.to_thread(read_object)
         except Exception as e:
             logger.warning("MinIO get_object failed for %s: %s", object_key, e)
             return None
@@ -157,7 +173,7 @@ class MinioClient:
         await self._ensure_connection()
         object_key = self._build_object_key(template_name, data_type, filename)
         try:
-            self._client.stat_object(self._bucket, object_key)
+            await asyncio.to_thread(self._client.stat_object, self._bucket, object_key)
             return True
         except Exception:
             return False

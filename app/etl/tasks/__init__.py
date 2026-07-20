@@ -15,12 +15,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Type
 
 from app.etl.tasks.base import BaseTask, TaskResult
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _TASK_REGISTRY: dict[str, BaseTask] = {}
 

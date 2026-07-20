@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 from datetime import date, datetime, timedelta, timezone
 
+from app.logger import setup_service_logging
 from app.scheduler.tasks.google_patent.crawler import (
     MAX_RESULTS_PER_QUERY,
     GooglePatentCrawler,
@@ -107,11 +107,7 @@ class GooglePatentCLI:
         """命令行入口 — 手动执行采集。"""
         args = self._parser.parse_args()
 
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s [PATENT-DAILY] %(levelname)s %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        )
+        setup_service_logging("patent-daily", "INFO")
 
         if self._is_range_mode(args):
             start_date, end_date = self._resolve_date_range(args)

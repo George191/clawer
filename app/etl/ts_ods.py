@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
@@ -10,8 +9,9 @@ from sqlalchemy import text
 from app.config.settings import settings
 from app.etl.base import ETLBase
 from app.etl.normalizers import get_normalizer
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _ODS_NEWS_TABLE = "ts_ods.ods_news"
 _ODS_PATENT_TABLE = "ts_ods.ods_patent"

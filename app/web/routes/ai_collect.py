@@ -3,34 +3,41 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 import time
-import yaml
 from collections.abc import AsyncGenerator
-from lxml import etree, html as lxml_html
 from typing import Any
 from urllib.parse import urlparse
 
+import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
+from lxml import etree
+from lxml import html as lxml_html
 from pydantic import BaseModel, Field
 
-from app.storage.minio_client import get_business_metadata_minio_client
+from app.config.ai_settings import ai_settings
+from app.logger import get_logger
 from app.models.template import SiteTemplate
-from app.web.services.ai_collect_store import ai_collect_store
-from app.web.services.browser_renderer import browser_renderer
-
+from app.storage.minio_client import get_business_metadata_minio_client
 from app.web.agents.adapter import adapter_agent
 from app.web.agents.template import AnalysisResult, template_agent
+from app.web.services.ai_collect_store import ai_collect_store
+from app.web.services.browser_renderer import browser_renderer
 from app.web.utils.validation import (
-    validate_target_url,
     clamp_positive,
     validate_generated_adapter,
+    validate_target_url,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 router = APIRouter()
+_PREFLIGHT_MAX_RETRIES = 3
+
+
+def _preflight_deadline() -> float:
+    retry_backoff = sum(2**attempt for attempt in range(_PREFLIGHT_MAX_RETRIES - 1))
+    return ai_settings.page_fetch_timeout * _PREFLIGHT_MAX_RETRIES + retry_backoff
 
 
 def _sanitize_preview_html(source: str) -> str:
@@ -308,7 +315,7 @@ def _validate_generated_template(
 
 async def _preflight(
     url: str,
-    max_retries: int = 3,
+    max_retries: int = _PREFLIGHT_MAX_RETRIES,
     viewport_width: int = 1440,
 ) -> UrlPreflightResponse:
     last_error = None
@@ -418,7 +425,7 @@ async def _analyze_events(
         yield _analysis_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
         preflight = await asyncio.wait_for(
             _preflight(url, viewport_width=viewport_width),
-            timeout=60.0,
+            timeout=_preflight_deadline(),
         )
         if not preflight.ok:
             raise RuntimeError(preflight.error_message or "Page preflight failed")
@@ -455,7 +462,7 @@ async def _analyze_events(
                     page_warnings=preflight.page_warnings,
                     on_event=analysis_events.put_nowait,
                 ),
-                timeout=120.0,
+                timeout=ai_settings.llm_request_timeout,
             )
         )
         async for event in _forward_model_events(analysis_task, analysis_events):
@@ -473,7 +480,7 @@ async def _analyze_events(
                     analysis_result,
                     on_event=template_events.put_nowait,
                 ),
-                timeout=120.0,
+                timeout=ai_settings.llm_request_timeout,
             )
         )
         async for event in _forward_model_events(template_task, template_events):
@@ -573,17 +580,16 @@ async def _generate_adapter_for_template(template_id: str) -> dict[str, Any]:
     try:
         adapter_result = await asyncio.wait_for(
             adapter_agent.generate_adapter(template_name, template_yaml),
-            timeout=120.0
+            timeout=ai_settings.llm_request_timeout,
         )
-    except asyncio.TimeoutError:
-        raise RuntimeError("Failed to generate adapter: timeout")
+    except asyncio.TimeoutError as exc:
+        raise RuntimeError("Failed to generate adapter: timeout") from exc
     
     adapter_code = adapter_result.adapter_code
-    
+    validate_generated_adapter(adapter_code)
+
     analysis["adapter_code"] = adapter_code
     await ai_collect_store.save_analysis(analysis)
-    
-    validate_generated_adapter(adapter_code)
     
     return {
         "adapterId": f"adp_{template_id}",

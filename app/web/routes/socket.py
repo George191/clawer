@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -35,16 +34,17 @@ from typing import Any, Callable
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from app.logger import get_logger
 from app.web.routes.ai_collect import (
     _analyze_events,
     _build_yaml_template,
 )
 from app.web.utils.validation import (
-    validate_target_url,
     scope_limit,
+    validate_target_url,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 

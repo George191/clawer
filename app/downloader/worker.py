@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -29,10 +28,11 @@ from app.base.mongo import MongoClient
 from app.config.settings import settings
 from app.downloader.http_client import FileTooLargeError
 from app.engine.template_loader import TemplateLoader
+from app.logger import get_logger
 from app.models.template import SiteTemplate
 from app.utils.path import get_nested_value
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════
 #  重试配置

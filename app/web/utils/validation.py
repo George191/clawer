@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import Any
-
-from fastapi import HTTPException
 from urllib.parse import urlparse
 
-from app.config.settings import settings
+from fastapi import HTTPException
 
-logger = logging.getLogger(__name__)
+from app.config.settings import settings
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 AI_COLLECT_SCOPE_PATH = Path(__file__).resolve().parent.parent / "policies" / "ai_collect_scope.json"
 DEFAULT_AI_COLLECT_SCOPE: dict[str, Any] = {

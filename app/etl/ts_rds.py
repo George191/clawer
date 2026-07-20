@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
@@ -10,8 +9,9 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _RDS_INSERT_TEMPLATE = """
 INSERT INTO ts_rds.rds_{table_name}

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -9,13 +8,14 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.config.settings import settings
 from app.etl.table_layout import normalize_table_role, schema_name_for
+from app.logger import get_logger
 from app.storage.etl_metadata_store import (
     get_registered_ddl_record,
     list_registered_ddl_records,
     save_registered_ddl,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 router = APIRouter()
 

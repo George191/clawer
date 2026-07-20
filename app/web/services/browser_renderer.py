@@ -3,18 +3,16 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
-
+from app.config.ai_settings import ai_settings
 from app.config.settings import settings
+from app.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _CHROME_PATHS = (
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
@@ -114,6 +112,14 @@ class BrowserRenderer:
         return config
 
     def _render_sync(self, url: str, use_proxy: bool, viewport_width: int) -> BrowserRenderResult:
+        try:
+            from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+            from playwright.sync_api import sync_playwright
+        except ImportError as exc:
+            raise RuntimeError(
+                "Browser rendering is unavailable; install playwright and its browser runtime"
+            ) from exc
+
         json_endpoints: list[str] = []
         network_responses: list[dict[str, object]] = []
         proxy = self._proxy_config(settings.tunnel_proxy_url) if use_proxy else None
@@ -173,7 +179,11 @@ class BrowserRenderer:
                             network_responses.append(evidence)
 
                 page.on("response", track_response)
-                page.goto(url, wait_until="domcontentloaded", timeout=0)
+                page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=max(1, int(ai_settings.page_fetch_timeout * 1000)),
+                )
                 try:
                     page.wait_for_load_state("load", timeout=10_000)
                 except PlaywrightTimeoutError:

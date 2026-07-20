@@ -24,25 +24,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, ClassVar, TypeVar
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
-from aiokafka.errors import NodeNotReadyError, KafkaConnectionError, RequestTimedOutError
+from aiokafka.errors import KafkaConnectionError, NodeNotReadyError, RequestTimedOutError
 
+from app.base.kafka_config import build_consumer_kwargs, build_producer_kwargs, get_brokers
 from app.config.settings import settings
 from app.etl.offset_manager import get_offset_manager
 from app.etl.table_layout import partition_bounds, schema_name_for
+from app.logger import get_logger
 from app.storage.etl_metadata_store import (
     ensure_ddlregistry_table,
     get_registered_ddl,
     get_registered_ddl_record,
 )
 from app.storage.postgres_client import get_pg_client
-from app.base.kafka_config import get_brokers, build_producer_kwargs, build_consumer_kwargs
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 KAFKA_RETRY_WAIT = 3
 KAFKA_MAX_RETRY = 30

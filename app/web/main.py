@@ -10,37 +10,38 @@
 from __future__ import annotations
 
 import os
+
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-import sys
 import asyncio
+import sys
+
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-from datetime import timezone
-import logging
 from contextlib import asynccontextmanager
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config.settings import settings
-from app.logger import configure_adapter_logging
+from app.logger import configure_adapter_logging, get_logger
+from app.web.routes.ai_collect import router as ai_collect_router
 from app.web.routes.dashboard import router as dashboard_router
 from app.web.routes.etl import router as etl_router
 from app.web.routes.monitor import router as monitor_router
-from app.web.routes.tasks import router as tasks_router
-from app.web.routes.templates import router as templates_router
-from app.web.routes.ai_collect import router as ai_collect_router
 from app.web.routes.scheduler import router as scheduler_router
 from app.web.routes.socket import router as socket_router
+from app.web.routes.tasks import router as tasks_router
+from app.web.routes.templates import router as templates_router
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ── 静态文件路径 ─────────────────────────────────────────────────────────────
 _STATIC_DIR = (Path(__file__).resolve().parent.parent.parent / "web-panel" / "dist").resolve()
@@ -52,7 +53,7 @@ _STATIC_DIR = (Path(__file__).resolve().parent.parent.parent / "web-panel" / "di
 @asynccontextmanager
 async def lifespan(appy: FastAPI):
     """应用生命周期：启动时初始化、关闭时清理。"""
-    configure_adapter_logging(getattr(logging, settings.log_level.upper(), logging.INFO))
+    configure_adapter_logging(settings.log_level)
     logger.info("=" * 50)
     logger.info("Web API starting on port 8000")
     logger.info("  Templates dir: %s", settings.template_dir)
@@ -182,6 +183,7 @@ def create_app() -> FastAPI:
         if settings.kafka_brokers:
             try:
                 from aiokafka.admin import AIOKafkaAdminClient, NewTopic
+
                 from app.base.kafka_config import build_admin_client_kwargs
                 admin = AIOKafkaAdminClient(**build_admin_client_kwargs())
                 await admin.start()

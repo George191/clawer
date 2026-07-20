@@ -11,14 +11,14 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from app.logger import get_logger
 from app.storage.postgres_client import PostgresClient, get_pg_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 TABLE_NAME = "public.syncer_watermarks"
 _DDL_PATH = (

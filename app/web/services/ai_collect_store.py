@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -78,12 +79,14 @@ CREATE INDEX IF NOT EXISTS idx_ai_collect_tasks_status ON public.ai_collect_task
 CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_task ON public.ai_collect_task_logs(task_id, created_at DESC);
 """
 _ICON_URL_PREFIX = "/api/ai/workspace/template-icons"
+_ARTIFACT_READ_CONCURRENCY = 8
 
 
 class AICollectStore:
     def __init__(self) -> None:
         self._pg = get_pg_client()
         self._initialized = False
+        self._initialize_lock = asyncio.Lock()
 
     @staticmethod
     def _is_image_content(content: bytes) -> bool:
@@ -109,11 +112,14 @@ class AICollectStore:
     async def initialize(self) -> None:
         if self._initialized:
             return
-        await self._pg.init_schema([_DDL])
-        await self._migrate_artifact_columns()
-        await self._import_local_templates()
-        await self._sync_minio_artifacts()
-        self._initialized = True
+        async with self._initialize_lock:
+            if self._initialized:
+                return
+            await self._pg.init_schema([_DDL])
+            await self._migrate_artifact_columns()
+            await self._import_local_templates()
+            await self._sync_minio_artifacts()
+            self._initialized = True
 
     async def _migrate_artifact_columns(self) -> None:
         rows = await self._pg.fetch_all(
@@ -410,10 +416,16 @@ class AICollectStore:
             """
         )
         minio = get_business_metadata_minio_client()
-        for row in rows:
-            template_bytes = await minio.get_object_bytes(str(row.get("template") or ""))
+
+        semaphore = asyncio.Semaphore(_ARTIFACT_READ_CONCURRENCY)
+
+        async def populate_artifacts(row: dict[str, Any]) -> None:
+            async with semaphore:
+                template_bytes = await minio.get_object_bytes(str(row.get("template") or ""))
             row["yaml_content"] = template_bytes.decode("utf-8") if template_bytes else ""
             row["favicon_url"] = self._template_icon_url(row)
+
+        await asyncio.gather(*(populate_artifacts(row) for row in rows))
         return rows
 
     async def update_template(self, template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -498,18 +510,31 @@ class AICollectStore:
 
     async def list_tasks(self) -> list[dict[str, Any]]:
         await self.initialize()
-        tasks = await self._pg.fetch_all(
-            "SELECT * FROM public.ai_collect_tasks ORDER BY updated_at DESC"
+        return await self._pg.fetch_all(
+            """
+            SELECT task.*,
+                   COALESCE(logs.items, '[]'::jsonb) AS logs
+            FROM public.ai_collect_tasks task
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(
+                           jsonb_build_object(
+                               'level', recent.level,
+                               'message', recent.message,
+                               'created_at', recent.created_at
+                           )
+                           ORDER BY recent.created_at DESC
+                       ) AS items
+                FROM (
+                    SELECT level, message, created_at
+                    FROM public.ai_collect_task_logs
+                    WHERE task_id = task.id
+                    ORDER BY created_at DESC
+                    LIMIT 100
+                ) recent
+            ) logs ON TRUE
+            ORDER BY task.updated_at DESC
+            """
         )
-        for task in tasks:
-            task["logs"] = await self._pg.fetch_all(
-                """
-                SELECT level, message, created_at FROM public.ai_collect_task_logs
-                WHERE task_id = :task_id ORDER BY created_at DESC LIMIT 100
-                """,
-                {"task_id": task["id"]},
-            )
-        return tasks
 
     async def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()

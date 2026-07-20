@@ -16,16 +16,16 @@ Celery task 定义在 tasks.py，CLI 入口在 __main__.py。
 from __future__ import annotations
 
 import asyncio
-import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from app.logger import get_logger
 from app.scheduler.task_store import TaskStore, get_task_store
 
 if TYPE_CHECKING:
     from app.engine.spider_engine import SpiderEngine
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════
 #  常量

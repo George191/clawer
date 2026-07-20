@@ -10,14 +10,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 # ── ETL 层定义 ─────────────────────────────────────────────
 _ETL_LAYERS: list[str] = [
@@ -274,8 +275,9 @@ class DashboardMetricsEngine:
 
         try:
             from aiokafka.admin import AIOKafkaAdminClient
-            from app.config.settings import settings as app_settings
+
             from app.base.kafka_config import build_admin_client_kwargs
+            from app.config.settings import settings as app_settings
         except ImportError:
             logger.debug("aiokafka admin not available, skipping lag query")
             return lag
@@ -342,8 +344,9 @@ class DashboardMetricsEngine:
 
         try:
             from aiokafka.admin import NewKafkaAdminClient
-            from app.config.settings import settings as app_settings
+
             from app.base.kafka_config import build_admin_client_kwargs
+            from app.config.settings import settings as app_settings
         except ImportError:
             return lag
 
