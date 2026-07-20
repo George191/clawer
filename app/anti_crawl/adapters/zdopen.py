@@ -22,7 +22,7 @@ DEFAULT_ZDPEN_API_URL = "http://www.zdopen.com/FreeProxy/Get/"
 # 错误码 12012: 上一个客户端IP仍在提取中，请等待2分钟后更换
 ERROR_CODE_IP_IN_USE = "12012"
 # 该错误的最小等待时间（秒）
-IP_IN_USE_WAIT_SECONDS = 180
+IP_IN_USE_WAIT_SECONDS = 60
 
 
 class ZdopenAPIAdapter(ProxySourceAdapter):
@@ -99,11 +99,10 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
         api_url = self._build_api_url()
         logger.info("Fetching proxies from API: %s", api_url)
 
-        max_retries = self._config.get("max_retries", 3)
         wait_seconds = IP_IN_USE_WAIT_SECONDS
         retries = 0
 
-        while retries <= max_retries:
+        while 1:
             try:
                 client = await self._get_client()
                 response = await client.get(api_url)
@@ -121,14 +120,9 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                 msg = data.get("msg", "Unknown error")
                 logger.warning("ZdopenAPI returned error code=%s: %s", code, msg)
                 
-                if retries >= max_retries:
-                    logger.error("Max retries reached (%d) for IP-in-use error", max_retries)
-                    return []
-                
                 retries += 1
-                logger.info("Waiting %ds before retry %d/%d", wait_seconds, retries, max_retries)
+                logger.info("Waiting %ds before retry %d", wait_seconds, retries)
                 await asyncio.sleep(wait_seconds)
-                wait_seconds = int(wait_seconds * 1.5)
                 continue
 
             proxy_list = self._extract_proxy_list(data)
