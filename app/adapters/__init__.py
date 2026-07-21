@@ -94,10 +94,27 @@ class BaseSiteAdapter:
         self._base_url = base_url.rstrip("/")
         self._client = http_client or HttpClient()
         self._crawl_context = kwargs.get("crawl_context", {})
+        self._site_logger = get_adapter_logger(
+            f"app.adapters.runtime.{self.adapter_name}",
+            self.adapter_name,
+        )
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。子类覆盖。"""
-        pass
+        context = self._crawl_context
+        if "batch_index" not in context:
+            return
+        self._site_logger.info(
+            "task=%s batch=%s/%s lines=%s-%s items=%s: %s...%s",
+            context.get("task_id", "standalone"),
+            context.get("batch_index", 1),
+            context.get("batch_count", 1),
+            context.get("start_line", "-"),
+            context.get("end_line", "-"),
+            context.get("batch_size", 1),
+            context.get("first_value", "-"),
+            context.get("last_value", "-"),
+        )
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前。子类覆盖。"""
@@ -118,7 +135,17 @@ class BaseSiteAdapter:
         cumulative_saved: int,
     ) -> None:
         """每页记录持久化成功后。子类覆盖。"""
-        pass
+        self._site_logger.info(
+            "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
+            task_id,
+            self._crawl_context.get("batch_index", 1),
+            self._crawl_context.get("batch_count", 1),
+            page_number,
+            total_pages,
+            fetched_count,
+            saved_count,
+            cumulative_saved,
+        )
 
     async def on_pagination_resolved(
         self,
@@ -128,7 +155,15 @@ class BaseSiteAdapter:
         total_pages: int | float,
     ) -> None:
         """分页总量确定后。子类覆盖。"""
-        pass
+        self._site_logger.info(
+            "task=%s batch=%s/%s pagination: total=%d, per_page=%d, need %s pages",
+            task_id,
+            self._crawl_context.get("batch_index", 1),
+            self._crawl_context.get("batch_count", 1),
+            total_records,
+            results_per_page,
+            total_pages,
+        )
 
     async def parse_list_response(
         self,

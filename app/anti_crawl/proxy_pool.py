@@ -165,20 +165,10 @@ class ProxyPool:
 
         # 初始分类：全部标记为健康
         self._healthy = list(self._proxies)
-        self._unhealthy = []
-
-        # 异步健康检查
-        if self._healthy:
-            check_tasks = [self._health_check(p) for p in self._proxies]
-            await asyncio.gather(*check_tasks, return_exceptions=True)
-            self._healthy = [p for p in self._proxies if p.healthy]
-            self._unhealthy = [p for p in self._proxies if not p.healthy]
-
         logger.info(
-            "Proxy pool loaded: %d total, %d healthy, %d unhealthy",
+            "Proxy pool loaded: %d total, %d healthy",
             len(self._proxies),
             len(self._healthy),
-            len(self._unhealthy),
         )
 
     async def reload(self) -> None:
