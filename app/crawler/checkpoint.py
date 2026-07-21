@@ -57,7 +57,7 @@ class BatchCheckpointStore:
         self.state_key = f"crawler:checkpoint-state:{template_name}:{base_digest}"
         self.key = self._checkpoint_key(
             template_name, file_path, param_name, start_line, limit
-        ) if start_line is not None else None
+        )
         self._redis = redis_client
         self._owns_client = redis_client is None
 
@@ -66,15 +66,13 @@ class BatchCheckpointStore:
         template_name: str,
         file_path: str,
         param_name: str,
-        start_line: int,
-        limit: int | None,
+        start_line: int | None = None,
+        limit: int | None = None,
     ) -> str:
         identity = "|".join((
             template_name,
             str(Path(file_path).resolve()),
             param_name,
-            str(start_line),
-            str(limit),
         ))
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
         return f"crawler:checkpoint:{template_name}:{digest}"

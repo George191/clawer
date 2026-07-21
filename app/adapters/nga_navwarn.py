@@ -11,7 +11,7 @@ from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
 from app.logger import get_adapter_logger
 
-logger = get_adapter_logger(__name__, "nga")
+logger = get_adapter_logger(__name__, "nga_navwarn")
 
 _MAX_RETRIES = 5
 _RETRYABLE_PATTERNS = ("(28)", "(7)", "(6)", "HTTP Error 0", "HTTP Error 103")
