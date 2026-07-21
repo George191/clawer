@@ -184,42 +184,7 @@ class ProxyPool:
             await self._load_from_adapters()
             self._loaded = True
 
-    # ── 健康检查 ────────────────────────────────────────────────────────────
-
-    async def _health_check(self, proxy: ProxyInfo) -> bool:
-        """对单个代理执行健康检查。
-
-        使用 curl_cffi 与实际请求库保持一致性，这样可以更准确地检测代理在实际使用中的健康状况。
-
-        Args:
-            proxy: 待检查的代理信息。
-
-        Returns:
-            True 如果代理健康，否则 False。
-        """
-        health_url = settings.proxy_health_check_url or "https://httpbin.org/ip"
-        try:
-            async with curl_requests.AsyncSession(
-                proxy=proxy.url,
-                impersonate="chrome120",
-                timeout=5.0,
-                verify=settings.http_verify_ssl,
-            ) as session:
-                response = await session.get(health_url)
-                if response.status_code < 500:
-                    proxy.healthy = True
-                    proxy.last_check = time.time()
-                    logger.debug("Proxy health check passed: %s", proxy.url)
-                    return True
-        except Exception as e:
-            logger.debug("Proxy health check failed for %s: %s", proxy.url, str(e))
-
-        proxy.healthy = False
-        proxy.last_check = time.time()
-        return False
-
     # ── 代理获取 ────────────────────────────────────────────────────────────
-
     async def get_proxy(self) -> Optional[str]:
         """获取下一个可用代理。
 
@@ -467,19 +432,7 @@ class ProxyPool:
         if not self._unhealthy:
             return
 
-        to_recheck = list(self._unhealthy)
-        logger.debug("Re-checking %d unhealthy proxies", len(to_recheck))
-
-        for proxy in to_recheck:
-            if await self._health_check(proxy):
-                async with self._lock:
-                    if proxy in self._unhealthy:
-                        self._unhealthy.remove(proxy)
-                        self._healthy.append(proxy)
-                        logger.info("Proxy recovered: %s", proxy.url)
-
     # ── 状态查询 ────────────────────────────────────────────────────────────
-
     def status(self) -> dict:
         """返回代理池状态快照。
 
