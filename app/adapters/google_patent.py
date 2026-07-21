@@ -59,7 +59,18 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。参数值已在 main.py 中组装完毕（+OR+ 拼接），无需额外处理。"""
-        return
+        context = self._crawl_context
+        logger.info(
+            "task=%s batch=%s/%s lines=%s-%s items=%s: %s...%s",
+            context.get("task_id", "standalone"),
+            context.get("batch_index", 1),
+            context.get("batch_count", 1),
+            context.get("start_line", "-"),
+            context.get("end_line", "-"),
+            context.get("batch_size", 1),
+            context.get("first_value", "-"),
+            context.get("last_value", "-"),
+        )
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前：发送翻页信令。
@@ -101,6 +112,7 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     async def on_records_saved(
         self,
+        task_id: int | str,
         page: int,
         page_number: int,
         total_pages: int | float,
@@ -111,7 +123,7 @@ class GooglePatentAdapter(BaseSiteAdapter):
         """记录每页抓取及持久化结果。"""
         logger.info(
             "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
-            self._crawl_context.get("task_id", "standalone"),
+            task_id,
             self._crawl_context.get("batch_index", 1),
             self._crawl_context.get("batch_count", 1),
             page_number,
@@ -123,14 +135,17 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     async def on_pagination_resolved(
         self,
+        task_id: int | str,
         total_records: int,
         results_per_page: int,
         total_pages: int | float,
     ) -> None:
         """记录 Google Patents 返回的动态分页信息。"""
         logger.info(
-            "task=%s pagination: total=%d, per_page=%d, need %s pages",
-            self._crawl_context.get("task_id", "standalone"),
+            "task=%s batch=%s/%s pagination: total=%d, per_page=%d, need %s pages",
+            task_id,
+            self._crawl_context.get("batch_index", 1),
+            self._crawl_context.get("batch_count", 1),
             total_records,
             results_per_page,
             total_pages,

@@ -171,6 +171,8 @@ class ProxyPool:
         if self._healthy:
             check_tasks = [self._health_check(p) for p in self._proxies]
             await asyncio.gather(*check_tasks, return_exceptions=True)
+            self._healthy = [p for p in self._proxies if p.healthy]
+            self._unhealthy = [p for p in self._proxies if not p.healthy]
 
         logger.info(
             "Proxy pool loaded: %d total, %d healthy, %d unhealthy",

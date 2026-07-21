@@ -27,6 +27,14 @@ class BatchCheckpoint:
         return f"{self.start_line}:{self.end_line}"
 
 
+@dataclass(frozen=True)
+class CrawlRunState:
+    start_line: int
+    limit: int | None
+    batch_size: int
+    last_assigned_line: int
+
+
 class BatchCheckpointStore:
     """Keep only currently running batch tasks in one Redis hash."""
 
@@ -35,23 +43,87 @@ class BatchCheckpointStore:
         template_name: str,
         file_path: str,
         param_name: str,
-        start_line: int,
+        start_line: int | None,
         limit: int | None,
         redis_client: Any = None,
     ) -> None:
-        identity = "|".join(
-            (
-                template_name,
-                str(Path(file_path).resolve()),
-                param_name,
-                str(start_line),
-                str(limit),
-            )
+        self._template_name = template_name
+        self._file_path = file_path
+        self._param_name = param_name
+        base_identity = "|".join(
+            (template_name, str(Path(file_path).resolve()), param_name)
         )
-        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
-        self.key = f"crawler:checkpoint:{template_name}:{digest}"
+        base_digest = hashlib.sha256(base_identity.encode("utf-8")).hexdigest()[:20]
+        self.state_key = f"crawler:checkpoint-state:{template_name}:{base_digest}"
+        self.key = self._checkpoint_key(
+            template_name, file_path, param_name, start_line, limit
+        ) if start_line is not None else None
         self._redis = redis_client
         self._owns_client = redis_client is None
+
+    @staticmethod
+    def _checkpoint_key(
+        template_name: str,
+        file_path: str,
+        param_name: str,
+        start_line: int,
+        limit: int | None,
+    ) -> str:
+        identity = "|".join((
+            template_name,
+            str(Path(file_path).resolve()),
+            param_name,
+            str(start_line),
+            str(limit),
+        ))
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+        return f"crawler:checkpoint:{template_name}:{digest}"
+
+    async def load_run_state(self) -> CrawlRunState | None:
+        if self._redis is None:
+            return None
+        try:
+            raw = await self._redis.get(self.state_key)
+            if not raw:
+                return None
+            data = json.loads(raw)
+            state = CrawlRunState(
+                start_line=int(data["start_line"]),
+                limit=int(data["limit"]) if data.get("limit") is not None else None,
+                batch_size=int(data["batch_size"]),
+                last_assigned_line=int(
+                    data.get("last_assigned_line", data["start_line"] - 1)
+                ),
+            )
+            self.key = data["checkpoint_key"]
+            return state
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("忽略无效 Redis 运行元数据: %s", exc)
+            return None
+
+    async def save_run_state(self, state: CrawlRunState) -> None:
+        if self._redis is None:
+            return
+        if self.key is None:
+            self.key = self._checkpoint_key(
+                self._template_name,
+                self._file_path,
+                self._param_name,
+                state.start_line,
+                state.limit,
+            )
+        payload = {
+            **asdict(state),
+            "checkpoint_key": self.key,
+        }
+        try:
+            await self._redis.set(
+                self.state_key,
+                json.dumps(payload),
+                ex=CHECKPOINT_TTL_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("写入 Redis 运行元数据失败: %s", exc)
 
     async def connect(self) -> bool:
         if self._redis is not None:
@@ -75,15 +147,19 @@ class BatchCheckpointStore:
             return False
 
     async def load(self) -> list[BatchCheckpoint]:
-        if self._redis is None:
+        if self._redis is None or self.key is None:
             return []
         try:
             raw_items = await self._redis.hgetall(self.key)
         except Exception as exc:
             logger.warning("读取 Redis checkpoint 失败: %s", exc)
             return []
+        return self._decode_checkpoints(raw_items.values())
+
+    @staticmethod
+    def _decode_checkpoints(raw_values: Any) -> list[BatchCheckpoint]:
         checkpoints: list[BatchCheckpoint] = []
-        for raw in raw_items.values():
+        for raw in raw_values:
             try:
                 data = json.loads(raw)
                 checkpoints.append(BatchCheckpoint(
@@ -95,19 +171,53 @@ class BatchCheckpointStore:
                 logger.warning("忽略无效 Redis checkpoint: %r", raw)
         return sorted(checkpoints, key=lambda item: item.start_line)
 
-    async def save(self, checkpoint: BatchCheckpoint) -> None:
+    async def discover_legacy_checkpoints(self) -> list[BatchCheckpoint]:
+        """Find the most recently active legacy hash when no run metadata exists."""
         if self._redis is None:
+            return []
+        pattern = f"crawler:checkpoint:{self._template_name}:*"
+        candidates: list[tuple[int, str, list[BatchCheckpoint]]] = []
+        try:
+            async for key in self._redis.scan_iter(match=pattern):
+                raw_items = await self._redis.hgetall(key)
+                checkpoints = self._decode_checkpoints(raw_items.values())
+                if not checkpoints:
+                    continue
+                ttl = await self._redis.ttl(key)
+                candidates.append((int(ttl), key, checkpoints))
+        except Exception as exc:
+            logger.warning("自动发现旧 Redis checkpoint 失败: %s", exc)
+            return []
+
+        if not candidates:
+            return []
+        _, key, checkpoints = max(
+            candidates,
+            key=lambda item: (item[0], max(cp.end_line for cp in item[2])),
+        )
+        self.key = key
+        if len(candidates) > 1:
+            logger.warning(
+                "发现 %d 个旧 checkpoint hash，选择最近活动的 %s",
+                len(candidates),
+                key,
+            )
+        return checkpoints
+
+    async def save(self, checkpoint: BatchCheckpoint) -> None:
+        if self._redis is None or self.key is None:
             return
         try:
             pipeline = self._redis.pipeline(transaction=True)
             pipeline.hset(self.key, checkpoint.task_id, json.dumps(asdict(checkpoint)))
             pipeline.expire(self.key, CHECKPOINT_TTL_SECONDS)
+            pipeline.expire(self.state_key, CHECKPOINT_TTL_SECONDS)
             await pipeline.execute()
         except Exception as exc:
             logger.warning("写入 Redis checkpoint 失败: %s", exc)
 
     async def delete(self, task_id: str) -> None:
-        if self._redis is not None:
+        if self._redis is not None and self.key is not None:
             try:
                 await self._redis.hdel(self.key, task_id)
             except Exception as exc:
@@ -116,7 +226,10 @@ class BatchCheckpointStore:
     async def clear(self) -> None:
         if self._redis is not None:
             try:
-                await self._redis.delete(self.key)
+                keys = [self.state_key]
+                if self.key is not None:
+                    keys.append(self.key)
+                await self._redis.delete(*keys)
             except Exception as exc:
                 logger.warning("清理 Redis checkpoint 失败: %s", exc)
 

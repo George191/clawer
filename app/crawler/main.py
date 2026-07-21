@@ -278,7 +278,7 @@ async def run_from_list_file_stream(
     template_name: str,
     file_path: str,
     param_name: str,
-    start_line: int = 0,
+    start_line: int | None = None,
     limit: Optional[int] = None,
     delay: float = 0,
     batch_size: int = 100,
@@ -298,7 +298,11 @@ async def run_from_list_file_stream(
         resume: 是否从 Redis 中仍在执行的批次断点恢复
     """
     from app.config.settings import settings
-    from app.crawler.checkpoint import BatchCheckpoint, BatchCheckpointStore
+    from app.crawler.checkpoint import (
+        BatchCheckpoint,
+        BatchCheckpointStore,
+        CrawlRunState,
+    )
 
     loader = TemplateLoader()
     engine = SpiderEngine()
@@ -325,6 +329,44 @@ async def run_from_list_file_stream(
     
     try:
         await checkpoint_store.connect()
+        saved_state = await checkpoint_store.load_run_state() if resume else None
+        if saved_state is not None:
+            start_line = saved_state.start_line
+            limit = saved_state.limit
+            batch_size = saved_state.batch_size
+            run_state = saved_state
+            logger.info(
+                "从 Redis 恢复运行参数: start=%d, limit=%s, batch_size=%d",
+                start_line,
+                limit,
+                batch_size,
+            )
+        else:
+            if resume and start_line is None:
+                legacy_saved = await checkpoint_store.discover_legacy_checkpoints()
+                if not legacy_saved:
+                    raise RuntimeError("Redis 中没有可恢复的活动 checkpoint")
+                start_line = min(item.start_line for item in legacy_saved)
+                last_assigned_line = max(item.end_line for item in legacy_saved)
+                logger.info(
+                    "自动发现旧 checkpoint: active=%d, start=%d, max_end=%d",
+                    len(legacy_saved),
+                    start_line,
+                    last_assigned_line,
+                )
+            else:
+                last_assigned_line = (0 if start_line is None else start_line) - 1
+            start_line = 0 if start_line is None else start_line
+            if not resume:
+                await checkpoint_store.clear()
+            run_state = CrawlRunState(
+                start_line=start_line,
+                limit=limit,
+                batch_size=batch_size,
+                last_assigned_line=last_assigned_line,
+            )
+            await checkpoint_store.save_run_state(run_state)
+
         reader = BatchParamReader(
             file_path=file_path,
             param_name=param_name,
@@ -353,53 +395,75 @@ async def run_from_list_file_stream(
         batch_count = len(all_batches)
         if batch_count == 0:
             logger.info("没有数据需要处理")
+            await checkpoint_store.clear()
             return
 
         batches_by_range = {
             (batch_start, batch_end): batch_data
             for batch_data, batch_start, batch_end in all_batches
         }
-        resume_pages: dict[tuple[int, int], int] = {}
+        batch_indices = {
+            (batch_start, batch_end): idx
+            for idx, (_, batch_start, batch_end) in enumerate(all_batches)
+        }
         if resume:
             saved = await checkpoint_store.load()
             valid = [
                 item for item in saved
                 if (item.start_line, item.end_line) in batches_by_range
             ]
+            active_ranges = {
+                (item.start_line, item.end_line) for item in valid
+            }
+            last_assigned_line = max(
+                run_state.last_assigned_line,
+                max((item.end_line for item in valid), default=start_line - 1),
+            )
+            all_batches = [
+                batch for batch in all_batches
+                if (batch[1], batch[2]) in active_ranges
+                or batch[1] > last_assigned_line
+            ]
+            if last_assigned_line != run_state.last_assigned_line:
+                run_state = CrawlRunState(
+                    start_line=run_state.start_line,
+                    limit=run_state.limit,
+                    batch_size=run_state.batch_size,
+                    last_assigned_line=last_assigned_line,
+                )
+                await checkpoint_store.save_run_state(run_state)
             if valid:
-                last_assigned_line = max(item.end_line for item in valid)
-                resume_pages = {
-                    (item.start_line, item.end_line): item.current_page
-                    for item in valid
-                }
-                all_batches = [
-                    batch for batch in all_batches
-                    if (batch[1], batch[2]) in resume_pages
-                    or batch[1] > last_assigned_line
-                ]
                 logger.info(
-                    "恢复 %d 个中断批次，并从第 %d 行后继续分配新批次",
+                    "重新采集 %d 个中断批次，并从第 %d 行后继续分配新批次",
                     len(valid), last_assigned_line,
                 )
             else:
-                logger.info("未找到可恢复的 Redis checkpoint，从指定起始行执行")
-        else:
-            await checkpoint_store.clear()
-
-        batch_count = len(all_batches)
+                logger.info("没有活动批次，从第 %d 行后继续", last_assigned_line)
+        scheduled_batch_count = len(all_batches)
         
-        logger.info(f"找到 {batch_count} 个批次，启动并发采集，max_concurrent_tasks={settings.max_concurrent_tasks}")
+        logger.info(
+            "计划执行 %d/%d 个批次，max_concurrent_tasks=%d",
+            scheduled_batch_count,
+            batch_count,
+            settings.max_concurrent_tasks,
+        )
         
         # 创建信号量控制并发
         semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
+        run_state_lock = asyncio.Lock()
         tasks = []
         
         # 错峰启动: 每个 task 依次延迟启动，避免 N 个协程同一瞬间打向服务器
         stagger = max(delay, 1.0) if delay > 0 else 1.0
-        logger.info(f"错峰启动: 每批间隔 {stagger:.1f}s，全部启动预计 {stagger * (batch_count - 1):.1f}s")
+        logger.info(
+            "错峰启动: 每批间隔 %.1fs，全部启动预计 %.1fs",
+            stagger,
+            stagger * max(scheduled_batch_count - 1, 0),
+        )
         
         async def _worker(batch_data: list[str], start_line_num: int, end_line_num: int, idx: int) -> int:
             """单个任务的 worker 函数。"""
+            nonlocal run_state
             async with semaphore:
                 # 由适配器负责批次参数拼接（Google Patents: +OR+ 连接）
                 param_value = adapter_cls.build_batch_param_value(batch_data, param_name)
@@ -412,12 +476,18 @@ async def run_from_list_file_stream(
                 checkpoint = BatchCheckpoint(
                     start_line=start_line_num,
                     end_line=end_line_num,
-                    current_page=resume_pages.get(
-                        (start_line_num, end_line_num),
-                        default_start_page,
-                    ),
+                    current_page=default_start_page,
                 )
                 await checkpoint_store.save(checkpoint)
+                async with run_state_lock:
+                    if end_line_num > run_state.last_assigned_line:
+                        run_state = CrawlRunState(
+                            start_line=run_state.start_line,
+                            limit=run_state.limit,
+                            batch_size=run_state.batch_size,
+                            last_assigned_line=end_line_num,
+                        )
+                        await checkpoint_store.save_run_state(run_state)
 
                 async def _record_page(page: int) -> None:
                     await checkpoint_store.save(BatchCheckpoint(
@@ -435,12 +505,15 @@ async def run_from_list_file_stream(
                         "start_line": start_line_num,
                         "end_line": end_line_num,
                         "batch_size": len(batch_data),
+                        "first_value": batch_data[0],
+                        "last_value": batch_data[-1],
                     }
                     result = await engine.crawl_from_page(
                         tmpl, checkpoint.current_page, _record_page
                     )
                     
                     if result.success:
+                        await checkpoint_store.delete(checkpoint.task_id)
                         logger.info(f"[OK] 批次 {idx + 1} 成功")
                         return len(batch_data)
                     logger.warning(f"[FAIL] 批次 {idx + 1} 失败: {result.errors}")
@@ -449,8 +522,6 @@ async def run_from_list_file_stream(
                 except Exception as e:
                     logger.exception(f"[ERROR] 批次 {idx + 1} 异常: {e}")
                     return -len(batch_data)
-                finally:
-                    await checkpoint_store.delete(checkpoint.task_id)
         
         # 创建所有任务，带错峰启动避免并发洪峰
         async def _staggered_worker(batch_data, start_line_num, end_line_num, idx, launch_delay):
@@ -459,10 +530,11 @@ async def run_from_list_file_stream(
                 await asyncio.sleep(launch_delay)
             return await _worker(batch_data, start_line_num, end_line_num, idx)
         
-        for idx, (batch_data, start_line_num, end_line_num) in enumerate(all_batches):
+        for launch_idx, (batch_data, start_line_num, end_line_num) in enumerate(all_batches):
+            idx = batch_indices[(start_line_num, end_line_num)]
             task = _staggered_worker(
                 batch_data, start_line_num, end_line_num, idx,
-                launch_delay=idx * stagger,
+                launch_delay=launch_idx * stagger,
             )
             tasks.append(task)
         
@@ -473,12 +545,15 @@ async def run_from_list_file_stream(
         for result in results:
             if isinstance(result, Exception):
                 logger.error(f"批次异常: {result}")
+                fail_count += 1
             elif result > 0:
                 success_count += result
             else:
                 fail_count += abs(result)
         
         logger.info("=" * 80)
+        if fail_count == 0:
+            await checkpoint_store.clear()
         logger.info(
             f"流式采集完成！共 {batch_count} 批, "
             f"成功: {success_count}, 失败: {fail_count}"
@@ -643,8 +718,8 @@ def main() -> None:
     parser.add_argument(
         "--start",
         type=int,
-        default=0,
-        help="Start from line N (0-based) in list-file",
+        default=None,
+        help="Start from line N (0-based); --resume reads it from Redis when available",
     )
     parser.add_argument(
         "--limit",
@@ -671,7 +746,7 @@ def main() -> None:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume interrupted list-file batches from Redis checkpoints",
+        help="Recrawl interrupted batches, then continue after the highest assigned batch",
     )
     
     args = parser.parse_args()

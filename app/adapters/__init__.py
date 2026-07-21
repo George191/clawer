@@ -109,6 +109,7 @@ class BaseSiteAdapter:
 
     async def on_records_saved(
         self,
+        task_id: int | str,
         page: int,
         page_number: int,
         total_pages: int | float,
@@ -121,6 +122,7 @@ class BaseSiteAdapter:
 
     async def on_pagination_resolved(
         self,
+        task_id: int | str,
         total_records: int,
         results_per_page: int,
         total_pages: int | float,

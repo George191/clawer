@@ -30,6 +30,9 @@ class AdapterContextFilter(logging.Filter):
         if not getattr(record, Field.adapter_name, ""):
             record.adapter_name = self._infer_adapter_name(record.name)
         if isinstance(record.msg, str):
+            if record.args:
+                record.msg = record.getMessage()
+                record.args = ()
             record.msg = self._normalize_message(record.msg)
         return True
 
@@ -44,7 +47,7 @@ class AdapterContextFilter(logging.Filter):
 
     @staticmethod
     def _normalize_message(message: str) -> str:
-        cleaned = re.sub(r"^\[[^\]]+\]\s*", "", message)
+        cleaned = re.sub(r"^\[[A-Za-z_][A-Za-z0-9_]*\]\s*", "", message)
         cleaned = re.sub(r"^[A-Za-z0-9_]+Adapter:\s*", "", cleaned)
         cleaned = re.sub(r"^[^\w]+", "", cleaned)
         return cleaned or message

@@ -350,20 +350,17 @@ class SpiderEngine:
             return all_records
 
         # 从第一页响应计算总页数
-        total_for_log = ""
+        page1_task_id = template._crawl_context.get("page_task_ids", {}).get(
+            page1, template._crawl_context.get("task_id", "standalone")
+        )
         if total_records is not None:
-            total_for_log = f" / total={total_records}"
             dynamic_pages = (total_records + results_per_page - 1) // results_per_page
             if total_pages_from_api is not None:
                 dynamic_pages = min(dynamic_pages, total_pages_from_api)
             if has_page_cap:
                 dynamic_pages = min(config_max_pages, dynamic_pages)
-            logger.info(
-                "Dynamic pagination: total=%d, per_page=%d, need %d pages%s",
-                total_records, results_per_page, dynamic_pages,
-                f" (capped at {config_max_pages})" if has_page_cap else "",
-            )
             await adapter.on_pagination_resolved(
+                page1_task_id,
                 total_records,
                 results_per_page,
                 dynamic_pages,
@@ -372,11 +369,6 @@ class SpiderEngine:
             dynamic_pages = total_pages_from_api
             if has_page_cap:
                 dynamic_pages = min(config_max_pages, dynamic_pages)
-            logger.info(
-                "API reports %d total pages%s",
-                dynamic_pages,
-                f" (capped at {config_max_pages})" if has_page_cap else "",
-            )
 
         # 处理第一页记录
         _init_enhancements()
@@ -384,6 +376,7 @@ class SpiderEngine:
         if records1:
             saved_count = await self._save_page_records(template, records1, result)
             await adapter.on_records_saved(
+                page1_task_id,
                 page1,
                 1,
                 dynamic_pages,
@@ -391,17 +384,6 @@ class SpiderEngine:
                 saved_count,
                 result.saved_records,
             )
-
-        logger.info(
-            "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
-            template._crawl_context.get("page_task_ids", {}).get(
-                page1, template._crawl_context.get("task_id", "standalone")
-            ),
-            template._crawl_context.get("batch_index", 1),
-            template._crawl_context.get("batch_count", 1),
-            1, dynamic_pages,
-            len(records1), saved_count if records1 else 0, result.saved_records,
-        )
 
         # 第一页终止条件
         if not records1:
@@ -590,11 +572,15 @@ class SpiderEngine:
             if abort:
                 continue
 
+            page_task_id = template._crawl_context.get("page_task_ids", {}).get(
+                p, template._crawl_context.get("task_id", "standalone")
+            )
             all_records.extend(records)
             saved_count = 0
             if records:
                 saved_count = await self._save_page_records(template, records, result)
                 await adapter.on_records_saved(
+                    page_task_id,
                     p,
                     p - start_page + 1,
                     dynamic_pages,
@@ -605,9 +591,7 @@ class SpiderEngine:
 
             logger.info(
                 "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
-                template._crawl_context.get("page_task_ids", {}).get(
-                    p, template._crawl_context.get("task_id", "standalone")
-                ),
+                page_task_id,
                 template._crawl_context.get("batch_index", 1),
                 template._crawl_context.get("batch_count", 1),
                 p - start_page + 1,

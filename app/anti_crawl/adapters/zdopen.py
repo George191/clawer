@@ -7,11 +7,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
+from pathlib import Path
 from typing import Any
 
 from curl_cffi import requests as curl_requests
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
+from app.config.settings import settings
 from app.logger import get_adapter_logger
 
 logger = get_adapter_logger(__name__, "zdopen_api", "proxy")
@@ -23,6 +27,7 @@ DEFAULT_ZDPEN_API_URL = "http://www.zdopen.com/FreeProxy/Get/"
 ERROR_CODE_IP_IN_USE = "12012"
 # 该错误的最小等待时间（秒）
 IP_IN_USE_WAIT_SECONDS = 60
+CACHE_MAX_AGE_SECONDS = 5 * 60
 
 
 class ZdopenAPIAdapter(ProxySourceAdapter):
@@ -118,20 +123,22 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
             code = data.get("code", "")
             if code == ERROR_CODE_IP_IN_USE:
                 msg = data.get("msg", "Unknown error")
-                logger.debug("ZdopenAPI returned error code=%s: %s", code, msg)
-                
+
                 retries += 1
-                logger.debug("Waiting %ds before retry %d", wait_seconds, retries)
+                logger.warning(
+                    "ZdopenAPI returned code=%s: %s retrying in %ds (attempt %d)",
+                    code,
+                    msg,
+                    wait_seconds,
+                    retries,
+                )
                 await asyncio.sleep(wait_seconds)
                 continue
 
             proxy_list = self._extract_proxy_list(data)
             proxies = self._parse_proxy_items(proxy_list)
-
             logger.info("Fetched %d proxies", len(proxies))
             return proxies
-
-        return []
 
     def _extract_proxy_list(self, data: Any) -> list[dict]:
         """从 API 响应中提取代理条目列表。
