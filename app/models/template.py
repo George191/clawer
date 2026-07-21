@@ -211,6 +211,7 @@ class SiteTemplate(BaseModel):
     )
 
     _param_values: dict[str, str] = {}
+    _crawl_context: dict[str, Any] = {}
 
     @property
     def effective_anti_crawl_enabled(self) -> bool:

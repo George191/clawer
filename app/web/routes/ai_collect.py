@@ -496,6 +496,12 @@ async def _analyze_events(
             preflight.page_warnings,
             analysis_result,
         )
+        yield _analysis_event("template_key", {
+            "key": next(reversed(template_dict), ""),
+            "index": len(template_dict),
+            "total": len(template_dict),
+            "templateYaml": template_yaml,
+        })
         yield _analysis_event("step", {"step": "generate_template", "label": "Generate template", "status": "done"})
         
         fields = template_agent._build_inferred_fields(analysis_result)

@@ -75,7 +75,12 @@ class BaseAgent:
         prompt = self.get_prompt(name)
         return prompt.format(**kwargs)
 
-    async def generate(self, prompt: str, max_tokens: int = 8192) -> str:
+    async def generate(
+        self,
+        prompt: str,
+        max_tokens: int = 8192,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> str:
         await self._ensure_model()
 
         model_input = self._tokenizer.apply_chat_template(
@@ -92,15 +97,61 @@ class BaseAgent:
         encoded = {k: v.to(self._model.device) for k, v in encoded.items()}
         input_length = encoded["input_ids"].shape[-1]
         
-        with self._torch.inference_mode():
-            outputs = self._model.generate(
-                **encoded,
-                max_new_tokens=max_tokens,
-                num_return_sequences=1,
-                do_sample=False,
-            )
-        
-        return self._tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True).strip()
+        if on_chunk is None:
+            with self._torch.inference_mode():
+                outputs = self._model.generate(
+                    **encoded,
+                    max_new_tokens=max_tokens,
+                    num_return_sequences=1,
+                    do_sample=False,
+                )
+
+            return self._tokenizer.decode(outputs[0][input_length:], skip_special_tokens=True).strip()
+
+        from transformers import TextIteratorStreamer
+
+        streamer = TextIteratorStreamer(
+            self._tokenizer,
+            skip_prompt=True,
+            skip_special_tokens=True,
+        )
+        generation_errors: list[BaseException] = []
+
+        def run_generation() -> None:
+            try:
+                with self._torch.inference_mode():
+                    self._model.generate(
+                        **encoded,
+                        streamer=streamer,
+                        max_new_tokens=max_tokens,
+                        num_return_sequences=1,
+                        do_sample=False,
+                    )
+            except BaseException as exc:
+                generation_errors.append(exc)
+                streamer.text_queue.put(streamer.stop_signal)
+
+        generation_task = asyncio.create_task(asyncio.to_thread(run_generation))
+        chunks: list[str] = []
+        while True:
+            finished, chunk = await asyncio.to_thread(self._next_stream_chunk, streamer)
+            if finished:
+                break
+            if chunk:
+                chunks.append(chunk)
+                on_chunk(chunk)
+
+        await generation_task
+        if generation_errors:
+            raise generation_errors[0]
+        return "".join(chunks).strip()
+
+    @staticmethod
+    def _next_stream_chunk(streamer: Any) -> tuple[bool, str]:
+        try:
+            return False, next(streamer)
+        except StopIteration:
+            return True, ""
 
     async def generate_complete_json(
         self,

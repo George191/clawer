@@ -20,11 +20,23 @@ logger = get_logger(__name__)
 
 class StorageBackend(abc.ABC):
     @abc.abstractmethod
-    async def save_record(self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any]) -> str:
+    async def save_record(
+        self,
+        template_name: str,
+        data_type: str,
+        dedup_fields: list[str],
+        record: dict[str, Any],
+    ) -> str:
         ...
 
     @abc.abstractmethod
-    async def save_records(self, template_name: str, data_type: str, dedup_fields: list[str], records: list[dict[str, Any]]) -> list[str]:
+    async def save_records(
+        self,
+        template_name: str,
+        data_type: str,
+        dedup_fields: list[str],
+        records: list[dict[str, Any]],
+    ) -> list[str]:
         ...
 
     @abc.abstractmethod
@@ -32,7 +44,7 @@ class StorageBackend(abc.ABC):
         self,
         template_name: str,
         data_type: str,
-        dedup_fields: list[str],
+        record_id: str,
         file_url: str,
         download_status: str,
     ) -> None:
@@ -43,7 +55,7 @@ class StorageBackend(abc.ABC):
         self,
         template_name: str,
         data_type: str,
-        dedup_fields: list[str],
+        record_id: str,
         sync_status: str,
     ) -> None:
         ...
@@ -53,7 +65,7 @@ class StorageBackend(abc.ABC):
         self,
         template_name: str,
         data_type: str,
-        dedup_fields: list[str],
+        record_id: str,
         updates: dict[str, Any],
     ) -> None:
         ...
@@ -95,7 +107,13 @@ class FileStorage(StorageBackend):
         content = json.dumps(record, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(content.encode()).hexdigest()
 
-    async def save_record(self, template_name: str, data_type: str, record: dict[str, Any]) -> str:
+    async def save_record(
+        self,
+        template_name: str,
+        data_type: str,
+        dedup_fields: list[str],
+        record: dict[str, Any],
+    ) -> str:
         record_dir = self._get_record_dir(template_name, data_type)
         record_id = self._resolve_record_id(record)
         file_path = record_dir / f"{record_id}.json"
@@ -122,11 +140,15 @@ class FileStorage(StorageBackend):
         return str(file_path)
 
     async def save_records(
-        self, template_name: str, data_type: str, records: list[dict[str, Any]]
+        self,
+        template_name: str,
+        data_type: str,
+        dedup_fields: list[str],
+        records: list[dict[str, Any]],
     ) -> list[str]:
         paths: list[str] = []
         for record in records:
-            path = await self.save_record(template_name, data_type, record)
+            path = await self.save_record(template_name, data_type, dedup_fields, record)
             paths.append(path)
         logger.info("Saved %d records for %s/%s", len(paths), template_name, data_type)
         return paths

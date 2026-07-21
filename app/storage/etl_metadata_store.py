@@ -9,7 +9,6 @@ from sqlalchemy import text
 
 from app.etl.table_layout import (
     META_SCHEMA_NAME,
-    RDS_CURRENT_HASH_PARTITION_COLUMN,
     default_table_layout,
     logical_table_name,
     normalize_table_role,

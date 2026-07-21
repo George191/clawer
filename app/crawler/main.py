@@ -282,6 +282,7 @@ async def run_from_list_file_stream(
     limit: Optional[int] = None,
     delay: float = 0,
     batch_size: int = 100,
+    resume: bool = False,
 ) -> None:
     """
     使用流式方式从list-file批量读取并采集，每批 batch_size 条。
@@ -294,20 +295,28 @@ async def run_from_list_file_stream(
         limit: 最大处理数量
         delay: 请求延迟
         batch_size: 每批处理数量（默认 100）
+        resume: 是否从 Redis 中仍在执行的批次断点恢复
     """
     from app.config.settings import settings
+    from app.crawler.checkpoint import BatchCheckpoint, BatchCheckpointStore
 
     loader = TemplateLoader()
     engine = SpiderEngine()
     success_count = 0
     fail_count = 0
     batch_count = 0
+    default_start_page = 1
+    checkpoint_store = BatchCheckpointStore(
+        template_name, file_path, param_name, start_line, limit
+    )
 
     # 预加载模板以获取适配器类（用于批次参数拼接）
     adapter_cls = GenericAdapter
     try:
         tmpl_meta = loader.load(template_name, validate_params=False)
         adapter_cls = get_adapter_class(tmpl_meta.adapter)
+        if tmpl_meta.list_pagination:
+            default_start_page = tmpl_meta.list_pagination.start_page
         logger.info(f"预加载模板 '{template_name}'，适配器: {adapter_cls.__name__}")
     except FileNotFoundError:
         logger.warning(f"模板 '{template_name}' 未找到，回退到 GenericAdapter")
@@ -315,6 +324,7 @@ async def run_from_list_file_stream(
         logger.warning(f"预加载模板元信息失败 ({e})，回退到 GenericAdapter")
     
     try:
+        await checkpoint_store.connect()
         reader = BatchParamReader(
             file_path=file_path,
             param_name=param_name,
@@ -344,6 +354,39 @@ async def run_from_list_file_stream(
         if batch_count == 0:
             logger.info("没有数据需要处理")
             return
+
+        batches_by_range = {
+            (batch_start, batch_end): batch_data
+            for batch_data, batch_start, batch_end in all_batches
+        }
+        resume_pages: dict[tuple[int, int], int] = {}
+        if resume:
+            saved = await checkpoint_store.load()
+            valid = [
+                item for item in saved
+                if (item.start_line, item.end_line) in batches_by_range
+            ]
+            if valid:
+                last_assigned_line = max(item.end_line for item in valid)
+                resume_pages = {
+                    (item.start_line, item.end_line): item.current_page
+                    for item in valid
+                }
+                all_batches = [
+                    batch for batch in all_batches
+                    if (batch[1], batch[2]) in resume_pages
+                    or batch[1] > last_assigned_line
+                ]
+                logger.info(
+                    "恢复 %d 个中断批次，并从第 %d 行后继续分配新批次",
+                    len(valid), last_assigned_line,
+                )
+            else:
+                logger.info("未找到可恢复的 Redis checkpoint，从指定起始行执行")
+        else:
+            await checkpoint_store.clear()
+
+        batch_count = len(all_batches)
         
         logger.info(f"找到 {batch_count} 个批次，启动并发采集，max_concurrent_tasks={settings.max_concurrent_tasks}")
         
@@ -366,9 +409,36 @@ async def run_from_list_file_stream(
                     f"共 {len(batch_data)} 条: {batch_data[0]}...{batch_data[-1]}"
                 )
                 
+                checkpoint = BatchCheckpoint(
+                    start_line=start_line_num,
+                    end_line=end_line_num,
+                    current_page=resume_pages.get(
+                        (start_line_num, end_line_num),
+                        default_start_page,
+                    ),
+                )
+                await checkpoint_store.save(checkpoint)
+
+                async def _record_page(page: int) -> None:
+                    await checkpoint_store.save(BatchCheckpoint(
+                        start_line=start_line_num,
+                        end_line=end_line_num,
+                        current_page=page,
+                    ))
+
                 try:
                     tmpl = loader.load(template_name, param_values=params)
-                    result = await engine.crawl(tmpl)
+                    tmpl._crawl_context = {
+                        "task_id": checkpoint.task_id,
+                        "batch_index": idx + 1,
+                        "batch_count": batch_count,
+                        "start_line": start_line_num,
+                        "end_line": end_line_num,
+                        "batch_size": len(batch_data),
+                    }
+                    result = await engine.crawl_from_page(
+                        tmpl, checkpoint.current_page, _record_page
+                    )
                     
                     if result.success:
                         logger.info(f"[OK] 批次 {idx + 1} 成功")
@@ -379,6 +449,8 @@ async def run_from_list_file_stream(
                 except Exception as e:
                     logger.exception(f"[ERROR] 批次 {idx + 1} 异常: {e}")
                     return -len(batch_data)
+                finally:
+                    await checkpoint_store.delete(checkpoint.task_id)
         
         # 创建所有任务，带错峰启动避免并发洪峰
         async def _staggered_worker(batch_data, start_line_num, end_line_num, idx, launch_delay):
@@ -418,6 +490,7 @@ async def run_from_list_file_stream(
     
     finally:
         await engine.close()
+        await checkpoint_store.close()
 
 
 async def run_from_command_line(
@@ -595,6 +668,11 @@ def main() -> None:
         type=int,
         help="Start crawling list pages from this page number",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume interrupted list-file batches from Redis checkpoints",
+    )
     
     args = parser.parse_args()
     
@@ -625,6 +703,7 @@ def main() -> None:
             limit=args.limit,
             delay=args.delay,
             batch_size=args.batch_size,
+            resume=args.resume,
         ))
     else:
         # 处理其他参数（--template, --param-file）

@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
+from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any
 
@@ -74,10 +74,8 @@ class KafkaProducer:
             except retryable as e:
                 self._connected = False
                 if self._producer is not None:
-                    try:
+                    with suppress(Exception):
                         await self._producer.stop()
-                    except Exception:
-                        pass
                     self._producer = None
 
                 delay = min(KAFKA_CONNECT_RETRY_WAIT * (2 ** min(attempt, 5)), KAFKA_CONNECT_MAX_RETRY_DELAY)
@@ -91,10 +89,8 @@ class KafkaProducer:
             except Exception as e:
                 self._connected = False
                 if self._producer is not None:
-                    try:
+                    with suppress(Exception):
                         await self._producer.stop()
-                    except Exception:
-                        pass
                     self._producer = None
                 logger.error("Failed to connect to Kafka: %s", e)
                 raise

@@ -1785,6 +1785,14 @@ const AICollect: React.FC = () => {
     }
 
     if (messagePayload.type === 'analyze_model') {
+      if (data.kind === 'template_delta') {
+        const templateYaml = typeof data.templateYaml === 'string' ? data.templateYaml : '';
+        if (!templateYaml.trim()) return;
+        setWorkspaceTemplateYaml(templateYaml);
+        setTemplateDraftEntries(parseTemplateEntries(templateYaml));
+        setTemplateValueDrafts({});
+        return;
+      }
       const content = typeof data.content === 'string'
         ? data.content
         : JSON.stringify(data);
@@ -1819,6 +1827,16 @@ const AICollect: React.FC = () => {
         appendAnalysisFeed({ kind: 'error', step: 'fetch_page', content: warning });
         pushLiveLog(`[preflight warning] ${warning}`);
       });
+      return;
+    }
+
+    if (messagePayload.type === 'analyze_template_key') {
+      const templateYaml = typeof data.templateYaml === 'string' ? data.templateYaml : '';
+      if (!templateYaml) return;
+      setWorkspaceTemplateYaml(templateYaml);
+      setTemplateDraftEntries(parseTemplateEntries(templateYaml));
+      setTemplateValueDrafts({});
+      pushLiveLog(`[generate_template] analyzed key: ${String(data.key ?? '')}`);
       return;
     }
 
@@ -3863,9 +3881,9 @@ const AICollect: React.FC = () => {
       return result;
     }, []);
     const templateStagesByAnalyzeStep: Partial<Record<string, TemplateStageId[]>> = {
-      fetch_page: ['site', 'request', 'response'],
-      analyze_structure: ['pagination', 'fields', 'dedup'],
-      generate_template: ['download'],
+      fetch_page: [],
+      analyze_structure: [],
+      generate_template: templateStageOrder,
     };
     const modelGroups = groups.filter((group) => group.step in templateStagesByAnalyzeStep);
     const formatDuration = (durationMs: number) => {

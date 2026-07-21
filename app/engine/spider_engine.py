@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from app.adapters import get_adapter
@@ -67,6 +68,7 @@ class CrawlResult:
         self.template_name = template_name
         self.data_type = data_type
         self.records: list[dict[str, Any]] = []
+        self.saved_records = 0
         self.downloaded_files: list[str] = []
         self.errors: list[str] = []
 
@@ -83,6 +85,7 @@ class CrawlResult:
             "template": self.template_name,
             "data_type": self.data_type,
             "total_records": self.total,
+            "saved_records": self.saved_records,
             "downloaded_files": len(self.downloaded_files),
             "errors": self.errors,
             "success": self.success,
@@ -107,13 +110,18 @@ class SpiderEngine:
         template: SiteTemplate,
         records: list[dict[str, Any]],
         result: CrawlResult,
-    ) -> None:
+    ) -> int:
         search_params = getattr(template, "_param_values", None) or {}
         if search_params:
             for record in records:
                 record["_meta_search_params"] = search_params
-        await self._storage.save_records(template.name, template.data_type, template.dedup_fields, records)
+        record_ids = await self._storage.save_records(
+            template.name, template.data_type, template.dedup_fields, records
+        )
         result.records.extend(records)
+        saved_count = len(record_ids)
+        result.saved_records += saved_count
+        return saved_count
 
     async def crawl(self, template: SiteTemplate) -> CrawlResult:
         return await self.crawl_from_page(template, None)
@@ -122,6 +130,7 @@ class SpiderEngine:
         self,
         template: SiteTemplate,
         resume_page: int | None,
+        progress_callback: Callable[[int], Awaitable[None]] | None = None,
     ) -> CrawlResult:
         result = CrawlResult(template.name, template.data_type)
 
@@ -145,7 +154,7 @@ class SpiderEngine:
                 logger.info("Pre-hooks completed, context: %s", list(hook_context.keys()))
 
             list_records = await self._crawl_list_pages(
-                template, result, resume_page
+                template, result, resume_page, progress_callback
             )
 
             result.records = list_records
@@ -165,15 +174,21 @@ class SpiderEngine:
     async def _crawl_list_pages(
         self, template: SiteTemplate, result: CrawlResult,
         resume_page: int | None = None,
+        progress_callback: Callable[[int], Awaitable[None]] | None = None,
     ) -> list[dict[str, Any]]:
         if template.response_type == ResponseType.JSON:
-            return await self._crawl_list_pages_json(template, result, resume_page)
-        return await self._crawl_list_pages_html(template, result, resume_page)
+            return await self._crawl_list_pages_json(
+                template, result, resume_page, progress_callback
+            )
+        return await self._crawl_list_pages_html(
+            template, result, resume_page, progress_callback
+        )
 
 
     async def _crawl_list_pages_html(
         self, template: SiteTemplate, result: CrawlResult,
         resume_page: int | None = None,
+        progress_callback: Callable[[int], Awaitable[None]] | None = None,
     ) -> list[dict[str, Any]]:
         all_records: list[dict[str, Any]] = []
         page = resume_page if resume_page is not None else (
@@ -194,6 +209,8 @@ class SpiderEngine:
         current_page = page
 
         while not has_page_cap or pages_crawled < max_pages:
+            if progress_callback is not None:
+                await progress_callback(current_page)
             is_first = (current_page == page)
             page_succeeded = False
             page_skipped = False
@@ -294,6 +311,7 @@ class SpiderEngine:
     async def _crawl_list_pages_json(
         self, template: SiteTemplate, result: CrawlResult,
         resume_page: int | None = None,
+        progress_callback: Callable[[int], Awaitable[None]] | None = None,
     ) -> list[dict[str, Any]]:
         all_records: list[dict[str, Any]] = []
         start_page = resume_page if resume_page is not None else (
@@ -312,10 +330,17 @@ class SpiderEngine:
         has_page_cap = config_max_pages > 0
         dynamic_pages: int | float = config_max_pages if has_page_cap else float("inf")
 
-        adapter = get_adapter(template.adapter, template.base_url, self._client)
+        adapter = get_adapter(
+            template.adapter,
+            template.base_url,
+            self._client,
+            crawl_context=template._crawl_context,
+        )
         await adapter.on_before_crawl(template)
 
         # ── Phase 1: 获取第一页，确定总页数 ─────────────────────────
+        if progress_callback is not None:
+            await progress_callback(start_page)
         page1, records1, total_records, total_pages_from_api, abort = await self._fetch_page_json(
             template, start_page, adapter, results_per_page, item_path,
             is_first=True, result=result,
@@ -352,7 +377,15 @@ class SpiderEngine:
         _init_enhancements()
         all_records.extend(records1)
         if records1:
-            await self._save_page_records(template, records1, result)
+            saved_count = await self._save_page_records(template, records1, result)
+            await adapter.on_records_saved(
+                page1,
+                1,
+                dynamic_pages,
+                len(records1),
+                saved_count,
+                result.saved_records,
+            )
 
         logger.info(
             "Page %d/%s: found %d records%s (cumulative: %d)",
@@ -376,9 +409,13 @@ class SpiderEngine:
 
         if known_total:
             # 已知总页数：一次性计算所有剩余页面并分批并行获取
-            remaining_pages = list(range(start_page + 1, start_page + int(dynamic_pages)))
+            configured_start_page = template.list_pagination.start_page
+            end_page = configured_start_page + int(dynamic_pages)
+            remaining_pages = list(range(start_page + 1, end_page))
             for batch_start in range(0, len(remaining_pages), page_concurrency):
                 batch = remaining_pages[batch_start:batch_start + page_concurrency]
+                if progress_callback is not None:
+                    await progress_callback(batch[0])
                 await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
                     start_page, dynamic_pages, result, all_records
@@ -388,6 +425,8 @@ class SpiderEngine:
             current = start_page + 1
             while True:
                 batch = list(range(current, current + page_concurrency))
+                if progress_callback is not None:
+                    await progress_callback(batch[0])
                 should_stop = await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
                     start_page, dynamic_pages, result, all_records
@@ -540,7 +579,15 @@ class SpiderEngine:
 
             all_records.extend(records)
             if records:
-                await self._save_page_records(template, records, result)
+                saved_count = await self._save_page_records(template, records, result)
+                await adapter.on_records_saved(
+                    p,
+                    p - start_page + 1,
+                    dynamic_pages,
+                    len(records),
+                    saved_count,
+                    result.saved_records,
+                )
 
             logger.info(
                 "Page %d/%s: found %d records (cumulative: %d)",

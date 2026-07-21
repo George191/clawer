@@ -105,7 +105,7 @@ class MongoStorage(StorageBackend):
             return False
         if isinstance(value, str):
             return bool(value.strip())
-        if isinstance(value, (list, dict, set, tuple)):
+        if isinstance(value, list | dict | set | tuple):
             return len(value) > 0
         return True
 

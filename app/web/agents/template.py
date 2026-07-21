@@ -226,10 +226,43 @@ class TemplateAgent(BaseAgent):
             reference_templates=json.dumps(reference_templates, ensure_ascii=False, indent=2),
         )
 
-        response = await self.generate(prompt, max_tokens=8192)
+        streamed_response: list[str] = []
+
+        def emit_chunk(chunk: str) -> None:
+            streamed_response.append(chunk)
+            if on_event:
+                on_event({
+                    "kind": "template_delta",
+                    "content": chunk,
+                    "templateYaml": self._extract_streaming_yaml("".join(streamed_response)),
+                })
+
+        response = await self.generate(
+            prompt,
+            max_tokens=8192,
+            on_chunk=emit_chunk if on_event else None,
+        )
         if on_event:
             on_event({"kind": "output", "attempt": 1, "content": response})
         return self._extract_yaml(response)
+
+    @staticmethod
+    def _extract_streaming_yaml(response: str) -> str:
+        fence = re.search(r"```(?:yaml|yml)?\s*", response, re.IGNORECASE)
+        if fence:
+            yaml_text = response[fence.end():]
+        else:
+            first_key = re.search(
+                r"(?m)^(?:name|display_name|base_url|data_type|adapter|params|response_type|list_page)\s*:",
+                response,
+            )
+            if not first_key:
+                return ""
+            yaml_text = response[first_key.start():]
+        closing_fence = yaml_text.find("```")
+        if closing_fence >= 0:
+            yaml_text = yaml_text[:closing_fence]
+        return yaml_text.rstrip()
 
     @staticmethod
     def _reference_template_summaries(data_type: str) -> list[dict[str, Any]]:

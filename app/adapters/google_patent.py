@@ -59,7 +59,16 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。参数值已在 main.py 中组装完毕（+OR+ 拼接），无需额外处理。"""
-        return 
+        context = self._crawl_context
+        logger.info(
+            "Task %s batch %s/%s lines %s-%s items=%s starting",
+            context.get("task_id", "standalone"),
+            context.get("batch_index", 1),
+            context.get("batch_count", 1),
+            context.get("start_line", "-"),
+            context.get("end_line", "-"),
+            context.get("batch_size", 1),
+        )
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前：发送翻页信令。
@@ -98,6 +107,29 @@ class GooglePatentAdapter(BaseSiteAdapter):
         #     )
         # return filtered
         return records
+
+    async def on_records_saved(
+        self,
+        page: int,
+        page_number: int,
+        total_pages: int | float,
+        fetched_count: int,
+        saved_count: int,
+        cumulative_saved: int,
+    ) -> None:
+        """记录每页抓取及持久化结果。"""
+        logger.info(
+            "Task %s batch %s/%s page %d/%s (api_page=%d): fetched=%d, saved=%d, cumulative_saved=%d",
+            self._crawl_context.get("task_id", "standalone"),
+            self._crawl_context.get("batch_index", 1),
+            self._crawl_context.get("batch_count", 1),
+            page_number,
+            total_pages,
+            page,
+            fetched_count,
+            saved_count,
+            cumulative_saved,
+        )
 
     def on_page_advance(self) -> None:
         """翻页状态推进：peid 继承 eid，生成新 eid。"""

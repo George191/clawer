@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError

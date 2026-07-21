@@ -93,6 +93,7 @@ class BaseSiteAdapter:
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._client = http_client or HttpClient()
+        self._crawl_context = kwargs.get("crawl_context", {})
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。子类覆盖。"""
@@ -105,6 +106,18 @@ class BaseSiteAdapter:
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """每页数据返回后。子类覆盖。"""
         return records
+
+    async def on_records_saved(
+        self,
+        page: int,
+        page_number: int,
+        total_pages: int | float,
+        fetched_count: int,
+        saved_count: int,
+        cumulative_saved: int,
+    ) -> None:
+        """每页记录持久化成功后。子类覆盖。"""
+        pass
 
     async def parse_list_response(
         self,
