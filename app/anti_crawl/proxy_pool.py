@@ -185,6 +185,8 @@ class ProxyPool:
             self._proxies.clear()
             self._healthy.clear()
             self._unhealthy.clear()
+            self._adapter_failures.clear()
+            self._current_proxy = None
             self._index = 0
             self._loaded = False
             await self._load_from_adapters()
@@ -365,6 +367,18 @@ class ProxyPool:
             if adapter_name not in self._adapter_failures.get(p.url, set())
         ]
 
+        if not candidates:
+            logger.warning(
+                "No proxy available for adapter %s after adapter-specific failures; reloading shared pool...",
+                adapter_name or "<unknown>",
+            )
+            await self.reload()
+            candidates = [
+                p
+                for p in self._healthy
+                if adapter_name not in self._adapter_failures.get(p.url, set())
+            ]
+
         # 优先选择未被其他协程使用的健康代理
         available = [p for p in candidates if p.url not in in_use]
         if available:
@@ -379,7 +393,7 @@ class ProxyPool:
         # 所有代理都在使用中，回退到轮询（同一代理可能被多协程共享）
         if not candidates:
             logger.warning(
-                "No proxy available for adapter %s after adapter-specific failures",
+                "Still no proxy available for adapter %s after shared pool reload",
                 adapter_name or "<unknown>",
             )
             return None

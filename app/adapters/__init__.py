@@ -119,6 +119,15 @@ class BaseSiteAdapter:
         """每页记录持久化成功后。子类覆盖。"""
         pass
 
+    async def on_pagination_resolved(
+        self,
+        total_records: int,
+        results_per_page: int,
+        total_pages: int | float,
+    ) -> None:
+        """分页总量确定后。子类覆盖。"""
+        pass
+
     async def parse_list_response(
         self,
         page: int,

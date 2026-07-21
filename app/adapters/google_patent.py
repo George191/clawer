@@ -59,16 +59,7 @@ class GooglePatentAdapter(BaseSiteAdapter):
 
     async def on_before_crawl(self, template: Any) -> None:
         """采集开始前。参数值已在 main.py 中组装完毕（+OR+ 拼接），无需额外处理。"""
-        context = self._crawl_context
-        logger.info(
-            "Task %s batch %s/%s lines %s-%s items=%s starting",
-            context.get("task_id", "standalone"),
-            context.get("batch_index", 1),
-            context.get("batch_count", 1),
-            context.get("start_line", "-"),
-            context.get("end_line", "-"),
-            context.get("batch_size", 1),
-        )
+        return
 
     async def on_before_page(self, page: int, is_first: bool) -> None:
         """请求每页数据前：发送翻页信令。
@@ -119,16 +110,30 @@ class GooglePatentAdapter(BaseSiteAdapter):
     ) -> None:
         """记录每页抓取及持久化结果。"""
         logger.info(
-            "Task %s batch %s/%s page %d/%s (api_page=%d): fetched=%d, saved=%d, cumulative_saved=%d",
+            "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
             self._crawl_context.get("task_id", "standalone"),
             self._crawl_context.get("batch_index", 1),
             self._crawl_context.get("batch_count", 1),
             page_number,
             total_pages,
-            page,
             fetched_count,
             saved_count,
             cumulative_saved,
+        )
+
+    async def on_pagination_resolved(
+        self,
+        total_records: int,
+        results_per_page: int,
+        total_pages: int | float,
+    ) -> None:
+        """记录 Google Patents 返回的动态分页信息。"""
+        logger.info(
+            "task=%s pagination: total=%d, per_page=%d, need %s pages",
+            self._crawl_context.get("task_id", "standalone"),
+            total_records,
+            results_per_page,
+            total_pages,
         )
 
     def on_page_advance(self) -> None:

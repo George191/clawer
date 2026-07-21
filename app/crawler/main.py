@@ -429,7 +429,7 @@ async def run_from_list_file_stream(
                 try:
                     tmpl = loader.load(template_name, param_values=params)
                     tmpl._crawl_context = {
-                        "task_id": checkpoint.task_id,
+                        "task_id": id(asyncio.current_task()),
                         "batch_index": idx + 1,
                         "batch_count": batch_count,
                         "start_line": start_line_num,

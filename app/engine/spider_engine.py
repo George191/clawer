@@ -363,6 +363,11 @@ class SpiderEngine:
                 total_records, results_per_page, dynamic_pages,
                 f" (capped at {config_max_pages})" if has_page_cap else "",
             )
+            await adapter.on_pagination_resolved(
+                total_records,
+                results_per_page,
+                dynamic_pages,
+            )
         elif total_pages_from_api is not None:
             dynamic_pages = total_pages_from_api
             if has_page_cap:
@@ -388,9 +393,14 @@ class SpiderEngine:
             )
 
         logger.info(
-            "Page %d/%s: found %d records%s (cumulative: %d)",
+            "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
+            template._crawl_context.get("page_task_ids", {}).get(
+                page1, template._crawl_context.get("task_id", "standalone")
+            ),
+            template._crawl_context.get("batch_index", 1),
+            template._crawl_context.get("batch_count", 1),
             1, dynamic_pages,
-            len(records1), total_for_log, len(all_records),
+            len(records1), saved_count if records1 else 0, result.saved_records,
         )
 
         # 第一页终止条件
@@ -461,6 +471,9 @@ class SpiderEngine:
 
         for attempt in self._retry_loop():
             try:
+                template._crawl_context.setdefault("page_task_ids", {})[page] = id(
+                    asyncio.current_task()
+                )
                 await adapter.on_before_page(page, is_first)
 
                 _session = getattr(adapter, "_session", None)
@@ -578,6 +591,7 @@ class SpiderEngine:
                 continue
 
             all_records.extend(records)
+            saved_count = 0
             if records:
                 saved_count = await self._save_page_records(template, records, result)
                 await adapter.on_records_saved(
@@ -590,8 +604,17 @@ class SpiderEngine:
                 )
 
             logger.info(
-                "Page %d/%s: found %d records (cumulative: %d)",
-                p - start_page + 1, dynamic_pages, len(records), len(all_records),
+                "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
+                template._crawl_context.get("page_task_ids", {}).get(
+                    p, template._crawl_context.get("task_id", "standalone")
+                ),
+                template._crawl_context.get("batch_index", 1),
+                template._crawl_context.get("batch_count", 1),
+                p - start_page + 1,
+                dynamic_pages,
+                len(records),
+                saved_count,
+                result.saved_records,
             )
 
             if not records or len(records) < results_per_page:

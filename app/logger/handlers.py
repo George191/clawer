@@ -49,6 +49,11 @@ class AsyncDailyAdapterFileHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if record.levelno != logging.INFO:
             return
+        if (
+            getattr(record, "adapter_kind", None) != self.adapter_kind
+            or getattr(record, "adapter_name", None) != self.adapter_name
+        ):
+            return
         try:
             message = self.format(record)
         except Exception:
