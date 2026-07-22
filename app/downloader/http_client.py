@@ -14,7 +14,7 @@ import asyncio
 import random
 from pathlib import Path
 
-from curl_cffi import requests as curl_requests
+from curl_cffi import CurlOpt, requests as curl_requests
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -71,6 +71,7 @@ class HttpClient:
         self,
         proxy_url: str | None = None,
         no_timeout: bool = False,
+        pre_proxy_url: str | None = None,
     ) -> curl_requests.AsyncSession:
         session_kwargs: dict = {
             "impersonate": "chrome120",
@@ -83,6 +84,8 @@ class HttpClient:
         if settings.http_interface:
             session_kwargs["interface"] = settings.http_interface
             logger.debug("Binding to network interface: %s", settings.http_interface)
+        if proxy_url and pre_proxy_url:
+            session_kwargs["curl_options"] = {CurlOpt.PRE_PROXY: pre_proxy_url}
         return curl_requests.AsyncSession(**session_kwargs)
 
     async def _before_request(
@@ -204,6 +207,7 @@ class HttpClient:
 
         # ── 代理选择：隧道代理 > 协程独立代理 > 代理池 ──────────
         proxy_url = None
+        pre_proxy_url = None
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
 
         if force_direct:
@@ -211,6 +215,7 @@ class HttpClient:
         elif settings.tunnel_proxy_url:
             proxy_url = settings.tunnel_proxy_url
         elif _proxy_pool is not None and _proxy_pool.enabled and use_anti_crawl:
+            pre_proxy_url = settings.proxy_pre_proxy_url or None
             lock = await self._get_lease_lock()
             async with lock:
                 if task_id in self._leased_proxies:
@@ -228,7 +233,11 @@ class HttpClient:
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
-        async with await self._create_client(proxy_url, no_timeout=no_timeout) as client:
+        async with await self._create_client(
+            proxy_url,
+            no_timeout=no_timeout,
+            pre_proxy_url=pre_proxy_url,
+        ) as client:
             try:
                 request_kwargs = dict(
                     method=config.method,
@@ -333,11 +342,13 @@ class HttpClient:
 
         # ── 代理选择：隧道代理 > 代理池 ──────────────────────────
         proxy_url = None
+        pre_proxy_url = None
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
 
         if settings.tunnel_proxy_url:
             proxy_url = settings.tunnel_proxy_url
         elif _proxy_pool is not None and _proxy_pool.enabled:
+            pre_proxy_url = settings.proxy_pre_proxy_url or None
             lock = await self._get_lease_lock()
             async with lock:
                 if task_id in self._leased_proxies:
@@ -350,7 +361,10 @@ class HttpClient:
         logger.info("Downloading bytes: %s with proxy: %s", url, proxy_url or "None")
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
-        async with await self._create_client(proxy_url) as client:
+        async with await self._create_client(
+            proxy_url,
+            pre_proxy_url=pre_proxy_url,
+        ) as client:
             try:
                 stream_kwargs = dict(
                     method=config.method or "GET",

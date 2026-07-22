@@ -88,6 +88,10 @@ class AppSettings(BaseSettings):
         default="", 
         description="隧道代理URL, 格式: http://user:pass@host:port, 配置后优先使用"
     )
+    proxy_pre_proxy_url: str = Field(
+        default="",
+        description="代理池前置代理URL, 例如 socks5h://127.0.0.1:1080",
+    )
 
     # Proxy Pool
     proxy_pool_file: str = Field(default="", description="代理列表文件路径, 每行一个代理URL")
