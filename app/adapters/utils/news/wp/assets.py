@@ -218,7 +218,7 @@ async def fetch_wp_media_url(
     media_id: int,
     cache: dict[int, str],
     adapter_name: str | None = None,
-) -> str:
+) -> Any:
     """Fetch a WordPress media URL by ID."""
     if not media_id:
         return ""
@@ -254,15 +254,15 @@ async def enrich_cover_images_batch(
         return
 
     async def _fetch_one(record: dict[str, Any], media_id: int) -> None:
-        cover_url = await fetch_wp_media_url(
+        cover_obj = await fetch_wp_media_url(
             client,
             base_url,
             media_id,
             cache,
             adapter_name,
         )
-        if cover_url:
-            record["featured_media"] = cover_url
+        if cover_obj:
+            record["featured_media"] = cover_obj
 
     await asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending))
 

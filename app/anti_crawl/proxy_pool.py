@@ -18,8 +18,6 @@ import random
 import time
 from typing import Optional
 
-from curl_cffi import requests as curl_requests
-
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
 from app.config.settings import settings
 from app.logger import get_logger
@@ -384,16 +382,21 @@ class ProxyPool:
             return
 
         async with self._lock:
-            if adapter_name:
-                self._adapter_failures.setdefault(proxy_url, set()).add(adapter_name)
-            else:
-                # 无适配器上下文的调用继续按全局代理故障处理。
-                if self._current_proxy and self._current_proxy.url == proxy_url:
-                    logger.debug("Clearing sticky proxy due to failure: %s", proxy_url)
-                    self._current_proxy = None
+            self._adapter_failures.pop(proxy_url, None)
 
-                for proxy_list in [self._proxies, self._healthy, self._unhealthy]:
-                    proxy_list[:] = [p for p in proxy_list if p.url != proxy_url]
+            # Failed proxies are removed immediately. Keep the recheck hook as
+            # a lightweight extension point without retaining stale proxies.
+            if self._current_proxy and self._current_proxy.url == proxy_url:
+                logger.debug("Clearing sticky proxy due to failure: %s", proxy_url)
+                self._current_proxy = None
+
+            for proxy_list in [self._proxies, self._healthy, self._unhealthy]:
+                proxy_list[:] = [p for p in proxy_list if p.url != proxy_url]
+            self._leases = {
+                task_id: proxy
+                for task_id, proxy in self._leases.items()
+                if proxy.url != proxy_url
+            }
                 
             # 更新指标
             m = self._metrics.setdefault(proxy_url, {"success": 0, "failure": 0, "last_used": 0, "last_check": 0})
@@ -431,6 +434,10 @@ class ProxyPool:
 
         if not self._unhealthy:
             return
+
+        # Failed proxies are removed immediately; retain this hook for a
+        # future health probe without keeping stale entries in the pool.
+        return
 
     # ── 状态查询 ────────────────────────────────────────────────────────────
     def status(self) -> dict:

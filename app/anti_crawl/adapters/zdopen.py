@@ -7,15 +7,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import time
-from pathlib import Path
 from typing import Any
 
 from curl_cffi import requests as curl_requests
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
-from app.config.settings import settings
 from app.logger import get_adapter_logger
 
 logger = get_adapter_logger(__name__, "zdopen_api", "proxy")
@@ -102,7 +98,8 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
             return []
 
         api_url = self._build_api_url()
-        logger.info("Fetching proxies from API: %s", api_url)
+        # Do not log the URL: query parameters may contain app_id/akey.
+        logger.info("Fetching proxies from Zdopen API")
 
         wait_seconds = IP_IN_USE_WAIT_SECONDS
         retries = 0

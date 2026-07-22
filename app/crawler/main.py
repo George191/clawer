@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any, Generator, Optional
 
-from app.adapters import GenericAdapter, get_adapter_class
+from app.adapters import get_adapter_class
 from app.config.settings import settings
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
@@ -283,7 +283,7 @@ async def run_from_list_file_stream(
     delay: float = 0,
     batch_size: int = 100,
     resume: bool = False,
-) -> None:
+) -> bool:
     """
     使用流式方式从list-file批量读取并采集，每批 batch_size 条。
 
@@ -315,17 +315,11 @@ async def run_from_list_file_stream(
     )
 
     # 预加载模板以获取适配器类（用于批次参数拼接）
-    adapter_cls = GenericAdapter
-    try:
-        tmpl_meta = loader.load(template_name, validate_params=False)
-        adapter_cls = get_adapter_class(tmpl_meta.adapter)
-        if tmpl_meta.list_pagination:
-            default_start_page = tmpl_meta.list_pagination.start_page
-        logger.info(f"预加载模板 '{template_name}'，适配器: {adapter_cls.__name__}")
-    except FileNotFoundError:
-        logger.warning(f"模板 '{template_name}' 未找到，回退到 GenericAdapter")
-    except Exception as e:
-        logger.warning(f"预加载模板元信息失败 ({e})，回退到 GenericAdapter")
+    tmpl_meta = loader.load(template_name, validate_params=False)
+    adapter_cls = get_adapter_class(tmpl_meta.adapter)
+    if tmpl_meta.list_pagination:
+        default_start_page = tmpl_meta.list_pagination.start_page
+    logger.info(f"预加载模板 '{template_name}'，适配器: {adapter_cls.__name__}")
     
     try:
         await checkpoint_store.connect()
@@ -367,63 +361,38 @@ async def run_from_list_file_stream(
             )
             await checkpoint_store.save_run_state(run_state)
 
-        reader = BatchParamReader(
-            file_path=file_path,
-            param_name=param_name,
-            start_line=start_line,
-            limit=limit,
-        )
-        
-        batch: list[str] = []
-        batch_start_line = 0
-        all_batches = []
-        
-        # 首先收集所有批次
-        for value, line_num in reader.read():
-            if not batch:
-                batch_start_line = line_num
-            batch.append(value)
-            
-            if len(batch) >= batch_size:
-                all_batches.append((batch.copy(), batch_start_line, line_num))
-                batch = []
-        
-        # 处理剩余不足 batch_size 的数据
-        if batch:
-            all_batches.append((batch.copy(), batch_start_line, line_num))
-        
-        batch_count = len(all_batches)
-        if batch_count == 0:
-            logger.info("没有数据需要处理")
-            await checkpoint_store.clear()
-            return
+        def iter_batches():
+            reader = BatchParamReader(
+                file_path=file_path,
+                param_name=param_name,
+                start_line=start_line,
+                limit=limit,
+            )
+            batch: list[str] = []
+            batch_start_line = 0
+            for value, line_num in reader.read():
+                if not batch:
+                    batch_start_line = line_num
+                batch.append(value)
+                if len(batch) >= batch_size:
+                    yield batch, batch_start_line, line_num
+                    batch = []
+            if batch:
+                yield batch, batch_start_line, line_num
 
-        batches_by_range = {
-            (batch_start, batch_end): batch_data
-            for batch_data, batch_start, batch_end in all_batches
-        }
-        batch_indices = {
-            (batch_start, batch_end): idx
-            for idx, (_, batch_start, batch_end) in enumerate(all_batches)
-        }
+        saved = await checkpoint_store.load() if resume else []
+        saved_ranges = {(item.start_line, item.end_line) for item in saved}
+        valid_ranges: set[tuple[int, int]] = set()
+        batch_count = 0
         if resume:
-            saved = await checkpoint_store.load()
-            valid = [
-                item for item in saved
-                if (item.start_line, item.end_line) in batches_by_range
-            ]
-            active_ranges = {
-                (item.start_line, item.end_line) for item in valid
-            }
+            for _, batch_start, batch_end in iter_batches():
+                batch_count += 1
+                if (batch_start, batch_end) in saved_ranges:
+                    valid_ranges.add((batch_start, batch_end))
             last_assigned_line = max(
                 run_state.last_assigned_line,
-                max((item.end_line for item in valid), default=start_line - 1),
+                max((end for _, end in valid_ranges), default=start_line - 1),
             )
-            all_batches = [
-                batch for batch in all_batches
-                if (batch[1], batch[2]) in active_ranges
-                or batch[1] > last_assigned_line
-            ]
             if last_assigned_line != run_state.last_assigned_line:
                 run_state = CrawlRunState(
                     start_line=run_state.start_line,
@@ -432,33 +401,37 @@ async def run_from_list_file_stream(
                     last_assigned_line=last_assigned_line,
                 )
                 await checkpoint_store.save_run_state(run_state)
-            if valid:
-                logger.info(
-                    "重新采集 %d 个中断批次，并从第 %d 行后继续分配新批次",
-                    len(valid), last_assigned_line,
-                )
-            else:
-                logger.info("没有活动批次，从第 %d 行后继续", last_assigned_line)
-        scheduled_batch_count = len(all_batches)
+
+        else:
+            batch_count = sum(1 for _ in iter_batches())
+        if batch_count == 0:
+            logger.info("没有数据需要处理")
+            await checkpoint_store.clear()
+            return True
+
+        if resume:
+            logger.info(
+                "重新采集 %d 个中断批次，并从第 %d 行后继续分配新批次",
+                len(valid_ranges), last_assigned_line,
+            )
         
         logger.info(
-            "计划执行 %d/%d 个批次，max_concurrent_tasks=%d",
-            scheduled_batch_count,
+            "参数文件包含 %d 个批次，max_concurrent_tasks=%d",
             batch_count,
             settings.max_concurrent_tasks,
         )
         
         # 创建信号量控制并发
-        semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
         run_state_lock = asyncio.Lock()
-        tasks = []
+        pending: set[asyncio.Task[int]] = set()
+        concurrency = max(1, settings.max_concurrent_tasks)
+        semaphore = asyncio.Semaphore(concurrency)
         
         # 错峰启动: 每个 task 依次延迟启动，避免 N 个协程同一瞬间打向服务器
         stagger = max(delay, 1.0) if delay > 0 else 1.0
         logger.info(
-            "错峰启动: 每批间隔 %.1fs，全部启动预计 %.1fs",
+            "错峰启动: 每批间隔 %.1fs",
             stagger,
-            stagger * max(scheduled_batch_count - 1, 0),
         )
         
         async def _worker(batch_data: list[str], start_line_num: int, end_line_num: int, idx: int) -> int:
@@ -523,35 +496,44 @@ async def run_from_list_file_stream(
                     logger.exception(f"[ERROR] 批次 {idx + 1} 异常: {e}")
                     return -len(batch_data)
         
-        # 创建所有任务，带错峰启动避免并发洪峰
-        async def _staggered_worker(batch_data, start_line_num, end_line_num, idx, launch_delay):
-            """先等待错峰延迟，再执行实际采集。"""
-            if launch_delay > 0:
-                await asyncio.sleep(launch_delay)
-            return await _worker(batch_data, start_line_num, end_line_num, idx)
-        
-        for launch_idx, (batch_data, start_line_num, end_line_num) in enumerate(all_batches):
-            idx = batch_indices[(start_line_num, end_line_num)]
-            task = _staggered_worker(
-                batch_data, start_line_num, end_line_num, idx,
-                launch_delay=launch_idx * stagger,
-            )
-            tasks.append(task)
-        
-        # 使用 asyncio.gather 并发执行所有任务
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # 统计结果
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error(f"批次异常: {result}")
-                fail_count += 1
-            elif result > 0:
-                success_count += result
-            else:
-                fail_count += abs(result)
+        async def _safe_worker(batch_data, start_line_num, end_line_num, idx):
+            try:
+                return await _worker(batch_data, start_line_num, end_line_num, idx)
+            except Exception as e:
+                logger.exception(f"[ERROR] 批次 {idx + 1} 异常: {e}")
+                return -len(batch_data)
+
+        def collect_results(done: set[asyncio.Task[int]]) -> None:
+            nonlocal success_count, fail_count
+            for task in done:
+                result = task.result()
+                if result > 0:
+                    success_count += result
+                else:
+                    fail_count += abs(result)
+
+        launch_idx = 0
+        for idx, (batch_data, start_line_num, end_line_num) in enumerate(iter_batches()):
+            if resume and (start_line_num, end_line_num) not in valid_ranges and start_line_num <= last_assigned_line:
+                continue
+            if launch_idx:
+                await asyncio.sleep(stagger)
+            pending.add(asyncio.create_task(
+                _safe_worker(batch_data, start_line_num, end_line_num, idx)
+            ))
+            launch_idx += 1
+            if len(pending) >= concurrency:
+                done, pending = await asyncio.wait(
+                    pending, return_when=asyncio.FIRST_COMPLETED
+                )
+                collect_results(done)
+
+        if pending:
+            done, _ = await asyncio.wait(pending)
+            collect_results(done)
         
         logger.info("=" * 80)
+        success = fail_count == 0
         if fail_count == 0:
             await checkpoint_store.clear()
         logger.info(
@@ -559,9 +541,11 @@ async def run_from_list_file_stream(
             f"成功: {success_count}, 失败: {fail_count}"
         )
         logger.info("=" * 80)
+        return success
     
     except Exception as e:
         logger.exception(f"流式采集发生异常: {e}")
+        return False
     
     finally:
         await engine.close()
@@ -572,7 +556,7 @@ async def run_from_command_line(
     template_args: list[tuple[str, dict[str, str]]],
     delay: float = 0,
     start_page: int | None = None,
-) -> None:
+) -> bool:
     """
     根据命令行参数运行采集（用于非list-file的批量参数）。
 
@@ -597,7 +581,7 @@ async def run_from_command_line(
 
     if not templates:
         logger.error("没有找到有效的模板")
-        return
+        return False
 
     logger.info(f"找到 {len(templates)} 个有效模板")
     logger.info(f"启动并发采集，max_concurrent_tasks={settings.max_concurrent_tasks}")
@@ -656,6 +640,7 @@ async def run_from_command_line(
         logger.info("=" * 80)
         logger.info(f"采集完成！成功: {success_count}, 失败: {fail_count}")
         logger.info("=" * 80)
+        return fail_count == 0
 
     finally:
         await engine.close()
@@ -770,7 +755,7 @@ def main() -> None:
             logger.error("错误: 使用 --list-file 时必须指定 --template-name 或 --template")
             sys.exit(1)
         
-        asyncio.run(run_from_list_file_stream(
+        success = asyncio.run(run_from_list_file_stream(
             template_name=tmpl_name,
             file_path=args.list_file,
             param_name=args.list_param,
@@ -780,6 +765,8 @@ def main() -> None:
             batch_size=args.batch_size,
             resume=args.resume,
         ))
+        if not success:
+            sys.exit(1)
     else:
         # 处理其他参数（--template, --param-file）
         template_args: list[tuple[str, dict[str, str]]] = []
@@ -800,13 +787,15 @@ def main() -> None:
         
         # 运行
         if template_args:
-            asyncio.run(
+            success = asyncio.run(
                 run_from_command_line(
                     template_args,
                     delay=args.delay,
                     start_page=args.start_page,
                 )
             )
+            if not success:
+                sys.exit(1)
 
 if __name__ == "__main__":
     main()

@@ -408,10 +408,12 @@ class SpiderEngine:
                 batch = remaining_pages[batch_start:batch_start + page_concurrency]
                 if progress_callback is not None:
                     await progress_callback(batch[0])
-                await self._fetch_and_process_batch(
+                _, aborted = await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
                     start_page, dynamic_pages, result, all_records
                 )
+                if aborted:
+                    break
         else:
             # 未知总页数：逐批并行获取，遇空页或不足一页时终止
             current = start_page + 1
@@ -419,11 +421,11 @@ class SpiderEngine:
                 batch = list(range(current, current + page_concurrency))
                 if progress_callback is not None:
                     await progress_callback(batch[0])
-                should_stop = await self._fetch_and_process_batch(
+                should_stop, aborted = await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
                     start_page, dynamic_pages, result, all_records
                 )
-                if should_stop:
+                if aborted or should_stop:
                     break
                 current += page_concurrency
 
@@ -511,8 +513,18 @@ class SpiderEngine:
                 page_succeeded = True
                 break
 
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as e:
                 await self._client.mark_last_proxy_failed(template.adapter)
+                adapter_action = await adapter.on_error(e, page, attempt)
+                if adapter_action == "abort":
+                    result.errors.append(f"List page {page}: {e}")
+                    return page, [], None, None, True
+                if adapter_action == "reset_session":
+                    await adapter.on_before_crawl(template)
+                elif adapter_action == "skip":
+                    page_skipped = True
+                    page_succeeded = True
+                    break
 
             except Exception as e:
 
@@ -530,10 +542,7 @@ class SpiderEngine:
                 # None → 继续下一次重试
 
         if not page_succeeded:
-            logger.error(
-                "[Page %d] Failed after %d attempts, skipping",
-                page, settings.http_max_retries,
-            )
+            logger.error("[Page %d] Request did not succeed", page)
             result.errors.append(f"List page {page}: exceeded retries")
 
         if page_skipped:
@@ -552,26 +561,38 @@ class SpiderEngine:
         dynamic_pages: int | float,
         result: CrawlResult,
         all_records: list[dict],
-    ) -> bool:
+    ) -> tuple[bool, bool]:
         """并行获取一批页面，处理去重和保存。
 
         Returns:
-            True 如果应该停止翻页（空页或不足一页），否则 False。
+            (是否停止翻页, 是否收到 adapter abort)。
         """
-        tasks = [
-            self._fetch_page_json(
+        tasks = {
+            asyncio.create_task(self._fetch_page_json(
                 template, p, adapter, results_per_page, item_path,
                 is_first=False, result=result,
-            )
+            ))
             for p in batch
-        ]
-        batch_results = await asyncio.gather(*tasks)
+        }
+        batch_results = []
+        while tasks:
+            done, tasks = await asyncio.wait(
+                tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in done:
+                page_result = task.result()
+                if page_result[4]:
+                    for pending in tasks:
+                        pending.cancel()
+                    if tasks:
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                    return False, True
+                batch_results.append(page_result)
+        batch_results.sort(key=lambda item: item[0])
 
         should_stop = False
-        for p, records, _, _, abort in batch_results:
-            if abort:
-                continue
-
+        for p, records, _, _, _ in batch_results:
             page_task_id = template._crawl_context.get("page_task_ids", {}).get(
                 p, template._crawl_context.get("task_id", "standalone")
             )
@@ -604,7 +625,7 @@ class SpiderEngine:
             if not records or len(records) < results_per_page:
                 should_stop = True
 
-        return should_stop
+        return should_stop, False
 
     @staticmethod
     def _retry_loop():

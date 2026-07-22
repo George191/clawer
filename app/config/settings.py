@@ -30,7 +30,6 @@ class AppSettings(BaseSettings):
 
     http_request_timeout: float = Field(default=30.0, description="HTTP请求超时(秒)")
     http_download_timeout: float = Field(default=300.0, description="文件下载超时(秒), 大文件需要更长")
-    http_max_retries: int = Field(default=3, description="HTTP请求最大重试次数")
     http_retry_backoff: float = Field(default=2.0, description="重试退避因子(秒)")
     http_retry_on_statuses: list[int] = Field(
         default=[429, 500, 502, 503, 504],

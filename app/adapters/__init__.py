@@ -49,24 +49,30 @@ def register_adapter(name: str):
 
 
 def get_adapter(
-    name: str,
+    name: str | None,
     base_url: str,
     http_client: HttpClient | None = None,
     **kwargs: Any,
 ) -> BaseSiteAdapter:
     """根据名称获取适配器实例。"""
     _ensure_adapters_loaded()
+    if not name:
+        return GenericAdapter(base_url, http_client, **kwargs)
     cls = _ADAPTER_REGISTRY.get(name)
     if cls is None:
-        return GenericAdapter(base_url, http_client, **kwargs)
+        raise ValueError(f"Unknown site adapter: {name}")
     return cls(base_url, http_client, **kwargs)
 
 
 def get_adapter_class(name: str | None) -> type[BaseSiteAdapter]:
     """根据名称获取适配器类（不实例化）。"""
     _ensure_adapters_loaded()
+    if not name:
+        return GenericAdapter
     cls = _ADAPTER_REGISTRY.get(name)
-    return cls if cls is not None else GenericAdapter
+    if cls is None:
+        raise ValueError(f"Unknown site adapter: {name}")
+    return cls
 
 
 # ── 基类 ────────────────────────────────────────────────────────────────
