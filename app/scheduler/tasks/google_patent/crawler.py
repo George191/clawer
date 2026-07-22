@@ -146,9 +146,15 @@ class GooglePatentCrawler:
         Returns:
             采集结果摘要
         """
+        from app.crawler.checkpoint import PageCheckpointStore
+
         engine = await self._get_engine()
+        checkpoint_store = PageCheckpointStore(TEMPLATE_NAME, query)
 
         try:
+            await checkpoint_store.connect()
+            resume_page = await checkpoint_store.load()
+
             from app.engine.template_loader import TemplateLoader
             loader = TemplateLoader()
             template = loader.load(TEMPLATE_NAME, param_values={"query": query})
@@ -157,9 +163,18 @@ class GooglePatentCrawler:
             if template.list_pagination:
                 template.list_pagination.max_pages = max_pages
 
-            logger.info("开始采集: query=%s, max_pages=%d", query, max_pages)
+            logger.info(
+                "开始采集: query=%s, max_pages=%d%s",
+                query,
+                max_pages,
+                f", resume_page={resume_page}" if resume_page else "",
+            )
 
-            result = await engine.crawl(template)
+            result = await engine.crawl_from_page(
+                template,
+                resume_page,
+                checkpoint_store.save,
+            )
 
             summary = {
                 "query": query,
@@ -170,6 +185,7 @@ class GooglePatentCrawler:
             }
 
             if result.success:
+                await checkpoint_store.clear()
                 logger.info("采集成功: query=%s, records=%d", query, result.total)
             else:
                 logger.warning(
@@ -188,6 +204,8 @@ class GooglePatentCrawler:
                 "errors": [str(e)],
                 "downloaded_files": 0,
             }
+        finally:
+            await checkpoint_store.close()
 
     async def crawl_date(
         self,
@@ -242,7 +260,11 @@ class GooglePatentCrawler:
             }
 
             if task_id:
-                await store.record_success(task_id, result=summary)
+                if summary["success"]:
+                    await store.record_success(task_id, result=summary)
+                else:
+                    error_msg = "; ".join(summary["errors"][:3]) or "采集结果包含错误"
+                    await store.record_failure(task_id, error_msg)
 
             return summary
 
@@ -338,11 +360,15 @@ class GooglePatentCrawler:
         logger.info("=" * 70)
 
         if task_id:
-            await store.record_success(task_id, result={
+            summary = {
                 "total_days": total_days,
                 "success_days": success_days,
                 "failed_days": failed_days,
                 "total_records": total_records,
-            })
+            }
+            if failed_days == 0:
+                await store.record_success(task_id, result=summary)
+            else:
+                await store.record_failure(task_id, f"{failed_days}/{total_days} 天采集失败")
 
         return results

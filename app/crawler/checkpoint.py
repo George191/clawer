@@ -8,6 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
 from app.logger import get_logger
 
@@ -35,6 +36,64 @@ class CrawlRunState:
     last_assigned_line: int
 
 
+class PageCheckpointStore:
+    """Persist the current page for one stable crawl identity."""
+
+    def __init__(
+        self,
+        namespace: str,
+        identity: str,
+        redis_client: Any = None,
+    ) -> None:
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+        self.key = f"crawler:checkpoint-page:{namespace}:{digest}"
+        self._connection = RedisConnection(settings.redis_url, client=redis_client)
+
+    async def connect(self) -> bool:
+        return await self._connection.ensure_connected() is not None
+
+    async def load(self) -> int | None:
+        redis = await self._connection.ensure_connected()
+        if redis is None:
+            return None
+        try:
+            raw = await redis.get(self.key)
+            if raw is None:
+                return None
+            page = int(raw)
+            return page if page > 0 else None
+        except (TypeError, ValueError):
+            logger.warning("忽略无效 Redis 页断点: key=%s", self.key)
+            return None
+        except Exception as exc:
+            logger.warning("读取 Redis 页断点失败: %s", exc)
+            self._connection.mark_unavailable()
+            return None
+
+    async def save(self, page: int) -> None:
+        redis = await self._connection.ensure_connected()
+        if redis is None:
+            return
+        try:
+            await redis.set(self.key, str(page), ex=CHECKPOINT_TTL_SECONDS)
+        except Exception as exc:
+            logger.warning("写入 Redis 页断点失败: %s", exc)
+            self._connection.mark_unavailable()
+
+    async def clear(self) -> None:
+        redis = await self._connection.ensure_connected()
+        if redis is None:
+            return
+        try:
+            await redis.delete(self.key)
+        except Exception as exc:
+            logger.warning("删除 Redis 页断点失败: %s", exc)
+            self._connection.mark_unavailable()
+
+    async def close(self) -> None:
+        await self._connection.close()
+
+
 class BatchCheckpointStore:
     """Keep only currently running batch tasks in one Redis hash."""
 
@@ -58,8 +117,10 @@ class BatchCheckpointStore:
         self.key = self._checkpoint_key(
             template_name, file_path, param_name, start_line, limit
         )
-        self._redis = redis_client
-        self._owns_client = redis_client is None
+        self._connection = RedisConnection(settings.redis_url, client=redis_client)
+
+    async def _get_redis(self) -> Any | None:
+        return await self._connection.ensure_connected()
 
     @staticmethod
     def _checkpoint_key(
@@ -78,10 +139,11 @@ class BatchCheckpointStore:
         return f"crawler:checkpoint:{template_name}:{digest}"
 
     async def load_run_state(self) -> CrawlRunState | None:
-        if self._redis is None:
+        redis = await self._get_redis()
+        if redis is None:
             return None
         try:
-            raw = await self._redis.get(self.state_key)
+            raw = await redis.get(self.state_key)
             if not raw:
                 return None
             data = json.loads(raw)
@@ -100,7 +162,8 @@ class BatchCheckpointStore:
             return None
 
     async def save_run_state(self, state: CrawlRunState) -> None:
-        if self._redis is None:
+        redis = await self._get_redis()
+        if redis is None:
             return
         if self.key is None:
             self.key = self._checkpoint_key(
@@ -115,42 +178,29 @@ class BatchCheckpointStore:
             "checkpoint_key": self.key,
         }
         try:
-            await self._redis.set(
+            await redis.set(
                 self.state_key,
                 json.dumps(payload),
                 ex=CHECKPOINT_TTL_SECONDS,
             )
         except Exception as exc:
             logger.warning("写入 Redis 运行元数据失败: %s", exc)
+            self._connection.mark_unavailable()
 
     async def connect(self) -> bool:
-        if self._redis is not None:
-            return True
-        if not settings.redis_url:
+        if not settings.redis_url and self._connection.client is None:
             logger.info("Redis 未配置，断点续传缓存已禁用")
-            return False
-        try:
-            import redis.asyncio as aioredis
-
-            self._redis = aioredis.from_url(
-                settings.redis_url,
-                decode_responses=True,
-                socket_connect_timeout=3,
-            )
-            await self._redis.ping()
-            return True
-        except Exception as exc:
-            logger.warning("Redis checkpoint 连接失败，继续执行但不缓存进度: %s", exc)
-            self._redis = None
-            return False
+        return await self._get_redis() is not None
 
     async def load(self) -> list[BatchCheckpoint]:
-        if self._redis is None or self.key is None:
+        redis = await self._get_redis()
+        if redis is None or self.key is None:
             return []
         try:
-            raw_items = await self._redis.hgetall(self.key)
+            raw_items = await redis.hgetall(self.key)
         except Exception as exc:
             logger.warning("读取 Redis checkpoint 失败: %s", exc)
+            self._connection.mark_unavailable()
             return []
         return self._decode_checkpoints(raw_items.values())
 
@@ -171,20 +221,22 @@ class BatchCheckpointStore:
 
     async def discover_legacy_checkpoints(self) -> list[BatchCheckpoint]:
         """Find the most recently active legacy hash when no run metadata exists."""
-        if self._redis is None:
+        redis = await self._get_redis()
+        if redis is None:
             return []
         pattern = f"crawler:checkpoint:{self._template_name}:*"
         candidates: list[tuple[int, str, list[BatchCheckpoint]]] = []
         try:
-            async for key in self._redis.scan_iter(match=pattern):
-                raw_items = await self._redis.hgetall(key)
+            async for key in redis.scan_iter(match=pattern):
+                raw_items = await redis.hgetall(key)
                 checkpoints = self._decode_checkpoints(raw_items.values())
                 if not checkpoints:
                     continue
-                ttl = await self._redis.ttl(key)
+                ttl = await redis.ttl(key)
                 candidates.append((int(ttl), key, checkpoints))
         except Exception as exc:
             logger.warning("自动发现旧 Redis checkpoint 失败: %s", exc)
+            self._connection.mark_unavailable()
             return []
 
         if not candidates:
@@ -203,38 +255,39 @@ class BatchCheckpointStore:
         return checkpoints
 
     async def save(self, checkpoint: BatchCheckpoint) -> None:
-        if self._redis is None or self.key is None:
+        redis = await self._get_redis()
+        if redis is None or self.key is None:
             return
         try:
-            pipeline = self._redis.pipeline(transaction=True)
+            pipeline = redis.pipeline(transaction=True)
             pipeline.hset(self.key, checkpoint.task_id, json.dumps(asdict(checkpoint)))
             pipeline.expire(self.key, CHECKPOINT_TTL_SECONDS)
             pipeline.expire(self.state_key, CHECKPOINT_TTL_SECONDS)
             await pipeline.execute()
         except Exception as exc:
             logger.warning("写入 Redis checkpoint 失败: %s", exc)
+            self._connection.mark_unavailable()
 
     async def delete(self, task_id: str) -> None:
-        if self._redis is not None and self.key is not None:
+        redis = await self._get_redis()
+        if redis is not None and self.key is not None:
             try:
-                await self._redis.hdel(self.key, task_id)
+                await redis.hdel(self.key, task_id)
             except Exception as exc:
                 logger.warning("删除 Redis checkpoint 失败: %s", exc)
+                self._connection.mark_unavailable()
 
     async def clear(self) -> None:
-        if self._redis is not None:
+        redis = await self._get_redis()
+        if redis is not None:
             try:
                 keys = [self.state_key]
                 if self.key is not None:
                     keys.append(self.key)
-                await self._redis.delete(*keys)
+                await redis.delete(*keys)
             except Exception as exc:
                 logger.warning("清理 Redis checkpoint 失败: %s", exc)
+                self._connection.mark_unavailable()
 
     async def close(self) -> None:
-        if self._redis is not None and self._owns_client:
-            try:
-                await self._redis.aclose()
-            except Exception as exc:
-                logger.warning("关闭 Redis checkpoint 连接失败: %s", exc)
-        self._redis = None
+        await self._connection.close()

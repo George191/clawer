@@ -24,10 +24,9 @@ Redis Key 设计：
 
 from __future__ import annotations
 
-import asyncio
-import time
 from typing import Any
 
+from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
 from app.logger import get_logger
 
@@ -40,42 +39,13 @@ REDIS_RETRY_INTERVAL = 30
 
 class OffsetManager:
     def __init__(self) -> None:
-        self._redis: Any = None
-        self._connected: bool = False
-        self._last_retry_ts: float = 0.0
+        self._connection = RedisConnection(
+            settings.redis_url,
+            retry_interval=REDIS_RETRY_INTERVAL,
+        )
 
-    async def _ensure_connected(self) -> None:
-        if self._connected:
-            return
-        if not settings.redis_url:
-            return
-
-        now = time.monotonic()
-        if self._last_retry_ts and (now - self._last_retry_ts) < REDIS_RETRY_INTERVAL:
-            return
-        self._last_retry_ts = now
-
-        try:
-            import redis.asyncio as aioredis
-
-            if self._redis:
-                try:
-                    await self._redis.close()
-                except Exception:
-                    pass
-
-            self._redis = aioredis.from_url(
-                settings.redis_url,
-                encoding="utf-8",
-                decode_responses=True,
-            )
-            await self._redis.ping()
-            self._connected = True
-            logger.info("OffsetManager: Redis connected, offset persistence enabled")
-        except ImportError:
-            logger.warning("OffsetManager: redis-py not installed. Run: pip install redis")
-        except Exception as e:
-            logger.warning("OffsetManager: Redis unavailable (%s), will retry in %ds", e, REDIS_RETRY_INTERVAL)
+    async def _get_redis(self) -> Any | None:
+        return await self._connection.ensure_connected()
 
     def _make_key(self, consumer_group: str, topic: str, partition: int) -> str:
         return f"{REDIS_KEY_PREFIX}:{consumer_group}:{topic}:{partition}"
@@ -87,25 +57,25 @@ class OffsetManager:
         partition: int,
         offset: int,
     ) -> None:
-        await self._ensure_connected()
-        if not self._connected or not self._redis:
+        redis = await self._get_redis()
+        if redis is None:
             return
 
         try:
             key = self._make_key(consumer_group, topic, partition)
-            await self._redis.set(key, str(offset), ex=OFFSET_TTL_SECONDS)
+            await redis.set(key, str(offset), ex=OFFSET_TTL_SECONDS)
             logger.debug("OffsetManager: saved %s = %d (kafka_offset)", key, offset)
         except Exception as e:
             logger.warning("OffsetManager: save_offset failed: %s", e)
-            self._connected = False
+            self._connection.mark_unavailable()
 
     async def load_offsets(
         self,
         consumer_group: str,
         topic: str,
     ) -> dict[int, int]:
-        await self._ensure_connected()
-        if not self._connected or not self._redis:
+        redis = await self._get_redis()
+        if redis is None:
             return {}
 
         result: dict[int, int] = {}
@@ -113,11 +83,11 @@ class OffsetManager:
             pattern = f"{REDIS_KEY_PREFIX}:{consumer_group}:{topic}:*"
             cursor = 0
             while True:
-                cursor, keys = await self._redis.scan(cursor=cursor, match=pattern, count=50)
+                cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=50)
                 for key in keys:
                     try:
                         partition = int(key.rsplit(":", 1)[-1])
-                        val = await self._redis.get(key)
+                        val = await redis.get(key)
                         if val is not None:
                             result[partition] = int(val)
                     except (ValueError, TypeError):
@@ -126,7 +96,7 @@ class OffsetManager:
                     break
         except Exception as e:
             logger.warning("OffsetManager: load_offsets failed: %s", e)
-            self._connected = False
+            self._connection.mark_unavailable()
             return {}
 
         if result:
@@ -138,8 +108,8 @@ class OffsetManager:
         return result
 
     async def reset_offsets(self, consumer_group: str, topic: str) -> int:
-        await self._ensure_connected()
-        if not self._connected or not self._redis:
+        redis = await self._get_redis()
+        if redis is None:
             return 0
 
         try:
@@ -147,17 +117,20 @@ class OffsetManager:
             deleted = 0
             cursor = 0
             while True:
-                cursor, keys = await self._redis.scan(cursor=cursor, match=pattern, count=50)
+                cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=50)
                 if keys:
-                    deleted += await self._redis.delete(*keys)
+                    deleted += await redis.delete(*keys)
                 if cursor == 0:
                     break
             logger.info("OffsetManager: reset %d keys for %s/%s", deleted, consumer_group, topic)
             return deleted
         except Exception as e:
             logger.warning("OffsetManager: reset_offsets failed: %s", e)
-            self._connected = False
+            self._connection.mark_unavailable()
             return 0
+
+    async def close(self) -> None:
+        await self._connection.close()
 
 
 _offset_manager: OffsetManager | None = None

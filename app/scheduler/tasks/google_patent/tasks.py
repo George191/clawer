@@ -45,7 +45,10 @@ def crawl_daily(self, target_date_str: str | None = None) -> dict[str, Any]:
     async def _run() -> dict[str, Any]:
         crawler = GooglePatentCrawler()
         try:
-            return await crawler.crawl_date(target_date, task_id=task_id)
+            result = await crawler.crawl_date(target_date, task_id=task_id)
+            if not result["success"]:
+                raise RuntimeError("; ".join(result["errors"][:3]) or "Google Patent 采集失败")
+            return result
         finally:
             await crawler.close()
 
@@ -89,7 +92,11 @@ def crawl_date_range_task(
     async def _run() -> list[dict[str, Any]]:
         crawler = GooglePatentCrawler()
         try:
-            return await crawler.crawl_date_range(start_date, end_date, task_id=task_id)
+            results = await crawler.crawl_date_range(start_date, end_date, task_id=task_id)
+            failed = [result for result in results if not result.get("success")]
+            if failed:
+                raise RuntimeError(f"Google Patent 日期范围采集失败: {len(failed)} 天")
+            return results
         finally:
             await crawler.close()
 
