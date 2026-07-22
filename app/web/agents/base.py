@@ -157,12 +157,17 @@ class BaseAgent:
         self,
         prompt: str,
         max_retries: int = 3,
+        max_tokens: int = 3072,
         on_event: Callable[[dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
         for attempt in range(max_retries):
-            response = await self.generate(prompt, max_tokens=8192)
+            response = await self.generate(prompt, max_tokens=max_tokens)
             if on_event:
-                on_event({"kind": "output", "attempt": attempt + 1, "content": response})
+                on_event({
+                    "kind": "output",
+                    "attempt": attempt + 1,
+                    "content": response[:4000],
+                })
             parsed = self._parse_json(response)
             
             if parsed and self._is_valid_json_structure(parsed):

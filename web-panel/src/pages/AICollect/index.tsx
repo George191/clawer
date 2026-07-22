@@ -49,11 +49,11 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import {
   AI_ANALYZE_WS_URL,
+  type BrowserAnalysisEvent,
   type DryRunResponse,
   type FieldDef,
   type UrlPreflightResponse,
   dryRun as dryRunApi,
-  generateAdapter as generateAdapterApi,
   generateTemplate as generateTemplateApi,
   preflightUrl,
   releaseWorkspaceTemplate,
@@ -74,6 +74,8 @@ type AnalysisFeedItem = {
   content: string;
   step?: string;
   status?: string;
+  startedAt?: number;
+  finishedAt?: number;
 };
 
 type AnalyzeSocketMessage = {
@@ -1075,6 +1077,14 @@ const AICollect: React.FC = () => {
   const { message } = App.useApp();
   const [searchParams, setSearchParams] = useSearchParams();
   const analyzeRequestRef = useRef<{ requestId: string; url: string; prompt: string } | null>(null);
+  const adapterRequestRef = useRef<{ requestId: string } | null>(null);
+  const adapterCharacterQueueRef = useRef<string[]>([]);
+  const adapterCharacterIndexRef = useRef(0);
+  const adapterTypingTimerRef = useRef<number | null>(null);
+  const adapterFinalResultRef = useRef<{ code: string; adapterId: string } | null>(null);
+  const adapterLiveCodeRef = useRef('');
+  const adapterLiveCodeElementRef = useRef<HTMLElement | null>(null);
+  const adapterEditorBodyRef = useRef<HTMLDivElement | null>(null);
   const analyzeStepRef = useRef('prepare');
   const analysisFeedIdRef = useRef(0);
   const simulationTimerRef = useRef<number | null>(null);
@@ -1140,6 +1150,8 @@ const AICollect: React.FC = () => {
   const [releaseBatchInput, setReleaseBatchInput] = useState(false);
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
   const [workspaceAdapterFile, setWorkspaceAdapterFile] = useState('');
+  const [workspaceAdapterCode, setWorkspaceAdapterCode] = useState('');
+  const [adapterWriting, setAdapterWriting] = useState(false);
   const [workspaceTemplateYaml, setWorkspaceTemplateYaml] = useState('');
   const [generatedAdapterRequired, setGeneratedAdapterRequired] = useState(false);
   const [releaseExit, setReleaseExit] = useState<{ x: number; y: number; scale: number } | null>(null);
@@ -1150,8 +1162,6 @@ const AICollect: React.FC = () => {
   const [inspectorAnimating, setInspectorAnimating] = useState(false);
   const templateScrollRef = useRef<HTMLDivElement | null>(null);
   const templateStageSectionRefs = useRef<Partial<Record<TemplateStageId, HTMLElement | null>>>({});
-  const browserFollowViewportRef = useRef<HTMLDivElement | null>(null);
-  const browserFollowIframeRef = useRef<HTMLIFrameElement | null>(null);
   const inspectorTransitionTimerRef = useRef<number | null>(null);
   const releaseExitTimerRef = useRef<number | null>(null);
 
@@ -1159,37 +1169,6 @@ const AICollect: React.FC = () => {
   const selectedCount = fields.filter((field) => selectedFields.has(field.name)).length;
   const qualityScore = mode === 'publish' ? 94 : mode === 'dryrun' ? 86 : mode === 'contract' ? 88 : 92;
   const activeStepIndex = processStepOrder.indexOf(activeProcessStep);
-  const browserFollowRatio = Math.max(0, activeStepIndex) / (processStepOrder.length - 1);
-  const scrollBrowserPreviewToAnalysis = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    window.requestAnimationFrame(() => {
-      const iframe = browserFollowIframeRef.current;
-      if (iframe) {
-        try {
-          const iframeWindow = iframe.contentWindow;
-          const iframeDocument = iframe.contentDocument;
-          const documentElement = iframeDocument?.documentElement;
-          const body = iframeDocument?.body;
-          if (iframeWindow && (documentElement || body)) {
-            const pageHeight = Math.max(
-              documentElement?.scrollHeight ?? 0,
-              body?.scrollHeight ?? 0,
-            );
-            iframeWindow.scrollTo({
-              top: Math.max(0, pageHeight - iframe.clientHeight) * browserFollowRatio,
-              behavior,
-            });
-            return;
-          }
-        } catch {
-          // The iframe may navigate or unmount between scheduling and execution.
-        }
-      }
-      const viewport = browserFollowViewportRef.current;
-      if (!viewport) return;
-      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-      viewport.scrollTo({ top: maxScrollTop * browserFollowRatio, behavior });
-    });
-  }, [browserFollowRatio]);
   const activeTemplate = useMemo(() => {
     if (!templateCatalog.length) return { id: 'empty', fileName: 'empty.yaml', displayName: 'Template', entries: [], raw: '' };
 
@@ -1266,7 +1245,7 @@ const AICollect: React.FC = () => {
     }
   }, [submittedPrompt, url, urlPreflight?.host]);
   const browserPreviewUrl = useMemo(() => {
-    if (urlPreflight?.normalizedUrl) return urlPreflight.normalizedUrl;
+    if (urlPreflight?.previewUrl) return urlPreflight.previewUrl;
     const candidate = url || submittedPrompt.match(/https?:\/\/[^\s锛屻€傦紱,]+/i)?.[0] || '';
     if (!candidate) return '';
 
@@ -1276,7 +1255,7 @@ const AICollect: React.FC = () => {
     } catch {
       return '';
     }
-  }, [submittedPrompt, url, urlPreflight?.normalizedUrl]);
+  }, [submittedPrompt, url, urlPreflight?.previewUrl]);
   const browserPreviewTitle = useMemo(() => {
     if (urlPreflight?.title) return urlPreflight.title;
     const normalizedHost = browserPreviewHost.replace(/^www\./i, '').split(':')[0];
@@ -1523,6 +1502,16 @@ const AICollect: React.FC = () => {
     return dynamicSteps;
   }, [activeTemplate.id, adapterDiffStats.added, adapterDiffStats.removed, templateDraftEntries, templateValueDrafts, url]);
   const adapterPreviewLines = useMemo<AdapterPreviewLine[]>(() => {
+    if (workspaceAdapterCode) {
+      return workspaceAdapterCode.split('\n').map((content, index) => ({
+        key: `adapter-generated-${index + 1}`,
+        lineNumber: index + 1,
+        prefix: '+',
+        added: true,
+        content,
+      }));
+    }
+
     const getEntryValue = (key: string, fallback = '') => {
       const entry = templateDraftEntries.find((item) => item.key === key);
       return stripYamlQuotes(
@@ -1572,7 +1561,7 @@ const AICollect: React.FC = () => {
       { key: 'adapter-12', lineNumber: 12, prefix: '+', added: true, content: `        # pagination: ${paginationType}` },
       { key: 'adapter-13', lineNumber: 13, prefix: '+', added: true, content: `        # downloads: ${downloadComment}` },
     ];
-  }, [activeTemplate.id, templateDraftEntries, templateValueDrafts, url]);
+  }, [activeTemplate.id, templateDraftEntries, templateValueDrafts, url, workspaceAdapterCode]);
   const adapterProgressPercent = Math.min(
     100,
     workflowPhase === 'release-template'
@@ -1638,16 +1627,6 @@ const AICollect: React.FC = () => {
   }, [mode]);
 
   useEffect(() => {
-    if (
-      sideInspectorOpen
-      && activeInspectorTab?.kind === 'browser'
-      && (urlPreflight?.previewHtml || urlPreflight?.previewImage)
-    ) {
-      scrollBrowserPreviewToAnalysis();
-    }
-  }, [activeInspectorTab?.kind, scrollBrowserPreviewToAnalysis, sideInspectorOpen, urlPreflight?.previewHtml, urlPreflight?.previewImage]);
-
-  useEffect(() => {
     if (!hasSession) {
       setUrlPreflight(null);
       setHoveredStageGuideStep(null);
@@ -1693,6 +1672,57 @@ const AICollect: React.FC = () => {
     setLiveLogs((prev) => [log, ...prev].slice(0, 8));
   }, []);
 
+  const clearAdapterTypingTimer = useCallback(() => {
+    if (adapterTypingTimerRef.current !== null) {
+      window.clearTimeout(adapterTypingTimerRef.current);
+      adapterTypingTimerRef.current = null;
+    }
+  }, []);
+
+  const finishAdapterTyping = useCallback(() => {
+    clearAdapterTypingTimer();
+    const result = adapterFinalResultRef.current;
+    const code = result?.code ?? adapterLiveCodeRef.current;
+    setWorkspaceAdapterCode(code);
+    setAdapterWriting(false);
+    adapterFinalResultRef.current = null;
+    adapterRequestRef.current = null;
+    setAdapterBuildIndex(adapterBuildPlan.length);
+    pushLiveLog(`adapter generated by service: ${result?.adapterId || 'generated adapter'}`);
+  }, [adapterBuildPlan.length, clearAdapterTypingTimer, pushLiveLog]);
+
+  const pumpAdapterCharacters = useCallback(() => {
+    if (adapterTypingTimerRef.current !== null) return;
+
+    const writeNextCharacter = () => {
+      const character = adapterCharacterQueueRef.current[adapterCharacterIndexRef.current];
+      if (character === undefined) {
+        adapterCharacterQueueRef.current = [];
+        adapterCharacterIndexRef.current = 0;
+        adapterTypingTimerRef.current = null;
+        if (adapterFinalResultRef.current) finishAdapterTyping();
+        return;
+      }
+
+      adapterCharacterIndexRef.current += 1;
+      adapterLiveCodeRef.current += character;
+      if (adapterLiveCodeElementRef.current) {
+        adapterLiveCodeElementRef.current.textContent = adapterLiveCodeRef.current;
+      }
+      if (adapterEditorBodyRef.current) {
+        adapterEditorBodyRef.current.scrollTop = adapterEditorBodyRef.current.scrollHeight;
+      }
+      adapterTypingTimerRef.current = window.setTimeout(writeNextCharacter, 8);
+    };
+
+    writeNextCharacter();
+  }, [finishAdapterTyping]);
+
+  const attachAdapterLiveCodeElement = useCallback((element: HTMLPreElement | null) => {
+    adapterLiveCodeElementRef.current = element;
+    if (element) element.textContent = adapterLiveCodeRef.current;
+  }, []);
+
   const appendAnalysisFeed = useCallback((item: Omit<AnalysisFeedItem, 'id' | 'createdAt' | 'updatedAt'>) => {
     analysisFeedIdRef.current += 1;
     const timestamp = Date.now();
@@ -1706,7 +1736,7 @@ const AICollect: React.FC = () => {
 
   const upsertAnalysisStep = useCallback((
     step: string,
-    updates: Pick<AnalysisFeedItem, 'content' | 'status'>,
+    updates: Pick<AnalysisFeedItem, 'content' | 'status'> & Pick<AnalysisFeedItem, 'startedAt' | 'finishedAt'>,
   ) => {
     setAnalysisFeed((prev) => {
       let index = prev.length - 1;
@@ -1741,9 +1771,50 @@ const AICollect: React.FC = () => {
       return;
     }
 
+    const data = messagePayload.data ?? {};
+    const activeAdapterRequest = adapterRequestRef.current;
+    if (
+      activeAdapterRequest
+      && messagePayload.request_id === activeAdapterRequest.requestId
+      && messagePayload.type.startsWith('adapter_')
+    ) {
+      if (messagePayload.type === 'adapter_started') {
+        pushLiveLog('adapter model stream connected; writing file');
+        return;
+      }
+      if (messagePayload.type === 'adapter_delta') {
+        const content = typeof data.content === 'string' ? data.content : '';
+        if (!content) return;
+        adapterCharacterQueueRef.current.push(...content);
+        pumpAdapterCharacters();
+        return;
+      }
+      if (messagePayload.type === 'adapter_ready') {
+        adapterFinalResultRef.current = {
+          code: typeof data.code === 'string' ? data.code : adapterLiveCodeRef.current,
+          adapterId: String(data.adapterId ?? ''),
+        };
+        pumpAdapterCharacters();
+        return;
+      }
+      if (messagePayload.type === 'adapter_error') {
+        const errorMessage = String(data.message ?? 'Adapter generation failed');
+        clearAdapterTypingTimer();
+        adapterCharacterQueueRef.current = [];
+        adapterCharacterIndexRef.current = 0;
+        adapterFinalResultRef.current = null;
+        adapterRequestRef.current = null;
+        setWorkspaceAdapterCode(adapterLiveCodeRef.current);
+        setAdapterWriting(false);
+        setRunStatus('completed');
+        message.error('Adapter generation failed');
+        pushLiveLog(`adapter generation failed: ${errorMessage}`);
+        return;
+      }
+    }
+
     const activeRequest = analyzeRequestRef.current;
     if (!activeRequest || messagePayload.request_id !== activeRequest.requestId) return;
-    const data = messagePayload.data ?? {};
 
     if (messagePayload.type === 'analyze_started') {
       appendAnalysisFeed({ kind: 'status', step: 'prepare', content: '分析任务已开始' });
@@ -1754,8 +1825,15 @@ const AICollect: React.FC = () => {
       const step = String(data.step ?? 'analysis');
       const label = String(data.label ?? step);
       const status = String(data.status ?? 'running');
+      const startedAt = Number(data.startedAt);
+      const finishedAt = Number(data.finishedAt);
       analyzeStepRef.current = step;
-      upsertAnalysisStep(step, { status, content: label });
+      upsertAnalysisStep(step, {
+        status,
+        content: label,
+        startedAt: Number.isFinite(startedAt) ? startedAt : undefined,
+        finishedAt: Number.isFinite(finishedAt) ? finishedAt : undefined,
+      });
       pushLiveLog(`[${step}] ${label}: ${status}`);
 
       const processStepByAnalyzeStep: Record<string, ProcessStepKey> = {
@@ -1804,6 +1882,64 @@ const AICollect: React.FC = () => {
       return;
     }
 
+    if (messagePayload.type === 'analyze_browser') {
+      const event = data as unknown as BrowserAnalysisEvent;
+      const eventUrl = typeof event.url === 'string' ? event.url : activeRequest.url;
+      const fields = event.recordFields?.length
+        ? `；字段：${event.recordFields.join(', ')}`
+        : '';
+      const detailByKind: Record<BrowserAnalysisEvent['kind'], string> = {
+        navigation_requested: `准备访问目标 URL：${eventUrl}`,
+        navigation: `主文档跳转到：${eventUrl}`,
+        document_response: `${event.status ?? '-'} 文档响应：${eventUrl}（${event.contentType || 'unknown'}）`,
+        api_candidate: event.decision === 'record_shape_found'
+          ? `${event.status ?? '-'} 发现结构化 API 候选：${eventUrl}${fields}`
+          : `${event.status ?? '-'} 检查 ${event.resourceType || 'XHR/fetch'}：${eventUrl}；未发现记录结构`,
+        page_link: `发现${event.scope === 'internal' ? '站内' : '站外'}链接：${event.text || '(无标题)'} → ${eventUrl}`,
+        snapshot: `浏览器已完成渲染并捕获当前视口：${eventUrl}`,
+        preflight_retry: `浏览器访问失败（${event.attempt ?? '-'}/${event.maxAttempts ?? '-'}）：${event.error || eventUrl}`,
+      };
+      appendAnalysisFeed({
+        kind: event.kind === 'preflight_retry' || (event.status && event.status >= 400) ? 'error' : 'status',
+        step: 'fetch_page',
+        content: detailByKind[event.kind] || `${event.label}: ${eventUrl}`,
+      });
+      pushLiveLog(`[browser:${event.kind}] ${eventUrl}`);
+
+      if (event.kind === 'navigation' || event.kind === 'snapshot') {
+        setUrlPreflight((previous) => ({
+          ok: true,
+          url: previous?.url || activeRequest.url,
+          normalizedUrl: eventUrl,
+          host: previous?.host || (() => {
+            try {
+              return new URL(eventUrl).host;
+            } catch {
+              return '';
+            }
+          })(),
+          title: event.title || (event.kind === 'navigation' ? eventUrl : previous?.title || eventUrl),
+          requiresProxy: previous?.requiresProxy ?? false,
+          proxyMode: previous?.proxyMode ?? 'direct',
+          previewUrl: eventUrl,
+          previewImage: event.previewImage || previous?.previewImage || '',
+          renderedBy: 'chrome',
+          networkEndpoints: previous?.networkEndpoints || [],
+          networkResponses: previous?.networkResponses || [],
+          browserEvents: [
+            ...(previous?.browserEvents || []),
+            { ...event, previewImage: undefined },
+          ],
+          pageWarnings: previous?.pageWarnings || [],
+          faviconUrl: previous?.faviconUrl || '',
+          errorCode: previous?.errorCode || '',
+          errorMessage: previous?.errorMessage || '',
+        }));
+        openSessionInspector();
+      }
+      return;
+    }
+
     if (messagePayload.type === 'analyze_preflight') {
       const preflight = data as unknown as UrlPreflightResponse;
       setUrlPreflight(preflight);
@@ -1814,23 +1950,10 @@ const AICollect: React.FC = () => {
         content: `已验证页面：${preflight.title || preflight.url}`,
       });
       openSessionInspector();
-      (preflight.networkResponses ?? []).slice(0, 8).forEach((response) => {
-        const fieldSummary = response.recordFields?.length
-          ? ` | fields: ${response.recordFields.slice(0, 12).join(', ')}`
-          : '';
-        appendAnalysisFeed({
-          kind: response.status >= 400 ? 'error' : 'status',
-          step: 'fetch_page',
-          content: `${response.status} ${response.resourceType.toUpperCase()} ${response.contentType || 'unknown content-type'} · ${response.url}${fieldSummary}`,
-        });
-      });
       (preflight.pageWarnings ?? []).forEach((warning) => {
         appendAnalysisFeed({ kind: 'error', step: 'fetch_page', content: warning });
         pushLiveLog(`[preflight warning] ${warning}`);
       });
-      window.setTimeout(() => {
-        closeSessionInspector();
-      }, 5000);
       return;
     }
 
@@ -1897,22 +2020,36 @@ const AICollect: React.FC = () => {
     if (messagePayload.type === 'analyze_raw') {
       appendAnalysisFeed({ kind: 'thinking', step: analyzeStepRef.current, content: String(data.content ?? '') });
     }
-  }, [appendAnalysisFeed, pushLiveLog, upsertAnalysisStep]);
+  }, [appendAnalysisFeed, clearAdapterTypingTimer, message, pumpAdapterCharacters, pushLiveLog, upsertAnalysisStep]);
 
   const { connected: analyzeSocketConnected, send: sendAnalyzeSocketMessage } = useWebSocket(
     AI_ANALYZE_WS_URL,
     {
       onMessage: handleAnalyzeSocketMessage,
       onClose: () => {
-        if (!analyzeRequestRef.current) return;
-        appendAnalysisFeed({ kind: 'error', content: '分析连接已断开，请重新发起分析' });
-        setPreflightLoading(false);
-        setStreamError('分析连接已断开，请重新发起分析。');
-        setRunStatus('completed');
-        analyzeRequestRef.current = null;
+        if (adapterRequestRef.current) {
+          clearAdapterTypingTimer();
+          adapterCharacterQueueRef.current = [];
+          adapterCharacterIndexRef.current = 0;
+          adapterFinalResultRef.current = null;
+          adapterRequestRef.current = null;
+          setWorkspaceAdapterCode(adapterLiveCodeRef.current);
+          setAdapterWriting(false);
+          setRunStatus('completed');
+          pushLiveLog('adapter generation failed: WebSocket disconnected');
+        }
+        if (analyzeRequestRef.current) {
+          appendAnalysisFeed({ kind: 'error', content: '分析连接已断开，请重新发起分析' });
+          setPreflightLoading(false);
+          setStreamError('分析连接已断开，请重新发起分析。');
+          setRunStatus('completed');
+          analyzeRequestRef.current = null;
+        }
       },
     },
   );
+
+  useEffect(() => () => clearAdapterTypingTimer(), [clearAdapterTypingTimer]);
 
   useEffect(() => {
     if (runStatus !== 'running') return undefined;
@@ -2020,6 +2157,14 @@ const AICollect: React.FC = () => {
       window.clearTimeout(promptGenerationTimerRef.current);
       promptGenerationTimerRef.current = null;
     }
+    clearAdapterTypingTimer();
+    adapterRequestRef.current = null;
+    adapterCharacterQueueRef.current = [];
+    adapterCharacterIndexRef.current = 0;
+    adapterFinalResultRef.current = null;
+    adapterLiveCodeRef.current = '';
+    setWorkspaceAdapterCode('');
+    setAdapterWriting(false);
     setActiveProcessStep('prepare');
     setHoveredStageGuideStep(null);
     setActiveTemplateStage(null);
@@ -2043,7 +2188,7 @@ const AICollect: React.FC = () => {
     setSessionInspectorTabs([]);
     setActiveInspectorTabId(null);
     setLiveLogs(['已接收采集目标，准备投射源站页面']);
-  }, []);
+  }, [clearAdapterTypingTimer]);
 
   useEffect(() => {
     if (runStatus !== 'running') return undefined;
@@ -2174,7 +2319,7 @@ const AICollect: React.FC = () => {
 
     const timer = window.setTimeout(() => {
       pushLiveLog(nextStep.log);
-      setAdapterBuildIndex((prev) => prev + 1);
+      setAdapterBuildIndex((prev) => Math.min(prev + 1, adapterBuildPlan.length - 1));
     }, adapterBuildIndex === 0 ? 520 : 860);
 
     return () => window.clearTimeout(timer);
@@ -2326,8 +2471,12 @@ const AICollect: React.FC = () => {
     setRunStatus('completed');
   }, [fields, maxPages, message, pushLiveLog, selectedFields, url]);
 
-  const handleConfirmTemplate = useCallback(async () => {
+  const handleConfirmTemplate = useCallback(() => {
     if (!templateReadyForConfirm) return;
+    if (!analyzeSocketConnected) {
+      message.error('Adapter generation connection is not ready');
+      return;
+    }
 
     setCompletedProcessSteps((prev) => {
       const next = new Set(prev);
@@ -2343,16 +2492,50 @@ const AICollect: React.FC = () => {
     setVisibleProcessSteps((prev) => (prev.includes('dryrun') ? prev : [...prev, 'dryrun']));
     setAdapterBuildIndex(0);
     setExpandedAdapterStep(0);
+    clearAdapterTypingTimer();
+    adapterCharacterQueueRef.current = [];
+    adapterCharacterIndexRef.current = 0;
+    adapterFinalResultRef.current = null;
+    adapterLiveCodeRef.current = '';
+    setWorkspaceAdapterCode('');
+    setAdapterWriting(true);
+    openSessionInspector({
+      id: `code:${adapterFileName}`,
+      kind: 'code',
+      title: adapterFileLabel,
+      subtitle: adapterFileName,
+    });
     pushLiveLog('template contract confirmed; adapter generation started');
-    try {
-      const adapter = await generateAdapterApi(url, 'default', templateId);
-      pushLiveLog(`adapter generated by service: ${adapter.adapterId}`);
-    } catch (error) {
+
+    const requestId = globalThis.crypto?.randomUUID?.()
+      ?? `adapter-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    adapterRequestRef.current = { requestId };
+    const sent = sendAnalyzeSocketMessage(JSON.stringify({
+      type: 'generate_adapter',
+      request_id: requestId,
+      template_id: templateId,
+      url,
+    }));
+    if (!sent) {
+      adapterRequestRef.current = null;
+      setAdapterWriting(false);
       setRunStatus('completed');
       message.error('Adapter generation failed');
-      pushLiveLog(`adapter generation failed: ${error instanceof Error ? error.message : String(error)}`);
+      pushLiveLog('adapter generation failed: WebSocket is not connected');
     }
-  }, [message, pushLiveLog, templateId, templateReadyForConfirm, url]);
+  }, [
+    adapterFileLabel,
+    adapterFileName,
+    analyzeSocketConnected,
+    clearAdapterTypingTimer,
+    message,
+    openSessionInspector,
+    pushLiveLog,
+    sendAnalyzeSocketMessage,
+    templateId,
+    templateReadyForConfirm,
+    url,
+  ]);
 
   const playReleaseCompletionAnimation = useCallback((includeTask: boolean) => {
     if (releaseExitTimerRef.current) return;
@@ -3259,7 +3442,6 @@ const AICollect: React.FC = () => {
       return true;
     });
     if (!stageEntries.length) return null;
-    const stageValueCount = stageEntries.filter((entry) => entry.nodeType === 'value').length;
     const getTemplateEntryGroupKey = (entry: TemplateEntry, nextEntry?: TemplateEntry) => {
       const rootGroupMatch = entry.key.match(/^([A-Za-z_][\w-]*)$/);
       if (entry.nodeType === 'group' && rootGroupMatch) {
@@ -3292,7 +3474,10 @@ const AICollect: React.FC = () => {
             <small>{templateStageMeta[stageId].desc}</small>
           </div>
           <div className="ai-template-stage-actions">
-            <span>{stageValueCount}</span>
+            <div className="ai-template-stage-complete">
+              <CheckCircleOutlined aria-hidden="true" />
+              <span>Completed</span>
+            </div>
           </div>
         </div>
         <div className="ai-template-stage-body">
@@ -3347,10 +3532,6 @@ const AICollect: React.FC = () => {
               </div>
             );
           })}
-        </div>
-        <div className="ai-template-stage-complete">
-          <CheckCircleOutlined aria-hidden="true" />
-          <span>Completed</span>
         </div>
       </section>
     );
@@ -3536,22 +3717,24 @@ const AICollect: React.FC = () => {
               )}
             </span>
             <strong>{browserPreviewHost || 'source.local'}</strong>
+            {browserPreviewUrl ? (
+              <a
+                className="ai-browser-open-link"
+                href={browserPreviewUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="在新标签页打开目标页面"
+              >
+                <LinkOutlined />
+              </a>
+            ) : null}
           </div>
         <div className="ai-side-browser-viewport">
           {urlPreflight?.previewImage ? (
             <img
-              className="ai-browser-render-image"
+              className="ai-browser-viewport-image"
               src={urlPreflight.previewImage}
-              alt={`${browserPreviewTitle} Chrome 页面预览`}
-              style={{ objectFit: 'contain', width: '100%', height: '100%' }}
-            />
-          ) : urlPreflight?.previewHtml ? (
-            <iframe
-              className="ai-side-browser-frame"
-              title={`${browserPreviewTitle} 页面预览`}
-              sandbox=""
-              referrerPolicy="no-referrer"
-              srcDoc={urlPreflight.previewHtml}
+              alt={`${browserPreviewTitle} 浏览器视口快照`}
             />
           ) : (
             <div className="ai-side-browser-empty">暂无经过服务端验证的页面快照</div>
@@ -3658,25 +3841,12 @@ const AICollect: React.FC = () => {
         <div className={`ai-session-inspector-body ${activeInspectorTab.kind === 'browser' ? 'is-browser' : ''}`}>
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
-              <div className="ai-session-inspector-browser-frame" ref={browserFollowViewportRef}>
+              <div className="ai-session-inspector-browser-frame">
                 {urlPreflight?.previewImage ? (
                   <img
-                    className="ai-browser-render-image"
+                    className="ai-browser-viewport-image"
                     src={urlPreflight.previewImage}
-                    alt={`${activeInspectorTab.title} Chrome 页面预览`}
-                    draggable={false}
-                    style={{ objectFit: 'contain', width: '100%', height: '100%' }}
-                    onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
-                  />
-                ) : urlPreflight?.previewHtml ? (
-                  <iframe
-                    ref={browserFollowIframeRef}
-                    sandbox="allow-same-origin"
-                    referrerPolicy="no-referrer"
-                    srcDoc={urlPreflight.previewHtml}
-                    title={activeInspectorTab.title}
-                    tabIndex={-1}
-                    onLoad={() => scrollBrowserPreviewToAnalysis('auto')}
+                    alt={`${activeInspectorTab.title} 浏览器视口快照`}
                   />
                 ) : (
                   <div className="ai-session-inspector-empty">
@@ -3688,8 +3858,13 @@ const AICollect: React.FC = () => {
             </div>
           ) : (
             <div className="ai-session-inspector-editor">
-              <div className="ai-session-inspector-editor-body">
-                {adapterPreviewLines.map((line) => (
+              <div className="ai-session-inspector-editor-body" ref={adapterEditorBodyRef}>
+                {adapterWriting ? (
+                  <pre
+                    className="ai-session-inspector-editor-stream"
+                    ref={attachAdapterLiveCodeElement}
+                  />
+                ) : adapterPreviewLines.map((line) => (
                   <div
                     className={`ai-session-inspector-editor-line ${line.added ? 'is-added' : ''}`}
                     key={line.key}
@@ -3893,7 +4068,14 @@ const AICollect: React.FC = () => {
     };
     const modelGroups = groups.filter((group) => group.step in templateStagesByAnalyzeStep);
     const formatDuration = (durationMs: number) => {
-      const totalSeconds = Math.max(1, Math.floor(durationMs / 1000));
+      const safeDurationMs = Math.max(0, durationMs);
+      if (safeDurationMs < 1000) {
+        return `${Math.max(1, Math.round(safeDurationMs))}ms`;
+      }
+      if (safeDurationMs < 10_000) {
+        return `${(safeDurationMs / 1000).toFixed(1)}s`;
+      }
+      const totalSeconds = Math.round(safeDurationMs / 1000);
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
       return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
@@ -3912,10 +4094,22 @@ const AICollect: React.FC = () => {
               || (group.step === 'generate_template' && analyzeStepRef.current === 'validate')
             )
           );
-          const startedAt = group.items[0].createdAt;
-          const finishedAt = isActive
+          const timingItems = group.items.filter((item) => item.kind === 'step');
+          const serverStartedAt = timingItems
+            .map((item) => item.startedAt)
+            .filter((value): value is number => value !== undefined);
+          const serverFinishedAt = timingItems
+            .map((item) => item.finishedAt)
+            .filter((value): value is number => value !== undefined);
+          const observedStartedAt = Math.min(...group.items.map((item) => item.createdAt));
+          const observedFinishedAt = isActive
             ? analysisClock
             : Math.max(...group.items.map((item) => item.updatedAt));
+          const observedDuration = observedFinishedAt - observedStartedAt;
+          const serverDuration = serverStartedAt.length && serverFinishedAt.length
+            ? Math.max(...serverFinishedAt) - Math.min(...serverStartedAt)
+            : 0;
+          const durationMs = Math.max(0, observedDuration, serverDuration);
           const expanded = expandedAnalysisSteps.has(group.step);
           return (
             <div className="ai-analysis-feed-group" key={`${group.step}-${group.items[0].id}`}>
@@ -3930,7 +4124,7 @@ const AICollect: React.FC = () => {
                   return next;
                 })}
               >
-                <span>{isActive ? 'Working for' : 'Worked for'} {formatDuration(finishedAt - startedAt)}</span>
+                <span>{isActive ? 'Working for' : 'Worked for'} {formatDuration(durationMs)}</span>
                 <i className={expanded ? 'is-expanded' : ''} aria-hidden="true">›</i>
               </button>
               {expanded ? (
@@ -3957,6 +4151,17 @@ const AICollect: React.FC = () => {
                     <strong>{activeTemplate.fileName}</strong>
                   </div>
                   {generatedStages.map(renderTemplateStageSection)}
+                  {group.step === 'generate_template' && templateReadyForConfirm ? (
+                    <div className="ai-template-confirm-bar">
+                      <Button
+                        type="primary"
+                        className="ai-template-confirm-btn"
+                        onClick={handleConfirmTemplate}
+                      >
+                        Confirm Template
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -3964,6 +4169,17 @@ const AICollect: React.FC = () => {
         }) : visibleTemplateStages.length ? (
           <div className="ai-analysis-generated-stage">
             {visibleTemplateStages.map(renderTemplateStageSection)}
+            {templateReadyForConfirm ? (
+              <div className="ai-template-confirm-bar">
+                <Button
+                  type="primary"
+                  className="ai-template-confirm-btn"
+                  onClick={handleConfirmTemplate}
+                >
+                  Confirm Template
+                </Button>
+              </div>
+            ) : null}
           </div>
         ) : null}
         </div>
@@ -3978,21 +4194,6 @@ const AICollect: React.FC = () => {
         {renderAnalysisFeed()}
         {streamError ? (
           <Alert className="ai-session-inline-alert" type="warning" showIcon message={streamError} />
-        ) : null}
-        {templateReadyForConfirm ? (
-          <div className="ai-template-confirm-bar">
-            <div className="ai-template-confirm-copy">
-              <strong>Confirm template</strong>
-              <span>Lock the YAML contract before adapter generation.</span>
-            </div>
-            <Button
-              type="primary"
-              className="ai-template-confirm-btn"
-              onClick={handleConfirmTemplate}
-            >
-              Confirm Template
-            </Button>
-          </div>
         ) : null}
         <div className="ai-session-template-tail" aria-hidden="true">
           <div className="ai-session-template-divider" />
@@ -5501,10 +5702,7 @@ const AICollect: React.FC = () => {
             transition: background 160ms ease, box-shadow 160ms ease;
           }
           .ai-template-stage-complete {
-            min-height: 26px;
-            padding: 7px 6px 0;
-            border-top: 1px solid rgba(255, 255, 255, 0.07);
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 6px;
             color: ${aura.success};
@@ -6484,6 +6682,16 @@ const AICollect: React.FC = () => {
             flex-direction: column;
             gap: 12px;
           }
+          .ai-browser-open-link {
+            color: rgba(255, 255, 255, 0.58);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex: 0 0 auto;
+          }
+          .ai-browser-open-link:hover {
+            color: ${tiffanyAccent};
+          }
           .ai-session-inspector-browser-frame,
           .ai-session-inspector-editor-body {
             flex: 1;
@@ -6503,17 +6711,11 @@ const AICollect: React.FC = () => {
             overflow-x: hidden;
             overflow-y: auto;
           }
-          .ai-session-inspector-browser-frame iframe {
+          .ai-session-inspector-browser-frame .ai-browser-viewport-image {
             display: block;
             width: 100%;
             height: 100%;
-            border: none;
             background: #fff;
-            pointer-events: none;
-            user-select: none;
-          }
-          .ai-session-inspector-browser-frame > .ai-browser-render-image {
-            min-height: 100%;
             object-fit: contain;
             object-position: top center;
           }
@@ -6556,6 +6758,30 @@ const AICollect: React.FC = () => {
             font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
             font-size: 12px;
             line-height: 1.76;
+          }
+          .ai-session-inspector-editor-stream {
+            min-height: 100%;
+            margin: 0;
+            padding: 0 18px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #a6e3a1;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+            font-size: 12px;
+            line-height: 1.76;
+          }
+          .ai-session-inspector-editor-stream::after {
+            content: '';
+            display: inline-block;
+            width: 1px;
+            height: 1.1em;
+            margin-left: 1px;
+            background: #f8f8f2;
+            vertical-align: -0.16em;
+            animation: ai-adapter-caret 0.8s step-end infinite;
+          }
+          @keyframes ai-adapter-caret {
+            50% { opacity: 0; }
           }
           .ai-session-inspector-editor-line + .ai-session-inspector-editor-line {
             margin-top: 2px;
@@ -6731,6 +6957,7 @@ const AICollect: React.FC = () => {
           }
           .ai-side-browser-bar strong {
             min-width: 0;
+            flex: 1;
             color: rgba(255, 255, 255, 0.82);
             font-size: 12px;
             font-weight: 500;
@@ -6768,19 +6995,10 @@ const AICollect: React.FC = () => {
             align-items: center;
             justify-content: center;
           }
-          .ai-side-browser-frame {
+          .ai-browser-viewport-image {
+            display: block;
             width: 100%;
             height: 100%;
-            min-height: 0;
-            border: 0;
-            background: #1a1d23;
-          }
-          .ai-browser-render-image {
-            display: block;
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
             object-fit: contain;
             object-position: top center;
             background: #fff;

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -63,7 +64,10 @@ class AdapterAgent(BaseAgent):
         )
 
     async def generate_adapter(
-        self, template_name: str, template_yaml: str
+        self,
+        template_name: str,
+        template_yaml: str,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> AdapterResult:
         data_type = self._template_data_type(template_yaml)
         prompt = self.render_prompt(
@@ -75,7 +79,26 @@ class AdapterAgent(BaseAgent):
                 indent=2,
             ),
         )
-        response = await self.generate(prompt, max_tokens=8192)
+        streamed_response = ""
+        streamed_code_length = 0
+        chunk_handler = on_chunk
+
+        def forward_code_chunk(chunk: str) -> None:
+            nonlocal streamed_response, streamed_code_length
+            if chunk_handler is None:
+                return
+            streamed_response += chunk
+            streamable_code = self._extract_streamable_code(streamed_response)
+            if len(streamable_code) <= streamed_code_length:
+                return
+            chunk_handler(streamable_code[streamed_code_length:])
+            streamed_code_length = len(streamable_code)
+
+        response = await self.generate(
+            prompt,
+            max_tokens=8192,
+            on_chunk=forward_code_chunk if chunk_handler else None,
+        )
 
         code = self._extract_code(response)
         warnings = self._validate_code(code)
@@ -85,6 +108,22 @@ class AdapterAgent(BaseAgent):
             warnings=warnings,
             adapter_name=f"{template_name}_adapter",
         )
+
+    @staticmethod
+    def _extract_streamable_code(response: str) -> str:
+        stripped = response.lstrip()
+        if not stripped or "```".startswith(stripped):
+            return ""
+        if not stripped.startswith("```"):
+            return response
+
+        first_line_end = stripped.find("\n")
+        if first_line_end < 0:
+            return ""
+        code = stripped[first_line_end + 1 :]
+        if closing_fence := re.search(r"\s*```\s*$", code):
+            return code[: closing_fence.start()]
+        return re.sub(r"\s*`{0,2}$", "", code)
 
     @staticmethod
     def _template_data_type(template_yaml: str) -> str:

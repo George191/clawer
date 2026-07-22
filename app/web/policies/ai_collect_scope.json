@@ -12,8 +12,7 @@
     "max_generated_adapter_lines": 500,
     "max_generated_template_bytes": 65536,
     "max_generated_adapter_bytes": 65536,
-    "max_generated_fields": 100,
-    "max_preview_html_bytes": 120000
+    "max_generated_fields": 100
   },
   "agent_output": {
     "model_path": "models/Qwen/2.5-0.5B-Instruct",

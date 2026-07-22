@@ -5,15 +5,13 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 from urllib.parse import urlparse
 
 import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
-from lxml import etree
-from lxml import html as lxml_html
 from pydantic import BaseModel, Field
 
 from app.config.ai_settings import ai_settings
@@ -38,36 +36,6 @@ _PREFLIGHT_MAX_RETRIES = 3
 def _preflight_deadline() -> float:
     retry_backoff = sum(2**attempt for attempt in range(_PREFLIGHT_MAX_RETRIES - 1))
     return ai_settings.page_fetch_timeout * _PREFLIGHT_MAX_RETRIES + retry_backoff
-
-
-def _sanitize_preview_html(source: str) -> str:
-    """Remove executable content before placing captured HTML in a sandboxed srcDoc."""
-    if not source:
-        return ""
-
-    try:
-        document = lxml_html.document_fromstring(source)
-    except (etree.ParserError, ValueError):
-        return ""
-
-    for element in document.xpath("//*[local-name()='script' or local-name()='iframe' or local-name()='object' or local-name()='embed']"):
-        element.drop_tree()
-    for element in document.xpath(
-        "//*[local-name()='meta' and "
-        "translate(@http-equiv, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')='refresh']"
-    ):
-        element.drop_tree()
-
-    for element in document.iter():
-        for attribute, value in list(element.attrib.items()):
-            normalized_attribute = attribute.lower()
-            normalized_value = value.strip().lower()
-            if normalized_attribute.startswith("on"):
-                del element.attrib[attribute]
-            elif normalized_attribute in {"href", "src", "action", "formaction"} and normalized_value.startswith("javascript:"):
-                del element.attrib[attribute]
-
-    return lxml_html.tostring(document, encoding="unicode", method="html")
 
 
 class FieldOverride(BaseModel):
@@ -150,10 +118,10 @@ class UrlPreflightResponse:
         favicon_url: str = "",
         network_responses: list[dict[str, Any]] | None = None,
         page_warnings: list[str] | None = None,
+        browser_events: list[dict[str, Any]] | None = None,
     ):
         self.url = url
         self.html = html
-        self.preview_html = _sanitize_preview_html(html)
         self.title = title
         self.network_endpoints = network_endpoints
         self.host = host
@@ -162,6 +130,7 @@ class UrlPreflightResponse:
         self.favicon_url = favicon_url
         self.network_responses = network_responses or []
         self.page_warnings = page_warnings or []
+        self.browser_events = browser_events or []
         self.ok = True
         self.error_message = ""
         self.requires_proxy = False
@@ -177,12 +146,16 @@ class UrlPreflightResponse:
             "proxyMode": self.proxy_mode,
             "ok": self.ok,
             "errorMessage": self.error_message,
-            "previewHtml": self.preview_html,
+            "previewUrl": self.normalized_url,
             "previewImage": self.preview_image,
             "renderedBy": "chrome",
             "networkEndpoints": self.network_endpoints,
             "networkResponses": self.network_responses,
             "pageWarnings": self.page_warnings,
+            "browserEvents": [
+                {key: value for key, value in event.items() if key != "previewImage"}
+                for event in self.browser_events
+            ],
             "faviconUrl": self.favicon_url,
         }
 
@@ -317,11 +290,16 @@ async def _preflight(
     url: str,
     max_retries: int = _PREFLIGHT_MAX_RETRIES,
     viewport_width: int = 1440,
+    on_browser_event: Callable[[dict[str, object]], None] | None = None,
 ) -> UrlPreflightResponse:
     last_error = None
     for attempt in range(max_retries):
         try:
-            result = await browser_renderer.render(url, viewport_width=viewport_width)
+            result = await browser_renderer.render(
+                url,
+                viewport_width=viewport_width,
+                on_event=on_browser_event,
+            )
             logger.info("Preflight succeeded on attempt %d/%d for %s", attempt + 1, max_retries, url)
             return UrlPreflightResponse(
                 url=url,
@@ -330,14 +308,24 @@ async def _preflight(
                 network_endpoints=result.json_endpoints,
                 host=urlparse(url).hostname or "",
                 normalized_url=result.url,
-                preview_image=result.screenshot_data_url,
+                preview_image=result.preview_image,
                 favicon_url=result.favicon_url,
                 network_responses=result.network_responses,
                 page_warnings=_detect_page_warnings(result.html, result.network_responses),
+                browser_events=result.browser_events,
             )
         except Exception as e:
             last_error = e
             logger.warning("Preflight attempt %d/%d failed for %s: %s", attempt + 1, max_retries, url, e)
+            if on_browser_event:
+                on_browser_event({
+                    "kind": "preflight_retry",
+                    "url": url,
+                    "label": "Browser preflight attempt failed",
+                    "attempt": attempt + 1,
+                    "maxAttempts": max_retries,
+                    "error": str(e),
+                })
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt)
     
@@ -399,19 +387,20 @@ def _analysis_event(event_type: str, data: dict[str, Any]) -> AnalysisStreamEven
     return event_type, data
 
 
-async def _forward_model_events(
+async def _forward_task_events(
     task: asyncio.Task[Any],
     queue: asyncio.Queue[dict[str, Any]],
+    event_type: str,
 ) -> AsyncGenerator[AnalysisStreamEvent, None]:
     while not task.done() or not queue.empty():
         if not queue.empty():
-            yield _analysis_event("model", queue.get_nowait())
+            yield _analysis_event(event_type, queue.get_nowait())
             continue
 
         next_event = asyncio.create_task(queue.get())
         done, _ = await asyncio.wait({task, next_event}, return_when=asyncio.FIRST_COMPLETED)
         if next_event in done:
-            yield _analysis_event("model", next_event.result())
+            yield _analysis_event(event_type, next_event.result())
         else:
             next_event.cancel()
 
@@ -421,16 +410,46 @@ async def _analyze_events(
     prompt: str = "",
     viewport_width: int = 1440,
 ) -> AsyncGenerator[AnalysisStreamEvent, None]:
+    step_started_at: dict[str, int] = {}
+
+    def step_event(step: str, label: str, status: str) -> AnalysisStreamEvent:
+        now = int(time.time() * 1000)
+        if status == "running":
+            step_started_at[step] = now
+        data: dict[str, Any] = {
+            "step": step,
+            "label": label,
+            "status": status,
+            "startedAt": step_started_at.get(step, now),
+        }
+        if status == "done":
+            data["finishedAt"] = now
+        return _analysis_event("step", data)
+
     try:
-        yield _analysis_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "running"})
-        preflight = await asyncio.wait_for(
-            _preflight(url, viewport_width=viewport_width),
-            timeout=_preflight_deadline(),
+        yield step_event("fetch_page", "Fetch page", "running")
+        browser_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        preflight_task = asyncio.create_task(
+            asyncio.wait_for(
+                _preflight(
+                    url,
+                    viewport_width=viewport_width,
+                    on_browser_event=lambda event: loop.call_soon_threadsafe(
+                        browser_events.put_nowait,
+                        event,
+                    ),
+                ),
+                timeout=_preflight_deadline(),
+            )
         )
+        async for event in _forward_task_events(preflight_task, browser_events, "browser"):
+            yield event
+        preflight = await preflight_task
         if not preflight.ok:
             raise RuntimeError(preflight.error_message or "Page preflight failed")
         
-        yield _analysis_event("step", {"step": "fetch_page", "label": "Fetch page", "status": "done"})
+        yield step_event("fetch_page", "Fetch page", "done")
         
         yield _analysis_event("preflight", {
             "url": preflight.normalized_url,
@@ -439,18 +458,22 @@ async def _analyze_events(
             "title": preflight.title,
             "requiresProxy": preflight.requires_proxy,
             "proxyMode": preflight.proxy_mode,
-            "previewHtml": preflight.preview_html,
+            "previewUrl": preflight.normalized_url,
             "previewImage": preflight.preview_image,
             "renderedBy": "chrome",
             "networkEndpoints": preflight.network_endpoints,
             "networkResponses": preflight.network_responses,
             "pageWarnings": preflight.page_warnings,
+            "browserEvents": [
+                {key: value for key, value in event.items() if key != "previewImage"}
+                for event in preflight.browser_events
+            ],
             "faviconUrl": preflight.favicon_url,
             "ok": True,
             "errorMessage": "",
         })
         
-        yield _analysis_event("step", {"step": "analyze_structure", "label": "Analyze page structure", "status": "running"})
+        yield step_event("analyze_structure", "Analyze page structure", "running")
         analysis_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         analysis_task = asyncio.create_task(
             asyncio.wait_for(
@@ -465,25 +488,26 @@ async def _analyze_events(
                 timeout=ai_settings.llm_request_timeout,
             )
         )
-        async for event in _forward_model_events(analysis_task, analysis_events):
+        async for event in _forward_task_events(analysis_task, analysis_events, "model"):
             yield event
         analysis_result = await analysis_task
         
-        yield _analysis_event("step", {"step": "analyze_structure", "label": "Analyze page structure", "status": "done"})
+        yield step_event("analyze_structure", "Analyze page structure", "done")
         
-        yield _analysis_event("step", {"step": "generate_template", "label": "Generate template", "status": "running"})
+        yield step_event("generate_template", "Generate template", "running")
         template_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         template_task = asyncio.create_task(
             asyncio.wait_for(
                 template_agent.generate_template(
                     preflight.normalized_url,
                     analysis_result,
+                    page_title=preflight.title,
                     on_event=template_events.put_nowait,
                 ),
                 timeout=ai_settings.llm_request_timeout,
             )
         )
-        async for event in _forward_model_events(template_task, template_events):
+        async for event in _forward_task_events(template_task, template_events, "model"):
             yield event
         template_yaml = await template_task
         if not template_yaml:
@@ -502,7 +526,7 @@ async def _analyze_events(
             "total": len(template_dict),
             "templateYaml": template_yaml,
         })
-        yield _analysis_event("step", {"step": "generate_template", "label": "Generate template", "status": "done"})
+        yield step_event("generate_template", "Generate template", "done")
         
         fields = template_agent._build_inferred_fields(analysis_result)
         sample_items = template_agent._build_sample_items(fields, analysis_result)
@@ -514,7 +538,10 @@ async def _analyze_events(
             base_url=template_agent._build_base_url(preflight.normalized_url),
             domain=preflight.host,
             template_name=template_name,
-            display_name=template_agent._build_display_name(preflight.normalized_url),
+            display_name=template_agent._build_display_name(
+                preflight.normalized_url,
+                preflight.title,
+            ),
             root_selector="",
             fields=fields,
             sample_items=sample_items,
@@ -528,9 +555,9 @@ async def _analyze_events(
             acquisition=acquisition,
         )
         
-        yield _analysis_event("step", {"step": "validate", "label": "Validate artifacts", "status": "running"})
+        yield step_event("validate", "Validate artifacts", "running")
         await asyncio.sleep(1)
-        yield _analysis_event("step", {"step": "validate", "label": "Validate artifacts", "status": "done"})
+        yield step_event("validate", "Validate artifacts", "done")
         yield _analysis_event("fields", {"fields": [f.__dict__ for f in fields]})
         yield _analysis_event("pagination", pagination.__dict__)
         
@@ -572,7 +599,10 @@ async def _analyze_events(
         logger.exception("Analysis failed for %s", url)
 
 
-async def _generate_adapter_for_template(template_id: str) -> dict[str, Any]:
+async def _generate_adapter_for_template(
+    template_id: str,
+    on_chunk: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
     analysis = await ai_collect_store.get_analysis(template_id)
     if analysis is None:
         raise HTTPException(status_code=404, detail=f"Analysis '{template_id}' not found")
@@ -585,7 +615,11 @@ async def _generate_adapter_for_template(template_id: str) -> dict[str, Any]:
     
     try:
         adapter_result = await asyncio.wait_for(
-            adapter_agent.generate_adapter(template_name, template_yaml),
+            adapter_agent.generate_adapter(
+                template_name,
+                template_yaml,
+                on_chunk=on_chunk,
+            ),
             timeout=ai_settings.llm_request_timeout,
         )
     except asyncio.TimeoutError as exc:
@@ -680,7 +714,11 @@ async def generate_template(body: GenerateTemplateRequest):
         page_warnings=preflight.page_warnings,
     )
     
-    template_yaml = await template_agent.generate_template(preflight.normalized_url, analysis_result)
+    template_yaml = await template_agent.generate_template(
+        preflight.normalized_url,
+        analysis_result,
+        page_title=preflight.title,
+    )
     _, warnings = _validate_generated_template(
         template_yaml,
         preflight.normalized_url,

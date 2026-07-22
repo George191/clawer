@@ -154,7 +154,7 @@ export interface UrlPreflightResponse {
   title: string;
   requiresProxy: boolean;
   proxyMode: 'direct' | 'configured_proxy';
-  previewHtml: string;
+  previewUrl: string;
   previewImage: string;
   renderedBy: 'http' | 'chrome';
   networkEndpoints: string[];
@@ -169,10 +169,29 @@ export interface UrlPreflightResponse {
     recordFields?: string[];
     sampleRecord?: Record<string, unknown>;
   }>;
+  browserEvents: BrowserAnalysisEvent[];
   pageWarnings: string[];
   faviconUrl: string;
   errorCode: string;
   errorMessage: string;
+}
+
+export interface BrowserAnalysisEvent {
+  kind: 'navigation_requested' | 'navigation' | 'document_response' | 'api_candidate' | 'page_link' | 'snapshot' | 'preflight_retry';
+  url: string;
+  label: string;
+  status?: number;
+  contentType?: string;
+  resourceType?: string;
+  decision?: 'record_shape_found' | 'no_record_shape';
+  recordFields?: string[];
+  scope?: 'internal' | 'external';
+  text?: string;
+  title?: string;
+  previewImage?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  error?: string;
 }
 
 export interface WorkspaceTemplate {

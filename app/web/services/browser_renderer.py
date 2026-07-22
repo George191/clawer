@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
@@ -27,10 +28,11 @@ class BrowserRenderResult:
     url: str
     title: str
     html: str
-    screenshot_data_url: str
+    preview_image: str = ""
     favicon_url: str = ""
     json_endpoints: list[str] = field(default_factory=list)
     network_responses: list[dict[str, object]] = field(default_factory=list)
+    browser_events: list[dict[str, object]] = field(default_factory=list)
 
 
 class BrowserRenderer:
@@ -69,7 +71,7 @@ class BrowserRenderer:
 
         result: dict[str, object] = {
             "jsonTopLevelType": type(payload).__name__,
-            "jsonTopLevelFields": list(payload)[:100] if isinstance(payload, dict) else [],
+            "jsonTopLevelFields": list(payload)[:40] if isinstance(payload, dict) else [],
         }
         found = find_record(payload)
         if found is not None:
@@ -77,10 +79,10 @@ class BrowserRenderer:
             result.update(
                 {
                     "jsonItemPath": item_path,
-                    "recordFields": list(record)[:200],
+                    "recordFields": list(record)[:80],
                     "sampleRecord": {
                         key: sample_value(value)
-                        for key, value in list(record.items())[:100]
+                        for key, value in list(record.items())[:40]
                     },
                 }
             )
@@ -111,7 +113,13 @@ class BrowserRenderer:
             config["password"] = parsed.password
         return config
 
-    def _render_sync(self, url: str, use_proxy: bool, viewport_width: int) -> BrowserRenderResult:
+    def _render_sync(
+        self,
+        url: str,
+        use_proxy: bool,
+        viewport_width: int,
+        on_event: Callable[[dict[str, object]], None] | None,
+    ) -> BrowserRenderResult:
         try:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
             from playwright.sync_api import sync_playwright
@@ -122,6 +130,21 @@ class BrowserRenderer:
 
         json_endpoints: list[str] = []
         network_responses: list[dict[str, object]] = []
+        browser_events: list[dict[str, object]] = []
+
+        def add_browser_event(kind: str, event_url: str, **details: object) -> None:
+            if len(browser_events) >= 60:
+                if kind != "snapshot":
+                    return
+                browser_events.pop()
+            event = {"kind": kind, "url": event_url, **details}
+            browser_events.append(
+                {key: value for key, value in event.items() if key != "previewImage"}
+            )
+            if on_event:
+                on_event(event)
+
+        add_browser_event("navigation_requested", url, label="Open target URL")
         proxy = self._proxy_config(settings.tunnel_proxy_url) if use_proxy else None
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(
@@ -137,13 +160,39 @@ class BrowserRenderer:
                     locale="zh-CN",
                 )
                 page = context.new_page()
+                page.route(
+                    "**/*",
+                    lambda route: route.abort()
+                    if route.request.resource_type in {"media", "font"}
+                    else route.continue_(),
+                )
+
+                def track_navigation(frame) -> None:
+                    if frame == page.main_frame and frame.url:
+                        add_browser_event(
+                            "navigation",
+                            frame.url,
+                            label="Main frame navigated",
+                        )
+
+                page.on("framenavigated", track_navigation)
 
                 def track_response(response) -> None:
                     content_type = response.headers.get("content-type", "").lower()
                     if "json" in content_type and response.url not in json_endpoints:
                         json_endpoints.append(response.url)
                     resource_type = response.request.resource_type
-                    if resource_type in {"xhr", "fetch"} or "json" in content_type:
+                    if resource_type == "document":
+                        add_browser_event(
+                            "document_response",
+                            response.url,
+                            label="Document response",
+                            status=response.status,
+                            contentType=content_type,
+                        )
+                    if (
+                        resource_type in {"xhr", "fetch"} or "json" in content_type
+                    ) and len(network_responses) < 24:
                         evidence: dict[str, object] = {
                             "url": response.url,
                             "status": response.status,
@@ -159,24 +208,44 @@ class BrowserRenderer:
                         )
                         if textual_api_response:
                             try:
-                                body = response.text()
-                                evidence["bodyPreview"] = re.sub(r"\s+", " ", body)[:2000]
-                                json_shape = self._json_shape(body)
-                                if json_shape:
-                                    evidence.update(json_shape)
-                                    if response.url not in json_endpoints:
-                                        json_endpoints.append(response.url)
-                                if response.status >= 400 and "html" in content_type:
-                                    evidence["links"] = [
-                                        urljoin(response.url, href)
-                                        for href in re.findall(
-                                            r'href=["\']([^"\']+)', body, re.IGNORECASE
-                                        )[:20]
-                                    ]
+                                content_length = int(response.headers.get("content-length", "0") or 0)
+                                if content_length <= 262_144:
+                                    body = response.text()
+                                    evidence["bodyPreview"] = re.sub(r"\s+", " ", body)[:800]
+                                    json_shape = self._json_shape(body)
+                                    if json_shape:
+                                        evidence.update(json_shape)
+                                        if response.url not in json_endpoints:
+                                            json_endpoints.append(response.url)
+                                    if response.status >= 400 and "html" in content_type:
+                                        evidence["links"] = [
+                                            urljoin(response.url, href)
+                                            for href in re.findall(
+                                                r'href=["\']([^"\']+)', body, re.IGNORECASE
+                                            )[:10]
+                                        ]
                             except Exception:
                                 logger.debug("Could not capture structured response body: %s", response.url)
                         if evidence not in network_responses:
                             network_responses.append(evidence)
+                        add_browser_event(
+                            "api_candidate",
+                            response.url,
+                            label=(
+                                "Structured API candidate"
+                                if evidence.get("recordFields")
+                                else "XHR/fetch response inspected"
+                            ),
+                            status=response.status,
+                            contentType=content_type,
+                            resourceType=resource_type,
+                            decision=(
+                                "record_shape_found"
+                                if evidence.get("recordFields")
+                                else "no_record_shape"
+                            ),
+                            recordFields=list(evidence.get("recordFields") or [])[:12],
+                        )
 
                 page.on("response", track_response)
                 page.goto(
@@ -185,93 +254,96 @@ class BrowserRenderer:
                     timeout=max(1, int(ai_settings.page_fetch_timeout * 1000)),
                 )
                 try:
-                    page.wait_for_load_state("load", timeout=10_000)
+                    page.wait_for_load_state("load", timeout=5_000)
                 except PlaywrightTimeoutError:
                     logger.warning("Page load did not settle before capture: %s", url)
-                page.evaluate(
-                    """
-                    async () => {
-                        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-                        for (let step = 0; step < 80; step += 1) {
-                            const maxScroll = Math.max(0, document.documentElement.scrollHeight - innerHeight);
-                            const nextScroll = Math.min(maxScroll, (step + 1) * Math.max(1, innerHeight * 0.8));
-                            scrollTo(0, nextScroll);
-                            await delay(75);
-                            if (nextScroll >= maxScroll) break;
-                        }
-                        scrollTo(0, 0);
-
-                        const imagesReady = Promise.all(
-                            Array.from(document.images)
-                                .filter((image) => !image.complete)
-                                .map((image) => new Promise((resolve) => {
-                                    image.addEventListener('load', resolve, { once: true });
-                                    image.addEventListener('error', resolve, { once: true });
-                                }))
-                        );
-                        const fontsReady = document.fonts?.ready ?? Promise.resolve();
-                        await Promise.race([
-                            Promise.all([imagesReady, fontsReady]),
-                            delay(5_000),
-                        ]);
-                    }
-                    """
-                )
-                page.wait_for_timeout(250)
+                page.wait_for_timeout(500)
                 final_url = page.url
                 if urlparse(final_url).scheme not in {"http", "https"}:
                     raise ValueError("Browser navigation escaped the HTTP/HTTPS boundary")
-                html = page.content()
-                html = self._make_absolute_paths(html, final_url)
+                html = self._compact_html(page.content())
                 favicon_href = page.locator('link[rel~="icon"]').last.get_attribute("href") if page.locator('link[rel~="icon"]').count() else ""
-                page.evaluate(
+                discovered_links = page.eval_on_selector_all(
+                    "a[href]",
                     """
-                    () => {
-                        const root = document.documentElement;
-                        const bodyWidth = document.body?.scrollWidth ?? 0;
-                        const contentWidth = Math.max(root.scrollWidth, bodyWidth);
-                        const viewportWidth = root.clientWidth;
-                        if (contentWidth > viewportWidth) {
-                            root.style.zoom = String(Math.max(0.1, viewportWidth / contentWidth));
-                        }
-                    }
-                    """
+                    (elements) => elements.slice(0, 80).map((element) => ({
+                        href: element.href,
+                        text: (element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+                    }))
+                    """,
                 )
-                page.wait_for_timeout(250)
-                screenshot = page.screenshot(type="jpeg", quality=78, full_page=True)
+                seen_links: set[str] = set()
+                final_host = urlparse(final_url).hostname
+                for link in discovered_links:
+                    link_url = str(link.get("href") or "")
+                    if not link_url.startswith(("http://", "https://")) or link_url in seen_links:
+                        continue
+                    seen_links.add(link_url)
+                    add_browser_event(
+                        "page_link",
+                        link_url,
+                        label="Page link discovered",
+                        text=str(link.get("text") or ""),
+                        scope=(
+                            "internal"
+                            if urlparse(link_url).hostname == final_host
+                            else "external"
+                        ),
+                    )
+                    if len(seen_links) >= 20:
+                        break
+                screenshot = page.screenshot(type="jpeg", quality=62, full_page=False)
+                preview_image = (
+                    "data:image/jpeg;base64,"
+                    + base64.b64encode(screenshot).decode("ascii")
+                )
+                add_browser_event(
+                    "snapshot",
+                    final_url,
+                    label="Viewport snapshot captured",
+                    title=page.title(),
+                    previewImage=preview_image,
+                )
                 return BrowserRenderResult(
                     url=final_url,
                     title=page.title(),
                     html=html,
-                    screenshot_data_url="data:image/jpeg;base64," + base64.b64encode(screenshot).decode("ascii"),
+                    preview_image=preview_image,
                     favicon_url=urljoin(final_url, favicon_href) if favicon_href else urljoin(final_url, "/favicon.ico"),
-                    json_endpoints=json_endpoints[:50],
-                    network_responses=network_responses[:100],
+                    json_endpoints=json_endpoints[:20],
+                    network_responses=network_responses,
+                    browser_events=browser_events,
                 )
             finally:
                 browser.close()
 
-    def _make_absolute_paths(self, html: str, base_url: str) -> str:
-        def make_absolute(match):
-            attr = match.group(1)
-            path = match.group(2)
-            if path.startswith('data:') or path.startswith('http://') or path.startswith('https://'):
-                return match.group(0)
-            return f'{attr}="{urljoin(base_url, path)}"'
-
-        html = re.sub(r'(href|src|action)=["\']([^"\']+)["\']', make_absolute, html)
-        html = re.sub(r'url\(["\']?([^"\')]+)["\']?\)', lambda m: f'url("{urljoin(base_url, m.group(1))}")' if not m.group(1).startswith(('data:', 'http://', 'https://')) else m.group(0), html)
-
-        return html
+    @staticmethod
+    def _compact_html(html: str) -> str:
+        html = re.sub(
+            r"<(script|style|noscript|svg)\b[^>]*>[\s\S]*?</\1>",
+            " ",
+            html,
+            flags=re.IGNORECASE,
+        )
+        html = re.sub(r"<!--([\s\S]*?)-->", " ", html)
+        html = re.sub(r"\s+", " ", html).strip()
+        return html[: ai_settings.max_html_chars_for_llm]
 
     async def render(
         self,
         url: str,
         use_proxy: bool = False,
         viewport_width: int = 1440,
+        on_event: Callable[[dict[str, object]], None] | None = None,
     ) -> BrowserRenderResult:
         safe_viewport_width = max(320, min(int(viewport_width), 3840))
-        return await asyncio.to_thread(self._render_sync, url, use_proxy, safe_viewport_width)
+        return await asyncio.to_thread(
+            self._render_sync,
+            url,
+            use_proxy,
+            safe_viewport_width,
+            on_event,
+        )
 
 
 browser_renderer = BrowserRenderer()

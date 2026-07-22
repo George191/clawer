@@ -38,6 +38,7 @@ from app.logger import get_logger
 from app.web.routes.ai_collect import (
     _analyze_events,
     _build_yaml_template,
+    _generate_adapter_for_template,
 )
 from app.web.utils.validation import (
     scope_limit,
@@ -61,6 +62,7 @@ class ClientConnection:
         self._send_lock = asyncio.Lock()
         self._closed = False
         self.analyze_task: asyncio.Task[None] | None = None
+        self.adapter_task: asyncio.Task[None] | None = None
 
     async def send(self, message: dict[str, Any]) -> bool:
         """发送消息到客户端."""
@@ -78,6 +80,8 @@ class ClientConnection:
         """关闭连接."""
         if self.analyze_task and not self.analyze_task.done():
             self.analyze_task.cancel()
+        if self.adapter_task and not self.adapter_task.done():
+            self.adapter_task.cancel()
         async with self._send_lock:
             if self._closed:
                 return
@@ -672,107 +676,100 @@ async def _stream_template_generation(connection: ClientConnection, url: str) ->
 
 
 async def handle_generate_adapter(connection: ClientConnection, message: dict[str, Any]) -> None:
-    """处理生成适配器请求."""
+    """Generate and stream an adapter from a stored template analysis."""
     url = message.get("url")
-    site_type = message.get("site_type", "default")
+    template_id = message.get("template_id")
+    request_id = message.get("request_id")
 
-    if not url:
-        await connection.send({"type": "error", "code": "MISSING_URL", "message": "缺少url参数"})
+    if not url or not template_id or not request_id:
+        await connection.send(
+            {
+                "type": "adapter_error",
+                "request_id": request_id,
+                "data": {"message": "url, template_id and request_id are required"},
+            }
+        )
         return
 
     try:
         validate_target_url(url)
     except Exception as e:
-        await connection.send({"type": "error", "code": "INVALID_URL", "message": str(e)})
+        await connection.send(
+            {
+                "type": "adapter_error",
+                "request_id": request_id,
+                "data": {"message": str(e)},
+            }
+        )
         return
 
-    adapter_task = asyncio.create_task(_stream_adapter_generation(connection, url, site_type))
+    if connection.adapter_task and not connection.adapter_task.done():
+        connection.adapter_task.cancel()
+    connection.adapter_task = asyncio.create_task(
+        _stream_adapter_generation(connection, template_id, request_id)
+    )
     connection.active_tasks.add("adapter_generation")
 
 
-async def _stream_adapter_generation(connection: ClientConnection, url: str, site_type: str) -> None:
-    """流式发送适配器生成进度."""
+async def _stream_adapter_generation(
+    connection: ClientConnection,
+    template_id: str,
+    request_id: str,
+) -> None:
+    """Stream real model output, then validate and persist the final adapter."""
+    chunk_queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+    async def generate() -> dict[str, Any]:
+        try:
+            return await _generate_adapter_for_template(
+                template_id,
+                on_chunk=chunk_queue.put_nowait,
+            )
+        finally:
+            chunk_queue.put_nowait(None)
+
     try:
-        from urllib.parse import urlparse
-
-        domain = urlparse(url).hostname or "unknown"
-        safe_name = domain.replace(".", "_")
-        adapter_id = f"adp_{int(datetime.now().timestamp())}"
-
         await connection.send(
             {
-                "type": "adapter_progress",
-                "data": {"stage": "analyzing", "progress": 20, "message": "正在分析站点特征..."},
+                "type": "adapter_started",
+                "request_id": request_id,
+                "data": {"templateId": template_id},
             }
         )
-        await asyncio.sleep(0.5)
+        generation_task = asyncio.create_task(generate())
+        while True:
+            chunk = await chunk_queue.get()
+            if chunk is None:
+                break
+            await connection.send(
+                {
+                    "type": "adapter_delta",
+                    "request_id": request_id,
+                    "data": {"content": chunk},
+                }
+            )
 
-        await connection.send(
-            {
-                "type": "adapter_progress",
-                "data": {"stage": "generating", "progress": 50, "message": "正在生成适配器代码..."},
-            }
-        )
-        await asyncio.sleep(0.8)
-
-        code = (
-            f"// Adapter for {domain} (type: {site_type})\n"
-            f"// Generated: {datetime.now(timezone.utc).isoformat()}\n"
-            f"// Adapter ID: {adapter_id}\n"
-            "\n"
-            "const cheerio = require('cheerio');\n"
-            "const axios = require('axios');\n"
-            "\n"
-            "module.exports = {\n"
-            f"  name: 'adapter_{safe_name}',\n"
-            f"  domain: '{domain}',\n"
-            "\n"
-            "  async fetch(url) {\n"
-            "    const { data } = await axios.get(url, { timeout: 30000 });\n"
-            "    return data;\n"
-            "  },\n"
-            "\n"
-            "  async parse(html, page = 1) {\n"
-            "    const $ = cheerio.load(html);\n"
-            "    const items = [];\n"
-            "    $('.list-item').each((i, el) => {\n"
-            "      items.push({\n"
-            "        title: $(el).find('.title').text().trim(),\n"
-            "        link: $(el).find('a').attr('href'),\n"
-            "      });\n"
-            "    });\n"
-            "    return items;\n"
-            "  },\n"
-            "\n"
-            "  getNextPageUrl(currentUrl, page) {\n"
-            f"    return `{url}${{page > 1 ? '?p=' + page : ''}}`;\n"
-            "  },\n"
-            "};\n"
-        )
-
-        await connection.send(
-            {
-                "type": "adapter_progress",
-                "data": {"stage": "validating", "progress": 80, "message": "正在验证代码安全性..."},
-            }
-        )
-        await asyncio.sleep(0.4)
+        result = await generation_task
 
         await connection.send(
             {
                 "type": "adapter_ready",
-                "data": {
-                    "adapter_id": adapter_id,
-                    "code": code,
-                    "language": "javascript",
-                    "test_result": {"passed": True, "sample_count": 10},
-                },
+                "request_id": request_id,
+                "data": result,
             }
         )
     except asyncio.CancelledError:
-        logger.info("Adapter generation cancelled for %s", url)
+        logger.info("Adapter generation cancelled for template %s", template_id)
     except Exception as e:
-        logger.exception("Adapter generation error for %s", url)
-        await connection.send({"type": "adapter_error", "data": {"code": "ADAPTER_ERROR", "message": str(e)}})
+        logger.exception("Adapter generation error for template %s", template_id)
+        await connection.send(
+            {
+                "type": "adapter_error",
+                "request_id": request_id,
+                "data": {"message": str(e)},
+            }
+        )
     finally:
-        connection.active_tasks.discard("adapter_generation")
+        if connection.adapter_task is asyncio.current_task():
+            connection.adapter_task = None
+            connection.active_tasks.discard("adapter_generation")
