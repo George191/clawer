@@ -75,6 +75,26 @@ class HttpClient:
         self._leased_proxies: dict[int, str] = {}
         self._lease_lock: asyncio.Lock | None = None
 
+    @staticmethod
+    def _should_mark_download_proxy_failure(error: Exception) -> bool:
+        """Only remove a proxy for errors that indicate the route failed.
+
+        Resource-level failures (404/403) and local size validation do not say
+        anything about the proxy, so retaining the lease avoids draining the
+        shared pool on bad or expired asset URLs.
+        """
+        if isinstance(error, FileTooLargeError):
+            return False
+        status_code = getattr(error, "status_code", None)
+        if status_code is None:
+            response = getattr(error, "response", None)
+            status_code = (
+                getattr(response, "status_code", None)
+                if response is not None
+                else None
+            )
+        return status_code not in {403, 404}
+
     async def _get_lease_lock(self) -> asyncio.Lock:
         if self._lease_lock is None:
             self._lease_lock = asyncio.Lock()
@@ -442,39 +462,49 @@ class HttpClient:
         headers = dict(config.headers)
         cookies = dict(config.cookies)
 
-        # _init_anti_crawl()
+        _init_anti_crawl()
 
-        # if _rotator is not None and _rotator.enabled:
-        #     anti_headers = _rotator.get_headers(target_url=url)
-        #     for k, v in anti_headers.items():
-        #         headers.setdefault(k, v)
-        #     anti_cookies = _rotator.get_cookies()
-        #     if anti_cookies:
-        #         for k, v in anti_cookies.items():
-        #             cookies.setdefault(k, v)
+        if _rotator is not None and _rotator.enabled:
+            anti_headers = _rotator.get_headers(target_url=url)
+            for k, v in anti_headers.items():
+                headers.setdefault(k, v)
+            anti_cookies = _rotator.get_cookies()
+            if anti_cookies:
+                for k, v in anti_cookies.items():
+                    cookies.setdefault(k, v)
 
-        # if _delayer is not None and _delayer.enabled:
-        #     await _delayer.delay(url)
+        if _delayer is not None and _delayer.enabled:
+            await _delayer.delay(url)
 
         # ── 代理选择：隧道代理 > 代理池 ──────────────────────────
         proxy_url = None
         pre_proxy_url = None
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
 
-        # if settings.tunnel_proxy_url:
-        #     proxy_url = settings.tunnel_proxy_url
-        # elif _proxy_pool is not None and _proxy_pool.enabled:
-        #     pre_proxy_url = settings.proxy_pre_proxy_url or None
-        #     lock = await self._get_lease_lock()
-        #     async with lock:
-        #         if task_id in self._leased_proxies:
-        #             proxy_url = self._leased_proxies[task_id]
-        #         else:
-        #             proxy_url = await _proxy_pool.lease_proxy(task_id)
-        #             if proxy_url:
-        #                 self._leased_proxies[task_id] = proxy_url
+        if settings.tunnel_proxy_url:
+            proxy_url = settings.tunnel_proxy_url
+        elif _proxy_pool is not None and _proxy_pool.enabled:
+            pre_proxy_url = settings.proxy_pre_proxy_url or None
+            lock = await self._get_lease_lock()
+            async with lock:
+                if task_id in self._leased_proxies:
+                    proxy_url = self._leased_proxies[task_id]
+                else:
+                    proxy_url = await _proxy_pool.lease_proxy(task_id)
+                    if proxy_url:
+                        self._leased_proxies[task_id] = proxy_url
 
-        logger.info("Downloading bytes: %s with proxy: %s", url, proxy_url or "None")
+        if proxy_url:
+            self._last_proxy_urls[task_id] = proxy_url
+        else:
+            self._last_proxy_urls.pop(task_id, None)
+            if _proxy_pool is not None and _proxy_pool.enabled:
+                raise DownloadError(url, message="Download proxy unavailable")
+        logger.info(
+            "Downloading bytes: %s with proxy: %s",
+            url,
+            self._safe_proxy_url(proxy_url),
+        )
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
         async with await self._create_client(
@@ -518,7 +548,11 @@ class HttpClient:
                 return data
 
             except Exception as e:
-                if _proxy_pool is not None and proxy_url:
+                if (
+                    _proxy_pool is not None
+                    and proxy_url
+                    and self._should_mark_download_proxy_failure(e)
+                ):
                     await _proxy_pool.mark_failure(proxy_url)
                     await self._release_failed_proxy(task_id, proxy_url)
                 raise
