@@ -1342,6 +1342,23 @@ const AICollect: React.FC = () => {
     () => sessionInspectorTabs.find((tab) => tab.id === activeInspectorTabId) ?? sessionInspectorTabs[sessionInspectorTabs.length - 1] ?? null,
     [activeInspectorTabId, sessionInspectorTabs],
   );
+
+  useEffect(() => {
+    const existing = sessionInspectorTabs.find((tab) => tab.kind === currentInspectorTab.kind);
+    if (
+      !existing
+      || (
+        existing.id === currentInspectorTab.id
+        && existing.title === currentInspectorTab.title
+        && existing.subtitle === currentInspectorTab.subtitle
+      )
+    ) return;
+
+    setSessionInspectorTabs((previous) => previous.map(
+      (tab) => (tab.kind === currentInspectorTab.kind ? currentInspectorTab : tab),
+    ));
+    setActiveInspectorTabId((current) => (current === existing.id ? currentInspectorTab.id : current));
+  }, [currentInspectorTab, sessionInspectorTabs]);
   const activeWorkspacePanel = useMemo<WorkspacePanel | null>(() => {
     const panel = searchParams.get('panel');
     return panel === 'templates' || panel === 'tasks' ? panel : null;
@@ -2091,7 +2108,13 @@ const AICollect: React.FC = () => {
 
   const openSessionInspector = useCallback((tab: SessionInspectorTab = currentInspectorTab) => {
     clearInspectorTransitionTimer();
-    setSessionInspectorTabs((prev) => (prev.some((item) => item.id === tab.id) ? prev : [...prev, tab]));
+    setSessionInspectorTabs((prev) => {
+      const index = prev.findIndex((item) => item.kind === tab.kind);
+      if (index < 0) return [...prev, tab];
+      const next = [...prev];
+      next[index] = tab;
+      return next;
+    });
     setActiveInspectorTabId(tab.id);
     setInspectorMounted(true);
     setInspectorAnimating(true);

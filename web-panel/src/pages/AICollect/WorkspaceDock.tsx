@@ -189,7 +189,7 @@ const extractTemplateDataType = (yaml: string) => (
   yaml.match(/^\s*data_type\s*:\s*['"]?([^'"\r\n#]+)['"]?/m)?.[1]?.trim() || 'other'
 );
 
-type TemplatePreviewStage = 'site' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
+type TemplatePreviewStage = 'site' | 'param' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
 
 interface TemplatePreviewEntry {
   id: string;
@@ -202,7 +202,8 @@ interface TemplatePreviewEntry {
 
 const templatePreviewStages: Array<{ id: TemplatePreviewStage; title: string; description: string }> = [
   { id: 'site', title: 'Site', description: 'base url, source identity and crawler baseline' },
-  { id: 'request', title: 'Request', description: 'request method, query params and fetch contract' },
+  { id: 'param', title: 'Param', description: 'request parameters and batch inputs' },
+  { id: 'request', title: 'Request', description: 'list/detail page routes and fetch contract' },
   { id: 'response', title: 'Response', description: 'response type and result path resolution' },
   { id: 'pagination', title: 'Pagination', description: 'page turning strategy and continuation cursor' },
   { id: 'fields', title: 'Fields', description: 'list/detail fields, selectors and output schema' },
@@ -211,11 +212,19 @@ const templatePreviewStages: Array<{ id: TemplatePreviewStage; title: string; de
 ];
 
 const inferTemplatePreviewStage = (key: string, path: string): TemplatePreviewStage => {
-  if (path === 'batch_params' || path.startsWith('batch_params.') || path === 'params' || path.startsWith('params') || key === 'list_page' || path.startsWith('list_request')) return 'request';
+  if (path === 'batch_params' || path.startsWith('batch_params.') || path === 'params' || path.startsWith('params')) return 'param';
+  if (
+    key === 'list_page'
+    || path.startsWith('list_request')
+    || key === 'detail_page'
+    || key === 'detail_url_selector'
+    || key === 'detail_url_selector_type'
+    || path.startsWith('detail_request')
+  ) return 'request';
   if (path === 'list_pagination' || path.startsWith('list_pagination.')) return 'pagination';
   if (path === 'dedup_fields' || path.startsWith('dedup_fields')) return 'dedup';
   if (path === 'download' || path.startsWith('download')) return 'download';
-  if (path === 'list_fields' || path.startsWith('list_fields')) return 'fields';
+  if (path === 'list_fields' || path.startsWith('list_fields') || path === 'detail_fields' || path.startsWith('detail_fields')) return 'fields';
   if (['name', 'display_name', 'base_url', 'data_type', 'adapter', 'anti_crawl_enabled', 'description'].includes(path)) return 'site';
   if (['response_type', 'json_item_path', 'json_total_path', 'json_page_path', 'json_total_num_pages'].includes(key)) return 'response';
   return 'fields';
@@ -334,7 +343,15 @@ const renderCompactTemplatePreview = (yaml: string) => {
         const stageEntries = entries.filter((entry) => entry.stage === stage.id);
         const valueEntries = stageEntries.filter((entry) => !entry.group);
         const displayEntries = stageEntries.filter(
-          (entry) => !entry.group || entry.key === 'params' || entry.key === 'batch_params',
+          (entry) => (
+            !entry.group
+            || entry.key === 'params'
+            || entry.key === 'batch_params'
+            || entry.key === 'list_request'
+            || entry.key === 'list_request.headers'
+            || entry.key === 'detail_request'
+            || entry.key === 'detail_request.headers'
+          ),
         );
         if (!valueEntries.length) return null;
         return (
@@ -354,28 +371,68 @@ const renderCompactTemplatePreview = (yaml: string) => {
                 const label = /^dedup_fields\[\d+\]$/.test(entry.key)
                   ? 'field'
                   : rawLabel.replace(/^([a-z_]+)\[(\d+)\]$/, '$1 $2');
-                const listItemKey = entry.key.match(/^(params|batch_params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
-                const previousListItemKey = displayEntries[index - 1]?.key.match(/^(params|batch_params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+                const listItemKey = entry.key.match(/^(params|batch_params|dedup_fields|list_fields|detail_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+                const previousListItemKey = displayEntries[index - 1]?.key.match(/^(params|batch_params|dedup_fields|list_fields|detail_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+                const fieldSectionRoot = entry.key.match(/^(list_fields|detail_fields)(?:\[|\.|$)/)?.[1] ?? null;
+                const previousFieldSectionRoot = displayEntries[index - 1]?.key.match(/^(list_fields|detail_fields)(?:\[|\.|$)/)?.[1] ?? null;
+                const showFieldSectionLabel = Boolean(fieldSectionRoot && fieldSectionRoot !== previousFieldSectionRoot);
+                const pageSectionRoot = stage.id === 'request'
+                  ? entry.key.match(/^(list_page|list_request)(?:\[|\.|$)/)
+                    ? 'list'
+                    : entry.key.match(/^(detail_page|detail_request)(?:\[|\.|$)/)
+                      ? 'detail'
+                      : null
+                  : null;
+                const previousPageSectionRoot = stage.id === 'request'
+                  ? displayEntries[index - 1]?.key.match(/^(list_page|list_request)(?:\[|\.|$)/)
+                    ? 'list'
+                    : displayEntries[index - 1]?.key.match(/^(detail_page|detail_request)(?:\[|\.|$)/)
+                      ? 'detail'
+                      : null
+                  : null;
+                const showPageSectionLabel = Boolean(
+                  pageSectionRoot && pageSectionRoot !== previousPageSectionRoot,
+                );
                 const showListDash = Boolean(listItemKey && listItemKey !== previousListItemKey);
-                const isRootGroup = entry.group && (entry.key === 'params' || entry.key === 'batch_params');
+                const isRootGroup = entry.group && (
+                  entry.key === 'params'
+                  || entry.key === 'batch_params'
+                );
+                const isRequestHeadersGroup = entry.group
+                  && (entry.key === 'list_request.headers' || entry.key === 'detail_request.headers');
+                const isRequestContainerGroup = entry.group
+                  && (entry.key === 'list_request' || entry.key === 'detail_request');
                 const isYamlListItem = Boolean(listItemKey);
-                const displayDepth = entry.depth - (isYamlListItem ? 1 : 0);
+                const displayDepth = entry.depth
+                  - (isYamlListItem ? 1 : 0)
+                  + (pageSectionRoot ? 1 : 0);
                 return (
-                  <div
-                    className={`ai-template-field ${entry.group ? 'is-group' : ''} ${isRootGroup ? 'is-root-group' : ''} ${isYamlListItem ? 'is-yaml-list-item' : ''} ${showListDash ? 'has-yaml-dash' : ''}`}
-                    key={entry.id}
-                    style={{ ['--ai-template-depth' as string]: String(displayDepth) }}
-                  >
-                    <div className="ai-template-field-key">
-                      {listItemKey ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
-                      <span>{label}</span>
-                    </div>
-                    {entry.group ? null : (
-                      <div className={`ai-template-field-value ${entry.key === 'description' ? 'is-rich' : ''}`}>
-                        <pre>{entry.value.replace(/^['"]|['"]$/g, '')}</pre>
+                  <React.Fragment key={entry.id}>
+                    {showFieldSectionLabel ? (
+                      <div className="ai-template-fields-subsection" role="heading" aria-level={3}>
+                        {fieldSectionRoot === 'detail_fields' ? 'Details fields' : 'List fields'}
                       </div>
-                    )}
-                  </div>
+                    ) : null}
+                    {showPageSectionLabel ? (
+                      <div className="ai-template-fields-subsection" role="heading" aria-level={3}>
+                        {pageSectionRoot === 'detail' ? 'Detail' : 'List'}
+                      </div>
+                    ) : null}
+                    <div
+                      className={`ai-template-field ${entry.group && !isRequestHeadersGroup && !isRequestContainerGroup ? 'is-group' : ''} ${isRootGroup ? 'is-root-group' : ''} ${isYamlListItem ? 'is-yaml-list-item' : ''} ${showListDash ? 'has-yaml-dash' : ''}`}
+                      style={{ ['--ai-template-depth' as string]: String(displayDepth) }}
+                    >
+                      <div className="ai-template-field-key">
+                        {listItemKey ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
+                        <span>{label}</span>
+                      </div>
+                      {entry.group ? null : (
+                        <div className={`ai-template-field-value ${entry.key === 'description' ? 'is-rich' : ''}`}>
+                          <pre>{entry.value.replace(/^['"]|['"]$/g, '')}</pre>
+                        </div>
+                      )}
+                    </div>
+                  </React.Fragment>
                 );
               })}
             </div>
@@ -3239,12 +3296,27 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           padding: 4px 6px;
           border-radius: 12px;
         }
+        .workspace-dock-template-preview .ai-template-fields-subsection {
+          margin: 10px 2px 2px;
+          padding: 7px 8px 5px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+          color: ${aura.muted};
+          font-size: 10px;
+          font-weight: 700;
+          line-height: 1.3;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .workspace-dock-template-preview .ai-template-fields-subsection:first-child {
+          margin-top: 2px;
+        }
         .workspace-dock-template-preview .ai-template-field {
           display: grid;
           grid-template-columns: minmax(120px, 156px) minmax(0, 1fr);
           gap: 8px 10px;
           align-items: start;
           --ai-template-indent: calc(var(--ai-template-depth, 0) * 12px);
+          padding-left: var(--ai-template-indent);
         }
         .workspace-dock-template-preview .ai-template-field:last-child {
           border-bottom: none;
@@ -3253,6 +3325,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: block;
           margin-top: 6px;
           padding: 4px 4px 2px;
+          padding-left: var(--ai-template-indent);
           border-bottom: none;
         }
         .workspace-dock-template-preview .ai-template-field.is-group:first-child {
