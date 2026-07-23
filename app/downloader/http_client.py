@@ -214,7 +214,7 @@ class HttpClient:
         Returns:
             代理出口信息字符串。
         """
-        tunnel_info = "DIRECT"
+        tunnel_info = self._safe_proxy_url(proxy_url)
         if settings.http_debug_proxy_ip:
             try:
                 exit_ip = await self._probe_proxy_exit_ip(

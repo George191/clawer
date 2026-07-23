@@ -304,10 +304,8 @@ class ProxyPool:
         """
         if not self._healthy:
             logger.warning("No healthy proxies available for task %d, reloading...", task_id)
-            async with self._load_lock:
-                if not self._healthy:
-                    self._loaded = False
-                    await self.ensure_loaded()
+            self._loaded = False
+            await self.ensure_loaded()
             if not self._healthy:
                 return None
 
