@@ -11,8 +11,11 @@
 from __future__ import annotations
 
 import asyncio
-import random
-from pathlib import Path
+import json
+import logging
+import socket
+import sys
+from urllib.parse import urlsplit, urlunsplit
 
 from curl_cffi import CurlOpt, requests as curl_requests
 
@@ -21,6 +24,16 @@ from app.logger import get_logger
 from app.models.template import RequestConfig
 
 logger = get_logger(__name__)
+
+_proxy_debug_logger = logging.getLogger("app.downloader.proxy_debug")
+if not _proxy_debug_logger.handlers:
+    _proxy_debug_handler = logging.StreamHandler(sys.stdout)
+    _proxy_debug_handler.setFormatter(
+        logging.Formatter("%(asctime)s [PROXY DEBUG] %(message)s")
+    )
+    _proxy_debug_logger.addHandler(_proxy_debug_handler)
+_proxy_debug_logger.setLevel(logging.DEBUG)
+_proxy_debug_logger.propagate = False
 
 # 反爬层（延迟导入避免循环依赖）
 _proxy_pool = None
@@ -86,12 +99,102 @@ class HttpClient:
             logger.debug("Binding to network interface: %s", settings.http_interface)
         if proxy_url and pre_proxy_url:
             session_kwargs["curl_options"] = {CurlOpt.PRE_PROXY: pre_proxy_url}
+        if settings.http_debug_proxy_ip:
+            _proxy_debug_logger.debug(
+                "session proxy=%s pre_proxy(jump)=%s interface=%s",
+                self._safe_proxy_url(proxy_url),
+                self._safe_proxy_url(pre_proxy_url),
+                settings.http_interface or "default",
+            )
         return curl_requests.AsyncSession(**session_kwargs)
+
+    @staticmethod
+    def _safe_proxy_url(proxy_url: str | None) -> str:
+        if not proxy_url:
+            return "DIRECT"
+        try:
+            parsed = urlsplit(proxy_url)
+            host = parsed.hostname or "unknown"
+            port = f":{parsed.port}" if parsed.port else ""
+            return urlunsplit((parsed.scheme, f"{host}{port}", parsed.path, "", ""))
+        except ValueError:
+            return "<invalid-proxy-url>"
+
+    @staticmethod
+    async def _resolve_proxy_host(proxy_url: str | None) -> str:
+        if not proxy_url:
+            return "DIRECT"
+        try:
+            host = urlsplit(proxy_url).hostname
+            if not host:
+                return "unknown"
+            return await asyncio.to_thread(socket.gethostbyname, host)
+        except (OSError, ValueError):
+            return "unresolved"
+
+    @staticmethod
+    def _extract_exit_ip(payload: object) -> str:
+        if isinstance(payload, dict):
+            for key in ("origin", "ip", "query", "address"):
+                value = payload.get(key)
+                if value:
+                    return str(value)
+        if isinstance(payload, str):
+            text = payload.strip()
+            if text:
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    return text
+                return HttpClient._extract_exit_ip(parsed)
+        return "unknown"
+
+    async def _probe_proxy_exit_ip(
+        self,
+        client: curl_requests.AsyncSession,
+        proxy_url: str | None,
+        pre_proxy_url: str | None,
+        url_display: str,
+        page: int,
+        attempt: int,
+    ) -> str:
+        health_url = settings.proxy_health_check_url
+        health_url_display = self._safe_proxy_url(health_url)
+        proxy_host_ip = await self._resolve_proxy_host(proxy_url)
+        jump_host_ip = await self._resolve_proxy_host(pre_proxy_url)
+        _proxy_debug_logger.debug(
+            "proxy route target=%s page=%d attempt=%d jump=%s jump_ip=%s proxy=%s proxy_ip=%s health_url=%s",
+            url_display,
+            page,
+            attempt,
+            self._safe_proxy_url(pre_proxy_url),
+            jump_host_ip,
+            self._safe_proxy_url(proxy_url),
+            proxy_host_ip,
+            health_url_display,
+        )
+        response = await client.get(health_url)
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except (ValueError, json.JSONDecodeError):
+            payload = response.text
+        exit_ip = self._extract_exit_ip(payload)
+        _proxy_debug_logger.debug(
+            "proxy exit test target=%s status=%d exit_ip=%s jump_ip=%s proxy_ip=%s",
+            url_display,
+            response.status_code,
+            exit_ip,
+            jump_host_ip,
+            proxy_host_ip,
+        )
+        return exit_ip
 
     async def _before_request(
         self,
         client: curl_requests.AsyncSession,
         proxy_url: str | None,
+        pre_proxy_url: str | None,
         url_display: str,
         page: int,
         attempt: int,
@@ -104,6 +207,7 @@ class HttpClient:
         Args:
             client: AsyncSession 实例。
             proxy_url: 代理URL。
+            pre_proxy_url: 跳板机代理URL。
             url_display: 显示用的URL。
             page: 当前页码。
             attempt: 当前尝试次数。
@@ -115,11 +219,26 @@ class HttpClient:
             代理出口信息字符串。
         """
         tunnel_info = "DIRECT"
-        if proxy_url and settings.http_debug_proxy_ip:
+        if settings.http_debug_proxy_ip:
             try:
-                ...
+                exit_ip = await self._probe_proxy_exit_ip(
+                    client=client,
+                    proxy_url=proxy_url,
+                    pre_proxy_url=pre_proxy_url,
+                    url_display=url_display,
+                    page=page,
+                    attempt=attempt,
+                )
+                tunnel_info = f"{self._safe_proxy_url(proxy_url)} exit_ip={exit_ip}"
             except Exception as e:
-                logger.debug("Failed to detect proxy IP: %s", e)
+                _proxy_debug_logger.debug(
+                    "proxy exit test failed target=%s proxy=%s pre_proxy=%s error=%s",
+                    url_display,
+                    self._safe_proxy_url(proxy_url),
+                    self._safe_proxy_url(pre_proxy_url),
+                    e,
+                )
+                tunnel_info = f"{self._safe_proxy_url(proxy_url)} exit_ip=unavailable"
 
         return tunnel_info
 
@@ -252,6 +371,7 @@ class HttpClient:
                 tunnel_info = await self._before_request(
                     client=client,
                     proxy_url=proxy_url,
+                    pre_proxy_url=pre_proxy_url,
                     url_display=url_display,
                     page=page,
                     attempt=attempt,
@@ -362,10 +482,19 @@ class HttpClient:
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
         async with await self._create_client(
-            proxy_url,
-            pre_proxy_url=pre_proxy_url,
+            # proxy_url,
+            # pre_proxy_url=pre_proxy_url,
         ) as client:
             try:
+                if settings.http_debug_proxy_ip:
+                    await self._probe_proxy_exit_ip(
+                        client=client,
+                        proxy_url=proxy_url,
+                        pre_proxy_url=pre_proxy_url,
+                        url_display=url,
+                        page=0,
+                        attempt=0,
+                    )
                 stream_kwargs = dict(
                     method=config.method or "GET",
                     url=url,
