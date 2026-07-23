@@ -442,37 +442,37 @@ class HttpClient:
         headers = dict(config.headers)
         cookies = dict(config.cookies)
 
-        _init_anti_crawl()
+        # _init_anti_crawl()
 
-        if _rotator is not None and _rotator.enabled:
-            anti_headers = _rotator.get_headers(target_url=url)
-            for k, v in anti_headers.items():
-                headers.setdefault(k, v)
-            anti_cookies = _rotator.get_cookies()
-            if anti_cookies:
-                for k, v in anti_cookies.items():
-                    cookies.setdefault(k, v)
+        # if _rotator is not None and _rotator.enabled:
+        #     anti_headers = _rotator.get_headers(target_url=url)
+        #     for k, v in anti_headers.items():
+        #         headers.setdefault(k, v)
+        #     anti_cookies = _rotator.get_cookies()
+        #     if anti_cookies:
+        #         for k, v in anti_cookies.items():
+        #             cookies.setdefault(k, v)
 
-        if _delayer is not None and _delayer.enabled:
-            await _delayer.delay(url)
+        # if _delayer is not None and _delayer.enabled:
+        #     await _delayer.delay(url)
 
         # ── 代理选择：隧道代理 > 代理池 ──────────────────────────
         proxy_url = None
         pre_proxy_url = None
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
 
-        if settings.tunnel_proxy_url:
-            proxy_url = settings.tunnel_proxy_url
-        elif _proxy_pool is not None and _proxy_pool.enabled:
-            pre_proxy_url = settings.proxy_pre_proxy_url or None
-            lock = await self._get_lease_lock()
-            async with lock:
-                if task_id in self._leased_proxies:
-                    proxy_url = self._leased_proxies[task_id]
-                else:
-                    proxy_url = await _proxy_pool.lease_proxy(task_id)
-                    if proxy_url:
-                        self._leased_proxies[task_id] = proxy_url
+        # if settings.tunnel_proxy_url:
+        #     proxy_url = settings.tunnel_proxy_url
+        # elif _proxy_pool is not None and _proxy_pool.enabled:
+        #     pre_proxy_url = settings.proxy_pre_proxy_url or None
+        #     lock = await self._get_lease_lock()
+        #     async with lock:
+        #         if task_id in self._leased_proxies:
+        #             proxy_url = self._leased_proxies[task_id]
+        #         else:
+        #             proxy_url = await _proxy_pool.lease_proxy(task_id)
+        #             if proxy_url:
+        #                 self._leased_proxies[task_id] = proxy_url
 
         logger.info("Downloading bytes: %s with proxy: %s", url, proxy_url or "None")
 
