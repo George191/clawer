@@ -519,7 +519,7 @@ const templateStepKeys: Record<ProcessStepKey, string[]> = {
     'list_page',
     'list_request',
   ],
-  structure: ['dedup_fields', 'list_fields', 'list_pagination'],
+  structure: ['dedup_fields', 'list_fields', 'detail_fields', 'list_pagination'],
   contract: ['download'],
   dryrun: [],
   publish: [],
@@ -656,6 +656,10 @@ const inferTemplateStep = (key: string, path: string): ProcessStepKey => {
     || key === 'json_total_path'
     || key === 'json_page_path'
     || key === 'json_total_num_pages'
+    || key === 'detail_page'
+    || key === 'detail_url_selector'
+    || key === 'detail_url_selector_type'
+    || path.startsWith('detail_request')
   ) {
     return 'entry';
   }
@@ -666,6 +670,8 @@ const inferTemplateStep = (key: string, path: string): ProcessStepKey => {
     || path.startsWith('dedup_fields')
     || path === 'list_fields'
     || path.startsWith('list_fields')
+    || path === 'detail_fields'
+    || path.startsWith('detail_fields')
   ) {
     return 'structure';
   }
@@ -695,6 +701,10 @@ const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
     || path.startsWith('params')
     || key === 'list_page'
     || path.startsWith('list_request')
+    || key === 'detail_page'
+    || key === 'detail_url_selector'
+    || key === 'detail_url_selector_type'
+    || path.startsWith('detail_request')
   ) {
     return 'request';
   }
@@ -710,7 +720,12 @@ const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
   if (path === 'download' || path.startsWith('download')) {
     return 'download';
   }
-  if (path === 'list_fields' || path.startsWith('list_fields')) {
+  if (
+    path === 'list_fields'
+    || path.startsWith('list_fields')
+    || path === 'detail_fields'
+    || path.startsWith('detail_fields')
+  ) {
     return 'fields';
   }
   if (
@@ -744,7 +759,7 @@ const isStructuredInlineYamlValue = (value: string) => {
   if (trimmed.startsWith('{') && trimmed.endsWith('}') && /[:,]/.test(trimmed.slice(1, -1))) return true;
   return false;
 };
-const yamlListPreviewRoots = new Set(['params', 'dedup_fields', 'list_fields', 'download']);
+const yamlListPreviewRoots = new Set(['params', 'dedup_fields', 'list_fields', 'detail_fields', 'download']);
 const flattenedTemplateRootKeys = new Set(['list_pagination', 'dedup_fields', 'download']);
 
 const parseTemplateEntries = (raw: string): TemplateEntry[] => {
@@ -3358,7 +3373,7 @@ const AICollect: React.FC = () => {
     if (rootKey === 'params') {
       return getTemplateEntryValueByKey(`${itemKey}.name`) || `param ${itemIndex + 1}`;
     }
-    if (rootKey === 'list_fields') {
+    if (rootKey === 'list_fields' || rootKey === 'detail_fields') {
       return getTemplateEntryValueByKey(`${itemKey}.name`) || `field ${itemIndex + 1}`;
     }
     if (rootKey === 'download') {
@@ -3433,7 +3448,7 @@ const AICollect: React.FC = () => {
       if (
         entry.nodeType === 'group'
         && (
-          /^(params|dedup_fields|list_fields|download)\[\d+\]$/.test(entry.key)
+          /^(params|dedup_fields|list_fields|detail_fields|download)\[\d+\]$/.test(entry.key)
           || flattenedTemplateRootKeys.has(entry.key)
         )
       ) {
@@ -3488,8 +3503,8 @@ const AICollect: React.FC = () => {
             const currentGroupKey = getTemplateEntryGroupKey(entry, nextEntry);
             const nextGroupKey = nextEntry ? getTemplateEntryGroupKey(nextEntry, nextNextEntry) : null;
             const extraClass = currentGroupKey !== nextGroupKey ? 'is-group-end' : '';
-            const yamlListItemKey = entry.key.match(/^(params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
-            const previousYamlListItemKey = previousEntry?.key.match(/^(params|dedup_fields|list_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+            const yamlListItemKey = entry.key.match(/^(params|dedup_fields|list_fields|detail_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+            const previousYamlListItemKey = previousEntry?.key.match(/^(params|dedup_fields|list_fields|detail_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
             const yamlListRoot = yamlListItemKey?.split('[')[0] ?? null;
             const rootKey = entry.key.match(/^([A-Za-z_][\w-]*)(?:\.|\[|$)/)?.[1] ?? entry.key;
             const isYamlListItem = Boolean(
@@ -3501,6 +3516,7 @@ const AICollect: React.FC = () => {
               isYamlListItem
               && yamlListItemKey !== previousYamlListItemKey
             );
+            const isFieldListItem = yamlListRoot === 'list_fields' || yamlListRoot === 'detail_fields';
             const flattenRootIndent = flattenedTemplateRootKeys.has(rootKey) && entry.key !== rootKey;
             const displayDepth = Math.max(
               0,
@@ -3511,7 +3527,7 @@ const AICollect: React.FC = () => {
             const isItemGroup = isGroup && /\[\d+\]$/.test(entry.key);
             const isRootGroup = isGroup && !entry.key.includes('.') && !/\[\d+\]$/.test(entry.key);
             const displayValue = entry.multiline ? value : stripYamlQuotes(value);
-            const { label } = getTemplateEntryDisplayMeta(entry, value);
+            const { label, pathHint } = getTemplateEntryDisplayMeta(entry, value);
             const displayLabel = label;
 
             return (
@@ -3523,6 +3539,7 @@ const AICollect: React.FC = () => {
                 <div className="ai-template-field-key">
                   {isYamlListItem ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
                   <span>{displayLabel}</span>
+                  {isYamlListAnchor && isFieldListItem && pathHint ? <small>{pathHint}</small> : null}
                 </div>
                 {isGroup ? null : (
                   <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
@@ -7144,6 +7161,12 @@ const AICollect: React.FC = () => {
             line-height: 1.35;
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           }
+          .ai-template-field-key small {
+            color: ${aura.muted};
+            font-size: 10px;
+            line-height: 1.4;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+          }
           .ai-template-field.is-group .ai-template-field-key {
             gap: 1px;
           }
@@ -7171,6 +7194,9 @@ const AICollect: React.FC = () => {
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           }
           .ai-template-field.is-yaml-list-item .ai-template-field-key span {
+            grid-column: 2;
+          }
+          .ai-template-field.is-yaml-list-item .ai-template-field-key small {
             grid-column: 2;
           }
           .ai-template-field.has-yaml-dash .ai-template-field-dash {
