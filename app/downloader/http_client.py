@@ -159,19 +159,15 @@ class HttpClient:
         attempt: int,
     ) -> str:
         health_url = settings.proxy_health_check_url
-        health_url_display = self._safe_proxy_url(health_url)
         proxy_host_ip = await self._resolve_proxy_host(proxy_url)
         jump_host_ip = await self._resolve_proxy_host(pre_proxy_url)
         _proxy_debug_logger.debug(
-            "proxy route target=%s page=%d attempt=%d jump=%s jump_ip=%s proxy=%s proxy_ip=%s health_url=%s",
-            url_display,
+            "proxy route target=%s page=%d attempt=%d jump_ip=%s proxy_ip=%s",
+            self._safe_proxy_url(url_display),
             page,
             attempt,
-            self._safe_proxy_url(pre_proxy_url),
             jump_host_ip,
-            self._safe_proxy_url(proxy_url),
             proxy_host_ip,
-            health_url_display,
         )
         response = await client.get(health_url)
         response.raise_for_status()
@@ -182,7 +178,7 @@ class HttpClient:
         exit_ip = self._extract_exit_ip(payload)
         _proxy_debug_logger.debug(
             "proxy exit test target=%s status=%d exit_ip=%s jump_ip=%s proxy_ip=%s",
-            url_display,
+            self._safe_proxy_url(url_display),
             response.status_code,
             exit_ip,
             jump_host_ip,
@@ -233,7 +229,7 @@ class HttpClient:
             except Exception as e:
                 _proxy_debug_logger.debug(
                     "proxy exit test failed target=%s proxy=%s pre_proxy=%s error=%s",
-                    url_display,
+                    self._safe_proxy_url(url_display),
                     self._safe_proxy_url(proxy_url),
                     self._safe_proxy_url(pre_proxy_url),
                     e,
@@ -482,19 +478,10 @@ class HttpClient:
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
         async with await self._create_client(
-            # proxy_url,
-            # pre_proxy_url=pre_proxy_url,
+            proxy_url,
+            pre_proxy_url=pre_proxy_url,
         ) as client:
             try:
-                if settings.http_debug_proxy_ip:
-                    await self._probe_proxy_exit_ip(
-                        client=client,
-                        proxy_url=proxy_url,
-                        pre_proxy_url=pre_proxy_url,
-                        url_display=url,
-                        page=0,
-                        attempt=0,
-                    )
                 stream_kwargs = dict(
                     method=config.method or "GET",
                     url=url,

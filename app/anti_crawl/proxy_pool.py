@@ -251,9 +251,8 @@ class ProxyPool:
         if not self.enabled:
             return None
 
-        await self.ensure_loaded()
-
         async with self._lease_lock:
+            await self.ensure_loaded()
             # 如果该协程已有租约且代理健康，直接返回
             if task_id in self._leases:
                 leased = self._leases[task_id]
@@ -305,8 +304,10 @@ class ProxyPool:
         """
         if not self._healthy:
             logger.warning("No healthy proxies available for task %d, reloading...", task_id)
-            self._loaded = False
-            await self.ensure_loaded()
+            async with self._load_lock:
+                if not self._healthy:
+                    self._loaded = False
+                    await self.ensure_loaded()
             if not self._healthy:
                 return None
 
