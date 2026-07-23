@@ -521,25 +521,23 @@ class HttpClient:
                     timeout=settings.http_download_timeout,
                 )
 
-                async with client.stream(**stream_kwargs) as response:
-                    if response.status_code in settings.http_retry_on_statuses:
-                        raise DownloadError(url, response.status_code, "Retryable status code")
+                # download_bytes() returns the complete payload.  Using
+                # AsyncSession.stream() here triggers curl_cffi's background
+                # perform task; malformed proxy headers then escape as
+                # "Task exception was never retrieved".  A non-stream request
+                # keeps parsing and cleanup in the caller task.
+                stream_kwargs["stream"] = False
+                response = await client.request(**stream_kwargs)
+                if response.status_code in settings.http_retry_on_statuses:
+                    raise DownloadError(url, response.status_code, "Retryable status code")
 
-                    response.raise_for_status()
-
-                    chunks: list[bytes] = []
-                    total_size = 0
-                    async for chunk in response.aiter_content(
-                        chunk_size=settings.download_chunk_size
-                    ):
-                        total_size += len(chunk)
-                        if total_size > settings.download_max_file_size:
-                            raise FileTooLargeError(
-                                url, total_size, settings.download_max_file_size
-                            )
-                        chunks.append(chunk)
-
-                data = b"".join(chunks)
+                response.raise_for_status()
+                data = response.content
+                total_size = len(data)
+                if total_size > settings.download_max_file_size:
+                    raise FileTooLargeError(
+                        url, total_size, settings.download_max_file_size
+                    )
                 logger.info("Download complete: %s (%d bytes)", url, total_size)
 
                 if _proxy_pool is not None and proxy_url:
