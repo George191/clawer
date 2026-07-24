@@ -134,7 +134,7 @@ class BrowserRenderer:
 
         def add_browser_event(kind: str, event_url: str, **details: object) -> None:
             if len(browser_events) >= 60:
-                if kind != "snapshot":
+                if kind not in {"snapshot", "closed"}:
                     return
                 browser_events.pop()
             event = {"kind": kind, "url": event_url, **details}
@@ -152,6 +152,7 @@ class BrowserRenderer:
                 headless=True,
                 proxy=proxy,
             )
+            page = None
             try:
                 context = browser.new_context(
                     viewport={"width": viewport_width, "height": 1000},
@@ -254,10 +255,16 @@ class BrowserRenderer:
                     timeout=max(1, int(ai_settings.page_fetch_timeout * 1000)),
                 )
                 try:
-                    page.wait_for_load_state("load", timeout=5_000)
+                    page.wait_for_function(
+                        "document.body && document.body.innerText.trim().length >= 80",
+                        timeout=3_000,
+                    )
                 except PlaywrightTimeoutError:
-                    logger.warning("Page load did not settle before capture: %s", url)
-                page.wait_for_timeout(500)
+                    logger.info("Capturing current dynamic page state without a populated body: %s", url)
+                for _ in range(10):
+                    page.wait_for_timeout(250)
+                    if any(response.get("recordFields") for response in network_responses):
+                        break
                 final_url = page.url
                 if urlparse(final_url).scheme not in {"http", "https"}:
                     raise ValueError("Browser navigation escaped the HTTP/HTTPS boundary")
@@ -315,6 +322,11 @@ class BrowserRenderer:
                     browser_events=browser_events,
                 )
             finally:
+                add_browser_event(
+                    "closed",
+                    page.url if page is not None else url,
+                    label="Browser closed",
+                )
                 browser.close()
 
     @staticmethod

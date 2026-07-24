@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List
@@ -31,16 +32,25 @@ data_type: analyzed_snake_case_type
 adapter: ""
 anti_crawl_enabled: null
 description: "One concise sentence."
-response_type: json
-json_item_path: data.items
-json_total_path: data.total
+params:
+  - name: query
+    description: "Required query value."
+    default: null
+    required: true
 list_page: /api/items
 list_request:
   method: GET
   headers: {}
   encoding: utf-8
-dedup_fields:
-  - title
+list_pagination:
+  type: page_number
+  page_param: page
+  start_page: 1
+  max_pages: 100
+  results_per_page: 20
+response_type: json
+json_item_path: data.items
+json_total_path: data.total
 list_fields:
   - name: title
     selector: title
@@ -48,12 +58,8 @@ list_fields:
     field_type: text
     required: true
     description: "Source title."
-list_pagination:
-  type: page_number
-  page_param: page
-  start_page: 1
-  max_pages: 100
-  results_per_page: 20
+dedup_fields:
+  - title
 download:
   - selector: download_url
     selector_type: json
@@ -129,67 +135,43 @@ class TemplateAgent(BaseAgent):
 
     def _register_default_prompts(self) -> None:
         self.register_prompt(
-            "analyze_page",
-            """
-                You analyze web pages for this project's template-driven crawler.
-
-                Target URL: {url}
-                Page title: {page_title}
-                Page summary: {page_summary}
-                Compact rendered structure: {page_structure}
-                Observed network evidence: {network_evidence}
-                Preflight warnings: {page_warnings}
-
-                Work in this order:
-                1. API discovery: inspect successful XHR/fetch evidence first. If a verified API supplies the records, select it as the primary source. Analyze rendered HTML only when no usable API exists. A page URL ending in query/results may be only a JavaScript shell.
-                2. Source validation: require a successful status, plausible content type, a record container and at least one real sample. Reject maintenance, CAPTCHA, login and WAF bodies. HTML from an endpoint is valid only when it contains the intended records, not an error shell.
-                3. Data-type field contract: infer data_type only from the page title, rendered structure, record fields and API samples. Return a concise lowercase snake_case singular business entity type; do not choose from a fixed enum and do not infer it from the hostname alone. Keep the smallest set that can identify and reconstruct the business record. Preserve source values exactly at collection time; do not synthesize derived values in the template or adapter. For navwarn consider the source warning number, source issue time, category/region/status, location coordinates and full warning text. Treat ingest/transport timestamps separately from business issue time.
-                4. Exclusions: remove transport/UI/internal fields such as request IDs, row IDs, component IDs, ranks and duplicated aliases unless they are the only stable business identity. Never keep two fields with the same meaning (for example navArea/usNavArea/msgType or msgSqncNumber/sequenceNumber); choose one canonical snake_case output name and document exactly one verified source field. A template targets one verified site schema: do not propose runtime alias lists or fallback source keys. If the source schema changes, require new evidence and update the selector.
-                5. Deduplication: prove the smallest stable business key. Prefer one immutable field such as canonical URL, publication number or warning number scoped by area. Use multiple fields only when one field is not unique; do not add redundant backup fields to a unique key.
-                6. Resources: identify downloadable or media values separately. Classify cover/thumbnail, body image/figure, attachment/document, gallery/slide, video/audio and dataset/archive fields. State whether each comes from list, detail or API and whether adapter enrichment is required.
-                7. Acquisition details: convert variable path/query values into required params. Set pagination to none when the verified API returns the complete collection; do not fabricate page parameters or page loops. Record an official fallback only when evidence supports it. Zero verified records is a warning, not collection success.
-
-                Return strict JSON without markdown:
-                {{
-                    "data_type": "business entity type inferred from page evidence",
-                    "source_kind": "api|html|text|dynamic_shell|unavailable",
-                    "selected_endpoint": "",
-                    "json_item_path": "",
-                    "verified_record_count": 0,
-                    "fields": [{{"name":"title","source_field":"title","type":"text","selector":"title","business_role":"content","description":"Title","sample_value":"","required":true}}],
-                    "excluded_fields": [{{"source_field":"rowId","reason":"internal UI identifier","duplicate_of":""}}],
-                    "dedup_analysis": {{"fields":[],"reason":"","uniqueness_scope":""}},
-                    "pagination": {{"type":"none","page_param":"page","list_page":"{url}","start_page":1,"results_per_page":0}},
-                    "api_endpoints": [],
-                    "fallback_endpoints": [],
-                    "response_evidence": [],
-                    "warnings": [],
-                    "resource_fields": [{{"name":"thumbnail","asset_type":"thumbnail","source":"list|detail|api","selector":"","multiple":false,"requires_adapter":false}}],
-                    "adapter_requirements": [],
-                    "download_fields": [],
-                    "dedup_fields": [],
-                    "description": ""
-                }}
-            """,
-        )
-
-        self.register_prompt(
             "generate_template",
             """
-                Generate a complete YAML template for this project's SiteTemplate schema.
+                Orchestrate one complete SiteTemplate analysis and return its final YAML.
 
-                Rules:
-                1. Use selected_endpoint when it is a verified API; use the rendered page only when analysis found no usable API. Match response_type, json_item_path and selector_type to the selected response.
-                2. Generate list_fields from the approved fields only. Do not reintroduce excluded transport/UI IDs or duplicate aliases. Output canonical snake_case names while each selector retains exactly one observed source field. Never put source-field fallback, alias guessing or derived-value synthesis in adapter code.
-                3. Set dedup_fields to exactly the minimal stable source/identity fields in dedup_analysis/dedup_fields. Every dedup field must be produced directly by list_fields; do not depend on downstream ODS normalization. Use a composite key only when its stated scope requires it.
-                4. Convert variable URL/query values into params and mark inputs required unless evidence proves a safe default. Preserve request method, required headers, pagination and verified official fallback behavior.
-                5. Translate every resource_fields/download_fields entry into a valid download item with selector_type, link_type and asset_type. If a resource requires detail/API enrichment, add detail_page/detail_fields where generic parsing is enough; otherwise set adapter and explain the exact required output field in description. News templates must account for available cover/thumbnail, body images and attachments without duplicating the cover in images.
-                6. Keep business record fields separate from resources. A source media ID used only to resolve a URL is adapter input, not a final resource selector; the adapter must output the actual URL/list expected by download.selector.
-                7. For a verified non-paginated API, omit list_pagination entirely. For a verified paginated API, include only the observed page parameter and bounds. If verified_record_count is zero or source_kind is unavailable, do not fabricate selectors or samples; retain warnings and require guarded adapter validation.
-                8. Use only SiteTemplate schema fields: name, display_name, base_url, data_type, adapter, anti_crawl_enabled, description, params/batch_params, response_type/json paths, list_page/list_request/list_fields/dedup_fields/list_pagination, detail_page/detail_request/detail_fields and download.
-                9. Set data_type exactly to the analyzed data_type. Do not reclassify it during YAML generation.
-                10. Keep description to one concise sentence describing the source and collection scope. Do not include reasoning, warnings, field inventories or implementation details.
-                11. Every named SiteTemplate field is a top-level sibling. Never nest params, response_type, list_page, list_fields, list_pagination, detail_page or download inside one another. Never replace a scalar or list with a mapping.
+                Execute these stages in order. At each stage, verify the stated checks before continuing. If a check fails, revisit the captured evidence, correct the current stage and every dependent later stage, then verify again. Do not emit reasoning or intermediate documents.
+
+                Stage 1 - Site
+                - Derive name, display_name, base_url and one lowercase snake_case business data_type from the target URL, title, page summary and rendered structure.
+                - Set description to one concise description of the current page based on its title, meta description and visible content; do not describe the analysis process.
+                - When data_type is game, set adapter exactly to {template_name}. For other data types, set adapter only when verified enrichment requires it.
+                - Reject maintenance, login, CAPTCHA and loading-shell content as business evidence.
+
+                Stage 2 - Request and params
+                - Inspect successful XHR/fetch evidence inside this stage; API discovery is not a separate task or output.
+                - Prefer a successful structured response with a record container and real sample. Use rendered HTML only when no usable API evidence exists.
+                - Set list_page/list_request from the verified source. Convert variable path/query values, including the input page value, into params. Never fabricate pagination, headers, methods or fallback endpoints.
+                - Verify the selected request matches one captured URL and its observed method/parameters.
+
+                Stage 3 - Response
+                - Set response_type and JSON paths/selectors from the selected response body shape.
+                - Verify status/content type, record container, sample record and response_type agree. An HTML error body from an API URL is not valid API evidence.
+
+                Stage 4 - Fields
+                - Generate list_fields/detail_fields only from the selected response sample or rendered structure.
+                - Preserve source values. Use one observed selector/source key per canonical output field; exclude UI IDs, ranks, duplicated aliases and derived values.
+                - Verify every required selector exists in the captured evidence and every output name is unique.
+
+                Stage 5 - Dedup and download
+                - Choose the smallest stable business identity from produced fields. Every dedup field must be emitted by list_fields/detail_fields.
+                - Map verified media/attachment URLs to download. Keep cover, body images and attachments distinct. Set adapter only when verified enrichment cannot be expressed by the generic template engine.
+                - Verify every download selector is produced and points to an actual URL/list rather than an internal media ID.
+
+                Final verification
+                - Use only fields from the SiteTemplate schema below; all named fields are top-level siblings.
+                - For a verified non-paginated source omit list_pagination. Never invent records, selectors, aliases or defaults when evidence is missing.
+                - Keep description to one concise sentence.
+                - Order YAML keys by the stages above so the UI can render Site, Request/Params, Response, Fields, then Dedup/Download progressively.
 
                 Exact YAML field shapes and enums:
                 {schema_shape}
@@ -197,41 +179,25 @@ class TemplateAgent(BaseAgent):
                 Target URL: {url}
                 Required template name: {template_name}
                 Required display name: {display_name}
-                If adapter is required, its name must be exactly {template_name}; otherwise leave adapter empty.
+                If data_type is game or an adapter is otherwise required, its name must be exactly {template_name}; otherwise leave adapter empty.
 
-                Existing same data-type template conventions:
+                Existing project conventions:
                 {reference_templates}
 
-                Use references only for project naming and schema conventions. Current verified evidence wins. Never copy a reference endpoint, selector, field or composite dedup key unless the current analysis independently supports it.
-
-                Analysis result:
+                Captured page and network evidence:
                 {analysis_json}
 
-                Return only a fenced ```yaml block.
-            """,
-        )
+                User refinement request:
+                {user_request}
 
-        self.register_prompt(
-            "repair_template",
-            """
-                Repair the YAML so it validates against this project's SiteTemplate schema.
+                Existing template to preserve unless the request or current evidence requires a change:
+                {existing_template_yaml}
 
-                Requirements:
-                1. Preserve evidence-backed endpoints, selectors, fields, values and data_type from the broken YAML and analysis. Do not invent new source evidence.
-                2. Fix only schema shape, nesting, required fields and enum values. All SiteTemplate fields are top-level siblings.
-                3. Return a complete template, not a patch or explanation.
+                Previous attempt requiring rework:
+                {previous_template_yaml}
 
-                Exact YAML field shapes and enums:
-                {schema_shape}
-
-                Validation errors:
-                {validation_errors}
-
-                Broken YAML:
-                {template_yaml}
-
-                Analysis result:
-                {analysis_json}
+                Previous validation error:
+                {validation_error}
 
                 Return only a fenced ```yaml block.
             """,
@@ -245,6 +211,29 @@ class TemplateAgent(BaseAgent):
         network_responses: List[Dict[str, Any]] | None = None,
         page_warnings: List[str] | None = None,
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        user_request: str = "",
+    ) -> Dict[str, Any]:
+        result = self.build_page_evidence(
+            url,
+            html_text,
+            network_endpoints,
+            network_responses,
+            page_warnings,
+        )
+        if on_event:
+            on_event({
+                "kind": "evidence_ready",
+                "content": "Page and network evidence prepared for template orchestration",
+            })
+        return result
+
+    def build_page_evidence(
+        self,
+        url: str,
+        html_text: str,
+        network_endpoints: List[str] | None = None,
+        network_responses: List[Dict[str, Any]] | None = None,
+        page_warnings: List[str] | None = None,
     ) -> Dict[str, Any]:
         page_title = self._extract_title(html_text)
         page_summary = self._extract_summary(html_text)
@@ -261,7 +250,7 @@ class TemplateAgent(BaseAgent):
                 str(response.get("resourceType") or "") not in {"xhr", "fetch"},
             ),
         )
-        prompt_evidence = [
+        response_evidence = [
             {
                 "url": response.get("url"),
                 "status": response.get("status"),
@@ -274,35 +263,33 @@ class TemplateAgent(BaseAgent):
                     if isinstance(response.get("sampleRecord"), dict)
                     else {}
                 ),
-                "bodyPreview": str(response.get("bodyPreview") or "")[:300],
+                "bodyPreview": str(response.get("bodyPreview") or "")[:800],
                 "links": list(response.get("links") or [])[:5],
             }
-            for response in prioritized_responses[:3]
+            for response in prioritized_responses[:6]
         ]
-
-        prompt = self.render_prompt(
-            "analyze_page",
-            url=url,
-            page_title=page_title,
-            page_summary=page_summary,
-            page_structure=page_structure,
-            network_evidence=json.dumps(prompt_evidence, ensure_ascii=False),
-            page_warnings=json.dumps(page_warnings, ensure_ascii=False),
+        selected_response = next(
+            (
+                response
+                for response in response_evidence
+                if int(response.get("status") or 0) < 400
+                and response.get("recordFields")
+            ),
+            None,
         )
-
-        result = await self.generate_complete_json(
-            prompt,
-            max_retries=max(1, ai_settings.llm_max_retries),
-            max_tokens=3072,
-            on_event=on_event,
-        )
-
-        if network_endpoints:
-            result.setdefault("api_endpoints", []).extend(network_endpoints[:10])
-        result.setdefault("response_evidence", []).extend(network_responses[:30])
-        result.setdefault("warnings", []).extend(page_warnings)
-
-        return result
+        return {
+            "target_url": url,
+            "page_title": page_title,
+            "page_summary": page_summary,
+            "page_structure": page_structure,
+            "source_kind": "api" if selected_response else "html",
+            "selected_endpoint": str((selected_response or {}).get("url") or ""),
+            "json_item_path": str((selected_response or {}).get("jsonItemPath") or ""),
+            "selected_candidate": selected_response or {},
+            "api_endpoints": list(dict.fromkeys(network_endpoints))[:20],
+            "response_evidence": response_evidence,
+            "warnings": page_warnings,
+        }
 
     async def generate_template(
         self,
@@ -310,71 +297,99 @@ class TemplateAgent(BaseAgent):
         analysis_result: Dict[str, Any],
         page_title: str = "",
         on_event: Callable[[dict[str, Any]], None] | None = None,
+        user_request: str = "",
+        existing_template_yaml: str = "",
     ) -> str:
-        analysis_context = dict(analysis_result)
-        analysis_context["response_evidence"] = [
-            {
-                "url": response.get("url"),
-                "status": response.get("status"),
-                "contentType": response.get("contentType"),
-                "jsonItemPath": response.get("jsonItemPath"),
-                "recordFields": list(response.get("recordFields") or [])[:100],
-            }
-            for response in (analysis_result.get("response_evidence") or [])[:6]
-            if isinstance(response, dict)
-        ]
-        analysis_json = json.dumps(analysis_context, ensure_ascii=False, indent=2)
-        reference_templates = self._reference_template_summaries(
-            str(analysis_result.get("data_type") or "other"),
-            self._analysis_response_type(analysis_result),
+        analysis_context = self._prompt_analysis_context(analysis_result)
+        analysis_json = json.dumps(
+            analysis_context,
+            ensure_ascii=False,
+            separators=(",", ":"),
         )
-
-        prompt = self.render_prompt(
-            "generate_template",
-            url=url,
-            template_name=self._build_template_name(url),
-            display_name=self._build_display_name(url, page_title),
-            analysis_json=analysis_json,
-            reference_templates=json.dumps(reference_templates, ensure_ascii=False, indent=2),
-            schema_shape=_SITE_TEMPLATE_YAML_SHAPE,
+        existing_template = self._safe_template_mapping(existing_template_yaml)
+        reference_data_type = str(
+            analysis_result.get("data_type")
+            or existing_template.get("data_type")
+            or "other"
         )
-
-        response = await self.generate(
-            prompt,
-            max_tokens=4096,
+        reference_templates = (
+            self._reference_template_summaries(
+                reference_data_type,
+                self._analysis_response_type(analysis_result),
+            )
+            if reference_data_type != "other"
+            else []
         )
-        template_yaml = self._normalize_template_yaml(
-            url,
-            self._extract_yaml(response),
-            analysis_result,
-            page_title,
-        )
-        validation_error = self._template_validation_error(template_yaml)
-        for attempt in range(max(1, ai_settings.llm_max_retries)):
-            if not validation_error:
-                break
-            if on_event:
+        template_yaml = ""
+        validation_error = ""
+        previous_template_yaml = "(none)"
+        attempts = max(1, ai_settings.llm_max_retries)
+        for attempt in range(attempts):
+            if attempt and on_event:
                 on_event({
                     "kind": "retry",
-                    "attempt": attempt + 2,
+                    "attempt": attempt + 1,
                     "reason": "template_schema_validation",
                     "content": validation_error[:2000],
                 })
-            repair_prompt = self.render_prompt(
-                "repair_template",
-                schema_shape=_SITE_TEMPLATE_YAML_SHAPE,
-                validation_errors=validation_error[:4000],
-                template_yaml=template_yaml,
-                analysis_json=analysis_json,
+            prompt = textwrap.dedent(
+                self.render_prompt(
+                    "generate_template",
+                    url=url,
+                    template_name=self._build_template_name(url),
+                    display_name=self._build_display_name(url, page_title),
+                    analysis_json=analysis_json,
+                    reference_templates=json.dumps(reference_templates, ensure_ascii=False),
+                    schema_shape=_SITE_TEMPLATE_YAML_SHAPE,
+                    user_request=user_request or "(none)",
+                    existing_template_yaml=existing_template_yaml or "(none)",
+                    previous_template_yaml=previous_template_yaml,
+                    validation_error=validation_error or "(none)",
+                )
+            ).strip()
+            streamed_response: list[str] = []
+            active_stage = ""
+
+            def emit_chunk(chunk: str) -> None:
+                nonlocal active_stage
+                streamed_response.append(chunk)
+                if not on_event:
+                    return
+                partial_yaml = self._extract_streaming_yaml("".join(streamed_response))
+                if not partial_yaml:
+                    return
+                next_stage = self._streaming_template_stage(partial_yaml)
+                if next_stage != active_stage:
+                    if active_stage:
+                        on_event({"kind": "template_stage", "stage": active_stage, "status": "done"})
+                    active_stage = next_stage
+                    on_event({"kind": "template_stage", "stage": active_stage, "status": "running"})
+                on_event({
+                    "kind": "template_delta",
+                    "stage": active_stage,
+                    "content": chunk,
+                    "templateYaml": partial_yaml,
+                })
+
+            response = await self.generate(
+                prompt,
+                max_tokens=4096,
+                on_chunk=emit_chunk if on_event else None,
             )
-            repaired_response = await self.generate(repair_prompt, max_tokens=4096)
+            if active_stage and on_event:
+                on_event({"kind": "template_stage", "stage": active_stage, "status": "done"})
             template_yaml = self._normalize_template_yaml(
                 url,
-                self._extract_yaml(repaired_response),
+                self._extract_yaml(response),
                 analysis_result,
                 page_title,
             )
             validation_error = self._template_validation_error(template_yaml)
+            if not validation_error:
+                break
+            previous_template_yaml = template_yaml
+        if validation_error:
+            raise RuntimeError(f"Template validation failed: {validation_error}")
         if on_event:
             on_event({
                 "kind": "template_delta",
@@ -382,6 +397,83 @@ class TemplateAgent(BaseAgent):
                 "templateYaml": template_yaml,
             })
         return template_yaml
+
+    @staticmethod
+    def _safe_template_mapping(template_yaml: str) -> Dict[str, Any]:
+        if not template_yaml.strip():
+            return {}
+        try:
+            template = yaml.safe_load(template_yaml)
+        except yaml.YAMLError:
+            return {}
+        return template if isinstance(template, dict) else {}
+
+    @classmethod
+    def _prompt_analysis_context(cls, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
+        context = dict(analysis_result)
+        context["page_summary"] = str(context.get("page_summary") or "")[:300]
+        context["page_structure"] = str(context.get("page_structure") or "")[:1600]
+        context["api_endpoints"] = list(context.get("api_endpoints") or [])[:8]
+        context["warnings"] = list(context.get("warnings") or [])[:5]
+
+        compact_responses: list[Dict[str, Any]] = []
+        for response in list(context.get("response_evidence") or [])[:3]:
+            if not isinstance(response, dict):
+                continue
+            compact = dict(response)
+            compact["url"] = str(compact.get("url") or "")[:500]
+            compact["bodyPreview"] = str(compact.get("bodyPreview") or "")[:240]
+            compact["recordFields"] = list(compact.get("recordFields") or [])[:20]
+            sample_record = compact.get("sampleRecord") or {}
+            compact["sampleRecord"] = (
+                {
+                    str(key): cls._compact_value(value)
+                    for key, value in list(sample_record.items())[:12]
+                }
+                if isinstance(sample_record, dict)
+                else {}
+            )
+            compact["links"] = [str(link)[:200] for link in list(compact.get("links") or [])[:3]]
+            compact_responses.append(compact)
+        context["response_evidence"] = compact_responses
+        context["selected_candidate"] = compact_responses[0] if compact_responses else {}
+        return context
+
+    @staticmethod
+    def _streaming_template_stage(template_yaml: str) -> str:
+        keys = {
+            match.group(1)
+            for match in re.finditer(r"(?m)^([A-Za-z_][\w-]*)\s*:", template_yaml)
+        }
+        if keys & {"dedup_fields", "download"}:
+            return "dedup_download"
+        if keys & {"list_fields", "detail_page", "detail_request", "detail_fields"}:
+            return "fields"
+        if keys & {"response_type", "json_item_path", "json_total_path", "json_page_path"}:
+            return "response"
+        if keys & {"params", "batch_params", "list_page", "list_request", "list_pagination"}:
+            return "request"
+        return "site"
+
+    @staticmethod
+    def _extract_streaming_yaml(response: str) -> str:
+        fence = re.search(
+            r"```[ \t]*(?:yaml|yml)[ \t]*(?:\r?\n)?",
+            response,
+            re.IGNORECASE,
+        )
+        if fence:
+            yaml_text = response[fence.end():]
+        else:
+            yaml_text = response
+        template_start = re.search(r"(?m)^name\s*:", yaml_text)
+        if not template_start:
+            return ""
+        yaml_text = yaml_text[template_start.start():]
+        closing_fence = yaml_text.find("```")
+        if closing_fence >= 0:
+            yaml_text = yaml_text[:closing_fence]
+        return yaml_text.rstrip()
 
     @staticmethod
     def _template_validation_error(template_yaml: str) -> str:
@@ -554,20 +646,7 @@ class TemplateAgent(BaseAgent):
         return "\n".join(lines)[: min(ai_settings.max_html_chars_for_llm, 3500)]
 
     def _extract_yaml(self, response: str) -> str:
-        text = response.strip()
-        opening_fence = re.search(
-            r"```[ \t]*(?:yaml|yml)?[ \t]*(?:\r?\n)?",
-            text,
-            re.IGNORECASE,
-        )
-        if not opening_fence:
-            return text
-
-        yaml_text = text[opening_fence.end():]
-        closing_fence = yaml_text.find("```")
-        if closing_fence >= 0:
-            yaml_text = yaml_text[:closing_fence]
-        return yaml_text.strip()
+        return self._extract_streaming_yaml(response).strip()
 
     def _build_template_name(self, url: str) -> str:
         parsed = urlparse(url)
@@ -611,13 +690,25 @@ class TemplateAgent(BaseAgent):
         template_name = self._build_template_name(url)
         template["name"] = template_name
         template["display_name"] = self._build_display_name(url, page_title)
-        template["data_type"] = str(analysis_result.get("data_type") or "other")
-        if analysis_result.get("adapter_requirements"):
+        data_type = re.sub(
+            r"[^a-z0-9]+",
+            "_",
+            str(template.get("data_type") or "other").strip().lower(),
+        ).strip("_") or "other"
+        template["data_type"] = data_type
+        if data_type == "game" or template.get("adapter"):
             template["adapter"] = template_name
         else:
             template["adapter"] = ""
+        template.setdefault("anti_crawl_enabled", None)
 
         description = re.sub(r"\s+", " ", str(template.get("description") or "")).strip()
+        if not description:
+            description = re.sub(
+                r"\s+",
+                " ",
+                str(analysis_result.get("page_summary") or page_title),
+            ).strip()
         if description:
             first_sentence = re.split(r"(?<=[。！？.!?])", description, maxsplit=1)[0]
             template["description"] = first_sentence[:120].rstrip(" ,，;；")
@@ -650,6 +741,52 @@ class TemplateAgent(BaseAgent):
                 )
             )
         return fields
+
+    @staticmethod
+    def merge_template_evidence(
+        analysis_result: Dict[str, Any],
+        template: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        def integer(value: Any, default: int) -> int:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        result = dict(analysis_result)
+        template_fields = [
+            field
+            for section in ("list_fields", "detail_fields")
+            for field in (template.get(section) or [])
+            if isinstance(field, dict) and field.get("name")
+        ]
+        pagination = template.get("list_pagination") or {}
+        result.update({
+            "data_type": str(template.get("data_type") or "other"),
+            "selected_endpoint": str(template.get("list_page") or ""),
+            "source_kind": "json" if template.get("response_type") == "json" else "html",
+            "json_item_path": str(template.get("json_item_path") or ""),
+            "fields": [
+                {
+                    "name": str(field.get("name") or ""),
+                    "selector": str(field.get("selector") or ""),
+                    "type": str(field.get("field_type") or "text"),
+                    "sample_value": "",
+                    "required": bool(field.get("required")),
+                }
+                for field in template_fields
+            ],
+            "pagination": {
+                "type": str(pagination.get("type") or "none"),
+                "list_page": str(template.get("list_page") or ""),
+                "start_page": integer(pagination.get("start_page"), 1),
+                "results_per_page": integer(pagination.get("results_per_page"), 0),
+                "page_param": str(pagination.get("page_param") or "page"),
+            },
+            "dedup_fields": list(template.get("dedup_fields") or []),
+            "adapter_requirements": [str(template.get("adapter"))] if template.get("adapter") else [],
+        })
+        return result
 
     def _build_sample_items(
         self, fields: List[FieldDef], analysis_result: Dict[str, Any]

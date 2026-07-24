@@ -54,8 +54,8 @@ interface WorkspaceDockProps {
   sessionActive?: boolean;
   onToggle: (panel: WorkspacePanel) => void;
   onClose: () => void;
-  analysisTemplate?: { yaml: string; adapter: string };
-  onTemplateApply?: (draft: { yaml: string; adapter: string }) => void;
+  analysisTemplate?: { yaml: string; adapter: string; adapterCode: string };
+  onTemplateApply?: (draft: { yaml: string; adapter: string; adapterCode: string }) => void;
   releaseTaskDefaults?: {
     concurrency: number;
     respectRobots: boolean;
@@ -78,6 +78,7 @@ type SiteKind = 'news' | 'patent' | 'intelligence' | 'warning' | 'signal' | 'gen
 
 interface TemplateDraft {
   adapter: string;
+  adapterCode: string;
   outputTag: string;
   notes: string;
   yaml: string;
@@ -673,39 +674,6 @@ const resolveSiteProfile = (value: string): SiteProfile => {
   };
 };
 
-const taskTemplateParameterBlueprints: Record<SiteKind, Array<{ key: string; label: string; placeholder: string }>> = {
-  news: [
-    { key: 'keyword', label: '关键词', placeholder: '例如：satellite / policy / tender' },
-    { key: 'page_limit', label: '抓取页数', placeholder: '例如：20' },
-    { key: 'category', label: '栏目过滤', placeholder: '例如：最新公告' },
-  ],
-  patent: [
-    { key: 'query', label: '检索式', placeholder: '例如：autonomous navigation' },
-    { key: 'assignee', label: '申请人', placeholder: '例如：OpenAI' },
-    { key: 'page_limit', label: '抓取页数', placeholder: '例如：50' },
-  ],
-  intelligence: [
-    { key: 'dataset', label: '数据主题', placeholder: '例如：market intelligence' },
-    { key: 'region', label: '区域范围', placeholder: '例如：global' },
-    { key: 'page_limit', label: '抓取页数', placeholder: '例如：30' },
-  ],
-  warning: [
-    { key: 'region', label: '海域/区域', placeholder: '例如：South China Sea' },
-    { key: 'notice_type', label: '通告类型', placeholder: '例如：navwarn' },
-    { key: 'page_limit', label: '抓取页数', placeholder: '例如：10' },
-  ],
-  signal: [
-    { key: 'check_scope', label: '校验范围', placeholder: '例如：abstract / attachment' },
-    { key: 'sample_limit', label: '抽样量', placeholder: '例如：200' },
-    { key: 'threshold', label: '质量阈值', placeholder: '例如：0.95' },
-  ],
-  generic: [
-    { key: 'keyword', label: '关键词', placeholder: '例如：policy update' },
-    { key: 'page_limit', label: '抓取页数', placeholder: '例如：20' },
-    { key: 'detail_limit', label: '详情上限', placeholder: '例如：200' },
-  ],
-};
-
 const defaultIncrementalFields = [
   'publish_time',
   'updated_at',
@@ -753,12 +721,67 @@ const taskComposerFieldPlaceholders: Record<string, string> = {
   detail_limit: '100',
 };
 
-const buildTaskTemplateParameterDrafts = (templateValue: string) => {
-  const kind = resolveSiteProfile(templateValue).kind;
-  return taskTemplateParameterBlueprints[kind].map((item) => ({
-    ...item,
-    value: '',
-  }));
+const stripYamlScalar = (value: string) => {
+  const trimmed = value.trim();
+  if (trimmed === 'null' || trimmed === '~') return '';
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) return trimmed.slice(1, -1);
+  return trimmed;
+};
+
+const extractTaskTemplateParameterDrafts = (yaml: string) => {
+  const lines = yaml.replace(/\r\n/g, '\n').split('\n');
+  const paramsIndex = lines.findIndex((line) => /^params:\s*(?:#.*)?$/.test(line));
+  if (paramsIndex < 0) return [];
+
+  const params: Array<{ key: string; label: string; placeholder: string; value: string }> = [];
+  let current: { key: string; label: string; placeholder: string; value: string } | null = null;
+
+  for (let index = paramsIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (trimmed && !/^\s/.test(line)) break;
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const nameMatch = trimmed.match(/^-\s+name:\s*(.*)$/);
+    if (nameMatch) {
+      if (current) params.push(current);
+      const name = stripYamlScalar(nameMatch[1]);
+      current = { key: name, label: name, placeholder: name, value: '' };
+      continue;
+    }
+    if (!current) continue;
+
+    const propertyMatch = trimmed.match(/^(description|default|required):\s*(.*)$/);
+    if (!propertyMatch) continue;
+    const [, property, rawValue] = propertyMatch;
+    if (property === 'required') {
+      if (stripYamlScalar(rawValue) === 'true') current.label = `${current.key} *`;
+      continue;
+    }
+    if (property === 'description' && (rawValue === '>' || rawValue === '|')) {
+      const propertyIndent = line.match(/^\s*/)?.[0].length ?? 0;
+      const blockLines: string[] = [];
+      while (index + 1 < lines.length) {
+        const nextLine = lines[index + 1];
+        const nextTrimmed = nextLine.trim();
+        const nextIndent = nextLine.match(/^\s*/)?.[0].length ?? 0;
+        if (nextTrimmed && nextIndent <= propertyIndent) break;
+        index += 1;
+        if (nextTrimmed) blockLines.push(nextTrimmed);
+      }
+      current.placeholder = blockLines.join(' ');
+      continue;
+    }
+    const value = stripYamlScalar(rawValue);
+    if (property === 'description') current.placeholder = value || current.key;
+    if (property === 'default') current.value = value;
+  }
+
+  if (current) params.push(current);
+  return params.filter((param) => Boolean(param.key));
 };
 
 const inferIncrementalField = (templateValue: string) => {
@@ -948,6 +971,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           setTemplates(templateItems.map(mapWorkspaceTemplate));
           setTemplateDrafts(Object.fromEntries(templateItems.map((item) => [item.id, {
             adapter: item.adapter,
+            adapterCode: item.adapter_code ?? '',
             outputTag: item.output_tag,
             notes: item.description,
             yaml: item.yaml_content ?? '',
@@ -1050,6 +1074,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       })),
     [templates],
   );
+  const buildTaskTemplateParameterDrafts = useCallback((templateValue: string) => {
+    const template = templates.find((item) => `${item.name}@${item.version}` === templateValue);
+    return extractTaskTemplateParameterDrafts(template ? templateDrafts[template.key]?.yaml ?? '' : '');
+  }, [templateDrafts, templates]);
   const selectedTask = useMemo(
     () => allTaskRows.find((item) => item.key === selectedTaskKey) ?? null,
     [allTaskRows, selectedTaskKey],
@@ -1157,6 +1185,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       onTemplateApply({
         yaml: patch.yaml ?? analysisTemplate?.yaml ?? current.yaml,
         adapter: patch.adapter ?? analysisTemplate?.adapter ?? current.adapter,
+        adapterCode: patch.adapterCode ?? analysisTemplate?.adapterCode ?? current.adapterCode,
       });
     }
   };
@@ -1168,6 +1197,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       void updateWorkspaceTemplate(selectedTemplate.key, {
         yaml_content: selectedTemplateDraft.yaml,
         adapter: selectedTemplateDraft.adapter,
+        adapter_code: selectedTemplateDraft.adapterCode,
         description: selectedTemplateDraft.notes,
         output_tag: selectedTemplateDraft.outputTag,
       }).then((updated) => {
@@ -1233,14 +1263,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       dailyTime: '09:00',
       intervalValue: 30,
       intervalUnit: 'minute' as TaskIntervalUnit,
-      templateParams: releaseTaskDefaults?.params.length
-        ? releaseTaskDefaults.params.map((param) => ({
-          key: param.name,
-          label: `${param.name}${param.required ? ' *' : ''}`,
-          value: param.defaultValue,
-          placeholder: param.description || param.name,
-        }))
-        : buildTaskTemplateParameterDrafts(template),
+      templateParams: buildTaskTemplateParameterDrafts(template),
       incremental: scheduleMode === 'recurring',
       incrementalMode: 'time_window' as TaskIncrementalMode,
       incrementalField: defaultField,
@@ -1254,7 +1277,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       maxEmptyPages: 2,
       ...patch,
     };
-  }, [releaseTaskDefaults?.params, taskTemplateOptions]);
+  }, [buildTaskTemplateParameterDrafts, taskTemplateOptions]);
 
   const resetTaskComposer = useCallback((patch?: Partial<TaskComposerDraft>) => {
     setTaskComposerDraft(buildTaskComposerDraft(patch));
@@ -1284,19 +1307,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskComposerDraft((prev) => ({
       ...prev,
       template: templateValue,
-      templateParams: releaseTaskDefaults?.params.length
-        ? releaseTaskDefaults.params.map((param) => ({
-          key: param.name,
-          label: `${param.name}${param.required ? ' *' : ''}`,
-          value: param.defaultValue,
-          placeholder: param.description || param.name,
-        }))
-        : buildTaskTemplateParameterDrafts(templateValue),
+      templateParams: buildTaskTemplateParameterDrafts(templateValue),
       incrementalField: inferIncrementalField(templateValue),
       stopField: inferIncrementalField(templateValue),
       ...patch,
     }));
-  }, [releaseTaskDefaults?.params]);
+  }, [buildTaskTemplateParameterDrafts]);
 
   const updateTaskComposerParameter = useCallback((index: number, value: string) => {
     setTaskComposerDraft((prev) => ({
@@ -1435,7 +1451,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''} ${isPinned ? 'is-pinned' : ''}`}
             onClick={() => {
               setSelectedTemplateKey(item.key);
-              setTemplateDetailMode('overview');
+              if (taskComposerOpen) {
+                updateTaskComposerTemplate(`${item.name}@${item.version}`, { templateLocked: true });
+              } else {
+                setTemplateDetailMode('overview');
+              }
             }}
           >
             <div className="workspace-dock-card-row">
@@ -2217,6 +2237,23 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           </div>
           <div className="workspace-dock-detail-head-actions">
+            <Tooltip title="创建任务" placement="top">
+              <button
+                type="button"
+                className="workspace-dock-detail-icon-btn"
+                aria-label="创建任务"
+                onClick={() => {
+                  openTaskComposer({
+                    name: `${selectedTemplate.title} task`,
+                    template: `${selectedTemplate.name}@${selectedTemplate.version}`,
+                    templateLocked: true,
+                    scheduleMode: 'recurring',
+                  });
+                }}
+              >
+                <PlusOutlined />
+              </button>
+            </Tooltip>
             <Tooltip title="编辑模板" placement="top">
               <button
                 type="button"
@@ -2225,8 +2262,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 aria-pressed={templateDetailMode === 'edit'}
                 onClick={() => {
                   if (templateDetailMode === 'overview') {
-                    onTemplateApply?.({ yaml: selectedTemplateDraft.yaml, adapter: selectedTemplateDraft.adapter });
-                    setTemplateDetailMode('edit');
+                    onTemplateApply?.({
+                      yaml: selectedTemplateDraft.yaml,
+                      adapter: selectedTemplateDraft.adapter,
+                      adapterCode: selectedTemplateDraft.adapterCode,
+                    });
+                    onClose();
                   } else {
                     setTemplateDetailMode('overview');
                   }
@@ -2282,23 +2323,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
             <div className="workspace-dock-detail-actions">
               <span>Last modified {formatDateTime(selectedTemplateDraft.savedAt)}</span>
-              <div className="workspace-dock-action-row">
-                <button
-                  type="button"
-                  className="workspace-dock-inline-action is-primary"
-                  onClick={() => {
-                    openTaskComposer({
-                      name: `${selectedTemplate.title} task`,
-                      template: `${selectedTemplate.name}@${selectedTemplate.version}`,
-                      templateLocked: true,
-                      scheduleMode: 'recurring',
-                    });
-                  }}
-                >
-                  <PlusOutlined />
-                  Create Task
-                </button>
-              </div>
             </div>
           </div>
         ) : (

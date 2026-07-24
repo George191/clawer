@@ -177,7 +177,7 @@ export interface UrlPreflightResponse {
 }
 
 export interface BrowserAnalysisEvent {
-  kind: 'navigation_requested' | 'navigation' | 'document_response' | 'api_candidate' | 'page_link' | 'snapshot' | 'preflight_retry';
+  kind: 'navigation_requested' | 'navigation' | 'document_response' | 'api_candidate' | 'page_link' | 'snapshot' | 'preflight_retry' | 'closed';
   url: string;
   label: string;
   status?: number;
@@ -204,6 +204,7 @@ export interface WorkspaceTemplate {
   status: 'active' | 'draft' | 'deprecated';
   yaml_content: string;
   adapter: string;
+  adapter_code?: string;
   description: string;
   output_tag: string;
   owner: string;
@@ -260,6 +261,7 @@ export interface WorkspaceReleasePayload {
   status: 'active' | 'draft' | 'deprecated';
   yaml_content: string;
   adapter: string;
+  adapter_code?: string;
   description?: string;
   output_tag?: string;
   metadata?: Record<string, unknown>;
@@ -304,7 +306,7 @@ export const fetchWorkspaceTemplates = (): Promise<WorkspaceTemplate[]> =>
 
 export const updateWorkspaceTemplate = (
   templateId: string,
-  data: Pick<WorkspaceTemplate, 'yaml_content' | 'adapter' | 'description' | 'output_tag'>,
+  data: Pick<WorkspaceTemplate, 'yaml_content' | 'adapter' | 'adapter_code' | 'description' | 'output_tag'>,
 ): Promise<WorkspaceTemplate> =>
   client.put(`/ai/workspace/templates/${templateId}`, data).then((r) => r.data);
 

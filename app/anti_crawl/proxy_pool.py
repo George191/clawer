@@ -381,21 +381,22 @@ class ProxyPool:
             return
 
         async with self._lock:
-            self._adapter_failures.pop(proxy_url, None)
+            if adapter_name:
+                self._adapter_failures.setdefault(proxy_url, set()).add(adapter_name)
+            else:
+                self._adapter_failures.pop(proxy_url, None)
 
-            # Failed proxies are removed immediately. Keep the recheck hook as
-            # a lightweight extension point without retaining stale proxies.
-            if self._current_proxy and self._current_proxy.url == proxy_url:
-                logger.debug("Clearing sticky proxy due to failure: %s", proxy_url)
-                self._current_proxy = None
+                if self._current_proxy and self._current_proxy.url == proxy_url:
+                    logger.debug("Clearing sticky proxy due to failure: %s", proxy_url)
+                    self._current_proxy = None
 
-            for proxy_list in [self._proxies, self._healthy, self._unhealthy]:
-                proxy_list[:] = [p for p in proxy_list if p.url != proxy_url]
-            self._leases = {
-                task_id: proxy
-                for task_id, proxy in self._leases.items()
-                if proxy.url != proxy_url
-            }
+                for proxy_list in [self._proxies, self._healthy, self._unhealthy]:
+                    proxy_list[:] = [p for p in proxy_list if p.url != proxy_url]
+                self._leases = {
+                    task_id: proxy
+                    for task_id, proxy in self._leases.items()
+                    if proxy.url != proxy_url
+                }
                 
             # 更新指标
             m = self._metrics.setdefault(proxy_url, {"success": 0, "failure": 0, "last_used": 0, "last_check": 0})

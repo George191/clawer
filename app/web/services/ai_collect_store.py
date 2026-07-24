@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
 
 import yaml
 from curl_cffi import requests as curl_requests
@@ -78,7 +79,6 @@ CREATE INDEX IF NOT EXISTS idx_ai_collect_templates_status ON public.ai_collect_
 CREATE INDEX IF NOT EXISTS idx_ai_collect_tasks_status ON public.ai_collect_tasks(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_task ON public.ai_collect_task_logs(task_id, created_at DESC);
 """
-_ICON_URL_PREFIX = "/api/ai/workspace/template-icons"
 _ARTIFACT_READ_CONCURRENCY = 8
 
 
@@ -103,11 +103,31 @@ class AICollectStore:
         )
 
     @staticmethod
-    def _template_icon_url(row: dict[str, Any]) -> str:
-        if not row.get("icon"):
+    def _template_icon_data_url(content: bytes | None) -> str:
+        if not content:
             return ""
-        revision = quote(str(row.get("updated_at") or row.get("version") or "1"), safe="")
-        return f"{_ICON_URL_PREFIX}/{row['name']}.ico?v={revision}"
+        stripped = content.lstrip()
+        if content.startswith(b"\x89PNG\r\n\x1a\n"):
+            media_type = "image/png"
+        elif content.startswith(b"\xff\xd8\xff"):
+            media_type = "image/jpeg"
+        elif content.startswith((b"GIF87a", b"GIF89a")):
+            media_type = "image/gif"
+        elif content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+            media_type = "image/webp"
+        elif stripped.startswith(b"<svg") or (stripped.startswith(b"<?xml") and b"<svg" in stripped[:512]):
+            media_type = "image/svg+xml"
+        else:
+            media_type = "image/x-icon"
+        encoded = base64.b64encode(content).decode("ascii")
+        return f"data:{media_type};base64,{encoded}"
+
+    async def _load_template_icon_data_url(self, row: dict[str, Any]) -> str:
+        icon_ref = str(row.get("icon") or "")
+        if not icon_ref:
+            return ""
+        content = await get_business_metadata_minio_client().get_object_bytes(icon_ref)
+        return self._template_icon_data_url(content)
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -280,18 +300,6 @@ class AICollectStore:
                     },
                 )
 
-    async def get_template_icon(self, filename: str) -> dict[str, Any] | None:
-        return await self._pg.fetch_one(
-            """
-            SELECT icon
-            FROM public.ai_collect_templates
-            WHERE name = :name AND icon <> ''
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            {"name": filename.removesuffix(".ico")},
-        )
-
     async def _import_local_templates(self) -> None:
         template_dir = Path(settings.template_dir)
         if not template_dir.exists():
@@ -378,6 +386,15 @@ class AICollectStore:
         )
         return object_key
 
+    async def _upload_adapter_code(self, name: str, version: str, adapter_code: str) -> str:
+        object_key = f"{self._artifact_prefix(name, version)}/adapter.py"
+        await get_business_metadata_minio_client().upload_bytes_to_key(
+            adapter_code.encode("utf-8"),
+            object_key,
+            "text/x-python",
+        )
+        return object_key
+
     async def _upload_favicon(self, name: str, version: str, source_url: str) -> str:
         if not source_url.startswith(("http://", "https://")):
             return ""
@@ -420,10 +437,22 @@ class AICollectStore:
         semaphore = asyncio.Semaphore(_ARTIFACT_READ_CONCURRENCY)
 
         async def populate_artifacts(row: dict[str, Any]) -> None:
+            adapter_ref = str(row.get("adapter") or "")
             async with semaphore:
                 template_bytes = await minio.get_object_bytes(str(row.get("template") or ""))
+            adapter_bytes = None
+            if adapter_ref.startswith("app/adapters/"):
+                adapter_path = Path(__file__).parents[3] / adapter_ref
+                if adapter_path.is_file():
+                    adapter_bytes = await asyncio.to_thread(adapter_path.read_bytes)
+            elif adapter_ref:
+                async with semaphore:
+                    adapter_bytes = await minio.get_object_bytes(adapter_ref)
+            async with semaphore:
+                favicon_url = await self._load_template_icon_data_url(row)
             row["yaml_content"] = template_bytes.decode("utf-8") if template_bytes else ""
-            row["favicon_url"] = self._template_icon_url(row)
+            row["adapter_code"] = adapter_bytes.decode("utf-8") if adapter_bytes else ""
+            row["favicon_url"] = favicon_url
 
         await asyncio.gather(*(populate_artifacts(row) for row in rows))
         return rows
@@ -441,6 +470,11 @@ class AICollectStore:
             str(current["version"]),
             str(payload["yaml_content"]),
         )
+        adapter_code = str(payload.get("adapter_code") or "")
+        adapter_key = (
+            await self._upload_adapter_code(str(current["name"]), str(current["version"]), adapter_code)
+            if adapter_code else str(payload.get("adapter") or "")
+        )
         row = await self._pg.fetch_one(
             """
             UPDATE public.ai_collect_templates SET
@@ -452,11 +486,12 @@ class AICollectStore:
             WHERE id = CAST(:id AS uuid)
             RETURNING *
             """,
-            {"id": template_id, "template": template_key, **payload},
+            {"id": template_id, "template": template_key, **payload, "adapter": adapter_key},
         )
         if row is not None:
             row["yaml_content"] = payload["yaml_content"]
-            row["favicon_url"] = self._template_icon_url(row)
+            row["adapter_code"] = adapter_code
+            row["favicon_url"] = await self._load_template_icon_data_url(row)
         return row
 
     async def release_template(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -465,6 +500,11 @@ class AICollectStore:
             str(payload["name"]),
             str(payload["version"]),
             str(payload["yaml_content"]),
+        )
+        adapter_code = str(payload.get("adapter_code") or "")
+        adapter_key = (
+            await self._upload_adapter_code(str(payload["name"]), str(payload["version"]), adapter_code)
+            if adapter_code else str(payload.get("adapter") or "")
         )
         existing = await self._pg.fetch_one(
             "SELECT icon FROM public.ai_collect_templates WHERE name = :name AND version = :version",
@@ -498,6 +538,7 @@ class AICollectStore:
             {
                 **payload,
                 "template": template_key,
+                "adapter": adapter_key,
                 "icon": icon_key,
                 "metadata": json.dumps(payload.get("metadata", {}), ensure_ascii=False),
             },
@@ -505,7 +546,8 @@ class AICollectStore:
         if row is None:
             raise RuntimeError("Template release did not return a row")
         row["yaml_content"] = payload["yaml_content"]
-        row["favicon_url"] = self._template_icon_url(row)
+        row["adapter_code"] = adapter_code
+        row["favicon_url"] = await self._load_template_icon_data_url(row)
         return row
 
     async def list_tasks(self) -> list[dict[str, Any]]:

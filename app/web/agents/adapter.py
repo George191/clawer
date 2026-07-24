@@ -59,6 +59,12 @@ class AdapterAgent(BaseAgent):
                 YAML template:
                 {template_yaml}
 
+                User refinement request:
+                {user_request}
+
+                Existing adapter to preserve unless the request or YAML contract requires a change:
+                {existing_adapter_code}
+
                 Return only a fenced ```python block.
             """,
         )
@@ -68,6 +74,8 @@ class AdapterAgent(BaseAgent):
         template_name: str,
         template_yaml: str,
         on_chunk: Callable[[str], None] | None = None,
+        user_request: str = "",
+        existing_adapter_code: str = "",
     ) -> AdapterResult:
         data_type = self._template_data_type(template_yaml)
         prompt = self.render_prompt(
@@ -78,6 +86,8 @@ class AdapterAgent(BaseAgent):
                 ensure_ascii=False,
                 indent=2,
             ),
+            user_request=user_request or "(none)",
+            existing_adapter_code=existing_adapter_code or "(none)",
         )
         streamed_response = ""
         streamed_code_length = 0

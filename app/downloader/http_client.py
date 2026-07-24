@@ -76,7 +76,28 @@ class HttpClient:
         self._lease_lock: asyncio.Lock | None = None
 
     @staticmethod
-    def _should_mark_download_proxy_failure(error: Exception) -> bool:
+    def _error_status_code(error: Exception) -> int | None:
+        status_code = getattr(error, "status_code", None)
+        if status_code is not None:
+            return status_code
+        response = getattr(error, "response", None)
+        return getattr(response, "status_code", None) if response is not None else None
+
+    @classmethod
+    def _should_mark_proxy_failure(
+        cls,
+        error: Exception,
+        pre_proxy_url: str | None,
+    ) -> bool:
+        """Do not blame an exit proxy for an ambiguous jump-host failure."""
+        return not (pre_proxy_url and cls._error_status_code(error) is None)
+
+    @classmethod
+    def _should_mark_download_proxy_failure(
+        cls,
+        error: Exception,
+        pre_proxy_url: str | None = None,
+    ) -> bool:
         """Only remove a proxy for errors that indicate the route failed.
 
         Resource-level failures (404/403) and local size validation do not say
@@ -85,14 +106,9 @@ class HttpClient:
         """
         if isinstance(error, FileTooLargeError):
             return False
-        status_code = getattr(error, "status_code", None)
-        if status_code is None:
-            response = getattr(error, "response", None)
-            status_code = (
-                getattr(response, "status_code", None)
-                if response is not None
-                else None
-            )
+        if not cls._should_mark_proxy_failure(error, pre_proxy_url):
+            return False
+        status_code = cls._error_status_code(error)
         return status_code not in {403, 404}
 
     async def _get_lease_lock(self) -> asyncio.Lock:
@@ -420,13 +436,12 @@ class HttpClient:
 
                 return response.text
 
-            except curl_requests.errors.RequestsError as e:
-                if _proxy_pool is not None and proxy_url:
-                    await _proxy_pool.mark_failure(proxy_url, adapter_name)
-                    await self._release_failed_proxy(task_id, proxy_url, adapter_name)
-                raise
             except Exception as e:
-                if _proxy_pool is not None and proxy_url:
+                if (
+                    _proxy_pool is not None
+                    and proxy_url
+                    and self._should_mark_proxy_failure(e, pre_proxy_url)
+                ):
                     await _proxy_pool.mark_failure(proxy_url, adapter_name)
                     await self._release_failed_proxy(task_id, proxy_url, adapter_name)
                 raise
@@ -549,7 +564,7 @@ class HttpClient:
                 if (
                     _proxy_pool is not None
                     and proxy_url
-                    and self._should_mark_download_proxy_failure(e)
+                    and self._should_mark_download_proxy_failure(e, pre_proxy_url)
                 ):
                     await _proxy_pool.mark_failure(proxy_url)
                     await self._release_failed_proxy(task_id, proxy_url)

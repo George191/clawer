@@ -443,6 +443,7 @@ async def handle_start_analyze(connection: ClientConnection, message: dict[str, 
     """处理启动分析请求."""
     url = message.get("url")
     prompt = str(message.get("prompt") or "").strip()[:2000]
+    existing_template_yaml = str(message.get("current_template_yaml") or "")[:100_000]
     request_id = str(message.get("request_id") or uuid.uuid4())
     try:
         viewport_width = max(320, min(int(message.get("viewport_width") or 1440), 3840))
@@ -462,7 +463,14 @@ async def handle_start_analyze(connection: ClientConnection, message: dict[str, 
         connection.analyze_task.cancel()
 
     connection.analyze_task = asyncio.create_task(
-        _stream_analyze_results(connection, url, prompt, request_id, viewport_width)
+        _stream_analyze_results(
+            connection,
+            url,
+            prompt,
+            request_id,
+            viewport_width,
+            existing_template_yaml,
+        )
     )
     connection.active_tasks.add("analyze")
     await connection.send({"type": "analyze_started", "request_id": request_id, "data": {"url": url}})
@@ -483,10 +491,16 @@ async def _stream_analyze_results(
     prompt: str,
     request_id: str,
     viewport_width: int,
+    existing_template_yaml: str = "",
 ) -> None:
     """流式发送分析结果到客户端."""
     try:
-        async for event_type, data in _analyze_events(url, prompt, viewport_width):
+        async for event_type, data in _analyze_events(
+            url,
+            prompt,
+            viewport_width,
+            existing_template_yaml,
+        ):
             await connection.send(
                 {
                     "type": f"analyze_{event_type}",
@@ -680,6 +694,8 @@ async def handle_generate_adapter(connection: ClientConnection, message: dict[st
     url = message.get("url")
     template_id = message.get("template_id")
     request_id = message.get("request_id")
+    prompt = str(message.get("prompt") or "").strip()[:2000]
+    existing_adapter_code = str(message.get("current_adapter_code") or "")[:200_000]
 
     if not url or not template_id or not request_id:
         await connection.send(
@@ -706,7 +722,13 @@ async def handle_generate_adapter(connection: ClientConnection, message: dict[st
     if connection.adapter_task and not connection.adapter_task.done():
         connection.adapter_task.cancel()
     connection.adapter_task = asyncio.create_task(
-        _stream_adapter_generation(connection, template_id, request_id)
+        _stream_adapter_generation(
+            connection,
+            template_id,
+            request_id,
+            prompt,
+            existing_adapter_code,
+        )
     )
     connection.active_tasks.add("adapter_generation")
 
@@ -715,6 +737,8 @@ async def _stream_adapter_generation(
     connection: ClientConnection,
     template_id: str,
     request_id: str,
+    prompt: str = "",
+    existing_adapter_code: str = "",
 ) -> None:
     """Stream real model output, then validate and persist the final adapter."""
     chunk_queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -723,6 +747,8 @@ async def _stream_adapter_generation(
         try:
             return await _generate_adapter_for_template(
                 template_id,
+                prompt=prompt,
+                existing_adapter_code=existing_adapter_code,
                 on_chunk=chunk_queue.put_nowait,
             )
         finally:

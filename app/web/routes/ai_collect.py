@@ -11,13 +11,11 @@ from urllib.parse import urlparse
 
 import yaml
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.config.ai_settings import ai_settings
 from app.logger import get_logger
 from app.models.template import SiteTemplate
-from app.storage.minio_client import get_business_metadata_minio_client
 from app.web.agents.adapter import adapter_agent
 from app.web.agents.template import AnalysisResult, template_agent
 from app.web.services.ai_collect_store import ai_collect_store
@@ -71,6 +69,7 @@ class GenerateAdapterRequest(BaseModel):
 class WorkspaceTemplateUpdateRequest(BaseModel):
     yaml_content: str
     adapter: str = ""
+    adapter_code: str = ""
     description: str = ""
     output_tag: str = ""
 
@@ -95,6 +94,7 @@ class WorkspaceReleaseRequest(BaseModel):
     status: str
     yaml_content: str
     adapter: str = ""
+    adapter_code: str = ""
     description: str = ""
     output_tag: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -409,6 +409,7 @@ async def _analyze_events(
     url: str,
     prompt: str = "",
     viewport_width: int = 1440,
+    existing_template_yaml: str = "",
 ) -> AsyncGenerator[AnalysisStreamEvent, None]:
     step_started_at: dict[str, int] = {}
 
@@ -450,7 +451,7 @@ async def _analyze_events(
             raise RuntimeError(preflight.error_message or "Page preflight failed")
         
         yield step_event("fetch_page", "Fetch page", "done")
-        
+
         yield _analysis_event("preflight", {
             "url": preflight.normalized_url,
             "normalizedUrl": preflight.normalized_url,
@@ -473,38 +474,24 @@ async def _analyze_events(
             "errorMessage": "",
         })
         
-        yield step_event("analyze_structure", "Analyze page structure", "running")
-        analysis_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        analysis_task = asyncio.create_task(
-            asyncio.wait_for(
-                template_agent.analyze_page(
-                    preflight.normalized_url,
-                    preflight.html,
-                    preflight.network_endpoints,
-                    network_responses=preflight.network_responses,
-                    page_warnings=preflight.page_warnings,
-                    on_event=analysis_events.put_nowait,
-                ),
-                timeout=ai_settings.llm_request_timeout,
-            )
+        analysis_result = template_agent.build_page_evidence(
+            preflight.normalized_url,
+            preflight.html,
+            preflight.network_endpoints,
+            network_responses=preflight.network_responses,
+            page_warnings=preflight.page_warnings,
         )
-        async for event in _forward_task_events(analysis_task, analysis_events, "model"):
-            yield event
-        analysis_result = await analysis_task
-        
-        yield step_event("analyze_structure", "Analyze page structure", "done")
-        
+
         yield step_event("generate_template", "Generate template", "running")
         template_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         template_task = asyncio.create_task(
-            asyncio.wait_for(
-                template_agent.generate_template(
-                    preflight.normalized_url,
-                    analysis_result,
-                    page_title=preflight.title,
-                    on_event=template_events.put_nowait,
-                ),
-                timeout=ai_settings.llm_request_timeout,
+            template_agent.generate_template(
+                preflight.normalized_url,
+                analysis_result,
+                page_title=preflight.title,
+                user_request=prompt,
+                existing_template_yaml=existing_template_yaml,
+                on_event=template_events.put_nowait,
             )
         )
         async for event in _forward_task_events(template_task, template_events, "model"):
@@ -519,6 +506,10 @@ async def _analyze_events(
             preflight.normalized_url,
             preflight.page_warnings,
             analysis_result,
+        )
+        analysis_result = template_agent.merge_template_evidence(
+            analysis_result,
+            template_dict,
         )
         yield _analysis_event("template_key", {
             "key": next(reversed(template_dict), ""),
@@ -586,6 +577,9 @@ async def _analyze_events(
             "warnings": result.warnings,
             "agent": {
                 "model": template_agent.model_name,
+                "decision": {
+                    "requires_adapter": bool(template_dict.get("adapter")),
+                },
                 "requiresProxy": preflight.requires_proxy,
                 "proxyMode": preflight.proxy_mode,
                 "pageTitle": preflight.title,
@@ -602,6 +596,8 @@ async def _analyze_events(
 async def _generate_adapter_for_template(
     template_id: str,
     on_chunk: Callable[[str], None] | None = None,
+    prompt: str = "",
+    existing_adapter_code: str = "",
 ) -> dict[str, Any]:
     analysis = await ai_collect_store.get_analysis(template_id)
     if analysis is None:
@@ -613,19 +609,17 @@ async def _generate_adapter_for_template(
     if not template_yaml:
         raise HTTPException(status_code=400, detail="Template YAML is empty")
     
-    try:
-        adapter_result = await asyncio.wait_for(
-            adapter_agent.generate_adapter(
-                template_name,
-                template_yaml,
-                on_chunk=on_chunk,
-            ),
-            timeout=ai_settings.llm_request_timeout,
-        )
-    except asyncio.TimeoutError as exc:
-        raise RuntimeError("Failed to generate adapter: timeout") from exc
+    adapter_result = await adapter_agent.generate_adapter(
+        template_name,
+        template_yaml,
+        user_request=prompt,
+        existing_adapter_code=existing_adapter_code,
+        on_chunk=on_chunk,
+    )
     
     adapter_code = adapter_result.adapter_code
+    if not adapter_code.strip():
+        raise RuntimeError("Adapter model returned empty code")
     validate_generated_adapter(adapter_code)
 
     analysis["adapter_code"] = adapter_code
@@ -780,23 +774,6 @@ async def dry_run(body: DryRunRequest):
 @router.get("/ai/workspace/templates")
 async def workspace_templates():
     return {"items": await ai_collect_store.list_templates()}
-
-
-@router.get("/ai/workspace/template-icons/{filename}")
-async def workspace_template_icon(filename: str):
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
-        raise HTTPException(status_code=404, detail="Template icon not found")
-    icon = await ai_collect_store.get_template_icon(filename)
-    if icon is None or not icon.get("icon"):
-        raise HTTPException(status_code=404, detail="Template icon not found")
-    content = await get_business_metadata_minio_client().get_object_bytes(str(icon["icon"]))
-    if not content:
-        raise HTTPException(status_code=404, detail="Template icon not found")
-    return Response(
-        content=content,
-        media_type="image/x-icon",
-        headers={"Cache-Control": "no-cache, must-revalidate"},
-    )
 
 
 @router.post("/ai/workspace/templates/release")

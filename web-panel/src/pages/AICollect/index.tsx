@@ -196,7 +196,7 @@ const ChevronRightIcon: React.FC<{ className?: string }> = ({ className }) => (
 
 type WorkMode = 'explore' | 'contract' | 'dryrun' | 'publish';
 type MissionTab = 'goal' | 'policy';
-type RunStatus = 'idle' | 'running' | 'paused' | 'completed';
+type RunStatus = 'idle' | 'running' | 'paused' | 'completed' | 'ready';
 type ProcessStepKey = 'prepare' | 'entry' | 'structure' | 'contract' | 'dryrun' | 'publish';
 type TerminalLogLevel = 'info' | 'ok' | 'warn';
 type TemplateStageId = 'site' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
@@ -752,6 +752,12 @@ const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
 };
 
 const stripYamlQuotes = (value: string) => value.trim().replace(/^['"]|['"]$/g, '');
+const normalizeGeneratedArtifact = (value: string) => value
+  .replace(/\r\n/g, '\n')
+  .split('\n')
+  .map((line) => line.trimEnd())
+  .join('\n')
+  .trim();
 const isStructuredInlineYamlValue = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) return false;
@@ -938,6 +944,12 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
   return entries;
 };
 
+const normalizeTemplateArtifact = (value: string) => parseTemplateEntries(value)
+  .filter((entry) => entry.nodeType === 'value')
+  .map((entry) => `${entry.key}:${stripYamlQuotes(entry.value)}`)
+  .sort()
+  .join('\n');
+
 const templateCatalog: TemplateCatalogItem[] = Object.entries(templateSourceModules)
   .map(([path, raw]) => {
     const fileName = path.split('/').pop() ?? path;
@@ -1084,6 +1096,7 @@ const runStatusMeta: Record<RunStatus, { label: string; color: string }> = {
   running: { label: '分析中', color: 'processing' },
   paused: { label: '已暂停', color: 'warning' },
   completed: { label: '待确认', color: 'success' },
+  ready: { label: '已加载', color: 'default' },
 };
 
 const aura = workspacePalette;
@@ -1097,6 +1110,9 @@ const AICollect: React.FC = () => {
   const adapterCharacterIndexRef = useRef(0);
   const adapterTypingTimerRef = useRef<number | null>(null);
   const adapterFinalResultRef = useRef<{ code: string; adapterId: string } | null>(null);
+  const refinementBaselineRef = useRef<{ template: string; adapter: string } | null>(null);
+  const refinementTemplateChangedRef = useRef(false);
+  const refinementPromptRef = useRef('');
   const adapterLiveCodeRef = useRef('');
   const adapterLiveCodeElementRef = useRef<HTMLElement | null>(null);
   const adapterEditorBodyRef = useRef<HTMLDivElement | null>(null);
@@ -1122,6 +1138,7 @@ const AICollect: React.FC = () => {
   const [selectedFields, setSelectedFields] = useState<Set<string>>(new Set(sampleFields.map((field) => field.name)));
   const [streamError, setStreamError] = useState('');
   const [preflightLoading, setPreflightLoading] = useState(false);
+  const [browserAnalysisActive, setBrowserAnalysisActive] = useState(false);
 
   const [urlPreflight, setUrlPreflight] = useState<UrlPreflightResponse | null>(null);
   const [templateId, setTemplateId] = useState('ai-contract-preview');
@@ -1133,6 +1150,7 @@ const AICollect: React.FC = () => {
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
   const [hoveredStageGuideStep, setHoveredStageGuideStep] = useState<SessionGuideStepId | null>(null);
   const [activeTemplateStage, setActiveTemplateStage] = useState<TemplateStageId | null>(null);
+  const [templateGenerationComplete, setTemplateGenerationComplete] = useState(false);
   const [templateStageVisibility, setTemplateStageVisibility] = useState<Partial<Record<TemplateStageId, number>>>({});
   const [guidePreviewPhase, setGuidePreviewPhase] = useState<SessionWorkflowPhase | null>(null);
   const [templateTabVisible, setTemplateTabVisible] = useState(false);
@@ -1153,6 +1171,10 @@ const AICollect: React.FC = () => {
   const [templateValueDrafts, setTemplateValueDrafts] = useState<Record<string, string>>({});
   const [templateDraftEntries, setTemplateDraftEntries] = useState<TemplateEntry[]>([]);
   const [adapterBuildIndex, setAdapterBuildIndex] = useState(0);
+  const [adapterReadyForConfirm, setAdapterReadyForConfirm] = useState(false);
+  const [pendingConfirmations, setPendingConfirmations] = useState({ template: false, adapter: false });
+  const [refinementAwaitingAdapter, setRefinementAwaitingAdapter] = useState(false);
+  const [showAnalysisTiming, setShowAnalysisTiming] = useState(true);
   const [expandedAdapterStep, setExpandedAdapterStep] = useState<number | null>(0);
   const [selectedReleaseAction, setSelectedReleaseAction] = useState<ReleaseAction>('draft');
   const [selectedTaskPublishMode, setSelectedTaskPublishMode] = useState<TaskPublishMode>('launch');
@@ -1381,17 +1403,18 @@ const AICollect: React.FC = () => {
     () => visibleTemplateEntries.filter((entry) => entry.nodeType === 'value').length,
     [visibleTemplateEntries],
   );
-  const templateStagesReady = templateStages.length > 0
-    && visibleTemplateStages.length === templateStages.length;
+  const templateStagesReady = templateGenerationComplete && templateStages.length > 0;
   const templateAnalysisComplete = activeProcessStep === 'contract'
     && templateStagesReady;
-  const templateReadyForConfirm = workflowPhase === 'confirm-template' && templateStagesReady;
+  const templateReadyForConfirm = workflowPhase === 'confirm-template'
+    && templateStagesReady
+    && pendingConfirmations.template;
   const displayWorkflowPhase = guidePreviewPhase ?? workflowPhase;
   const templateCollapsed = displayWorkflowPhase === 'generating-adapter' || displayWorkflowPhase === 'release-template';
   const sessionGuideSteps = useMemo<SessionGuideStepId[]>(() => {
     const steps: SessionGuideStepId[] = [...visibleTemplateStages];
 
-    if (templateStagesReady || templateCollapsed) {
+    if (templateAnalysisComplete || templateCollapsed) {
       steps.push('confirm-template');
     }
     if (workflowPhase === 'generating-adapter' || workflowPhase === 'release-template') {
@@ -1402,7 +1425,7 @@ const AICollect: React.FC = () => {
     }
 
     return steps;
-  }, [templateCollapsed, templateStagesReady, visibleTemplateStages, workflowPhase]);
+  }, [templateAnalysisComplete, templateCollapsed, visibleTemplateStages, workflowPhase]);
   const currentGuideStep = useMemo<SessionGuideStepId | null>(() => {
     if (workflowPhase === 'release-template') return 'save-template';
     if (workflowPhase === 'generating-adapter') return 'generate-adapter';
@@ -1534,66 +1557,15 @@ const AICollect: React.FC = () => {
     return dynamicSteps;
   }, [activeTemplate.id, adapterDiffStats.added, adapterDiffStats.removed, templateDraftEntries, templateValueDrafts, url]);
   const adapterPreviewLines = useMemo<AdapterPreviewLine[]>(() => {
-    if (workspaceAdapterCode) {
-      return workspaceAdapterCode.split('\n').map((content, index) => ({
-        key: `adapter-generated-${index + 1}`,
-        lineNumber: index + 1,
-        prefix: '+',
-        added: true,
-        content,
-      }));
-    }
-
-    const getEntryValue = (key: string, fallback = '') => {
-      const entry = templateDraftEntries.find((item) => item.key === key);
-      return stripYamlQuotes(
-        (entry ? templateValueDrafts[entry.id] : undefined)
-        ?? entry?.value
-        ?? fallback,
-      );
-    };
-
-    const baseUrl = getEntryValue('base_url', url || 'https://source.local');
-    const responseType = (getEntryValue('response_type', 'html') || 'html').toLowerCase();
-    const requestMethod = (getEntryValue('list_request.method', 'GET') || 'GET').toUpperCase();
-    const paginationType = getEntryValue('list_pagination.type', 'page_number') || 'page_number';
-    const className = `${toPascalCase(activeTemplate.id || 'Generated')}Adapter`;
-    const fieldNames = templateDraftEntries
-      .filter((entry) => /^list_fields\[\d+\]\.name$/.test(entry.key))
-      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
-      .filter(Boolean);
-    const dedupKeys = templateDraftEntries
-      .filter((entry) => /^dedup_fields\[\d+\]$/.test(entry.key) && entry.nodeType === 'value')
-      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
-      .filter(Boolean);
-    const downloadSelectors = templateDraftEntries
-      .filter((entry) => /^download\[\d+\]\.selector$/.test(entry.key))
-      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value))
-      .filter(Boolean);
-
-    const responseAccessor = responseType === 'json' ? 'response.json()' : 'response.text()';
-    const dedupLiteral = dedupKeys.length
-      ? `[${dedupKeys.map((key) => `'${key}'`).join(', ')}]`
-      : "['source_url', 'title']";
-    const fieldComment = fieldNames.length ? fieldNames.join(', ') : 'title, source_url';
-    const downloadComment = downloadSelectors.length ? downloadSelectors.join(', ') : 'no download selectors';
-
-    return [
-      { key: 'adapter-1', lineNumber: 1, prefix: '+', added: true, content: `class ${className}(BaseAdapter):` },
-      { key: 'adapter-2', lineNumber: 2, prefix: '+', added: true, content: `    template_key = '${activeTemplate.id || 'generated_template'}'` },
-      { key: 'adapter-3', lineNumber: 3, prefix: '+', added: true, content: `    start_urls = ['${baseUrl}']` },
-      { key: 'adapter-4', lineNumber: 4, prefix: ' ', content: '' },
-      { key: 'adapter-5', lineNumber: 5, prefix: '+', added: true, content: '    async def fetch_list(self, page: int = 1):' },
-      { key: 'adapter-6', lineNumber: 6, prefix: '+', added: true, content: `        return await self.request(method='${requestMethod}', page=page)` },
-      { key: 'adapter-7', lineNumber: 7, prefix: ' ', content: '' },
-      { key: 'adapter-8', lineNumber: 8, prefix: '+', added: true, content: '    def parse_list(self, response):' },
-      { key: 'adapter-9', lineNumber: 9, prefix: '+', added: true, content: `        payload = ${responseAccessor}` },
-      { key: 'adapter-10', lineNumber: 10, prefix: '+', added: true, content: `        # fields: ${fieldComment}` },
-      { key: 'adapter-11', lineNumber: 11, prefix: '+', added: true, content: `        # dedup: ${dedupLiteral}` },
-      { key: 'adapter-12', lineNumber: 12, prefix: '+', added: true, content: `        # pagination: ${paginationType}` },
-      { key: 'adapter-13', lineNumber: 13, prefix: '+', added: true, content: `        # downloads: ${downloadComment}` },
-    ];
-  }, [activeTemplate.id, templateDraftEntries, templateValueDrafts, url, workspaceAdapterCode]);
+    if (!workspaceAdapterCode) return [];
+    return workspaceAdapterCode.split('\n').map((content, index) => ({
+      key: `adapter-generated-${index + 1}`,
+      lineNumber: index + 1,
+      prefix: '+',
+      added: true,
+      content,
+    }));
+  }, [workspaceAdapterCode]);
   const adapterProgressPercent = Math.min(
     100,
     workflowPhase === 'release-template'
@@ -1612,7 +1584,6 @@ const AICollect: React.FC = () => {
         eyebrow: 'Release Gate',
         title: 'Template Release',
         subtitle: activeTemplate.fileName,
-        stat: releaseActionMeta[selectedReleaseAction].title,
       };
     }
     if (displayWorkflowPhase === 'generating-adapter') {
@@ -1621,22 +1592,18 @@ const AICollect: React.FC = () => {
         eyebrow: 'Adapter Build',
         title: 'Implementation Steps',
         subtitle: currentAdapterStep?.title ?? 'Adapter generation in progress',
-        stat: `${Math.min(adapterBuildIndex + 1, adapterBuildPlan.length)}/${adapterBuildPlan.length}`,
       };
     }
     return {
       eyebrow: displayWorkflowPhase === 'confirm-template' ? 'Template Confirm' : 'Template Analysis',
       title: activeTemplate.displayName,
       subtitle: activeTemplate.fileName,
-      stat: `${visibleTemplateValueCount} keys`,
     };
   }, [
     activeTemplate.displayName,
     activeTemplate.fileName,
     adapterBuildIndex,
     displayWorkflowPhase,
-    selectedReleaseAction,
-    visibleTemplateValueCount,
   ]);
 
   useEffect(() => () => {
@@ -1717,6 +1684,31 @@ const AICollect: React.FC = () => {
     const code = result?.code ?? adapterLiveCodeRef.current;
     setWorkspaceAdapterCode(code);
     setAdapterWriting(false);
+    const refinementBaseline = refinementBaselineRef.current;
+    if (refinementBaseline) {
+      const adapterChanged = normalizeGeneratedArtifact(code)
+        !== normalizeGeneratedArtifact(refinementBaseline.adapter);
+      const templateChanged = refinementTemplateChangedRef.current;
+      setPendingConfirmations({ template: templateChanged, adapter: adapterChanged });
+      setAdapterReadyForConfirm(true);
+      if (templateChanged) {
+        setWorkflowPhase('confirm-template');
+        setGuidePreviewPhase(null);
+        setRunStatus('completed');
+      } else if (adapterChanged) {
+        setWorkflowPhase('generating-adapter');
+        setRunStatus('completed');
+      } else {
+        setWorkflowPhase('release-template');
+        setMode('publish');
+        setRunStatus('ready');
+      }
+      refinementBaselineRef.current = null;
+      refinementTemplateChangedRef.current = false;
+      refinementPromptRef.current = '';
+    } else {
+      setAdapterReadyForConfirm(true);
+    }
     adapterFinalResultRef.current = null;
     adapterRequestRef.current = null;
     setAdapterBuildIndex(adapterBuildPlan.length);
@@ -1857,6 +1849,7 @@ const AICollect: React.FC = () => {
       const step = String(data.step ?? 'analysis');
       const label = String(data.label ?? step);
       const status = String(data.status ?? 'running');
+      if (step === 'fetch_page' && status === 'done') setBrowserAnalysisActive(false);
       const startedAt = Number(data.startedAt);
       const finishedAt = Number(data.finishedAt);
       analyzeStepRef.current = step;
@@ -1869,9 +1862,7 @@ const AICollect: React.FC = () => {
       pushLiveLog(`[${step}] ${label}: ${status}`);
 
       const processStepByAnalyzeStep: Record<string, ProcessStepKey> = {
-        fetch_page: 'entry',
-        analyze_structure: 'structure',
-        generate_template: 'contract',
+        fetch_page: 'prepare',
         validate: 'contract',
       };
       const processStep = processStepByAnalyzeStep[step];
@@ -1895,6 +1886,32 @@ const AICollect: React.FC = () => {
     }
 
     if (messagePayload.type === 'analyze_model') {
+      if (data.kind === 'template_stage') {
+        const stage = String(data.stage ?? 'site');
+        const processStepByTemplateStage: Record<string, ProcessStepKey> = {
+          site: 'prepare',
+          request: 'entry',
+          response: 'structure',
+          fields: 'structure',
+          dedup_download: 'contract',
+        };
+        const templateStageByModelStage: Partial<Record<string, TemplateStageId>> = {
+          site: 'site',
+          request: 'request',
+          response: 'response',
+          fields: 'fields',
+          dedup_download: 'dedup',
+        };
+        const processStep = processStepByTemplateStage[stage];
+        if (processStep) {
+          const processIndex = processStepOrder.indexOf(processStep);
+          setVisibleProcessSteps(processStepOrder.slice(0, processIndex + 1));
+          setActiveProcessStep(processStep);
+          setSelectedLogStep(processStep);
+        }
+        setActiveTemplateStage(templateStageByModelStage[stage] ?? null);
+        return;
+      }
       if (data.kind === 'template_delta') {
         const templateYaml = typeof data.templateYaml === 'string' ? data.templateYaml : '';
         if (!templateYaml.trim()) return;
@@ -1916,11 +1933,14 @@ const AICollect: React.FC = () => {
 
     if (messagePayload.type === 'analyze_browser') {
       const event = data as unknown as BrowserAnalysisEvent;
+      const browserClosed = event.kind === 'closed';
+      if (browserClosed) setBrowserAnalysisActive(false);
+      else if (event.kind !== 'preflight_retry') setBrowserAnalysisActive(true);
       const eventUrl = typeof event.url === 'string' ? event.url : activeRequest.url;
       const fields = event.recordFields?.length
         ? `；字段：${event.recordFields.join(', ')}`
         : '';
-      const detailByKind: Record<BrowserAnalysisEvent['kind'], string> = {
+      const detailByKind: Partial<Record<BrowserAnalysisEvent['kind'], string>> = {
         navigation_requested: `准备访问目标 URL：${eventUrl}`,
         navigation: `主文档跳转到：${eventUrl}`,
         document_response: `${event.status ?? '-'} 文档响应：${eventUrl}（${event.contentType || 'unknown'}）`,
@@ -1967,7 +1987,6 @@ const AICollect: React.FC = () => {
           errorCode: previous?.errorCode || '',
           errorMessage: previous?.errorMessage || '',
         }));
-        openSessionInspector();
       }
       return;
     }
@@ -1981,7 +2000,6 @@ const AICollect: React.FC = () => {
         status: 'done',
         content: `已验证页面：${preflight.title || preflight.url}`,
       });
-      openSessionInspector();
       (preflight.pageWarnings ?? []).forEach((warning) => {
         appendAnalysisFeed({ kind: 'error', step: 'fetch_page', content: warning });
         pushLiveLog(`[preflight warning] ${warning}`);
@@ -2030,8 +2048,14 @@ const AICollect: React.FC = () => {
         setTemplateDraftEntries(parseTemplateEntries(templateYaml));
         setTemplateValueDrafts({});
       }
+      if (refinementBaselineRef.current) {
+        refinementTemplateChangedRef.current = normalizeTemplateArtifact(templateYaml)
+          !== normalizeTemplateArtifact(refinementBaselineRef.current.template);
+        setRefinementAwaitingAdapter(true);
+      }
       if (adapterPath) setWorkspaceAdapterFile(adapterPath);
       setGeneratedAdapterRequired(Boolean(agent?.decision?.requires_adapter));
+      setTemplateGenerationComplete(true);
       setPreflightLoading(false);
       appendAnalysisFeed({ kind: 'status', step: 'complete', content: '模板合约已生成' });
       pushLiveLog('服务端合约草案已生成，等待前端确认');
@@ -2040,6 +2064,7 @@ const AICollect: React.FC = () => {
     }
 
     if (messagePayload.type === 'analyze_error') {
+      setTemplateGenerationComplete(false);
       const errorMessage = String(data.message ?? data.error ?? '分析服务暂不可用');
       appendAnalysisFeed({ kind: 'error', content: errorMessage });
       setPreflightLoading(false);
@@ -2167,6 +2192,23 @@ const AICollect: React.FC = () => {
     });
   }, [closeSessionInspector]);
 
+  useEffect(() => {
+    const browserTab = sessionInspectorTabs.find((tab) => tab.kind === 'browser');
+    if (browserAnalysisActive) {
+      if (!browserTab && currentInspectorTab.kind === 'browser') {
+        openSessionInspector(currentInspectorTab);
+      }
+      return;
+    }
+    if (browserTab) closeSessionInspectorTab(browserTab.id);
+  }, [
+    browserAnalysisActive,
+    closeSessionInspectorTab,
+    currentInspectorTab,
+    openSessionInspector,
+    sessionInspectorTabs,
+  ]);
+
   const finishPromptGeneration = useCallback(() => {
     if (promptGenerationTimerRef.current) {
       window.clearTimeout(promptGenerationTimerRef.current);
@@ -2201,11 +2243,13 @@ const AICollect: React.FC = () => {
     adapterCharacterIndexRef.current = 0;
     adapterFinalResultRef.current = null;
     adapterLiveCodeRef.current = '';
+    refinementTemplateChangedRef.current = false;
     setWorkspaceAdapterCode('');
     setAdapterWriting(false);
     setActiveProcessStep('prepare');
     setHoveredStageGuideStep(null);
     setActiveTemplateStage(null);
+    setTemplateGenerationComplete(false);
     setTemplateStageVisibility({});
     setGuidePreviewPhase(null);
     setTemplateTabVisible(false);
@@ -2219,7 +2263,10 @@ const AICollect: React.FC = () => {
     setScanPulse(0);
     setPromptGenerating(false);
     setWorkflowPhase('analyzing-template');
+    setBrowserAnalysisActive(false);
     setAdapterBuildIndex(0);
+    setAdapterReadyForConfirm(false);
+    setRefinementAwaitingAdapter(false);
     setExpandedAdapterStep(0);
     setSelectedReleaseAction('draft');
     setSelectedTaskPublishMode('launch');
@@ -2256,12 +2303,13 @@ const AICollect: React.FC = () => {
 
   useEffect(() => {
     if (!hasSession || workflowPhase !== 'analyzing-template' || !templateAnalysisComplete) return;
+    if (refinementBaselineRef.current || !pendingConfirmations.template) return;
 
     setWorkflowPhase('confirm-template');
     setGuidePreviewPhase(null);
     setRunStatus('completed');
     pushLiveLog('template contract ready for confirmation');
-  }, [hasSession, pushLiveLog, templateAnalysisComplete, workflowPhase]);
+  }, [hasSession, pendingConfirmations.template, pushLiveLog, templateAnalysisComplete, workflowPhase]);
 
   useEffect(() => {
     if (!templateCollapsed) {
@@ -2334,22 +2382,12 @@ const AICollect: React.FC = () => {
     if (workflowPhase !== 'generating-adapter') return undefined;
 
     if (adapterBuildIndex >= adapterBuildPlan.length) {
-      const timer = window.setTimeout(() => {
-        setCompletedProcessSteps((prev) => {
-          const next = new Set(prev);
-          next.add('dryrun');
-          return next;
-        });
-        setWorkflowPhase('release-template');
-        setMode('publish');
+      if (!adapterReadyForConfirm) {
+        setAdapterReadyForConfirm(true);
         setRunStatus('completed');
-        setActiveProcessStep('publish');
-        setSelectedLogStep('publish');
-        setVisibleProcessSteps((prev) => (prev.includes('publish') ? prev : [...prev, 'publish']));
-        pushLiveLog('adapter draft completed; release gate unlocked');
-      }, 280);
-
-      return () => window.clearTimeout(timer);
+        pushLiveLog('adapter draft completed; waiting for confirmation');
+      }
+      return undefined;
     }
 
     const nextStep = adapterBuildPlan[adapterBuildIndex];
@@ -2361,7 +2399,7 @@ const AICollect: React.FC = () => {
     }, adapterBuildIndex === 0 ? 520 : 860);
 
     return () => window.clearTimeout(timer);
-  }, [adapterBuildIndex, adapterBuildPlan, pushLiveLog, workflowPhase]);
+  }, [adapterBuildIndex, adapterBuildPlan, adapterReadyForConfirm, pushLiveLog, workflowPhase]);
 
   const validateUrl = useCallback((value: string) => {
     if (!value.trim()) return '请输入目标 URL';
@@ -2395,6 +2433,9 @@ const AICollect: React.FC = () => {
       return;
     }
     const draftPrompt = taskDraft.trim();
+    const isRefinement = hasSession && Boolean(draftPrompt);
+    const currentTemplateYaml = workspaceTemplateYaml || activeTemplate.raw;
+    const currentAdapterCode = workspaceAdapterCode;
     const targetUrl = hasSession
       ? (urlPreflight?.normalizedUrl || url || submittedPrompt).trim()
       : intent.trim();
@@ -2407,6 +2448,14 @@ const AICollect: React.FC = () => {
     }
 
     setPreflightLoading(true);
+    refinementBaselineRef.current = isRefinement
+      ? { template: currentTemplateYaml, adapter: currentAdapterCode }
+      : null;
+    refinementPromptRef.current = isRefinement ? draftPrompt : '';
+    setPendingConfirmations(isRefinement
+      ? { template: false, adapter: false }
+      : { template: true, adapter: true });
+    setShowAnalysisTiming(hasSession);
     setWorkspaceTemplateYaml('');
     setWorkspaceAdapterFile('');
     setGeneratedAdapterRequired(false);
@@ -2420,6 +2469,7 @@ const AICollect: React.FC = () => {
     analysisFeedIdRef.current = 0;
     analyzeStepRef.current = 'prepare';
     setStreamError('');
+    setBrowserAnalysisActive(false);
     setRunStatus('running');
     setMode('explore');
     setExpandedStep('explore');
@@ -2431,6 +2481,8 @@ const AICollect: React.FC = () => {
       request_id: requestId,
       url: targetUrl,
       prompt: agentPrompt,
+      current_template_yaml: isRefinement ? currentTemplateYaml : '',
+      current_adapter_code: isRefinement ? currentAdapterCode : '',
       viewport_width: Math.round(window.innerWidth),
     }));
     if (!sent) {
@@ -2439,7 +2491,7 @@ const AICollect: React.FC = () => {
       setRunStatus('completed');
       setStreamError('分析连接尚未就绪，请重新发起分析。');
     }
-  }, [analyzeSocketConnected, hasSession, intent, message, preflightLoading, resetSimulation, sendAnalyzeSocketMessage, submittedPrompt, taskDraft, url, urlPreflight?.normalizedUrl, validateUrl]);
+  }, [activeTemplate.raw, analyzeSocketConnected, hasSession, intent, message, preflightLoading, resetSimulation, sendAnalyzeSocketMessage, submittedPrompt, taskDraft, url, urlPreflight?.normalizedUrl, validateUrl, workspaceAdapterCode, workspaceTemplateYaml]);
 
   const handlePauseAnalysis = useCallback(() => {
     const request = analyzeRequestRef.current;
@@ -2462,6 +2514,7 @@ const AICollect: React.FC = () => {
       analyzeRequestRef.current = null;
     }
     finishPromptGeneration();
+    setBrowserAnalysisActive(false);
     setRunStatus('idle');
     setMode('explore');
     setStreamError('');
@@ -2509,18 +2562,22 @@ const AICollect: React.FC = () => {
     setRunStatus('completed');
   }, [fields, maxPages, message, pushLiveLog, selectedFields, url]);
 
-  const handleConfirmTemplate = useCallback(() => {
-    if (!templateReadyForConfirm) return;
+  const advanceToRelease = useCallback(() => {
+    setCompletedProcessSteps((prev) => new Set(prev).add('dryrun'));
+    setWorkflowPhase('release-template');
+    setMode('publish');
+    setRunStatus('ready');
+    setActiveProcessStep('publish');
+    setSelectedLogStep('publish');
+    setVisibleProcessSteps([...processStepOrder]);
+  }, []);
+
+  const startAdapterGeneration = useCallback((prompt = '', existingAdapterCode = '') => {
     if (!analyzeSocketConnected) {
       message.error('Adapter generation connection is not ready');
-      return;
+      return false;
     }
 
-    setCompletedProcessSteps((prev) => {
-      const next = new Set(prev);
-      next.add('contract');
-      return next;
-    });
     setGuidePreviewPhase(null);
     setWorkflowPhase('generating-adapter');
     setMode('dryrun');
@@ -2529,6 +2586,7 @@ const AICollect: React.FC = () => {
     setSelectedLogStep('dryrun');
     setVisibleProcessSteps((prev) => (prev.includes('dryrun') ? prev : [...prev, 'dryrun']));
     setAdapterBuildIndex(0);
+    setAdapterReadyForConfirm(false);
     setExpandedAdapterStep(0);
     clearAdapterTypingTimer();
     adapterCharacterQueueRef.current = [];
@@ -2553,6 +2611,8 @@ const AICollect: React.FC = () => {
       request_id: requestId,
       template_id: templateId,
       url,
+      prompt,
+      current_adapter_code: existingAdapterCode,
     }));
     if (!sent) {
       adapterRequestRef.current = null;
@@ -2560,7 +2620,9 @@ const AICollect: React.FC = () => {
       setRunStatus('completed');
       message.error('Adapter generation failed');
       pushLiveLog('adapter generation failed: WebSocket is not connected');
+      return false;
     }
+    return true;
   }, [
     adapterFileLabel,
     adapterFileName,
@@ -2571,9 +2633,49 @@ const AICollect: React.FC = () => {
     pushLiveLog,
     sendAnalyzeSocketMessage,
     templateId,
-    templateReadyForConfirm,
     url,
   ]);
+
+  useEffect(() => {
+    if (!refinementAwaitingAdapter) return;
+    const baseline = refinementBaselineRef.current;
+    if (!baseline) {
+      setRefinementAwaitingAdapter(false);
+      return;
+    }
+    if (startAdapterGeneration(refinementPromptRef.current, baseline.adapter)) {
+      setRefinementAwaitingAdapter(false);
+    }
+  }, [refinementAwaitingAdapter, startAdapterGeneration]);
+
+  const handleConfirmTemplate = useCallback(() => {
+    if (!templateReadyForConfirm) return;
+    setCompletedProcessSteps((prev) => new Set(prev).add('contract'));
+    setPendingConfirmations((prev) => ({ ...prev, template: false }));
+    pushLiveLog('template contract confirmed');
+
+    if (adapterReadyForConfirm) {
+      if (pendingConfirmations.adapter) {
+        setGuidePreviewPhase(null);
+        setWorkflowPhase('generating-adapter');
+        setMode('dryrun');
+        setRunStatus('completed');
+      } else {
+        advanceToRelease();
+      }
+      return;
+    }
+    startAdapterGeneration();
+  }, [adapterReadyForConfirm, advanceToRelease, pendingConfirmations.adapter, pushLiveLog, startAdapterGeneration, templateReadyForConfirm]);
+
+  const handleConfirmAdapter = useCallback(() => {
+    if (!pendingConfirmations.adapter || !adapterReadyForConfirm || adapterWriting) return;
+    setPendingConfirmations((prev) => ({ ...prev, adapter: false }));
+    advanceToRelease();
+    setSelectedReleaseAction('publish');
+    setSelectedTaskPublishMode('launch');
+    pushLiveLog('adapter confirmed; task creation is ready');
+  }, [adapterReadyForConfirm, adapterWriting, advanceToRelease, pendingConfirmations.adapter, pushLiveLog]);
 
   const playReleaseCompletionAnimation = useCallback((includeTask: boolean) => {
     if (releaseExitTimerRef.current) return;
@@ -2653,6 +2755,7 @@ const AICollect: React.FC = () => {
         status,
         yaml_content: workspaceTemplateYaml || activeTemplate.raw,
         adapter: generatedAdapterRequired ? adapterFileName : '',
+        adapter_code: generatedAdapterRequired ? workspaceAdapterCode : '',
         description: releaseActionMeta[selectedReleaseAction].desc,
         output_tag: outputTarget,
         metadata: { field_count: selectedCount },
@@ -2870,12 +2973,53 @@ const AICollect: React.FC = () => {
     setSearchParams(nextParams);
   }, [activeWorkspacePanel, searchParams, setSearchParams]);
 
-  const handleWorkspaceTemplateApply = useCallback((draft: { yaml: string; adapter: string }) => {
+  const handleWorkspaceTemplateApply = useCallback((draft: { yaml: string; adapter: string; adapterCode: string }) => {
+    const activeRequest = analyzeRequestRef.current;
+    if (activeRequest) {
+      sendAnalyzeSocketMessage(JSON.stringify({
+        type: 'cancel_analyze',
+        request_id: activeRequest.requestId,
+      }));
+      analyzeRequestRef.current = null;
+    }
+    adapterRequestRef.current = null;
+    clearAdapterTypingTimer();
+    adapterCharacterQueueRef.current = [];
+    adapterCharacterIndexRef.current = 0;
+    adapterFinalResultRef.current = null;
+    adapterLiveCodeRef.current = draft.adapterCode;
+    refinementBaselineRef.current = null;
+    refinementPromptRef.current = '';
     setWorkspaceTemplateYaml(draft.yaml);
     setWorkspaceAdapterFile(draft.adapter);
+    setWorkspaceAdapterCode(draft.adapterCode);
+    setGeneratedAdapterRequired(Boolean(draft.adapterCode || draft.adapter));
     setTemplateDraftEntries(parseTemplateEntries(draft.yaml));
     setTemplateValueDrafts({});
-  }, []);
+    const templateName = draft.yaml.match(/^name:\s*["']?([^\s"']+)/m)?.[1];
+    const baseUrl = draft.yaml.match(/^base_url:\s*["']?([^\r\n"']+)/m)?.[1]?.trim();
+    if (templateName) setTemplateId(templateName);
+    if (baseUrl) {
+      setUrl(baseUrl);
+      setSubmittedPrompt(baseUrl);
+    }
+    setAnalysisFeed([]);
+    setCompletedProcessSteps(new Set());
+    setPendingConfirmations({ template: false, adapter: false });
+    setAdapterReadyForConfirm(Boolean(draft.adapterCode));
+    setAdapterWriting(false);
+    setAdapterBuildIndex(adapterBuildPlan.length);
+    setActiveProcessStep('publish');
+    setActiveTemplateStage(null);
+    setTemplateGenerationComplete(false);
+    setVisibleProcessSteps([...processStepOrder]);
+    setSelectedLogStep('publish');
+    setMode('publish');
+    setWorkflowPhase('release-template');
+    setGuidePreviewPhase('confirm-template');
+    setRunStatus('ready');
+    setShowAnalysisTiming(true);
+  }, [adapterBuildPlan.length, clearAdapterTypingTimer, sendAnalyzeSocketMessage]);
 
   const renderMissionPanel = (variant: 'hero' | 'compact') => {
     if (variant === 'hero') {
@@ -3466,6 +3610,10 @@ const AICollect: React.FC = () => {
   }, [getTemplateListItemTitle, normalizeTemplateDisplayPath]);
 
   const renderTemplateStageSection = useCallback((stageId: TemplateStageId) => {
+    const templateTypingActive = workflowPhase === 'analyzing-template'
+      && runStatus === 'running'
+      && activeTemplateStage === stageId
+      && !templateGenerationComplete;
     const stageEntries = visibleTemplateEntries.filter((entry) => {
       if (entry.stageId !== stageId) return false;
       if (
@@ -3499,7 +3647,7 @@ const AICollect: React.FC = () => {
 
     return (
       <section
-        className="ai-template-stage-section"
+        className={`ai-template-stage-section ${templateTypingActive ? 'is-typing' : ''}`}
         key={stageId}
         data-stage-id={stageId}
         ref={(node) => {
@@ -3511,12 +3659,12 @@ const AICollect: React.FC = () => {
             <span className="ai-template-stage-title">{templateStageMeta[stageId].title}</span>
             <small>{templateStageMeta[stageId].desc}</small>
           </div>
-          <div className="ai-template-stage-actions">
+          {templateGenerationComplete ? <div className="ai-template-stage-actions">
             <div className="ai-template-stage-complete">
               <CheckCircleOutlined aria-hidden="true" />
               <span>Completed</span>
             </div>
-          </div>
+          </div> : null}
         </div>
         <div className="ai-template-stage-body">
           {stageEntries.map((entry, index) => {
@@ -3572,10 +3720,13 @@ const AICollect: React.FC = () => {
               </div>
             );
           })}
+          {templateTypingActive ? (
+            <span className="ai-template-typing-caret" aria-hidden="true" />
+          ) : null}
         </div>
       </section>
     );
-  }, [getTemplateEntryDisplayMeta, templateValueDrafts, visibleTemplateEntries]);
+  }, [activeTemplateStage, getTemplateEntryDisplayMeta, runStatus, templateGenerationComplete, templateValueDrafts, visibleTemplateEntries, workflowPhase]);
 
   const renderSessionTemplateSheet = () => (
     <section className="ai-session-template-shell">
@@ -3584,7 +3735,6 @@ const AICollect: React.FC = () => {
           <Text className="ai-session-fixed-eyebrow">Template Contract</Text>
           <div className="ai-session-fixed-title-row">
             <h2>{activeTemplate.displayName}</h2>
-            <Text className="ai-session-fixed-stat">{visibleTemplateValueCount} keys</Text>
           </div>
           <Text className="ai-session-fixed-subtitle">{activeTemplate.fileName}</Text>
         </div>
@@ -3703,6 +3853,8 @@ const AICollect: React.FC = () => {
   };
 
   const renderSessionBrowserPreview = () => {
+    const showAdapterEditorStatus = workflowPhase === 'generating-adapter';
+    if (!browserAnalysisActive && !showAdapterEditorStatus) return null;
     return (
       <button
         type="button"
@@ -4039,7 +4191,6 @@ const AICollect: React.FC = () => {
         <Text className="ai-session-fixed-eyebrow">{sessionHeaderMeta.eyebrow}</Text>
         <div className="ai-session-fixed-title-row">
           <h2>{sessionHeaderMeta.title}</h2>
-          <Text className="ai-session-fixed-stat">{sessionHeaderMeta.stat}</Text>
         </div>
         <Text className="ai-session-fixed-subtitle">{sessionHeaderMeta.subtitle}</Text>
       </div>
@@ -4060,7 +4211,7 @@ const AICollect: React.FC = () => {
             title={activeTemplate.fileName}
             onClick={() => {
               setExpandingPinnedPanel('template');
-              setGuidePreviewPhase('confirm-template');
+              setGuidePreviewPhase('analyzing-template');
               window.requestAnimationFrame(() => {
                 window.requestAnimationFrame(() => {
                   templateScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
@@ -4103,10 +4254,14 @@ const AICollect: React.FC = () => {
     }, []);
     const templateStagesByAnalyzeStep: Partial<Record<string, TemplateStageId[]>> = {
       fetch_page: [],
-      analyze_structure: [],
       generate_template: templateStageOrder,
     };
     const modelGroups = groups.filter((group) => group.step in templateStagesByAnalyzeStep);
+    const displayedModelGroups = showAnalysisTiming
+      ? modelGroups
+      : modelGroups.filter((group) => (
+        templateStagesByAnalyzeStep[group.step] ?? []
+      ).some((stageId) => visibleTemplateStages.includes(stageId)));
     const formatDuration = (durationMs: number) => {
       const safeDurationMs = Math.max(0, durationMs);
       if (safeDurationMs < 1000) {
@@ -4124,7 +4279,7 @@ const AICollect: React.FC = () => {
     return (
       <section className="ai-analysis-feed" aria-live="polite">
         <div className="ai-analysis-feed-body">
-        {modelGroups.length ? modelGroups.map((group) => {
+        {displayedModelGroups.length ? displayedModelGroups.map((group) => {
           const generatedStages = (templateStagesByAnalyzeStep[group.step] ?? [])
             .filter((stageId) => visibleTemplateStages.includes(stageId));
           const isActive = Boolean(
@@ -4153,7 +4308,7 @@ const AICollect: React.FC = () => {
           const expanded = expandedAnalysisSteps.has(group.step);
           return (
             <div className="ai-analysis-feed-group" key={`${group.step}-${group.items[0].id}`}>
-              <button
+              {showAnalysisTiming ? <button
                 type="button"
                 className="ai-analysis-worked-row"
                 aria-expanded={expanded}
@@ -4166,8 +4321,8 @@ const AICollect: React.FC = () => {
               >
                 <span>{isActive ? 'Working for' : 'Worked for'} {formatDuration(durationMs)}</span>
                 <i className={expanded ? 'is-expanded' : ''} aria-hidden="true">›</i>
-              </button>
-              {expanded ? (
+              </button> : null}
+              {showAnalysisTiming && expanded ? (
                 <div className="ai-analysis-feed-details">
                   {group.items.map((item) => (
                     <div className={`ai-analysis-feed-item is-${item.kind}`} key={item.id}>
@@ -4186,10 +4341,6 @@ const AICollect: React.FC = () => {
               ) : null}
               {generatedStages.length ? (
                 <div className="ai-analysis-generated-stage">
-                  <div className="ai-analysis-artifact-label">
-                    <span>Generated</span>
-                    <strong>{activeTemplate.fileName}</strong>
-                  </div>
                   {generatedStages.map(renderTemplateStageSection)}
                   {group.step === 'generate_template' && templateReadyForConfirm ? (
                     <div className="ai-template-confirm-bar">
@@ -4245,6 +4396,9 @@ const AICollect: React.FC = () => {
   const renderWorkflowAdapterPanel = () => {
     const currentStepIndex = Math.min(adapterBuildIndex, adapterBuildPlan.length - 1);
     const currentStep = adapterBuildPlan[currentStepIndex];
+    const adapterCanConfirm = pendingConfirmations.adapter
+      && !adapterWriting
+      && (adapterReadyForConfirm || Boolean(workspaceAdapterCode));
 
     return (
       <section className={`ai-session-main-shell is-adapter ${expandingPinnedPanel === 'adapter' ? 'is-restoring-from-tab' : ''}`}>
@@ -4314,6 +4468,16 @@ const AICollect: React.FC = () => {
                 );
               })}
             </div>
+            {pendingConfirmations.adapter ? <div className="ai-template-confirm-bar">
+              <Button
+                type="primary"
+                className="ai-template-confirm-btn"
+                disabled={!adapterCanConfirm}
+                onClick={handleConfirmAdapter}
+              >
+                Confirm Adapter
+              </Button>
+            </div> : null}
             </div>
             <div className="ai-session-template-tail" aria-hidden="true">
               <div className="ai-session-template-divider" />
@@ -5317,12 +5481,6 @@ const AICollect: React.FC = () => {
           .ai-analysis-feed-item.is-error .ai-analysis-feed-content {
             color: ${aura.danger};
           }
-          .ai-analysis-artifact-label {
-            display: flex;
-            align-items: baseline;
-            gap: 10px;
-            margin: 2px 4px 10px;
-          }
           .ai-analysis-generated-stage {
             width: calc(100% - 18px);
             max-width: 776px;
@@ -5330,19 +5488,16 @@ const AICollect: React.FC = () => {
             gap: 12px;
             margin: 2px auto 6px;
           }
-          .ai-analysis-generated-stage .ai-analysis-artifact-label {
-            margin-bottom: 0;
+          .ai-template-typing-caret {
+            display: block;
+            width: 7px;
+            height: 15px;
+            margin-top: 2px;
+            background: ${aura.accent};
+            animation: ai-template-caret 0.72s step-end infinite;
           }
-          .ai-analysis-artifact-label span {
-            color: ${aura.accent};
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-          }
-          .ai-analysis-artifact-label strong {
-            color: ${aura.text};
-            font-size: 13px;
+          @keyframes ai-template-caret {
+            50% { opacity: 0; }
           }
           .ai-session-main-shell.is-restoring-from-tab .ai-session-template-scroll,
           .ai-session-main-shell.is-restoring-from-tab .ai-session-adapter-scroll,
@@ -5387,8 +5542,7 @@ const AICollect: React.FC = () => {
             overflow: hidden;
           }
           .ai-session-fixed-eyebrow,
-          .ai-session-fixed-subtitle,
-          .ai-session-fixed-stat {
+          .ai-session-fixed-subtitle {
             color: ${aura.subtle};
             font-size: 9px;
             letter-spacing: 0.06em;
@@ -5414,10 +5568,6 @@ const AICollect: React.FC = () => {
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-          }
-          .ai-session-fixed-stat {
-            white-space: nowrap;
-            flex-shrink: 0;
           }
           .ai-session-fixed-subtitle {
             color: ${aura.muted};
@@ -9301,7 +9451,11 @@ const AICollect: React.FC = () => {
           sessionActive={hasSession}
           onToggle={handleWorkspacePanelToggle}
           onClose={handleWorkspacePanelClose}
-          analysisTemplate={{ yaml: workspaceTemplateYaml || activeTemplate.raw, adapter: adapterFileName }}
+          analysisTemplate={{
+            yaml: workspaceTemplateYaml || activeTemplate.raw,
+            adapter: adapterFileName,
+            adapterCode: workspaceAdapterCode,
+          }}
           onTemplateApply={handleWorkspaceTemplateApply}
           releaseTaskDefaults={{
             concurrency,
