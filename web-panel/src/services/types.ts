@@ -190,7 +190,6 @@ export interface WorkspaceTemplateUpdateRequest {
   yaml_content: string;
   adapter?: string;
   description?: string;
-  output_tag?: string;
 }
 
 export interface WorkspaceTaskRequest {
@@ -214,7 +213,6 @@ export interface WorkspaceReleaseRequest {
   yaml_content: string;
   adapter?: string;
   description?: string;
-  output_tag?: string;
   metadata?: Record<string, unknown>;
   task?: WorkspaceTaskRequest;
 }
@@ -274,7 +272,6 @@ export interface WorkspaceTemplate {
   status: 'active' | 'draft' | 'deprecated';
   adapter: string;
   description: string;
-  output_tag: string;
   owner: string;
   metadata: Record<string, unknown>;
   created_at: string;

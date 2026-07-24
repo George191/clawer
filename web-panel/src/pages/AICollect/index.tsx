@@ -1005,12 +1005,6 @@ const scheduleModeLabel: Record<string, string> = {
   incremental: '增量任务',
 };
 
-const outputTargetLabel: Record<string, string> = {
-  ods_patent: 'ODS 专利主题表',
-  raw_dataset: '原始 Dataset',
-  object_storage: '对象存储附件区',
-};
-
 const stageMeta: Record<WorkMode, { title: string; desc: string; action: string; score: number }> = {
   explore: {
     title: 'AI 正在还原页面逻辑',
@@ -1114,8 +1108,9 @@ const AICollect: React.FC = () => {
   const refinementTemplateChangedRef = useRef(false);
   const refinementPromptRef = useRef('');
   const adapterLiveCodeRef = useRef('');
-  const adapterLiveCodeElementRef = useRef<HTMLElement | null>(null);
   const adapterEditorBodyRef = useRef<HTMLDivElement | null>(null);
+  const adapterAutoScrollRef = useRef(true);
+  const adapterLastScrollTopRef = useRef(0);
   const analyzeStepRef = useRef('prepare');
   const analysisFeedIdRef = useRef(0);
   const simulationTimerRef = useRef<number | null>(null);
@@ -1131,7 +1126,6 @@ const AICollect: React.FC = () => {
   const [maxPages, setMaxPages] = useState(20);
   const [scheduleMode, setScheduleMode] = useState('cron');
   const [concurrency, setConcurrency] = useState(4);
-  const [outputTarget, setOutputTarget] = useState('ods_patent');
   const [enableDriftGuard, setEnableDriftGuard] = useState(true);
   const [respectRobots, setRespectRobots] = useState(true);
   const [fields, setFields] = useState<FieldDef[]>(sampleFields);
@@ -1150,6 +1144,7 @@ const AICollect: React.FC = () => {
   const [activeProcessStep, setActiveProcessStep] = useState<ProcessStepKey>('prepare');
   const [hoveredStageGuideStep, setHoveredStageGuideStep] = useState<SessionGuideStepId | null>(null);
   const [activeTemplateStage, setActiveTemplateStage] = useState<TemplateStageId | null>(null);
+  const [streamingTemplateStage, setStreamingTemplateStage] = useState<TemplateStageId | null>(null);
   const [templateGenerationComplete, setTemplateGenerationComplete] = useState(false);
   const [templateStageVisibility, setTemplateStageVisibility] = useState<Partial<Record<TemplateStageId, number>>>({});
   const [guidePreviewPhase, setGuidePreviewPhase] = useState<SessionWorkflowPhase | null>(null);
@@ -1188,6 +1183,7 @@ const AICollect: React.FC = () => {
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
   const [workspaceAdapterFile, setWorkspaceAdapterFile] = useState('');
   const [workspaceAdapterCode, setWorkspaceAdapterCode] = useState('');
+  const [adapterStreamingCode, setAdapterStreamingCode] = useState('');
   const [adapterWriting, setAdapterWriting] = useState(false);
   const [workspaceTemplateYaml, setWorkspaceTemplateYaml] = useState('');
   const [generatedAdapterRequired, setGeneratedAdapterRequired] = useState(false);
@@ -1252,6 +1248,10 @@ const AICollect: React.FC = () => {
         };
       })
       .filter((param) => Boolean(param.name));
+  }, [templateDraftEntries, templateValueDrafts]);
+  const releaseTemplateDescription = useMemo(() => {
+    const entry = templateDraftEntries.find((item) => item.key === 'description');
+    return stripYamlQuotes(templateValueDrafts[entry?.id ?? 'description'] ?? entry?.value ?? '');
   }, [templateDraftEntries, templateValueDrafts]);
   const releaseBatchConfig = useMemo<ReleaseBatchConfig | null>(() => {
     const getEntryValue = (key: string) => {
@@ -1557,15 +1557,34 @@ const AICollect: React.FC = () => {
     return dynamicSteps;
   }, [activeTemplate.id, adapterDiffStats.added, adapterDiffStats.removed, templateDraftEntries, templateValueDrafts, url]);
   const adapterPreviewLines = useMemo<AdapterPreviewLine[]>(() => {
-    if (!workspaceAdapterCode) return [];
-    return workspaceAdapterCode.split('\n').map((content, index) => ({
+    const code = adapterWriting ? adapterStreamingCode : workspaceAdapterCode;
+    if (!code) return [];
+    return code.split('\n').map((content, index) => ({
       key: `adapter-generated-${index + 1}`,
       lineNumber: index + 1,
       prefix: '+',
       added: true,
       content,
     }));
-  }, [workspaceAdapterCode]);
+  }, [adapterStreamingCode, adapterWriting, workspaceAdapterCode]);
+  useEffect(() => {
+    if (!adapterWriting || !adapterAutoScrollRef.current) return;
+    const editorBody = adapterEditorBodyRef.current;
+    if (!editorBody) return;
+    editorBody.scrollTop = editorBody.scrollHeight;
+    adapterLastScrollTopRef.current = editorBody.scrollTop;
+  }, [adapterStreamingCode, adapterWriting]);
+  const handleAdapterEditorScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const editorBody = event.currentTarget;
+    const distanceFromBottom = editorBody.scrollHeight - editorBody.scrollTop - editorBody.clientHeight;
+    const movedUp = editorBody.scrollTop < adapterLastScrollTopRef.current - 1;
+    if (movedUp) {
+      adapterAutoScrollRef.current = false;
+    } else if (distanceFromBottom <= 8) {
+      adapterAutoScrollRef.current = true;
+    }
+    adapterLastScrollTopRef.current = editorBody.scrollTop;
+  }, []);
   const adapterProgressPercent = Math.min(
     100,
     workflowPhase === 'release-template'
@@ -1630,6 +1649,7 @@ const AICollect: React.FC = () => {
       setUrlPreflight(null);
       setHoveredStageGuideStep(null);
       setActiveTemplateStage(null);
+      setStreamingTemplateStage(null);
       setTemplateStageVisibility({});
       setGuidePreviewPhase(null);
       setTemplateTabVisible(false);
@@ -1719,8 +1739,10 @@ const AICollect: React.FC = () => {
     if (adapterTypingTimerRef.current !== null) return;
 
     const writeNextCharacter = () => {
-      const character = adapterCharacterQueueRef.current[adapterCharacterIndexRef.current];
-      if (character === undefined) {
+      const nextCharacters = adapterCharacterQueueRef.current
+        .slice(adapterCharacterIndexRef.current, adapterCharacterIndexRef.current + 4)
+        .join('');
+      if (!nextCharacters) {
         adapterCharacterQueueRef.current = [];
         adapterCharacterIndexRef.current = 0;
         adapterTypingTimerRef.current = null;
@@ -1728,24 +1750,14 @@ const AICollect: React.FC = () => {
         return;
       }
 
-      adapterCharacterIndexRef.current += 1;
-      adapterLiveCodeRef.current += character;
-      if (adapterLiveCodeElementRef.current) {
-        adapterLiveCodeElementRef.current.textContent = adapterLiveCodeRef.current;
-      }
-      if (adapterEditorBodyRef.current) {
-        adapterEditorBodyRef.current.scrollTop = adapterEditorBodyRef.current.scrollHeight;
-      }
-      adapterTypingTimerRef.current = window.setTimeout(writeNextCharacter, 8);
+      adapterCharacterIndexRef.current += nextCharacters.length;
+      adapterLiveCodeRef.current += nextCharacters;
+      setAdapterStreamingCode(adapterLiveCodeRef.current);
+      adapterTypingTimerRef.current = window.setTimeout(writeNextCharacter, 16);
     };
 
     writeNextCharacter();
   }, [finishAdapterTyping]);
-
-  const attachAdapterLiveCodeElement = useCallback((element: HTMLPreElement | null) => {
-    adapterLiveCodeElementRef.current = element;
-    if (element) element.textContent = adapterLiveCodeRef.current;
-  }, []);
 
   const appendAnalysisFeed = useCallback((item: Omit<AnalysisFeedItem, 'id' | 'createdAt' | 'updatedAt'>) => {
     analysisFeedIdRef.current += 1;
@@ -1886,13 +1898,22 @@ const AICollect: React.FC = () => {
     }
 
     if (messagePayload.type === 'analyze_model') {
+      if (data.kind === 'template_status') {
+        const content = String(data.content ?? 'Template generation is running');
+        appendAnalysisFeed({ kind: 'status', step: 'generate_template', content });
+        pushLiveLog(content);
+        return;
+      }
       if (data.kind === 'template_stage') {
         const stage = String(data.stage ?? 'site');
+        const stageStatus = String(data.status ?? 'running');
         const processStepByTemplateStage: Record<string, ProcessStepKey> = {
           site: 'prepare',
           request: 'entry',
           response: 'structure',
           fields: 'structure',
+          dedup: 'contract',
+          download: 'contract',
           dedup_download: 'contract',
         };
         const templateStageByModelStage: Partial<Record<string, TemplateStageId>> = {
@@ -1900,6 +1921,8 @@ const AICollect: React.FC = () => {
           request: 'request',
           response: 'response',
           fields: 'fields',
+          dedup: 'dedup',
+          download: 'download',
           dedup_download: 'dedup',
         };
         const processStep = processStepByTemplateStage[stage];
@@ -1909,7 +1932,13 @@ const AICollect: React.FC = () => {
           setActiveProcessStep(processStep);
           setSelectedLogStep(processStep);
         }
-        setActiveTemplateStage(templateStageByModelStage[stage] ?? null);
+        const resolvedStage = templateStageByModelStage[stage] ?? null;
+        if (stageStatus === 'done') {
+          setStreamingTemplateStage((current) => (current === resolvedStage ? null : current));
+        } else {
+          setActiveTemplateStage(resolvedStage);
+          setStreamingTemplateStage(resolvedStage);
+        }
         return;
       }
       if (data.kind === 'template_delta') {
@@ -2056,6 +2085,7 @@ const AICollect: React.FC = () => {
       if (adapterPath) setWorkspaceAdapterFile(adapterPath);
       setGeneratedAdapterRequired(Boolean(agent?.decision?.requires_adapter));
       setTemplateGenerationComplete(true);
+      setStreamingTemplateStage(null);
       setPreflightLoading(false);
       appendAnalysisFeed({ kind: 'status', step: 'complete', content: '模板合约已生成' });
       pushLiveLog('服务端合约草案已生成，等待前端确认');
@@ -2065,6 +2095,7 @@ const AICollect: React.FC = () => {
 
     if (messagePayload.type === 'analyze_error') {
       setTemplateGenerationComplete(false);
+      setStreamingTemplateStage(null);
       const errorMessage = String(data.message ?? data.error ?? '分析服务暂不可用');
       appendAnalysisFeed({ kind: 'error', content: errorMessage });
       setPreflightLoading(false);
@@ -2243,12 +2274,16 @@ const AICollect: React.FC = () => {
     adapterCharacterIndexRef.current = 0;
     adapterFinalResultRef.current = null;
     adapterLiveCodeRef.current = '';
+    adapterAutoScrollRef.current = true;
+    adapterLastScrollTopRef.current = 0;
     refinementTemplateChangedRef.current = false;
     setWorkspaceAdapterCode('');
+    setAdapterStreamingCode('');
     setAdapterWriting(false);
     setActiveProcessStep('prepare');
     setHoveredStageGuideStep(null);
     setActiveTemplateStage(null);
+    setStreamingTemplateStage(null);
     setTemplateGenerationComplete(false);
     setTemplateStageVisibility({});
     setGuidePreviewPhase(null);
@@ -2593,7 +2628,10 @@ const AICollect: React.FC = () => {
     adapterCharacterIndexRef.current = 0;
     adapterFinalResultRef.current = null;
     adapterLiveCodeRef.current = '';
+    adapterAutoScrollRef.current = true;
+    adapterLastScrollTopRef.current = 0;
     setWorkspaceAdapterCode('');
+    setAdapterStreamingCode('');
     setAdapterWriting(true);
     openSessionInspector({
       id: `code:${adapterFileName}`,
@@ -2708,6 +2746,10 @@ const AICollect: React.FC = () => {
         nextParams.delete('panel');
         setSearchParams(nextParams);
       }
+      setIntent('');
+      setUrl('');
+      setSubmittedPrompt('');
+      setTaskDraft('');
       setRunStatus('idle');
       setReleaseExit(null);
       releaseExitTimerRef.current = null;
@@ -2756,8 +2798,7 @@ const AICollect: React.FC = () => {
         yaml_content: workspaceTemplateYaml || activeTemplate.raw,
         adapter: generatedAdapterRequired ? adapterFileName : '',
         adapter_code: generatedAdapterRequired ? workspaceAdapterCode : '',
-        description: releaseActionMeta[selectedReleaseAction].desc,
-        output_tag: outputTarget,
+        description: releaseTemplateDescription,
         metadata: { field_count: selectedCount },
         task: createsTask ? {
           name: `${browserPreviewTitle} task`,
@@ -2790,7 +2831,7 @@ const AICollect: React.FC = () => {
       message.error('Release failed; no template or task was saved');
       pushLiveLog(`release failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, outputTarget, playReleaseCompletionAnimation, pushLiveLog, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
+  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, playReleaseCompletionAnimation, pushLiveLog, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateDescription, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
 
   const handleReleaseActionSelect = useCallback((action: ReleaseAction) => {
     setSelectedReleaseAction(action);
@@ -2988,6 +3029,7 @@ const AICollect: React.FC = () => {
     adapterCharacterIndexRef.current = 0;
     adapterFinalResultRef.current = null;
     adapterLiveCodeRef.current = draft.adapterCode;
+    setAdapterStreamingCode('');
     refinementBaselineRef.current = null;
     refinementPromptRef.current = '';
     setWorkspaceTemplateYaml(draft.yaml);
@@ -3011,6 +3053,7 @@ const AICollect: React.FC = () => {
     setAdapterBuildIndex(adapterBuildPlan.length);
     setActiveProcessStep('publish');
     setActiveTemplateStage(null);
+    setStreamingTemplateStage(null);
     setTemplateGenerationComplete(false);
     setVisibleProcessSteps([...processStepOrder]);
     setSelectedLogStep('publish');
@@ -3149,19 +3192,6 @@ const AICollect: React.FC = () => {
                   { label: '手动任务', value: 'manual' },
                   { label: '周期任务', value: 'cron' },
                   { label: '增量任务', value: 'incremental' },
-                ]}
-              />
-            </label>
-            <label>
-              <Text type="secondary" style={{ fontSize: 12 }}>输出目标</Text>
-              <Select
-                value={outputTarget}
-                onChange={setOutputTarget}
-                style={{ width: '100%', marginTop: 6 }}
-                options={[
-                  { label: 'ODS 专利主题表', value: 'ods_patent' },
-                  { label: '原始 Dataset', value: 'raw_dataset' },
-                  { label: '对象存储附件区', value: 'object_storage' },
                 ]}
               />
             </label>
@@ -3368,7 +3398,6 @@ const AICollect: React.FC = () => {
             rateLimit: respectRobots ? '12 req/min' : 'custom',
             driftGuard: enableDriftGuard,
           },
-          output: { target: outputTarget, mode: 'raw + normalized' },
         }, null, 2)}
       </pre>
     </div>
@@ -3531,11 +3560,6 @@ const AICollect: React.FC = () => {
     return stripYamlQuotes(templateValueDrafts[match.id] ?? match.value);
   }, [templateDraftEntries, templateValueDrafts]);
 
-  const normalizeTemplateDisplayPath = useCallback(
-    (path: string) => path.replace(/\[\d+\](?=\.|$)/g, ''),
-    [],
-  );
-
   const getTemplateListItemTitle = useCallback((rootKey: string, itemKey: string, itemIndex: number, fallbackValue = '') => {
     if (rootKey === 'params') {
       return getTemplateEntryValueByKey(`${itemKey}.name`) || `param ${itemIndex + 1}`;
@@ -3567,7 +3591,6 @@ const AICollect: React.FC = () => {
       const itemIndex = Number(rawIndex);
       return {
         label: getTemplateListItemTitle(rootKey, entry.key, itemIndex),
-        pathHint: rootKey,
       };
     }
 
@@ -3580,39 +3603,33 @@ const AICollect: React.FC = () => {
       const itemIndex = Number(rawIndex);
       return {
         label: rootKey === 'dedup_fields' ? 'field' : getTemplateListItemTitle(rootKey, entry.key, itemIndex, normalizedValue),
-        pathHint: rootKey,
       };
     }
 
     const arrayChildMatch = entry.key.match(/^([a-z_]+)\[(\d+)\]\.(.+)$/);
     if (arrayChildMatch) {
-      const [, rootKey, rawIndex, childPath] = arrayChildMatch;
-      const itemIndex = Number(rawIndex);
+      const [, rootKey, , childPath] = arrayChildMatch;
       const label = childPath.split('.').pop() ?? childPath;
       if (rootKey === 'params') {
         return {
           label: label,
-          pathHint: 'params',
         };
       }
-      const itemTitle = getTemplateListItemTitle(rootKey, `${rootKey}[${itemIndex}]`, itemIndex);
       return {
         label,
-        pathHint: itemTitle ? `${rootKey} / ${itemTitle}` : rootKey,
       };
     }
 
     const label = entry.key.split('.').pop() ?? entry.key;
     return {
       label,
-      pathHint: label === entry.key ? '' : normalizeTemplateDisplayPath(entry.key.slice(0, -(label.length + 1))),
     };
-  }, [getTemplateListItemTitle, normalizeTemplateDisplayPath]);
+  }, [getTemplateListItemTitle]);
 
   const renderTemplateStageSection = useCallback((stageId: TemplateStageId) => {
     const templateTypingActive = workflowPhase === 'analyzing-template'
       && runStatus === 'running'
-      && activeTemplateStage === stageId
+      && streamingTemplateStage === stageId
       && !templateGenerationComplete;
     const stageEntries = visibleTemplateEntries.filter((entry) => {
       if (entry.stageId !== stageId) return false;
@@ -3628,6 +3645,7 @@ const AICollect: React.FC = () => {
       return true;
     });
     if (!stageEntries.length) return null;
+    const lastValueEntryId = [...stageEntries].reverse().find((entry) => entry.nodeType === 'value')?.id;
     const getTemplateEntryGroupKey = (entry: TemplateEntry, nextEntry?: TemplateEntry) => {
       const rootGroupMatch = entry.key.match(/^([A-Za-z_][\w-]*)$/);
       if (entry.nodeType === 'group' && rootGroupMatch) {
@@ -3687,7 +3705,6 @@ const AICollect: React.FC = () => {
               isYamlListItem
               && yamlListItemKey !== previousYamlListItemKey
             );
-            const isFieldListItem = yamlListRoot === 'list_fields' || yamlListRoot === 'detail_fields';
             const flattenRootIndent = flattenedTemplateRootKeys.has(rootKey) && entry.key !== rootKey;
             const displayDepth = Math.max(
               0,
@@ -3698,8 +3715,9 @@ const AICollect: React.FC = () => {
             const isItemGroup = isGroup && /\[\d+\]$/.test(entry.key);
             const isRootGroup = isGroup && !entry.key.includes('.') && !/\[\d+\]$/.test(entry.key);
             const displayValue = entry.multiline ? value : stripYamlQuotes(value);
-            const { label, pathHint } = getTemplateEntryDisplayMeta(entry, value);
+            const { label } = getTemplateEntryDisplayMeta(entry, value);
             const displayLabel = label;
+            const isTypingTarget = templateTypingActive && entry.id === lastValueEntryId;
 
             return (
               <div
@@ -3710,23 +3728,20 @@ const AICollect: React.FC = () => {
                 <div className="ai-template-field-key">
                   {isYamlListItem ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
                   <span>{displayLabel}</span>
-                  {isYamlListAnchor && isFieldListItem && pathHint ? <small>{pathHint}</small> : null}
                 </div>
                 {isGroup ? null : (
                   <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
                     <pre>{displayValue || 'null'}</pre>
+                    {isTypingTarget ? <span className="ai-session-inspector-editor-caret" aria-hidden="true" /> : null}
                   </div>
                 )}
               </div>
             );
           })}
-          {templateTypingActive ? (
-            <span className="ai-template-typing-caret" aria-hidden="true" />
-          ) : null}
         </div>
       </section>
     );
-  }, [activeTemplateStage, getTemplateEntryDisplayMeta, runStatus, templateGenerationComplete, templateValueDrafts, visibleTemplateEntries, workflowPhase]);
+  }, [getTemplateEntryDisplayMeta, runStatus, streamingTemplateStage, templateGenerationComplete, templateValueDrafts, visibleTemplateEntries, workflowPhase]);
 
   const renderSessionTemplateSheet = () => (
     <section className="ai-session-template-shell">
@@ -4050,20 +4065,24 @@ const AICollect: React.FC = () => {
             </div>
           ) : (
             <div className="ai-session-inspector-editor">
-              <div className="ai-session-inspector-editor-body" ref={adapterEditorBodyRef}>
-                {adapterWriting ? (
-                  <pre
-                    className="ai-session-inspector-editor-stream"
-                    ref={attachAdapterLiveCodeElement}
-                  />
-                ) : adapterPreviewLines.map((line) => (
+              <div
+                className="ai-session-inspector-editor-body"
+                ref={adapterEditorBodyRef}
+                onScroll={handleAdapterEditorScroll}
+              >
+                {adapterPreviewLines.map((line, index) => (
                   <div
                     className={`ai-session-inspector-editor-line ${line.added ? 'is-added' : ''}`}
                     key={line.key}
                   >
                     <span className="ai-session-inspector-editor-no">{line.lineNumber}</span>
                     <span className="ai-session-inspector-editor-prefix">{line.prefix}</span>
-                    <code>{renderPythonPreviewContent(line.content || ' ', line.key)}</code>
+                    <code>
+                      {renderPythonPreviewContent(line.content || ' ', line.key)}
+                      {adapterWriting && index === adapterPreviewLines.length - 1
+                        ? <span className="ai-session-inspector-editor-caret" aria-hidden="true" />
+                        : null}
+                    </code>
                   </div>
                 ))}
               </div>
@@ -4398,7 +4417,8 @@ const AICollect: React.FC = () => {
     const currentStep = adapterBuildPlan[currentStepIndex];
     const adapterCanConfirm = pendingConfirmations.adapter
       && !adapterWriting
-      && (adapterReadyForConfirm || Boolean(workspaceAdapterCode));
+      && adapterReadyForConfirm
+      && Boolean(workspaceAdapterCode);
 
     return (
       <section className={`ai-session-main-shell is-adapter ${expandingPinnedPanel === 'adapter' ? 'is-restoring-from-tab' : ''}`}>
@@ -4468,11 +4488,10 @@ const AICollect: React.FC = () => {
                 );
               })}
             </div>
-            {pendingConfirmations.adapter ? <div className="ai-template-confirm-bar">
+            {adapterCanConfirm ? <div className="ai-template-confirm-bar">
               <Button
                 type="primary"
                 className="ai-template-confirm-btn"
-                disabled={!adapterCanConfirm}
                 onClick={handleConfirmAdapter}
               >
                 Confirm Adapter
@@ -4936,7 +4955,6 @@ const AICollect: React.FC = () => {
         ['字段', `${selectedCount}/${fields.length}`],
         ['渲染', renderModeLabel[renderMode]],
         ['调度', scheduleModeLabel[scheduleMode]],
-        ['输出', outputTargetLabel[outputTarget]],
       ].map(([label, value]) => (
         <div className="ai-overview-card" key={label}>
           <span>{label}</span>
@@ -4962,7 +4980,6 @@ const AICollect: React.FC = () => {
           <div><span>字段</span><strong>{selectedCount}/{fields.length}</strong></div>
           <div><span>渲染</span><strong>{renderModeLabel[renderMode]}</strong></div>
           <div><span>调度</span><strong>{scheduleModeLabel[scheduleMode]}</strong></div>
-          <div><span>输出</span><strong>{outputTargetLabel[outputTarget]}</strong></div>
         </div>
       </div>
 
@@ -5487,17 +5504,6 @@ const AICollect: React.FC = () => {
             display: grid;
             gap: 12px;
             margin: 2px auto 6px;
-          }
-          .ai-template-typing-caret {
-            display: block;
-            width: 7px;
-            height: 15px;
-            margin-top: 2px;
-            background: ${aura.accent};
-            animation: ai-template-caret 0.72s step-end infinite;
-          }
-          @keyframes ai-template-caret {
-            50% { opacity: 0; }
           }
           .ai-session-main-shell.is-restoring-from-tab .ai-session-template-scroll,
           .ai-session-main-shell.is-restoring-from-tab .ai-session-adapter-scroll,
@@ -6949,19 +6955,7 @@ const AICollect: React.FC = () => {
             font-size: 12px;
             line-height: 1.76;
           }
-          .ai-session-inspector-editor-stream {
-            min-height: 100%;
-            margin: 0;
-            padding: 0 18px;
-            white-space: pre-wrap;
-            word-break: break-word;
-            color: #a6e3a1;
-            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-            font-size: 12px;
-            line-height: 1.76;
-          }
-          .ai-session-inspector-editor-stream::after {
-            content: '';
+          .ai-session-inspector-editor-caret {
             display: inline-block;
             width: 1px;
             height: 1.1em;
@@ -7334,12 +7328,6 @@ const AICollect: React.FC = () => {
             line-height: 1.35;
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           }
-          .ai-template-field-key small {
-            color: ${aura.muted};
-            font-size: 10px;
-            line-height: 1.4;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-          }
           .ai-template-field.is-group .ai-template-field-key {
             gap: 1px;
           }
@@ -7367,9 +7355,6 @@ const AICollect: React.FC = () => {
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           }
           .ai-template-field.is-yaml-list-item .ai-template-field-key span {
-            grid-column: 2;
-          }
-          .ai-template-field.is-yaml-list-item .ai-template-field-key small {
             grid-column: 2;
           }
           .ai-template-field.has-yaml-dash .ai-template-field-dash {

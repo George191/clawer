@@ -32,6 +32,8 @@ logger = get_logger(__name__)
 PG_CONNECT_RETRY_WAIT = 3
 PG_CONNECT_MAX_RETRY = 30
 PG_CONNECT_MAX_RETRY_DELAY = 60
+PG_READ_MAX_ATTEMPTS = 3
+PG_READ_RETRY_WAIT = 0.2
 
 _DDL_STMT_SEP = re.compile(r";\s*\n\s*")
 
@@ -40,6 +42,20 @@ try:
     from sqlalchemy.exc import TimeoutError as SA2TimeoutError
 except ImportError:
     SA2TimeoutError = SATimeoutError
+
+
+def _is_retryable_read_error(error: Exception) -> bool:
+    if isinstance(
+        error,
+        ConnectionError
+        | InterfaceError
+        | OSError
+        | OperationalError
+        | SA2TimeoutError
+        | SATimeoutError,
+    ):
+        return True
+    return isinstance(error, DBAPIError) and error.connection_invalidated
 
 
 class PostgresClient:
@@ -171,18 +187,32 @@ class PostgresClient:
     async def fetch_all(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        async with self.session() as session:
-            result = await session.execute(text(sql), params or {})
-            rows = result.mappings().all()
-            return [dict(r) for r in rows]
+        for attempt in range(PG_READ_MAX_ATTEMPTS):
+            try:
+                async with self.session() as session:
+                    result = await session.execute(text(sql), params or {})
+                    rows = result.mappings().all()
+                    return [dict(r) for r in rows]
+            except Exception as error:
+                if not _is_retryable_read_error(error) or attempt == PG_READ_MAX_ATTEMPTS - 1:
+                    raise
+                await asyncio.sleep(PG_READ_RETRY_WAIT * (attempt + 1))
+        return []
 
     async def fetch_one(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
-        async with self.session() as session:
-            result = await session.execute(text(sql), params or {})
-            row = result.mappings().first()
-            return dict(row) if row else None
+        for attempt in range(PG_READ_MAX_ATTEMPTS):
+            try:
+                async with self.session() as session:
+                    result = await session.execute(text(sql), params or {})
+                    row = result.mappings().first()
+                    return dict(row) if row else None
+            except Exception as error:
+                if not _is_retryable_read_error(error) or attempt == PG_READ_MAX_ATTEMPTS - 1:
+                    raise
+                await asyncio.sleep(PG_READ_RETRY_WAIT * (attempt + 1))
+        return None
 
     async def init_schema(self, ddl_blocks: list[str]) -> None:
         await self.connect()

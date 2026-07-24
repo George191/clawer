@@ -206,7 +206,6 @@ export interface WorkspaceTemplate {
   adapter: string;
   adapter_code?: string;
   description: string;
-  output_tag: string;
   owner: string;
   metadata: Record<string, unknown>;
   task_count: number;
@@ -263,7 +262,6 @@ export interface WorkspaceReleasePayload {
   adapter: string;
   adapter_code?: string;
   description?: string;
-  output_tag?: string;
   metadata?: Record<string, unknown>;
   task?: WorkspaceTaskPayload;
 }
@@ -306,7 +304,7 @@ export const fetchWorkspaceTemplates = (): Promise<WorkspaceTemplate[]> =>
 
 export const updateWorkspaceTemplate = (
   templateId: string,
-  data: Pick<WorkspaceTemplate, 'yaml_content' | 'adapter' | 'adapter_code' | 'description' | 'output_tag'>,
+  data: Pick<WorkspaceTemplate, 'yaml_content' | 'adapter' | 'adapter_code' | 'description'>,
 ): Promise<WorkspaceTemplate> =>
   client.put(`/ai/workspace/templates/${templateId}`, data).then((r) => r.data);
 

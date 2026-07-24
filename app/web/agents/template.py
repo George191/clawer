@@ -143,7 +143,7 @@ class TemplateAgent(BaseAgent):
 
                 Stage 1 - Site
                 - Derive name, display_name, base_url and one lowercase snake_case business data_type from the target URL, title, page summary and rendered structure.
-                - Set description to one concise description of the current page based on its title, meta description and visible content; do not describe the analysis process.
+                - Write description as the current template's usage contract, not the page's marketing/meta description. Follow the Google Patent convention: state the source and collection purpose first; then document evidence-backed required inputs or query examples; finally summarize important request/pagination parameters or limits. Omit sections unsupported by current evidence and never describe the analysis process.
                 - When data_type is game, set adapter exactly to {template_name}. For other data types, set adapter only when verified enrichment requires it.
                 - Reject maintenance, login, CAPTCHA and loading-shell content as business evidence.
 
@@ -151,6 +151,7 @@ class TemplateAgent(BaseAgent):
                 - Inspect successful XHR/fetch evidence inside this stage; API discovery is not a separate task or output.
                 - Prefer a successful structured response with a record container and real sample. Use rendered HTML only when no usable API evidence exists.
                 - Set list_page/list_request from the verified source. Convert variable path/query values, including the input page value, into params. Never fabricate pagination, headers, methods or fallback endpoints.
+                - Every non-null params[].default must be a YAML string, including numeric and boolean-looking request values.
                 - Verify the selected request matches one captured URL and its observed method/parameters.
 
                 Stage 3 - Response
@@ -170,7 +171,7 @@ class TemplateAgent(BaseAgent):
                 Final verification
                 - Use only fields from the SiteTemplate schema below; all named fields are top-level siblings.
                 - For a verified non-paginated source omit list_pagination. Never invent records, selectors, aliases or defaults when evidence is missing.
-                - Keep description to one concise sentence.
+                - Keep description focused on how this template is used. It may be a short folded YAML block when verified inputs or request parameters need explanation.
                 - Order YAML keys by the stages above so the UI can render Site, Request/Params, Response, Fields, then Dedup/Download progressively.
 
                 Exact YAML field shapes and enums:
@@ -349,12 +350,20 @@ class TemplateAgent(BaseAgent):
             ).strip()
             streamed_response: list[str] = []
             active_stage = ""
+            first_chunk_received = False
 
             def emit_chunk(chunk: str) -> None:
-                nonlocal active_stage
+                nonlocal active_stage, first_chunk_received
                 streamed_response.append(chunk)
                 if not on_event:
                     return
+                if not first_chunk_received:
+                    first_chunk_received = True
+                    on_event({
+                        "kind": "template_status",
+                        "status": "streaming",
+                        "content": "Template model started streaming",
+                    })
                 partial_yaml = self._extract_streaming_yaml("".join(streamed_response))
                 if not partial_yaml:
                     return
@@ -371,6 +380,12 @@ class TemplateAgent(BaseAgent):
                     "templateYaml": partial_yaml,
                 })
 
+            if on_event:
+                on_event({
+                    "kind": "template_status",
+                    "status": "prefill",
+                    "content": "Template model is preparing the first token",
+                })
             response = await self.generate(
                 prompt,
                 max_tokens=4096,
@@ -412,31 +427,45 @@ class TemplateAgent(BaseAgent):
     def _prompt_analysis_context(cls, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
         context = dict(analysis_result)
         context["page_summary"] = str(context.get("page_summary") or "")[:300]
-        context["page_structure"] = str(context.get("page_structure") or "")[:1600]
-        context["api_endpoints"] = list(context.get("api_endpoints") or [])[:8]
+        context["page_structure"] = str(context.get("page_structure") or "")[:900]
+        context["api_endpoints"] = [
+            str(endpoint)[:240]
+            for endpoint in list(context.get("api_endpoints") or [])[:3]
+        ]
         context["warnings"] = list(context.get("warnings") or [])[:5]
 
         compact_responses: list[Dict[str, Any]] = []
-        for response in list(context.get("response_evidence") or [])[:3]:
+        for response_index, response in enumerate(list(context.get("response_evidence") or [])[:2]):
             if not isinstance(response, dict):
                 continue
             compact = dict(response)
-            compact["url"] = str(compact.get("url") or "")[:500]
-            compact["bodyPreview"] = str(compact.get("bodyPreview") or "")[:240]
-            compact["recordFields"] = list(compact.get("recordFields") or [])[:20]
+            compact["url"] = str(compact.get("url") or "")[:320]
+            compact["bodyPreview"] = str(compact.get("bodyPreview") or "")[:160]
+            compact["recordFields"] = list(compact.get("recordFields") or [])[
+                :20 if response_index == 0 else 12
+            ]
             sample_record = compact.get("sampleRecord") or {}
             compact["sampleRecord"] = (
                 {
-                    str(key): cls._compact_value(value)
-                    for key, value in list(sample_record.items())[:12]
+                    str(key): (
+                        value[:80]
+                        if isinstance(value, str)
+                        else cls._compact_value(value)
+                    )
+                    for key, value in list(sample_record.items())[:20]
                 }
-                if isinstance(sample_record, dict)
+                if response_index == 0 and isinstance(sample_record, dict)
                 else {}
             )
-            compact["links"] = [str(link)[:200] for link in list(compact.get("links") or [])[:3]]
+            compact["links"] = [str(link)[:160] for link in list(compact.get("links") or [])[:2]]
             compact_responses.append(compact)
         context["response_evidence"] = compact_responses
-        context["selected_candidate"] = compact_responses[0] if compact_responses else {}
+        selected = compact_responses[0] if compact_responses else {}
+        context["selected_candidate"] = {
+            "url": selected.get("url", ""),
+            "jsonItemPath": selected.get("jsonItemPath", ""),
+            "recordFields": selected.get("recordFields", []),
+        }
         return context
 
     @staticmethod
@@ -445,8 +474,10 @@ class TemplateAgent(BaseAgent):
             match.group(1)
             for match in re.finditer(r"(?m)^([A-Za-z_][\w-]*)\s*:", template_yaml)
         }
-        if keys & {"dedup_fields", "download"}:
-            return "dedup_download"
+        if "download" in keys:
+            return "download"
+        if "dedup_fields" in keys:
+            return "dedup"
         if keys & {"list_fields", "detail_page", "detail_request", "detail_fields"}:
             return "fields"
         if keys & {"response_type", "json_item_path", "json_total_path", "json_page_path"}:
@@ -702,18 +733,27 @@ class TemplateAgent(BaseAgent):
             template["adapter"] = ""
         template.setdefault("anti_crawl_enabled", None)
 
-        description = re.sub(r"\s+", " ", str(template.get("description") or "")).strip()
+        params = template.get("params")
+        if isinstance(params, list):
+            for param in params:
+                if not isinstance(param, dict) or param.get("default") is None:
+                    continue
+                param["default"] = str(param["default"])
+
+        description = str(template.get("description") or "").strip()
         if not description:
-            description = re.sub(
-                r"\s+",
-                " ",
-                str(analysis_result.get("page_summary") or page_title),
-            ).strip()
-        if description:
-            first_sentence = re.split(r"(?<=[。！？.!?])", description, maxsplit=1)[0]
-            template["description"] = first_sentence[:120].rstrip(" ,，;；")
-        else:
-            template["description"] = ""
+            source_kind = str(analysis_result.get("source_kind") or "page")
+            description = (
+                f"{template['display_name']} template collects "
+                f"{data_type.replace('_', ' ')} records from {template['base_url']} "
+                f"using the verified {source_kind} source."
+            )
+        description = "\n".join(
+            re.sub(r"[ \t]+", " ", line).rstrip()
+            for line in description.replace("\r\n", "\n").split("\n")
+        ).strip()[:1600]
+        description_placeholder = "__AI_COLLECT_TEMPLATE_DESCRIPTION__"
+        template["description"] = description_placeholder
 
         if template.get("detail_page") == {}:
             template["detail_page"] = None
@@ -722,7 +762,13 @@ class TemplateAgent(BaseAgent):
         if template.get("download") == {}:
             template["download"] = []
 
-        return yaml.safe_dump(template, allow_unicode=True, sort_keys=False).strip()
+        template_yaml = yaml.safe_dump(template, allow_unicode=True, sort_keys=False).strip()
+        description_block = "description: >\n" + textwrap.indent(description, "  ")
+        return template_yaml.replace(
+            f"description: {description_placeholder}",
+            description_block,
+            1,
+        )
 
     def _build_base_url(self, url: str) -> str:
         parsed = urlparse(url)

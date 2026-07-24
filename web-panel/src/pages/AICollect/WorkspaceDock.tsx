@@ -79,7 +79,6 @@ type SiteKind = 'news' | 'patent' | 'intelligence' | 'warning' | 'signal' | 'gen
 interface TemplateDraft {
   adapter: string;
   adapterCode: string;
-  outputTag: string;
   notes: string;
   yaml: string;
   savedAt: string;
@@ -958,6 +957,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskRuntime(Object.fromEntries(items.map((item) => [item.id, mapWorkspaceTaskRuntime(item)])));
   }, []);
 
+  const applyWorkspaceTemplates = useCallback((items: WorkspaceTemplate[]) => {
+    setTemplates(items.map(mapWorkspaceTemplate));
+    setTemplateDrafts(Object.fromEntries(items.map((item) => [item.id, {
+      adapter: item.adapter,
+      adapterCode: item.adapter_code ?? '',
+      notes: item.description,
+      yaml: item.yaml_content ?? '',
+      savedAt: item.updated_at,
+    }])));
+  }, []);
+
+  const refreshWorkspaceTemplates = useCallback(async () => {
+    applyWorkspaceTemplates(await fetchWorkspaceTemplates());
+  }, [applyWorkspaceTemplates]);
+
   const refreshWorkspaceTasks = useCallback(async () => {
     applyWorkspaceTasks(await fetchWorkspaceTasks());
   }, [applyWorkspaceTasks]);
@@ -968,15 +982,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       Promise.all([fetchWorkspaceTemplates(), fetchWorkspaceTasks()])
         .then(([templateItems, taskItemsResponse]) => {
           if (!active) return;
-          setTemplates(templateItems.map(mapWorkspaceTemplate));
-          setTemplateDrafts(Object.fromEntries(templateItems.map((item) => [item.id, {
-            adapter: item.adapter,
-            adapterCode: item.adapter_code ?? '',
-            outputTag: item.output_tag,
-            notes: item.description,
-            yaml: item.yaml_content ?? '',
-            savedAt: item.updated_at,
-          }])));
+          applyWorkspaceTemplates(templateItems);
           applyWorkspaceTasks(taskItemsResponse);
         })
         .catch((error) => console.error('Failed to load AI Collect workspace', error));
@@ -985,7 +991,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [applyWorkspaceTasks]);
+  }, [applyWorkspaceTasks, applyWorkspaceTemplates]);
+
+  useEffect(() => {
+    if (activePanel !== 'templates') return;
+    void refreshWorkspaceTemplates().catch((error) => {
+      console.error('Failed to refresh templates', error);
+    });
+  }, [activePanel, refreshWorkspaceTemplates]);
 
   useEffect(() => {
     if (activePanel !== 'tasks') return undefined;
@@ -1199,7 +1212,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         adapter: selectedTemplateDraft.adapter,
         adapter_code: selectedTemplateDraft.adapterCode,
         description: selectedTemplateDraft.notes,
-        output_tag: selectedTemplateDraft.outputTag,
       }).then((updated) => {
         setTemplateDrafts((prev) => ({
           ...prev,
@@ -1214,7 +1226,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     selectedTemplate?.key,
     selectedTemplateDraft?.adapter,
     selectedTemplateDraft?.notes,
-    selectedTemplateDraft?.outputTag,
     selectedTemplateDraft?.yaml,
     templateDetailMode,
   ]);
@@ -2335,13 +2346,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   onChange={(event) => updateTemplateDraft(selectedTemplate.key, {
                     adapter: event.target.value,
                   })}
-                />
-              </label>
-              <label>
-                <span>输出标签</span>
-                <Input
-                  value={selectedTemplateDraft.outputTag}
-                  onChange={(event) => updateTemplateDraft(selectedTemplate.key, { outputTag: event.target.value })}
                 />
               </label>
             </div>

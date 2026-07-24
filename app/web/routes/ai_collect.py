@@ -71,7 +71,6 @@ class WorkspaceTemplateUpdateRequest(BaseModel):
     adapter: str = ""
     adapter_code: str = ""
     description: str = ""
-    output_tag: str = ""
 
 
 class WorkspaceTaskRequest(BaseModel):
@@ -96,7 +95,6 @@ class WorkspaceReleaseRequest(BaseModel):
     adapter: str = ""
     adapter_code: str = ""
     description: str = ""
-    output_tag: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
     task: WorkspaceTaskRequest | None = None
 

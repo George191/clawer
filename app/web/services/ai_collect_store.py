@@ -13,8 +13,11 @@ from curl_cffi import requests as curl_requests
 from lxml import html as lxml_html
 
 from app.config.settings import settings
+from app.logger import get_logger
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
+
+logger = get_logger(__name__)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
@@ -28,7 +31,6 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
     status text NOT NULL DEFAULT 'draft' CHECK (status IN ('active', 'draft', 'deprecated')),
     adapter text NOT NULL DEFAULT '',
     description text NOT NULL DEFAULT '',
-    output_tag text NOT NULL DEFAULT '',
     owner text NOT NULL DEFAULT 'AI Collect',
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -126,7 +128,11 @@ class AICollectStore:
         icon_ref = str(row.get("icon") or "")
         if not icon_ref:
             return ""
-        content = await get_business_metadata_minio_client().get_object_bytes(icon_ref)
+        try:
+            content = await get_business_metadata_minio_client().get_object_bytes(icon_ref)
+        except Exception as exc:
+            logger.warning("Failed to load optional template icon %s: %s", icon_ref, exc)
+            return ""
         return self._template_icon_data_url(content)
 
     async def initialize(self) -> None:
@@ -178,6 +184,7 @@ class AICollectStore:
             "template_sha256",
             "template_size",
             "yaml_content",
+            "output_tag",
         ):
             await self._pg.execute(
                 f"ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS {column}"
@@ -319,9 +326,9 @@ class AICollectStore:
                 await self._pg.execute(
                     """
                     INSERT INTO public.ai_collect_templates
-                        (name, version, title, domain, status, adapter, description, output_tag)
+                        (name, version, title, domain, status, adapter, description)
                     VALUES
-                        (:name, :version, :title, :domain, 'active', :adapter, :description, :output_tag)
+                        (:name, :version, :title, :domain, 'active', :adapter, :description)
                     ON CONFLICT (name, version) DO NOTHING
                     """,
                     {
@@ -331,7 +338,6 @@ class AICollectStore:
                         "domain": domain,
                         "adapter": adapter_path.as_posix() if adapter_path.exists() else "",
                         "description": str(raw.get("description") or ""),
-                        "output_tag": str(raw.get("data_type") or "other"),
                     },
                 )
             except Exception:
@@ -481,7 +487,6 @@ class AICollectStore:
                 template = :template,
                 adapter = :adapter,
                 description = :description,
-                output_tag = :output_tag,
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
             RETURNING *
@@ -518,10 +523,10 @@ class AICollectStore:
         row = await self._pg.fetch_one(
             """
             INSERT INTO public.ai_collect_templates
-                (name, version, title, domain, template, icon, status, adapter, description, output_tag, metadata)
+                (name, version, title, domain, template, icon, status, adapter, description, metadata)
             VALUES
                 (:name, :version, :title, :domain, :template, :icon, :status, :adapter,
-                 :description, :output_tag, CAST(:metadata AS jsonb))
+                 :description, CAST(:metadata AS jsonb))
             ON CONFLICT (name, version) DO UPDATE SET
                 title = EXCLUDED.title,
                 domain = EXCLUDED.domain,
@@ -530,7 +535,6 @@ class AICollectStore:
                 status = EXCLUDED.status,
                 adapter = EXCLUDED.adapter,
                 description = EXCLUDED.description,
-                output_tag = EXCLUDED.output_tag,
                 metadata = EXCLUDED.metadata,
                 updated_at = now()
             RETURNING *

@@ -158,11 +158,25 @@ class MinioClient:
                 response.close()
                 response.release_conn()
 
-        try:
-            return await asyncio.to_thread(read_object)
-        except Exception as e:
-            logger.warning("MinIO get_object failed for %s: %s", object_key, e)
-            return None
+        non_retryable_codes = {
+            "AccessDenied",
+            "InvalidAccessKeyId",
+            "NoSuchBucket",
+            "NoSuchKey",
+            "NoSuchObject",
+            "SignatureDoesNotMatch",
+        }
+        attempts = 3
+        for attempt in range(attempts):
+            try:
+                return await asyncio.to_thread(read_object)
+            except Exception as e:
+                error_code = str(getattr(e, "code", "") or "")
+                if error_code in non_retryable_codes or attempt == attempts - 1:
+                    logger.warning("MinIO get_object failed for %s: %s", object_key, e)
+                    return None
+                await asyncio.sleep(0.2 * (attempt + 1))
+        return None
 
     async def file_exists(
         self,
