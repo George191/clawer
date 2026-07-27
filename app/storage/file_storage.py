@@ -92,6 +92,7 @@ class StorageBackend(abc.ABC):
 class FileStorage(StorageBackend):
     def __init__(self, base_dir: str | None = None) -> None:
         self._base_dir = Path(base_dir or settings.output_dir)
+        self.last_save_stats = {"inserted": 0, "updated": 0, "deleted": 0}
 
     def _get_record_dir(self, template_name: str, data_type: str) -> Path:
         record_dir = self._base_dir / template_name / data_type
@@ -146,6 +147,17 @@ class FileStorage(StorageBackend):
         dedup_fields: list[str],
         records: list[dict[str, Any]],
     ) -> list[str]:
+        record_dir = self._get_record_dir(template_name, data_type)
+        existing = sum(
+            1
+            for record in records
+            if (record_dir / f"{self._resolve_record_id(record)}.json").exists()
+        )
+        self.last_save_stats = {
+            "inserted": len(records) - existing,
+            "updated": existing,
+            "deleted": 0,
+        }
         paths: list[str] = []
         for record in records:
             path = await self.save_record(template_name, data_type, dedup_fields, record)

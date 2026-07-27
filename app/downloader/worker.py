@@ -31,6 +31,7 @@ from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate
 from app.utils.path import get_nested_value
+from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
 
@@ -138,10 +139,21 @@ class DownloadWorker:
         meta = record.get("_meta", {})
         record_id = meta.get("record_id", "")
         template_name = meta.get("template", "")
+        workspace_task_id = str(
+            (meta.get("search_params") or {}).get("__workspace_task_id") or ""
+        )
 
         if not record_id or not template_name:
             logger.warning("DownloadWorker: skip record with missing meta")
             return False
+
+        if workspace_task_id:
+            task_control = await ai_collect_store.get_task_control(workspace_task_id)
+            if task_control is None:
+                workspace_task_id = ""
+            elif task_control.get("download_state") != "running":
+                await self._mongo.update_file_status(template_name, record_id, "pending")
+                return False
 
         async with self._semaphore:
             try:
@@ -263,6 +275,16 @@ class DownloadWorker:
                         "(skipped_existing=%d)",
                         downloaded_assets, record_id, skipped_existing,
                     )
+                    if workspace_task_id and downloaded_assets:
+                        await ai_collect_store.increment_task_stats(
+                            workspace_task_id,
+                            downloaded=downloaded_assets,
+                        )
+                        await ai_collect_store.append_task_log(
+                            workspace_task_id,
+                            "ok",
+                            f"下载完成：record={record_id}, assets={downloaded_assets}",
+                        )
                 else:
                     await self._mongo.update_file_status(
                         template_name, record_id, "no_assets",

@@ -22,6 +22,7 @@ from app.base.kafka import KafkaProducer
 from app.base.mongo import MongoClient
 from app.config.settings import settings
 from app.logger import get_logger
+from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
 
@@ -68,15 +69,39 @@ class SyncWorker:
         if not ready:
             return 0
 
-        logger.info("SyncWorker: pushing %d records to Kafka", len(ready))
+        eligible: list[dict[str, Any]] = []
+        for record in ready:
+            task_id = str(
+                (record.get("_meta", {}).get("search_params") or {}).get(
+                    "__workspace_task_id"
+                )
+                or ""
+            )
+            if not task_id:
+                eligible.append(record)
+                continue
+            task_control = await ai_collect_store.get_task_control(task_id)
+            if task_control is None:
+                record.get("_meta", {}).get("search_params", {}).pop(
+                    "__workspace_task_id",
+                    None,
+                )
+                eligible.append(record)
+            elif task_control.get("sync_state") == "running":
+                eligible.append(record)
+        if not eligible:
+            return 0
+
+        logger.info("SyncWorker: pushing %d records to Kafka", len(eligible))
 
         try:
-            sent_count = await self._kafka.send_records(ready)
+            sent_count = await self._kafka.send_records(eligible)
         except Exception:
             logger.exception("SyncWorker: Kafka send failed")
             return 0
 
-        for record in ready:
+        synced_by_task: dict[str, int] = {}
+        for record in eligible:
             record_meta = record.get("_meta", {})
             record_id = record_meta.get("record_id", "")
             template_name = record_meta.get("template", "")
@@ -86,8 +111,26 @@ class SyncWorker:
                     await self._mongo.update_sync_status(
                         template_name, data_type, record_id, "synced",
                     )
+                    workspace_task_id = str(
+                        (record_meta.get("search_params") or {}).get(
+                            "__workspace_task_id"
+                        )
+                        or ""
+                    )
+                    if workspace_task_id:
+                        synced_by_task[workspace_task_id] = (
+                            synced_by_task.get(workspace_task_id, 0) + 1
+                        )
                 except Exception:
                     logger.exception("SyncWorker: sync status update failed for %s", record_id)
+
+        for task_id, count in synced_by_task.items():
+            await ai_collect_store.increment_task_stats(task_id, synced=count)
+            await ai_collect_store.append_task_log(
+                task_id,
+                "ok",
+                f"同步完成：records={count}",
+            )
 
         logger.info("SyncWorker: synced %d records to Kafka", sent_count)
         return sent_count

@@ -46,6 +46,11 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     progress integer NOT NULL DEFAULT 0,
     records bigint NOT NULL DEFAULT 0,
     throughput integer NOT NULL DEFAULT 0,
+    inserted_records bigint NOT NULL DEFAULT 0,
+    updated_records bigint NOT NULL DEFAULT 0,
+    deleted_records bigint NOT NULL DEFAULT 0,
+    downloaded_records bigint NOT NULL DEFAULT 0,
+    synced_records bigint NOT NULL DEFAULT 0,
     control_state text,
     download_state text NOT NULL DEFAULT 'idle',
     sync_state text NOT NULL DEFAULT 'idle',
@@ -57,7 +62,18 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     updated_at timestamptz NOT NULL DEFAULT now(),
     started_at timestamptz
 );
-DROP TABLE IF EXISTS public.ai_collect_task_logs;
+ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS inserted_records bigint NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS updated_records bigint NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS deleted_records bigint NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS downloaded_records bigint NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS synced_records bigint NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS public.ai_collect_task_logs (
+    id bigserial PRIMARY KEY,
+    task_id uuid NOT NULL REFERENCES public.ai_collect_tasks(id) ON DELETE CASCADE,
+    level text NOT NULL DEFAULT 'info',
+    message text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS public.ai_collect_analyses (
     template_id text PRIMARY KEY,
     source_url text NOT NULL,
@@ -71,6 +87,7 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_analyses (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_collect_templates_status ON public.ai_collect_templates(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_collect_tasks_status ON public.ai_collect_tasks(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_task ON public.ai_collect_task_logs(task_id, created_at DESC);
 """
 class AICollectStore:
     def __init__(self) -> None:
@@ -537,6 +554,48 @@ class AICollectStore:
             """
         )
 
+    async def append_task_log(self, task_id: str, level: str, message: str) -> None:
+        await self.initialize()
+        await self._pg.execute(
+            """
+            INSERT INTO public.ai_collect_task_logs (task_id, level, message)
+            VALUES (CAST(:task_id AS uuid), :level, :message)
+            """,
+            {"task_id": task_id, "level": level, "message": message},
+        )
+
+    async def increment_task_stats(
+        self,
+        task_id: str,
+        *,
+        inserted: int = 0,
+        updated: int = 0,
+        deleted: int = 0,
+        downloaded: int = 0,
+        synced: int = 0,
+    ) -> None:
+        await self.initialize()
+        await self._pg.execute(
+            """
+            UPDATE public.ai_collect_tasks SET
+                inserted_records = inserted_records + :inserted,
+                updated_records = updated_records + :updated,
+                deleted_records = deleted_records + :deleted,
+                downloaded_records = downloaded_records + :downloaded,
+                synced_records = synced_records + :synced,
+                updated_at = now()
+            WHERE id = CAST(:task_id AS uuid)
+            """,
+            {
+                "task_id": task_id,
+                "inserted": inserted,
+                "updated": updated,
+                "deleted": deleted,
+                "downloaded": downloaded,
+                "synced": synced,
+            },
+        )
+
     async def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()
         task = await self._pg.fetch_one(
@@ -569,6 +628,11 @@ class AICollectStore:
                 progress = COALESCE(:progress, progress),
                 records = COALESCE(:records, records),
                 throughput = COALESCE(:throughput, throughput),
+                inserted_records = COALESCE(:inserted_records, inserted_records),
+                updated_records = COALESCE(:updated_records, updated_records),
+                deleted_records = COALESCE(:deleted_records, deleted_records),
+                downloaded_records = COALESCE(:downloaded_records, downloaded_records),
+                synced_records = COALESCE(:synced_records, synced_records),
                 control_state = COALESCE(:control_state, control_state),
                 download_state = COALESCE(:download_state, download_state),
                 sync_state = COALESCE(:sync_state, sync_state),
@@ -579,9 +643,15 @@ class AICollectStore:
             """,
             {
                 "id": task_id,
+                "status": None,
                 "progress": None,
                 "records": None,
                 "throughput": None,
+                "inserted_records": None,
+                "updated_records": None,
+                "deleted_records": None,
+                "downloaded_records": None,
+                "synced_records": None,
                 "control_state": None,
                 "download_state": None,
                 "sync_state": None,
@@ -600,6 +670,8 @@ class AICollectStore:
             """
             UPDATE public.ai_collect_tasks SET
                 status = 'running',
+                download_state = 'running',
+                sync_state = 'running',
                 started_at = now(),
                 updated_at = now()
             WHERE id = CAST(:id AS uuid) AND status = 'queued'
@@ -636,7 +708,37 @@ class AICollectStore:
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
         await self.initialize()
         return await self._pg.fetch_one(
-            "SELECT *, '[]'::jsonb AS logs FROM public.ai_collect_tasks WHERE id = CAST(:id AS uuid)",
+            """
+            SELECT task.*,
+                   COALESCE((
+                       SELECT jsonb_agg(log_row.payload ORDER BY log_row.created_at)
+                       FROM (
+                           SELECT created_at,
+                                  jsonb_build_object(
+                                      'level', level,
+                                      'message', message,
+                                      'created_at', created_at
+                                  ) AS payload
+                           FROM public.ai_collect_task_logs
+                           WHERE task_id = task.id
+                           ORDER BY created_at DESC
+                           LIMIT 200
+                       ) log_row
+                   ), '[]'::jsonb) AS logs
+            FROM public.ai_collect_tasks task
+            WHERE id = CAST(:id AS uuid)
+            """,
+            {"id": task_id},
+        )
+
+    async def get_task_control(self, task_id: str) -> dict[str, Any] | None:
+        await self.initialize()
+        return await self._pg.fetch_one(
+            """
+            SELECT status, control_state, download_state, sync_state
+            FROM public.ai_collect_tasks
+            WHERE id = CAST(:id AS uuid)
+            """,
             {"id": task_id},
         )
 

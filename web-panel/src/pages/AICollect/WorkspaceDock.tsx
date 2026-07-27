@@ -27,6 +27,7 @@ import {
 import {
   createWorkspaceTask,
   deleteWorkspaceTask,
+  fetchWorkspaceTask,
   fetchWorkspaceTasks,
   fetchWorkspaceTemplates,
   runWorkspaceTaskAction,
@@ -58,6 +59,8 @@ interface WorkspaceDockProps {
   onClose: () => void;
   analysisTemplate?: { yaml: string; adapter: string; adapterCode: string };
   onTemplateApply?: (draft: { yaml: string; adapter: string; adapterCode: string }) => void;
+  onTaskCreated?: (task: WorkspaceTask) => void;
+  focusTask?: WorkspaceTask | null;
   releaseTaskDefaults?: {
     concurrency: number;
     respectRobots: boolean;
@@ -102,7 +105,12 @@ interface TaskRuntimeItem {
   logs: TaskLog[];
   controlState: 'canceled' | null;
   downloadState: 'idle' | 'running' | 'paused';
-  syncState: 'idle' | 'running' | 'canceled';
+  syncState: 'idle' | 'running' | 'paused' | 'canceled';
+  insertedRecords: number;
+  updatedRecords: number;
+  deletedRecords: number;
+  downloadedRecords: number;
+  syncedRecords: number;
 }
 
 interface TaskRow extends CollectTask {
@@ -548,37 +556,24 @@ const createHistory = (recordsValue: number) => {
   return Array.from({ length: 12 }, (_, index) => Math.round(start + ((recordsValue - start) * (index + 1)) / 12));
 };
 
-const buildInitialTaskLogs = (item: CollectTask): TaskLog[] => [
-  {
-    time: '09:12:04',
-    level: item.status === 'failed' ? 'warn' : 'ok',
-    message: item.comments[0] ?? '任务已接入运行面板',
-  },
-  {
-    time: '09:12:36',
-    level: 'info',
-    message: `template loaded: ${item.template}`,
-  },
-  {
-    time: '09:13:08',
-    level: item.status === 'running' ? 'ok' : 'info',
-    message: `${item.area} 链路${item.status === 'running' ? '持续采集' : '等待调度'}`,
-  },
-];
-
-const buildTaskRuntimeItem = (item: CollectTask, index: number): TaskRuntimeItem => {
+const buildTaskRuntimeItem = (item: CollectTask): TaskRuntimeItem => {
   const recordsValue = parseCompactNumber(item.records);
   return {
     status: item.status,
     progress: item.progress,
     recordsValue,
-    throughput: item.status === 'running' ? 18 + index * 4 : item.status === 'queued' ? 0 : 12,
-    lastDelta: item.status === 'running' ? 96 + index * 14 : 0,
+    throughput: 0,
+    lastDelta: 0,
     history: createHistory(recordsValue),
-    logs: buildInitialTaskLogs(item),
+    logs: [],
     controlState: null,
     downloadState: item.status === 'running' ? 'running' : item.status === 'completed' ? 'paused' : 'idle',
     syncState: item.status === 'running' || item.status === 'completed' ? 'running' : 'idle',
+    insertedRecords: 0,
+    updatedRecords: 0,
+    deletedRecords: 0,
+    downloadedRecords: 0,
+    syncedRecords: 0,
   };
 };
 
@@ -614,7 +609,7 @@ const fetchArtifactText = async (url: string, label: string) => {
 
 const mapWorkspaceTask = (item: WorkspaceTask): CollectTask => ({
   key: item.id,
-  name: item.name,
+  name: item.name.replace(/\s+task$/i, ''),
   template: `${item.template_name}@${item.template_version}`,
   group: 'prototype',
   area: `${item.template_name.replace(/_/g, ' ')} workspace`,
@@ -622,7 +617,9 @@ const mapWorkspaceTask = (item: WorkspaceTask): CollectTask => ({
   progress: item.progress,
   records: String(item.records),
   lag: item.status === 'running' ? 'live' : '-',
-  nextRun: String(item.schedule?.label ?? (item.status === 'running' ? 'Continuous' : 'Waiting')),
+  nextRun: item.schedule?.mode === 'once'
+    ? '一次性任务'
+    : String(item.schedule?.label ?? (item.status === 'running' ? 'Continuous' : 'Waiting')),
   owner: item.owner,
   avatar: toAvatarLabel(item.owner),
   comments: [],
@@ -644,6 +641,11 @@ const mapWorkspaceTaskRuntime = (item: WorkspaceTask): TaskRuntimeItem => ({
   controlState: item.control_state,
   downloadState: item.download_state,
   syncState: item.sync_state,
+  insertedRecords: item.inserted_records ?? 0,
+  updatedRecords: item.updated_records ?? 0,
+  deletedRecords: item.deleted_records ?? 0,
+  downloadedRecords: item.downloaded_records ?? 0,
+  syncedRecords: item.synced_records ?? 0,
 });
 
 const toAvatarLabel = (value: string) => {
@@ -812,7 +814,7 @@ const inferIncrementalField = (templateValue: string) => {
 };
 
 const formatTaskNextRun = (draft: TaskComposerDraft) => {
-  if (draft.scheduleMode === 'once') return '待手动启动';
+  if (draft.scheduleMode === 'once') return '一次性任务';
   if (draft.recurringMode === 'daily') return `每天 ${draft.dailyTime}`;
   return `每 ${draft.intervalValue} ${draft.intervalUnit === 'minute' ? '分钟' : '小时'}`;
 };
@@ -892,6 +894,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   onClose,
   analysisTemplate,
   onTemplateApply,
+  onTaskCreated,
+  focusTask,
   releaseTaskDefaults,
 }) => {
   const bodyScrollRef = useRef<HTMLDivElement>(null);
@@ -981,7 +985,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const applyWorkspaceTasks = useCallback((items: WorkspaceTask[]) => {
     setTaskItems(items.map(mapWorkspaceTask));
-    setTaskRuntime(Object.fromEntries(items.map((item) => [item.id, mapWorkspaceTaskRuntime(item)])));
+    setTaskRuntime((current) => Object.fromEntries(items.map((item) => {
+      const runtime = mapWorkspaceTaskRuntime(item);
+      if (!runtime.logs.length && current[item.id]?.logs.length) {
+        runtime.logs = current[item.id].logs;
+      }
+      return [item.id, runtime];
+    })));
   }, []);
 
   const applyWorkspaceTemplates = useCallback((items: WorkspaceTemplate[]) => {
@@ -1046,6 +1056,57 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     };
   }, [activePanel, refreshWorkspaceTasks]);
 
+  useEffect(() => {
+    if (activePanel !== 'tasks' || !focusTask) return;
+    const mappedTask = mapWorkspaceTask(focusTask);
+    setKeyword('');
+    setTaskFilter('all');
+    setTaskTemplateFilter(null);
+    setTaskItems((current) => (
+      current.some((task) => task.key === focusTask.id)
+        ? current.map((task) => (task.key === focusTask.id ? mappedTask : task))
+        : [mappedTask, ...current]
+    ));
+    setTaskRuntime((current) => ({
+      ...current,
+      [focusTask.id]: mapWorkspaceTaskRuntime(focusTask),
+    }));
+    setSelectedTaskKey(focusTask.id);
+  }, [activePanel, focusTask]);
+
+  useEffect(() => {
+    if (activePanel !== 'tasks' || !selectedTaskKey) return undefined;
+
+    let active = true;
+    let timer: number;
+    const refreshDetail = async () => {
+      try {
+        const item = await fetchWorkspaceTask(selectedTaskKey);
+        if (!active) return;
+        const mappedTask = mapWorkspaceTask(item);
+        setTaskItems((current) => (
+          current.some((task) => task.key === item.id)
+            ? current.map((task) => (task.key === item.id ? mappedTask : task))
+            : [mappedTask, ...current]
+        ));
+        setTaskRuntime((current) => ({
+          ...current,
+          [item.id]: mapWorkspaceTaskRuntime(item),
+        }));
+      } catch (error) {
+        console.error('Failed to refresh task detail', error);
+      } finally {
+        if (active) timer = window.setTimeout(refreshDetail, 2000);
+      }
+    };
+    void refreshDetail();
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [activePanel, selectedTaskKey]);
+
   const templateRows = useMemo(() => templates
     .filter((item) => {
       const matchFilter = templateFilter === 'all' || item.status === templateFilter;
@@ -1060,8 +1121,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       return leftPinned ? -1 : 1;
     }), [keyword, pinnedTemplateKeys, templateFilter, templates]);
 
-  const allTaskRows = useMemo<TaskRow[]>(() => taskItems.map((item, index) => {
-    const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item, index);
+  const allTaskRows = useMemo<TaskRow[]>(() => taskItems.map((item) => {
+    const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item);
     const site = resolveSiteProfile(item.template);
     const template = templates.find((candidate) => normalizeTemplateKey(candidate.name) === normalizeTemplateKey(item.template));
     return {
@@ -1194,20 +1255,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       ? Boolean(selectedTask)
       : false;
 
-  const taskInsertedLines = selectedTask ? Math.max(selectedTask.runtime.lastDelta, 24) : 0;
-  const taskUpdatedLines = selectedTask ? Math.max(Math.round(selectedTask.runtime.lastDelta * 0.42), 12) : 0;
-  const taskDeletedLines = selectedTask ? Math.max(Math.round(selectedTask.runtime.lastDelta * 0.18), selectedTask.runtime.controlState === 'canceled' ? 11 : 5) : 0;
-  const taskDownloadedResources = selectedTask
-    ? Math.max(
-      Math.round(selectedTask.runtime.recordsValue / 72),
-      selectedTask.runtime.downloadState === 'running' ? 12 : selectedTask.runtime.downloadState === 'paused' ? 7 : 0,
-    )
-    : 0;
-  const taskSyncedRecords = selectedTask
-    ? (selectedTask.runtime.syncState === 'canceled'
-      ? Math.max(selectedTask.runtime.recordsValue - Math.round(selectedTask.runtime.lastDelta * 1.2), 0)
-      : Math.max(selectedTask.runtime.recordsValue - Math.round(selectedTask.runtime.lastDelta * 0.24), 0))
-    : 0;
+  const taskInsertedLines = selectedTask?.runtime.insertedRecords ?? 0;
+  const taskUpdatedLines = selectedTask?.runtime.updatedRecords ?? 0;
+  const taskDeletedLines = selectedTask?.runtime.deletedRecords ?? 0;
+  const taskDownloadedResources = selectedTask?.runtime.downloadedRecords ?? 0;
+  const taskSyncedRecords = selectedTask?.runtime.syncedRecords ?? 0;
 
   const updateTemplateDraft = (templateKey: string, patch: Partial<TemplateDraft>) => {
     setTemplateDrafts((prev) => ({
@@ -1371,8 +1423,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       || '';
     const matchedTemplate = templates.find((item) => `${item.name}@${item.version}` === normalizedTemplate) ?? null;
     const fallbackName = normalizedTemplate
-      ? `${normalizeTemplateKey(normalizedTemplate).replace(/_/g, ' ')} task`
-      : 'New collect task';
+      ? normalizeTemplateKey(normalizedTemplate).replace(/_/g, ' ')
+      : 'New collect';
     const nextTask: CollectTask = {
       key: `task-${Date.now()}`,
       name: taskComposerDraft.name.trim() || fallbackName,
@@ -1437,10 +1489,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         template: normalizedTemplate,
         templateLocked: taskComposerDraft.templateLocked,
       });
+      onTaskCreated?.(created);
     } catch (error) {
       console.error('Failed to create task', error);
     }
-  }, [resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchParam, taskBatchSize, taskBatchStartLine, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
+  }, [onTaskCreated, resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchParam, taskBatchSize, taskBatchStartLine, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
 
   const handleWorkspaceTaskAction = useCallback(async (
     taskKey: string,
@@ -1460,6 +1513,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const handleStartTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start');
   const handleResumeTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'resume');
   const handleCancelTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'cancel');
+  const handleStartDownload = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start_download');
+  const handlePauseDownload = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'pause_download');
+  const handleStartSync = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start_sync');
+  const handlePauseSync = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'pause_sync');
   const handleDeleteTask = useCallback(async (taskKey: string) => {
     try {
       await deleteWorkspaceTask(taskKey);
@@ -2330,7 +2387,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 disabled={templateDetailLoading}
                 onClick={() => {
                   openTaskComposer({
-                    name: `${selectedTemplate.title} task`,
+                    name: selectedTemplate.title,
                     template: `${selectedTemplate.name}@${selectedTemplate.version}`,
                     templateLocked: true,
                     scheduleMode: 'recurring',
@@ -2456,6 +2513,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
     const { runtime, display } = selectedTask;
     const taskCanceled = runtime.controlState === 'canceled';
+    const pipelineControlsDisabled = taskCanceled || runtime.status === 'queued';
     const taskDeletable = runtime.status === 'queued' || runtime.status === 'completed' || runtime.status === 'failed';
     const taskPinned = Boolean(pinnedTaskKeys[selectedTask.key]);
 
@@ -2536,6 +2594,56 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Popconfirm>
             ) : null}
+            {runtime.downloadState === 'running' ? (
+              <Tooltip title="暂停下载" placement="top">
+                <button
+                  type="button"
+                  className="workspace-dock-detail-icon-btn is-download"
+                  aria-label="暂停下载"
+                  disabled={pipelineControlsDisabled}
+                  onClick={() => handlePauseDownload(selectedTask.key)}
+                >
+                  <span className="workspace-dock-slashed-icon"><DownloadOutlined /></span>
+                </button>
+              </Tooltip>
+            ) : (
+              <Tooltip title={runtime.downloadState === 'paused' ? '继续下载' : '开始下载'} placement="top">
+                <button
+                  type="button"
+                  className="workspace-dock-detail-icon-btn is-download"
+                  aria-label={runtime.downloadState === 'paused' ? '继续下载' : '开始下载'}
+                  disabled={pipelineControlsDisabled}
+                  onClick={() => handleStartDownload(selectedTask.key)}
+                >
+                  <DownloadOutlined />
+                </button>
+              </Tooltip>
+            )}
+            {runtime.syncState === 'running' ? (
+              <Tooltip title="暂停同步" placement="top">
+                <button
+                  type="button"
+                  className="workspace-dock-detail-icon-btn is-sync"
+                  aria-label="暂停同步"
+                  disabled={pipelineControlsDisabled}
+                  onClick={() => handlePauseSync(selectedTask.key)}
+                >
+                  <span className="workspace-dock-slashed-icon"><SyncOutlined /></span>
+                </button>
+              </Tooltip>
+            ) : (
+              <Tooltip title={runtime.syncState === 'paused' ? '继续同步' : '开始同步'} placement="top">
+                <button
+                  type="button"
+                  className="workspace-dock-detail-icon-btn is-sync"
+                  aria-label={runtime.syncState === 'paused' ? '继续同步' : '开始同步'}
+                  disabled={pipelineControlsDisabled}
+                  onClick={() => handleStartSync(selectedTask.key)}
+                >
+                  <SyncOutlined />
+                </button>
+              </Tooltip>
+            )}
             <button
               type="button"
               className="workspace-dock-detail-close"
@@ -3263,6 +3371,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: #8AB4FF;
           background: rgba(138, 180, 255, 0.08);
         }
+        .workspace-dock-slashed-icon {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .workspace-dock-slashed-icon::after {
+          content: '';
+          position: absolute;
+          width: 15px;
+          height: 2px;
+          border-radius: 999px;
+          background: currentColor;
+          transform: rotate(-45deg);
+        }
         .workspace-dock-detail-body {
           flex: 1;
           min-height: 0;
@@ -3342,9 +3465,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           min-height: 0;
           display: flex;
           flex-direction: column;
-        }
-        .workspace-dock-detail.is-task-log-only .workspace-dock-detail-icon-btn {
-          display: none;
         }
         .workspace-dock-detail.is-task-log-only .workspace-dock-log-panel {
           height: 100%;
@@ -4075,6 +4195,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                         { label: 'All', value: 'all' },
                         { label: 'Running', value: 'running' },
                         { label: 'Queued', value: 'queued' },
+                        { label: 'Paused', value: 'paused' },
+                        { label: 'Completed', value: 'completed' },
                         { label: 'Failed', value: 'failed' },
                       ]}
                     />

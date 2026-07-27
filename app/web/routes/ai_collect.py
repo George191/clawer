@@ -809,6 +809,14 @@ async def workspace_tasks():
     return {"items": await ai_collect_store.list_tasks()}
 
 
+@router.get("/ai/workspace/tasks/{task_id}")
+async def workspace_task_detail(task_id: str):
+    task = await ai_collect_store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
 @router.post("/ai/workspace/tasks")
 async def workspace_task_create(body: WorkspaceTaskRequest):
     return await ai_collect_store.create_task(body.model_dump())
@@ -831,6 +839,7 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
         except Exception as exc:
             await ai_collect_store.update_task(task_id, {"status": "failed", "throughput": 0})
             raise HTTPException(status_code=503, detail="Failed to enqueue crawler task") from exc
+        await ai_collect_store.append_task_log(task_id, "info", "采集任务已提交到 Celery Worker")
         return task
 
     if body.action == "cancel":
@@ -852,6 +861,7 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
             celery_app.control.revoke(task_id, terminate=True)
         except Exception:
             logger.exception("Failed to revoke workspace task %s", task_id)
+        await ai_collect_store.append_task_log(task_id, "warn", "任务已取消")
         return task
 
     if body.action in {"pause", "resume"}:
@@ -861,12 +871,18 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
         task = await ai_collect_store.set_active_task_status(task_id, current_status, next_status)
         if task is None:
             raise HTTPException(status_code=409, detail=f"Task cannot {body.action} from its current state")
+        await ai_collect_store.append_task_log(
+            task_id,
+            "info",
+            "任务已暂停" if body.action == "pause" else "任务已继续",
+        )
         return task
 
     actions: dict[str, dict[str, Any]] = {
         "start_download": {"status": None, "control_state": None, "download_state": "running", "sync_state": None},
         "pause_download": {"status": None, "control_state": None, "download_state": "paused", "sync_state": None},
         "start_sync": {"status": None, "control_state": None, "download_state": None, "sync_state": "running"},
+        "pause_sync": {"status": None, "control_state": None, "download_state": None, "sync_state": "paused"},
         "cancel_sync": {"status": None, "control_state": None, "download_state": None, "sync_state": "canceled"},
     }
     action = actions.get(body.action)
@@ -875,6 +891,14 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
     task = await ai_collect_store.update_task(task_id, action)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
+    action_log = {
+        "start_download": "下载已开始或继续",
+        "pause_download": "下载已暂停",
+        "start_sync": "同步已开始或继续",
+        "pause_sync": "同步已暂停",
+        "cancel_sync": "同步已取消",
+    }
+    await ai_collect_store.append_task_log(task_id, "info", action_log[body.action])
     return task
 
 

@@ -89,6 +89,9 @@ class PostgresClient:
                     connect_args={
                         "timeout": 10,
                         "command_timeout": 10,
+                        # Multiple long-lived workers share this database while
+                        # startup migrations can change result row shapes.
+                        "prepared_statement_cache_size": 0,
                     },
                 )
                 self._session_factory = async_sessionmaker(

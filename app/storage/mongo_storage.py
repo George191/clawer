@@ -34,6 +34,7 @@ class MongoStorage(StorageBackend):
         self._client = None
         self._db = None
         self._initialized_collections: set[str] = set()
+        self.last_save_stats = {"inserted": 0, "updated": 0, "deleted": 0}
 
     def _get_collection_name(self, template_name: str) -> str:
         return template_name
@@ -201,6 +202,11 @@ class MongoStorage(StorageBackend):
             record_id = meta.get("record_id")
             if record_id:
                 existing_docs[record_id] = doc
+        self.last_save_stats = {
+            "inserted": len(unique_ids) - len(existing_docs),
+            "updated": len(existing_docs),
+            "deleted": 0,
+        }
 
         operations: list[ReplaceOne] = []
         processed_ids: set[str] = set()

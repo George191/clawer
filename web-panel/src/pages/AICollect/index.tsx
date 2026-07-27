@@ -53,6 +53,7 @@ import {
   type DryRunResponse,
   type FieldDef,
   type UrlPreflightResponse,
+  type WorkspaceTask,
   dryRun as dryRunApi,
   generateTemplate as generateTemplateApi,
   preflightUrl,
@@ -1173,6 +1174,7 @@ const AICollect: React.FC = () => {
   const [expandedAdapterStep, setExpandedAdapterStep] = useState<number | null>(0);
   const [selectedReleaseAction, setSelectedReleaseAction] = useState<ReleaseAction>('draft');
   const [selectedTaskPublishMode, setSelectedTaskPublishMode] = useState<TaskPublishMode>('launch');
+  const [workspaceTaskFocus, setWorkspaceTaskFocus] = useState<WorkspaceTask | null>(null);
   const [releaseScheduleKind, setReleaseScheduleKind] = useState<ReleaseScheduleKind>('once');
   const [releaseDailyTime, setReleaseDailyTime] = useState('09:00');
   const [releaseIntervalMinutes, setReleaseIntervalMinutes] = useState(60);
@@ -2715,11 +2717,14 @@ const AICollect: React.FC = () => {
     pushLiveLog('adapter confirmed; task creation is ready');
   }, [adapterReadyForConfirm, adapterWriting, advanceToRelease, pendingConfirmations.adapter, pushLiveLog]);
 
-  const playReleaseCompletionAnimation = useCallback((includeTask: boolean) => {
+  const playReleaseCompletionAnimation = useCallback((includeTask: boolean, fromTaskComposer = false) => {
     if (releaseExitTimerRef.current) return;
 
     const sessionShell = document.querySelector<HTMLElement>('.ai-session-shell');
-    const templateButton = document.querySelector<HTMLElement>('[data-ai-workspace-panel="templates"]');
+    const targetButton = document.querySelector<HTMLElement>(
+      `[data-ai-workspace-panel="${includeTask ? 'tasks' : 'templates'}"]`,
+    );
+    const taskComposer = document.querySelector<HTMLElement>('.workspace-dock-detail.is-task-composer');
 
     const finish = () => {
       const attentionFrames: Keyframe[] = [
@@ -2735,14 +2740,13 @@ const AICollect: React.FC = () => {
         easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
       };
 
-      templateButton?.animate(attentionFrames, attentionOptions);
-      if (includeTask) {
-        document.querySelector<HTMLElement>('[data-ai-workspace-panel="tasks"]')
-          ?.animate(attentionFrames, attentionOptions);
-      }
+      targetButton?.animate(attentionFrames, attentionOptions);
 
-      if (activeWorkspacePanel) {
-        const nextParams = new URLSearchParams(searchParams);
+      const nextParams = new URLSearchParams(searchParams);
+      if (includeTask) {
+        nextParams.set('panel', 'tasks');
+        setSearchParams(nextParams);
+      } else if (activeWorkspacePanel) {
         nextParams.delete('panel');
         setSearchParams(nextParams);
       }
@@ -2755,13 +2759,35 @@ const AICollect: React.FC = () => {
       releaseExitTimerRef.current = null;
     };
 
-    if (!sessionShell || !templateButton) {
+    if (!targetButton) {
+      finish();
+      return;
+    }
+
+    if (fromTaskComposer && taskComposer) {
+      const sourceRect = taskComposer.getBoundingClientRect();
+      const targetRect = targetButton.getBoundingClientRect();
+      const x = targetRect.left + targetRect.width / 2 - (sourceRect.left + sourceRect.width / 2);
+      const y = targetRect.top + targetRect.height / 2 - (sourceRect.top + sourceRect.height / 2);
+      const scale = Math.min(0.08, 30 / Math.max(sourceRect.width, sourceRect.height));
+      taskComposer.animate(
+        [
+          { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' },
+          { opacity: 0, transform: `translate3d(${x}px, ${y}px, 0) scale(${scale})` },
+        ],
+        { duration: 680, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' },
+      );
+      releaseExitTimerRef.current = window.setTimeout(finish, 680);
+      return;
+    }
+
+    if (!sessionShell) {
       finish();
       return;
     }
 
     const shellRect = sessionShell.getBoundingClientRect();
-    const targetRect = templateButton.getBoundingClientRect();
+    const targetRect = targetButton.getBoundingClientRect();
     const x = targetRect.left + targetRect.width / 2 - (shellRect.left + shellRect.width / 2);
     const y = targetRect.top + targetRect.height / 2 - (shellRect.top + shellRect.height / 2);
     const scale = Math.min(0.06, 30 / Math.max(shellRect.width, shellRect.height));
@@ -2787,7 +2813,7 @@ const AICollect: React.FC = () => {
         param.name,
         releaseTaskParamValues[param.name] ?? param.defaultValue,
       ]));
-      await releaseWorkspaceTemplate({
+      const releaseResult = await releaseWorkspaceTemplate({
         analysisId: templateId,
         name: activeTemplate.id === 'empty' ? templateId : activeTemplate.id,
         version: 'v1.0',
@@ -2801,7 +2827,7 @@ const AICollect: React.FC = () => {
         description: releaseTemplateDescription,
         metadata: { field_count: selectedCount },
         task: createsTask ? {
-          name: `${browserPreviewTitle} task`,
+          name: browserPreviewTitle,
           template_name: activeTemplate.id === 'empty' ? templateId : activeTemplate.id,
           template_version: 'v1.0',
           schedule: {
@@ -2822,6 +2848,7 @@ const AICollect: React.FC = () => {
           owner: 'AI Collect',
         } : undefined,
       });
+      if (releaseResult.task) setWorkspaceTaskFocus(releaseResult.task);
       setRunStatus('completed');
       message.success(createsTask
         ? 'Template published and crawl task created'
@@ -9442,6 +9469,11 @@ const AICollect: React.FC = () => {
             adapterCode: workspaceAdapterCode,
           }}
           onTemplateApply={handleWorkspaceTemplateApply}
+          focusTask={workspaceTaskFocus}
+          onTaskCreated={(task) => {
+            setWorkspaceTaskFocus(task);
+            playReleaseCompletionAnimation(true, true);
+          }}
           releaseTaskDefaults={{
             concurrency,
             respectRobots,

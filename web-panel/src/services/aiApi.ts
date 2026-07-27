@@ -231,9 +231,14 @@ export interface WorkspaceTask {
   progress: number;
   records: number;
   throughput: number;
+  inserted_records: number;
+  updated_records: number;
+  deleted_records: number;
+  downloaded_records: number;
+  synced_records: number;
   control_state: 'canceled' | null;
   download_state: 'idle' | 'running' | 'paused';
-  sync_state: 'idle' | 'running' | 'canceled';
+  sync_state: 'idle' | 'running' | 'paused' | 'canceled';
   schedule: Record<string, unknown>;
   parameters: Record<string, unknown>;
   policies: Record<string, unknown>;
@@ -320,12 +325,15 @@ export const releaseWorkspaceTemplate = (
 export const fetchWorkspaceTasks = (): Promise<WorkspaceTask[]> =>
   client.get('/ai/workspace/tasks').then((r) => r.data.items);
 
+export const fetchWorkspaceTask = (taskId: string): Promise<WorkspaceTask> =>
+  client.get(`/ai/workspace/tasks/${taskId}`).then((r) => r.data);
+
 export const createWorkspaceTask = (data: WorkspaceTaskPayload): Promise<WorkspaceTask> =>
   client.post('/ai/workspace/tasks', data).then((r) => r.data);
 
 export const runWorkspaceTaskAction = (
   taskId: string,
-  action: 'start' | 'pause' | 'resume' | 'cancel' | 'start_download' | 'pause_download' | 'start_sync' | 'cancel_sync',
+  action: 'start' | 'pause' | 'resume' | 'cancel' | 'start_download' | 'pause_download' | 'start_sync' | 'pause_sync' | 'cancel_sync',
 ): Promise<WorkspaceTask> =>
   client.post(`/ai/workspace/tasks/${taskId}/action`, { action }).then((r) => r.data);
 
