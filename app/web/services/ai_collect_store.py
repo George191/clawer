@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import re
 from pathlib import Path
@@ -13,11 +12,8 @@ from curl_cffi import requests as curl_requests
 from lxml import html as lxml_html
 
 from app.config.settings import settings
-from app.logger import get_logger
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
-
-logger = get_logger(__name__)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
@@ -26,6 +22,7 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
     version text NOT NULL DEFAULT 'v1.0',
     title text NOT NULL,
     domain text NOT NULL DEFAULT '',
+    data_type text NOT NULL DEFAULT 'other',
     template text NOT NULL DEFAULT '',
     icon text NOT NULL DEFAULT '',
     status text NOT NULL DEFAULT 'draft' CHECK (status IN ('active', 'draft', 'deprecated')),
@@ -39,6 +36,7 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
 );
 ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS template text NOT NULL DEFAULT '';
 ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS icon text NOT NULL DEFAULT '';
+ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS data_type text NOT NULL DEFAULT 'other';
 CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
@@ -59,13 +57,7 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     updated_at timestamptz NOT NULL DEFAULT now(),
     started_at timestamptz
 );
-CREATE TABLE IF NOT EXISTS public.ai_collect_task_logs (
-    id bigserial PRIMARY KEY,
-    task_id uuid NOT NULL REFERENCES public.ai_collect_tasks(id) ON DELETE CASCADE,
-    level text NOT NULL DEFAULT 'info',
-    message text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
+DROP TABLE IF EXISTS public.ai_collect_task_logs;
 CREATE TABLE IF NOT EXISTS public.ai_collect_analyses (
     template_id text PRIMARY KEY,
     source_url text NOT NULL,
@@ -79,11 +71,7 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_analyses (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_collect_templates_status ON public.ai_collect_templates(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_collect_tasks_status ON public.ai_collect_tasks(status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_task ON public.ai_collect_task_logs(task_id, created_at DESC);
 """
-_ARTIFACT_READ_CONCURRENCY = 8
-
-
 class AICollectStore:
     def __init__(self) -> None:
         self._pg = get_pg_client()
@@ -104,37 +92,6 @@ class AICollectStore:
             or (stripped.startswith(b"<?xml") and b"<svg" in stripped[:512])
         )
 
-    @staticmethod
-    def _template_icon_data_url(content: bytes | None) -> str:
-        if not content:
-            return ""
-        stripped = content.lstrip()
-        if content.startswith(b"\x89PNG\r\n\x1a\n"):
-            media_type = "image/png"
-        elif content.startswith(b"\xff\xd8\xff"):
-            media_type = "image/jpeg"
-        elif content.startswith((b"GIF87a", b"GIF89a")):
-            media_type = "image/gif"
-        elif content.startswith(b"RIFF") and content[8:12] == b"WEBP":
-            media_type = "image/webp"
-        elif stripped.startswith(b"<svg") or (stripped.startswith(b"<?xml") and b"<svg" in stripped[:512]):
-            media_type = "image/svg+xml"
-        else:
-            media_type = "image/x-icon"
-        encoded = base64.b64encode(content).decode("ascii")
-        return f"data:{media_type};base64,{encoded}"
-
-    async def _load_template_icon_data_url(self, row: dict[str, Any]) -> str:
-        icon_ref = str(row.get("icon") or "")
-        if not icon_ref:
-            return ""
-        try:
-            content = await get_business_metadata_minio_client().get_object_bytes(icon_ref)
-        except Exception as exc:
-            logger.warning("Failed to load optional template icon %s: %s", icon_ref, exc)
-            return ""
-        return self._template_icon_data_url(content)
-
     async def initialize(self) -> None:
         if self._initialized:
             return
@@ -144,7 +101,6 @@ class AICollectStore:
             await self._pg.init_schema([_DDL])
             await self._migrate_artifact_columns()
             await self._import_local_templates()
-            await self._sync_minio_artifacts()
             self._initialized = True
 
     async def _migrate_artifact_columns(self) -> None:
@@ -326,16 +282,20 @@ class AICollectStore:
                 await self._pg.execute(
                     """
                     INSERT INTO public.ai_collect_templates
-                        (name, version, title, domain, status, adapter, description)
+                        (name, version, title, domain, data_type, status, adapter, description)
                     VALUES
-                        (:name, :version, :title, :domain, 'active', :adapter, :description)
-                    ON CONFLICT (name, version) DO NOTHING
+                        (:name, :version, :title, :domain, :data_type, 'active', :adapter, :description)
+                    ON CONFLICT (name, version) DO UPDATE SET
+                        data_type = EXCLUDED.data_type
+                    WHERE public.ai_collect_templates.data_type = 'other'
+                      AND EXCLUDED.data_type <> 'other'
                     """,
                     {
                         "name": name,
                         "version": version,
                         "title": title,
                         "domain": domain,
+                        "data_type": str(raw.get("data_type") or "other"),
                         "adapter": adapter_path.as_posix() if adapter_path.exists() else "",
                         "description": str(raw.get("description") or ""),
                     },
@@ -382,6 +342,16 @@ class AICollectStore:
         safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._") or "template"
         safe_version = re.sub(r"[^A-Za-z0-9_.-]+", "_", version).strip("._") or "v1"
         return f"collection/templates/{safe_name}/{safe_version}"
+
+    @staticmethod
+    def _template_data_type(template_yaml: str) -> str:
+        try:
+            raw = yaml.safe_load(template_yaml)
+        except yaml.YAMLError:
+            return "other"
+        if not isinstance(raw, dict):
+            return "other"
+        return str(raw.get("data_type") or "other").strip().lower() or "other"
 
     async def _upload_template_yaml(self, name: str, version: str, yaml_content: str) -> str:
         object_key = f"{self._artifact_prefix(name, version)}/template.yaml"
@@ -439,28 +409,16 @@ class AICollectStore:
             """
         )
         minio = get_business_metadata_minio_client()
-
-        semaphore = asyncio.Semaphore(_ARTIFACT_READ_CONCURRENCY)
-
-        async def populate_artifacts(row: dict[str, Any]) -> None:
+        for row in rows:
+            template_ref = str(row.get("template") or "")
+            icon_ref = str(row.get("icon") or "")
             adapter_ref = str(row.get("adapter") or "")
-            async with semaphore:
-                template_bytes = await minio.get_object_bytes(str(row.get("template") or ""))
-            adapter_bytes = None
-            if adapter_ref.startswith("app/adapters/"):
-                adapter_path = Path(__file__).parents[3] / adapter_ref
-                if adapter_path.is_file():
-                    adapter_bytes = await asyncio.to_thread(adapter_path.read_bytes)
-            elif adapter_ref:
-                async with semaphore:
-                    adapter_bytes = await minio.get_object_bytes(adapter_ref)
-            async with semaphore:
-                favicon_url = await self._load_template_icon_data_url(row)
-            row["yaml_content"] = template_bytes.decode("utf-8") if template_bytes else ""
-            row["adapter_code"] = adapter_bytes.decode("utf-8") if adapter_bytes else ""
-            row["favicon_url"] = favicon_url
-
-        await asyncio.gather(*(populate_artifacts(row) for row in rows))
+            row["template_path"] = template_ref
+            row["template"] = minio.build_object_url(template_ref)
+            row["icon"] = minio.build_object_url(icon_ref)
+            row["favicon_url"] = row["icon"]
+            if adapter_ref and not adapter_ref.startswith("app/adapters/"):
+                row["adapter"] = minio.build_object_url(adapter_ref)
         return rows
 
     async def update_template(self, template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -476,6 +434,7 @@ class AICollectStore:
             str(current["version"]),
             str(payload["yaml_content"]),
         )
+        data_type = self._template_data_type(str(payload["yaml_content"]))
         adapter_code = str(payload.get("adapter_code") or "")
         adapter_key = (
             await self._upload_adapter_code(str(current["name"]), str(current["version"]), adapter_code)
@@ -486,17 +445,26 @@ class AICollectStore:
             UPDATE public.ai_collect_templates SET
                 template = :template,
                 adapter = :adapter,
+                data_type = :data_type,
                 description = :description,
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
             RETURNING *
             """,
-            {"id": template_id, "template": template_key, **payload, "adapter": adapter_key},
+            {
+                "id": template_id,
+                "template": template_key,
+                "data_type": data_type,
+                **payload,
+                "adapter": adapter_key,
+            },
         )
         if row is not None:
             row["yaml_content"] = payload["yaml_content"]
             row["adapter_code"] = adapter_code
-            row["favicon_url"] = await self._load_template_icon_data_url(row)
+            row["favicon_url"] = get_business_metadata_minio_client().build_object_url(
+                str(row.get("icon") or "")
+            )
         return row
 
     async def release_template(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -506,6 +474,7 @@ class AICollectStore:
             str(payload["version"]),
             str(payload["yaml_content"]),
         )
+        data_type = self._template_data_type(str(payload["yaml_content"]))
         adapter_code = str(payload.get("adapter_code") or "")
         adapter_key = (
             await self._upload_adapter_code(str(payload["name"]), str(payload["version"]), adapter_code)
@@ -523,13 +492,14 @@ class AICollectStore:
         row = await self._pg.fetch_one(
             """
             INSERT INTO public.ai_collect_templates
-                (name, version, title, domain, template, icon, status, adapter, description, metadata)
+                (name, version, title, domain, data_type, template, icon, status, adapter, description, metadata)
             VALUES
-                (:name, :version, :title, :domain, :template, :icon, :status, :adapter,
+                (:name, :version, :title, :domain, :data_type, :template, :icon, :status, :adapter,
                  :description, CAST(:metadata AS jsonb))
             ON CONFLICT (name, version) DO UPDATE SET
                 title = EXCLUDED.title,
                 domain = EXCLUDED.domain,
+                data_type = EXCLUDED.data_type,
                 template = EXCLUDED.template,
                 icon = EXCLUDED.icon,
                 status = EXCLUDED.status,
@@ -542,6 +512,7 @@ class AICollectStore:
             {
                 **payload,
                 "template": template_key,
+                "data_type": data_type,
                 "adapter": adapter_key,
                 "icon": icon_key,
                 "metadata": json.dumps(payload.get("metadata", {}), ensure_ascii=False),
@@ -551,33 +522,17 @@ class AICollectStore:
             raise RuntimeError("Template release did not return a row")
         row["yaml_content"] = payload["yaml_content"]
         row["adapter_code"] = adapter_code
-        row["favicon_url"] = await self._load_template_icon_data_url(row)
+        row["favicon_url"] = get_business_metadata_minio_client().build_object_url(
+            str(row.get("icon") or "")
+        )
         return row
 
     async def list_tasks(self) -> list[dict[str, Any]]:
         await self.initialize()
         return await self._pg.fetch_all(
             """
-            SELECT task.*,
-                   COALESCE(logs.items, '[]'::jsonb) AS logs
+            SELECT task.*, '[]'::jsonb AS logs
             FROM public.ai_collect_tasks task
-            LEFT JOIN LATERAL (
-                SELECT jsonb_agg(
-                           jsonb_build_object(
-                               'level', recent.level,
-                               'message', recent.message,
-                               'created_at', recent.created_at
-                           )
-                           ORDER BY recent.created_at DESC
-                       ) AS items
-                FROM (
-                    SELECT level, message, created_at
-                    FROM public.ai_collect_task_logs
-                    WHERE task_id = task.id
-                    ORDER BY created_at DESC
-                    LIMIT 100
-                ) recent
-            ) logs ON TRUE
             ORDER BY task.updated_at DESC
             """
         )
@@ -590,7 +545,7 @@ class AICollectStore:
                 (name, template_name, template_version, status, schedule, parameters, policies, owner, started_at)
             VALUES
                 (:name, :template_name, :template_version, 'queued', CAST(:schedule AS jsonb),
-                 CAST(:parameters AS jsonb), CAST(:policies AS jsonb), :owner, now())
+                 CAST(:parameters AS jsonb), CAST(:policies AS jsonb), :owner, NULL)
             RETURNING *
             """,
             {
@@ -602,44 +557,102 @@ class AICollectStore:
         )
         if task is None:
             raise RuntimeError("Task creation did not return a row")
-        await self.add_task_log(str(task["id"]), "info", "task created and queued")
-        task["logs"] = await self._pg.fetch_all(
-            "SELECT level, message, created_at FROM public.ai_collect_task_logs WHERE task_id = :task_id ORDER BY created_at DESC",
-            {"task_id": task["id"]},
-        )
+        task["logs"] = []
         return task
 
-    async def update_task(self, task_id: str, changes: dict[str, Any], level: str, message: str) -> dict[str, Any] | None:
+    async def update_task(self, task_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
         await self.initialize()
         task = await self._pg.fetch_one(
             """
             UPDATE public.ai_collect_tasks SET
                 status = COALESCE(:status, status),
+                progress = COALESCE(:progress, progress),
+                records = COALESCE(:records, records),
+                throughput = COALESCE(:throughput, throughput),
                 control_state = COALESCE(:control_state, control_state),
                 download_state = COALESCE(:download_state, download_state),
                 sync_state = COALESCE(:sync_state, sync_state),
+                started_at = CASE WHEN :start_now THEN now() ELSE started_at END,
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
             RETURNING *
             """,
-            {"id": task_id, **changes},
+            {
+                "id": task_id,
+                "progress": None,
+                "records": None,
+                "throughput": None,
+                "control_state": None,
+                "download_state": None,
+                "sync_state": None,
+                "start_now": False,
+                **changes,
+            },
         )
         if task:
-            await self.add_task_log(task_id, level, message)
-            task["logs"] = await self._pg.fetch_all(
-                "SELECT level, message, created_at FROM public.ai_collect_task_logs WHERE task_id = :task_id ORDER BY created_at DESC LIMIT 100",
-                {"task_id": task_id},
-            )
+            task["logs"] = []
         return task
 
-    async def add_task_log(self, task_id: str, level: str, message: str) -> None:
-        await self._pg.execute(
+    async def start_task(self, task_id: str) -> dict[str, Any] | None:
+        """Atomically claim a queued workspace task for execution."""
+        await self.initialize()
+        task = await self._pg.fetch_one(
             """
-            INSERT INTO public.ai_collect_task_logs (task_id, level, message)
-            VALUES (CAST(:task_id AS uuid), :level, :message)
+            UPDATE public.ai_collect_tasks SET
+                status = 'running',
+                started_at = now(),
+                updated_at = now()
+            WHERE id = CAST(:id AS uuid) AND status = 'queued'
+            RETURNING *
             """,
-            {"task_id": task_id, "level": level, "message": message},
+            {"id": task_id},
         )
+        if task:
+            task["logs"] = []
+        return task
+
+    async def set_active_task_status(
+        self,
+        task_id: str,
+        current_status: str,
+        next_status: str,
+    ) -> dict[str, Any] | None:
+        """Transition an active task only from its expected current state."""
+        await self.initialize()
+        task = await self._pg.fetch_one(
+            """
+            UPDATE public.ai_collect_tasks SET
+                status = :next_status,
+                updated_at = now()
+            WHERE id = CAST(:id AS uuid) AND status = :current_status
+            RETURNING *
+            """,
+            {"id": task_id, "current_status": current_status, "next_status": next_status},
+        )
+        if task:
+            task["logs"] = []
+        return task
+
+    async def get_task(self, task_id: str) -> dict[str, Any] | None:
+        await self.initialize()
+        return await self._pg.fetch_one(
+            "SELECT *, '[]'::jsonb AS logs FROM public.ai_collect_tasks WHERE id = CAST(:id AS uuid)",
+            {"id": task_id},
+        )
+
+    async def delete_task(self, task_id: str) -> bool:
+        """Delete an unstarted or terminal task; active tasks must be canceled first."""
+        await self.initialize()
+        deleted = await self._pg.fetch_one(
+            """
+            DELETE FROM public.ai_collect_tasks
+            WHERE id = CAST(:id AS uuid)
+              AND status NOT IN ('running', 'paused')
+            RETURNING id
+            """,
+            {"id": task_id},
+        )
+        return deleted is not None
 
 
 ai_collect_store = AICollectStore()

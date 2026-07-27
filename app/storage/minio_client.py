@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from io import BytesIO
 from pathlib import Path
 
@@ -19,9 +20,10 @@ logger = get_logger(__name__)
 
 
 class MinioClient:
-    def __init__(self, bucket: str | None = None) -> None:
+    def __init__(self, bucket: str | None = None, public_read: bool = False) -> None:
         self._client = None
         self._bucket = bucket or settings.minio_bucket
+        self._public_read = public_read
         self._connection_lock = asyncio.Lock()
 
     async def _ensure_connection(self) -> None:
@@ -45,6 +47,23 @@ class MinioClient:
             if not self._client.bucket_exists(self._bucket):
                 self._client.make_bucket(self._bucket)
                 logger.info("Created MinIO bucket: %s", self._bucket)
+            if self._public_read:
+                self._client.set_bucket_policy(
+                    self._bucket,
+                    json.dumps(
+                        {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Principal": {"AWS": ["*"]},
+                                    "Action": ["s3:GetObject"],
+                                    "Resource": [f"arn:aws:s3:::{self._bucket}/*"],
+                                }
+                            ],
+                        }
+                    ),
+                )
             logger.info("Connected to MinIO: %s", settings.minio_endpoint)
         except Exception as e:
             logger.error("Failed to connect to MinIO: %s", e)
@@ -58,9 +77,17 @@ class MinioClient:
     ) -> str:
         return f"{data_type}/{template_name}/{filename}"
 
+    def build_object_url(self, object_key: str) -> str:
+        if not object_key or object_key.startswith(("http://", "https://")):
+            return object_key
+        endpoint = settings.minio_endpoint.rstrip("/")
+        if not endpoint.startswith(("http://", "https://")):
+            scheme = "https" if settings.minio_secure else "http"
+            endpoint = f"{scheme}://{endpoint}"
+        return f"{endpoint}/{self._bucket}/{object_key.lstrip('/')}"
+
     def _build_file_url(self, object_key: str) -> str:
-        scheme = "https" if settings.minio_secure else "http"
-        return f"{scheme}://{settings.minio_endpoint}/{self._bucket}/{object_key}"
+        return self.build_object_url(object_key)
 
     async def upload_file(
         self,
@@ -236,5 +263,5 @@ _business_metadata_minio_client: MinioClient | None = None
 def get_business_metadata_minio_client() -> MinioClient:
     global _business_metadata_minio_client
     if _business_metadata_minio_client is None:
-        _business_metadata_minio_client = MinioClient(settings.business_metadata_minio_bucket)
+        _business_metadata_minio_client = MinioClient(settings.business_metadata_minio_bucket, public_read=True)
     return _business_metadata_minio_client

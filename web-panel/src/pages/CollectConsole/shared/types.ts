@@ -25,6 +25,8 @@ export interface TemplateAsset {
   taskCount: number;
   faviconUrl?: string;
   dataType?: string;
+  templateUrl?: string;
+  templatePath?: string;
 }
 
 export interface CollectTask {

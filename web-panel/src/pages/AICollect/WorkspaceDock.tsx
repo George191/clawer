@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Checkbox, Input, InputNumber, Segmented, Select, Switch, Tooltip, Typography, Upload } from 'antd';
+import { Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Tooltip, Typography, Upload } from 'antd';
 import {
   BellOutlined,
   CaretRightOutlined,
@@ -9,6 +9,7 @@ import {
   CloseOutlined,
   CodeOutlined,
   DeploymentUnitOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -25,6 +26,7 @@ import {
 } from '@ant-design/icons';
 import {
   createWorkspaceTask,
+  deleteWorkspaceTask,
   fetchWorkspaceTasks,
   fetchWorkspaceTemplates,
   runWorkspaceTaskAction,
@@ -74,7 +76,7 @@ type TaskIncrementalMode = 'time_window' | 'stop_condition';
 type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLookbackUnit = 'hour' | 'day';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
-type SiteKind = 'news' | 'patent' | 'intelligence' | 'warning' | 'signal' | 'generic';
+type SiteKind = 'news' | 'patent' | 'intelligence' | 'warning' | 'signal' | 'game' | 'generic';
 
 interface TemplateDraft {
   adapter: string;
@@ -488,12 +490,19 @@ const incrementalModeMeta: Record<TaskIncrementalMode, { label: string }> = {
   stop_condition: { label: '阈值停止规则' },
 };
 
+const GamepadGlyph = () => (
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+    <path d="M7.1 6h9.8a4.5 4.5 0 0 1 4.2 3l1.5 4.3a3.2 3.2 0 0 1-5 3.6l-1.8-1.4H8.2l-1.8 1.4a3.2 3.2 0 0 1-5-3.6L2.9 9A4.5 4.5 0 0 1 7.1 6Zm-1.6 4v1.5H4V13h1.5v1.5H7V13h1.5v-1.5H7V10H5.5Zm11.8.5a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2Zm2.7 2.7a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2Z" />
+  </svg>
+);
+
 const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tint: string }> = {
   news: { icon: <ReadOutlined />, label: '新闻', tint: '#BFA8FF' },
   patent: { icon: <ExperimentOutlined />, label: '专利', tint: '#8AB4FF' },
   intelligence: { icon: <RadarChartOutlined />, label: '情报', tint: '#7DD3FC' },
   warning: { icon: <BellOutlined />, label: '告警', tint: '#F6C35B' },
   signal: { icon: <DeploymentUnitOutlined />, label: '信号', tint: '#65D5A3' },
+  game: { icon: <GamepadGlyph />, label: '游戏', tint: '#FFFFFF' },
   generic: { icon: <CodeOutlined />, label: '通用', tint: '#A0AEC0' },
 };
 
@@ -590,8 +599,18 @@ const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
   icon: 'code',
   taskCount: item.task_count,
   faviconUrl: item.favicon_url,
-  dataType: extractTemplateDataType(item.yaml_content ?? ''),
+  dataType: item.data_type ?? extractTemplateDataType(item.yaml_content ?? ''),
+  templateUrl: item.template,
+  templatePath: item.template_path,
 });
+
+const fetchArtifactText = async (url: string, label: string) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`${label} request failed with status ${response.status}`);
+  }
+  return response.text();
+};
 
 const mapWorkspaceTask = (item: WorkspaceTask): CollectTask => ({
   key: item.id,
@@ -639,6 +658,7 @@ const toAvatarLabel = (value: string) => {
 
 const inferSiteKind = (value: string): SiteKind => {
   const text = value.toLowerCase();
+  if (text.includes('game') || text.includes('游戏')) return 'game';
   if (text.includes('patent') || text.includes('专利')) return 'patent';
   if (text.includes('warn') || text.includes('warning') || text.includes('告警')) return 'warning';
   if (text.includes('notice') || text.includes('news') || text.includes('公告') || text.includes('新闻')) return 'news';
@@ -829,11 +849,13 @@ const TaskPulseGlyph: React.FC<{ kind: SiteKind; active?: boolean; className?: s
 );
 
 const SiteLogoMark: React.FC<{ site: SiteProfile; faviconUrl?: string }> = ({ site, faviconUrl }) => {
-  const [failed, setFailed] = useState(false);
+  const [failedSource, setFailedSource] = useState('');
   const source = faviconUrl || site.faviconUrl;
   return (
     <i className="workspace-dock-meta-logo" style={{ '--brand-hue': site.hue } as React.CSSProperties} aria-hidden="true">
-      {source && !failed ? <img src={source} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : site.logo}
+      {source && source !== failedSource
+        ? <img src={source} alt="" referrerPolicy="no-referrer" onError={() => setFailedSource(source)} />
+        : site.logo}
     </i>
   );
 };
@@ -874,12 +896,17 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 }) => {
   const bodyScrollRef = useRef<HTMLDivElement>(null);
   const templateSaveTimerRef = useRef<number | null>(null);
+  const templateListRequestRef = useRef<Promise<WorkspaceTemplate[]> | null>(null);
+  const templateDetailRequestRef = useRef(0);
+  const taskListRequestRef = useRef<Promise<WorkspaceTask[]> | null>(null);
   const [templates, setTemplates] = useState<TemplateAsset[]>([]);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
   const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
   const [taskTemplateFilter, setTaskTemplateFilter] = useState<string | null>(null);
   const [templateDetailMode, setTemplateDetailMode] = useState<TemplateDetailMode>('overview');
+  const [templateDetailLoading, setTemplateDetailLoading] = useState(false);
+  const [templateDetailError, setTemplateDetailError] = useState('');
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
   const [templateVisibleCount, setTemplateVisibleCount] = useState(defaultPageSize);
@@ -959,42 +986,39 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const applyWorkspaceTemplates = useCallback((items: WorkspaceTemplate[]) => {
     setTemplates(items.map(mapWorkspaceTemplate));
-    setTemplateDrafts(Object.fromEntries(items.map((item) => [item.id, {
+    setTemplateDrafts((current) => Object.fromEntries(items.map((item) => [item.id, {
       adapter: item.adapter,
-      adapterCode: item.adapter_code ?? '',
+      adapterCode: item.adapter_code ?? current[item.id]?.adapterCode ?? '',
       notes: item.description,
-      yaml: item.yaml_content ?? '',
+      yaml: item.yaml_content ?? current[item.id]?.yaml ?? '',
       savedAt: item.updated_at,
     }])));
   }, []);
 
   const refreshWorkspaceTemplates = useCallback(async () => {
-    applyWorkspaceTemplates(await fetchWorkspaceTemplates());
+    if (!templateListRequestRef.current) {
+      templateListRequestRef.current = fetchWorkspaceTemplates();
+    }
+    try {
+      applyWorkspaceTemplates(await templateListRequestRef.current);
+    } finally {
+      templateListRequestRef.current = null;
+    }
   }, [applyWorkspaceTemplates]);
 
   const refreshWorkspaceTasks = useCallback(async () => {
-    applyWorkspaceTasks(await fetchWorkspaceTasks());
+    if (!taskListRequestRef.current) {
+      taskListRequestRef.current = fetchWorkspaceTasks();
+    }
+    try {
+      applyWorkspaceTasks(await taskListRequestRef.current);
+    } finally {
+      taskListRequestRef.current = null;
+    }
   }, [applyWorkspaceTasks]);
 
   useEffect(() => {
-    let active = true;
-    const timer = window.setTimeout(() => {
-      Promise.all([fetchWorkspaceTemplates(), fetchWorkspaceTasks()])
-        .then(([templateItems, taskItemsResponse]) => {
-          if (!active) return;
-          applyWorkspaceTemplates(templateItems);
-          applyWorkspaceTasks(taskItemsResponse);
-        })
-        .catch((error) => console.error('Failed to load AI Collect workspace', error));
-    }, 0);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
-  }, [applyWorkspaceTasks, applyWorkspaceTemplates]);
-
-  useEffect(() => {
-    if (activePanel !== 'templates') return;
+    if (activePanel !== 'templates' && activePanel !== 'tasks') return;
     void refreshWorkspaceTemplates().catch((error) => {
       console.error('Failed to refresh templates', error);
     });
@@ -1014,7 +1038,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         if (active) timer = window.setTimeout(refresh, 5000);
       }
     };
-    timer = window.setTimeout(refresh, 5000);
+    void refresh();
 
     return () => {
       active = false;
@@ -1097,9 +1121,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   );
   const selectedTemplateDraft = selectedTemplate ? templateDrafts[selectedTemplate.key] : null;
   const templateTaskCounts = useMemo<Record<string, number>>(() => Object.fromEntries(
-    templates.map((item) => [item.key, taskItems.filter(
+    templates.map((item) => [item.key, Math.max(item.taskCount, taskItems.filter(
       (taskItem) => normalizeTemplateKey(taskItem.template) === normalizeTemplateKey(item.name),
-    ).length]),
+    ).length)]),
   ) as Record<string, number>, [taskItems, templates]);
   const visibleTemplateRows = useMemo(
     () => templateRows.slice(0, templateVisibleCount),
@@ -1433,12 +1457,65 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, []);
 
   const handlePauseTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'pause');
+  const handleStartTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start');
   const handleResumeTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'resume');
   const handleCancelTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'cancel');
-  const handleStartDownload = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start_download');
-  const handlePauseDownload = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'pause_download');
-  const handleStartSync = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start_sync');
-  const handleCancelSync = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'cancel_sync');
+  const handleDeleteTask = useCallback(async (taskKey: string) => {
+    try {
+      await deleteWorkspaceTask(taskKey);
+      setTaskItems((prev) => prev.filter((item) => item.key !== taskKey));
+      setTaskRuntime((prev) => {
+        const next = { ...prev };
+        delete next[taskKey];
+        return next;
+      });
+      setSelectedTaskKey((current) => (current === taskKey ? null : current));
+    } catch (error) {
+      console.error('Failed to delete task', error);
+    }
+  }, []);
+
+  const handleTemplateSelect = useCallback(async (item: TemplateAsset) => {
+    const requestId = templateDetailRequestRef.current + 1;
+    templateDetailRequestRef.current = requestId;
+    setSelectedTemplateKey(item.key);
+    setTemplateDetailError('');
+    setTemplateDetailLoading(true);
+    if (!taskComposerOpen) setTemplateDetailMode('overview');
+
+    try {
+      if (!item.templateUrl) throw new Error('Template artifact URL is missing');
+      const templateYaml = await fetchArtifactText(item.templateUrl, 'Template artifact');
+      if (templateDetailRequestRef.current !== requestId) return;
+      const detailDraft = {
+        adapter: item.adapter,
+        adapterCode: templateDrafts[item.key]?.adapterCode ?? '',
+        notes: item.description,
+        yaml: templateYaml,
+        savedAt: item.lastRun,
+      };
+      setTemplateDrafts((current) => ({ ...current, [item.key]: detailDraft }));
+      if (taskComposerOpen) {
+        const templateValue = `${item.name}@${item.version}`;
+        setTaskComposerDraft((current) => ({
+          ...current,
+          template: templateValue,
+          templateLocked: true,
+          templateParams: extractTaskTemplateParameterDrafts(detailDraft.yaml),
+          incrementalField: inferIncrementalField(templateValue),
+          stopField: inferIncrementalField(templateValue),
+        }));
+      }
+    } catch (error) {
+      if (templateDetailRequestRef.current !== requestId) return;
+      setTemplateDetailError('Failed to load template artifacts');
+      console.error('Failed to load template artifacts', error);
+    } finally {
+      if (templateDetailRequestRef.current === requestId) {
+        setTemplateDetailLoading(false);
+      }
+    }
+  }, [taskComposerOpen, templateDrafts]);
 
   const renderTemplateList = () => (
     <div className="workspace-dock-list is-templates">
@@ -1460,21 +1537,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             type="button"
             key={item.key}
             className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''} ${isPinned ? 'is-pinned' : ''}`}
-            onClick={() => {
-              setSelectedTemplateKey(item.key);
-              if (taskComposerOpen) {
-                updateTaskComposerTemplate(`${item.name}@${item.version}`, { templateLocked: true });
-              } else {
-                setTemplateDetailMode('overview');
-              }
-            }}
+            onClick={() => void handleTemplateSelect(item)}
           >
             <div className="workspace-dock-card-row">
               <div className="workspace-dock-card-main">
-                <span className="workspace-dock-card-icon"><TemplateGlyph kind={inferSiteKind(item.dataType || item.name)} /></span>
                 <div className="workspace-dock-card-copy">
                   <div className="workspace-dock-card-titleline">
-                    <Text strong>{item.title}</Text>
+                    <span className="workspace-dock-card-title-leading">
+                      <span className="workspace-dock-card-icon">
+                        <TemplateGlyph kind={inferSiteKind(item.dataType || item.name)} />
+                      </span>
+                      <Text strong>{item.title}</Text>
+                    </span>
                     <span className="workspace-dock-card-title-actions">
                       <span
                         className={`workspace-dock-card-pin ${isPinned ? 'is-pinned' : ''}`}
@@ -1486,7 +1560,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                     </span>
                   </div>
                   <div className="workspace-dock-card-subline">
-                    <Text type="secondary">{draft.adapter}</Text>
+                    <Text type="secondary" className="workspace-dock-card-subtitle">{item.templatePath}</Text>
                     {statusIcon ? (
                       <span className="workspace-dock-card-runtime">
                         <span className="workspace-dock-card-state" style={{ color: status.color }}>
@@ -1521,7 +1595,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 >
                   {linkedTaskCount}
                 </span>
-                <span> tasks</span>
+                <span>tasks</span>
               </span>
             </div>
 
@@ -2253,6 +2327,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 type="button"
                 className="workspace-dock-detail-icon-btn"
                 aria-label="创建任务"
+                disabled={templateDetailLoading}
                 onClick={() => {
                   openTaskComposer({
                     name: `${selectedTemplate.title} task`,
@@ -2271,6 +2346,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 className={`workspace-dock-detail-icon-btn ${templateDetailMode === 'edit' ? 'is-pinned' : ''}`}
                 aria-label="编辑模板"
                 aria-pressed={templateDetailMode === 'edit'}
+                disabled={templateDetailLoading}
                 onClick={() => {
                   if (templateDetailMode === 'overview') {
                     onTemplateApply?.({
@@ -2292,6 +2368,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               className="workspace-dock-detail-close"
               aria-label="关闭模板详情"
               onClick={() => {
+                templateDetailRequestRef.current += 1;
+                setTemplateDetailLoading(false);
+                setTemplateDetailError('');
                 setTemplateDetailMode('overview');
                 setSelectedTemplateKey(null);
               }}
@@ -2301,7 +2380,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           </div>
         </div>
 
-        {templateDetailMode === 'overview' ? (
+        {templateDetailLoading ? (
+          <div className="workspace-dock-empty">Loading template artifacts…</div>
+        ) : templateDetailError ? (
+          <div className="workspace-dock-empty">{templateDetailError}</div>
+        ) : templateDetailMode === 'overview' ? (
           <div className="workspace-dock-detail-body">
             <div className="workspace-dock-inline-meta">
               <span className="is-domain">域名 {selectedTemplate.domain}</span>
@@ -2373,6 +2456,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
     const { runtime, display } = selectedTask;
     const taskCanceled = runtime.controlState === 'canceled';
+    const taskDeletable = runtime.status === 'queued' || runtime.status === 'completed' || runtime.status === 'failed';
     const taskPinned = Boolean(pinnedTaskKeys[selectedTask.key]);
 
     return (
@@ -2386,6 +2470,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           </div>
           <div className="workspace-dock-detail-head-actions">
+            {runtime.status === 'queued' ? (
+              <Tooltip title="启动任务" placement="top">
+                <button
+                  type="button"
+                  className="workspace-dock-detail-icon-btn is-run"
+                  aria-label="启动任务"
+                  onClick={() => handleStartTask(selectedTask.key)}
+                >
+                  <CaretRightOutlined />
+                </button>
+              </Tooltip>
+            ) : null}
             {runtime.status === 'running' && runtime.controlState !== 'canceled' ? (
               <Tooltip title="暂停任务" placement="top">
                 <button
@@ -2398,7 +2494,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Tooltip>
             ) : null}
-            {(runtime.status === 'paused' || (runtime.status === 'failed' && runtime.controlState !== 'canceled')) ? (
+            {runtime.status === 'paused' ? (
               <Tooltip title="继续任务" placement="top">
                 <button
                   type="button"
@@ -2422,56 +2518,24 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Tooltip>
             ) : null}
-            {runtime.downloadState === 'running' ? (
-              <Tooltip title="暂停下载" placement="top">
+            {taskDeletable ? (
+              <Popconfirm
+                title="删除任务？"
+                description="任务及其运行记录将被删除，无法恢复。"
+                okText="删除"
+                cancelText="保留"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => handleDeleteTask(selectedTask.key)}
+              >
                 <button
                   type="button"
-                  className="workspace-dock-detail-icon-btn is-download"
-                  aria-label="暂停下载"
-                  disabled={taskCanceled}
-                  onClick={() => handlePauseDownload(selectedTask.key)}
+                  className="workspace-dock-detail-icon-btn is-danger"
+                  aria-label="删除任务"
                 >
-                  <PauseCircleOutlined />
+                  <DeleteOutlined />
                 </button>
-              </Tooltip>
-            ) : (
-              <Tooltip title="下载资源" placement="top">
-                <button
-                  type="button"
-                  className="workspace-dock-detail-icon-btn is-download"
-                  aria-label="下载资源"
-                  disabled={taskCanceled}
-                  onClick={() => handleStartDownload(selectedTask.key)}
-                >
-                  <DownloadOutlined />
-                </button>
-              </Tooltip>
-            )}
-            {runtime.syncState === 'running' ? (
-              <Tooltip title="取消同步" placement="top">
-                <button
-                  type="button"
-                  className="workspace-dock-detail-icon-btn is-sync"
-                  aria-label="取消同步"
-                  disabled={taskCanceled}
-                  onClick={() => handleCancelSync(selectedTask.key)}
-                >
-                  <CloseCircleOutlined />
-                </button>
-              </Tooltip>
-            ) : (
-              <Tooltip title="开始同步" placement="top">
-                <button
-                  type="button"
-                  className="workspace-dock-detail-icon-btn is-sync"
-                  aria-label="开始同步"
-                  disabled={taskCanceled}
-                  onClick={() => handleStartSync(selectedTask.key)}
-                >
-                  <SyncOutlined />
-                </button>
-              </Tooltip>
-            )}
+              </Popconfirm>
+            ) : null}
             <button
               type="button"
               className="workspace-dock-detail-close"
@@ -2731,7 +2795,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           overflow: hidden;
         }
         .workspace-dock-list.is-templates .workspace-dock-card-footer {
-          margin-top: 5px;
+          margin-top: 12px;
         }
         .workspace-dock-list.is-tasks {
           gap: 6px;
@@ -2788,10 +2852,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-card-icon {
           flex-shrink: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
           color: rgba(255, 255, 255, 0.68);
           font-size: 13px;
           line-height: 18px;
-          margin-top: 1px;
         }
         .workspace-dock-card-copy {
           min-width: 0;
@@ -2803,6 +2869,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           justify-content: space-between;
           gap: 10px;
           min-width: 0;
+        }
+        .workspace-dock-card-title-leading {
+          min-width: 0;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .workspace-dock-card-title-leading {
+          flex: 1;
         }
         .workspace-dock-card-titleline .ant-typography {
           min-width: 0;
@@ -2825,10 +2900,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-card-subline {
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           justify-content: space-between;
           gap: 8px;
           margin-top: 2px;
+        }
+        .workspace-dock-card-subtitle.ant-typography-secondary {
+          min-width: 0;
+          flex: 1;
+          margin-top: 0;
+          white-space: normal;
+          line-height: 1.4;
+          display: -webkit-box;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 2;
         }
         .workspace-dock-card-runtime {
           display: inline-flex;
@@ -2951,6 +3036,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-size: 10px;
           line-height: 1.3;
         }
+        .workspace-dock-list.is-templates .workspace-dock-card-footer {
+          font-size: 9px;
+          line-height: 1;
+        }
         .workspace-dock-card-footer span {
           min-width: 0;
           overflow: hidden;
@@ -2960,6 +3049,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-linked-tasks {
           display: inline-flex;
           align-items: center;
+          gap: 4px;
           color: ${aura.subtle};
         }
         .workspace-dock-linked-task-count {
@@ -3891,6 +3981,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         @media (max-width: 960px) {
           .workspace-dock-panel.is-detail .workspace-dock-stack {
             grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: repeat(2, minmax(0, 1fr));
           }
           .workspace-dock-panel.is-detail .workspace-dock-master {
             width: auto;

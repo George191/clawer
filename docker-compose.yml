@@ -174,13 +174,7 @@ services:
     volumes:
       - ./templates:/app/templates:ro
     working_dir: /app
-    command:
-      [
-        "python",
-        "-m",
-        "app.crawler.main",
-        "google_patent:keyword=patent",
-      ]
+    command: celery -A app.scheduler.celery_app worker --loglevel=info
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
       interval: 60s

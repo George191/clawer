@@ -200,9 +200,13 @@ export interface WorkspaceTemplate {
   version: string;
   title: string;
   domain: string;
-  favicon_url: string;
+  data_type?: string;
+  template?: string;
+  template_path?: string;
+  icon?: string;
+  favicon_url?: string;
   status: 'active' | 'draft' | 'deprecated';
-  yaml_content: string;
+  yaml_content?: string;
   adapter: string;
   adapter_code?: string;
   description: string;
@@ -321,6 +325,9 @@ export const createWorkspaceTask = (data: WorkspaceTaskPayload): Promise<Workspa
 
 export const runWorkspaceTaskAction = (
   taskId: string,
-  action: 'pause' | 'resume' | 'cancel' | 'start_download' | 'pause_download' | 'start_sync' | 'cancel_sync',
+  action: 'start' | 'pause' | 'resume' | 'cancel' | 'start_download' | 'pause_download' | 'start_sync' | 'cancel_sync',
 ): Promise<WorkspaceTask> =>
   client.post(`/ai/workspace/tasks/${taskId}/action`, { action }).then((r) => r.data);
+
+export const deleteWorkspaceTask = (taskId: string): Promise<void> =>
+  client.delete(`/ai/workspace/tasks/${taskId}`).then(() => undefined);

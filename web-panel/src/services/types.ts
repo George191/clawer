@@ -267,8 +267,10 @@ export interface WorkspaceTemplate {
   version: string;
   title: string;
   domain: string;
-  template: string;
-  icon: string;
+  data_type?: string;
+  template?: string;
+  template_path?: string;
+  icon?: string;
   status: 'active' | 'draft' | 'deprecated';
   adapter: string;
   description: string;
@@ -276,8 +278,8 @@ export interface WorkspaceTemplate {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
-  yaml_content: string;
-  favicon_url: string;
+  yaml_content?: string;
+  favicon_url?: string;
   task_count?: number;
 }
 

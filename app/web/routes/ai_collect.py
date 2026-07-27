@@ -816,19 +816,70 @@ async def workspace_task_create(body: WorkspaceTaskRequest):
 
 @router.post("/ai/workspace/tasks/{task_id}/action")
 async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
-    actions: dict[str, tuple[dict[str, Any], str, str]] = {
-        "pause": ({"status": "paused", "control_state": None, "download_state": None, "sync_state": None}, "warn", "operator paused task"),
-        "resume": ({"status": "running", "control_state": None, "download_state": None, "sync_state": None}, "ok", "operator resumed task"),
-        "cancel": ({"status": "failed", "control_state": "canceled", "download_state": "paused", "sync_state": "canceled"}, "warn", "operator canceled task"),
-        "start_download": ({"status": None, "control_state": None, "download_state": "running", "sync_state": None}, "ok", "download lane started"),
-        "pause_download": ({"status": None, "control_state": None, "download_state": "paused", "sync_state": None}, "warn", "download lane paused"),
-        "start_sync": ({"status": None, "control_state": None, "download_state": None, "sync_state": "running"}, "ok", "sync lane started"),
-        "cancel_sync": ({"status": None, "control_state": None, "download_state": None, "sync_state": "canceled"}, "warn", "sync lane canceled"),
+    if body.action == "start":
+        task = await ai_collect_store.start_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=409, detail="Only queued tasks can be started")
+        try:
+            from app.scheduler.celery_app import app as celery_app
+
+            celery_app.send_task(
+                "app.scheduler.tasks.workspace.crawl_template",
+                args=[task_id, str(task["template_name"]), dict(task.get("parameters") or {})],
+                task_id=task_id,
+            )
+        except Exception as exc:
+            await ai_collect_store.update_task(task_id, {"status": "failed", "throughput": 0})
+            raise HTTPException(status_code=503, detail="Failed to enqueue crawler task") from exc
+        return task
+
+    if body.action == "cancel":
+        task = await ai_collect_store.update_task(
+            task_id,
+            {
+                "status": "failed",
+                "control_state": "canceled",
+                "download_state": "paused",
+                "sync_state": "canceled",
+                "throughput": 0,
+            },
+        )
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        try:
+            from app.scheduler.celery_app import app as celery_app
+
+            celery_app.control.revoke(task_id, terminate=True)
+        except Exception:
+            logger.exception("Failed to revoke workspace task %s", task_id)
+        return task
+
+    if body.action in {"pause", "resume"}:
+        current_status, next_status = (
+            ("running", "paused") if body.action == "pause" else ("paused", "running")
+        )
+        task = await ai_collect_store.set_active_task_status(task_id, current_status, next_status)
+        if task is None:
+            raise HTTPException(status_code=409, detail=f"Task cannot {body.action} from its current state")
+        return task
+
+    actions: dict[str, dict[str, Any]] = {
+        "start_download": {"status": None, "control_state": None, "download_state": "running", "sync_state": None},
+        "pause_download": {"status": None, "control_state": None, "download_state": "paused", "sync_state": None},
+        "start_sync": {"status": None, "control_state": None, "download_state": None, "sync_state": "running"},
+        "cancel_sync": {"status": None, "control_state": None, "download_state": None, "sync_state": "canceled"},
     }
     action = actions.get(body.action)
     if action is None:
         raise HTTPException(status_code=400, detail="Invalid task action")
-    task = await ai_collect_store.update_task(task_id, *action)
+    task = await ai_collect_store.update_task(task_id, action)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+@router.delete("/ai/workspace/tasks/{task_id}", status_code=204)
+async def workspace_task_delete(task_id: str):
+    deleted = await ai_collect_store.delete_task(task_id)
+    if not deleted:
+        raise HTTPException(status_code=409, detail="Cancel active tasks before deleting them")
