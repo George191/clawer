@@ -196,6 +196,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -207,6 +209,7 @@ services:
       SPIDER_MINIO_BUCKET: "${SPIDER_MINIO_BUCKET:-spider-files}"
       SPIDER_MINIO_SECURE: "false"
       SPIDER_REDIS_URL: "redis://redis:6379/0"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
     working_dir: /app
     command: ["python", "-m", "app.downloader.main", "--poll", "10"]
     healthcheck:
@@ -230,6 +233,8 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -238,6 +243,7 @@ services:
       SPIDER_KAFKA_BROKERS: "kafka:9092"
       SPIDER_KAFKA_TOPIC: "${SPIDER_KAFKA_TOPIC:-spider-crawler}"
       SPIDER_REDIS_URL: "redis://redis:6379/0"
+      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
     working_dir: /app
     command: ["python", "-m", "app.syncer.main", "--poll", "10", "--startup-delay", "15"]
     healthcheck:
