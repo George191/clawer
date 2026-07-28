@@ -14,6 +14,9 @@ from app.web.services.ai_collect_store import ai_collect_store
 
 _writing_task_logs: ContextVar[bool] = ContextVar("writing_task_logs", default=False)
 _STOP = object()
+_CELERY_CONSOLE_FORMATTER = logging.Formatter(
+    "[%(asctime)s: %(levelname)s/%(processName)s] %(message)s"
+)
 
 
 class WorkspaceTaskLogCapture(logging.Handler):
@@ -23,19 +26,29 @@ class WorkspaceTaskLogCapture(logging.Handler):
         super().__init__(logging.NOTSET)
         self.task_id = task_id
         self._store = store
-        self.setFormatter(logging.Formatter("%(message)s"))
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread_id: int | None = None
         self._queue: asyncio.Queue[dict[str, Any] | object] | None = None
         self._writer_task: asyncio.Task[None] | None = None
         self._loggers: list[logging.Logger] = []
+        self._formatters: dict[str, logging.Formatter] = {}
+        self._suppressed_handlers: list[tuple[logging.Logger, logging.Handler]] = []
 
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._loop_thread_id = threading.get_ident()
         self._queue = asyncio.Queue()
         self._writer_task = asyncio.create_task(self._write_logs())
-        self._loggers = _console_loggers()
+        all_loggers = _all_loggers()
+        self._formatters = _console_formatters(all_loggers)
+        for logger in all_loggers:
+            for handler in list(logger.handlers):
+                if _is_task_output_handler(handler):
+                    logger.removeHandler(handler)
+                    self._suppressed_handlers.append((logger, handler))
+        self._loggers = [
+            logger for logger in all_loggers if logger is logging.getLogger() or not logger.propagate
+        ]
         for logger in self._loggers:
             logger.addHandler(self)
 
@@ -45,7 +58,7 @@ class WorkspaceTaskLogCapture(logging.Handler):
         try:
             item = {
                 "level": "warn" if record.levelno >= logging.WARNING else "info",
-                "message": self.format(record),
+                "message": _format_console_record(record, self._formatters),
                 "created_at": datetime.fromtimestamp(record.created, timezone.utc),
             }
             if threading.get_ident() == self._loop_thread_id:
@@ -59,15 +72,21 @@ class WorkspaceTaskLogCapture(logging.Handler):
         for logger in self._loggers:
             logger.removeHandler(self)
         self._loggers = []
-        if self._queue is not None and self._writer_task is not None:
-            await asyncio.sleep(0)
-            self._queue.put_nowait(_STOP)
-            await self._writer_task
-        self._writer_task = None
-        self._queue = None
-        self._loop = None
-        self._loop_thread_id = None
-        super().close()
+        try:
+            if self._queue is not None and self._writer_task is not None:
+                await asyncio.sleep(0)
+                self._queue.put_nowait(_STOP)
+                await self._writer_task
+        finally:
+            for logger, handler in self._suppressed_handlers:
+                logger.addHandler(handler)
+            self._suppressed_handlers = []
+            self._formatters = {}
+            self._writer_task = None
+            self._queue = None
+            self._loop = None
+            self._loop_thread_id = None
+            super().close()
 
     async def _write_logs(self) -> None:
         assert self._queue is not None
@@ -98,17 +117,55 @@ class WorkspaceTaskLogCapture(logging.Handler):
                 return
 
 
-def _console_loggers() -> list[logging.Logger]:
+def _all_loggers() -> list[logging.Logger]:
     loggers = [logging.getLogger()]
     for value in logging.root.manager.loggerDict.values():
-        if not isinstance(value, logging.Logger) or value.propagate:
-            continue
-        if any(_is_console_handler(handler) for handler in value.handlers):
+        if isinstance(value, logging.Logger):
             loggers.append(value)
     return loggers
 
 
 def _is_console_handler(handler: logging.Handler) -> bool:
-    return isinstance(handler, logging.StreamHandler) and getattr(
-        handler, "stream", None
-    ) in {sys.stdout, sys.stderr}
+    return isinstance(handler, logging.StreamHandler) and not isinstance(
+        handler, logging.FileHandler
+    )
+
+
+def _is_task_output_handler(handler: logging.Handler) -> bool:
+    return isinstance(handler, logging.StreamHandler) or bool(
+        getattr(handler, "_spider_adapter_file_handler", False)
+    )
+
+
+def _console_formatters(
+    loggers: list[logging.Logger],
+) -> dict[str, logging.Formatter]:
+    formatters: dict[str, logging.Formatter] = {}
+    for logger in loggers:
+        for handler in logger.handlers:
+            if _is_console_handler(handler):
+                formatters[logger.name] = handler.formatter or logging.Formatter(
+                    "%(message)s"
+                )
+                break
+    return formatters
+
+
+def _format_console_record(
+    record: logging.LogRecord,
+    formatters: dict[str, logging.Formatter] | None = None,
+) -> str:
+    logger = logging.getLogger(record.name)
+    while True:
+        formatter = (formatters or {}).get(logger.name)
+        if formatter is not None:
+            return formatter.format(record)
+        if formatters is None:
+            for handler in logger.handlers:
+                if _is_console_handler(handler):
+                    formatter = handler.formatter or logging.Formatter("%(message)s")
+                    return formatter.format(record)
+        if not logger.propagate or logger.parent is None:
+            break
+        logger = logger.parent
+    return _CELERY_CONSOLE_FORMATTER.format(record)

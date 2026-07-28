@@ -481,6 +481,27 @@ const formatDateTime = (value: string) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
+const consoleLogPrefixPattern = /^(\[)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})(:\s*)([A-Z]+)(\/)([^\]]+)(\])(\s*)/;
+
+const renderConsoleLogMessage = (message: string): React.ReactNode => {
+  const match = message.match(consoleLogPrefixPattern);
+  if (!match) return message;
+  const level = match[4].toLowerCase();
+  return (
+    <>
+      <span className="workspace-dock-log-bracket">{match[1]}</span>
+      <span className="workspace-dock-log-time">{match[2]}</span>
+      <span className="workspace-dock-log-bracket">{match[3]}</span>
+      <span className={`workspace-dock-log-level is-${level}`}>{match[4]}</span>
+      <span className="workspace-dock-log-bracket">{match[5]}</span>
+      <span className="workspace-dock-log-process">{match[6]}</span>
+      <span className="workspace-dock-log-bracket">{match[7]}</span>
+      {match[8]}
+      {message.slice(match[0].length)}
+    </>
+  );
+};
+
 const formatTemplateDomain = (value: string) => ({
   '政务公告': 'Government notices',
   'PDF 附件': 'PDF attachments',
@@ -2699,9 +2720,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className="workspace-dock-log-list is-detail">
               {runtime.logs.map((log) => (
                 <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.time}-${log.message}`}>
-                  <span>{log.time}</span>
-                  <b>{log.level}</b>
-                  <code>{log.message}</code>
+                  <code>{renderConsoleLogMessage(log.message)}</code>
                 </div>
               ))}
             </div>
@@ -4044,35 +4063,44 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           height: 0;
         }
         .workspace-dock-log-row {
-          display: grid;
-          grid-template-columns: 54px 28px minmax(0, 1fr);
-          gap: 6px;
+          display: block;
           color: ${aura.muted};
           font-size: 10px;
           line-height: 1.45;
-          align-items: baseline;
-        }
-        .workspace-dock-log-row span {
-          color: rgba(255, 255, 255, 0.4);
-        }
-        .workspace-dock-log-row b {
-          font-weight: 600;
-          text-transform: lowercase;
         }
         .workspace-dock-log-row code {
+          display: block;
           color: inherit;
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-          white-space: normal;
+          white-space: pre-wrap;
           word-break: break-word;
         }
-        .workspace-dock-log-row.is-ok b {
-          color: ${aura.success};
+        .workspace-dock-log-bracket {
+          color: rgba(255, 255, 255, 0.38);
         }
-        .workspace-dock-log-row.is-warn b {
-          color: ${aura.warning};
+        .workspace-dock-log-time {
+          color: #7DD3FC;
         }
-        .workspace-dock-log-row.is-info b {
-          color: ${aura.accent};
+        .workspace-dock-log-level {
+          color: #8AB4FF;
+          font-weight: 700;
+        }
+        .workspace-dock-log-level.is-debug {
+          color: #BFA8FF;
+        }
+        .workspace-dock-log-level.is-info {
+          color: #65D5A3;
+        }
+        .workspace-dock-log-level.is-warning {
+          color: #F6C35B;
+        }
+        .workspace-dock-log-level.is-error,
+        .workspace-dock-log-level.is-critical {
+          color: #F87171;
+        }
+        .workspace-dock-log-process {
+          color: #C4A7FF;
+          font-weight: 600;
         }
         .workspace-dock-subtask-list {
           display: flex;

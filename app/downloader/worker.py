@@ -138,8 +138,22 @@ class DownloadWorker:
             return 0
 
         logger.info("DownloadWorker: found %d pending downloads", len(pending))
+        workspace_task_ids = {
+            str(
+                (record.get("_meta", {}).get("search_params") or {}).get(
+                    "__workspace_task_id"
+                )
+                or ""
+            )
+            for record in pending
+        }
+        workspace_task_ids.discard("")
         tasks = [self._download_one(rec) for rec in pending]
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        for task_id in workspace_task_ids:
+            await ai_collect_store.transition_task_stage_state(
+                task_id, "download", "running", "idle"
+            )
         success = sum(1 for r in results if r is True)
         logger.info("DownloadWorker: completed %d/%d records", success, len(pending))
         return success
@@ -167,6 +181,19 @@ class DownloadWorker:
             task_control = await ai_collect_store.get_task_control(workspace_task_id)
             if task_control is None:
                 workspace_task_id = ""
+            elif task_control.get("download_state") == "idle":
+                claimed = await ai_collect_store.transition_task_stage_state(
+                    workspace_task_id, "download", "idle", "running"
+                )
+                if claimed is None:
+                    task_control = await ai_collect_store.get_task_control(
+                        workspace_task_id
+                    )
+                    if task_control is None or task_control.get("download_state") != "running":
+                        await self._mongo.update_file_status(
+                            template_name, record_id, "pending"
+                        )
+                        return False
             elif task_control.get("download_state") != "running":
                 await self._mongo.update_file_status(template_name, record_id, "pending")
                 return False

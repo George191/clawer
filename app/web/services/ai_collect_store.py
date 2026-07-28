@@ -616,6 +616,36 @@ class AICollectStore:
         )
         await publish_task_change(task_id)
 
+    async def transition_task_stage_state(
+        self,
+        task_id: str,
+        stage: str,
+        current_state: str,
+        next_state: str,
+    ) -> dict[str, Any] | None:
+        if stage not in {"download", "sync"}:
+            raise ValueError(f"Unsupported task stage: {stage}")
+        await self.initialize()
+        state_column = f"{stage}_state"
+        task = await self._pg.fetch_one(
+            f"""
+            UPDATE public.ai_collect_tasks SET
+                {state_column} = :next_state,
+                updated_at = now()
+            WHERE id = CAST(:id AS uuid) AND {state_column} = :current_state
+            RETURNING *
+            """,
+            {
+                "id": task_id,
+                "current_state": current_state,
+                "next_state": next_state,
+            },
+        )
+        if task:
+            task["logs"] = []
+            await publish_task_change(task_id)
+        return task
+
     async def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()
         task = await self._pg.fetch_one(
@@ -692,8 +722,8 @@ class AICollectStore:
             """
             UPDATE public.ai_collect_tasks SET
                 status = 'running',
-                download_state = 'running',
-                sync_state = 'running',
+                download_state = 'idle',
+                sync_state = 'idle',
                 started_at = now(),
                 updated_at = now()
             WHERE id = CAST(:id AS uuid) AND status = 'queued'
