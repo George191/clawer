@@ -2632,14 +2632,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   disabled={pipelineControlsDisabled}
                   onClick={() => handlePauseDownload(selectedTask.key)}
                 >
-                  <span className="workspace-dock-slashed-icon"><DownloadOutlined /></span>
+                  <DownloadOutlined />
                 </button>
               </Tooltip>
             ) : (
               <Tooltip title={runtime.downloadState === 'paused' ? '继续下载' : '开始下载'} placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
-                  className="workspace-dock-detail-icon-btn is-download"
+                  className={`workspace-dock-detail-icon-btn is-download ${runtime.downloadState === 'paused' ? 'is-paused' : ''}`}
                   aria-label={runtime.downloadState === 'paused' ? '继续下载' : '开始下载'}
                   disabled={pipelineControlsDisabled}
                   onClick={() => handleStartDownload(selectedTask.key)}
@@ -2657,14 +2657,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   disabled={pipelineControlsDisabled}
                   onClick={() => handlePauseSync(selectedTask.key)}
                 >
-                  <span className="workspace-dock-slashed-icon"><SyncOutlined /></span>
+                  <SyncOutlined />
                 </button>
               </Tooltip>
             ) : (
               <Tooltip title={runtime.syncState === 'paused' ? '继续同步' : '开始同步'} placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
-                  className="workspace-dock-detail-icon-btn is-sync"
+                  className={`workspace-dock-detail-icon-btn is-sync ${runtime.syncState === 'paused' ? 'is-paused' : ''}`}
                   aria-label={runtime.syncState === 'paused' ? '继续同步' : '开始同步'}
                   disabled={pipelineControlsDisabled}
                   onClick={() => handleStartSync(selectedTask.key)}
@@ -2718,7 +2718,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               </div>
             </div>
             <div className="workspace-dock-log-list is-detail">
-              {runtime.logs.map((log) => (
+              {runtime.logs.slice().reverse().map((log) => (
                 <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.time}-${log.message}`}>
                   <code>{renderConsoleLogMessage(log.message)}</code>
                 </div>
@@ -3429,20 +3429,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: #8AB4FF;
           background: rgba(138, 180, 255, 0.08);
         }
-        .workspace-dock-slashed-icon {
-          position: relative;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .workspace-dock-slashed-icon::after {
-          content: '';
-          position: absolute;
-          width: 15px;
-          height: 2px;
-          border-radius: 999px;
-          background: currentColor;
-          transform: rotate(-45deg);
+        .workspace-dock-detail-icon-btn.is-paused {
+          color: ${aura.subtle};
+          background: rgba(148, 163, 184, 0.08);
         }
         .workspace-dock-detail-body {
           flex: 1;

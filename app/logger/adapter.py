@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from .context import database_only_logging_enabled
 from .fields import (
     ADAPTER_LOG_FORMAT,
     ADAPTER_LOGGER_NAMES,
@@ -30,8 +31,9 @@ def get_adapter_logger(
     adapter_kind: str = "site",
 ) -> AdapterLogger:
     logger = logging.getLogger(module_name)
-    handler = _get_file_handler(adapter_kind, adapter_name)
-    replace_handler(logger, marker_name=FILE_HANDLER_MARKER, handler=handler)
+    if not database_only_logging_enabled():
+        handler = _get_file_handler(adapter_kind, adapter_name)
+        replace_handler(logger, marker_name=FILE_HANDLER_MARKER, handler=handler)
     logger.setLevel(_LOG_LEVEL)
     return AdapterLogger(
         logger,
