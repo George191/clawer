@@ -40,7 +40,7 @@ _proxy_pool = None
 _delayer = None
 _rotator = None
 
-def _init_anti_crawl():
+def _init_anti_crawl(*, use_proxy: bool = True):
     """延迟初始化反爬各组件。"""
     global _proxy_pool, _delayer, _rotator
     if _rotator is None:
@@ -48,7 +48,7 @@ def _init_anti_crawl():
         from app.anti_crawl.request_delayer import get_delayer
         _delayer = get_delayer()
         _rotator = get_identity_rotator()
-    if settings.anti_crawl_enabled and _proxy_pool is None:
+    if use_proxy and settings.anti_crawl_enabled and _proxy_pool is None:
         from app.anti_crawl.proxy_pool import get_proxy_pool
         _proxy_pool = get_proxy_pool()
 
@@ -517,7 +517,7 @@ class HttpClient:
         headers = dict(config.headers)
         cookies = dict(config.cookies)
 
-        _init_anti_crawl()
+        _init_anti_crawl(use_proxy=settings.download_use_proxy)
 
         if _rotator is not None and _rotator.enabled:
             anti_headers = _rotator.get_headers(target_url=url)
@@ -536,24 +536,29 @@ class HttpClient:
         pre_proxy_url = None
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
 
-        if settings.tunnel_proxy_url:
-            proxy_url = settings.tunnel_proxy_url
-        elif _proxy_pool is not None and _proxy_pool.enabled:
-            pre_proxy_url = settings.proxy_pre_proxy_url or None
-            lock = await self._get_lease_lock()
-            async with lock:
-                if task_id in self._leased_proxies:
-                    proxy_url = self._leased_proxies[task_id]
-                else:
-                    proxy_url = await _proxy_pool.lease_proxy(task_id)
-                    if proxy_url:
-                        self._leased_proxies[task_id] = proxy_url
+        if settings.download_use_proxy:
+            if settings.tunnel_proxy_url:
+                proxy_url = settings.tunnel_proxy_url
+            elif _proxy_pool is not None and _proxy_pool.enabled:
+                pre_proxy_url = settings.proxy_pre_proxy_url or None
+                lock = await self._get_lease_lock()
+                async with lock:
+                    if task_id in self._leased_proxies:
+                        proxy_url = self._leased_proxies[task_id]
+                    else:
+                        proxy_url = await _proxy_pool.lease_proxy(task_id)
+                        if proxy_url:
+                            self._leased_proxies[task_id] = proxy_url
 
         if proxy_url:
             self._last_proxy_urls[task_id] = proxy_url
         else:
             self._last_proxy_urls.pop(task_id, None)
-            if _proxy_pool is not None and _proxy_pool.enabled:
+            if (
+                settings.download_use_proxy
+                and _proxy_pool is not None
+                and _proxy_pool.enabled
+            ):
                 raise DownloadError(url, message="Download proxy unavailable")
         logger.debug(
             "Downloading bytes: %s with proxy: %s",

@@ -52,6 +52,10 @@ class AppSettings(BaseSettings):
         ge=1,
         description="下载服务全局资源并发数",
     )
+    download_use_proxy: bool = Field(
+        default=True,
+        description="资源下载是否使用隧道代理或代理池",
+    )
     download_max_file_size: int = Field(
         default=500 * 1024 * 1024, description="允许下载的最大文件大小(bytes)"
     )

@@ -111,11 +111,12 @@ class DownloadWorker:
 
         logger.info(
             "DownloadWorker started (poll=%ds, batch=%d, record_concurrency=%d, "
-            "asset_concurrency=%d, template=%s)",
+            "asset_concurrency=%d, download_proxy=%s, template=%s)",
             self._poll_interval,
             self._batch_size,
             settings.max_concurrent_tasks,
             settings.download_asset_concurrency,
+            "on" if settings.download_use_proxy else "off",
             self._template_name or "ALL",
         )
 

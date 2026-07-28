@@ -509,11 +509,24 @@ const formatTemplateDomain = (value: string) => ({
   '历史公告': 'Legacy notices',
 }[value] ?? value);
 
-const formatTaskNextRunLabel = (value: string) => ({
-  '持续运行': 'Continuous',
-  '等待恢复': 'Awaiting recovery',
-  '人工确认': 'Manual review',
-}[value] ?? value);
+const formatTaskNextRunLabel = (value: string) => {
+  const exact = {
+    '持续运行': 'Continuous',
+    '等待恢复': 'Awaiting recovery',
+    '人工确认': 'Manual review',
+    '一次性任务': 'One-time task',
+  }[value];
+  if (exact) return exact;
+
+  const daily = value.match(/^每天\s+(.+)$/);
+  if (daily) return `Daily at ${daily[1]}`;
+  const interval = value.match(/^每\s+(\d+)\s+(分钟|小时)$/);
+  if (interval) {
+    const unit = interval[2] === '分钟' ? 'minute' : 'hour';
+    return `Every ${interval[1]} ${unit}${interval[1] === '1' ? '' : 's'}`;
+  }
+  return value;
+};
 
 const incrementalModeMeta: Record<TaskIncrementalMode, { label: string }> = {
   time_window: { label: '时间范围过滤' },
@@ -836,9 +849,10 @@ const inferIncrementalField = (templateValue: string) => {
 };
 
 const formatTaskNextRun = (draft: TaskComposerDraft) => {
-  if (draft.scheduleMode === 'once') return '一次性任务';
-  if (draft.recurringMode === 'daily') return `每天 ${draft.dailyTime}`;
-  return `每 ${draft.intervalValue} ${draft.intervalUnit === 'minute' ? '分钟' : '小时'}`;
+  if (draft.scheduleMode === 'once') return 'One-time task';
+  if (draft.recurringMode === 'daily') return `Daily at ${draft.dailyTime}`;
+  const unit = draft.intervalUnit === 'minute' ? 'minute' : 'hour';
+  return `Every ${draft.intervalValue} ${unit}${draft.intervalValue === 1 ? '' : 's'}`;
 };
 
 const formatIncrementalSummary = (draft: TaskComposerDraft) => {
@@ -1945,7 +1959,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           {taskComposerDraft.incremental ? (
             <div className="workspace-dock-progress-panel">
               <div className="workspace-dock-progress-meta">
-                <strong>增量参数配置</strong>
+                <strong>Incremental Parameters</strong>
                 <span>{incrementalSummary}</span>
               </div>
 
@@ -2695,7 +2709,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           <div className="workspace-dock-progress-panel">
             <div className="workspace-dock-progress-meta">
               <span><SiteLogoMark site={selectedTask.site} />{stripDecorativeSuffix(selectedTask.area)}</span>
-              <strong>{selectedTask.nextRun}</strong>
+              <strong>{formatTaskNextRunLabel(selectedTask.nextRun)}</strong>
             </div>
             <div className={`workspace-dock-marquee ${display.isRunning ? 'is-running' : ''}`}>
               <i style={{ width: `${Math.max(runtime.progress, 8)}%`, background: display.color }} />
