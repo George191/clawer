@@ -292,6 +292,33 @@ class MongoStorage(StorageBackend):
         )
         logger.debug("Updated %d fields for %s", len(updates), record_id)
 
+    async def update_download_result(
+        self,
+        template_name: str,
+        record_id: str,
+        updates: dict[str, Any],
+        download_status: str,
+    ) -> None:
+        """Persist downloaded asset paths and final claim status atomically."""
+        collection = await self._get_collection(template_name)
+        await collection.update_one(
+            {"_meta.record_id": record_id},
+            {
+                "$set": {
+                    **updates,
+                    "_meta.download_status": download_status,
+                    "_meta.updated_at": datetime.now(timezone.utc),
+                },
+                "$unset": {"_meta.download_claim_token": ""},
+            },
+        )
+        logger.debug(
+            "Updated download result for %s: status=%s fields=%d",
+            record_id,
+            download_status,
+            len(updates),
+        )
+
     async def update_sync_status(
         self,
         template_name: str,

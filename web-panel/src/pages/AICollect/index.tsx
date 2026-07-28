@@ -2770,14 +2770,17 @@ const AICollect: React.FC = () => {
       const x = targetRect.left + targetRect.width / 2 - (sourceRect.left + sourceRect.width / 2);
       const y = targetRect.top + targetRect.height / 2 - (sourceRect.top + sourceRect.height / 2);
       const scale = Math.min(0.08, 30 / Math.max(sourceRect.width, sourceRect.height));
-      taskComposer.animate(
+      const taskComposerExitAnimation = taskComposer.animate(
         [
           { opacity: 1, transform: 'translate3d(0, 0, 0) scale(1)' },
           { opacity: 0, transform: `translate3d(${x}px, ${y}px, 0) scale(${scale})` },
         ],
         { duration: 680, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', fill: 'forwards' },
       );
-      releaseExitTimerRef.current = window.setTimeout(finish, 680);
+      releaseExitTimerRef.current = window.setTimeout(() => {
+        taskComposerExitAnimation.cancel();
+        finish();
+      }, 680);
       return;
     }
 

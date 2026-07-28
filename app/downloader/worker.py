@@ -4,13 +4,13 @@
 --------
 1. 轮询 MongoDB 中 `download_status=pending` 的记录
 2. 根据模板的 download 配置提取下载链接
-3. 使用流式上传（download_bytes + upload_bytes）直接存入 MinIO，无需落盘
+3. 使用内存中转（download_bytes + upload_bytes）存入 MinIO，无需落盘
 4. 更新 MongoDB 记录的文件路径和下载状态
 
 设计原则
 --------
 - 采集与下载完全解耦：本 Worker 独立于 SpiderEngine 运行
-- 流式上传：直接内存传输，节省 IO 和磁盘空间
+- 内存中转：无需落盘，但单个资源会占用等量内存
 - 幂等性：通过 MongoDB 状态字段保证重复处理安全
 - 模板驱动：根据 YAML 模板中的 download 配置自动选择下载策略
   支持 JSON 路径提取（如 Google Patents）和 CSS 选择器提取（如 Sealagom PDF）
@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import asyncio
+import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -47,7 +49,16 @@ RETRY_ALERT_THRESHOLD: int = 10
 # 严重告警阈值：每 N 次连续重试输出 ERROR 日志，提示持续故障
 RETRY_CRITICAL_THRESHOLD: int = 50
 # 最大重试次数：达到后跳过该资源
-RETRY_MAX_ATTEMPTS: int = 10
+RETRY_MAX_ATTEMPTS: int = 5
+
+
+@dataclass(slots=True)
+class AssetDownloadJob:
+    dl_info: dict[str, Any]
+    template_name: str
+    data_type: str
+    record_id: str
+    result: asyncio.Future[tuple[dict[str, Any], str | None]]
 
 
 class DownloadWorker:
@@ -82,6 +93,8 @@ class DownloadWorker:
         self._minio: MinioClient | None = None
         self._mongo = MongoClient()
         self._semaphore: asyncio.Semaphore | None = None
+        self._asset_queue: asyncio.Queue[AssetDownloadJob] | None = None
+        self._asset_workers: list[asyncio.Task[None]] = []
         self._running = False
         self._template_loader = TemplateLoader()
         # 模板缓存：避免每次下载都重新加载 YAML
@@ -94,12 +107,15 @@ class DownloadWorker:
         self._http = HttpClient()
         self._minio = MinioClient()
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
+        self._start_asset_workers()
 
         logger.info(
-            "DownloadWorker started (poll=%ds, batch=%d, concurrency=%d, template=%s)",
+            "DownloadWorker started (poll=%ds, batch=%d, record_concurrency=%d, "
+            "asset_concurrency=%d, template=%s)",
             self._poll_interval,
             self._batch_size,
             settings.max_concurrent_tasks,
+            settings.download_asset_concurrency,
             self._template_name or "ALL",
         )
 
@@ -237,39 +253,69 @@ class DownloadWorker:
                     )
                     return True
 
-                downloaded_assets = 0
-                for dl_info in pending_by_url.values():
-                    url = dl_info["url"]
-                    filename = dl_info["filename"]
-
-                    asset_path = await self._download_asset_to_minio(
-                        url, template_name, data_type,
-                        record_id, filename,
+                asset_results = await asyncio.gather(*(
+                    self._download_pending_asset(
+                        dl_info,
+                        template_name,
+                        data_type,
+                        record_id,
                     )
-                    if asset_path:
-                        asset_keys = list(dict.fromkeys(dl_info["asset_keys"]))
-                        updates = {key: asset_path for key in asset_keys}
-                        await self._mongo.update_record_fields(
-                            template_name, record_id, updates,
-                        )
-                        for key in asset_keys:
-                            self._set_nested_value(record, key, asset_path)
-                        downloaded_assets += len(updates)
+                    for dl_info in pending_by_url.values()
+                ))
+
+                updates: dict[str, str] = {}
+                failed_assets = 0
+                for dl_info, asset_path in asset_results:
+                    if not asset_path:
+                        failed_assets += 1
+                        continue
+                    asset_keys = list(dict.fromkeys(dl_info["asset_keys"]))
+                    updates.update(dict.fromkeys(asset_keys, asset_path))
+
+                downloaded_assets = len(updates)
 
                 if not self._running:
-                    await self._mongo.update_file_status(
-                        template_name, record_id, "pending",
-                    )
+                    final_status = "pending"
+                elif failed_assets:
+                    final_status = "failed"
+                elif downloaded_assets or skipped_existing:
+                    final_status = "downloaded"
+                else:
+                    final_status = "no_assets"
+
+                mongo_started_at = time.perf_counter()
+                await self._mongo.update_download_result(
+                    template_name,
+                    record_id,
+                    updates,
+                    final_status,
+                )
+                logger.debug(
+                    "DownloadWorker timing: phase=mongo record=%s fields=%d "
+                    "seconds=%.3f",
+                    record_id,
+                    len(updates),
+                    time.perf_counter() - mongo_started_at,
+                )
+                for key, asset_path in updates.items():
+                    self._set_nested_value(record, key, asset_path)
+
+                if not self._running:
                     logger.info(
                         "DownloadWorker: worker stopping, leaving %s pending",
                         record_id,
                     )
                     return False
 
-                if downloaded_assets or skipped_existing:
-                    await self._mongo.update_file_status(
-                        template_name, record_id, "downloaded",
+                if failed_assets:
+                    logger.warning(
+                        "DownloadWorker: %s has %d failed assets "
+                        "(downloaded=%d, skipped_existing=%d)",
+                        record_id, failed_assets, downloaded_assets, skipped_existing,
                     )
+                    return False
+
+                if downloaded_assets or skipped_existing:
                     logger.info(
                         "DownloadWorker: downloaded %d assets for %s "
                         "(skipped_existing=%d)",
@@ -285,10 +331,6 @@ class DownloadWorker:
                             "ok",
                             f"下载完成：record={record_id}, assets={downloaded_assets}",
                         )
-                else:
-                    await self._mongo.update_file_status(
-                        template_name, record_id, "no_assets",
-                    )
                 return True
 
             except Exception:
@@ -563,10 +605,17 @@ class DownloadWorker:
         """
         retry_count = 0
         delay = RETRY_INITIAL_DELAY
+        started_at = time.perf_counter()
 
         while self._running:
             try:
                 data = await self._http.download_bytes(url)
+                logger.debug(
+                    "DownloadWorker timing: phase=http attempts=%d seconds=%.3f url=%s",
+                    retry_count + 1,
+                    time.perf_counter() - started_at,
+                    url,
+                )
                 if retry_count > 0:
                     logger.info(
                         "DownloadWorker: succeeded after %d retries: %s",
@@ -576,6 +625,13 @@ class DownloadWorker:
             except Exception as exc:
                 # 不可重试错误：403 / 404 / 文件过大
                 if not self._is_retryable(exc):
+                    logger.debug(
+                        "DownloadWorker timing: phase=http attempts=%d seconds=%.3f "
+                        "result=skipped url=%s",
+                        retry_count + 1,
+                        time.perf_counter() - started_at,
+                        url,
+                    )
                     status = self._extract_status_code(exc)
                     if status == 403:
                         logger.warning(
@@ -605,6 +661,13 @@ class DownloadWorker:
                 )
 
                 if retry_count >= RETRY_MAX_ATTEMPTS:
+                    logger.debug(
+                        "DownloadWorker timing: phase=http attempts=%d seconds=%.3f "
+                        "result=failed url=%s",
+                        retry_count,
+                        time.perf_counter() - started_at,
+                        url,
+                    )
                     logger.warning(
                         "DownloadWorker: reached max retries (%d), skipping: %s",
                         RETRY_MAX_ATTEMPTS,
@@ -658,9 +721,16 @@ class DownloadWorker:
             return None
 
         try:
+            upload_started_at = time.perf_counter()
             asset_path = await self._minio.upload_bytes(
                 data, template_name, data_type,
                 f"{record_id}/{filename}", content_type,
+            )
+            logger.debug(
+                "DownloadWorker timing: phase=minio record=%s seconds=%.3f file=%s",
+                record_id,
+                time.perf_counter() - upload_started_at,
+                filename,
             )
             logger.debug("DownloadWorker: uploaded %s -> %s", filename, asset_path)
             return asset_path
@@ -668,8 +738,77 @@ class DownloadWorker:
             logger.exception("DownloadWorker: MinIO upload failed for %s", filename)
             return None
 
+    async def _download_pending_asset(
+        self,
+        dl_info: dict[str, Any],
+        template_name: str,
+        data_type: str,
+        record_id: str,
+    ) -> tuple[dict[str, Any], str | None]:
+        """Submit one asset to the fixed download worker pool."""
+        assert self._asset_queue is not None
+        result = asyncio.get_running_loop().create_future()
+        await self._asset_queue.put(AssetDownloadJob(
+            dl_info=dl_info,
+            template_name=template_name,
+            data_type=data_type,
+            record_id=record_id,
+            result=result,
+        ))
+        return await result
+
+    def _start_asset_workers(self) -> None:
+        self._asset_queue = asyncio.Queue()
+        self._asset_workers = [
+            asyncio.create_task(
+                self._asset_worker(),
+                name=f"download-asset-{index}",
+            )
+            for index in range(settings.download_asset_concurrency)
+        ]
+
+    async def _asset_worker(self) -> None:
+        assert self._asset_queue is not None
+        while True:
+            job = await self._asset_queue.get()
+            try:
+                asset_path = await self._download_asset_to_minio(
+                    job.dl_info["url"],
+                    job.template_name,
+                    job.data_type,
+                    job.record_id,
+                    job.dl_info["filename"],
+                )
+                if not job.result.done():
+                    job.result.set_result((job.dl_info, asset_path))
+            except asyncio.CancelledError:
+                if not job.result.done():
+                    job.result.cancel()
+                raise
+            except Exception as exc:
+                if not job.result.done():
+                    job.result.set_exception(exc)
+            finally:
+                self._asset_queue.task_done()
+
+    async def _stop_asset_workers(self) -> None:
+        for task in self._asset_workers:
+            task.cancel()
+        if self._asset_workers:
+            await asyncio.gather(*self._asset_workers, return_exceptions=True)
+        self._asset_workers.clear()
+
+        if self._asset_queue is not None:
+            while not self._asset_queue.empty():
+                job = self._asset_queue.get_nowait()
+                if not job.result.done():
+                    job.result.cancel()
+                self._asset_queue.task_done()
+            self._asset_queue = None
+
     async def stop(self) -> None:
         self._running = False
+        await self._stop_asset_workers()
         if self._http:
             await self._http.close()
         if self._minio:

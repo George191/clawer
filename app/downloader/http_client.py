@@ -74,6 +74,11 @@ class HttpClient:
         # 协程级代理分配：每个协程独立租用一个代理 IP
         self._leased_proxies: dict[int, str] = {}
         self._lease_lock: asyncio.Lock | None = None
+        self._download_clients: dict[
+            int,
+            tuple[str | None, str | None, curl_requests.AsyncSession],
+        ] = {}
+        self._download_client_lock: asyncio.Lock | None = None
 
     @staticmethod
     def _error_status_code(error: Exception) -> int | None:
@@ -115,6 +120,41 @@ class HttpClient:
         if self._lease_lock is None:
             self._lease_lock = asyncio.Lock()
         return self._lease_lock
+
+    async def _get_download_client_lock(self) -> asyncio.Lock:
+        if self._download_client_lock is None:
+            self._download_client_lock = asyncio.Lock()
+        return self._download_client_lock
+
+    async def _get_download_client(
+        self,
+        task_id: int,
+        proxy_url: str | None,
+        pre_proxy_url: str | None,
+    ) -> curl_requests.AsyncSession:
+        lock = await self._get_download_client_lock()
+        async with lock:
+            cached = self._download_clients.get(task_id)
+            if cached is not None:
+                cached_proxy, cached_pre_proxy, client = cached
+                if (cached_proxy, cached_pre_proxy) == (proxy_url, pre_proxy_url):
+                    return client
+                del self._download_clients[task_id]
+                await client.close()
+
+            client = await self._create_client(
+                proxy_url,
+                pre_proxy_url=pre_proxy_url,
+            )
+            self._download_clients[task_id] = (proxy_url, pre_proxy_url, client)
+            return client
+
+    async def _discard_download_client(self, task_id: int) -> None:
+        lock = await self._get_download_client_lock()
+        async with lock:
+            cached = self._download_clients.pop(task_id, None)
+        if cached is not None:
+            await cached[2].close()
 
     async def _create_client(
         self,
@@ -515,73 +555,98 @@ class HttpClient:
             self._last_proxy_urls.pop(task_id, None)
             if _proxy_pool is not None and _proxy_pool.enabled:
                 raise DownloadError(url, message="Download proxy unavailable")
-        logger.info(
+        logger.debug(
             "Downloading bytes: %s with proxy: %s",
             url,
             self._safe_proxy_url(proxy_url),
         )
 
-        # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
-        async with await self._create_client(
+        client = await self._get_download_client(
+            task_id,
             proxy_url,
             pre_proxy_url=pre_proxy_url,
-        ) as client:
-            try:
-                stream_kwargs = dict(
-                    method=config.method or "GET",
-                    url=url,
-                    headers=headers,
-                    params=config.params,
-                    cookies=cookies,
-                    timeout=settings.http_download_timeout,
+        )
+        try:
+            stream_kwargs = dict(
+                method=config.method or "GET",
+                url=url,
+                headers=headers,
+                params=config.params,
+                cookies=cookies,
+                timeout=settings.http_download_timeout,
+            )
+
+            # download_bytes() returns the complete payload.  Using
+            # AsyncSession.stream() here triggers curl_cffi's background
+            # perform task; malformed proxy headers then escape as
+            # "Task exception was never retrieved".  A non-stream request
+            # keeps parsing and cleanup in the caller task.
+            stream_kwargs["stream"] = False
+            response = await client.request(**stream_kwargs)
+            if response.status_code in settings.http_retry_on_statuses:
+                raise DownloadError(url, response.status_code, "Retryable status code")
+
+            response.raise_for_status()
+            data = response.content
+            total_size = len(data)
+            if total_size > settings.download_max_file_size:
+                raise FileTooLargeError(
+                    url, total_size, settings.download_max_file_size
                 )
+            logger.debug("Download complete: %s (%d bytes)", url, total_size)
 
-                # download_bytes() returns the complete payload.  Using
-                # AsyncSession.stream() here triggers curl_cffi's background
-                # perform task; malformed proxy headers then escape as
-                # "Task exception was never retrieved".  A non-stream request
-                # keeps parsing and cleanup in the caller task.
-                stream_kwargs["stream"] = False
-                response = await client.request(**stream_kwargs)
-                if response.status_code in settings.http_retry_on_statuses:
-                    raise DownloadError(url, response.status_code, "Retryable status code")
+            if _proxy_pool is not None and proxy_url:
+                await _proxy_pool.mark_success(proxy_url)
 
-                response.raise_for_status()
-                data = response.content
-                total_size = len(data)
-                if total_size > settings.download_max_file_size:
-                    raise FileTooLargeError(
-                        url, total_size, settings.download_max_file_size
-                    )
-                logger.info("Download complete: %s (%d bytes)", url, total_size)
+            return data
 
-                if _proxy_pool is not None and proxy_url:
-                    await _proxy_pool.mark_success(proxy_url)
-
-                return data
-
-            except Exception as e:
-                if (
-                    _proxy_pool is not None
-                    and proxy_url
-                    and self._should_mark_download_proxy_failure(e, pre_proxy_url)
-                ):
-                    await _proxy_pool.mark_failure(proxy_url)
-                    await self._release_failed_proxy(task_id, proxy_url)
-                raise
+        except Exception as e:
+            proxy_failed = (
+                _proxy_pool is not None
+                and proxy_url
+                and self._should_mark_download_proxy_failure(e, pre_proxy_url)
+            )
+            transport_failed = (
+                self._error_status_code(e) is None
+                and not isinstance(e, FileTooLargeError)
+            )
+            if proxy_failed or transport_failed:
+                await self._discard_download_client(task_id)
+            if proxy_failed:
+                await _proxy_pool.mark_failure(proxy_url)
+                await self._release_failed_proxy(task_id, proxy_url)
+            raise
 
     async def close(self) -> None:
         """关闭HTTP客户端资源。
         
-        由于每次请求都创建新的AsyncSession并通过上下文管理器自动关闭，
-        这里主要用于清理协程级代理租约。
+        关闭按资源 worker 复用的下载会话，并清理协程级代理租约。
         """
+        clients = [cached[2] for cached in self._download_clients.values()]
+        self._download_clients.clear()
+        if clients:
+            await asyncio.gather(
+                *(client.close() for client in clients),
+                return_exceptions=True,
+            )
         if _proxy_pool is not None:
             for task_id in list(self._leased_proxies):
                 await _proxy_pool.release_proxy(task_id)
         self._leased_proxies.clear()
         self._last_proxy_urls.clear()
-    
+
+    async def release_current_task_proxy(self) -> None:
+        """Release the proxy lease owned by the current download task."""
+        task = asyncio.current_task()
+        task_id = id(task) if task else 0
+        await self._discard_download_client(task_id)
+        lock = await self._get_lease_lock()
+        async with lock:
+            self._leased_proxies.pop(task_id, None)
+            self._last_proxy_urls.pop(task_id, None)
+            if _proxy_pool is not None:
+                await _proxy_pool.release_proxy(task_id)
+
     async def mark_last_proxy_failed(self, adapter_name: str | None = None) -> None:
         """标记最后使用的代理为失败并释放协程租约，这样下次请求会使用新代理。"""
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0

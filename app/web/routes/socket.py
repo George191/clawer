@@ -28,18 +28,25 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Callable
+from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
+from app.base.redis_connection import RedisConnection
+from app.config.settings import settings
 from app.logger import get_logger
 from app.web.routes.ai_collect import (
     _analyze_events,
     _build_yaml_template,
     _generate_adapter_for_template,
 )
+from app.web.services.ai_collect_store import ai_collect_store
+from app.web.services.task_events import TASK_EVENT_CHANNEL
 from app.web.utils.validation import (
     scope_limit,
     validate_target_url,
@@ -168,6 +175,66 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+_task_event_connection = RedisConnection(settings.redis_url, retry_interval=3)
+_task_event_listener_task: asyncio.Task[None] | None = None
+
+
+async def _send_task_snapshot(task_id: str, connection: ClientConnection | None = None) -> None:
+    task = await ai_collect_store.get_task(task_id)
+    message = (
+        {"type": "task_detail", "task_id": task_id, "data": jsonable_encoder(task)}
+        if task is not None
+        else {"type": "task_deleted", "task_id": task_id, "data": {}}
+    )
+    if connection is not None:
+        await connection.send(message)
+    else:
+        await manager.broadcast(f"task:{task_id}", message)
+
+
+async def _listen_for_task_events() -> None:
+    while True:
+        redis = await _task_event_connection.ensure_connected()
+        if redis is None:
+            await asyncio.sleep(1)
+            continue
+
+        pubsub = redis.pubsub()
+        try:
+            await pubsub.subscribe(TASK_EVENT_CHANNEL)
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1)
+                if not message:
+                    continue
+                payload = json.loads(message["data"])
+                task_id = str(payload.get("task_id") or "")
+                if task_id:
+                    await _send_task_snapshot(task_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _task_event_connection.mark_unavailable()
+            logger.warning("Task event listener failed: %s", exc)
+            await asyncio.sleep(1)
+        finally:
+            with suppress(Exception):
+                await pubsub.aclose()
+
+
+async def start_task_event_listener() -> None:
+    global _task_event_listener_task
+    if _task_event_listener_task is None or _task_event_listener_task.done():
+        _task_event_listener_task = asyncio.create_task(_listen_for_task_events())
+
+
+async def stop_task_event_listener() -> None:
+    global _task_event_listener_task
+    if _task_event_listener_task is not None:
+        _task_event_listener_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _task_event_listener_task
+        _task_event_listener_task = None
+    await _task_event_connection.close()
 
 # ── 消息模型 ───────────────────────────────────────────────────────────────────
 
@@ -373,22 +440,8 @@ async def handle_subscribe(connection: ClientConnection, message: dict[str, Any]
     await manager.subscribe(connection.client_id, channel)
 
     if channel.startswith("task:"):
-        task_id = channel.split(":")[1]
-        runtime = _task_runtimes.get(task_id)
-        if runtime:
-            await connection.send(
-                {
-                    "type": "task_status",
-                    "task_id": task_id,
-                    "data": {
-                        "status": runtime.status,
-                        "progress": runtime.progress,
-                        "records": runtime.records,
-                        "throughput": runtime.throughput,
-                        "started_at": runtime.started_at,
-                    },
-                }
-            )
+        task_id = channel.removeprefix("task:")
+        await _send_task_snapshot(task_id, connection)
 
     await connection.send({"type": "subscribed", "channel": channel})
 

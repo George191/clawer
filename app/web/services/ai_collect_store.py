@@ -14,6 +14,7 @@ from lxml import html as lxml_html
 from app.config.settings import settings
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
+from app.web.services.task_events import publish_task_change
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
@@ -563,6 +564,24 @@ class AICollectStore:
             """,
             {"task_id": task_id, "level": level, "message": message},
         )
+        await publish_task_change(task_id)
+
+    async def append_task_logs(
+        self,
+        task_id: str,
+        logs: list[dict[str, Any]],
+    ) -> None:
+        if not logs:
+            return
+        await self.initialize()
+        await self._pg.execute_many(
+            """
+            INSERT INTO public.ai_collect_task_logs (task_id, level, message, created_at)
+            VALUES (CAST(:task_id AS uuid), :level, :message, :created_at)
+            """,
+            [{"task_id": task_id, **log} for log in logs],
+        )
+        await publish_task_change(task_id)
 
     async def increment_task_stats(
         self,
@@ -595,6 +614,7 @@ class AICollectStore:
                 "synced": synced,
             },
         )
+        await publish_task_change(task_id)
 
     async def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()
@@ -617,6 +637,7 @@ class AICollectStore:
         if task is None:
             raise RuntimeError("Task creation did not return a row")
         task["logs"] = []
+        await publish_task_change(str(task["id"]))
         return task
 
     async def update_task(self, task_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
@@ -661,6 +682,7 @@ class AICollectStore:
         )
         if task:
             task["logs"] = []
+            await publish_task_change(task_id)
         return task
 
     async def start_task(self, task_id: str) -> dict[str, Any] | None:
@@ -681,6 +703,7 @@ class AICollectStore:
         )
         if task:
             task["logs"] = []
+            await publish_task_change(task_id)
         return task
 
     async def set_active_task_status(
@@ -703,6 +726,7 @@ class AICollectStore:
         )
         if task:
             task["logs"] = []
+            await publish_task_change(task_id)
         return task
 
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
@@ -754,6 +778,8 @@ class AICollectStore:
             """,
             {"id": task_id},
         )
+        if deleted is not None:
+            await publish_task_change(task_id)
         return deleted is not None
 
 

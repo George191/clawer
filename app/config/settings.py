@@ -47,6 +47,11 @@ class AppSettings(BaseSettings):
     download_chunk_size: int = Field(
         default=8192, description="文件下载流式写入块大小(bytes)"
     )
+    download_asset_concurrency: int = Field(
+        default=64,
+        ge=1,
+        description="下载服务全局资源并发数",
+    )
     download_max_file_size: int = Field(
         default=500 * 1024 * 1024, description="允许下载的最大文件大小(bytes)"
     )
@@ -61,6 +66,11 @@ class AppSettings(BaseSettings):
     minio_bucket: str = Field(default="", description="MinIO存储桶名称")
     business_metadata_minio_bucket: str = Field(default="business-metadata", description="业务元数据与制品存储桶")
     minio_secure: bool = Field(default=False, description="MinIO是否使用HTTPS")
+    minio_max_workers: int = Field(
+        default=32,
+        ge=1,
+        description="MinIO 客户端连接池与 I/O 线程数",
+    )
 
     kafka_brokers: str = Field(default="", description="Kafka Broker地址, 多个以逗号分隔")
     kafka_topic: str = Field(default="", description="Kafka推送主题")

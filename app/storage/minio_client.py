@@ -10,8 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from io import BytesIO
 from pathlib import Path
+
+import urllib3
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -25,6 +29,17 @@ class MinioClient:
         self._bucket = bucket or settings.minio_bucket
         self._public_read = public_read
         self._connection_lock = asyncio.Lock()
+        self._executor = ThreadPoolExecutor(
+            max_workers=settings.minio_max_workers,
+            thread_name_prefix="minio",
+        )
+
+    async def _run_sync(self, func, /, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            partial(func, *args, **kwargs),
+        )
 
     async def _ensure_connection(self) -> None:
         if self._client is not None:
@@ -32,7 +47,7 @@ class MinioClient:
         async with self._connection_lock:
             if self._client is not None:
                 return
-            await asyncio.to_thread(self._connect)
+            await self._run_sync(self._connect)
 
     def _connect(self) -> None:
         try:
@@ -43,6 +58,16 @@ class MinioClient:
                 access_key=settings.minio_access_key,
                 secret_key=settings.minio_secret_key,
                 secure=settings.minio_secure,
+                http_client=urllib3.PoolManager(
+                    timeout=urllib3.Timeout(connect=300, read=300),
+                    maxsize=settings.minio_max_workers,
+                    block=True,
+                    retries=urllib3.Retry(
+                        total=5,
+                        backoff_factor=0.2,
+                        status_forcelist=[500, 502, 503, 504],
+                    ),
+                ),
             )
             if not self._client.bucket_exists(self._bucket):
                 self._client.make_bucket(self._bucket)
@@ -109,7 +134,7 @@ class MinioClient:
 
         file_size = file_path.stat().st_size
 
-        await asyncio.to_thread(
+        await self._run_sync(
             self._client.fput_object,
             bucket_name=self._bucket,
             object_name=object_key,
@@ -141,7 +166,7 @@ class MinioClient:
             content_type = self._guess_content_type(filename)
 
         data_stream = BytesIO(data)
-        await asyncio.to_thread(
+        await self._run_sync(
             self._client.put_object,
             bucket_name=self._bucket,
             object_name=object_key,
@@ -150,7 +175,7 @@ class MinioClient:
             content_type=content_type,
         )
 
-        logger.info("Uploaded bytes to MinIO: %s (%d bytes)", object_key, len(data))
+        logger.debug("Uploaded bytes to MinIO: %s (%d bytes)", object_key, len(data))
         return object_key
 
     async def upload_bytes_to_key(
@@ -162,7 +187,7 @@ class MinioClient:
         await self._ensure_connection()
 
         data_stream = BytesIO(data)
-        await asyncio.to_thread(
+        await self._run_sync(
             self._client.put_object,
             bucket_name=self._bucket,
             object_name=object_key,
@@ -196,7 +221,7 @@ class MinioClient:
         attempts = 3
         for attempt in range(attempts):
             try:
-                return await asyncio.to_thread(read_object)
+                return await self._run_sync(read_object)
             except Exception as e:
                 error_code = str(getattr(e, "code", "") or "")
                 if error_code in non_retryable_codes or attempt == attempts - 1:
@@ -214,13 +239,14 @@ class MinioClient:
         await self._ensure_connection()
         object_key = self._build_object_key(template_name, data_type, filename)
         try:
-            await asyncio.to_thread(self._client.stat_object, self._bucket, object_key)
+            await self._run_sync(self._client.stat_object, self._bucket, object_key)
             return True
         except Exception:
             return False
 
     async def close(self) -> None:
-        pass
+        self._executor.shutdown(wait=True, cancel_futures=True)
+        self._client = None
 
     @staticmethod
     def _guess_content_type(filename: str) -> str:

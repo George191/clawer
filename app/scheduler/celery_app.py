@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import pkgutil
+import sys
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -60,7 +61,7 @@ class CeleryAppFactory:
 
     def _build_config(self) -> dict:
         """构建 Celery 配置字典。"""
-        return {
+        config = {
             # ── 序列化 ──
             "task_serializer": "json",
             "result_serializer": "json",
@@ -90,6 +91,13 @@ class CeleryAppFactory:
             "worker_send_task_events": True,           # 发送任务事件（供监控消费）
             "task_send_sent_event": True,              # 发送任务下发事件
         }
+        if sys.platform == "win32":
+            # Celery's prefork pool is not supported reliably on Windows. Spawned
+            # billiard children can enter fast_trace_task before its local trace
+            # state is initialized, so use the in-process pool on this platform.
+            config["worker_pool"] = "solo"
+            config["worker_concurrency"] = 1
+        return config
 
     # ── 任务发现 ──────────────────────────────────────────────────────
 

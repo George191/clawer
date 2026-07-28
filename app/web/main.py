@@ -38,6 +38,7 @@ from app.web.routes.etl import router as etl_router
 from app.web.routes.monitor import router as monitor_router
 from app.web.routes.scheduler import router as scheduler_router
 from app.web.routes.socket import router as socket_router
+from app.web.routes.socket import start_task_event_listener, stop_task_event_listener
 from app.web.routes.tasks import router as tasks_router
 from app.web.routes.templates import router as templates_router
 
@@ -63,7 +64,11 @@ async def lifespan(appy: FastAPI):
     logger.info("=" * 50)
     from app.web.services.ai_collect_store import ai_collect_store
     await ai_collect_store.initialize()
+    await start_task_event_listener()
     yield
+    await stop_task_event_listener()
+    from app.web.services.task_events import close_task_event_publisher
+    await close_task_event_publisher()
     from app.storage.postgres_client import get_pg_client
     await get_pg_client().close()
     logger.info("Web API shutting down")

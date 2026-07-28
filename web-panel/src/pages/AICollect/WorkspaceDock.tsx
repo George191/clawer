@@ -27,14 +27,15 @@ import {
 import {
   createWorkspaceTask,
   deleteWorkspaceTask,
-  fetchWorkspaceTask,
   fetchWorkspaceTasks,
   fetchWorkspaceTemplates,
+  AI_ANALYZE_WS_URL,
   runWorkspaceTaskAction,
   updateWorkspaceTemplate,
   type WorkspaceTask,
   type WorkspaceTemplate,
 } from '@/services/aiApi';
+import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import type {
@@ -983,6 +984,22 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [taskItems, setTaskItems] = useState<CollectTask[]>([]);
   const [taskRuntime, setTaskRuntime] = useState<Record<string, TaskRuntimeItem>>({});
 
+  const applyWorkspaceTask = useCallback((item: WorkspaceTask) => {
+    const mappedTask = mapWorkspaceTask(item);
+    setTaskItems((current) => (
+      current.some((task) => task.key === item.id)
+        ? current.map((task) => (task.key === item.id ? mappedTask : task))
+        : [mappedTask, ...current]
+    ));
+    setTaskRuntime((current) => {
+      const runtime = mapWorkspaceTaskRuntime(item);
+      if (!runtime.logs.length && current[item.id]?.logs.length) {
+        runtime.logs = current[item.id].logs;
+      }
+      return { ...current, [item.id]: runtime };
+    });
+  }, []);
+
   const applyWorkspaceTasks = useCallback((items: WorkspaceTask[]) => {
     setTaskItems(items.map(mapWorkspaceTask));
     setTaskRuntime((current) => Object.fromEntries(items.map((item) => {
@@ -1036,24 +1053,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   useEffect(() => {
     if (activePanel !== 'tasks') return undefined;
-
-    let active = true;
-    let timer: number;
-    const refresh = async () => {
-      try {
-        await refreshWorkspaceTasks();
-      } catch (error) {
-        console.error('Failed to refresh tasks', error);
-      } finally {
-        if (active) timer = window.setTimeout(refresh, 5000);
-      }
-    };
-    void refresh();
-
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
+    void refreshWorkspaceTasks().catch((error) => {
+      console.error('Failed to refresh tasks', error);
+    });
+    return undefined;
   }, [activePanel, refreshWorkspaceTasks]);
 
   useEffect(() => {
@@ -1074,38 +1077,42 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setSelectedTaskKey(focusTask.id);
   }, [activePanel, focusTask]);
 
-  useEffect(() => {
-    if (activePanel !== 'tasks' || !selectedTaskKey) return undefined;
-
-    let active = true;
-    let timer: number;
-    const refreshDetail = async () => {
-      try {
-        const item = await fetchWorkspaceTask(selectedTaskKey);
-        if (!active) return;
-        const mappedTask = mapWorkspaceTask(item);
-        setTaskItems((current) => (
-          current.some((task) => task.key === item.id)
-            ? current.map((task) => (task.key === item.id ? mappedTask : task))
-            : [mappedTask, ...current]
-        ));
-        setTaskRuntime((current) => ({
-          ...current,
-          [item.id]: mapWorkspaceTaskRuntime(item),
-        }));
-      } catch (error) {
-        console.error('Failed to refresh task detail', error);
-      } finally {
-        if (active) timer = window.setTimeout(refreshDetail, 2000);
+  const handleTaskSocketMessage = useCallback((rawMessage: string) => {
+    try {
+      const message = JSON.parse(rawMessage) as {
+        type?: string;
+        task_id?: string;
+        data?: WorkspaceTask;
+      };
+      if (message.type === 'task_detail' && message.data) {
+        applyWorkspaceTask(message.data);
+      } else if (message.type === 'task_deleted' && message.task_id) {
+        setTaskItems((current) => current.filter((item) => item.key !== message.task_id));
+        setTaskRuntime((current) => {
+          const next = { ...current };
+          delete next[message.task_id!];
+          return next;
+        });
+        setSelectedTaskKey((current) => (current === message.task_id ? null : current));
       }
-    };
-    void refreshDetail();
+    } catch (error) {
+      console.error('Failed to handle task WebSocket message', error);
+    }
+  }, [applyWorkspaceTask]);
 
+  const { connected: taskSocketConnected, send: sendTaskSocketMessage } = useWebSocket(
+    AI_ANALYZE_WS_URL,
+    { onMessage: handleTaskSocketMessage },
+  );
+
+  useEffect(() => {
+    if (activePanel !== 'tasks' || !selectedTaskKey || !taskSocketConnected) return undefined;
+    const channel = `task:${selectedTaskKey}`;
+    sendTaskSocketMessage(JSON.stringify({ type: 'subscribe', channel }));
     return () => {
-      active = false;
-      window.clearTimeout(timer);
+      sendTaskSocketMessage(JSON.stringify({ type: 'unsubscribe', channel }));
     };
-  }, [activePanel, selectedTaskKey]);
+  }, [activePanel, selectedTaskKey, sendTaskSocketMessage, taskSocketConnected]);
 
   const templateRows = useMemo(() => templates
     .filter((item) => {
@@ -1501,13 +1508,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   ) => {
     try {
       const updated = await runWorkspaceTaskAction(taskKey, action);
-      const mappedTask = mapWorkspaceTask(updated);
-      setTaskItems((prev) => prev.map((item) => (item.key === taskKey ? mappedTask : item)));
-      setTaskRuntime((prev) => ({ ...prev, [taskKey]: mapWorkspaceTaskRuntime(updated) }));
+      applyWorkspaceTask(updated);
     } catch (error) {
       console.error(`Failed to run task action: ${action}`, error);
     }
-  }, []);
+  }, [applyWorkspaceTask]);
 
   const handlePauseTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'pause');
   const handleStartTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start');
@@ -2529,7 +2534,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           </div>
           <div className="workspace-dock-detail-head-actions">
             {runtime.status === 'queued' ? (
-              <Tooltip title="启动任务" placement="top">
+              <Tooltip title="启动任务" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
                   className="workspace-dock-detail-icon-btn is-run"
@@ -2541,7 +2546,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               </Tooltip>
             ) : null}
             {runtime.status === 'running' && runtime.controlState !== 'canceled' ? (
-              <Tooltip title="暂停任务" placement="top">
+              <Tooltip title="暂停任务" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
                   className="workspace-dock-detail-icon-btn is-pause"
@@ -2553,7 +2558,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               </Tooltip>
             ) : null}
             {runtime.status === 'paused' ? (
-              <Tooltip title="继续任务" placement="top">
+              <Tooltip title="继续任务" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
                   className="workspace-dock-detail-icon-btn is-run"
@@ -2565,7 +2570,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               </Tooltip>
             ) : null}
             {runtime.status !== 'completed' && runtime.controlState !== 'canceled' ? (
-              <Tooltip title="取消任务" placement="top">
+              <Tooltip title="取消任务" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
                   className="workspace-dock-detail-icon-btn is-danger"
@@ -2583,19 +2588,22 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 okText="删除"
                 cancelText="保留"
                 okButtonProps={{ danger: true }}
+                rootClassName="workspace-dock-control-popconfirm"
                 onConfirm={() => handleDeleteTask(selectedTask.key)}
               >
-                <button
-                  type="button"
-                  className="workspace-dock-detail-icon-btn is-danger"
-                  aria-label="删除任务"
-                >
-                  <DeleteOutlined />
-                </button>
+                <Tooltip title="删除任务" placement="top" rootClassName="workspace-dock-control-tooltip">
+                  <button
+                    type="button"
+                    className="workspace-dock-detail-icon-btn is-danger"
+                    aria-label="删除任务"
+                  >
+                    <DeleteOutlined />
+                  </button>
+                </Tooltip>
               </Popconfirm>
             ) : null}
             {runtime.downloadState === 'running' ? (
-              <Tooltip title="暂停下载" placement="top">
+              <Tooltip title="暂停下载" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
                   className="workspace-dock-detail-icon-btn is-download"
@@ -2607,7 +2615,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Tooltip>
             ) : (
-              <Tooltip title={runtime.downloadState === 'paused' ? '继续下载' : '开始下载'} placement="top">
+              <Tooltip title={runtime.downloadState === 'paused' ? '继续下载' : '开始下载'} placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
                   className="workspace-dock-detail-icon-btn is-download"
@@ -2620,7 +2628,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               </Tooltip>
             )}
             {runtime.syncState === 'running' ? (
-              <Tooltip title="暂停同步" placement="top">
+              <Tooltip title="暂停同步" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
                   className="workspace-dock-detail-icon-btn is-sync"
@@ -2632,7 +2640,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Tooltip>
             ) : (
-              <Tooltip title={runtime.syncState === 'paused' ? '继续同步' : '开始同步'} placement="top">
+              <Tooltip title={runtime.syncState === 'paused' ? '继续同步' : '开始同步'} placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
                   className="workspace-dock-detail-icon-btn is-sync"
@@ -3322,6 +3330,37 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           align-items: center;
           gap: 8px;
+        }
+        .workspace-dock-control-tooltip .ant-tooltip-inner {
+          min-height: 0;
+          padding: 3px 7px;
+          border-radius: 5px;
+          font-size: 11px;
+          font-weight: 400;
+          line-height: 16px;
+        }
+        .workspace-dock-control-popconfirm .ant-popover-inner {
+          padding: 9px 10px;
+          border-radius: 7px;
+        }
+        .workspace-dock-control-popconfirm .ant-popconfirm-title {
+          font-size: 12px;
+          font-weight: 500;
+          line-height: 18px;
+        }
+        .workspace-dock-control-popconfirm .ant-popconfirm-description {
+          margin-top: 1px;
+          font-size: 11px;
+          line-height: 16px;
+        }
+        .workspace-dock-control-popconfirm .ant-popconfirm-buttons {
+          margin-top: 7px;
+        }
+        .workspace-dock-control-popconfirm .ant-popconfirm-buttons .ant-btn {
+          height: 24px;
+          padding: 0 8px;
+          border-radius: 5px;
+          font-size: 11px;
         }
         .workspace-dock-detail-icon-btn {
           border: none;
