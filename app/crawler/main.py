@@ -336,23 +336,11 @@ async def run_from_list_file_stream(
                 batch_size,
             )
         else:
-            if resume and start_line is None:
-                legacy_saved = await checkpoint_store.discover_legacy_checkpoints()
-                if not legacy_saved:
-                    raise RuntimeError("Redis 中没有可恢复的活动 checkpoint")
-                start_line = min(item.start_line for item in legacy_saved)
-                last_assigned_line = max(item.end_line for item in legacy_saved)
-                logger.info(
-                    "自动发现旧 checkpoint: active=%d, start=%d, max_end=%d",
-                    len(legacy_saved),
-                    start_line,
-                    last_assigned_line,
-                )
-            else:
-                last_assigned_line = (0 if start_line is None else start_line) - 1
+            if resume:
+                raise RuntimeError("Redis 中没有统一格式的可恢复 checkpoint")
+            last_assigned_line = (0 if start_line is None else start_line) - 1
             start_line = 0 if start_line is None else start_line
-            if not resume:
-                await checkpoint_store.clear()
+            await checkpoint_store.clear()
             run_state = CrawlRunState(
                 start_line=start_line,
                 limit=limit,
@@ -486,7 +474,7 @@ async def run_from_list_file_stream(
                     )
                     
                     if result.success:
-                        await checkpoint_store.delete(checkpoint.task_id)
+                        await checkpoint_store.delete(checkpoint.identity)
                         logger.info(f"[OK] 批次 {idx + 1} 成功")
                         return len(batch_data)
                     logger.warning(f"[FAIL] 批次 {idx + 1} 失败: {result.errors}")

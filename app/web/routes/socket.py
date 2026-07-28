@@ -209,7 +209,17 @@ async def _listen_for_task_events() -> None:
                 payload = json.loads(message["data"])
                 task_id = str(payload.get("task_id") or "")
                 if task_id:
-                    await _send_task_snapshot(task_id)
+                    if payload.get("type") == "task_log":
+                        await manager.broadcast(
+                            f"task:{task_id}",
+                            {
+                                "type": "task_log",
+                                "task_id": task_id,
+                                "data": payload.get("data") or {},
+                            },
+                        )
+                    else:
+                        await _send_task_snapshot(task_id)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

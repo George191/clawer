@@ -26,5 +26,24 @@ async def publish_task_change(task_id: str) -> None:
         logger.warning("Failed to publish task change for %s: %s", task_id, exc)
 
 
+async def publish_task_log(task_id: str, log: dict) -> None:
+    """Publish one persisted task log line for genuine incremental rendering."""
+    redis = await _publisher_connection.ensure_connected()
+    if redis is None:
+        return
+    payload = dict(log)
+    created_at = payload.get("created_at")
+    if hasattr(created_at, "isoformat"):
+        payload["created_at"] = created_at.isoformat()
+    try:
+        await redis.publish(
+            TASK_EVENT_CHANNEL,
+            json.dumps({"type": "task_log", "task_id": task_id, "data": payload}),
+        )
+    except Exception as exc:
+        _publisher_connection.mark_unavailable()
+        logger.warning("Failed to publish task log for %s: %s", task_id, exc)
+
+
 async def close_task_event_publisher() -> None:
     await _publisher_connection.close()

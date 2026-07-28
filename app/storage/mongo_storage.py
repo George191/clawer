@@ -34,7 +34,9 @@ class MongoStorage(StorageBackend):
         self._client = None
         self._db = None
         self._initialized_collections: set[str] = set()
-        self.last_save_stats = {"inserted": 0, "updated": 0, "deleted": 0}
+        self.last_save_stats = {
+            "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
+        }
 
     def _get_collection_name(self, template_name: str) -> str:
         return template_name
@@ -75,6 +77,14 @@ class MongoStorage(StorageBackend):
     def _resolve_record_id(self, record: dict[str, Any]) -> str:
         content = json.dumps(record, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(content.encode()).hexdigest()
+
+    @staticmethod
+    def _business_content(record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in record.items()
+            if key not in {"_id", "_meta"}
+        }
 
     @staticmethod
     def _build_record_with_meta(
@@ -202,11 +212,9 @@ class MongoStorage(StorageBackend):
             record_id = meta.get("record_id")
             if record_id:
                 existing_docs[record_id] = doc
-        self.last_save_stats = {
-            "inserted": len(unique_ids) - len(existing_docs),
-            "updated": len(existing_docs),
-            "deleted": 0,
-        }
+        inserted_count = 0
+        updated_count = 0
+        unchanged_count = 0
 
         operations: list[ReplaceOne] = []
         processed_ids: set[str] = set()
@@ -234,12 +242,29 @@ class MongoStorage(StorageBackend):
                 final_record["_meta"]["download_status"] = existing_meta.get(
                     "download_status", "pending"
                 )
-                final_record["_meta"]["sync_status"] = existing_meta.get(
-                    "sync_status", "pending"
-                )
-                final_record["_meta"]["updated_at"] = now
+                business_changed = self._business_content(
+                    existing
+                ) != self._business_content(final_record)
+                search_params_changed = existing_meta.get(
+                    "search_params", {}
+                ) != final_record["_meta"].get("search_params", {})
+                if business_changed:
+                    final_record["_meta"]["sync_status"] = "pending"
+                    final_record["_meta"]["updated_at"] = now
+                    updated_count += 1
+                else:
+                    final_record["_meta"]["sync_status"] = existing_meta.get(
+                        "sync_status", "pending"
+                    )
+                    final_record["_meta"]["updated_at"] = existing_meta.get(
+                        "updated_at", now
+                    )
+                    unchanged_count += 1
+                    if not search_params_changed:
+                        continue
             else:
                 final_record = self._drop_none_values(record_with_meta)
+                inserted_count += 1
 
             operations.append(
                 ReplaceOne(
@@ -251,6 +276,12 @@ class MongoStorage(StorageBackend):
 
         if operations:
             await collection.bulk_write(operations, ordered=False)
+        self.last_save_stats = {
+            "inserted": inserted_count,
+            "updated": updated_count,
+            "unchanged": unchanged_count,
+            "deleted": 0,
+        }
         return ids
 
     async def update_file_status(
@@ -273,6 +304,7 @@ class MongoStorage(StorageBackend):
             },
         )
         logger.debug("Updated file_status for %s: %s", record_id, download_status)
+
 
     async def update_record_fields(
         self,

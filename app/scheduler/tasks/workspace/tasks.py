@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 
+from app.adapters import load_adapter_class_from_source
+from app.crawler.checkpoint import PageCheckpointStore
+from app.crawler.incremental import build_time_watermark
 from app.engine.spider_engine import CrawlResult, SpiderEngine
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
@@ -52,7 +56,10 @@ async def _crawl_template(
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     engine: SpiderEngine | None = None
-    log_capture = WorkspaceTaskLogCapture(task_id, ai_collect_store)
+    checkpoint_store: PageCheckpointStore | None = None
+    checkpoint_connected = False
+    run_id = str(uuid.uuid4())
+    log_capture = WorkspaceTaskLogCapture(task_id, run_id, ai_collect_store)
     log_capture.start()
     try:
         logger.info("Workspace crawl task started: %s", task_id)
@@ -60,19 +67,75 @@ async def _crawl_template(
         if task is None:
             raise RuntimeError(f"Workspace task not found: {task_id}")
         schedule = dict(task.get("schedule") or {})
+        policies = dict(task.get("policies") or {})
         params = {str(key): str(value) for key, value in parameters.items() if value is not None}
-        template = TemplateLoader().load(template_name, param_values=params or None)
+        template_version = str(task.get("template_version") or "v1.0")
+        artifacts = await ai_collect_store.get_template_runtime_artifacts(
+            template_name,
+            template_version,
+        )
+        template = TemplateLoader().load_content(
+            artifacts["template_yaml"],
+            param_values=params or None,
+            source=artifacts["template_key"],
+        )
+        if template.name != template_name:
+            raise RuntimeError(
+                f"Released template name mismatch: expected {template_name}, got {template.name}"
+            )
+        adapter_class = None
+        if template.adapter:
+            adapter_code = artifacts["adapter_code"]
+            if not adapter_code:
+                raise RuntimeError(
+                    f"Released adapter is missing: {template_name}@{template_version}"
+                )
+            adapter_class = load_adapter_class_from_source(
+                template.adapter,
+                adapter_code,
+                artifacts["adapter_key"],
+            )
+        checkpoint_store = PageCheckpointStore(
+            template_name,
+            task_id,
+            task_id=task_id,
+        )
+        checkpoint_connected = await checkpoint_store.connect()
+        if policies.get("incremental") and not checkpoint_connected:
+            raise RuntimeError(
+                f"Redis is required for incremental task {task_id}"
+            )
+        resume_page = await checkpoint_store.load()
+        redis_watermark = (
+            await checkpoint_store.load_watermark()
+            if policies.get("incremental") else None
+        )
+        incremental_watermark = build_time_watermark(
+            template, policies, redis_watermark
+        )
+        if incremental_watermark.enabled:
+            logger.info(
+                "Workspace incremental crawl: task=%s field=%s watermark=%s window_start=%s",
+                task_id,
+                incremental_watermark.field,
+                incremental_watermark.value.isoformat()
+                if incremental_watermark.value else "bootstrap",
+                incremental_watermark.window_start.isoformat()
+                if incremental_watermark.window_start else "full",
+            )
         template._crawl_context = {
             "task_id": task_id,
             "workspace_task_id": task_id,
             "batch_index": 1,
             "batch_count": 1,
+            "incremental_watermark": incremental_watermark,
         }
-        engine = SpiderEngine()
+        engine = SpiderEngine(adapter_class=adapter_class)
 
         async def update_progress(_page: int, result: CrawlResult) -> None:
             if not await _wait_until_runnable(task_id):
                 raise asyncio.CancelledError
+            await checkpoint_store.save(_page)
             await ai_collect_store.update_task(
                 task_id,
                 {
@@ -84,12 +147,31 @@ async def _crawl_template(
                 },
             )
 
-        result = await engine.crawl_from_page(template, None, update_progress)
+        result = await engine.crawl_from_page(
+            template, resume_page, update_progress
+        )
         if not await _wait_until_runnable(task_id):
             return {"task_id": task_id, "status": "canceled"}
         if not result.success:
             raise RuntimeError("; ".join(result.errors) or "Crawl failed")
 
+        if incremental_watermark.enabled:
+            successful_times = [
+                value for value in (
+                    incremental_watermark.value,
+                    result.latest_record_time,
+                ) if value is not None
+            ]
+            new_watermark = max(successful_times, default=None)
+            checkpoint_saved = await checkpoint_store.complete(
+                new_watermark.isoformat() if new_watermark else None
+            )
+        else:
+            checkpoint_saved = await checkpoint_store.clear()
+        if checkpoint_connected and not checkpoint_saved:
+            raise RuntimeError(
+                f"Failed to commit Redis checkpoint for task {task_id}"
+            )
         final_status = _status_after_success(schedule)
         await ai_collect_store.update_task(
             task_id,
@@ -122,6 +204,8 @@ async def _crawl_template(
     finally:
         if engine is not None:
             await engine.close()
+        if checkpoint_store is not None:
+            await checkpoint_store.close()
         await log_capture.stop()
 
 

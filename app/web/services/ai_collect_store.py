@@ -12,9 +12,12 @@ from curl_cffi import requests as curl_requests
 from lxml import html as lxml_html
 
 from app.config.settings import settings
+from app.logger import get_logger
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
-from app.web.services.task_events import publish_task_change
+from app.web.services.task_events import publish_task_change, publish_task_log
+
+logger = get_logger(__name__)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
@@ -61,13 +64,15 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     owner text NOT NULL DEFAULT 'AI Collect',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    started_at timestamptz
+    started_at timestamptz,
+    deleted_at timestamptz
 );
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS inserted_records bigint NOT NULL DEFAULT 0;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS updated_records bigint NOT NULL DEFAULT 0;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS deleted_records bigint NOT NULL DEFAULT 0;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS downloaded_records bigint NOT NULL DEFAULT 0;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS synced_records bigint NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE public.ai_collect_tasks ALTER COLUMN download_state SET DEFAULT 'running';
 ALTER TABLE public.ai_collect_tasks ALTER COLUMN sync_state SET DEFAULT 'running';
 UPDATE public.ai_collect_tasks SET download_state = 'running' WHERE download_state = 'idle';
@@ -75,10 +80,12 @@ UPDATE public.ai_collect_tasks SET sync_state = 'running' WHERE sync_state = 'id
 CREATE TABLE IF NOT EXISTS public.ai_collect_task_logs (
     id bigserial PRIMARY KEY,
     task_id uuid NOT NULL REFERENCES public.ai_collect_tasks(id) ON DELETE CASCADE,
+    run_id uuid,
     level text NOT NULL DEFAULT 'info',
     message text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE public.ai_collect_task_logs ADD COLUMN IF NOT EXISTS run_id uuid;
 CREATE TABLE IF NOT EXISTS public.ai_collect_analyses (
     template_id text PRIMARY KEY,
     source_url text NOT NULL,
@@ -93,6 +100,7 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_analyses (
 CREATE INDEX IF NOT EXISTS idx_ai_collect_templates_status ON public.ai_collect_templates(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_collect_tasks_status ON public.ai_collect_tasks(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_task ON public.ai_collect_task_logs(task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_run ON public.ai_collect_task_logs(task_id, run_id, created_at DESC);
 """
 class AICollectStore:
     def __init__(self) -> None:
@@ -425,7 +433,8 @@ class AICollectStore:
             """
             SELECT t.*,
                    COALESCE((SELECT count(*) FROM public.ai_collect_tasks task
-                             WHERE task.template_name = t.name), 0)::int AS task_count
+                             WHERE task.template_name = t.name
+                               AND task.deleted_at IS NULL), 0)::int AS task_count
             FROM public.ai_collect_templates t
             ORDER BY t.updated_at DESC
             """
@@ -442,6 +451,150 @@ class AICollectStore:
             if adapter_ref and not adapter_ref.startswith("app/adapters/"):
                 row["adapter"] = minio.build_object_url(adapter_ref)
         return rows
+
+    async def get_template_runtime_artifacts(
+        self,
+        name: str,
+        version: str,
+    ) -> dict[str, str]:
+        await self.initialize()
+        row = await self._pg.fetch_one(
+            """
+            SELECT template, adapter
+            FROM public.ai_collect_templates
+            WHERE name = :name AND version = :version
+            """,
+            {"name": name, "version": version},
+        )
+        if row is None:
+            raise RuntimeError(f"Released template not found: {name}@{version}")
+
+        template_key = str(row.get("template") or "")
+        if not template_key or template_key.startswith("templates/"):
+            raise RuntimeError(f"Template is not stored in MinIO: {name}@{version}")
+
+        minio = get_business_metadata_minio_client()
+        template_bytes = await minio.get_object_bytes(template_key)
+        if template_bytes is None:
+            raise RuntimeError(f"MinIO template object is unavailable: {template_key}")
+
+        adapter_key = str(row.get("adapter") or "")
+        adapter_bytes: bytes | None = None
+        if adapter_key:
+            if adapter_key.startswith("app/adapters/"):
+                raise RuntimeError(f"Adapter is not stored in MinIO: {name}@{version}")
+            adapter_bytes = await minio.get_object_bytes(adapter_key)
+            if adapter_bytes is None:
+                raise RuntimeError(f"MinIO adapter object is unavailable: {adapter_key}")
+
+        try:
+            template_yaml = template_bytes.decode("utf-8")
+            adapter_code = adapter_bytes.decode("utf-8") if adapter_bytes is not None else ""
+        except UnicodeDecodeError as exc:
+            raise RuntimeError(f"Released artifact is not valid UTF-8: {name}@{version}") from exc
+        return {
+            "template_yaml": template_yaml,
+            "template_key": template_key,
+            "adapter_code": adapter_code,
+            "adapter_key": adapter_key,
+        }
+
+    async def list_template_definitions(self) -> list[dict[str, Any]]:
+        await self.initialize()
+        rows = await self._pg.fetch_all(
+            """
+            SELECT t.*,
+                   COALESCE((SELECT count(*) FROM public.ai_collect_tasks task
+                             WHERE task.template_name = t.name
+                               AND task.deleted_at IS NULL), 0)::int AS task_count
+            FROM public.ai_collect_templates t
+            ORDER BY t.updated_at DESC
+            """
+        )
+        minio = get_business_metadata_minio_client()
+        definitions: list[dict[str, Any]] = []
+        for row in rows:
+            template_key = str(row.get("template") or "")
+            template_bytes = await minio.get_object_bytes(template_key)
+            if template_bytes is None:
+                raise RuntimeError(f"MinIO template object is unavailable: {template_key}")
+            try:
+                row["yaml_content"] = template_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise RuntimeError(
+                    f"Released template is not valid UTF-8: {row['name']}@{row['version']}"
+                ) from exc
+            definitions.append(row)
+        return definitions
+
+    async def get_template_definition(
+        self,
+        name: str,
+        version: str | None = None,
+    ) -> dict[str, Any] | None:
+        await self.initialize()
+        version_clause = "AND t.version = :version" if version is not None else ""
+        params: dict[str, Any] = {"name": name}
+        if version is not None:
+            params["version"] = version
+        row = await self._pg.fetch_one(
+            f"""
+            SELECT t.*,
+                   COALESCE((SELECT count(*) FROM public.ai_collect_tasks task
+                             WHERE task.template_name = t.name
+                               AND task.deleted_at IS NULL), 0)::int AS task_count
+            FROM public.ai_collect_templates t
+            WHERE t.name = :name {version_clause}
+            ORDER BY (t.status = 'active') DESC, t.updated_at DESC
+            LIMIT 1
+            """,
+            params,
+        )
+        if row is None:
+            return None
+        template_key = str(row.get("template") or "")
+        template_bytes = await get_business_metadata_minio_client().get_object_bytes(
+            template_key
+        )
+        if template_bytes is None:
+            raise RuntimeError(f"MinIO template object is unavailable: {template_key}")
+        try:
+            row["yaml_content"] = template_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise RuntimeError(
+                f"Released template is not valid UTF-8: {row['name']}@{row['version']}"
+            ) from exc
+        return row
+
+    async def delete_template_definition(self, name: str, version: str) -> bool:
+        await self.initialize()
+        row = await self._pg.fetch_one(
+            """
+            DELETE FROM public.ai_collect_templates target
+            WHERE target.name = :name
+              AND target.version = :version
+              AND NOT EXISTS (
+                  SELECT 1 FROM public.ai_collect_tasks task
+                  WHERE task.template_name = target.name
+                    AND task.deleted_at IS NULL
+              )
+            RETURNING target.template, target.adapter, target.icon
+            """,
+            {"name": name, "version": version},
+        )
+        if row is None:
+            return False
+        minio = get_business_metadata_minio_client()
+        for object_key in dict.fromkeys(
+            str(row.get(column) or "") for column in ("template", "adapter", "icon")
+        ):
+            if not object_key:
+                continue
+            try:
+                await minio.remove_object(object_key)
+            except Exception:
+                logger.exception("Failed to clean deleted template object: %s", object_key)
+        return True
 
     async def update_template(self, template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         await self.initialize()
@@ -555,6 +708,7 @@ class AICollectStore:
             """
             SELECT task.*, '[]'::jsonb AS logs
             FROM public.ai_collect_tasks task
+            WHERE task.deleted_at IS NULL
             ORDER BY task.updated_at DESC
             """
         )
@@ -580,12 +734,13 @@ class AICollectStore:
         await self.initialize()
         await self._pg.execute_many(
             """
-            INSERT INTO public.ai_collect_task_logs (task_id, level, message, created_at)
-            VALUES (CAST(:task_id AS uuid), :level, :message, :created_at)
+            INSERT INTO public.ai_collect_task_logs (task_id, run_id, level, message, created_at)
+            VALUES (CAST(:task_id AS uuid), CAST(:run_id AS uuid), :level, :message, :created_at)
             """,
-            [{"task_id": task_id, **log} for log in logs],
+            [{"task_id": task_id, "run_id": log.get("run_id"), **log} for log in logs],
         )
-        await publish_task_change(task_id)
+        for log in logs:
+            await publish_task_log(task_id, log)
 
     async def increment_task_stats(
         self,
@@ -608,6 +763,7 @@ class AICollectStore:
                 synced_records = synced_records + :synced,
                 updated_at = now()
             WHERE id = CAST(:task_id AS uuid)
+              AND deleted_at IS NULL
             """,
             {
                 "task_id": task_id,
@@ -636,7 +792,9 @@ class AICollectStore:
             UPDATE public.ai_collect_tasks SET
                 {state_column} = :next_state,
                 updated_at = now()
-            WHERE id = CAST(:id AS uuid) AND {state_column} = :current_state
+            WHERE id = CAST(:id AS uuid)
+              AND deleted_at IS NULL
+              AND {state_column} = :current_state
             RETURNING *
             """,
             {
@@ -696,6 +854,7 @@ class AICollectStore:
                 started_at = CASE WHEN :start_now THEN now() ELSE started_at END,
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
+              AND deleted_at IS NULL
             RETURNING *
             """,
             {
@@ -733,7 +892,9 @@ class AICollectStore:
                 progress = 0,
                 started_at = now(),
                 updated_at = now()
-            WHERE id = CAST(:id AS uuid) AND status = 'queued'
+            WHERE id = CAST(:id AS uuid)
+              AND deleted_at IS NULL
+              AND status = 'queued'
             RETURNING *
             """,
             {"id": task_id},
@@ -752,6 +913,7 @@ class AICollectStore:
                 SELECT id
                 FROM public.ai_collect_tasks
                 WHERE status IN ('queued', 'failed')
+                  AND deleted_at IS NULL
                   AND control_state IS DISTINCT FROM 'canceled'
                   AND (
                     CASE
@@ -823,7 +985,9 @@ class AICollectStore:
             UPDATE public.ai_collect_tasks SET
                 status = :next_status,
                 updated_at = now()
-            WHERE id = CAST(:id AS uuid) AND status = :current_status
+            WHERE id = CAST(:id AS uuid)
+              AND deleted_at IS NULL
+              AND status = :current_status
             RETURNING *
             """,
             {"id": task_id, "current_status": current_status, "next_status": next_status},
@@ -845,18 +1009,104 @@ class AICollectStore:
                                   jsonb_build_object(
                                       'level', level,
                                       'message', message,
-                                      'created_at', created_at
+                                      'created_at', created_at,
+                                      'run_id', run_id::text
                                   ) AS payload
                            FROM public.ai_collect_task_logs
                            WHERE task_id = task.id
+                             AND (
+                               run_id = (
+                                 SELECT latest.run_id
+                                 FROM public.ai_collect_task_logs latest
+                                 WHERE latest.task_id = task.id AND latest.run_id IS NOT NULL
+                                 ORDER BY latest.created_at DESC
+                                 LIMIT 1
+                               )
+                               OR (
+                                 run_id IS NULL
+                                 AND NOT EXISTS (
+                                   SELECT 1 FROM public.ai_collect_task_logs grouped
+                                   WHERE grouped.task_id = task.id AND grouped.run_id IS NOT NULL
+                                 )
+                               )
+                             )
                            ORDER BY created_at DESC
                            LIMIT 200
                        ) log_row
-                   ), '[]'::jsonb) AS logs
+                   ), '[]'::jsonb) AS logs,
+                   COALESCE((
+                       SELECT jsonb_agg(
+                           jsonb_build_object(
+                               'id', run_row.run_id::text,
+                               'started_at', run_row.started_at,
+                               'ended_at', run_row.ended_at,
+                               'log_count', run_row.log_count
+                           ) ORDER BY run_row.started_at DESC
+                       )
+                       FROM (
+                           SELECT run_id, min(created_at) AS started_at,
+                                  max(created_at) AS ended_at, count(*) AS log_count
+                           FROM public.ai_collect_task_logs
+                           WHERE task_id = task.id AND run_id IS NOT NULL
+                           GROUP BY run_id
+                           ORDER BY min(created_at) DESC
+                           LIMIT 20
+                       ) run_row
+                   ), '[]'::jsonb) AS log_runs,
+                   (SELECT count(DISTINCT run_id)
+                    FROM public.ai_collect_task_logs
+                    WHERE task_id = task.id AND run_id IS NOT NULL)::integer AS log_run_count
             FROM public.ai_collect_tasks task
             WHERE id = CAST(:id AS uuid)
+              AND task.deleted_at IS NULL
             """,
             {"id": task_id},
+        )
+
+    async def get_task_logs(self, task_id: str, run_id: str) -> list[dict[str, Any]]:
+        await self.initialize()
+        return await self._pg.fetch_all(
+            """
+            SELECT level, message, created_at, run_id::text AS run_id
+            FROM (
+                SELECT log.level, log.message, log.created_at, log.run_id
+                FROM public.ai_collect_task_logs log
+                JOIN public.ai_collect_tasks task ON task.id = log.task_id
+                WHERE log.task_id = CAST(:task_id AS uuid)
+                  AND log.run_id = CAST(:run_id AS uuid)
+                  AND task.deleted_at IS NULL
+                ORDER BY log.created_at DESC
+                LIMIT 200
+            ) run_logs
+            ORDER BY created_at
+            """,
+            {"task_id": task_id, "run_id": run_id},
+        )
+
+    async def get_task_log_runs(
+        self,
+        task_id: str,
+        offset: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        await self.initialize()
+        return await self._pg.fetch_all(
+            """
+            SELECT log.run_id::text AS id,
+                   min(log.created_at) AS started_at,
+                   max(log.created_at) AS ended_at,
+                   count(*) AS log_count
+            FROM public.ai_collect_task_logs log
+            JOIN public.ai_collect_tasks task ON task.id = log.task_id
+            WHERE log.task_id = CAST(:task_id AS uuid)
+              AND log.run_id IS NOT NULL
+              AND task.deleted_at IS NULL
+            GROUP BY log.run_id
+            ORDER BY min(log.created_at) DESC
+            OFFSET :offset
+            LIMIT :limit
+            """,
+            {"task_id": task_id, "offset": offset, "limit": limit},
         )
 
     async def get_task_control(self, task_id: str) -> dict[str, Any] | None:
@@ -866,17 +1116,21 @@ class AICollectStore:
             SELECT status, control_state, download_state, sync_state
             FROM public.ai_collect_tasks
             WHERE id = CAST(:id AS uuid)
+              AND deleted_at IS NULL
             """,
             {"id": task_id},
         )
 
     async def delete_task(self, task_id: str) -> bool:
-        """Delete an unstarted or terminal task; active tasks must be canceled first."""
+        """Soft-delete an unstarted or terminal task; active tasks must be canceled first."""
         await self.initialize()
         deleted = await self._pg.fetch_one(
             """
-            DELETE FROM public.ai_collect_tasks
+            UPDATE public.ai_collect_tasks SET
+                deleted_at = now(),
+                updated_at = now()
             WHERE id = CAST(:id AS uuid)
+              AND deleted_at IS NULL
               AND status NOT IN ('running', 'paused')
             RETURNING id
             """,

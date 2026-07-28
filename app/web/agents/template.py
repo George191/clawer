@@ -137,44 +137,23 @@ class TemplateAgent(BaseAgent):
         self.register_prompt(
             "generate_template",
             """
-                Orchestrate one complete SiteTemplate analysis and return its final YAML.
+                Create the final SiteTemplate YAML from captured evidence. Return no analysis.
 
-                Execute these stages in order. At each stage, verify the stated checks before continuing. If a check fails, revisit the captured evidence, correct the current stage and every dependent later stage, then verify again. Do not emit reasoning or intermediate documents.
+                Decision order:
+                1. Evidence wins. Prefer a successful XHR/fetch JSON response with a real record container and sample; otherwise use rendered HTML. Ignore login, CAPTCHA, maintenance, loading shells and HTML error responses.
+                2. Infer only reusable structure from the closest historical templates: top-level order, request/field shapes, naming, dedup and resource patterns. Never copy another site's URL, selector, constant, field or unsupported behavior.
+                3. Preserve the existing template unless the user request or current evidence requires a change.
 
-                Stage 1 - Site
-                - Derive name, display_name, base_url and one lowercase snake_case business data_type from the target URL, title, page summary and rendered structure.
-                - Write description as the current template's usage contract, not the page's marketing/meta description. Follow the Google Patent convention: state the source and collection purpose first; then document evidence-backed required inputs or query examples; finally summarize important request/pagination parameters or limits. Omit sections unsupported by current evidence and never describe the analysis process.
-                - When data_type is game, set adapter exactly to {template_name}. For other data types, set adapter only when verified enrichment requires it.
-                - Reject maintenance, login, CAPTCHA and loading-shell content as business evidence.
+                Build and verify in this output order:
+                - Site: name/display_name/base_url and one lowercase snake_case business data_type. Description is a concise usage contract: source and purpose, then only verified inputs/examples and important request or pagination limits. Use adapter={template_name} for game; otherwise set it only when verified enrichment cannot be expressed by the template engine.
+                - Request: list_page/list_request must match one captured request and its observed method/parameters. Turn variable path/query values into params; every non-null default is a YAML string. Do not invent headers, endpoints, fallbacks or pagination; omit list_pagination for a verified single-page source.
+                - Response: response_type, item/total paths and selectors must match the selected body, content type, record container and sample.
+                - Fields: emit only observed business fields, with one observed selector/source key per unique output name. Preserve source values; exclude UI IDs, ranks, duplicate aliases and derived values.
+                - Dedup/download: choose the smallest stable identity from emitted fields. Every dedup field and download selector must be emitted; downloads must be verified URLs/lists, not internal media IDs. Keep cover, body images and attachments distinct.
 
-                Stage 2 - Request and params
-                - Inspect successful XHR/fetch evidence inside this stage; API discovery is not a separate task or output.
-                - Prefer a successful structured response with a record container and real sample. Use rendered HTML only when no usable API evidence exists.
-                - Set list_page/list_request from the verified source. Convert variable path/query values, including the input page value, into params. Never fabricate pagination, headers, methods or fallback endpoints.
-                - Every non-null params[].default must be a YAML string, including numeric and boolean-looking request values.
-                - Verify the selected request matches one captured URL and its observed method/parameters.
+                Use only the schema below. Omit unsupported optional sections and empty mappings/lists. Never invent evidence. Keep the required key order so the UI streams Site, Request, Response, Fields, Dedup and Download progressively.
 
-                Stage 3 - Response
-                - Set response_type and JSON paths/selectors from the selected response body shape.
-                - Verify status/content type, record container, sample record and response_type agree. An HTML error body from an API URL is not valid API evidence.
-
-                Stage 4 - Fields
-                - Generate list_fields/detail_fields only from the selected response sample or rendered structure.
-                - Preserve source values. Use one observed selector/source key per canonical output field; exclude UI IDs, ranks, duplicated aliases and derived values.
-                - Verify every required selector exists in the captured evidence and every output name is unique.
-
-                Stage 5 - Dedup and download
-                - Choose the smallest stable business identity from produced fields. Every dedup field must be emitted by list_fields/detail_fields.
-                - Map verified media/attachment URLs to download. Keep cover, body images and attachments distinct. Set adapter only when verified enrichment cannot be expressed by the generic template engine.
-                - Verify every download selector is produced and points to an actual URL/list rather than an internal media ID.
-
-                Final verification
-                - Use only fields from the SiteTemplate schema below; all named fields are top-level siblings.
-                - For a verified non-paginated source omit list_pagination. Never invent records, selectors, aliases or defaults when evidence is missing.
-                - Keep description focused on how this template is used. It may be a short folded YAML block when verified inputs or request parameters need explanation.
-                - Order YAML keys by the stages above so the UI can render Site, Request/Params, Response, Fields, then Dedup/Download progressively.
-
-                Exact YAML field shapes and enums:
+                Schema and allowed values:
                 {schema_shape}
 
                 Target URL: {url}
@@ -182,10 +161,10 @@ class TemplateAgent(BaseAgent):
                 Required display name: {display_name}
                 If data_type is game or an adapter is otherwise required, its name must be exactly {template_name}; otherwise leave adapter empty.
 
-                Existing project conventions:
+                Closest historical template summaries (patterns only):
                 {reference_templates}
 
-                Captured page and network evidence:
+                Current page/network evidence:
                 {analysis_json}
 
                 User refinement request:
@@ -194,10 +173,10 @@ class TemplateAgent(BaseAgent):
                 Existing template to preserve unless the request or current evidence requires a change:
                 {existing_template_yaml}
 
-                Previous attempt requiring rework:
+                Invalid previous attempt, if any:
                 {previous_template_yaml}
 
-                Previous validation error:
+                Validation error to fix, if any:
                 {validation_error}
 
                 Return only a fenced ```yaml block.
@@ -313,13 +292,9 @@ class TemplateAgent(BaseAgent):
             or existing_template.get("data_type")
             or "other"
         )
-        reference_templates = (
-            self._reference_template_summaries(
-                reference_data_type,
-                self._analysis_response_type(analysis_result),
-            )
-            if reference_data_type != "other"
-            else []
+        reference_templates = self._reference_template_summaries(
+            reference_data_type,
+            self._analysis_response_type(analysis_result),
         )
         template_yaml = ""
         validation_error = ""

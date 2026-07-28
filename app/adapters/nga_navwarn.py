@@ -98,7 +98,7 @@ class NgaNavwarnAdapter(BaseSiteAdapter):
             logger.error(
                 f"{self.area_name} gave up page {page} after {attempt + 1} attempts: {error_text[:120]}"
             )
-            return "skip"
+            return "abort"
 
         if "404" in error_text:
             return "skip"

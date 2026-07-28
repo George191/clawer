@@ -33,6 +33,25 @@ class TemplateLoader:
     ) -> SiteTemplate:
         file_path = self._resolve_template_file(name)
         raw = self._read_yaml(file_path)
+        return self._build_template(raw, param_values, validate_params)
+
+    def load_content(
+        self,
+        content: str,
+        param_values: dict[str, str] | None = None,
+        *,
+        validate_params: bool = True,
+        source: str = "<memory>",
+    ) -> SiteTemplate:
+        raw = self._read_yaml_content(content, source)
+        return self._build_template(raw, param_values, validate_params)
+
+    def _build_template(
+        self,
+        raw: dict[str, Any],
+        param_values: dict[str, str] | None,
+        validate_params: bool,
+    ) -> SiteTemplate:
         raw = self._normalize_download_config(raw)
         template = SiteTemplate(**raw)
         if template.params and (param_values is not None or validate_params):
@@ -77,9 +96,13 @@ class TemplateLoader:
     @staticmethod
     def _read_yaml(file_path: Path) -> dict[str, Any]:
         content = file_path.read_text(encoding="utf-8")
+        return TemplateLoader._read_yaml_content(content, str(file_path))
+
+    @staticmethod
+    def _read_yaml_content(content: str, source: str) -> dict[str, Any]:
         data = yaml.safe_load(content)
         if not isinstance(data, dict):
-            raise ValueError(f"Template file must contain a YAML mapping: {file_path}")
+            raise ValueError(f"Template must contain a YAML mapping: {source}")
         return data
 
     @staticmethod

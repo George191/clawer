@@ -10,6 +10,7 @@ import {
   CodeOutlined,
   DeploymentUnitOutlined,
   DeleteOutlined,
+  DownOutlined,
   DownloadOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -27,12 +28,16 @@ import {
 import {
   createWorkspaceTask,
   deleteWorkspaceTask,
+  fetchWorkspaceTaskLogRuns,
+  fetchWorkspaceTaskLogs,
   fetchWorkspaceTasks,
   fetchWorkspaceTemplates,
   AI_ANALYZE_WS_URL,
   runWorkspaceTaskAction,
   updateWorkspaceTemplate,
   type WorkspaceTask,
+  type WorkspaceTaskLog,
+  type WorkspaceTaskLogRun,
   type WorkspaceTemplate,
 } from '@/services/aiApi';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -76,9 +81,7 @@ type TaskFilter = 'all' | TaskStatus;
 type TemplateDetailMode = 'overview' | 'edit';
 type TaskComposerMode = 'once' | 'recurring';
 type TaskRecurringMode = 'daily' | 'interval';
-type TaskIncrementalMode = 'time_window' | 'stop_condition';
 type TaskIntervalUnit = 'minute' | 'hour';
-type TaskLookbackUnit = 'hour' | 'day';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
 type SiteKind = 'news' | 'patent' | 'intelligence' | 'warning' | 'signal' | 'game' | 'generic';
 
@@ -91,9 +94,11 @@ interface TemplateDraft {
 }
 
 interface TaskLog {
+  createdAt: string;
   time: string;
   level: TaskLogLevel;
   message: string;
+  runId: string | null;
 }
 
 interface TaskRuntimeItem {
@@ -104,6 +109,9 @@ interface TaskRuntimeItem {
   lastDelta: number;
   history: number[];
   logs: TaskLog[];
+  logRuns: WorkspaceTaskLogRun[];
+  logRunCount: number;
+  isRecurring: boolean;
   controlState: 'canceled' | null;
   downloadState: 'idle' | 'running' | 'paused';
   syncState: 'idle' | 'running' | 'paused' | 'canceled';
@@ -151,15 +159,7 @@ interface TaskComposerDraft {
   intervalUnit: TaskIntervalUnit;
   templateParams: TaskTemplateParameterDraft[];
   incremental: boolean;
-  incrementalMode: TaskIncrementalMode;
   incrementalField: string;
-  lookbackValue: number;
-  lookbackUnit: TaskLookbackUnit;
-  overlapMinutes: number;
-  stopField: string;
-  stopComparator: '<' | '<=';
-  stopThreshold: string;
-  stopConsecutivePages: number;
   maxEmptyPages: number;
 }
 
@@ -469,11 +469,6 @@ const intervalUnitMeta: Array<{ value: TaskIntervalUnit; label: string }> = [
   { value: 'hour', label: '小时' },
 ];
 
-const lookbackUnitMeta: Array<{ value: TaskLookbackUnit; label: string }> = [
-  { value: 'hour', label: '小时' },
-  { value: 'day', label: '天' },
-];
-
 const formatDateTime = (value: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -526,11 +521,6 @@ const formatTaskNextRunLabel = (value: string) => {
     return `Every ${interval[1]} ${unit}${interval[1] === '1' ? '' : 's'}`;
   }
   return value;
-};
-
-const incrementalModeMeta: Record<TaskIncrementalMode, { label: string }> = {
-  time_window: { label: '时间范围过滤' },
-  stop_condition: { label: '阈值停止规则' },
 };
 
 const GamepadGlyph = () => (
@@ -601,6 +591,9 @@ const buildTaskRuntimeItem = (item: CollectTask): TaskRuntimeItem => {
     lastDelta: 0,
     history: createHistory(recordsValue),
     logs: [],
+    logRuns: [],
+    logRunCount: 0,
+    isRecurring: false,
     controlState: null,
     downloadState: item.status === 'running' ? 'running' : item.status === 'completed' ? 'paused' : 'idle',
     syncState: item.status === 'running' || item.status === 'completed' ? 'running' : 'idle',
@@ -669,10 +662,17 @@ const mapWorkspaceTaskRuntime = (item: WorkspaceTask): TaskRuntimeItem => ({
   lastDelta: 0,
   history: createHistory(item.records),
   logs: item.logs.map((log) => ({
+    createdAt: log.created_at,
     time: formatDateTime(log.created_at),
     level: log.level,
     message: log.message,
+    runId: log.run_id,
   })),
+  logRuns: item.log_runs ?? [],
+  logRunCount: item.log_run_count ?? item.log_runs?.length ?? 0,
+  isRecurring: item.schedule?.mode === 'recurring'
+    ? ['daily', 'interval'].includes(String(item.schedule?.recurring_mode ?? ''))
+    : ['daily', 'interval'].includes(String(item.schedule?.mode ?? '')),
   controlState: item.control_state,
   downloadState: item.download_state,
   syncState: item.sync_state,
@@ -731,20 +731,12 @@ const resolveSiteProfile = (value: string): SiteProfile => {
 };
 
 const defaultIncrementalFields = [
-  'publish_time',
+  'modified',
+  'date',
+  'issue_time',
+  'patent.publication_date',
   'updated_at',
-  'notice_time',
-  'filing_date',
   'created_at',
-  'record_id',
-] as const;
-
-const defaultStopFields = [
-  'publish_time',
-  'record_id',
-  'priority_score',
-  'sort_value',
-  'page_cursor',
 ] as const;
 
 const taskComposerFieldLabels: Record<string, string> = {
@@ -842,10 +834,10 @@ const extractTaskTemplateParameterDrafts = (yaml: string) => {
 
 const inferIncrementalField = (templateValue: string) => {
   const normalized = templateValue.toLowerCase();
-  if (normalized.includes('patent')) return 'filing_date';
-  if (normalized.includes('warn')) return 'notice_time';
-  if (normalized.includes('market')) return 'updated_at';
-  return 'publish_time';
+  if (normalized.includes('patent')) return 'patent.publication_date';
+  if (normalized.includes('warn')) return 'issue_time';
+  if (normalized.includes('planet') || normalized.includes('blacksky') || normalized.includes('satellite')) return 'modified';
+  return 'date';
 };
 
 const formatTaskNextRun = (draft: TaskComposerDraft) => {
@@ -857,10 +849,7 @@ const formatTaskNextRun = (draft: TaskComposerDraft) => {
 
 const formatIncrementalSummary = (draft: TaskComposerDraft) => {
   if (!draft.incremental) return '全量采集';
-  if (draft.incrementalMode === 'time_window') {
-    return `${draft.incrementalField} 回看 ${draft.lookbackValue}${draft.lookbackUnit === 'hour' ? '小时' : '天'}，重叠 ${draft.overlapMinutes} 分钟`;
-  }
-  return `${draft.stopField} ${draft.stopComparator} ${draft.stopThreshold} 时停止，连续命中 ${draft.stopConsecutivePages} 页`;
+  return `${draft.incrementalField}：Redis 水位线减 1 天`;
 };
 
 const stripDecorativeSuffix = (value: string) => value.replace(/\s+[^\u4E00-\u9FFFa-zA-Z0-9]+$/g, '');
@@ -965,15 +954,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     intervalUnit: 'minute',
     templateParams: [],
     incremental: false,
-    incrementalMode: 'time_window',
-    incrementalField: 'publish_time',
-    lookbackValue: 6,
-    lookbackUnit: 'hour',
-    overlapMinutes: 15,
-    stopField: 'publish_time',
-    stopComparator: '<=',
-    stopThreshold: '7d',
-    stopConsecutivePages: 2,
+    incrementalField: 'date',
     maxEmptyPages: 2,
   });
   const [taskConcurrency, setTaskConcurrency] = useState(releaseTaskDefaults?.concurrency ?? 4);
@@ -1018,6 +999,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplateDraft>>({});
   const [taskItems, setTaskItems] = useState<CollectTask[]>([]);
   const [taskRuntime, setTaskRuntime] = useState<Record<string, TaskRuntimeItem>>({});
+  const [selectedTaskLogRunId, setSelectedTaskLogRunId] = useState<string | null>(null);
+  const [historicalTaskLogs, setHistoricalTaskLogs] = useState<{
+    taskId: string;
+    runId: string;
+    logs: TaskLog[];
+  } | null>(null);
+  const [taskLogsLoading, setTaskLogsLoading] = useState(false);
+  const [taskLogRunsLoading, setTaskLogRunsLoading] = useState(false);
+  const [taskLogRunOpen, setTaskLogRunOpen] = useState(false);
 
   const applyWorkspaceTask = useCallback((item: WorkspaceTask) => {
     const mappedTask = mapWorkspaceTask(item);
@@ -1028,8 +1018,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     ));
     setTaskRuntime((current) => {
       const runtime = mapWorkspaceTaskRuntime(item);
-      if (!runtime.logs.length && current[item.id]?.logs.length) {
-        runtime.logs = current[item.id].logs;
+      const existing = current[item.id];
+      if (!runtime.logs.length && existing?.logs.length) {
+        runtime.logs = existing.logs;
+      }
+      if (
+        existing
+        && existing.logRuns.length > runtime.logRuns.length
+        && existing.logRuns[0]?.id === runtime.logRuns[0]?.id
+      ) {
+        runtime.logRuns = existing.logRuns;
       }
       return { ...current, [item.id]: runtime };
     });
@@ -1039,8 +1037,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskItems(items.map(mapWorkspaceTask));
     setTaskRuntime((current) => Object.fromEntries(items.map((item) => {
       const runtime = mapWorkspaceTaskRuntime(item);
-      if (!runtime.logs.length && current[item.id]?.logs.length) {
-        runtime.logs = current[item.id].logs;
+      const existing = current[item.id];
+      if (!runtime.logs.length && existing?.logs.length) {
+        runtime.logs = existing.logs;
+      }
+      if (
+        existing
+        && existing.logRuns.length > runtime.logRuns.length
+        && existing.logRuns[0]?.id === runtime.logRuns[0]?.id
+      ) {
+        runtime.logRuns = existing.logRuns;
       }
       return [item.id, runtime];
     })));
@@ -1117,10 +1123,52 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       const message = JSON.parse(rawMessage) as {
         type?: string;
         task_id?: string;
-        data?: WorkspaceTask;
+        data?: WorkspaceTask | WorkspaceTaskLog;
       };
       if (message.type === 'task_detail' && message.data) {
-        applyWorkspaceTask(message.data);
+        applyWorkspaceTask(message.data as WorkspaceTask);
+      } else if (message.type === 'task_log' && message.task_id && message.data) {
+        const log = message.data as WorkspaceTaskLog;
+        setTaskRuntime((current) => {
+          const runtime = current[message.task_id!];
+          if (!runtime) return current;
+          const mappedLog: TaskLog = {
+            createdAt: log.created_at,
+            time: formatDateTime(log.created_at),
+            level: log.level,
+            message: log.message,
+            runId: log.run_id,
+          };
+          const duplicate = runtime.logs.some((item) => (
+            item.runId === mappedLog.runId
+            && item.createdAt === mappedLog.createdAt
+            && item.message === mappedLog.message
+          ));
+          if (duplicate) return current;
+          const latestRun = runtime.logRuns[0];
+          const isNewRun = Boolean(log.run_id && latestRun?.id !== log.run_id);
+          const nextRuns = isNewRun
+            ? [{
+                id: log.run_id!,
+                started_at: log.created_at,
+                ended_at: log.created_at,
+                log_count: 1,
+              }, ...runtime.logRuns]
+            : runtime.logRuns.map((run, index) => index === 0 ? {
+                ...run,
+                ended_at: log.created_at,
+                log_count: run.log_count + 1,
+              } : run);
+          return {
+            ...current,
+            [message.task_id!]: {
+              ...runtime,
+              logs: isNewRun ? [mappedLog] : [...runtime.logs, mappedLog].slice(-200),
+              logRuns: nextRuns,
+              logRunCount: runtime.logRunCount + (isNewRun ? 1 : 0),
+            },
+          };
+        });
       } else if (message.type === 'task_deleted' && message.task_id) {
         setTaskItems((current) => current.filter((item) => item.key !== message.task_id));
         setTaskRuntime((current) => {
@@ -1222,6 +1270,84 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     () => allTaskRows.find((item) => item.key === selectedTaskKey) ?? null,
     [allTaskRows, selectedTaskKey],
   );
+  const latestTaskLogRunId = selectedTask?.runtime.logRuns[0]?.id ?? null;
+
+  useEffect(() => {
+    setSelectedTaskLogRunId(latestTaskLogRunId);
+    setHistoricalTaskLogs(null);
+    setTaskLogRunOpen(false);
+  }, [latestTaskLogRunId, selectedTaskKey]);
+
+  const handleTaskLogRunChange = useCallback(async (runId: string) => {
+    if (!selectedTaskKey) return;
+    setSelectedTaskLogRunId(runId);
+    if (runId === latestTaskLogRunId) {
+      setHistoricalTaskLogs(null);
+      return;
+    }
+    setTaskLogsLoading(true);
+    try {
+      const logs = await fetchWorkspaceTaskLogs(selectedTaskKey, runId);
+      setHistoricalTaskLogs({
+        taskId: selectedTaskKey,
+        runId,
+        logs: logs.map((log) => ({
+          createdAt: log.created_at,
+          time: formatDateTime(log.created_at),
+          level: log.level,
+          message: log.message,
+          runId: log.run_id,
+        })),
+      });
+    } catch (error) {
+      console.error('Failed to load task run logs', error);
+      setHistoricalTaskLogs({ taskId: selectedTaskKey, runId, logs: [] });
+    } finally {
+      setTaskLogsLoading(false);
+    }
+  }, [latestTaskLogRunId, selectedTaskKey]);
+
+  const handleTaskLogRunPopupScroll = useCallback(async (
+    event: React.UIEvent<HTMLDivElement>,
+  ) => {
+    const target = event.currentTarget;
+    const reachedBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 24;
+    const runtime = selectedTaskKey ? taskRuntime[selectedTaskKey] : null;
+    if (
+      !reachedBottom
+      || !selectedTaskKey
+      || !runtime
+      || taskLogRunsLoading
+      || runtime.logRuns.length >= runtime.logRunCount
+    ) return;
+
+    setTaskLogRunsLoading(true);
+    try {
+      const nextRuns = await fetchWorkspaceTaskLogRuns(
+        selectedTaskKey,
+        runtime.logRuns.length,
+      );
+      setTaskRuntime((current) => {
+        const currentRuntime = current[selectedTaskKey];
+        if (!currentRuntime) return current;
+        const knownIds = new Set(currentRuntime.logRuns.map((run) => run.id));
+        return {
+          ...current,
+          [selectedTaskKey]: {
+            ...currentRuntime,
+            logRuns: [
+              ...currentRuntime.logRuns,
+              ...nextRuns.filter((run) => !knownIds.has(run.id)),
+            ],
+          },
+        };
+      });
+    } catch (error) {
+      console.error('Failed to load more task log runs', error);
+    } finally {
+      setTaskLogRunsLoading(false);
+    }
+  }, [selectedTaskKey, taskLogRunsLoading, taskRuntime]);
   const selectedTemplateDraft = selectedTemplate ? templateDrafts[selectedTemplate.key] : null;
   const templateTaskCounts = useMemo<Record<string, number>>(() => Object.fromEntries(
     templates.map((item) => [item.key, Math.max(item.taskCount, taskItems.filter(
@@ -1394,15 +1520,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       intervalUnit: 'minute' as TaskIntervalUnit,
       templateParams: buildTaskTemplateParameterDrafts(template),
       incremental: scheduleMode === 'recurring',
-      incrementalMode: 'time_window' as TaskIncrementalMode,
       incrementalField: defaultField,
-      lookbackValue: 6,
-      lookbackUnit: 'hour' as TaskLookbackUnit,
-      overlapMinutes: 15,
-      stopField: defaultField,
-      stopComparator: '<=' as const,
-      stopThreshold: '7d',
-      stopConsecutivePages: 2,
       maxEmptyPages: 2,
       ...patch,
     };
@@ -1438,7 +1556,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       template: templateValue,
       templateParams: buildTaskTemplateParameterDrafts(templateValue),
       incrementalField: inferIncrementalField(templateValue),
-      stopField: inferIncrementalField(templateValue),
       ...patch,
     }));
   }, [buildTaskTemplateParameterDrafts]);
@@ -1505,7 +1622,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         policies: {
           concurrency: taskConcurrency,
           incremental: taskComposerDraft.incremental,
-          incremental_mode: taskComposerDraft.incrementalMode,
+          incremental_field: taskComposerDraft.incrementalField,
           respect_robots: taskRespectRobots,
           drift_guard: taskDriftGuard,
           batch: taskBatchInput ? {
@@ -1600,7 +1717,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           templateLocked: true,
           templateParams: extractTaskTemplateParameterDrafts(detailDraft.yaml),
           incrementalField: inferIncrementalField(templateValue),
-          stopField: inferIncrementalField(templateValue),
         }));
       }
     } catch (error) {
@@ -1949,7 +2065,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           <div className="workspace-dock-switch-row">
             <div>
               <strong>增量采集</strong>
-              <small>关闭后按全量任务执行；开启后会追加增量边界与停止规则。</small>
+              <small>开启后使用 Redis 记录最后入库时间，下次从该时间减 1 天采集。</small>
             </div>
             <Switch
               checked={taskComposerDraft.incremental}
@@ -1963,120 +2079,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 <span>{incrementalSummary}</span>
               </div>
 
-              <label className="workspace-dock-form-block" style={{ marginTop: 10 }}>
-                <span>增量策略</span>
-                <Segmented
-                  block
-                  size="small"
-                  value={taskComposerDraft.incrementalMode}
-                  onChange={(value) => updateTaskComposerDraft({ incrementalMode: value as TaskIncrementalMode })}
-                  options={[
-                    { label: incrementalModeMeta.time_window.label, value: 'time_window' },
-                    { label: incrementalModeMeta.stop_condition.label, value: 'stop_condition' },
-                  ]}
-                />
-              </label>
-
-              {taskComposerDraft.incrementalMode === 'time_window' ? (
-                <>
-                  <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
-                    <label>
-                      <span>时间字段</span>
-                      <Select
-                        value={taskComposerDraft.incrementalField}
-                        options={defaultIncrementalFields.map((item) => ({ value: item, label: item }))}
-                        onChange={(value) => updateTaskComposerDraft({ incrementalField: value })}
-                      />
-                    </label>
-                    <label>
-                      <span>重叠分钟</span>
-                      <InputNumber
-                        min={0}
-                        max={240}
-                        value={taskComposerDraft.overlapMinutes}
-                        onChange={(value) => updateTaskComposerDraft({ overlapMinutes: value ?? 15 })}
-                      />
-                    </label>
-                  </div>
-                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
-                    <label>
-                      <span>回看窗口</span>
-                      <InputNumber
-                        min={1}
-                        max={90}
-                        value={taskComposerDraft.lookbackValue}
-                        onChange={(value) => updateTaskComposerDraft({ lookbackValue: value ?? 6 })}
-                      />
-                    </label>
-                    <label>
-                      <span>窗口单位</span>
-                      <Select
-                        value={taskComposerDraft.lookbackUnit}
-                        options={lookbackUnitMeta}
-                        onChange={(value) => updateTaskComposerDraft({ lookbackUnit: value as TaskLookbackUnit })}
-                      />
-                    </label>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
-                    <label>
-                      <span>判断字段</span>
-                      <Select
-                        value={taskComposerDraft.stopField}
-                        options={defaultStopFields.map((item) => ({ value: item, label: item }))}
-                        onChange={(value) => updateTaskComposerDraft({ stopField: value })}
-                      />
-                    </label>
-                    <label>
-                      <span>比较方式</span>
-                      <Select
-                        value={taskComposerDraft.stopComparator}
-                        options={[
-                          { value: '<', label: '< 阈值' },
-                          { value: '<=', label: '<= 阈值' },
-                        ]}
-                        onChange={(value) => updateTaskComposerDraft({ stopComparator: value as '<' | '<=' })}
-                      />
-                    </label>
-                  </div>
-                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
-                    <label>
-                      <span>停止阈值</span>
-                      <Input
-                        value={taskComposerDraft.stopThreshold}
-                        placeholder="例如：7d / 2026-06-01 / 1000"
-                        onChange={(event) => updateTaskComposerDraft({ stopThreshold: event.target.value })}
-                      />
-                    </label>
-                    <label>
-                      <span>连续命中页数</span>
-                      <InputNumber
-                        min={1}
-                        max={20}
-                        value={taskComposerDraft.stopConsecutivePages}
-                        onChange={(value) => updateTaskComposerDraft({ stopConsecutivePages: value ?? 2 })}
-                      />
-                    </label>
-                  </div>
-                  <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
-                    <label>
-                      <span>最多空页数</span>
-                      <InputNumber
-                        min={1}
-                        max={20}
-                        value={taskComposerDraft.maxEmptyPages}
-                        onChange={(value) => updateTaskComposerDraft({ maxEmptyPages: value ?? 2 })}
-                      />
-                    </label>
-                    <label>
-                      <span>策略说明</span>
-                      <Input value="若页面抓取到的排序字段持续低于阈值，则提前停止翻页" readOnly />
-                    </label>
-                  </div>
-                </>
-              )}
+              <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
+                <label>
+                  <span>时间字段</span>
+                  <Select
+                    value={taskComposerDraft.incrementalField}
+                    options={defaultIncrementalFields.map((item) => ({ value: item, label: item }))}
+                    onChange={(value) => updateTaskComposerDraft({ incrementalField: value })}
+                  />
+                </label>
+                <label>
+                  <span>固定策略</span>
+                  <Input value="最后入库时间减 1 天" readOnly />
+                </label>
+              </div>
             </div>
           ) : null}
 
@@ -2552,6 +2568,19 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     if (!selectedTask) return null;
 
     const { runtime, display } = selectedTask;
+    const selectedRunLogs = selectedTaskLogRunId
+      && selectedTaskLogRunId !== latestTaskLogRunId
+      && historicalTaskLogs?.taskId === selectedTask.key
+      && historicalTaskLogs.runId === selectedTaskLogRunId
+      ? historicalTaskLogs.logs
+      : runtime.logs;
+    const selectedLogRun = runtime.logRuns.find((run) => run.id === selectedTaskLogRunId)
+      ?? runtime.logRuns[0]
+      ?? null;
+    const logRunOptions = runtime.logRuns.map((run) => ({
+      value: run.id,
+      label: formatDateTime(run.started_at),
+    }));
     const taskCanceled = runtime.controlState === 'canceled';
     const pipelineControlsDisabled = taskCanceled || runtime.status === 'queued';
     const taskDeletable = runtime.status === 'queued' || runtime.status === 'completed' || runtime.status === 'failed';
@@ -2715,7 +2744,50 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               <i style={{ width: `${Math.max(runtime.progress, 8)}%`, background: display.color }} />
             </div>
             <div className="workspace-dock-progress-meta is-subtle">
-              <span>{selectedTask.lag}</span>
+              {runtime.isRecurring && logRunOptions.length ? (
+                <span
+                  className="workspace-dock-log-run-trigger"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={taskLogRunOpen}
+                  onMouseDownCapture={(event) => {
+                    if ((event.target as HTMLElement).closest('.workspace-dock-log-run-popup')) {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setTaskLogRunOpen((current) => !current);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setTaskLogRunOpen((current) => !current);
+                    }
+                  }}
+                >
+                  <Select
+                    className="workspace-dock-log-run-select"
+                    popupClassName="workspace-dock-log-run-popup"
+                    popupMatchSelectWidth={168}
+                    size="small"
+                    listHeight={160}
+                    suffixIcon={<DownOutlined className="workspace-dock-log-run-arrow" />}
+                    open={taskLogRunOpen}
+                    onOpenChange={setTaskLogRunOpen}
+                    value={selectedTaskLogRunId ?? logRunOptions[0].value}
+                    options={logRunOptions}
+                    loading={taskLogsLoading || taskLogRunsLoading}
+                    onChange={(runId) => {
+                      setTaskLogRunOpen(false);
+                      void handleTaskLogRunChange(runId);
+                    }}
+                    onPopupScroll={(event) => void handleTaskLogRunPopupScroll(event)}
+                    aria-label="选择采集执行日志"
+                  />
+                </span>
+              ) : (
+                <span>{selectedLogRun ? formatDateTime(selectedLogRun.started_at) : selectedTask.lag}</span>
+              )}
               <span>{display.isRunning ? `+${formatCompactNumber(runtime.lastDelta)}/轮` : display.label}</span>
             </div>
           </div>
@@ -2732,8 +2804,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               </div>
             </div>
             <div className="workspace-dock-log-list is-detail">
-              {runtime.logs.slice().reverse().map((log) => (
-                <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.time}-${log.message}`}>
+              {selectedRunLogs.slice().reverse().map((log) => (
+                <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.runId}-${log.createdAt}-${log.message}`}>
                   <code>{renderConsoleLogMessage(log.message)}</code>
                 </div>
               ))}
@@ -3526,6 +3598,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           min-height: 0;
           display: flex;
           flex-direction: column;
+          padding: 0 10px 10px 10px;
         }
         .workspace-dock-detail.is-task-log-only .workspace-dock-log-panel {
           height: 100%;
@@ -3972,7 +4045,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           margin-top: 8px;
           background: transparent;
         }
-        .workspace-dock-progress-meta.is-subtle span {
+        .workspace-dock-progress-meta.is-subtle > span {
           display: inline;
           font-size: 10px;
         }
@@ -3987,6 +4060,111 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: ${aura.subtle};
           font-size: 11px;
           line-height: 1;
+        }
+        .workspace-dock-progress-meta.is-subtle > .workspace-dock-log-run-trigger {
+          display: inline-flex;
+          align-items: center;
+          width: 168px;
+          cursor: pointer;
+          outline: 0;
+        }
+        .workspace-dock-log-run-select {
+          width: 100%;
+        }
+        .workspace-dock-log-run-select.ant-select-single,
+        .workspace-dock-log-run-select.ant-select-single.ant-select-sm {
+          height: auto !important;
+          min-height: 0 !important;
+        }
+        .workspace-dock-log-run-select .ant-select-selector {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          height: 22px !important;
+          padding: 0 24px 0 8px !important;
+          border: 0 !important;
+          background: transparent !important;
+          box-shadow: none !important;
+          font-size: 9px !important;
+        }
+        .workspace-dock-log-run-select.ant-select-focused .ant-select-selector,
+        .workspace-dock-log-run-select:focus-within .ant-select-selector {
+          border: 0 !important;
+          outline: 0 !important;
+          box-shadow: none !important;
+        }
+        .workspace-dock-log-run-select .ant-select-selection-wrap {
+          display: flex;
+          align-items: center;
+          align-self: stretch;
+        }
+        .workspace-dock-log-run-select .ant-select-selection-item {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          line-height: normal !important;
+          text-align: center;
+        }
+        .workspace-dock-log-run-select .ant-select-arrow {
+          top: 50%;
+          inset-inline-end: 8px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 8px;
+          height: 8px;
+          margin-top: 0;
+          transform: translateY(-50%);
+          color: ${aura.subtle};
+          font-size: 8px;
+        }
+        .workspace-dock-log-run-select .ant-select-arrow .anticon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          line-height: 1;
+        }
+        .workspace-dock-log-run-select .ant-select-arrow svg {
+          width: 8px;
+          height: 8px;
+        }
+        .workspace-dock-log-run-arrow {
+          transition: transform 160ms ease;
+        }
+        .workspace-dock-log-run-select.ant-select-open .workspace-dock-log-run-arrow {
+          transform: rotate(180deg);
+        }
+        .workspace-dock-log-run-popup {
+          box-sizing: border-box;
+          padding: 4px;
+          border: 1px solid ${aura.borderSoft};
+          border-radius: 8px;
+          background: ${aura.surfaceElevated};
+          box-shadow: ${aura.shadow};
+        }
+        .workspace-dock-log-run-popup .ant-select-item {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 22px;
+          margin: 1px 0;
+          padding: 2px 6px;
+          border-radius: 5px;
+          font-size: 9px;
+          text-align: center;
+        }
+        .workspace-dock-log-run-popup .ant-select-item-option-content {
+          width: 100%;
+          overflow: hidden;
+          text-align: center;
+          text-overflow: ellipsis;
+        }
+        .workspace-dock-log-run-popup .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
+          background: ${aura.surfaceSoft};
+        }
+        .workspace-dock-log-run-popup .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+          color: ${aura.text};
+          background: ${aura.accentSoft};
         }
         .workspace-dock-diff-stats {
           display: inline-flex;

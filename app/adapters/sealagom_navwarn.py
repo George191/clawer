@@ -194,14 +194,14 @@ class SealagomAdapter(BaseSiteAdapter):
         navarea = self._current_navarea
         err_short = str(error)[:100]
 
-        # 超过最大重试次数，放弃当前页
+        # 超过最大重试次数，终止本次采集
         if attempt >= _MAX_RETRIES:
             logger.error(
                 "[SealagomAdapter] ✗ NAVAREA %d page %d GAVE UP after %d attempts "
                 "(cumulative errors: %d). Last error: %s",
                 navarea, page, attempt, self._error_count, err_short,
             )
-            return "skip"
+            return "abort"
 
         error_str = str(error)
 

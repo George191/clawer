@@ -220,6 +220,14 @@ export interface WorkspaceTaskLog {
   level: 'info' | 'ok' | 'warn';
   message: string;
   created_at: string;
+  run_id: string | null;
+}
+
+export interface WorkspaceTaskLogRun {
+  id: string;
+  started_at: string;
+  ended_at: string;
+  log_count: number;
 }
 
 export interface WorkspaceTask {
@@ -247,6 +255,8 @@ export interface WorkspaceTask {
   updated_at: string;
   started_at?: string;
   logs: WorkspaceTaskLog[];
+  log_runs: WorkspaceTaskLogRun[];
+  log_run_count: number;
 }
 
 export interface WorkspaceTaskPayload {
@@ -327,6 +337,16 @@ export const fetchWorkspaceTasks = (): Promise<WorkspaceTask[]> =>
 
 export const fetchWorkspaceTask = (taskId: string): Promise<WorkspaceTask> =>
   client.get(`/ai/workspace/tasks/${taskId}`).then((r) => r.data);
+
+export const fetchWorkspaceTaskLogs = (taskId: string, runId: string): Promise<WorkspaceTaskLog[]> =>
+  client.get(`/ai/workspace/tasks/${taskId}/logs/${runId}`).then((r) => r.data.items);
+
+export const fetchWorkspaceTaskLogRuns = (
+  taskId: string,
+  offset: number,
+  limit = 20,
+): Promise<WorkspaceTaskLogRun[]> =>
+  client.get(`/ai/workspace/tasks/${taskId}/log-runs`, { params: { offset, limit } }).then((r) => r.data.items);
 
 export const createWorkspaceTask = (data: WorkspaceTaskPayload): Promise<WorkspaceTask> =>
   client.post('/ai/workspace/tasks', data).then((r) => r.data);

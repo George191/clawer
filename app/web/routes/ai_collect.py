@@ -10,10 +10,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.config.ai_settings import ai_settings
+from app.crawler.checkpoint import PageCheckpointStore
 from app.logger import get_logger
 from app.models.template import SiteTemplate
 from app.web.agents.adapter import adapter_agent
@@ -101,6 +102,17 @@ class WorkspaceReleaseRequest(BaseModel):
 
 class WorkspaceTaskActionRequest(BaseModel):
     action: str
+
+
+async def _clear_workspace_checkpoint(task: dict[str, Any]) -> None:
+    task_id = str(task["id"])
+    store = PageCheckpointStore(
+        str(task["template_name"]), task_id, task_id=task_id
+    )
+    try:
+        await store.clear()
+    finally:
+        await store.close()
 
 
 class UrlPreflightResponse:
@@ -817,6 +829,20 @@ async def workspace_task_detail(task_id: str):
     return task
 
 
+@router.get("/ai/workspace/tasks/{task_id}/logs/{run_id}")
+async def workspace_task_logs(task_id: str, run_id: str):
+    return {"items": await ai_collect_store.get_task_logs(task_id, run_id)}
+
+
+@router.get("/ai/workspace/tasks/{task_id}/log-runs")
+async def workspace_task_log_runs(
+    task_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=50),
+):
+    return {"items": await ai_collect_store.get_task_log_runs(task_id, offset, limit)}
+
+
 @router.post("/ai/workspace/tasks")
 async def workspace_task_create(body: WorkspaceTaskRequest):
     return await ai_collect_store.create_task(body.model_dump())
@@ -861,6 +887,7 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
             celery_app.control.revoke(task_id, terminate=True)
         except Exception:
             logger.exception("Failed to revoke workspace task %s", task_id)
+        await _clear_workspace_checkpoint(task)
         await ai_collect_store.append_task_log(task_id, "warn", "任务已取消")
         return task
 
@@ -904,6 +931,9 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
 
 @router.delete("/ai/workspace/tasks/{task_id}", status_code=204)
 async def workspace_task_delete(task_id: str):
+    task = await ai_collect_store.get_task(task_id)
     deleted = await ai_collect_store.delete_task(task_id)
     if not deleted:
         raise HTTPException(status_code=409, detail="Cancel active tasks before deleting them")
+    if task is not None:
+        await _clear_workspace_checkpoint(task)

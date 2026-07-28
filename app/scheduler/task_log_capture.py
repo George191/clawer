@@ -23,9 +23,10 @@ _CELERY_CONSOLE_FORMATTER = logging.Formatter(
 class WorkspaceTaskLogCapture(logging.Handler):
     """Copy task-scoped console records to ``ai_collect_task_logs``."""
 
-    def __init__(self, task_id: str, store: Any = ai_collect_store) -> None:
+    def __init__(self, task_id: str, run_id: str, store: Any = ai_collect_store) -> None:
         super().__init__(logging.NOTSET)
         self.task_id = task_id
+        self.run_id = run_id
         self._store = store
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread_id: int | None = None
@@ -60,6 +61,7 @@ class WorkspaceTaskLogCapture(logging.Handler):
             return
         try:
             item = {
+                "run_id": self.run_id,
                 "level": "warn" if record.levelno >= logging.WARNING else "info",
                 "message": _format_console_record(record, self._formatters),
                 "created_at": datetime.fromtimestamp(record.created, timezone.utc),
@@ -100,27 +102,13 @@ class WorkspaceTaskLogCapture(logging.Handler):
             item = await self._queue.get()
             if item is _STOP:
                 return
-            batch = [item]
-            stopping = False
-            while len(batch) < 100:
-                try:
-                    next_item = await asyncio.wait_for(self._queue.get(), timeout=0.1)
-                except TimeoutError:
-                    break
-                if next_item is _STOP:
-                    stopping = True
-                    break
-                batch.append(next_item)
-
             token = _writing_task_logs.set(True)
             try:
-                await self._store.append_task_logs(self.task_id, batch)
+                await self._store.append_task_logs(self.task_id, [item])
             except Exception as exc:
                 sys.stderr.write(f"Workspace task log write failed: {exc}\n")
             finally:
                 _writing_task_logs.reset(token)
-            if stopping:
-                return
 
 
 def _all_loggers() -> list[logging.Logger]:

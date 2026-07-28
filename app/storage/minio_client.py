@@ -244,6 +244,11 @@ class MinioClient:
         except Exception:
             return False
 
+    async def remove_object(self, object_key: str) -> None:
+        await self._ensure_connection()
+        await self._run_sync(self._client.remove_object, self._bucket, object_key)
+        logger.info("Removed MinIO object: %s", object_key)
+
     async def close(self) -> None:
         self._executor.shutdown(wait=True, cancel_futures=True)
         self._client = None

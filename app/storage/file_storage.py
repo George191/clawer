@@ -14,6 +14,7 @@ from typing import Any
 
 from app.config.settings import settings
 from app.logger import get_logger
+from app.utils.path import get_nested_value
 
 logger = get_logger(__name__)
 
@@ -92,14 +93,16 @@ class StorageBackend(abc.ABC):
 class FileStorage(StorageBackend):
     def __init__(self, base_dir: str | None = None) -> None:
         self._base_dir = Path(base_dir or settings.output_dir)
-        self.last_save_stats = {"inserted": 0, "updated": 0, "deleted": 0}
+        self.last_save_stats = {
+            "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
+        }
 
     def _get_record_dir(self, template_name: str, data_type: str) -> Path:
         record_dir = self._base_dir / template_name / data_type
         record_dir.mkdir(parents=True, exist_ok=True)
         return record_dir
 
-    def _resolve_record_id(self, record: dict[str, Any]) -> str:
+    def _resolve_legacy_record_id(self, record: dict[str, Any]) -> str:
         for key in ("id", "uid", "contract_no", "patent_id", "title"):
             if key in record and record[key]:
                 value = str(record[key]).strip()
@@ -107,6 +110,39 @@ class FileStorage(StorageBackend):
                 return safe_value[:200]
         content = json.dumps(record, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(content.encode()).hexdigest()
+
+    def _resolve_record_id(
+        self,
+        record: dict[str, Any],
+        dedup_fields: list[str] | None = None,
+    ) -> str:
+        if dedup_fields:
+            identity = {
+                field: get_nested_value(record, field) for field in dedup_fields
+            }
+            content = json.dumps(identity, sort_keys=True, ensure_ascii=False)
+            return hashlib.md5(content.encode()).hexdigest()
+        return self._resolve_legacy_record_id(record)
+
+    def _record_path(
+        self,
+        record_dir: Path,
+        record: dict[str, Any],
+        dedup_fields: list[str],
+    ) -> Path:
+        path = record_dir / f"{self._resolve_record_id(record, dedup_fields)}.json"
+        legacy_path = record_dir / f"{self._resolve_legacy_record_id(record)}.json"
+        if legacy_path != path and legacy_path.exists() and not path.exists():
+            return legacy_path
+        return path
+
+    @staticmethod
+    def _business_content(record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in record.items()
+            if key not in {"_meta", "_meta_search_params"}
+        }
 
     async def save_record(
         self,
@@ -116,27 +152,40 @@ class FileStorage(StorageBackend):
         record: dict[str, Any],
     ) -> str:
         record_dir = self._get_record_dir(template_name, data_type)
-        record_id = self._resolve_record_id(record)
-        file_path = record_dir / f"{record_id}.json"
+        file_path = self._record_path(record_dir, record, dedup_fields)
+        record_id = file_path.stem
 
         search_params = record.pop("_meta_search_params", None) or {}
+
+        existing: dict[str, Any] = {}
+        if file_path.exists():
+            existing = json.loads(file_path.read_text(encoding="utf-8"))
+        existing_meta = dict(existing.get("_meta") or {})
+        existing_params = dict(existing_meta.get("search_params") or {})
+        existing_params.update(search_params)
 
         record_with_meta = {
             **record,
             "_meta": {
+                **existing_meta,
                 "template": template_name,
                 "data_type": data_type,
                 "record_id": record_id,
-                "download_status": "pending",
-                "sync_status": "pending",
-                "search_params": search_params,
+                "download_status": existing_meta.get("download_status", "pending"),
+                "sync_status": (
+                    "pending"
+                    if existing and self._business_content(existing) != record
+                    else existing_meta.get("sync_status", "pending")
+                ),
+                "search_params": existing_params,
             },
         }
 
-        file_path.write_text(
-            json.dumps(record_with_meta, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        if record_with_meta != existing:
+            file_path.write_text(
+                json.dumps(record_with_meta, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         logger.debug("Saved record: %s", file_path)
         return str(file_path)
 
@@ -148,14 +197,23 @@ class FileStorage(StorageBackend):
         records: list[dict[str, Any]],
     ) -> list[str]:
         record_dir = self._get_record_dir(template_name, data_type)
-        existing = sum(
-            1
-            for record in records
-            if (record_dir / f"{self._resolve_record_id(record)}.json").exists()
-        )
+        inserted = 0
+        updated = 0
+        unchanged = 0
+        for record in records:
+            path = self._record_path(record_dir, record, dedup_fields)
+            if not path.exists():
+                inserted += 1
+                continue
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if self._business_content(existing) == self._business_content(record):
+                unchanged += 1
+            else:
+                updated += 1
         self.last_save_stats = {
-            "inserted": len(records) - existing,
-            "updated": existing,
+            "inserted": inserted,
+            "updated": updated,
+            "unchanged": unchanged,
             "deleted": 0,
         }
         paths: list[str] = []

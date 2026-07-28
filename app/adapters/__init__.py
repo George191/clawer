@@ -11,8 +11,12 @@ USPTO 的 CAPTCHA 处理等），使 SpiderEngine 保持通用性。
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import pkgutil
+import re
+import sys
+from types import ModuleType
 from typing import Any
 
 from app.downloader.http_client import HttpClient
@@ -73,6 +77,43 @@ def get_adapter_class(name: str | None) -> type[BaseSiteAdapter]:
     if cls is None:
         raise ValueError(f"Unknown site adapter: {name}")
     return cls
+
+
+def load_adapter_class_from_source(
+    name: str,
+    source: str,
+    source_key: str,
+) -> type[BaseSiteAdapter]:
+    """Load one released adapter without depending on a local module file."""
+    safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_") or "adapter"
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
+    module_name = f"app.adapters._runtime_{safe_name}_{digest}"
+    module = ModuleType(module_name)
+    module.__file__ = f"<minio:{source_key}>"
+    module.__package__ = "app.adapters"
+    previous_registry = dict(_ADAPTER_REGISTRY)
+    sys.modules[module_name] = module
+    try:
+        exec(compile(source, module.__file__, "exec"), module.__dict__)
+        cls = _ADAPTER_REGISTRY.get(name)
+        if cls is None or cls.__module__ != module_name:
+            raise ValueError(f"Adapter source did not register '{name}'")
+        return cls
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    finally:
+        runtime_names = [
+            registered_name
+            for registered_name, registered_class in _ADAPTER_REGISTRY.items()
+            if registered_class.__module__ == module_name
+        ]
+        for registered_name in runtime_names:
+            previous_class = previous_registry.get(registered_name)
+            if previous_class is None:
+                _ADAPTER_REGISTRY.pop(registered_name, None)
+            else:
+                _ADAPTER_REGISTRY[registered_name] = previous_class
 
 
 # ── 基类 ────────────────────────────────────────────────────────────────

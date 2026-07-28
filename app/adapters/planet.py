@@ -20,8 +20,8 @@ URL 规则:
 
 from __future__ import annotations
 
-from urllib.parse import urljoin
 from typing import Any
+from urllib.parse import urljoin
 
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
@@ -165,7 +165,7 @@ class PlanetAdapter(BaseSiteAdapter):
                 "Failed to fetch subdirectory '%s': %s",
                 sub_dir_url, e,
             )
-            return []
+            raise
 
         records = self._parser.parse_list(html, self._template.list_fields)
         logger.debug(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,20 @@ def validate_generated_adapter(code: str) -> None:
     for forbidden in adapter_forbidden_patterns():
         if forbidden in code:
             errors.append(f"检测到禁止模式: {forbidden}")
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as exc:
+        errors.append(f"Python syntax error: {exc.msg}")
+    else:
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            imports_http_client = any(alias.name == "HttpClient" for alias in node.names)
+            if imports_http_client and node.module != "app.downloader.http_client":
+                errors.append(
+                    "HttpClient must be imported from app.downloader.http_client"
+                )
 
     if errors:
         raise HTTPException(status_code=400, detail=f"安全校验失败: {'; '.join(errors)}")

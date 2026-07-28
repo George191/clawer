@@ -38,23 +38,24 @@ class AdapterAgent(BaseAgent):
         self.register_prompt(
             "generate_adapter",
             """
-                Generate a Python site adapter for the supplied YAML template.
+                Write the complete Python adapter required by the confirmed YAML. Return no analysis.
 
-                Project constraints:
-                1. Treat the YAML as the complete contract. Emit exactly its business fields and adapter-produced resource fields; do not restore source IDs, duplicate aliases or metadata that the template deliberately omitted.
-                2. Import BaseSiteAdapter/register_adapter from app.adapters and use the injected HttpClient. For data_type=news, prefer the existing NewsBaseAdapter and its URL/media dedupe helpers when applicable. Do not introduce requests, aiohttp, clients, dependencies or standalone crawler code.
-                3. Implement only site-specific hooks the YAML requires: parse_list_response, on_before_crawl, on_after_page, on_error, on_request_headers, on_page_advance or build_batch_param_value. Leave selectors and ordinary parsing to the template engine. One adapter targets one verified site schema: never hardcode multi-key field fallbacks (such as first_value across aliases) or repeat source-to-output mappings already declared by YAML selectors. The collection layer must preserve source values exactly; do not synthesize, concatenate, normalize or reinterpret business fields. If a custom mixed-format response hook is explicitly required, reuse TemplateParser with the YAML list_fields.
-                4. Match the response contract exactly. For response_type=json, let the engine decode JSON and use json_item_path/list_fields; do not inspect prefixes, call startswith/lower on response content, parse HTML/text, or switch sources. For response_type=html/text, parse only the verified format. A fallback is allowed only when explicitly documented by YAML evidence.
-                5. Preserve required params without silent defaults. If the verified API is not paginated, omit list_pagination; the engine will fetch exactly one page. Never invent page loops or page parameters. The YAML dedup_fields are authoritative and must be stable source/identity fields produced by list_fields.
-                6. Optional null, empty-string and whitespace fields must be omitted from records; required empty fields must reject the record. Do not add null placeholders merely to mirror the schema.
-                6. Fulfil every download item. Output actual absolute HTTP(S) URLs under the declared selector. For news, resolve cover/thumbnail metadata, extract body images separately, exclude the cover from images, extract document attachments (PDF/DOC/XLS/PPT/ZIP and declared types), retain useful labels/alt text, and deduplicate by normalized URL. Follow detail_page only when resources or reconstructive content are absent from the list/API.
-                7. For patents preserve declared PDF/figure/thumbnail resources; for intelligence preserve declared document/dataset resources; for navwarn do not invent assets. Never treat an internal numeric media ID as a downloadable URL—resolve it through a verified endpoint when the YAML requires adapter enrichment.
-                8. Keep retries bounded and use the shared proxy failure/rotation path through HttpClient. Generate valid complete Python, use project logging, and add no unrelated framework code.
+                Decision order:
+                1. YAML is the contract. Emit exactly its business fields and required adapter-produced resources; do not restore omitted IDs, aliases or metadata.
+                2. Infer only reusable architecture from same-data-type adapter summaries: base class, necessary hooks, parameter flow and resource handling. Never copy another site's URL, selector, constant or field. Preserve existing code unless the user request or YAML requires a change.
+                3. Add code only for behavior the generic template engine cannot perform.
 
-                Same data-type project conventions:
+                Implementation rules:
+                - Import BaseSiteAdapter/register_adapter from app.adapters and HttpClient from app.downloader.http_client; use the injected HttpClient and project logging, and reuse NewsBaseAdapter helpers for news when applicable. Add no client, dependency, standalone crawler or unrelated framework code.
+                - Implement only required hooks: parse_list_response, on_before_crawl, on_after_page, on_error, on_request_headers, on_page_advance or build_batch_param_value. Leave ordinary selectors/parsing to YAML; for an explicitly required mixed-format hook, reuse TemplateParser with YAML list_fields.
+                - Match response_type exactly. JSON uses engine-decoded data, json_item_path and list_fields; do not sniff content or switch to HTML/text. Parse HTML/text only when declared. Add a fallback only when the YAML evidence explicitly requires it.
+                - Preserve source business values. Do not synthesize, concatenate, normalize, reinterpret or implement multi-key alias fallbacks. Preserve required params without defaults; never invent pagination, loops or page parameters. Treat dedup_fields as authoritative.
+                - Omit optional null/blank fields; reject a record missing a required field. Do not add null placeholders.
+                - Fulfil each download with absolute HTTP(S) URLs under its declared selector. Follow detail_page only for declared resources/content absent from list data. For news, separate cover, body images and document attachments, exclude cover from images, retain useful labels and dedupe normalized URLs. Preserve declared patent PDF/figure/thumbnail and intelligence document/dataset resources; invent no navwarn assets. Resolve internal media IDs only through a verified endpoint.
+                - Keep retries bounded and use HttpClient's shared proxy failure/rotation path. Output valid, complete, minimal Python.
+
+                Same-data-type adapter summaries (patterns only):
                 {reference_adapters}
-
-                References describe reusable project patterns only. The supplied YAML wins; never copy another site's URLs, selectors, constants or fields.
 
                 YAML template:
                 {template_yaml}

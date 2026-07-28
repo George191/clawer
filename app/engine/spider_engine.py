@@ -21,10 +21,16 @@ import asyncio
 import itertools
 import json
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
-from app.adapters import get_adapter
+from app.adapters import BaseSiteAdapter, get_adapter
 from app.config.settings import settings
+from app.crawler.incremental import (
+    FilteredRecords,
+    TimeWatermark,
+    filter_records_by_watermark,
+)
 from app.downloader.http_client import HttpClient
 from app.logger import get_logger
 from app.models.template import (
@@ -71,11 +77,16 @@ class CrawlResult:
         self.saved_records = 0
         self.inserted_records = 0
         self.updated_records = 0
+        self.unchanged_records = 0
         self.deleted_records = 0
         self.pages_processed = 0
         self.total_pages: int | None = None
         self.downloaded_files: list[str] = []
         self.errors: list[str] = []
+        self.latest_record_time: datetime | None = None
+        self.incremental_source_records = 0
+        self.incremental_valid_time_records = 0
+        self.missing_time_records = 0
 
     @property
     def total(self) -> int:
@@ -93,8 +104,13 @@ class CrawlResult:
             "saved_records": self.saved_records,
             "inserted_records": self.inserted_records,
             "updated_records": self.updated_records,
+            "unchanged_records": self.unchanged_records,
             "deleted_records": self.deleted_records,
             "downloaded_files": len(self.downloaded_files),
+            "latest_record_time": (
+                self.latest_record_time.isoformat()
+                if self.latest_record_time else None
+            ),
             "errors": self.errors,
             "success": self.success,
         }
@@ -106,12 +122,28 @@ class SpiderEngine:
         http_client: HttpClient | None = None,
         parser: TemplateParser | None = None,
         storage: StorageBackend | None = None,
+        adapter_class: type[BaseSiteAdapter] | None = None,
     ) -> None:
         self._client = http_client or HttpClient()
         self._parser = parser or TemplateParser()
         self._storage = storage or _create_storage()
+        self._adapter_class = adapter_class
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
         # 断点续采过期时间（默认7天）
+
+    def _create_adapter(
+        self,
+        template: SiteTemplate,
+        **kwargs: Any,
+    ) -> BaseSiteAdapter:
+        if self._adapter_class is None:
+            return get_adapter(
+                template.adapter,
+                template.base_url,
+                self._client,
+                **kwargs,
+            )
+        return self._adapter_class(template.base_url, self._client, **kwargs)
 
     async def _save_page_records(
         self,
@@ -135,8 +167,36 @@ class SpiderEngine:
         save_stats = getattr(self._storage, "last_save_stats", {})
         result.inserted_records += int(save_stats.get("inserted", saved_count))
         result.updated_records += int(save_stats.get("updated", 0))
+        result.unchanged_records += int(save_stats.get("unchanged", 0))
         result.deleted_records += int(save_stats.get("deleted", 0))
         return saved_count
+
+    async def _filter_and_save_page_records(
+        self,
+        template: SiteTemplate,
+        records: list[dict[str, Any]],
+        result: CrawlResult,
+    ) -> tuple[FilteredRecords, int]:
+        watermark = template._crawl_context.get("incremental_watermark")
+        if not isinstance(watermark, TimeWatermark):
+            watermark = TimeWatermark(False, "", None)
+        filtered = filter_records_by_watermark(records, watermark)
+        if watermark.enabled:
+            result.incremental_source_records += len(records)
+            result.missing_time_records += filtered.missing_time
+            result.incremental_valid_time_records += len(records) - filtered.missing_time
+
+        saved_count = 0
+        if filtered.records:
+            saved_count = await self._save_page_records(
+                template, filtered.records, result
+            )
+            if filtered.latest_time and (
+                result.latest_record_time is None
+                or filtered.latest_time > result.latest_record_time
+            ):
+                result.latest_record_time = filtered.latest_time
+        return filtered, saved_count
 
     async def crawl(self, template: SiteTemplate) -> CrawlResult:
         return await self.crawl_from_page(template, None)
@@ -171,6 +231,18 @@ class SpiderEngine:
             list_records = await self._crawl_list_pages(
                 template, result, resume_page, progress_callback
             )
+
+            watermark = template._crawl_context.get("incremental_watermark")
+            if (
+                isinstance(watermark, TimeWatermark)
+                and watermark.enabled
+                and result.incremental_source_records
+                and not result.incremental_valid_time_records
+            ):
+                raise ValueError(
+                    "Incremental time field has no valid values: "
+                    f"template={template.name} field={watermark.field}"
+                )
 
             result.records = list_records
 
@@ -214,9 +286,7 @@ class SpiderEngine:
         result.total_pages = max_pages if max_pages > 0 else None
 
         # 初始化适配器（与 JSON 路径一致，支持站点特定行为和重试逻辑）
-        adapter = get_adapter(
-            template.adapter, template.base_url, self._client
-        )
+        adapter = self._create_adapter(template)
         await adapter.on_before_crawl(template)
 
         # max_pages=0 表示不限制页数，使用大数代替无限循环
@@ -231,6 +301,7 @@ class SpiderEngine:
             page_succeeded = False
             page_skipped = False
             records: list[dict[str, Any]] = []  # 防止 skip 路径下未定义
+            filtered = FilteredRecords([], None, 0, False)
 
             for attempt in self._retry_loop():
                 try:
@@ -258,11 +329,11 @@ class SpiderEngine:
                         break  # 跳出重试循环
 
                     _init_enhancements()
-                    
-                    if records:
-                        await self._save_page_records(template, records, result)
 
-                    all_records.extend(records)
+                    filtered, _ = await self._filter_and_save_page_records(
+                        template, records, result
+                    )
+                    all_records.extend(filtered.records)
 
                     logger.info(
                         "Page %d: found %d records (total: %d)",
@@ -308,6 +379,13 @@ class SpiderEngine:
             if page_succeeded and not page_skipped and not records:
                 break
 
+            if filtered.all_before_window:
+                logger.info(
+                    "Incremental time window reached at page %d",
+                    current_page,
+                )
+                break
+
             if not template.list_pagination:
                 break
 
@@ -350,10 +428,8 @@ class SpiderEngine:
         has_page_cap = config_max_pages > 0
         dynamic_pages: int | float = config_max_pages if has_page_cap else float("inf")
 
-        adapter = get_adapter(
-            template.adapter,
-            template.base_url,
-            self._client,
+        adapter = self._create_adapter(
+            template,
             crawl_context=template._crawl_context,
         )
         await adapter.on_before_crawl(template)
@@ -394,9 +470,11 @@ class SpiderEngine:
 
         # 处理第一页记录
         _init_enhancements()
-        all_records.extend(records1)
+        filtered1, saved_count = await self._filter_and_save_page_records(
+            template, records1, result
+        )
+        all_records.extend(filtered1.records)
         if records1:
-            saved_count = await self._save_page_records(template, records1, result)
             await adapter.on_records_saved(
                 page1_task_id,
                 page1,
@@ -412,6 +490,9 @@ class SpiderEngine:
 
         # 第一页终止条件
         if not records1:
+            await adapter.close()
+            return all_records
+        if filtered1.all_before_window:
             await adapter.close()
             return all_records
         if template.list_pagination is None:
@@ -622,10 +703,11 @@ class SpiderEngine:
             page_task_id = template._crawl_context.get("page_task_ids", {}).get(
                 p, template._crawl_context.get("task_id", "standalone")
             )
-            all_records.extend(records)
-            saved_count = 0
+            filtered, saved_count = await self._filter_and_save_page_records(
+                template, records, result
+            )
+            all_records.extend(filtered.records)
             if records:
-                saved_count = await self._save_page_records(template, records, result)
                 await adapter.on_records_saved(
                     page_task_id,
                     p,
@@ -652,7 +734,11 @@ class SpiderEngine:
             if progress_callback is not None:
                 await progress_callback(p, result)
 
-            if not records or len(records) < results_per_page:
+            if (
+                not records
+                or len(records) < results_per_page
+                or filtered.all_before_window
+            ):
                 should_stop = True
 
         return should_stop, False
