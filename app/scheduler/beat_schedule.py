@@ -115,6 +115,17 @@ class BeatScheduleRegistry:
             },
         )
 
+        self._register_system_tasks()
+
+    def _register_system_tasks(self) -> None:
+        """Register scheduler infrastructure that database overrides cannot remove."""
+        self.register(
+            name="workspace_recurring_dispatch",
+            task="app.scheduler.tasks.workspace.dispatch_due",
+            schedule=crontab(minute="*"),
+            options={"expires": 55},
+        )
+
     # ── 数据库加载（数据驱动） ────────────────────────────────────────
 
     async def load_from_db(self, force: bool = False) -> bool:
@@ -146,6 +157,7 @@ class BeatScheduleRegistry:
             self._entries = {
                 cfg.task_name: cfg.to_beat_entry() for cfg in configs
             }
+            self._register_system_tasks()
             self._db_loaded = True
             logger.info(
                 "Loaded %d tasks from database: %s",

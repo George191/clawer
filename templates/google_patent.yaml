@@ -4,6 +4,7 @@ base_url: "https://patents.google.com"
 data_type: patent
 adapter: google_patent
 anti_crawl_enabled: true
+download_use_proxy: false
 description: >
   Google Patents 通用搜索，支持任意查询语法。
 

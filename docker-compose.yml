@@ -174,7 +174,7 @@ services:
     volumes:
       - ./templates:/app/templates:ro
     working_dir: /app
-    command: celery -A app.scheduler.celery_app worker --loglevel=info
+    command: celery -A app.scheduler.celery_app worker --beat --loglevel=info
     healthcheck:
       test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
       interval: 60s

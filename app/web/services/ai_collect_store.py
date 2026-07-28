@@ -53,8 +53,8 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     downloaded_records bigint NOT NULL DEFAULT 0,
     synced_records bigint NOT NULL DEFAULT 0,
     control_state text,
-    download_state text NOT NULL DEFAULT 'idle',
-    sync_state text NOT NULL DEFAULT 'idle',
+    download_state text NOT NULL DEFAULT 'running',
+    sync_state text NOT NULL DEFAULT 'running',
     schedule jsonb NOT NULL DEFAULT '{}'::jsonb,
     parameters jsonb NOT NULL DEFAULT '{}'::jsonb,
     policies jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -68,6 +68,10 @@ ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS updated_records big
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS deleted_records bigint NOT NULL DEFAULT 0;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS downloaded_records bigint NOT NULL DEFAULT 0;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS synced_records bigint NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_tasks ALTER COLUMN download_state SET DEFAULT 'running';
+ALTER TABLE public.ai_collect_tasks ALTER COLUMN sync_state SET DEFAULT 'running';
+UPDATE public.ai_collect_tasks SET download_state = 'running' WHERE download_state = 'idle';
+UPDATE public.ai_collect_tasks SET sync_state = 'running' WHERE sync_state = 'idle';
 CREATE TABLE IF NOT EXISTS public.ai_collect_task_logs (
     id bigserial PRIMARY KEY,
     task_id uuid NOT NULL REFERENCES public.ai_collect_tasks(id) ON DELETE CASCADE,
@@ -651,9 +655,11 @@ class AICollectStore:
         task = await self._pg.fetch_one(
             """
             INSERT INTO public.ai_collect_tasks
-                (name, template_name, template_version, status, schedule, parameters, policies, owner, started_at)
+                (name, template_name, template_version, status, download_state, sync_state,
+                 schedule, parameters, policies, owner, started_at)
             VALUES
-                (:name, :template_name, :template_version, 'queued', CAST(:schedule AS jsonb),
+                (:name, :template_name, :template_version, 'queued', 'running', 'running',
+                 CAST(:schedule AS jsonb),
                  CAST(:parameters AS jsonb), CAST(:policies AS jsonb), :owner, NULL)
             RETURNING *
             """,
@@ -722,8 +728,9 @@ class AICollectStore:
             """
             UPDATE public.ai_collect_tasks SET
                 status = 'running',
-                download_state = 'idle',
-                sync_state = 'idle',
+                download_state = 'running',
+                sync_state = 'running',
+                progress = 0,
                 started_at = now(),
                 updated_at = now()
             WHERE id = CAST(:id AS uuid) AND status = 'queued'
@@ -735,6 +742,73 @@ class AICollectStore:
             task["logs"] = []
             await publish_task_change(task_id)
         return task
+
+    async def claim_due_recurring_tasks(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Atomically claim due recurring workspace tasks for one crawl run."""
+        await self.initialize()
+        tasks = await self._pg.fetch_all(
+            """
+            WITH due AS (
+                SELECT id
+                FROM public.ai_collect_tasks
+                WHERE status IN ('queued', 'failed')
+                  AND control_state IS DISTINCT FROM 'canceled'
+                  AND (
+                    CASE
+                      WHEN schedule->>'mode' = 'recurring'
+                        THEN schedule->>'recurring_mode'
+                      ELSE schedule->>'mode'
+                    END
+                  ) IN ('daily', 'interval')
+                  AND (
+                    (
+                      (CASE WHEN schedule->>'mode' = 'recurring'
+                         THEN schedule->>'recurring_mode' ELSE schedule->>'mode' END) = 'daily'
+                      AND (now() AT TIME ZONE 'Asia/Shanghai')::time
+                          >= COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time
+                      AND (
+                        started_at IS NULL
+                        OR (started_at AT TIME ZONE 'Asia/Shanghai')::date
+                           < (now() AT TIME ZONE 'Asia/Shanghai')::date
+                      )
+                    )
+                    OR
+                    (
+                      (CASE WHEN schedule->>'mode' = 'recurring'
+                         THEN schedule->>'recurring_mode' ELSE schedule->>'mode' END) = 'interval'
+                      AND (
+                        started_at IS NULL
+                        OR started_at + (
+                          COALESCE(NULLIF(schedule->>'interval_value', '')::integer, 30)
+                          * CASE WHEN schedule->>'interval_unit' = 'hour' THEN 3600 ELSE 60 END
+                          * interval '1 second'
+                        ) <= now()
+                      )
+                    )
+                  )
+                ORDER BY COALESCE(started_at, created_at), created_at
+                FOR UPDATE SKIP LOCKED
+                LIMIT :limit
+            )
+            UPDATE public.ai_collect_tasks task SET
+                status = 'running',
+                progress = 0,
+                download_state = CASE
+                    WHEN task.download_state = 'paused' THEN 'paused' ELSE 'running' END,
+                sync_state = CASE
+                    WHEN task.sync_state IN ('paused', 'canceled') THEN task.sync_state ELSE 'running' END,
+                started_at = now(),
+                updated_at = now()
+            FROM due
+            WHERE task.id = due.id
+            RETURNING task.*
+            """,
+            {"limit": limit},
+        )
+        for task in tasks:
+            task["logs"] = []
+            await publish_task_change(str(task["id"]))
+        return tasks
 
     async def set_active_task_status(
         self,

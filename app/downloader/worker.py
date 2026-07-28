@@ -58,6 +58,7 @@ class AssetDownloadJob:
     template_name: str
     data_type: str
     record_id: str
+    use_proxy: bool
     result: asyncio.Future[tuple[dict[str, Any], str | None]]
 
 
@@ -139,22 +140,8 @@ class DownloadWorker:
             return 0
 
         logger.info("DownloadWorker: found %d pending downloads", len(pending))
-        workspace_task_ids = {
-            str(
-                (record.get("_meta", {}).get("search_params") or {}).get(
-                    "__workspace_task_id"
-                )
-                or ""
-            )
-            for record in pending
-        }
-        workspace_task_ids.discard("")
         tasks = [self._download_one(rec) for rec in pending]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for task_id in workspace_task_ids:
-            await ai_collect_store.transition_task_stage_state(
-                task_id, "download", "running", "idle"
-            )
         success = sum(1 for r in results if r is True)
         logger.info("DownloadWorker: completed %d/%d records", success, len(pending))
         return success
@@ -182,19 +169,6 @@ class DownloadWorker:
             task_control = await ai_collect_store.get_task_control(workspace_task_id)
             if task_control is None:
                 workspace_task_id = ""
-            elif task_control.get("download_state") == "idle":
-                claimed = await ai_collect_store.transition_task_stage_state(
-                    workspace_task_id, "download", "idle", "running"
-                )
-                if claimed is None:
-                    task_control = await ai_collect_store.get_task_control(
-                        workspace_task_id
-                    )
-                    if task_control is None or task_control.get("download_state") != "running":
-                        await self._mongo.update_file_status(
-                            template_name, record_id, "pending"
-                        )
-                        return False
             elif task_control.get("download_state") != "running":
                 await self._mongo.update_file_status(template_name, record_id, "pending")
                 return False
@@ -287,6 +261,7 @@ class DownloadWorker:
                         template_name,
                         data_type,
                         record_id,
+                        template.effective_download_use_proxy,
                     )
                     for dl_info in pending_by_url.values()
                 ))
@@ -624,7 +599,7 @@ class DownloadWorker:
             return False
         return True
 
-    async def _download_with_retry(self, url: str) -> bytes | None:
+    async def _download_with_retry(self, url: str, *, use_proxy: bool) -> bytes | None:
         """带无限重试的资源下载。
 
         策略：
@@ -640,7 +615,7 @@ class DownloadWorker:
 
         while self._running:
             try:
-                data = await self._http.download_bytes(url)
+                data = await self._http.download_bytes(url, use_proxy=use_proxy)
                 logger.debug(
                     "DownloadWorker timing: phase=http attempts=%d seconds=%.3f url=%s",
                     retry_count + 1,
@@ -739,6 +714,7 @@ class DownloadWorker:
         data_type: str,
         record_id: str,
         filename: str,
+        use_proxy: bool,
     ) -> str | None:
         """下载单个资源文件并上传到 MinIO。
 
@@ -747,7 +723,7 @@ class DownloadWorker:
         """
         content_type = MinioClient._guess_content_type(filename)
 
-        data = await self._download_with_retry(url)
+        data = await self._download_with_retry(url, use_proxy=use_proxy)
         if data is None:
             return None
 
@@ -775,6 +751,7 @@ class DownloadWorker:
         template_name: str,
         data_type: str,
         record_id: str,
+        use_proxy: bool,
     ) -> tuple[dict[str, Any], str | None]:
         """Submit one asset to the fixed download worker pool."""
         assert self._asset_queue is not None
@@ -784,6 +761,7 @@ class DownloadWorker:
             template_name=template_name,
             data_type=data_type,
             record_id=record_id,
+            use_proxy=use_proxy,
             result=result,
         ))
         return await result
@@ -809,6 +787,7 @@ class DownloadWorker:
                     job.data_type,
                     job.record_id,
                     job.dl_info["filename"],
+                    job.use_proxy,
                 )
                 if not job.result.done():
                     job.result.set_result((job.dl_info, asset_path))

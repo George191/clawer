@@ -511,13 +511,16 @@ class HttpClient:
         self,
         url: str,
         config: RequestConfig | None = None,
+        *,
+        use_proxy: bool | None = None,
     ) -> bytes:
         config = config or RequestConfig()
+        effective_use_proxy = settings.download_use_proxy if use_proxy is None else use_proxy
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)
 
-        _init_anti_crawl(use_proxy=settings.download_use_proxy)
+        _init_anti_crawl(use_proxy=effective_use_proxy)
 
         if _rotator is not None and _rotator.enabled:
             anti_headers = _rotator.get_headers(target_url=url)
@@ -536,7 +539,7 @@ class HttpClient:
         pre_proxy_url = None
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
 
-        if settings.download_use_proxy:
+        if effective_use_proxy:
             if settings.tunnel_proxy_url:
                 proxy_url = settings.tunnel_proxy_url
             elif _proxy_pool is not None and _proxy_pool.enabled:
@@ -555,7 +558,7 @@ class HttpClient:
         else:
             self._last_proxy_urls.pop(task_id, None)
             if (
-                settings.download_use_proxy
+                effective_use_proxy
                 and _proxy_pool is not None
                 and _proxy_pool.enabled
             ):

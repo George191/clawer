@@ -153,6 +153,14 @@ class SiteTemplate(BaseModel):
         ),
     )
 
+    download_use_proxy: bool | None = Field(
+        default=None,
+        description=(
+            "资源下载是否使用代理。None 回退到全局 "
+            "SPIDER_DOWNLOAD_USE_PROXY，布尔值覆盖全局配置。"
+        ),
+    )
+
     pre_hooks: list[PreHookConfig] = Field(
         default_factory=list,
         description="预处理钩子列表，在请求列表页之前按顺序执行",
@@ -226,6 +234,14 @@ class SiteTemplate(BaseModel):
             return self.anti_crawl_enabled
         from app.config.settings import settings
         return settings.anti_crawl_enabled
+
+    @property
+    def effective_download_use_proxy(self) -> bool:
+        """解析模板级资源下载代理开关。"""
+        if self.download_use_proxy is not None:
+            return self.download_use_proxy
+        from app.config.settings import settings
+        return settings.download_use_proxy
 
     @staticmethod
     def _replace_params(text: str, params: dict[str, str | None]) -> str:

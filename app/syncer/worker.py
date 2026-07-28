@@ -70,7 +70,6 @@ class SyncWorker:
             return 0
 
         eligible: list[dict[str, Any]] = []
-        active_task_ids: set[str] = set()
         for record in ready:
             task_id = str(
                 (record.get("_meta", {}).get("search_params") or {}).get(
@@ -88,15 +87,7 @@ class SyncWorker:
                     None,
                 )
                 eligible.append(record)
-            elif task_control.get("sync_state") == "idle":
-                claimed = await ai_collect_store.transition_task_stage_state(
-                    task_id, "sync", "idle", "running"
-                )
-                if claimed is not None:
-                    active_task_ids.add(task_id)
-                    eligible.append(record)
             elif task_control.get("sync_state") == "running":
-                active_task_ids.add(task_id)
                 eligible.append(record)
         if not eligible:
             return 0
@@ -107,10 +98,6 @@ class SyncWorker:
             sent_count = await self._kafka.send_records(eligible)
         except Exception:
             logger.exception("SyncWorker: Kafka send failed")
-            for task_id in active_task_ids:
-                await ai_collect_store.transition_task_stage_state(
-                    task_id, "sync", "running", "idle"
-                )
             return 0
 
         synced_by_task: dict[str, int] = {}
@@ -143,11 +130,6 @@ class SyncWorker:
                 task_id,
                 "ok",
                 f"同步完成：records={count}",
-            )
-
-        for task_id in active_task_ids:
-            await ai_collect_store.transition_task_stage_state(
-                task_id, "sync", "running", "idle"
             )
 
         logger.info("SyncWorker: synced %d records to Kafka", sent_count)
