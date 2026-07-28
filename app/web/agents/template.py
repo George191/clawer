@@ -74,7 +74,8 @@ Allowed values:
 - field_type/link_type: text | attr | html | href | src | json | number | boolean
 - list_pagination.type: next_page | page_number | load_more | infinite_scroll
 params is a list of mappings with name/description/default/required. batch_params is a
-separate top-level mapping with file_path/param_name/start_line/limit/delay. Emit either
+separate top-level mapping with param_name/batch_size/start_line/limit/delay; batch files
+are uploaded to MinIO when a task is created, so never emit file_path. Emit either
 only when analysis requires them. For a non-paginated source omit list_pagination. Omit
 download and all detail fields when unused instead of emitting empty mappings or lists.
 """.strip()

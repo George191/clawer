@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from pathlib import Path
 from typing import Any
 
 from app.adapters import BaseSiteAdapter, GenericAdapter
@@ -15,6 +14,7 @@ from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.scheduler.celery_app import app, run_async
 from app.scheduler.task_log_capture import WorkspaceTaskLogCapture
+from app.storage.minio_client import get_business_metadata_minio_client
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
@@ -51,7 +51,7 @@ def _progress_percent(result: CrawlResult) -> int:
     return min(99, int(result.pages_processed * 100 / result.total_pages))
 
 
-def _batch_parameter_sets(
+async def _batch_parameter_sets(
     template: Any,
     policies: dict[str, Any],
     adapter_class: type[BaseSiteAdapter] | None,
@@ -69,22 +69,17 @@ def _batch_parameter_sets(
     if isinstance(raw_values, list) and raw_values:
         values = [str(value).strip() for value in raw_values if str(value).strip()]
     else:
-        configured_path = str(config.file_path if config else "")
-        requested_path = str(batch.get("file") or configured_path)
-        if (
-            configured_path
-            and Path(requested_path).name == Path(configured_path).name
-            and not Path(requested_path).is_file()
-        ):
-            requested_path = configured_path
-        file_path = Path(requested_path)
-        if not file_path.is_file():
-            raise FileNotFoundError(f"Batch parameter file not found: {file_path}")
-        values = [
-            line.strip()
-            for line in file_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        object_key = str(batch.get("object_key") or "").strip()
+        if not object_key:
+            raise ValueError("Batch input must be uploaded to MinIO before the task starts")
+        content = await get_business_metadata_minio_client().get_object_bytes(object_key)
+        if content is None:
+            raise RuntimeError(f"MinIO batch input is unavailable: {object_key}")
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Batch input must use UTF-8 encoding") from exc
+        values = [line.strip() for line in text.splitlines() if line.strip()]
 
     start_line = max(0, int(batch.get("start_line", config.start_line if config else 0) or 0))
     raw_limit = batch.get("limit", config.limit if config else None)
@@ -156,7 +151,7 @@ async def _crawl_template(
             validate_params=False,
         )
         template = released.template
-        batch_parameter_sets = _batch_parameter_sets(
+        batch_parameter_sets = await _batch_parameter_sets(
             template, policies, released.adapter_class
         )
         if not batch_parameter_sets:

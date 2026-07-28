@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from io import BytesIO
 from pathlib import Path
+from typing import BinaryIO
 
 import urllib3
 
@@ -197,6 +198,26 @@ class MinioClient:
         )
 
         logger.info("Uploaded bytes to MinIO: %s (%d bytes)", object_key, len(data))
+        return object_key
+
+    async def upload_stream_to_key(
+        self,
+        stream: BinaryIO,
+        length: int,
+        object_key: str,
+        content_type: str | None = None,
+    ) -> str:
+        await self._ensure_connection()
+        stream.seek(0)
+        await self._run_sync(
+            self._client.put_object,
+            bucket_name=self._bucket,
+            object_name=object_key,
+            data=stream,
+            length=length,
+            content_type=content_type or "application/octet-stream",
+        )
+        logger.info("Uploaded stream to MinIO: %s (%d bytes)", object_key, length)
         return object_key
 
     async def get_object_bytes(self, object_key: str) -> bytes | None:

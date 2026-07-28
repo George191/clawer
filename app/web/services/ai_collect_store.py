@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from urllib.parse import urljoin, urlparse
 
 import yaml
@@ -400,6 +401,29 @@ class AICollectStore:
             "text/x-python",
         )
         return object_key
+
+    async def upload_batch_input(
+        self,
+        name: str,
+        version: str,
+        filename: str,
+        stream: BinaryIO,
+        size: int,
+        content_type: str,
+    ) -> str:
+        safe_filename = re.sub(
+            r"[^A-Za-z0-9_.-]+", "_", Path(filename).name
+        ).strip("._") or "batch-input.txt"
+        object_key = (
+            f"{self._artifact_prefix(name, version)}/batch-inputs/"
+            f"{uuid.uuid4().hex}-{safe_filename}"
+        )
+        return await get_business_metadata_minio_client().upload_stream_to_key(
+            stream,
+            size,
+            object_key,
+            content_type,
+        )
 
     async def _upload_favicon(self, name: str, version: str, source_url: str) -> str:
         if not source_url.startswith(("http://", "https://")):

@@ -34,6 +34,7 @@ import {
   fetchWorkspaceTemplates,
   AI_ANALYZE_WS_URL,
   runWorkspaceTaskAction,
+  uploadWorkspaceBatchInput,
   updateWorkspaceTemplate,
   type WorkspaceTask,
   type WorkspaceTaskLog,
@@ -74,6 +75,15 @@ interface WorkspaceDockProps {
     params: Array<{ name: string; description: string; defaultValue: string; required: boolean }>;
     batch?: { filePath: string; paramName: string; batchSize: string; startLine: string; limit: string; delay: string } | null;
   };
+}
+
+interface TaskBatchConfig {
+  filePath: string;
+  paramName: string;
+  batchSize: string;
+  startLine: string;
+  limit: string;
+  delay: string;
 }
 
 type TemplateFilter = 'all' | TemplateStatus;
@@ -832,6 +842,28 @@ const extractTaskTemplateParameterDrafts = (yaml: string) => {
   return params.filter((param) => Boolean(param.key));
 };
 
+const extractTaskBatchConfig = (yaml: string): TaskBatchConfig | null => {
+  const lines = yaml.replace(/\r\n/g, '\n').split('\n');
+  const batchIndex = lines.findIndex((line) => /^batch_params:\s*(?:#.*)?$/.test(line));
+  if (batchIndex < 0) return null;
+  const values: Record<string, string> = {};
+  for (let index = batchIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line.trim() && !/^\s/.test(line)) break;
+    const match = line.trim().match(/^([a-z_]+):\s*(.*?)\s*(?:#.*)?$/);
+    if (match) values[match[1]] = stripYamlScalar(match[2]);
+  }
+  if (!values.param_name) return null;
+  return {
+    filePath: values.file_path ?? '',
+    paramName: values.param_name,
+    batchSize: values.batch_size || '1',
+    startLine: values.start_line || '0',
+    limit: values.limit ?? '',
+    delay: values.delay || '0',
+  };
+};
+
 const inferIncrementalField = (templateValue: string) => {
   const normalized = templateValue.toLowerCase();
   if (normalized.includes('patent')) return 'patent.publication_date';
@@ -961,8 +993,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [taskRespectRobots, setTaskRespectRobots] = useState(releaseTaskDefaults?.respectRobots ?? true);
   const [taskDriftGuard, setTaskDriftGuard] = useState(releaseTaskDefaults?.driftGuard ?? true);
   const [taskBatchInput, setTaskBatchInput] = useState(false);
-  const [taskBatchFile, setTaskBatchFile] = useState(releaseTaskDefaults?.batch?.filePath ?? '');
-  const [taskBatchValues, setTaskBatchValues] = useState<string[]>([]);
+  const [taskBatchFile, setTaskBatchFile] = useState('');
+  const [taskBatchObjectKey, setTaskBatchObjectKey] = useState('');
+  const [taskBatchUploading, setTaskBatchUploading] = useState(false);
+  const [taskBatchUploadError, setTaskBatchUploadError] = useState('');
   const [taskBatchParam, setTaskBatchParam] = useState(releaseTaskDefaults?.batch?.paramName ?? '');
   const [taskBatchSize, setTaskBatchSize] = useState(Number(releaseTaskDefaults?.batch?.batchSize) || 1);
   const [taskBatchStartLine, setTaskBatchStartLine] = useState(Number(releaseTaskDefaults?.batch?.startLine) || 0);
@@ -978,23 +1012,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskConcurrency(releaseTaskDefaults.concurrency);
     setTaskRespectRobots(releaseTaskDefaults.respectRobots);
     setTaskDriftGuard(releaseTaskDefaults.driftGuard);
-    if (releaseTaskDefaults.batch) {
-      setTaskBatchFile(releaseTaskDefaults.batch.filePath);
-      setTaskBatchValues([]);
-      setTaskBatchParam(releaseTaskDefaults.batch.paramName);
-      setTaskBatchSize(Number(releaseTaskDefaults.batch.batchSize) || 1);
-      setTaskBatchStartLine(Number(releaseTaskDefaults.batch.startLine) || 0);
-      const limit = Number(releaseTaskDefaults.batch.limit);
-      setTaskBatchLimit(Number.isFinite(limit) && limit > 0 ? limit : null);
-      setTaskBatchDelay(Number(releaseTaskDefaults.batch.delay) || 0);
-    }
   }, [
-    releaseTaskDefaults?.batch?.batchSize,
-    releaseTaskDefaults?.batch?.delay,
-    releaseTaskDefaults?.batch?.filePath,
-    releaseTaskDefaults?.batch?.limit,
-    releaseTaskDefaults?.batch?.paramName,
-    releaseTaskDefaults?.batch?.startLine,
     releaseTaskDefaults?.concurrency,
     releaseTaskDefaults?.driftGuard,
     releaseTaskDefaults?.respectRobots,
@@ -1266,6 +1284,23 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       })),
     [templates],
   );
+  const taskBatchConfig = useMemo(() => {
+    const template = templates.find((item) => `${item.name}@${item.version}` === taskComposerDraft.template);
+    return extractTaskBatchConfig(template ? templateDrafts[template.key]?.yaml ?? '' : '');
+  }, [taskComposerDraft.template, templateDrafts, templates]);
+  useEffect(() => {
+    setTaskBatchInput(false);
+    setTaskBatchFile('');
+    setTaskBatchObjectKey('');
+    setTaskBatchUploadError('');
+    if (!taskBatchConfig) return;
+    setTaskBatchParam(taskBatchConfig.paramName);
+    setTaskBatchSize(Number(taskBatchConfig.batchSize) || 1);
+    setTaskBatchStartLine(Number(taskBatchConfig.startLine) || 0);
+    const limit = Number(taskBatchConfig.limit);
+    setTaskBatchLimit(Number.isFinite(limit) && limit > 0 ? limit : null);
+    setTaskBatchDelay(Number(taskBatchConfig.delay) || 0);
+  }, [taskBatchConfig, taskComposerDraft.template]);
   const buildTaskTemplateParameterDrafts = useCallback((templateValue: string) => {
     const template = templates.find((item) => `${item.name}@${item.version}` === templateValue);
     return extractTaskTemplateParameterDrafts(template ? templateDrafts[template.key]?.yaml ?? '' : '');
@@ -1579,6 +1614,25 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     }));
   }, []);
 
+  const handleTaskBatchUpload = useCallback(async (file: File) => {
+    const [templateName, templateVersion = 'v1.0'] = taskComposerDraft.template.split('@');
+    if (!templateName) return;
+    setTaskBatchUploading(true);
+    setTaskBatchUploadError('');
+    try {
+      const uploaded = await uploadWorkspaceBatchInput(file, templateName, templateVersion);
+      setTaskBatchFile(uploaded.filename);
+      setTaskBatchObjectKey(uploaded.object_key);
+    } catch (error) {
+      setTaskBatchFile('');
+      setTaskBatchObjectKey('');
+      setTaskBatchUploadError('Upload failed; the file was not stored in MinIO.');
+      console.error('Failed to upload batch input', error);
+    } finally {
+      setTaskBatchUploading(false);
+    }
+  }, [taskComposerDraft.template]);
+
   const handleCreateTask = useCallback(async () => {
     const normalizedTemplate = taskComposerDraft.template
       || (selectedTemplate ? `${selectedTemplate.name}@${selectedTemplate.version}` : '')
@@ -1631,7 +1685,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           drift_guard: taskDriftGuard,
           batch: taskBatchInput ? {
             file: taskBatchFile,
-            values: taskBatchValues,
+            object_key: taskBatchObjectKey,
             parameter: taskBatchParam,
             size: taskBatchSize,
             start_line: taskBatchStartLine,
@@ -1657,7 +1711,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     } catch (error) {
       console.error('Failed to create task', error);
     }
-  }, [onTaskCreated, resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchParam, taskBatchSize, taskBatchStartLine, taskBatchValues, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
+  }, [onTaskCreated, resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchObjectKey, taskBatchParam, taskBatchSize, taskBatchStartLine, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
 
   const handleWorkspaceTaskAction = useCallback(async (
     taskKey: string,
@@ -2309,7 +2363,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           </div>
 
-          {releaseTaskDefaults?.batch ? (
+          {taskBatchConfig ? (
             <div className="workspace-dock-progress-panel">
               <div className="workspace-dock-switch-row">
                 <div>
@@ -2330,22 +2384,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                       accept=".txt,.csv"
                       showUploadList={false}
                       beforeUpload={(file) => {
-                        setTaskBatchFile(file.name || '');
-                        void file.text().then((content) => {
-                          setTaskBatchValues(content.split(/\r?\n/).map((value) => value.trim()).filter(Boolean));
-                        });
+                        void handleTaskBatchUpload(file);
                         return false;
                       }}
                     >
-                      <Button className="workspace-dock-file-picker-button" size="small" icon={<UploadOutlined />}>{taskBatchFile || 'Choose'}</Button>
+                      <Button className="workspace-dock-file-picker-button" size="small" icon={<UploadOutlined />} loading={taskBatchUploading}>{taskBatchFile || 'Upload to MinIO'}</Button>
                     </Upload>
                   </label>
+                  {taskBatchUploadError ? <Text type="danger">{taskBatchUploadError}</Text> : null}
                   <div className="workspace-dock-form-grid" style={{ marginTop: 8 }}>
                     <label>
                       <span>Inject Into *</span>
                       <Select
                         value={taskBatchParam || undefined}
-                        options={releaseTaskDefaults.params.map((param) => ({ value: param.name, label: param.name }))}
+                        options={taskComposerDraft.templateParams.map((param) => ({ value: param.key, label: param.key }))}
                         onChange={setTaskBatchParam}
                       />
                     </label>
@@ -2414,7 +2466,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               <button
                 type="button"
                 className="workspace-dock-inline-action is-primary"
-                disabled={!taskComposerDraft.template.trim()}
+                disabled={!taskComposerDraft.template.trim() || (taskBatchInput && (!taskBatchObjectKey || taskBatchUploading))}
                 onClick={handleCreateTask}
               >
                 <PlusOutlined />

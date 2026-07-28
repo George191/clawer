@@ -269,6 +269,12 @@ export interface WorkspaceTaskPayload {
   owner?: string;
 }
 
+export interface WorkspaceBatchInputUpload {
+  object_key: string;
+  filename: string;
+  size: number;
+}
+
 export interface WorkspaceReleasePayload {
   analysisId?: string;
   name: string;
@@ -350,6 +356,20 @@ export const fetchWorkspaceTaskLogRuns = (
 
 export const createWorkspaceTask = (data: WorkspaceTaskPayload): Promise<WorkspaceTask> =>
   client.post('/ai/workspace/tasks', data).then((r) => r.data);
+
+export const uploadWorkspaceBatchInput = (
+  file: File,
+  templateName: string,
+  templateVersion: string,
+): Promise<WorkspaceBatchInputUpload> => {
+  const data = new FormData();
+  data.append('file', file);
+  data.append('template_name', templateName);
+  data.append('template_version', templateVersion);
+  return client.post('/ai/workspace/batch-inputs', data, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }).then((r) => r.data);
+};
 
 export const runWorkspaceTaskAction = (
   taskId: string,

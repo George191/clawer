@@ -6,11 +6,12 @@ import asyncio
 import re
 import time
 from collections.abc import AsyncGenerator, Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from app.config.ai_settings import ai_settings
@@ -30,6 +31,7 @@ from app.web.utils.validation import (
 logger = get_logger(__name__)
 router = APIRouter()
 _PREFLIGHT_MAX_RETRIES = 3
+_BATCH_INPUT_MAX_BYTES = 128 * 1024 * 1024
 
 
 def _preflight_deadline() -> float:
@@ -819,6 +821,42 @@ async def workspace_template_update(template_id: str, body: WorkspaceTemplateUpd
 @router.get("/ai/workspace/tasks")
 async def workspace_tasks():
     return {"items": await ai_collect_store.list_tasks()}
+
+
+@router.post("/ai/workspace/batch-inputs")
+async def workspace_batch_input_upload(
+    template_name: str = Form(...),
+    template_version: str = Form("v1.0"),
+    file: UploadFile = File(...),
+):
+    filename = Path(file.filename or "batch-input.txt").name
+    if Path(filename).suffix.lower() not in {".txt", ".csv"}:
+        raise HTTPException(status_code=400, detail="Batch input must be a TXT or CSV file")
+    size = file.size
+    if size is None:
+        size = await asyncio.to_thread(file.file.seek, 0, 2)
+        await file.seek(0)
+    if size <= 0:
+        raise HTTPException(status_code=400, detail="Batch input is empty")
+    if size > _BATCH_INPUT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Batch input exceeds 128 MiB")
+    try:
+        object_key = await ai_collect_store.upload_batch_input(
+            template_name,
+            template_version,
+            filename,
+            file.file,
+            size,
+            file.content_type or "text/plain",
+        )
+    except Exception as exc:
+        logger.exception("Failed to upload batch input for %s", template_name)
+        raise HTTPException(status_code=503, detail="Failed to store batch input") from exc
+    return {
+        "object_key": object_key,
+        "filename": filename,
+        "size": size,
+    }
 
 
 @router.get("/ai/workspace/tasks/{task_id}")

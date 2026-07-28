@@ -58,6 +58,7 @@ import {
   generateTemplate as generateTemplateApi,
   preflightUrl,
   releaseWorkspaceTemplate,
+  uploadWorkspaceBatchInput,
 } from '@/services/aiApi';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
@@ -1183,7 +1184,9 @@ const AICollect: React.FC = () => {
   const [releaseIncremental, setReleaseIncremental] = useState(false);
   const [releaseBatchInput, setReleaseBatchInput] = useState(false);
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
-  const [releaseBatchValues, setReleaseBatchValues] = useState<string[]>([]);
+  const [releaseBatchObjectKey, setReleaseBatchObjectKey] = useState('');
+  const [releaseBatchUploading, setReleaseBatchUploading] = useState(false);
+  const [releaseBatchUploadError, setReleaseBatchUploadError] = useState('');
   const [workspaceAdapterFile, setWorkspaceAdapterFile] = useState('');
   const [workspaceAdapterCode, setWorkspaceAdapterCode] = useState('');
   const [adapterStreamingCode, setAdapterStreamingCode] = useState('');
@@ -1261,11 +1264,11 @@ const AICollect: React.FC = () => {
       const entry = templateDraftEntries.find((item) => item.key === key);
       return stripYamlQuotes(templateValueDrafts[entry?.id ?? key] ?? entry?.value ?? '');
     };
-    const filePath = getEntryValue('batch_params.file_path');
-    if (!filePath) return null;
+    const paramName = getEntryValue('batch_params.param_name');
+    if (!paramName) return null;
     return {
-      filePath,
-      paramName: getEntryValue('batch_params.param_name'),
+      filePath: getEntryValue('batch_params.file_path'),
+      paramName,
       batchSize: getEntryValue('batch_params.batch_size'),
       startLine: getEntryValue('batch_params.start_line'),
       limit: getEntryValue('batch_params.limit'),
@@ -1672,7 +1675,8 @@ const AICollect: React.FC = () => {
       setReleaseIncremental(false);
       setReleaseBatchInput(false);
       setReleaseTaskParamValues({});
-      setReleaseBatchValues([]);
+      setReleaseBatchObjectKey('');
+      setReleaseBatchUploadError('');
       setGeneratedAdapterRequired(false);
       setReleaseExit(null);
       if (inspectorTransitionTimerRef.current) {
@@ -2801,6 +2805,24 @@ const AICollect: React.FC = () => {
     releaseExitTimerRef.current = window.setTimeout(finish, 680);
   }, [activeWorkspacePanel, searchParams, setSearchParams]);
 
+  const handleReleaseBatchUpload = useCallback(async (file: File) => {
+    const templateName = activeTemplate.id === 'empty' ? templateId : activeTemplate.id;
+    setReleaseBatchUploading(true);
+    setReleaseBatchUploadError('');
+    try {
+      const uploaded = await uploadWorkspaceBatchInput(file, templateName, 'v1.0');
+      setReleaseTaskParamValues((prev) => ({ ...prev, list_file: uploaded.filename }));
+      setReleaseBatchObjectKey(uploaded.object_key);
+    } catch (error) {
+      setReleaseTaskParamValues((prev) => ({ ...prev, list_file: '' }));
+      setReleaseBatchObjectKey('');
+      setReleaseBatchUploadError('Upload failed; the file was not stored in MinIO.');
+      console.error('Failed to upload batch input', error);
+    } finally {
+      setReleaseBatchUploading(false);
+    }
+  }, [activeTemplate.id, templateId]);
+
   const handleApplyReleaseAction = useCallback(async () => {
     const releaseLabel = releaseActionMeta[selectedReleaseAction].title;
     const taskLabel = taskPublishMeta[selectedTaskPublishMode].title;
@@ -2849,8 +2871,8 @@ const AICollect: React.FC = () => {
             drift_guard: enableDriftGuard,
             empty_page_limit: releaseEmptyPageLimit,
             batch: releaseBatchInput && releaseBatchConfig ? {
-              file: releaseTaskParamValues.list_file || releaseBatchConfig.filePath,
-              values: releaseBatchValues,
+              file: releaseTaskParamValues.list_file,
+              object_key: releaseBatchObjectKey,
               parameter: releaseTaskParamValues.batch_param_name || releaseBatchConfig.paramName,
               size: Number(releaseTaskParamValues.batch_size || releaseBatchConfig.batchSize) || 1,
               start_line: Number(releaseTaskParamValues.batch_start_line || releaseBatchConfig.startLine) || 0,
@@ -2871,7 +2893,7 @@ const AICollect: React.FC = () => {
       message.error('Release failed; no template or task was saved');
       pushLiveLog(`release failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, playReleaseCompletionAnimation, pushLiveLog, releaseBatchConfig, releaseBatchInput, releaseBatchValues, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateDescription, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
+  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, playReleaseCompletionAnimation, pushLiveLog, releaseBatchConfig, releaseBatchInput, releaseBatchObjectKey, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateDescription, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
 
   const handleReleaseActionSelect = useCallback((action: ReleaseAction) => {
     setSelectedReleaseAction(action);
@@ -4557,7 +4579,7 @@ const AICollect: React.FC = () => {
     const createsTask = isPublishing && selectedTaskPublishMode === 'launch';
     const hasTaskComposer = isPublishing && createsTask;
     const batchParamName = releaseTaskParamValues.batch_param_name ?? releaseBatchConfig?.paramName ?? '';
-    const selectedBatchFile = releaseTaskParamValues.list_file ?? releaseBatchConfig?.filePath ?? '';
+    const selectedBatchFile = releaseTaskParamValues.list_file ?? '';
     const hasSelectedBatchFile = Boolean(selectedBatchFile);
     const visibleTaskParams = releaseTemplateParams.filter(
       (param) => !(releaseBatchInput && batchParamName === param.name),
@@ -4737,16 +4759,11 @@ const AICollect: React.FC = () => {
                                     accept=".txt,.csv"
                                     showUploadList={false}
                                     beforeUpload={(file) => {
-                                      if (file.name) {
-                                        setReleaseTaskParamValues((prev) => ({ ...prev, list_file: file.name }));
-                                      }
-                                      void file.text().then((content) => {
-                                        setReleaseBatchValues(content.split(/\r?\n/).map((value) => value.trim()).filter(Boolean));
-                                      });
+                                      void handleReleaseBatchUpload(file);
                                       return false;
                                     }}
                                   >
-                                    <Button size="small" icon={<UploadOutlined />}>Choose</Button>
+                                    <Button size="small" icon={<UploadOutlined />} loading={releaseBatchUploading}>Upload to MinIO</Button>
                                   </Upload>
                                   {hasSelectedBatchFile ? (
                                     <span className="ai-session-task-file-reference" title={selectedBatchFile}>
@@ -4757,7 +4774,7 @@ const AICollect: React.FC = () => {
                                         aria-label="Remove selected file"
                                         onClick={() => {
                                           setReleaseTaskParamValues(({ list_file, ...rest }) => rest);
-                                          setReleaseBatchValues([]);
+                                          setReleaseBatchObjectKey('');
                                         }}
                                       >
                                         <CloseOutlined />
@@ -4800,6 +4817,7 @@ const AICollect: React.FC = () => {
                               </div>
                                 </div>
                               ) : null}
+                              {releaseBatchUploadError ? <Text type="danger">{releaseBatchUploadError}</Text> : null}
                             </div>
                           </div>
                         ) : null}
@@ -4839,6 +4857,7 @@ const AICollect: React.FC = () => {
                 type="primary"
                 className="ai-template-confirm-btn"
                 onClick={() => void handleApplyReleaseAction()}
+                disabled={hasTaskComposer && releaseBatchInput && (!releaseBatchObjectKey || releaseBatchUploading)}
               >
                 {releaseCta}
               </Button>

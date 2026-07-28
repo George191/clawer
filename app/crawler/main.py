@@ -462,7 +462,7 @@ async def run_from_list_file_stream(
                         )
                         await checkpoint_store.save_run_state(run_state)
 
-                async def _record_page(page: int) -> None:
+                async def _record_page(page: int, _result: Any) -> None:
                     await checkpoint_store.save(BatchCheckpoint(
                         start_line=start_line_num,
                         end_line=end_line_num,
