@@ -9,8 +9,35 @@
 - 调度增强：域名速率控制、请求降级回退
 """
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
 from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+REDIS_CHECKPOINT_DB = 0
+REDIS_TASK_DB = 1
+REDIS_ETL_DB = 2
+
+
+def redis_url_with_database(redis_url: str, database: int) -> str:
+    """Return the configured Redis URL with an explicit logical database."""
+    if not redis_url:
+        return ""
+    if database < 0:
+        raise ValueError("Redis database must be non-negative")
+
+    parsed = urlsplit(redis_url)
+    query = [
+        (key, str(database) if key.lower() == "db" else value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+    ]
+    if parsed.scheme == "redis+unix" and not any(
+        key.lower() == "db" for key, _ in query
+    ):
+        query.append(("db", str(database)))
+
+    path = parsed.path if parsed.scheme == "redis+unix" else f"/{database}"
+    return urlunsplit(parsed._replace(path=path, query=urlencode(query)))
 
 
 class AppSettings(BaseSettings):
@@ -63,6 +90,18 @@ class AppSettings(BaseSettings):
     db_url: str = Field(default="", description="MongoDB连接URL, 留空则仅使用文件存储")
     db_name: str = Field(default="", description="MongoDB数据库名")
     redis_url: str = Field(default="", description="Redis连接URL, 留空则不使用去重缓存")
+
+    @property
+    def checkpoint_redis_url(self) -> str:
+        return redis_url_with_database(self.redis_url, REDIS_CHECKPOINT_DB)
+
+    @property
+    def task_redis_url(self) -> str:
+        return redis_url_with_database(self.redis_url, REDIS_TASK_DB)
+
+    @property
+    def etl_redis_url(self) -> str:
+        return redis_url_with_database(self.redis_url, REDIS_ETL_DB)
 
     minio_endpoint: str = Field(default="", description="MinIO服务地址, 如 localhost:9000")
     minio_access_key: str = Field(default="", description="MinIO Access Key")

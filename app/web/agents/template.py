@@ -17,6 +17,7 @@ from app.config.ai_settings import ai_settings
 from app.logger import get_logger
 from app.models.template import SiteTemplate
 from app.web.agents.base import BaseAgent
+from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
 
@@ -292,7 +293,7 @@ class TemplateAgent(BaseAgent):
             or existing_template.get("data_type")
             or "other"
         )
-        reference_templates = self._reference_template_summaries(
+        reference_templates = await self._reference_template_summaries(
             reference_data_type,
             self._analysis_response_type(analysis_result),
         )
@@ -496,16 +497,15 @@ class TemplateAgent(BaseAgent):
         return ""
 
     @staticmethod
-    def _reference_template_summaries(
+    async def _reference_template_summaries(
         data_type: str,
         response_type: str,
     ) -> list[dict[str, Any]]:
-        template_dir = Path(__file__).parents[3] / "templates"
         candidates: list[dict[str, Any]] = []
-        for path in sorted(template_dir.glob("*.y*ml")):
+        for definition in await ai_collect_store.list_template_definitions():
             try:
-                template = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError):
+                template = yaml.safe_load(str(definition["yaml_content"]))
+            except yaml.YAMLError:
                 continue
             if not isinstance(template, dict):
                 continue

@@ -452,54 +452,11 @@ class AICollectStore:
                 row["adapter"] = minio.build_object_url(adapter_ref)
         return rows
 
-    async def get_template_runtime_artifacts(
+    async def list_template_definitions(
         self,
-        name: str,
-        version: str,
-    ) -> dict[str, str]:
-        await self.initialize()
-        row = await self._pg.fetch_one(
-            """
-            SELECT template, adapter
-            FROM public.ai_collect_templates
-            WHERE name = :name AND version = :version
-            """,
-            {"name": name, "version": version},
-        )
-        if row is None:
-            raise RuntimeError(f"Released template not found: {name}@{version}")
-
-        template_key = str(row.get("template") or "")
-        if not template_key or template_key.startswith("templates/"):
-            raise RuntimeError(f"Template is not stored in MinIO: {name}@{version}")
-
-        minio = get_business_metadata_minio_client()
-        template_bytes = await minio.get_object_bytes(template_key)
-        if template_bytes is None:
-            raise RuntimeError(f"MinIO template object is unavailable: {template_key}")
-
-        adapter_key = str(row.get("adapter") or "")
-        adapter_bytes: bytes | None = None
-        if adapter_key:
-            if adapter_key.startswith("app/adapters/"):
-                raise RuntimeError(f"Adapter is not stored in MinIO: {name}@{version}")
-            adapter_bytes = await minio.get_object_bytes(adapter_key)
-            if adapter_bytes is None:
-                raise RuntimeError(f"MinIO adapter object is unavailable: {adapter_key}")
-
-        try:
-            template_yaml = template_bytes.decode("utf-8")
-            adapter_code = adapter_bytes.decode("utf-8") if adapter_bytes is not None else ""
-        except UnicodeDecodeError as exc:
-            raise RuntimeError(f"Released artifact is not valid UTF-8: {name}@{version}") from exc
-        return {
-            "template_yaml": template_yaml,
-            "template_key": template_key,
-            "adapter_code": adapter_code,
-            "adapter_key": adapter_key,
-        }
-
-    async def list_template_definitions(self) -> list[dict[str, Any]]:
+        *,
+        include_adapter_code: bool = False,
+    ) -> list[dict[str, Any]]:
         await self.initialize()
         rows = await self._pg.fetch_all(
             """
@@ -524,6 +481,21 @@ class AICollectStore:
                 raise RuntimeError(
                     f"Released template is not valid UTF-8: {row['name']}@{row['version']}"
                 ) from exc
+            row["adapter_code"] = ""
+            adapter_key = str(row.get("adapter") or "")
+            if include_adapter_code and adapter_key:
+                adapter_bytes = await minio.get_object_bytes(adapter_key)
+                if adapter_bytes is None:
+                    raise RuntimeError(
+                        f"MinIO adapter object is unavailable: {adapter_key}"
+                    )
+                try:
+                    row["adapter_code"] = adapter_bytes.decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise RuntimeError(
+                        f"Released adapter is not valid UTF-8: "
+                        f"{row['name']}@{row['version']}"
+                    ) from exc
             definitions.append(row)
         return definitions
 

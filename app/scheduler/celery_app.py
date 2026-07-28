@@ -75,11 +75,11 @@ class CeleryAppFactory:
 
     def _get_broker_url(self) -> str:
         """从项目 settings 推导 Celery broker URL。"""
-        return settings.redis_url
+        return settings.task_redis_url
 
     def _get_result_backend(self) -> str:
         """结果后端，默认与 broker 共用 Redis。"""
-        return settings.redis_url
+        return settings.task_redis_url
 
     def _build_config(self) -> dict:
         """构建 Celery 配置字典。"""

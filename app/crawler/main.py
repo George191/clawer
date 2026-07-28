@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any, Generator, Optional
 
-from app.adapters import get_adapter_class
+from app.adapters import GenericAdapter
 from app.config.settings import settings
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
@@ -203,7 +203,11 @@ async def run_batch_from_config(
         batch_config: 批量配置
     """
     loader = TemplateLoader()
-    engine = SpiderEngine()
+    released = await loader.load_released(
+        template_name,
+        validate_params=False,
+    )
+    engine = SpiderEngine(adapter_class=released.adapter_class)
     
     logger.info("=" * 80)
     logger.info(f"使用模板配置的批量参数: {template_name}")
@@ -233,7 +237,11 @@ async def run_batch_from_config(
             
             try:
                 # 重新加载模板并应用参数
-                tmpl = loader.load(template_name, param_values=params)
+                tmpl = loader.load_content(
+                    released.yaml_content,
+                    param_values=params,
+                    source=released.template_key,
+                )
                 
                 success = await run_single_template(engine, tmpl, params)
                 
@@ -305,7 +313,11 @@ async def run_from_list_file_stream(
     )
 
     loader = TemplateLoader()
-    engine = SpiderEngine()
+    released = await loader.load_released(
+        template_name,
+        validate_params=False,
+    )
+    engine = SpiderEngine(adapter_class=released.adapter_class)
     success_count = 0
     fail_count = 0
     batch_count = 0
@@ -315,8 +327,8 @@ async def run_from_list_file_stream(
     )
 
     # 预加载模板以获取适配器类（用于批次参数拼接）
-    tmpl_meta = loader.load(template_name, validate_params=False)
-    adapter_cls = get_adapter_class(tmpl_meta.adapter)
+    tmpl_meta = released.template
+    adapter_cls = released.adapter_class or GenericAdapter
     if tmpl_meta.list_pagination:
         default_start_page = tmpl_meta.list_pagination.start_page
     logger.info(f"预加载模板 '{template_name}'，适配器: {adapter_cls.__name__}")
@@ -458,7 +470,11 @@ async def run_from_list_file_stream(
                     ))
 
                 try:
-                    tmpl = loader.load(template_name, param_values=params)
+                    tmpl = loader.load_content(
+                        released.yaml_content,
+                        param_values=params,
+                        source=released.template_key,
+                    )
                     tmpl._crawl_context = {
                         "task_id": id(asyncio.current_task()),
                         "batch_index": idx + 1,
@@ -558,13 +574,20 @@ async def run_from_command_line(
 
     # 加载所有模板
     templates = []
+    adapter_classes = {}
     for name, params in template_args:
         try:
-            tmpl = loader.load(name, param_values=params or None)
+            released = await loader.load_released(
+                name,
+                param_values=params or None,
+            )
+            tmpl = released.template
             templates.append((tmpl, params))
+            if released.adapter_class is not None:
+                adapter_classes[tmpl.name] = released.adapter_class
         except FileNotFoundError as e:
             logger.error(str(e))
-        except ValueError as e:
+        except (RuntimeError, ValueError) as e:
             logger.error(f"参数错误: {e}")
 
     if not templates:
@@ -575,7 +598,7 @@ async def run_from_command_line(
     logger.info(f"启动并发采集，max_concurrent_tasks={settings.max_concurrent_tasks}")
 
     # 创建单个 engine 实例，所有任务共享
-    engine = SpiderEngine()
+    engine = SpiderEngine(adapter_classes=adapter_classes)
 
     # 创建信号量控制并发
     semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
@@ -645,7 +668,7 @@ def log_infra_status() -> None:
     logger.info("  Storage:    %s", "MongoDB" if settings.db_url else "File (local)")
     logger.info("  File Store: %s", "MinIO" if settings.minio_endpoint else "Local filesystem")
     logger.info("  Messaging:  %s", "Kafka" if settings.kafka_brokers else "Disabled")
-    logger.info("  Templates:  %s", settings.template_dir)
+    logger.info("  Templates:  MinIO released catalog")
     logger.info("  Output:     %s", settings.output_dir)
     logger.info("  Concurrency: %d", settings.max_concurrent_tasks)
     logger.info("-" * 60)

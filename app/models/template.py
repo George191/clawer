@@ -108,6 +108,7 @@ class BatchParamConfig(BaseModel):
 
     file_path: str = Field(description="批量参数文件路径，每行一个参数值")
     param_name: str = Field(description="参数名称，如 publication_number")
+    batch_size: int = Field(default=1, ge=1)
     start_line: int = Field(
         default=0, description="起始行号（0-based）"
     )

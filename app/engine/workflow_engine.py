@@ -271,9 +271,13 @@ async def _handle_crawl(
     params = await _render_step_params(step, global_inputs, input_data)
 
     loader = TemplateLoader()
-    template = loader.load(step.template, param_values=params)
+    released = await loader.load_released(
+        step.template,
+        param_values=params,
+    )
+    template = released.template
 
-    engine = SpiderEngine()
+    engine = SpiderEngine(adapter_class=released.adapter_class)
     try:
         crawl_result = await engine.crawl(template)
         records = crawl_result.records

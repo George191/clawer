@@ -123,11 +123,13 @@ class SpiderEngine:
         parser: TemplateParser | None = None,
         storage: StorageBackend | None = None,
         adapter_class: type[BaseSiteAdapter] | None = None,
+        adapter_classes: dict[str, type[BaseSiteAdapter]] | None = None,
     ) -> None:
         self._client = http_client or HttpClient()
         self._parser = parser or TemplateParser()
         self._storage = storage or _create_storage()
         self._adapter_class = adapter_class
+        self._adapter_classes = adapter_classes or {}
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
         # 断点续采过期时间（默认7天）
 
@@ -136,14 +138,15 @@ class SpiderEngine:
         template: SiteTemplate,
         **kwargs: Any,
     ) -> BaseSiteAdapter:
-        if self._adapter_class is None:
+        adapter_class = self._adapter_class or self._adapter_classes.get(template.name)
+        if adapter_class is None:
             return get_adapter(
                 template.adapter,
                 template.base_url,
                 self._client,
                 **kwargs,
             )
-        return self._adapter_class(template.base_url, self._client, **kwargs)
+        return adapter_class(template.base_url, self._client, **kwargs)
 
     async def _save_page_records(
         self,

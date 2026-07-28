@@ -371,10 +371,12 @@ class DownloadWorker:
             return self._template_cache[template_name]
 
         try:
-            template = self._template_loader.load(
+            released = await self._template_loader.load_released(
                 template_name,
                 validate_params=False,
+                load_adapter=False,
             )
+            template = released.template
             self._template_cache[template_name] = template
             return template
         except FileNotFoundError:

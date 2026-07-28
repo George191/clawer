@@ -1,7 +1,7 @@
 """ETL Kafka Offset 管理器 — 基于 Redis 的偏移量持久化与控制。
 
 Redis Key 设计：
-    etl:offset:{layer}:{topic}:{partition}  → <kafka_offset:int>
+    offset:{layer}:{topic}:{partition}  → <kafka_offset:int>
 
 其中 kafka_offset 是 Kafka 分区内的全局偏移量（非从 0 开始的序号）。
 
@@ -13,13 +13,13 @@ Redis Key 设计：
 
 运维示例：
     # 查看当前消费位置
-    redis-cli GET "etl:offset:rds:spider-crawler:0"
+    redis-cli -n 2 GET "offset:rds:spider-crawler:0"
 
     # 重新消费所有数据（RDS 从头开始）
-    redis-cli DEL "etl:offset:rds:spider-crawler:0"
+    redis-cli -n 2 DEL "offset:rds:spider-crawler:0"
 
     # 重新消费 ODS 层数据（从 offset 1000 继续）
-    redis-cli SET "etl:offset:ods:spider-rds-processed:0" 1000
+    redis-cli -n 2 SET "offset:ods:spider-rds-processed:0" 1000
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
-REDIS_KEY_PREFIX = "etl:offset"
+REDIS_KEY_PREFIX = "offset"
 OFFSET_TTL_SECONDS = 30 * 24 * 3600
 REDIS_RETRY_INTERVAL = 30
 
@@ -40,7 +40,7 @@ REDIS_RETRY_INTERVAL = 30
 class OffsetManager:
     def __init__(self) -> None:
         self._connection = RedisConnection(
-            settings.redis_url,
+            settings.etl_redis_url,
             retry_interval=REDIS_RETRY_INTERVAL,
         )
 

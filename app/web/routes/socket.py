@@ -175,7 +175,7 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-_task_event_connection = RedisConnection(settings.redis_url, retry_interval=3)
+_task_event_connection = RedisConnection(settings.task_redis_url, retry_interval=3)
 _task_event_listener_task: asyncio.Task[None] | None = None
 
 

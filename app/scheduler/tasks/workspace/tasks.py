@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 from typing import Any
 
-from app.adapters import load_adapter_class_from_source
+from app.adapters import BaseSiteAdapter, GenericAdapter
 from app.crawler.checkpoint import PageCheckpointStore
 from app.crawler.incremental import build_time_watermark
 from app.engine.spider_engine import CrawlResult, SpiderEngine
@@ -50,6 +51,85 @@ def _progress_percent(result: CrawlResult) -> int:
     return min(99, int(result.pages_processed * 100 / result.total_pages))
 
 
+def _batch_parameter_sets(
+    template: Any,
+    policies: dict[str, Any],
+    adapter_class: type[BaseSiteAdapter] | None,
+) -> list[tuple[dict[str, str], dict[str, Any]]]:
+    batch = policies.get("batch")
+    if not isinstance(batch, dict):
+        return []
+
+    config = template.batch_params
+    param_name = str(batch.get("parameter") or (config.param_name if config else "")).strip()
+    if not param_name:
+        raise ValueError("Batch parameter name is required")
+
+    raw_values = batch.get("values")
+    if isinstance(raw_values, list) and raw_values:
+        values = [str(value).strip() for value in raw_values if str(value).strip()]
+    else:
+        configured_path = str(config.file_path if config else "")
+        requested_path = str(batch.get("file") or configured_path)
+        if (
+            configured_path
+            and Path(requested_path).name == Path(configured_path).name
+            and not Path(requested_path).is_file()
+        ):
+            requested_path = configured_path
+        file_path = Path(requested_path)
+        if not file_path.is_file():
+            raise FileNotFoundError(f"Batch parameter file not found: {file_path}")
+        values = [
+            line.strip()
+            for line in file_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    start_line = max(0, int(batch.get("start_line", config.start_line if config else 0) or 0))
+    raw_limit = batch.get("limit", config.limit if config else None)
+    limit = int(raw_limit) if raw_limit not in (None, "") else None
+    values = values[start_line:]
+    if limit is not None:
+        values = values[:max(0, limit)]
+    if not values:
+        raise ValueError("Batch parameter input contains no values")
+
+    batch_size = max(1, int(batch.get("size", config.batch_size if config else 1) or 1))
+    builder = adapter_class or GenericAdapter
+    parameter_sets: list[tuple[dict[str, str], dict[str, Any]]] = []
+    for offset in range(0, len(values), batch_size):
+        chunk = values[offset:offset + batch_size]
+        parameter_sets.append((
+            {param_name: builder.build_batch_param_value(chunk, param_name)},
+            {
+                "start_line": start_line + offset,
+                "end_line": start_line + offset + len(chunk) - 1,
+                "batch_size": len(chunk),
+                "first_value": chunk[0],
+                "last_value": chunk[-1],
+            },
+        ))
+    return parameter_sets
+
+
+def _merge_crawl_result(target: CrawlResult, source: CrawlResult) -> None:
+    target.records.extend(source.records)
+    target.saved_records += source.saved_records
+    target.inserted_records += source.inserted_records
+    target.updated_records += source.updated_records
+    target.unchanged_records += source.unchanged_records
+    target.deleted_records += source.deleted_records
+    target.pages_processed += source.pages_processed
+    target.downloaded_files.extend(source.downloaded_files)
+    target.errors.extend(source.errors)
+    if source.latest_record_time and (
+        target.latest_record_time is None
+        or source.latest_record_time > target.latest_record_time
+    ):
+        target.latest_record_time = source.latest_record_time
+
+
 async def _crawl_template(
     task_id: str,
     template_name: str,
@@ -70,31 +150,18 @@ async def _crawl_template(
         policies = dict(task.get("policies") or {})
         params = {str(key): str(value) for key, value in parameters.items() if value is not None}
         template_version = str(task.get("template_version") or "v1.0")
-        artifacts = await ai_collect_store.get_template_runtime_artifacts(
+        released = await TemplateLoader().load_released(
             template_name,
             template_version,
+            validate_params=False,
         )
-        template = TemplateLoader().load_content(
-            artifacts["template_yaml"],
-            param_values=params or None,
-            source=artifacts["template_key"],
+        template = released.template
+        batch_parameter_sets = _batch_parameter_sets(
+            template, policies, released.adapter_class
         )
-        if template.name != template_name:
-            raise RuntimeError(
-                f"Released template name mismatch: expected {template_name}, got {template.name}"
-            )
-        adapter_class = None
-        if template.adapter:
-            adapter_code = artifacts["adapter_code"]
-            if not adapter_code:
-                raise RuntimeError(
-                    f"Released adapter is missing: {template_name}@{template_version}"
-                )
-            adapter_class = load_adapter_class_from_source(
-                template.adapter,
-                adapter_code,
-                artifacts["adapter_key"],
-            )
+        if not batch_parameter_sets:
+            template.apply_params(params or None)
+            batch_parameter_sets = [(params, {})]
         checkpoint_store = PageCheckpointStore(
             template_name,
             task_id,
@@ -106,6 +173,9 @@ async def _crawl_template(
                 f"Redis is required for incremental task {task_id}"
             )
         resume_page = await checkpoint_store.load()
+        if len(batch_parameter_sets) > 1:
+            resume_page = None
+            await checkpoint_store.clear()
         redis_watermark = (
             await checkpoint_store.load_watermark()
             if policies.get("incremental") else None
@@ -123,37 +193,73 @@ async def _crawl_template(
                 incremental_watermark.window_start.isoformat()
                 if incremental_watermark.window_start else "full",
             )
-        template._crawl_context = {
-            "task_id": task_id,
-            "workspace_task_id": task_id,
-            "batch_index": 1,
-            "batch_count": 1,
-            "incremental_watermark": incremental_watermark,
-        }
-        engine = SpiderEngine(adapter_class=adapter_class)
-
-        async def update_progress(_page: int, result: CrawlResult) -> None:
+        engine = SpiderEngine(adapter_class=released.adapter_class)
+        result = CrawlResult(template.name, template.data_type)
+        batch_count = len(batch_parameter_sets)
+        batch_policy = policies.get("batch") or {}
+        delay = float(batch_policy.get(
+            "delay", template.batch_params.delay if template.batch_params else 0
+        ) or 0)
+        loader = TemplateLoader()
+        for batch_index, (batch_params, batch_context) in enumerate(batch_parameter_sets):
             if not await _wait_until_runnable(task_id):
                 raise asyncio.CancelledError
-            await checkpoint_store.save(_page)
+            current_template = loader.load_content(
+                released.yaml_content,
+                param_values={**params, **batch_params},
+                source=released.template_key,
+            )
+            current_template._crawl_context = {
+                "task_id": task_id,
+                "workspace_task_id": task_id,
+                "batch_index": batch_index + 1,
+                "batch_count": batch_count,
+                "incremental_watermark": incremental_watermark,
+                **batch_context,
+            }
+
+            async def update_progress(
+                _page: int,
+                current: CrawlResult,
+                _batch_index: int = batch_index,
+            ) -> None:
+                if not await _wait_until_runnable(task_id):
+                    raise asyncio.CancelledError
+                await checkpoint_store.save(_page)
+                page_progress = _progress_percent(current) / batch_count
+                await ai_collect_store.update_task(
+                    task_id,
+                    {
+                        "progress": min(99, int(_batch_index * 100 / batch_count + page_progress)),
+                        "records": result.saved_records + current.saved_records,
+                        "inserted_records": result.inserted_records + current.inserted_records,
+                        "updated_records": result.updated_records + current.updated_records,
+                        "deleted_records": result.deleted_records + current.deleted_records,
+                    },
+                )
+
+            current_result = await engine.crawl_from_page(
+                current_template,
+                resume_page if batch_count == 1 else None,
+                update_progress,
+            )
+            _merge_crawl_result(result, current_result)
+            if not current_result.success:
+                raise RuntimeError("; ".join(current_result.errors) or "Crawl failed")
             await ai_collect_store.update_task(
                 task_id,
                 {
-                    "progress": _progress_percent(result),
+                    "progress": min(99, int((batch_index + 1) * 100 / batch_count)),
                     "records": result.saved_records,
                     "inserted_records": result.inserted_records,
                     "updated_records": result.updated_records,
                     "deleted_records": result.deleted_records,
                 },
             )
-
-        result = await engine.crawl_from_page(
-            template, resume_page, update_progress
-        )
+            if delay > 0 and batch_index + 1 < batch_count:
+                await asyncio.sleep(delay)
         if not await _wait_until_runnable(task_id):
             return {"task_id": task_id, "status": "canceled"}
-        if not result.success:
-            raise RuntimeError("; ".join(result.errors) or "Crawl failed")
 
         if incremental_watermark.enabled:
             successful_times = [

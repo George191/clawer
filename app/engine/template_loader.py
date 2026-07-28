@@ -8,16 +8,29 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from app.adapters import BaseSiteAdapter, load_adapter_class_from_source
 from app.config.settings import settings
 from app.logger import get_logger
 from app.models.template import SiteTemplate
+from app.storage.minio_client import get_business_metadata_minio_client
+from app.storage.postgres_client import get_pg_client
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class ReleasedTemplate:
+    template: SiteTemplate
+    yaml_content: str
+    template_key: str
+    adapter_key: str
+    adapter_class: type[BaseSiteAdapter] | None
 
 
 class TemplateLoader:
@@ -45,6 +58,86 @@ class TemplateLoader:
     ) -> SiteTemplate:
         raw = self._read_yaml_content(content, source)
         return self._build_template(raw, param_values, validate_params)
+
+    async def load_released(
+        self,
+        name: str,
+        version: str | None = None,
+        param_values: dict[str, str] | None = None,
+        *,
+        validate_params: bool = True,
+        load_adapter: bool = True,
+    ) -> ReleasedTemplate:
+        version_clause = "AND version = :version" if version is not None else ""
+        params: dict[str, Any] = {"name": name}
+        if version is not None:
+            params["version"] = version
+        row = await get_pg_client().fetch_one(
+            f"""
+            SELECT name, version, template, adapter
+            FROM public.ai_collect_templates
+            WHERE name = :name {version_clause}
+            ORDER BY (status = 'active') DESC, updated_at DESC
+            LIMIT 1
+            """,
+            params,
+        )
+        if row is None:
+            requested = f"{name}@{version}" if version is not None else name
+            raise FileNotFoundError(f"Released template not found: {requested}")
+
+        minio = get_business_metadata_minio_client()
+        template_key = str(row.get("template") or "")
+        template_bytes = await minio.get_object_bytes(template_key)
+        if template_bytes is None:
+            raise RuntimeError(f"MinIO template object is unavailable: {template_key}")
+        try:
+            yaml_content = template_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise RuntimeError(
+                f"Released template is not valid UTF-8: {row['name']}@{row['version']}"
+            ) from exc
+
+        template = self.load_content(
+            yaml_content,
+            param_values=param_values,
+            validate_params=validate_params,
+            source=template_key,
+        )
+        if template.name != name:
+            raise RuntimeError(
+                f"Released template name mismatch: expected {name}, got {template.name}"
+            )
+
+        adapter_key = str(row.get("adapter") or "")
+        adapter_class: type[BaseSiteAdapter] | None = None
+        if template.adapter and load_adapter:
+            if not adapter_key:
+                raise RuntimeError(
+                    f"Released adapter is missing: {row['name']}@{row['version']}"
+                )
+            adapter_bytes = await minio.get_object_bytes(adapter_key)
+            if adapter_bytes is None:
+                raise RuntimeError(f"MinIO adapter object is unavailable: {adapter_key}")
+            try:
+                adapter_code = adapter_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise RuntimeError(
+                    f"Released adapter is not valid UTF-8: {row['name']}@{row['version']}"
+                ) from exc
+            adapter_class = load_adapter_class_from_source(
+                template.adapter,
+                adapter_code,
+                adapter_key,
+            )
+
+        return ReleasedTemplate(
+            template=template,
+            yaml_content=yaml_content,
+            template_key=template_key,
+            adapter_key=adapter_key,
+            adapter_class=adapter_class,
+        )
 
     def _build_template(
         self,

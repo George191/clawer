@@ -10,8 +10,8 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
-TASK_EVENT_CHANNEL = "ai_collect:task_events"
-_publisher_connection = RedisConnection(settings.redis_url)
+TASK_EVENT_CHANNEL = "task_events"
+_publisher_connection = RedisConnection(settings.task_redis_url)
 
 
 async def publish_task_change(task_id: str) -> None:

@@ -158,7 +158,10 @@ def create_app() -> FastAPI:
         if settings.redis_url:
             try:
                 import redis.asyncio as aioredis
-                r = aioredis.from_url(settings.redis_url, socket_connect_timeout=2)
+                r = aioredis.from_url(
+                    settings.checkpoint_redis_url,
+                    socket_connect_timeout=2,
+                )
                 await r.ping()
                 checks["redis"] = "connected"
                 await r.close()

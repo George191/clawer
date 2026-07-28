@@ -11,6 +11,7 @@ import yaml
 
 from app.logger import get_logger
 from app.web.agents.base import BaseAgent
+from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
 
@@ -83,7 +84,7 @@ class AdapterAgent(BaseAgent):
             "generate_adapter",
             template_yaml=template_yaml,
             reference_adapters=json.dumps(
-                self._reference_adapter_summaries(data_type),
+                await self._reference_adapter_summaries(data_type),
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -149,13 +150,15 @@ class AdapterAgent(BaseAgent):
         )
 
     @staticmethod
-    def _reference_adapter_summaries(data_type: str) -> list[dict[str, Any]]:
-        project_root = Path(__file__).parents[3]
+    async def _reference_adapter_summaries(data_type: str) -> list[dict[str, Any]]:
         summaries: list[dict[str, Any]] = []
-        for path in sorted((project_root / "templates").glob("*.y*ml")):
+        definitions = await ai_collect_store.list_template_definitions(
+            include_adapter_code=True
+        )
+        for definition in definitions:
             try:
-                template = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except (OSError, yaml.YAMLError):
+                template = yaml.safe_load(str(definition["yaml_content"]))
+            except yaml.YAMLError:
                 continue
             if (
                 not isinstance(template, dict)
@@ -164,13 +167,7 @@ class AdapterAgent(BaseAgent):
                 continue
 
             adapter_name = str(template.get("adapter") or "")
-            adapter_path = project_root / "app" / "adapters" / f"{adapter_name}.py"
-            source = ""
-            if adapter_name and adapter_path.is_file():
-                try:
-                    source = adapter_path.read_text(encoding="utf-8")
-                except OSError:
-                    source = ""
+            source = str(definition.get("adapter_code") or "")
             class_match = re.search(r"class\s+\w+\(([^)]+)\)", source)
             hooks = re.findall(
                 r"^\s+(?:async\s+)?def\s+(on_\w+|parse_list_response|build_batch_param_value)\s*\(",

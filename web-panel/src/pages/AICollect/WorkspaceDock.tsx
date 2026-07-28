@@ -72,7 +72,7 @@ interface WorkspaceDockProps {
     respectRobots: boolean;
     driftGuard: boolean;
     params: Array<{ name: string; description: string; defaultValue: string; required: boolean }>;
-    batch?: { paramName: string; batchSize: string; startLine: string; limit: string; delay: string } | null;
+    batch?: { filePath: string; paramName: string; batchSize: string; startLine: string; limit: string; delay: string } | null;
   };
 }
 
@@ -961,7 +961,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [taskRespectRobots, setTaskRespectRobots] = useState(releaseTaskDefaults?.respectRobots ?? true);
   const [taskDriftGuard, setTaskDriftGuard] = useState(releaseTaskDefaults?.driftGuard ?? true);
   const [taskBatchInput, setTaskBatchInput] = useState(false);
-  const [taskBatchFile, setTaskBatchFile] = useState('');
+  const [taskBatchFile, setTaskBatchFile] = useState(releaseTaskDefaults?.batch?.filePath ?? '');
+  const [taskBatchValues, setTaskBatchValues] = useState<string[]>([]);
   const [taskBatchParam, setTaskBatchParam] = useState(releaseTaskDefaults?.batch?.paramName ?? '');
   const [taskBatchSize, setTaskBatchSize] = useState(Number(releaseTaskDefaults?.batch?.batchSize) || 1);
   const [taskBatchStartLine, setTaskBatchStartLine] = useState(Number(releaseTaskDefaults?.batch?.startLine) || 0);
@@ -978,6 +979,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskRespectRobots(releaseTaskDefaults.respectRobots);
     setTaskDriftGuard(releaseTaskDefaults.driftGuard);
     if (releaseTaskDefaults.batch) {
+      setTaskBatchFile(releaseTaskDefaults.batch.filePath);
+      setTaskBatchValues([]);
       setTaskBatchParam(releaseTaskDefaults.batch.paramName);
       setTaskBatchSize(Number(releaseTaskDefaults.batch.batchSize) || 1);
       setTaskBatchStartLine(Number(releaseTaskDefaults.batch.startLine) || 0);
@@ -988,6 +991,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, [
     releaseTaskDefaults?.batch?.batchSize,
     releaseTaskDefaults?.batch?.delay,
+    releaseTaskDefaults?.batch?.filePath,
     releaseTaskDefaults?.batch?.limit,
     releaseTaskDefaults?.batch?.paramName,
     releaseTaskDefaults?.batch?.startLine,
@@ -1627,6 +1631,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           drift_guard: taskDriftGuard,
           batch: taskBatchInput ? {
             file: taskBatchFile,
+            values: taskBatchValues,
             parameter: taskBatchParam,
             size: taskBatchSize,
             start_line: taskBatchStartLine,
@@ -1652,7 +1657,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     } catch (error) {
       console.error('Failed to create task', error);
     }
-  }, [onTaskCreated, resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchParam, taskBatchSize, taskBatchStartLine, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
+  }, [onTaskCreated, resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchParam, taskBatchSize, taskBatchStartLine, taskBatchValues, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
 
   const handleWorkspaceTaskAction = useCallback(async (
     taskKey: string,
@@ -2324,8 +2329,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                     <Upload
                       accept=".txt,.csv"
                       showUploadList={false}
-                      beforeUpload={() => false}
-                      onChange={({ file }) => setTaskBatchFile(file.name || '')}
+                      beforeUpload={(file) => {
+                        setTaskBatchFile(file.name || '');
+                        void file.text().then((content) => {
+                          setTaskBatchValues(content.split(/\r?\n/).map((value) => value.trim()).filter(Boolean));
+                        });
+                        return false;
+                      }}
                     >
                       <Button className="workspace-dock-file-picker-button" size="small" icon={<UploadOutlined />}>{taskBatchFile || 'Choose'}</Button>
                     </Upload>

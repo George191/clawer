@@ -50,11 +50,14 @@ class PageCheckpointStore:
         self.task_id = task_id
         self.namespace = namespace
         self.key = (
-            f"crawler:checkpoint:{task_id}"
+            f"checkpoint:{task_id}"
             if task_id
-            else f"crawler:checkpoint:{namespace}:{digest}"
+            else f"checkpoint:{namespace}:{digest}"
         )
-        self._connection = RedisConnection(settings.redis_url, client=redis_client)
+        self._connection = RedisConnection(
+            settings.checkpoint_redis_url,
+            client=redis_client,
+        )
 
     async def connect(self) -> bool:
         return await self._connection.ensure_connected() is not None
@@ -161,7 +164,10 @@ class BatchCheckpointStore:
         self.key = self._checkpoint_key(
             template_name, file_path, param_name, start_line, limit
         )
-        self._connection = RedisConnection(settings.redis_url, client=redis_client)
+        self._connection = RedisConnection(
+            settings.checkpoint_redis_url,
+            client=redis_client,
+        )
 
     async def _get_redis(self) -> Any | None:
         return await self._connection.ensure_connected()
@@ -180,7 +186,7 @@ class BatchCheckpointStore:
             param_name,
         ))
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
-        return f"crawler:checkpoint:{template_name}:{digest}"
+        return f"checkpoint:{template_name}:{digest}"
 
     async def load_run_state(self) -> CrawlRunState | None:
         redis = await self._get_redis()

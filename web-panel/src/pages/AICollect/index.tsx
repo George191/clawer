@@ -1183,6 +1183,7 @@ const AICollect: React.FC = () => {
   const [releaseIncremental, setReleaseIncremental] = useState(false);
   const [releaseBatchInput, setReleaseBatchInput] = useState(false);
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
+  const [releaseBatchValues, setReleaseBatchValues] = useState<string[]>([]);
   const [workspaceAdapterFile, setWorkspaceAdapterFile] = useState('');
   const [workspaceAdapterCode, setWorkspaceAdapterCode] = useState('');
   const [adapterStreamingCode, setAdapterStreamingCode] = useState('');
@@ -1671,6 +1672,7 @@ const AICollect: React.FC = () => {
       setReleaseIncremental(false);
       setReleaseBatchInput(false);
       setReleaseTaskParamValues({});
+      setReleaseBatchValues([]);
       setGeneratedAdapterRequired(false);
       setReleaseExit(null);
       if (inspectorTransitionTimerRef.current) {
@@ -2846,7 +2848,15 @@ const AICollect: React.FC = () => {
             respect_robots: respectRobots,
             drift_guard: enableDriftGuard,
             empty_page_limit: releaseEmptyPageLimit,
-            batch_input: releaseBatchInput,
+            batch: releaseBatchInput && releaseBatchConfig ? {
+              file: releaseTaskParamValues.list_file || releaseBatchConfig.filePath,
+              values: releaseBatchValues,
+              parameter: releaseTaskParamValues.batch_param_name || releaseBatchConfig.paramName,
+              size: Number(releaseTaskParamValues.batch_size || releaseBatchConfig.batchSize) || 1,
+              start_line: Number(releaseTaskParamValues.batch_start_line || releaseBatchConfig.startLine) || 0,
+              limit: Number(releaseTaskParamValues.batch_limit || releaseBatchConfig.limit) || null,
+              delay: Number(releaseTaskParamValues.batch_delay || releaseBatchConfig.delay) || 0,
+            } : null,
           },
           owner: 'AI Collect',
         } : undefined,
@@ -2861,7 +2871,7 @@ const AICollect: React.FC = () => {
       message.error('Release failed; no template or task was saved');
       pushLiveLog(`release failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, playReleaseCompletionAnimation, pushLiveLog, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateDescription, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
+  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, playReleaseCompletionAnimation, pushLiveLog, releaseBatchConfig, releaseBatchInput, releaseBatchValues, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateDescription, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
 
   const handleReleaseActionSelect = useCallback((action: ReleaseAction) => {
     setSelectedReleaseAction(action);
@@ -4547,7 +4557,7 @@ const AICollect: React.FC = () => {
     const createsTask = isPublishing && selectedTaskPublishMode === 'launch';
     const hasTaskComposer = isPublishing && createsTask;
     const batchParamName = releaseTaskParamValues.batch_param_name ?? releaseBatchConfig?.paramName ?? '';
-    const selectedBatchFile = releaseTaskParamValues.list_file ?? '';
+    const selectedBatchFile = releaseTaskParamValues.list_file ?? releaseBatchConfig?.filePath ?? '';
     const hasSelectedBatchFile = Boolean(selectedBatchFile);
     const visibleTaskParams = releaseTemplateParams.filter(
       (param) => !(releaseBatchInput && batchParamName === param.name),
@@ -4726,11 +4736,14 @@ const AICollect: React.FC = () => {
                                   <Upload
                                     accept=".txt,.csv"
                                     showUploadList={false}
-                                    beforeUpload={() => false}
-                                    onChange={({ file }) => {
+                                    beforeUpload={(file) => {
                                       if (file.name) {
                                         setReleaseTaskParamValues((prev) => ({ ...prev, list_file: file.name }));
                                       }
+                                      void file.text().then((content) => {
+                                        setReleaseBatchValues(content.split(/\r?\n/).map((value) => value.trim()).filter(Boolean));
+                                      });
+                                      return false;
                                     }}
                                   >
                                     <Button size="small" icon={<UploadOutlined />}>Choose</Button>
@@ -4742,7 +4755,10 @@ const AICollect: React.FC = () => {
                                         type="button"
                                         className="ai-session-task-file-remove"
                                         aria-label="Remove selected file"
-                                        onClick={() => setReleaseTaskParamValues(({ list_file, ...rest }) => rest)}
+                                        onClick={() => {
+                                          setReleaseTaskParamValues(({ list_file, ...rest }) => rest);
+                                          setReleaseBatchValues([]);
+                                        }}
                                       >
                                         <CloseOutlined />
                                       </button>
