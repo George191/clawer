@@ -182,7 +182,7 @@ class SpiderEngine:
     ) -> tuple[FilteredRecords, int]:
         watermark = template._crawl_context.get("incremental_watermark")
         if not isinstance(watermark, TimeWatermark):
-            watermark = TimeWatermark(False, "", None)
+            watermark = TimeWatermark(False, "", None, "")
         filtered = filter_records_by_watermark(records, watermark)
         if watermark.enabled:
             result.incremental_source_records += len(records)

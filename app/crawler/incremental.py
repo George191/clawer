@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from email.utils import parsedate_to_datetime
 from typing import Any
 
 from app.models.template import SiteTemplate
@@ -12,33 +11,19 @@ from app.utils.path import get_nested_value
 
 WATERMARK_LOOKBACK = timedelta(days=1)
 
-_TEMPLATE_TIME_FIELDS = {
-    "arstechnica": "date",
-    "blacksky_news": "modified",
-    "blacksky_posts": "modified",
-    "blacksky_press": "modified",
-    "google_patent": "patent.publication_date",
-    "nga_navwarn": "issue_time",
-    "planet": "modified",
-    "satellite_today": "modified",
-    "sealagom_navwarn": "issue_time",
-    "ssc_news": "date",
-    "ssc_press": "date",
+_TEMPLATE_TIME_RULES = {
+    "arstechnica": ("date", "%Y-%m-%d"),
+    "blacksky_news": ("modified", "%Y-%m-%dT%H:%M:%S"),
+    "blacksky_posts": ("modified", "%Y-%m-%dT%H:%M:%S"),
+    "blacksky_press": ("modified", "%Y-%m-%dT%H:%M:%S"),
+    "google_patent": ("patent.publication_date", "%Y-%m-%d"),
+    "nga_navwarn": ("issue_time", "%d%H%MZ %b %Y"),
+    "planet": ("modified", "%m/%d/%Y %I:%M:%S %p %z"),
+    "satellite_today": ("modified", "%Y-%m-%dT%H:%M:%S"),
+    "sealagom_navwarn": ("issue_time", "%d/%m/%Y, %H:%M"),
+    "ssc_news": ("date", "%B %d, %Y"),
+    "ssc_press": ("date", "%B %d, %Y"),
 }
-
-_DATE_FORMATS = (
-    "%Y-%m-%dT%H:%M:%S.%f%z",
-    "%Y-%m-%dT%H:%M:%S%z",
-    "%Y-%m-%dT%H:%M:%S.%f",
-    "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%d %H:%M:%S",
-    "%Y-%m-%d",
-    "%Y%m%d",
-    "%d %b %Y",
-    "%m/%d/%Y, %H:%M",
-    "%m/%d/%Y %I:%M:%S %p",
-    "%m/%d/%Y %I:%M:%S %p %z",
-)
 
 
 @dataclass(frozen=True)
@@ -46,6 +31,7 @@ class TimeWatermark:
     enabled: bool
     field: str
     value: datetime | None
+    record_time_format: str
 
     @property
     def window_start(self) -> datetime | None:
@@ -60,38 +46,27 @@ class FilteredRecords:
     all_before_window: bool
 
 
-def parse_record_time(value: Any) -> datetime | None:
+def parse_record_time(value: Any, date_format: str) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
-    elif isinstance(value, int | float):
-        seconds = float(value)
-        if seconds > 10_000_000_000:
-            seconds /= 1000
-        try:
-            parsed = datetime.fromtimestamp(seconds, tz=timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return None
     else:
         text = str(value or "").strip()
         if not text:
             return None
-        normalized = text.replace("Z", "+00:00")
         try:
-            parsed = datetime.fromisoformat(normalized)
+            parsed = datetime.strptime(text, date_format)
         except ValueError:
-            parsed = None
-        if parsed is None:
-            for date_format in _DATE_FORMATS:
-                try:
-                    parsed = datetime.strptime(text, date_format)
-                    break
-                except ValueError:
-                    continue
-        if parsed is None:
-            try:
-                parsed = parsedate_to_datetime(text)
-            except (TypeError, ValueError, OverflowError):
-                return None
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def parse_watermark_time(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -104,9 +79,9 @@ def resolve_time_field(
     configured = str(policies.get("incremental_field") or "").strip()
     if configured:
         return configured
-    known = _TEMPLATE_TIME_FIELDS.get(template.name)
-    if known:
-        return known
+    known_rule = _TEMPLATE_TIME_RULES.get(template.name)
+    if known_rule:
+        return known_rule[0]
     available = {field.name for field in template.list_fields}
     for candidate in (
         "modified", "updated_at", "date", "issue_time",
@@ -125,14 +100,20 @@ def build_time_watermark(
     redis_value: str | None,
 ) -> TimeWatermark:
     if not policies.get("incremental"):
-        return TimeWatermark(False, "", None)
+        return TimeWatermark(False, "", None, "")
     field = resolve_time_field(template, policies)
-    watermark = parse_record_time(redis_value) if redis_value else None
+    time_rule = _TEMPLATE_TIME_RULES.get(template.name)
+    if time_rule is None:
+        raise ValueError(
+            f"Incremental crawl has no time parser: template={template.name}"
+        )
+    record_time_format = time_rule[1]
+    watermark = parse_watermark_time(redis_value) if redis_value else None
     if redis_value and watermark is None:
         raise ValueError(
             f"Invalid Redis watermark for task template {template.name}: {redis_value!r}"
         )
-    return TimeWatermark(True, field, watermark)
+    return TimeWatermark(True, field, watermark, record_time_format)
 
 
 def filter_records_by_watermark(
@@ -148,7 +129,10 @@ def filter_records_by_watermark(
     missing_time = 0
     window_start = watermark.window_start
     for record in records:
-        record_time = parse_record_time(get_nested_value(record, watermark.field))
+        record_time = parse_record_time(
+            get_nested_value(record, watermark.field),
+            watermark.record_time_format,
+        )
         if record_time is None:
             missing_time += 1
             if window_start is None:
