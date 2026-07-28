@@ -8,7 +8,7 @@ from typing import Any
 from app.engine.spider_engine import CrawlResult, SpiderEngine
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
-from app.scheduler.celery_app import app
+from app.scheduler.celery_app import app, run_async
 from app.scheduler.task_log_capture import WorkspaceTaskLogCapture
 from app.web.services.ai_collect_store import ai_collect_store
 
@@ -115,4 +115,4 @@ def crawl_template(
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     """Run one released workspace template in a Celery worker."""
-    return asyncio.run(_crawl_template(task_id, template_name, parameters))
+    return run_async(_crawl_template(task_id, template_name, parameters))

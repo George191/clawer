@@ -1,7 +1,7 @@
 """Celery 应用实例 — 任务调度核心。
 
 使用 Redis 作为 Broker 和 Result Backend，支持 Beat 定时调度。
-项目原有代码为 async 架构，Celery task 内部通过 asyncio.run() 桥接。
+项目原有代码为 async 架构，Celery task 通过进程内持久事件循环桥接。
 
 启动 Worker:
     celery -A app.scheduler.celery_app worker --loglevel=info
@@ -15,15 +15,37 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
+import os
 import pkgutil
 import sys
+from typing import Any
 
 from app.config.settings import settings
 from app.logger import get_logger
 
 logger = get_logger(__name__)
+
+_worker_event_loop: asyncio.AbstractEventLoop | None = None
+_worker_event_loop_pid: int | None = None
+
+
+def run_async(awaitable: Any) -> Any:
+    """Run async Celery work on one persistent event loop per worker process."""
+    global _worker_event_loop, _worker_event_loop_pid
+
+    current_pid = os.getpid()
+    if (
+        _worker_event_loop is None
+        or _worker_event_loop.is_closed()
+        or _worker_event_loop_pid != current_pid
+    ):
+        _worker_event_loop = asyncio.new_event_loop()
+        _worker_event_loop_pid = current_pid
+        asyncio.set_event_loop(_worker_event_loop)
+    return _worker_event_loop.run_until_complete(awaitable)
 
 # ── Celery 导入（延迟处理，允许未安装时模块仍可被 import 检查） ──
 
@@ -196,15 +218,13 @@ class CeleryAppFactory:
     @staticmethod
     def _load_schedule_from_db_sync() -> None:
         """同步执行数据库配置加载（在 Celery 信号回调中使用）。"""
-        import asyncio
-
         from app.scheduler.beat_schedule import BeatScheduleRegistry
 
         async def _load() -> bool:
             return await BeatScheduleRegistry.instance().load_from_db(force=True)
 
         try:
-            loaded = asyncio.run(_load())
+            loaded = run_async(_load())
             if loaded:
                 registry = BeatScheduleRegistry.instance()
                 app.conf.beat_schedule = registry.build_schedule()
