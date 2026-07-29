@@ -960,6 +960,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const templateListRequestRef = useRef<Promise<WorkspaceTemplate[]> | null>(null);
   const templateDetailRequestRef = useRef(0);
   const taskListRequestRef = useRef<Promise<WorkspaceTask[]> | null>(null);
+  const taskListRevisionRef = useRef(0);
   const [templates, setTemplates] = useState<TemplateAsset[]>([]);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
@@ -1100,10 +1101,17 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     if (!taskListRequestRef.current) {
       taskListRequestRef.current = fetchWorkspaceTasks();
     }
+    const request = taskListRequestRef.current;
+    const revision = taskListRevisionRef.current;
     try {
-      applyWorkspaceTasks(await taskListRequestRef.current);
+      const items = await request;
+      if (revision === taskListRevisionRef.current) {
+        applyWorkspaceTasks(items);
+      }
     } finally {
-      taskListRequestRef.current = null;
+      if (taskListRequestRef.current === request) {
+        taskListRequestRef.current = null;
+      }
     }
   }, [applyWorkspaceTasks]);
 
@@ -1696,8 +1704,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         owner: nextTask.owner,
       });
       const createdTask = mapWorkspaceTask(created);
+      taskListRevisionRef.current += 1;
+      taskListRequestRef.current = null;
       setKeyword('');
       setTaskFilter('all');
+      setTaskTemplateFilter(null);
       setTaskItems((prev) => [createdTask, ...prev.filter((item) => item.key !== createdTask.key)]);
       setTaskRuntime((prev) => ({ ...prev, [created.id]: mapWorkspaceTaskRuntime(created) }));
       setSelectedTaskKey(created.id);

@@ -303,6 +303,7 @@ class SpiderEngine:
             is_first = (current_page == page)
             page_succeeded = False
             page_skipped = False
+            html: str | None = None
             records: list[dict[str, Any]] = []  # 防止 skip 路径下未定义
             filtered = FilteredRecords([], None, 0, False)
 
@@ -393,6 +394,12 @@ class SpiderEngine:
                 break
 
             if template.list_pagination.type == PaginationType.NEXT_PAGE:
+                if html is None:
+                    logger.info(
+                        "Stopping next-page pagination after skipped page %d without a response",
+                        current_page,
+                    )
+                    break
                 has_next = self._parser.extract_links(
                     html,
                     template.list_pagination.next_selector or "",
