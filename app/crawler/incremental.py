@@ -18,7 +18,7 @@ _TEMPLATE_TIME_RULES = {
     "blacksky_press": ("modified", "%Y-%m-%dT%H:%M:%S"),
     "google_patent": ("patent.publication_date", "%Y-%m-%d"),
     "nga_navwarn": ("issue_time", "%d%H%MZ %b %Y"),
-    "planet": ("modified", "%m/%d/%Y %I:%M:%S %p"),
+    "planet": ("modified", "%m/%d/%Y %I:%M:%S %p %z"),
     "satellite_today": ("modified", "%Y-%m-%dT%H:%M:%S"),
     "sealagom_navwarn": ("issue_time", "%d/%m/%Y, %H:%M"),
     "ssc_news": ("date", "%B %d, %Y"),
