@@ -20,3 +20,5 @@ DMIT-Rcbx3LcMXQ-ed25519/
 __pycache__/
 
 ~$*.*
+
+celerybeat*

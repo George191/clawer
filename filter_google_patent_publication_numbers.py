@@ -14,9 +14,10 @@ import msvcrt
 import os
 import re
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable
+from typing import Any, BinaryIO
 
 from pymongo import MongoClient
 from pymongo.collection import Collection
@@ -265,6 +266,7 @@ def rotate_output(
 def process_batch(
     *,
     batch: list[tuple[int, str]],
+    source_name: str,
     collection: Collection[Any],
     output_dir: Path,
     chunk_size: int,
@@ -288,7 +290,9 @@ def process_batch(
     for line_number, publication_number, record_id in prepared:
         state["total_input_rows"] += 1
         if record_id is None:
-            invalid_file.write(f"{line_number}\t{publication_number.rstrip()}\n".encode())
+            invalid_file.write(
+                f"{source_name}:{line_number}\t{publication_number.rstrip()}\n".encode()
+            )
             state["total_invalid"] += 1
         elif record_id in existing_record_ids:
             state["total_existing"] += 1
@@ -394,6 +398,7 @@ def filter_files(
                         continue
                     output_file = process_batch(
                         batch=batch,
+                        source_name=source_path.name,
                         collection=collection,
                         output_dir=output_dir,
                         chunk_size=args.chunk_size,
@@ -421,6 +426,7 @@ def filter_files(
                 if batch:
                     output_file = process_batch(
                         batch=batch,
+                        source_name=source_path.name,
                         collection=collection,
                         output_dir=output_dir,
                         chunk_size=args.chunk_size,
