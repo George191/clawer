@@ -117,7 +117,6 @@ def initial_state(
     source_files: list[Path],
     database: str,
     collection: str,
-    batch_size: int,
     chunk_size: int,
 ) -> dict[str, Any]:
     return {
@@ -182,7 +181,6 @@ def validate_state(
         "source_files": source_manifest(source_files),
         "database": database,
         "collection": collection,
-        "batch_size": batch_size,
         "chunk_size": chunk_size,
     }
     for key, value in expected.items():
@@ -340,7 +338,6 @@ def filter_files(
             source_files=source_files,
             database=settings.db_name,
             collection=args.collection,
-            batch_size=args.batch_size,
             chunk_size=args.chunk_size,
         )
         save_state(state_path, state)
@@ -355,6 +352,7 @@ def filter_files(
             batch_size=args.batch_size,
             chunk_size=args.chunk_size,
         )
+        state["batch_size"] = args.batch_size
 
     if state.get("completed"):
         print(
