@@ -83,6 +83,7 @@ class CrawlResult:
         self.total_pages: int | None = None
         self.downloaded_files: list[str] = []
         self.errors: list[str] = []
+        self.error: BaseException | None = None
         self.latest_record_time: datetime | None = None
         self.incremental_source_records = 0
         self.incremental_valid_time_records = 0
@@ -251,6 +252,7 @@ class SpiderEngine:
 
         except Exception as e:
             logger.error("Crawl failed for template %s: %s", template.name, e)
+            result.error = e
             result.errors.append(str(e))
 
         logger.info(

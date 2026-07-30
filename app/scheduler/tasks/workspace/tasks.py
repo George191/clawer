@@ -6,6 +6,8 @@ import asyncio
 import uuid
 from typing import Any
 
+from pymongo.errors import ConnectionFailure
+
 from app.adapters import BaseSiteAdapter, GenericAdapter
 from app.crawler.checkpoint import PageCheckpointStore
 from app.crawler.incremental import build_time_watermark
@@ -132,15 +134,17 @@ async def _crawl_template(
 ) -> dict[str, Any]:
     engine: SpiderEngine | None = None
     checkpoint_store: PageCheckpointStore | None = None
+    log_capture: WorkspaceTaskLogCapture | None = None
     checkpoint_connected = False
     run_id = str(uuid.uuid4())
-    log_capture = WorkspaceTaskLogCapture(task_id, run_id, ai_collect_store)
-    log_capture.start()
     try:
-        logger.info("Workspace crawl task started: %s", task_id)
         task = await ai_collect_store.get_task(task_id)
         if task is None:
-            raise RuntimeError(f"Workspace task not found: {task_id}")
+            logger.warning("Skipping stale workspace crawl task: %s", task_id)
+            return {"task_id": task_id, "status": "canceled"}
+        log_capture = WorkspaceTaskLogCapture(task_id, run_id, ai_collect_store)
+        log_capture.start()
+        logger.info("Workspace crawl task started: %s", task_id)
         schedule = dict(task.get("schedule") or {})
         policies = dict(task.get("policies") or {})
         params = {str(key): str(value) for key, value in parameters.items() if value is not None}
@@ -240,6 +244,8 @@ async def _crawl_template(
             )
             _merge_crawl_result(result, current_result)
             if not current_result.success:
+                if isinstance(current_result.error, ConnectionFailure):
+                    raise current_result.error
                 raise RuntimeError("; ".join(current_result.errors) or "Crawl failed")
             await ai_collect_store.update_task(
                 task_id,
@@ -295,29 +301,45 @@ async def _crawl_template(
     except asyncio.CancelledError:
         logger.info("Workspace crawl task canceled: %s", task_id)
         return {"task_id": task_id, "status": "canceled"}
-    except Exception:
+    except ConnectionFailure:
+        logger.warning(
+            "Workspace crawl task will retry after MongoDB connection failure: %s",
+            task_id,
+        )
+        raise
+    except Exception as exc:
         await ai_collect_store.update_task(
             task_id,
             {"status": "failed", "throughput": 0},
         )
-        logger.exception("Workspace crawl task failed: %s", task_id)
+        logger.error("%s: %s", type(exc).__name__, exc)
         raise
     finally:
         if engine is not None:
             await engine.close()
         if checkpoint_store is not None:
             await checkpoint_store.close()
-        await log_capture.stop()
+        if log_capture is not None:
+            await log_capture.stop()
 
 
-@app.task(name=TASK_NAME)
+@app.task(
+    bind=True,
+    name=TASK_NAME,
+    max_retries=None,
+    throws=(RuntimeError,),
+)
 def crawl_template(
+    self: Any,
     task_id: str,
     template_name: str,
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     """Run one released workspace template in a Celery worker."""
-    return run_async(_crawl_template(task_id, template_name, parameters))
+    try:
+        return run_async(_crawl_template(task_id, template_name, parameters))
+    except ConnectionFailure as exc:
+        raise self.retry(exc=exc, countdown=60) from exc
 
 
 async def _dispatch_due_workspace_tasks() -> dict[str, Any]:

@@ -19,6 +19,7 @@ import {
   PushpinOutlined,
   RadarChartOutlined,
   ReadOutlined,
+  ReloadOutlined,
   SearchOutlined,
   StopOutlined,
   SyncOutlined,
@@ -2679,6 +2680,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   onClick={() => handleStartTask(selectedTask.key)}
                 >
                   <CaretRightOutlined />
+                </button>
+              </Tooltip>
+            ) : null}
+            {runtime.status === 'failed' && !taskCanceled ? (
+              <Tooltip title="重新运行" placement="top" rootClassName="workspace-dock-control-tooltip">
+                <button
+                  type="button"
+                  className="workspace-dock-detail-icon-btn is-run"
+                  aria-label="重新运行"
+                  onClick={() => handleStartTask(selectedTask.key)}
+                >
+                  <ReloadOutlined />
                 </button>
               </Tooltip>
             ) : null}

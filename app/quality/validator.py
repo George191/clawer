@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable
 
 
@@ -220,4 +221,73 @@ def create_patent_validation_engine() -> ValidationRuleEngine:
             FieldRule(name="priority_date", required=False, pattern="date_iso"),
         ],
         primary_key="patent_id",
+    )
+
+
+# NAVAREA 编号国际标准范围 1-21（NAVAREA I-XXI）
+_NAVAREA_MIN = 1
+_NAVAREA_MAX = 21
+_NAVWARN_MESSAGE_MAX_LENGTH = 20000
+_NAVWARN_WARNING_NO_MAX_LENGTH = 64
+_NAVWARN_REGION_MAX_LENGTH = 64
+_NAVWARN_HAZARD_MAX_LENGTH = 64
+_NAVWARN_RECORD_ID_MAX_LENGTH = 256
+_NAVWARN_YEAR_MIN = 1900
+
+
+def _is_int_in_range(value: Any, low: int, high: int) -> bool:
+    """允许 int 类型（排除 bool）并校验闭区间范围。"""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return False
+    return low <= value <= high
+
+
+def create_navwarn_validation_engine() -> ValidationRuleEngine:
+    """Pre-configured validation engine for navwarn (NGA) ODS records.
+
+    覆盖字段类型、长度与业务规则：
+    - navarea_id: int 且 1-21
+    - warning_year: int 且 1900 ~ 当前年份+1
+    - serial_number: int 且 > 0
+    - coordinate: WKT 格式 (POINT|MULTIPOINT)
+    - quality_score: 0.0-1.0
+    - record_id / data_source / data_type 必填
+    """
+    current_year = datetime.now().year
+
+    def _navarea_range(value: Any) -> bool:
+        return _is_int_in_range(value, _NAVAREA_MIN, _NAVAREA_MAX)
+
+    def _warning_year_range(value: Any) -> bool:
+        return _is_int_in_range(value, _NAVWARN_YEAR_MIN, current_year + 1)
+
+    def _serial_positive(value: Any) -> bool:
+        if isinstance(value, bool) or not isinstance(value, int):
+            return False
+        return value > 0
+
+    def _quality_score_range(value: Any) -> bool:
+        if isinstance(value, bool):
+            return False
+        try:
+            return 0.0 <= float(value) <= 1.0
+        except (TypeError, ValueError):
+            return False
+
+    return ValidationRuleEngine(
+        rules=[
+            FieldRule(name="record_id", required=True, min_length=1, max_length=_NAVWARN_RECORD_ID_MAX_LENGTH),
+            FieldRule(name="data_source", required=True, min_length=1, max_length=64),
+            FieldRule(name="data_type", required=True, min_length=1, max_length=32),
+            FieldRule(name="navarea_id", required=False, nullable=True, type_check=int, custom=_navarea_range),
+            FieldRule(name="warning_no", required=False, nullable=True, max_length=_NAVWARN_WARNING_NO_MAX_LENGTH),
+            FieldRule(name="serial_number", required=False, nullable=True, type_check=int, custom=_serial_positive),
+            FieldRule(name="warning_year", required=False, nullable=True, type_check=int, custom=_warning_year_range),
+            FieldRule(name="region", required=False, nullable=True, max_length=_NAVWARN_REGION_MAX_LENGTH),
+            FieldRule(name="message_text", required=False, nullable=True, max_length=_NAVWARN_MESSAGE_MAX_LENGTH),
+            FieldRule(name="hazard_type", required=False, nullable=True, max_length=_NAVWARN_HAZARD_MAX_LENGTH),
+            FieldRule(name="coordinate", required=False, nullable=True, pattern=r"^(POINT|MULTIPOINT)\("),
+            FieldRule(name="quality_score", required=False, nullable=True, custom=_quality_score_range),
+        ],
+        primary_key="record_id",
     )

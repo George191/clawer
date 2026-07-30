@@ -8,10 +8,21 @@ from typing import Any
 
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_datetime, safe_str
+from app.logger import get_logger
+
+logger = get_logger(__name__)
 
 _NAVAREA_PREFIX_RE = re.compile(r"^(NAVAREA\s+[IVXLC\d]+)\b[\s\-:,.]*", re.IGNORECASE)
 _WARNING_SLASH_RE = re.compile(r"(?P<serial>\d{1,4})\s*/\s*(?P<year>\d{2,4})")
 _WARNING_YEAR_SERIAL_RE = re.compile(r"(?P<year>\d{2,4})\s*-\s*(?P<serial>\d{1,4})")
+
+_LAT_MIN, _LAT_MAX = -90.0, 90.0
+_LON_MIN, _LON_MAX = -180.0, 180.0
+_NAVAREA_MIN, _NAVAREA_MAX = 1, 21
+_NAVWARN_YEAR_MIN = 1900
+_NAVWARN_MESSAGE_MAX_LENGTH = 20000
+_NAVWARN_WARNING_NO_MAX_LENGTH = 64
+_NAVWARN_REGION_MAX_LENGTH = 64
 
 
 def _normalize_warning_number(
@@ -87,6 +98,13 @@ def _extract_coordinates(text: str | None) -> list[dict[str, Any]]:
             lat = -lat
         if lon_dir == "W":
             lon = -lon
+        # 坐标范围校验：纬度 ±90，经度 ±180，异常值丢弃并记录
+        if not (_LAT_MIN <= lat <= _LAT_MAX and _LON_MIN <= lon <= _LON_MAX):
+            logger.warning(
+                "Coordinate out of range dropped: lat=%.6f lon=%.6f raw=%r",
+                lat, lon, match.group(0).strip(),
+            )
+            continue
         coordinates.append(
             {
                 "lat": round(lat, 6),
@@ -133,7 +151,13 @@ def _classify_hazard_type(text: str | None) -> str | None:
     return "general"
 
 
-def _parse_issue_time(time_str: str | None):
+def _parse_sealagom_issue_time(time_str: str | None) -> datetime | None:
+    """sealagom issue_time 解析，格式如 '01/01/2026, 12:00'。"""
+    return safe_datetime(time_str)
+
+
+def _parse_nga_issue_time(time_str: str | None) -> datetime | None:
+    """NGA issue_time 解析，格式如 '011200Z JAN 2026'。"""
     parsed = safe_datetime(time_str)
     if parsed or not time_str:
         return parsed
@@ -143,9 +167,78 @@ def _parse_issue_time(time_str: str | None):
         return None
 
 
-def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
+def _clean_nga_navwarn_fields(
+    *,
+    navarea_id: int | None,
+    warning_year: int | None,
+    serial_number: int | None,
+    message_text: str | None,
+    warning_no: str | None,
+    region: str | None,
+    record_id: str,
+    quality_flags: list[str],
+) -> tuple[int | None, int | None, int | None, str | None, str | None, str | None]:
+    """NGA navwarn 专属清洗：业务范围校验、异常值修正、字段长度规范化。
+
+    清洗规则：
+    - navarea_id 不在 1-21 范围 → 置 None 并记录 flag
+    - warning_year 不在 1900 ~ 当前年份+1 → 置 None 并记录 flag
+    - serial_number <= 0 → 置 None 并记录 flag
+    - message_text 超长 → 截断并记录 flag
+    - warning_no / region 超长 → 截断并记录 flag
+    """
+    current_year = datetime.now().year
+
+    if navarea_id is not None and not (_NAVAREA_MIN <= navarea_id <= _NAVAREA_MAX):
+        logger.warning(
+            "nga navarea_id out of range dropped: %s record_id=%s",
+            navarea_id, record_id,
+        )
+        quality_flags.append("navarea_id_out_of_range")
+        navarea_id = None
+
+    if warning_year is not None and not (_NAVWARN_YEAR_MIN <= warning_year <= current_year + 1):
+        logger.warning(
+            "nga warning_year out of range dropped: %s record_id=%s",
+            warning_year, record_id,
+        )
+        quality_flags.append("warning_year_out_of_range")
+        warning_year = None
+
+    if serial_number is not None and serial_number <= 0:
+        logger.warning(
+            "nga serial_number non-positive dropped: %s record_id=%s",
+            serial_number, record_id,
+        )
+        quality_flags.append("serial_number_non_positive")
+        serial_number = None
+
+    if message_text and len(message_text) > _NAVWARN_MESSAGE_MAX_LENGTH:
+        logger.warning(
+            "nga message_text truncated: %d -> %d record_id=%s",
+            len(message_text), _NAVWARN_MESSAGE_MAX_LENGTH, record_id,
+        )
+        quality_flags.append("message_text_truncated")
+        message_text = message_text[:_NAVWARN_MESSAGE_MAX_LENGTH]
+
+    if warning_no and len(warning_no) > _NAVWARN_WARNING_NO_MAX_LENGTH:
+        warning_no = warning_no[:_NAVWARN_WARNING_NO_MAX_LENGTH]
+        quality_flags.append("warning_no_truncated")
+
+    if region and len(region) > _NAVWARN_REGION_MAX_LENGTH:
+        region = region[:_NAVWARN_REGION_MAX_LENGTH]
+        quality_flags.append("region_truncated")
+
+    return navarea_id, warning_year, serial_number, message_text, warning_no, region
+
+
+def _navwarn_common(record: dict[str, Any], source: str) -> dict[str, Any]:
+    """通用 navwarn 字段提取（参考 news._news_common 多源融合模式）。
+
+    返回完整基础字段 dict（含 coordinate WKT）；issued_at 由源专属函数填充，
+    quality_flags / quality_score 由 _finalize_navwarn 计算。
+    """
     meta = record.get("_meta", {}) or {}
-    quality_flags: list[str] = []
 
     message_id = safe_str(record.get("message_id"))
     region = safe_str(record.get("region") or record.get("sea_name") or record.get("navarea"))
@@ -153,10 +246,7 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
         record.get("warning_no"),
         region,
     )
-    issue_time_raw = safe_str(record.get("issue_time"))
     message_text = safe_str(record.get("message_text"))
-
-    issued_at = _parse_issue_time(issue_time_raw)
     coordinates = _extract_coordinates(message_text)
     hazard_type = _classify_hazard_type(message_text)
     navarea_id_raw = record.get("navarea_id") or (meta.get("search_params") or {}).get("navarea_id")
@@ -174,23 +264,15 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
         message_hash = hashlib.sha1((message_text or "missing").encode("utf-8")).hexdigest()[:16]
         record_id = f"navwarn:unknown_{message_hash}"
 
-    if not warning_no:
-        quality_flags.append("missing_warning_no")
-    if serial_number is None:
-        quality_flags.append("missing_serial_number")
-    if warning_year is None:
-        quality_flags.append("missing_warning_year")
-    if not message_text:
-        quality_flags.append("missing_message_text")
-    if not issued_at:
-        quality_flags.append("missing_issue_date")
-    if not coordinates:
-        quality_flags.append("no_coordinates_extracted")
-
-    quality_score = max(0.0, 1.0 - len(quality_flags) * 0.2)
+    data_source = (
+        record.get("data_source")
+        or meta.get("data_source")
+        or meta.get("template")
+        or source
+    )
 
     return {
-        "data_source": record.get("data_source") or meta.get("data_source") or meta.get("template") or "sealagom_navwarn",
+        "data_source": data_source,
         "data_type": record.get("data_type") or "navwarn",
         "record_id": record_id,
         "navarea_id": navarea_id,
@@ -198,12 +280,69 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
         "serial_number": serial_number,
         "warning_year": warning_year,
         "region": region,
-        "issued_at": issued_at,
         "message_text": message_text,
         "hazard_type": hazard_type,
         "coordinate": _coordinates_to_wkt(coordinates),
-        "quality_score": quality_score,
-        "quality_flags": json.dumps(quality_flags, ensure_ascii=False),
     }
+
+
+def _finalize_navwarn(
+    normalized: dict[str, Any],
+    quality_flags: list[str],
+) -> dict[str, Any]:
+    """通用 navwarn 收尾：缺失判断 + quality_score，原地补全并返回。"""
+    if not normalized["warning_no"]:
+        quality_flags.append("missing_warning_no")
+    if normalized["serial_number"] is None:
+        quality_flags.append("missing_serial_number")
+    if normalized["warning_year"] is None:
+        quality_flags.append("missing_warning_year")
+    if not normalized["message_text"]:
+        quality_flags.append("missing_message_text")
+    if not normalized.get("issued_at"):
+        quality_flags.append("missing_issue_date")
+    if not normalized.get("coordinate"):
+        quality_flags.append("no_coordinates_extracted")
+
+    normalized["quality_score"] = max(0.0, 1.0 - len(quality_flags) * 0.2)
+    normalized["quality_flags"] = json.dumps(quality_flags, ensure_ascii=False)
+    return normalized
+
+
+def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
+    """sealagom_navwarn 专属 normalizer：通用提取 + sealagom 时间解析 + 收尾。"""
+    normalized = _navwarn_common(record, "sealagom_navwarn")
+    normalized["issued_at"] = _parse_sealagom_issue_time(record.get("issue_time"))
+    return _finalize_navwarn(normalized, quality_flags=[])
+
+
+def normalize_nga_navwarn(record: dict[str, Any]) -> dict[str, Any]:
+    """nga_navwarn 专属 normalizer：通用提取 + NGA 时间解析 + NGA 清洗 + 收尾。"""
+    normalized = _navwarn_common(record, "nga_navwarn")
+    normalized["issued_at"] = _parse_nga_issue_time(record.get("issue_time"))
+    quality_flags: list[str] = []
+
+    # ── NGA navwarn 专属清洗：异常值修正与字段规范化 ──
+    (
+        normalized["navarea_id"],
+        normalized["warning_year"],
+        normalized["serial_number"],
+        normalized["message_text"],
+        normalized["warning_no"],
+        normalized["region"],
+    ) = _clean_nga_navwarn_fields(
+        navarea_id=normalized["navarea_id"],
+        warning_year=normalized["warning_year"],
+        serial_number=normalized["serial_number"],
+        message_text=normalized["message_text"],
+        warning_no=normalized["warning_no"],
+        region=normalized["region"],
+        record_id=normalized["record_id"],
+        quality_flags=quality_flags,
+    )
+
+    return _finalize_navwarn(normalized, quality_flags=quality_flags)
+
+
 register_normalizer("navwarn", "sealagom_navwarn", normalize_sealagom_navwarn)
-register_normalizer("navwarn", "nga_navwarn", normalize_sealagom_navwarn)
+register_normalizer("navwarn", "nga_navwarn", normalize_nga_navwarn)

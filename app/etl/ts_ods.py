@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from app.config.settings import settings
 from app.etl.base import ETLBase
 from app.etl.normalizers import get_normalizer
 from app.logger import get_logger
+from app.quality.validator import create_navwarn_validation_engine
 
 logger = get_logger(__name__)
 
@@ -17,6 +20,10 @@ _ODS_NEWS_TABLE = "ts_ods.ods_news"
 _ODS_PATENT_TABLE = "ts_ods.ods_patent"
 _ODS_NAVWARN_TABLE = "ts_ods.ods_navwarn"
 _ODS_INTELLIGENCE_TABLE = "ts_ods.ods_intelligence"
+
+# ODS 单条入库重试配置：仅针对可重试的连接/瞬时错误
+_ODS_WRITE_MAX_ATTEMPTS = 3
+_ODS_WRITE_RETRY_WAIT = 0.5
 
 
 def _prefer_text(table_ref: str, column: str) -> str:
@@ -222,12 +229,40 @@ class TsOds(ETLBase):
         table: str,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
-        current_sql = _ODS_INSERT_SQL[table]
+        """单条 ODS 入库，带可重试错误重试与显式事务语义。
 
-        async with self._pg.session() as session:
-            result = await session.execute(text(current_sql), payload)
-            current_row = result.mappings().first()
-            return dict(current_row) if current_row else None
+        session() 上下文已提供 commit/rollback：成功提交、异常回滚。
+        此处在连接级瞬时错误（InterfaceError/OperationalError）上做有限重试，
+        schema 级错误由上层 _execute_with_table_recovery 处理。
+        """
+        current_sql = _ODS_INSERT_SQL[table]
+        last_error: Exception | None = None
+
+        for attempt in range(_ODS_WRITE_MAX_ATTEMPTS):
+            try:
+                async with self._pg.session() as session:
+                    result = await session.execute(text(current_sql), payload)
+                    current_row = result.mappings().first()
+                    if attempt > 0:
+                        logger.info(
+                            "%s ODS write recovered on attempt %d/%d table=%s",
+                            self._log_prefix, attempt + 1, _ODS_WRITE_MAX_ATTEMPTS, table,
+                        )
+                    return dict(current_row) if current_row else None
+            except (InterfaceError, OperationalError) as exc:
+                last_error = exc
+                if attempt < _ODS_WRITE_MAX_ATTEMPTS - 1:
+                    delay = _ODS_WRITE_RETRY_WAIT * (2 ** attempt)
+                    logger.warning(
+                        "%s ODS write retry %d/%d table=%s record_id=%s error=%s",
+                        self._log_prefix, attempt + 1, _ODS_WRITE_MAX_ATTEMPTS,
+                        table, payload.get("record_id"), exc,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+        # 理论不可达，防御性抛出
+        raise last_error if last_error else RuntimeError("ODS write exhausted retries")
 
     def _validate_required_fields(
         self,
@@ -245,6 +280,42 @@ class TsOds(ETLBase):
             )
             return False
         return True
+
+    def _validate_navwarn_record(
+        self,
+        normalized: dict[str, Any],
+    ) -> tuple[bool, list[str]]:
+        """navwarn ODS 入库前字段级验证门禁。
+
+        覆盖字段类型、长度、业务规则（navarea_id 1-21、warning_year 范围、
+        serial_number>0、coordinate WKT 格式、quality_score 0-1）。
+
+        返回 (passed, error_messages)：
+        - passed=False 表示存在阻断性错误（必填缺失/类型错误），应拒绝入库
+        - 非阻断错误（范围/长度/格式）仅记录 warning，不阻断（normalizer 已清洗）
+        """
+        engine = create_navwarn_validation_engine()
+        result = engine.validate([normalized])
+
+        if not result.errors:
+            return True, []
+
+        blocking_rules = {"required", "type"}
+        blocking: list[str] = []
+        non_blocking: list[str] = []
+        for err in result.errors:
+            message = f"{err.field}({err.rule}): {err.message}"
+            if err.rule in blocking_rules:
+                blocking.append(message)
+            else:
+                non_blocking.append(message)
+
+        if non_blocking:
+            logger.warning(
+                "%s Navwarn validation warnings: %s",
+                self._log_prefix, "; ".join(non_blocking),
+            )
+        return (len(blocking) == 0), blocking
 
     async def _process_ods_record(self, message: dict[str, Any], table: str) -> bool:
         insert_sql = _ODS_INSERT_SQL.get(table)
@@ -274,6 +345,18 @@ class TsOds(ETLBase):
                 },
             ):
                 return False
+
+            # navwarn 专属：字段级验证门禁（类型/长度/业务规则多重校验）
+            if table == "navwarn":
+                passed, validation_errors = self._validate_navwarn_record(normalized)
+                if not passed:
+                    logger.warning(
+                        "%s Navwarn record rejected by validation: %s | record_id=%s",
+                        self._log_prefix,
+                        "; ".join(validation_errors),
+                        normalized_record_id,
+                    )
+                    return False
 
             now = datetime.now(timezone.utc)
             payload = {

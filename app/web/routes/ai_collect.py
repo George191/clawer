@@ -891,7 +891,10 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
     if body.action == "start":
         task = await ai_collect_store.start_task(task_id)
         if task is None:
-            raise HTTPException(status_code=409, detail="Only queued tasks can be started")
+            raise HTTPException(
+                status_code=409,
+                detail="Only queued or failed tasks can be started",
+            )
         try:
             from app.scheduler.celery_app import app as celery_app
 
@@ -973,5 +976,11 @@ async def workspace_task_delete(task_id: str):
     deleted = await ai_collect_store.delete_task(task_id)
     if not deleted:
         raise HTTPException(status_code=409, detail="Cancel active tasks before deleting them")
+    try:
+        from app.scheduler.celery_app import app as celery_app
+
+        celery_app.control.revoke(task_id, terminate=False)
+    except Exception:
+        logger.exception("Failed to revoke deleted workspace task %s", task_id)
     if task is not None:
         await _clear_workspace_checkpoint(task)

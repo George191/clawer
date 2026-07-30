@@ -877,7 +877,7 @@ class AICollectStore:
         return task
 
     async def start_task(self, task_id: str) -> dict[str, Any] | None:
-        """Atomically claim a queued workspace task for execution."""
+        """Atomically claim a queued or failed workspace task for execution."""
         await self.initialize()
         task = await self._pg.fetch_one(
             """
@@ -890,7 +890,8 @@ class AICollectStore:
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
-              AND status = 'queued'
+              AND status IN ('queued', 'failed')
+              AND control_state IS DISTINCT FROM 'canceled'
             RETURNING *
             """,
             {"id": task_id},

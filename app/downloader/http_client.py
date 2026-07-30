@@ -40,6 +40,18 @@ _proxy_pool = None
 _delayer = None
 _rotator = None
 
+_AWS_WAF_CHALLENGE_MARKERS = (
+    "window.awsWafCookieDomainList",
+    "window.gokuProps",
+)
+
+
+def _is_aws_waf_challenge(status_code: int, text: str) -> bool:
+    return status_code == 202 and all(
+        marker in text for marker in _AWS_WAF_CHALLENGE_MARKERS
+    )
+
+
 def _init_anti_crawl(*, use_proxy: bool = True):
     """延迟初始化反爬各组件。"""
     global _proxy_pool, _delayer, _rotator
@@ -456,6 +468,13 @@ class HttpClient:
 
                 if config.encoding:
                     response.encoding = config.encoding
+
+                if _is_aws_waf_challenge(response.status_code, response.text):
+                    raise DownloadError(
+                        url_display,
+                        response.status_code,
+                        "AWS WAF challenge response",
+                    )
 
                 if response.status_code in settings.http_retry_on_statuses:
                     raise DownloadError(url_display, response.status_code, "Retryable status code")
