@@ -81,20 +81,19 @@ data/             批量采集参数与本地数据文件
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
 
-## 基础设施
+## 外部基础设施
 
-`docker-compose.yml` 中包含以下主要组件：
+MongoDB、Redis、MinIO、Kafka 和 PostgreSQL/TimescaleDB 由外部环境提供，
+`docker-compose.yml` 只启动项目应用服务。所有连接地址、认证信息、Topic
+和 Consumer Group 均从 `.env` 读取，Compose 不覆盖这些值。
 
-| 组件 | 默认端口 | 用途 |
+| 组件 | 常用端口 | 用途 |
 | --- | --- | --- |
 | MongoDB | `27017` | 原始采集数据与任务数据 |
 | Redis | `6379` | 去重、缓存、队列辅助 |
 | MinIO | `9000`, `9001` | PDF、图片等资源文件存储 |
 | Kafka | `9092`, `29092` | 采集数据与 ETL 层间消息 |
 | PostgreSQL/TimescaleDB | `5432` | ETL 结构化数据仓库 |
-| pgAdmin | `5050` | PostgreSQL 管理 |
-| RedisInsight | `5540` | Redis 管理 |
-| Compass Web | `8081` | MongoDB 管理 |
 
 ## 快速开始
 
@@ -112,13 +111,7 @@ cd web-panel
 npm install
 ```
 
-### 2. 启动基础设施
-
-```bash
-docker compose up -d mongodb redis minio zookeeper kafka postgres pgadmin
-```
-
-如需启动全部服务：
+### 2. 启动应用服务
 
 ```bash
 docker compose up -d
@@ -141,8 +134,8 @@ SPIDER_CELERY_CONCURRENCY=5
 SPIDER_CELERY_WORKER_REPLICAS=6
 ```
 
-MongoDB、Redis、MinIO、Kafka、Postgres 和管理界面端口默认只绑定到
-`127.0.0.1`；公网入口只开放 Nginx。生产环境仍应在 Nginx 前配置 HTTPS。
+Compose 仅开放 Nginx 入口；生产环境仍应配置 HTTPS。启动前必须确保
+容器网络能够访问 `.env` 中配置的所有外部服务地址。
 
 ### 3. 运行采集
 
