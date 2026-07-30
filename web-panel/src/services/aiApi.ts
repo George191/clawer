@@ -373,7 +373,7 @@ export const uploadWorkspaceBatchInput = (
 
 export const runWorkspaceTaskAction = (
   taskId: string,
-  action: 'start' | 'pause' | 'resume' | 'cancel' | 'start_download' | 'pause_download' | 'start_sync' | 'pause_sync' | 'cancel_sync',
+  action: 'start' | 'restart' | 'pause' | 'resume' | 'cancel' | 'start_download' | 'pause_download' | 'start_sync' | 'pause_sync' | 'cancel_sync',
 ): Promise<WorkspaceTask> =>
   client.post(`/ai/workspace/tasks/${taskId}/action`, { action }).then((r) => r.data);
 

@@ -10,7 +10,6 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
-from app.logger.context import reset_database_only_logging, set_database_only_logging
 from app.web.services.ai_collect_store import ai_collect_store
 
 _writing_task_logs: ContextVar[bool] = ContextVar("writing_task_logs", default=False)
@@ -34,22 +33,14 @@ class WorkspaceTaskLogCapture(logging.Handler):
         self._writer_task: asyncio.Task[None] | None = None
         self._loggers: list[logging.Logger] = []
         self._formatters: dict[str, logging.Formatter] = {}
-        self._suppressed_handlers: list[tuple[logging.Logger, logging.Handler]] = []
-        self._database_only_token = None
 
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._loop_thread_id = threading.get_ident()
         self._queue = asyncio.Queue()
         self._writer_task = asyncio.create_task(self._write_logs())
-        self._database_only_token = set_database_only_logging(True)
         all_loggers = _all_loggers()
         self._formatters = _console_formatters(all_loggers)
-        for logger in all_loggers:
-            for handler in list(logger.handlers):
-                if _is_task_output_handler(handler):
-                    logger.removeHandler(handler)
-                    self._suppressed_handlers.append((logger, handler))
         self._loggers = [
             logger for logger in all_loggers if logger is logging.getLogger() or not logger.propagate
         ]
@@ -83,13 +74,7 @@ class WorkspaceTaskLogCapture(logging.Handler):
                 self._queue.put_nowait(_STOP)
                 await self._writer_task
         finally:
-            for logger, handler in self._suppressed_handlers:
-                logger.addHandler(handler)
-            self._suppressed_handlers = []
             self._formatters = {}
-            if self._database_only_token is not None:
-                reset_database_only_logging(self._database_only_token)
-                self._database_only_token = None
             self._writer_task = None
             self._queue = None
             self._loop = None
@@ -122,12 +107,6 @@ def _all_loggers() -> list[logging.Logger]:
 def _is_console_handler(handler: logging.Handler) -> bool:
     return isinstance(handler, logging.StreamHandler) and not isinstance(
         handler, logging.FileHandler
-    )
-
-
-def _is_task_output_handler(handler: logging.Handler) -> bool:
-    return isinstance(handler, logging.StreamHandler) or bool(
-        getattr(handler, "_spider_adapter_file_handler", False)
     )
 
 

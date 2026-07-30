@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+import uuid
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from typing import Any
@@ -889,7 +890,8 @@ async def workspace_task_create(body: WorkspaceTaskRequest):
 @router.post("/ai/workspace/tasks/{task_id}/action")
 async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
     if body.action == "start":
-        task = await ai_collect_store.start_task(task_id)
+        celery_task_id = str(uuid.uuid4())
+        task = await ai_collect_store.start_task(task_id, celery_task_id)
         if task is None:
             raise HTTPException(
                 status_code=409,
@@ -901,12 +903,36 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
             celery_app.send_task(
                 "app.scheduler.tasks.workspace.crawl_template",
                 args=[task_id, str(task["template_name"]), dict(task.get("parameters") or {})],
-                task_id=task_id,
+                task_id=celery_task_id,
             )
         except Exception as exc:
             await ai_collect_store.update_task(task_id, {"status": "failed", "throughput": 0})
             raise HTTPException(status_code=503, detail="Failed to enqueue crawler task") from exc
         await ai_collect_store.append_task_log(task_id, "info", "采集任务已提交到 Celery Worker")
+        return task
+
+    if body.action == "restart":
+        celery_task_id = str(uuid.uuid4())
+        task = await ai_collect_store.restart_task(task_id, celery_task_id)
+        if task is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Only running, paused, or failed tasks can be restarted",
+            )
+        try:
+            from app.scheduler.celery_app import app as celery_app
+
+            previous_celery_task_id = str(task.get("previous_celery_task_id") or task_id)
+            celery_app.control.revoke(previous_celery_task_id, terminate=True)
+            celery_app.send_task(
+                "app.scheduler.tasks.workspace.crawl_template",
+                args=[task_id, str(task["template_name"]), dict(task.get("parameters") or {})],
+                task_id=celery_task_id,
+            )
+        except Exception as exc:
+            await ai_collect_store.update_task(task_id, {"status": "failed", "throughput": 0})
+            raise HTTPException(status_code=503, detail="Failed to enqueue crawler task") from exc
+        await ai_collect_store.append_task_log(task_id, "info", "采集任务已重新提交到 Celery Worker")
         return task
 
     if body.action == "cancel":
@@ -925,7 +951,7 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
         try:
             from app.scheduler.celery_app import app as celery_app
 
-            celery_app.control.revoke(task_id, terminate=True)
+            celery_app.control.revoke(str(task.get("celery_task_id") or task_id), terminate=True)
         except Exception:
             logger.exception("Failed to revoke workspace task %s", task_id)
         await _clear_workspace_checkpoint(task)
@@ -979,7 +1005,10 @@ async def workspace_task_delete(task_id: str):
     try:
         from app.scheduler.celery_app import app as celery_app
 
-        celery_app.control.revoke(task_id, terminate=False)
+        celery_app.control.revoke(
+            str((task or {}).get("celery_task_id") or task_id),
+            terminate=False,
+        )
     except Exception:
         logger.exception("Failed to revoke deleted workspace task %s", task_id)
     if task is not None:

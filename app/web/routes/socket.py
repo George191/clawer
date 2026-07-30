@@ -189,7 +189,10 @@ async def _send_task_snapshot(task_id: str, connection: ClientConnection | None 
     if connection is not None:
         await connection.send(message)
     else:
-        await manager.broadcast(f"task:{task_id}", message)
+        await asyncio.gather(
+            manager.broadcast(f"task:{task_id}", message),
+            manager.broadcast("tasks", message),
+        )
 
 
 async def _listen_for_task_events() -> None:

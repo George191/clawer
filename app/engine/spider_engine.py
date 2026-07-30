@@ -24,6 +24,8 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
+from pymongo.errors import ConnectionFailure
+
 from app.adapters import BaseSiteAdapter, get_adapter
 from app.config.settings import settings
 from app.crawler.incremental import (
@@ -356,6 +358,8 @@ class SpiderEngine:
                     break  # 页面成功，跳出重试循环
 
                 except Exception as e:
+                    if isinstance(e, ConnectionFailure):
+                        raise
                     adapter_action = await adapter.on_error(e, current_page, attempt)
 
                     if adapter_action == "abort":
@@ -645,6 +649,8 @@ class SpiderEngine:
                     break
 
             except Exception as e:
+                if isinstance(e, ConnectionFailure):
+                    raise
 
                 adapter_action = await adapter.on_error(e, page, attempt)
                 if adapter_action == "abort":

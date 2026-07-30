@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
     deleted_records bigint NOT NULL DEFAULT 0,
     downloaded_records bigint NOT NULL DEFAULT 0,
     synced_records bigint NOT NULL DEFAULT 0,
+    celery_task_id text,
     control_state text,
     download_state text NOT NULL DEFAULT 'running',
     sync_state text NOT NULL DEFAULT 'running',
@@ -73,6 +74,7 @@ ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS updated_records big
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS deleted_records bigint NOT NULL DEFAULT 0;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS downloaded_records bigint NOT NULL DEFAULT 0;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS synced_records bigint NOT NULL DEFAULT 0;
+ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS celery_task_id text;
 ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE public.ai_collect_tasks ALTER COLUMN download_state SET DEFAULT 'running';
 ALTER TABLE public.ai_collect_tasks ALTER COLUMN sync_state SET DEFAULT 'running';
@@ -876,13 +878,18 @@ class AICollectStore:
             await publish_task_change(task_id)
         return task
 
-    async def start_task(self, task_id: str) -> dict[str, Any] | None:
+    async def start_task(
+        self,
+        task_id: str,
+        celery_task_id: str,
+    ) -> dict[str, Any] | None:
         """Atomically claim a queued or failed workspace task for execution."""
         await self.initialize()
         task = await self._pg.fetch_one(
             """
             UPDATE public.ai_collect_tasks SET
                 status = 'running',
+                celery_task_id = :celery_task_id,
                 download_state = 'running',
                 sync_state = 'running',
                 progress = 0,
@@ -894,7 +901,52 @@ class AICollectStore:
               AND control_state IS DISTINCT FROM 'canceled'
             RETURNING *
             """,
-            {"id": task_id},
+            {"id": task_id, "celery_task_id": celery_task_id},
+        )
+        if task:
+            task["logs"] = []
+            await publish_task_change(task_id)
+        return task
+
+    async def restart_task(
+        self,
+        task_id: str,
+        celery_task_id: str,
+    ) -> dict[str, Any] | None:
+        """Atomically reset an existing workspace task for a new execution."""
+        await self.initialize()
+        task = await self._pg.fetch_one(
+            """
+            WITH current AS (
+                SELECT id, celery_task_id
+                FROM public.ai_collect_tasks
+                WHERE id = CAST(:id AS uuid)
+                  AND deleted_at IS NULL
+                  AND status IN ('running', 'paused', 'failed')
+                  AND control_state IS DISTINCT FROM 'canceled'
+                FOR UPDATE
+            )
+            UPDATE public.ai_collect_tasks task SET
+                status = 'running',
+                celery_task_id = :celery_task_id,
+                progress = 0,
+                records = 0,
+                throughput = 0,
+                inserted_records = 0,
+                updated_records = 0,
+                deleted_records = 0,
+                downloaded_records = 0,
+                synced_records = 0,
+                control_state = NULL,
+                download_state = 'running',
+                sync_state = 'running',
+                started_at = now(),
+                updated_at = now()
+            FROM current
+            WHERE task.id = current.id
+            RETURNING task.*, current.celery_task_id AS previous_celery_task_id
+            """,
+            {"id": task_id, "celery_task_id": celery_task_id},
         )
         if task:
             task["logs"] = []
@@ -951,6 +1003,7 @@ class AICollectStore:
             )
             UPDATE public.ai_collect_tasks task SET
                 status = 'running',
+                celery_task_id = gen_random_uuid()::text,
                 progress = 0,
                 download_state = CASE
                     WHEN task.download_state = 'paused' THEN 'paused' ELSE 'running' END,

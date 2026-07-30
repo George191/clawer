@@ -1220,6 +1220,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   );
 
   useEffect(() => {
+    if (activePanel !== 'tasks' || !taskSocketConnected) return undefined;
+    const channel = 'tasks';
+    sendTaskSocketMessage(JSON.stringify({ type: 'subscribe', channel }));
+    return () => {
+      sendTaskSocketMessage(JSON.stringify({ type: 'unsubscribe', channel }));
+    };
+  }, [activePanel, sendTaskSocketMessage, taskSocketConnected]);
+
+  useEffect(() => {
     if (activePanel !== 'tasks' || !selectedTaskKey || !taskSocketConnected) return undefined;
     const channel = `task:${selectedTaskKey}`;
     sendTaskSocketMessage(JSON.stringify({ type: 'subscribe', channel }));
@@ -1739,6 +1748,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const handlePauseTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'pause');
   const handleStartTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start');
+  const handleRestartTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'restart');
   const handleResumeTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'resume');
   const handleCancelTask = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'cancel');
   const handleStartDownload = (taskKey: string) => void handleWorkspaceTaskAction(taskKey, 'start_download');
@@ -2689,7 +2699,19 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   type="button"
                   className="workspace-dock-detail-icon-btn is-run"
                   aria-label="重新运行"
-                  onClick={() => handleStartTask(selectedTask.key)}
+                  onClick={() => handleRestartTask(selectedTask.key)}
+                >
+                  <ReloadOutlined />
+                </button>
+              </Tooltip>
+            ) : null}
+            {(runtime.status === 'running' || runtime.status === 'paused') && !taskCanceled ? (
+              <Tooltip title="重新运行" placement="top" rootClassName="workspace-dock-control-tooltip">
+                <button
+                  type="button"
+                  className="workspace-dock-detail-icon-btn is-run"
+                  aria-label="重新运行"
+                  onClick={() => handleRestartTask(selectedTask.key)}
                 >
                   <ReloadOutlined />
                 </button>

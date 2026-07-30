@@ -224,7 +224,7 @@ class PostgresClient:
                 stmts = [s.strip() for s in _DDL_STMT_SEP.split(block) if s.strip()]
                 for stmt in stmts:
                     await session.execute(text(stmt))
-        logger.info("ETL schema initialized (RDS/ODS/TASK schema created)")
+        logger.info("Postgres schema initialization completed")
 
 
 _pg_client: PostgresClient | None = None

@@ -355,7 +355,7 @@ async def _dispatch_due_workspace_tasks() -> dict[str, Any]:
                     str(task["template_name"]),
                     dict(task.get("parameters") or {}),
                 ],
-                task_id=task_id,
+                task_id=str(task["celery_task_id"]),
             )
             await ai_collect_store.append_task_log(
                 task_id,
