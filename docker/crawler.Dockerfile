@@ -29,7 +29,6 @@ COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 
 COPY app/ ./app/
-COPY templates/ ./templates/
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser \
     && mkdir -p /app/output \

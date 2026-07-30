@@ -16,6 +16,9 @@ from app.logger import get_logger
 logger = get_logger(__name__)
 
 _CHROME_PATHS = (
+    Path("/usr/bin/chromium"),
+    Path("/usr/bin/chromium-browser"),
+    Path("/usr/bin/google-chrome"),
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),

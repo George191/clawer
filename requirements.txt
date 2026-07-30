@@ -30,6 +30,7 @@ playwright>=1.55,<2
 
 # ── Runtime: Anti-Crawl & Dedup ──
 redis>=5.0
+celery>=5.4,<6
 
 # ── Runtime: ETL Pipeline (Postgres + asyncpg) ──
 sqlalchemy[asyncio]>=2.0

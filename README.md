@@ -124,6 +124,26 @@ docker compose up -d mongodb redis minio zookeeper kafka postgres pgadmin
 docker compose up -d
 ```
 
+服务器部署会同时构建前端和后端，并通过 Nginx 的 `${SPIDER_HTTP_PORT:-80}`
+提供入口。Celery Beat 独立保持单实例，Crawler Worker 可以横向扩容：
+
+```bash
+docker compose up -d --build
+docker compose ps
+curl http://localhost:${SPIDER_HTTP_PORT:-80}/api/health
+```
+
+Worker 总任务并发数为
+`SPIDER_CELERY_CONCURRENCY * SPIDER_CELERY_WORKER_REPLICAS`。例如 30 并发：
+
+```dotenv
+SPIDER_CELERY_CONCURRENCY=5
+SPIDER_CELERY_WORKER_REPLICAS=6
+```
+
+MongoDB、Redis、MinIO、Kafka、Postgres 和管理界面端口默认只绑定到
+`127.0.0.1`；公网入口只开放 Nginx。生产环境仍应在 Nginx 前配置 HTTPS。
+
 ### 3. 运行采集
 
 运行单个模板：

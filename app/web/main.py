@@ -222,7 +222,6 @@ def create_app() -> FastAPI:
             checks["postgres"] = "disabled"
 
         # ── 文件系统 ──
-        checks["templates_dir"] = "exists" if Path(settings.template_dir).is_dir() else "missing"
         checks["static_dir"] = "exists" if _STATIC_DIR.is_dir() else "missing"
 
         all_ok = all(v in ("connected", "disabled", "exists") for v in checks.values())
