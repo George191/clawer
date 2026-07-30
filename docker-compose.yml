@@ -1,5 +1,5 @@
 # ====================================================================
-# Spider — 4 App Services + N Infrastructure Services
+# Spider - application services with external infrastructure
 #
 #  App Services:
 #    1. crawler     — 采集：爬取数据，保存到 MongoDB
@@ -7,8 +7,7 @@
 #    3. syncer      — 同步：监听 MongoDB，推送已下载数据到 Kafka
 #    4. web         — Web 管理面板 (FastAPI)
 #
-#  Infrastructure:
-#    mongodb, redis, minio, kafka, postgres
+#  Infrastructure connections are loaded from .env.
 #
 #  ETL Pipeline:
 #    rds-worker  — 原始数据入库
@@ -18,7 +17,7 @@
 
 services:
   # ════════════════════════════════════════════════════════════
-  # Infrastructure Services
+  # External infrastructure is reached through the IPs or hostnames in .env.
   # ════════════════════════════════════════════════════════════
 
   # ════════════════════════════════════════════════════════════
@@ -72,12 +71,6 @@ services:
       - .env
     working_dir: /app
     command: ["python", "-m", "app.downloader.main", "--poll", "10"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 60s
-      timeout: 10s
-      start_period: 10s
-      retries: 3
     networks:
       - asiral-helio
 
@@ -92,12 +85,6 @@ services:
       - .env
     working_dir: /app
     command: ["python", "-m", "app.syncer.main", "--poll", "10", "--startup-delay", "15"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 60s
-      timeout: 10s
-      start_period: 10s
-      retries: 3
     networks:
       - asiral-helio
 
@@ -117,7 +104,7 @@ services:
     working_dir: /app
     command: uvicorn app.web.main:app --host 0.0.0.0 --port 8000
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health').raise_for_status()"]
+      test: ["CMD", "python", "-c", "import httpx; r=httpx.get('http://localhost:8000/api/health'); r.raise_for_status(); assert r.json()['data']['status'] == 'healthy'"]
       interval: 20s
       timeout: 5s
       start_period: 15s
@@ -146,7 +133,7 @@ services:
       - asiral-helio
 
   # ════════════════════════════════════════════════════════════
-  # ETL Infrastructure — Postgres + ETL Pipeline
+  # ETL Pipeline
   # ════════════════════════════════════════════════════════════
 
   # ── RDS Worker — 原始数据存储层 ─────────────────────────────
@@ -156,20 +143,8 @@ services:
       dockerfile: docker/etl.Dockerfile
     container_name: rds-worker
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
     env_file:
       - .env
-    environment:
-      SPIDER_KAFKA_BROKERS: "kafka:9092"
-      SPIDER_KAFKA_TOPIC: "${SPIDER_KAFKA_TOPIC:-spider-crawler}"
-      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
-      SPIDER_ETL_RAW_TOPIC: "${SPIDER_KAFKA_TOPIC:-spider-crawler}"
-      SPIDER_ETL_RDS_TOPIC: "${SPIDER_ETL_RDS_TOPIC:-spider-rds-processed}"
-      SPIDER_ETL_RDS_CONSUMER_GROUP: "${SPIDER_ETL_RDS_CONSUMER_GROUP:-spider-rds-group}"
     working_dir: /app
     command: >
       sh -c "python -m app.etl.main --init-schema &&
@@ -185,20 +160,10 @@ services:
     container_name: ods-worker
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
       rds-worker:
         condition: service_started
     env_file:
       - .env
-    environment:
-      SPIDER_KAFKA_BROKERS: "kafka:9092"
-      SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
-      SPIDER_ETL_RDS_TOPIC: "${SPIDER_ETL_RDS_TOPIC:-spider-rds-processed}"
-      SPIDER_ETL_ODS_TOPIC: "${SPIDER_ETL_ODS_TOPIC:-spider-ods-processed}"
-      SPIDER_ETL_ODS_CONSUMER_GROUP: "${SPIDER_ETL_ODS_CONSUMER_GROUP:-spider-ods-group}"
     working_dir: /app
     command: python -m app.etl.main --layer ods
     networks:
@@ -211,19 +176,8 @@ services:
   #     dockerfile: docker/etl.Dockerfile
   #   container_name: task-worker
   #   restart: unless-stopped
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     kafka:
-  #       condition: service_healthy
   #   env_file:
   #     - .env
-  #   environment:
-  #     SPIDER_KAFKA_BROKERS: "kafka:9092"
-  #     SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
-  #     SPIDER_ETL_ODS_TOPIC: "${SPIDER_ETL_ODS_TOPIC:-spider-ods-processed}"
-  #     SPIDER_ETL_TASK_TOPIC: "${SPIDER_ETL_TASK_TOPIC:-spider-task-processed}"
-  #     SPIDER_ETL_TASK_CONSUMER_GROUP: "${SPIDER_ETL_TASK_CONSUMER_GROUP:-spider-task-group}"
   #   working_dir: /app
   #   command: python -m app.etl.main --layer task
   #   networks:
@@ -237,20 +191,10 @@ services:
   #   container_name: dwd-worker
   #   restart: unless-stopped
   #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     kafka:
-  #       condition: service_healthy
   #     task-worker:
   #       condition: service_started
   #   env_file:
   #     - .env
-  #   environment:
-  #     SPIDER_KAFKA_BROKERS: "kafka:9092"
-  #     SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
-  #     SPIDER_ETL_TASK_TOPIC: "${SPIDER_ETL_TASK_TOPIC:-spider-task-processed}"
-  #     SPIDER_ETL_DWD_TOPIC: "${SPIDER_ETL_DWD_TOPIC:-spider-dwd-processed}"
-  #     SPIDER_ETL_DWD_CONSUMER_GROUP: "${SPIDER_ETL_DWD_CONSUMER_GROUP:-spider-dwd-group}"
   #   working_dir: /app
   #   command: python -m app.etl.main --layer dwd
   #   networks:
@@ -264,20 +208,10 @@ services:
   #   container_name: dws-worker
   #   restart: unless-stopped
   #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     kafka:
-  #       condition: service_healthy
   #     dwd-worker:
   #       condition: service_started
   #   env_file:
   #     - .env
-  #   environment:
-  #     SPIDER_KAFKA_BROKERS: "kafka:9092"
-  #     SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
-  #     SPIDER_ETL_DWD_TOPIC: "${SPIDER_ETL_DWD_TOPIC:-spider-dwd-processed}"
-  #     SPIDER_ETL_DWS_TOPIC: "${SPIDER_ETL_DWS_TOPIC:-spider-dws-processed}"
-  #     SPIDER_ETL_DWS_CONSUMER_GROUP: "${SPIDER_ETL_DWS_CONSUMER_GROUP:-spider-dws-group}"
   #   working_dir: /app
   #   command: python -m app.etl.main --layer dws
   #   networks:
@@ -291,20 +225,10 @@ services:
   #   container_name: dim-worker
   #   restart: unless-stopped
   #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     kafka:
-  #       condition: service_healthy
   #     rds-worker:
   #       condition: service_started
   #   env_file:
   #     - .env
-  #   environment:
-  #     SPIDER_KAFKA_BROKERS: "kafka:9092"
-  #     SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
-  #     SPIDER_ETL_RDS_TOPIC: "${SPIDER_ETL_RDS_TOPIC:-spider-rds-processed}"
-  #     SPIDER_ETL_DIM_TOPIC: "${SPIDER_ETL_DIM_TOPIC:-spider-dim-processed}"
-  #     SPIDER_ETL_DIM_CONSUMER_GROUP: "${SPIDER_ETL_DIM_CONSUMER_GROUP:-spider-dim-group}"
   #   working_dir: /app
   #   command: python -m app.etl.main --layer dim
   #   networks:
@@ -318,20 +242,10 @@ services:
   #   container_name: ads-worker
   #   restart: unless-stopped
   #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     kafka:
-  #       condition: service_healthy
   #     rds-worker:
   #       condition: service_started
   #   env_file:
   #     - .env
-  #   environment:
-  #     SPIDER_KAFKA_BROKERS: "kafka:9092"
-  #     SPIDER_PG_URL: "postgresql+asyncpg://${SPIDER_PG_USER:-postgres}:${SPIDER_PG_PASS:-postgres}@postgres:5432/${SPIDER_PG_DB:-spider_etl}"
-  #     SPIDER_ETL_ODS_TOPIC: "${SPIDER_ETL_ODS_TOPIC:-spider-ods-processed}"
-  #     SPIDER_ETL_ADS_TOPIC: "${SPIDER_ETL_ADS_TOPIC:-spider-ads-processed}"
-  #     SPIDER_ETL_ADS_CONSUMER_GROUP: "${SPIDER_ETL_ADS_CONSUMER_GROUP:-spider-ads-group}"
   #   working_dir: /app
   #   command: python -m app.etl.main --layer ads
   #   networks:

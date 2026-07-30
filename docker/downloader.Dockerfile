@@ -34,7 +34,4 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser \
     && chown -R appuser:appuser /app
 USER appuser
 
-HEALTHCHECK --interval=60s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
-
 CMD ["python", "-m", "app.downloader.main"]
