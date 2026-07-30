@@ -17,6 +17,7 @@ from app.logger import get_logger
 from app.scheduler.celery_app import app, run_async
 from app.scheduler.task_log_capture import WorkspaceTaskLogCapture
 from app.storage.minio_client import get_business_metadata_minio_client
+from app.utils.runtime_control import reset_control_checkpoint, set_control_checkpoint
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
@@ -137,6 +138,7 @@ async def _crawl_template(
     log_capture: WorkspaceTaskLogCapture | None = None
     checkpoint_connected = False
     run_id = str(uuid.uuid4())
+    control_token = set_control_checkpoint(lambda: _wait_until_runnable(task_id))
     try:
         task = await ai_collect_store.get_task(task_id)
         if task is None:
@@ -315,6 +317,7 @@ async def _crawl_template(
         logger.error("%s: %s", type(exc).__name__, exc)
         raise
     finally:
+        reset_control_checkpoint(control_token)
         if engine is not None:
             await engine.close()
         if checkpoint_store is not None:

@@ -6,13 +6,13 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from curl_cffi import requests as curl_requests
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
 from app.logger import get_adapter_logger
+from app.utils.runtime_control import controlled_sleep
 
 logger = get_adapter_logger(__name__, "zdopen_api", "proxy")
 
@@ -128,7 +128,7 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                     msg,
                     RATE_LIMIT_WAIT_SECONDS,
                 )
-                await asyncio.sleep(RATE_LIMIT_WAIT_SECONDS)
+                await controlled_sleep(RATE_LIMIT_WAIT_SECONDS)
                 continue
 
             if code == ERROR_CODE_IP_IN_USE:
@@ -142,7 +142,7 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                     wait_seconds,
                     retries,
                 )
-                await asyncio.sleep(wait_seconds)
+                await controlled_sleep(wait_seconds)
                 continue
 
             proxy_list = self._extract_proxy_list(data)

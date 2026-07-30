@@ -134,7 +134,9 @@ class ProxyPool:
         tasks = [adapter.fetch() for adapter in self._adapters]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for adapter, result in zip(self._adapters, results):
+        for adapter, result in zip(self._adapters, results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
             if isinstance(result, Exception):
                 logger.error("Adapter '%s' fetch failed: %s", adapter.name, result)
                 continue
