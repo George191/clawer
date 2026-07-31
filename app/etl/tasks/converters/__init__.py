@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import Type
 
 from app.etl.tasks.converters.base import BaseConverter
@@ -23,6 +24,10 @@ logger = get_logger(__name__)
 
 _CONVERTER_REGISTRY: dict[str, BaseConverter] = {}
 _DEFAULT = "pymupdf"
+_OPTIONAL_CONVERTERS = {
+    "docling": ("docling", "DoclingConverter"),
+    "pymupdf4llm": ("pymupdf4llm", "PyMuPDF4LLMConverter"),
+}
 
 
 def _register(converter_cls: Type[BaseConverter]) -> None:
@@ -34,18 +39,30 @@ def _register(converter_cls: Type[BaseConverter]) -> None:
 def get_converter(name: str | None = None) -> BaseConverter:
     name = name or _DEFAULT
     converter = _CONVERTER_REGISTRY.get(name)
+    if converter is None and name in _OPTIONAL_CONVERTERS:
+        _try_register_optional(*_OPTIONAL_CONVERTERS[name])
+        converter = _CONVERTER_REGISTRY.get(name)
+
     if converter is None:
         available = list(_CONVERTER_REGISTRY)
         raise KeyError(f"Converter '{name}' not found. Available: {available}")
     return converter
 
 
-from app.etl.tasks.converters import (
-    docling,  # noqa: E402, F401
-    pymupdf,  # noqa: E402, F401
-    pymupdf4llm,  # noqa: E402, F401
-)
+def _try_register_optional(module_name: str, class_name: str) -> None:
+    try:
+        module = import_module(f"app.etl.tasks.converters.{module_name}")
+    except ModuleNotFoundError as exc:
+        logger.info(
+            "Optional converter unavailable: %s (%s)",
+            module_name,
+            exc.name or exc,
+        )
+        return
 
-_register(docling.DoclingConverter)
-_register(pymupdf4llm.PyMuPDF4LLMConverter)
+    _register(getattr(module, class_name))
+
+
+from app.etl.tasks.converters import pymupdf  # noqa: E402, F401
+
 _register(pymupdf.PyMuPDFConverter)

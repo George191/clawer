@@ -34,10 +34,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ARG INSTALL_CHROMIUM=false
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    chromium \
-    && rm -rf /var/lib/apt/lists/*
+    && if [ "$INSTALL_CHROMIUM" = "true" ]; then \
+        apt-get install -y --no-install-recommends chromium; \
+    fi \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 COPY --from=builder /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels

@@ -94,12 +94,7 @@ class SyncWorker:
 
         logger.info("SyncWorker: pushing %d records to Kafka", len(eligible))
 
-        try:
-            sent_count = await self._kafka.send_records(eligible)
-        except Exception:
-            logger.exception("SyncWorker: Kafka send failed")
-            return 0
-
+        sent_count = 0
         synced_by_task: dict[str, int] = {}
         for record in eligible:
             record_meta = record.get("_meta", {})
@@ -108,6 +103,8 @@ class SyncWorker:
             data_type = record_meta.get("data_type", "")
             if record_id and template_name:
                 try:
+                    await self._kafka.send_record(record)
+                    sent_count += 1
                     await self._mongo.update_sync_status(
                         template_name, data_type, record_id, "synced",
                     )
@@ -122,7 +119,7 @@ class SyncWorker:
                             synced_by_task.get(workspace_task_id, 0) + 1
                         )
                 except Exception:
-                    logger.exception("SyncWorker: sync status update failed for %s", record_id)
+                    logger.exception("SyncWorker: sync failed for %s", record_id)
 
         for task_id, count in synced_by_task.items():
             await ai_collect_store.increment_task_stats(task_id, synced=count)
