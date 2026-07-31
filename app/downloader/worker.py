@@ -47,6 +47,8 @@ RETRY_MAX_DELAY: float = 60.0
 RETRY_ALERT_THRESHOLD: int = 10
 # 严重告警阈值：每 N 次连续重试输出 ERROR 日志，提示持续故障
 RETRY_CRITICAL_THRESHOLD: int = 50
+# 403 可能是代理/上游临时拒绝，但长期 403 会占住下载 worker。
+RETRY_MAX_FORBIDDEN_ATTEMPTS: int = 10
 @dataclass(slots=True)
 class AssetDownloadJob:
     dl_info: dict[str, Any]
@@ -598,7 +600,7 @@ class DownloadWorker:
     def _is_retryable(exc: Exception) -> bool:
         """判断异常是否可重试。
 
-        - 403: Access Denied / 无权限 → 可重试（代理或上游可能临时拒绝）
+        - 403: Access Denied / 无权限 → 有上限重试
         - 404: 资源不存在 → 不重试
         - 其他（5xx、网络超时、连接重置等）→ 可重试
         """
@@ -673,6 +675,17 @@ class DownloadWorker:
                     "DownloadWorker: retry %d for %s | error=%s | status=%s | time=%s",
                     retry_count, url, error_type, status, timestamp,
                 )
+
+                if (
+                    status == 403
+                    and retry_count >= RETRY_MAX_FORBIDDEN_ATTEMPTS
+                ):
+                    logger.warning(
+                        "DownloadWorker: reached max 403 retries (%d), skipping: %s",
+                        RETRY_MAX_FORBIDDEN_ATTEMPTS,
+                        url,
+                    )
+                    return None
 
                 # 阈值告警：连续重试达到预设阈值时触发通知
                 if retry_count % RETRY_CRITICAL_THRESHOLD == 0:
