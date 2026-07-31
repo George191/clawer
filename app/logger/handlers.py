@@ -10,10 +10,6 @@ from contextlib import suppress
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from aiologger import Logger as AsyncLogger
-from aiologger.handlers.files import AsyncFileHandler
-from aiologger.levels import LogLevel
-
 from .fields import ADAPTER_LOGGER_NAMES, LOG_FILE_DATE_FORMAT
 
 LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
@@ -24,14 +20,13 @@ _DATED_LOG_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}\.log")
 
 
 class AsyncDailyAdapterFileHandler(logging.Handler):
-    """Bridge standard logging calls to an aiologger daily file writer."""
+    """Bridge standard logging calls to a daily adapter log file."""
 
     def __init__(self, adapter_kind: str, adapter_name: str, *, level: int) -> None:
         super().__init__(level)
         self.adapter_kind = adapter_kind
         self.adapter_name = adapter_name
         self._current_date = self._date_string()
-        self._async_logger: AsyncLogger | None = None
         self._write_lock: asyncio.Lock | None = None
         self._loop = asyncio.new_event_loop()
         self._loop_ready = threading.Event()
@@ -75,19 +70,10 @@ class AsyncDailyAdapterFileHandler(logging.Handler):
         async with self._write_lock:
             record_date = self._date_string(timestamp)
             if record_date != self._current_date:
-                await self._shutdown_writer()
                 self._current_date = record_date
                 cleanup_adapter_logs()
 
-            if self._async_logger is None:
-                self._async_logger = AsyncLogger(
-                    name=f"adapter.{self.adapter_kind}.{self.adapter_name}",
-                    level=LogLevel.INFO,
-                )
-                self._async_logger.add_handler(
-                    AsyncFileHandler(str(self._log_path()), encoding="utf-8")
-                )
-            await self._async_logger.info(message)
+            await asyncio.to_thread(self._write_line, message)
 
     def close(self) -> None:
         with self._state_lock:
@@ -100,18 +86,10 @@ class AsyncDailyAdapterFileHandler(logging.Handler):
             with suppress(Exception):
                 future.result()
 
-        shutdown = asyncio.run_coroutine_threadsafe(self._shutdown_writer(), self._loop)
-        with suppress(Exception):
-            shutdown.result()
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join()
         self._loop.close()
         super().close()
-
-    async def _shutdown_writer(self) -> None:
-        if self._async_logger is not None:
-            await self._async_logger.shutdown()
-            self._async_logger = None
 
     def _run_event_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -129,6 +107,11 @@ class AsyncDailyAdapterFileHandler(logging.Handler):
         adapter_dir = LOG_DIR / self.adapter_kind / self.adapter_name
         adapter_dir.mkdir(parents=True, exist_ok=True)
         return adapter_dir / f"{self._current_date}.log"
+
+    def _write_line(self, message: str) -> None:
+        with self._log_path().open("a", encoding="utf-8") as log_file:
+            log_file.write(message)
+            log_file.write("\n")
 
     @staticmethod
     def _date_string(timestamp: float | None = None) -> str:
