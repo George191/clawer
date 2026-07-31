@@ -83,9 +83,6 @@ class AppSettings(BaseSettings):
         default=True,
         description="资源下载是否使用隧道代理或代理池",
     )
-    download_max_file_size: int = Field(
-        default=500 * 1024 * 1024, description="允许下载的最大文件大小(bytes)"
-    )
 
     db_url: str = Field(default="", description="MongoDB连接URL, 留空则仅使用文件存储")
     db_name: str = Field(default="", description="MongoDB数据库名")

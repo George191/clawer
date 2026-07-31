@@ -72,13 +72,6 @@ class DownloadError(Exception):
         super().__init__(f"Download failed: {url} (status={status_code}): {message}")
 
 
-class FileTooLargeError(DownloadError):
-    def __init__(self, url: str, size: int, max_size: int):
-        self.size = size
-        self.max_size = max_size
-        super().__init__(url, message=f"File size {size} exceeds limit {max_size}")
-
-
 class HttpClient:
     def __init__(self) -> None:
         # 按协程缓存最近使用的代理，避免并发模板互相标记对方的代理。
@@ -121,8 +114,6 @@ class HttpClient:
         anything about the proxy, so retaining the lease avoids draining the
         shared pool on bad or expired asset URLs.
         """
-        if isinstance(error, FileTooLargeError):
-            return False
         if not cls._should_mark_proxy_failure(error, pre_proxy_url):
             return False
         status_code = cls._error_status_code(error)
@@ -615,12 +606,6 @@ class HttpClient:
 
             response.raise_for_status()
             data = response.content
-            total_size = len(data)
-            if total_size > settings.download_max_file_size:
-                raise FileTooLargeError(
-                    url, total_size, settings.download_max_file_size
-                )
-            logger.debug("Download complete: %s (%d bytes)", url, total_size)
 
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
@@ -633,10 +618,7 @@ class HttpClient:
                 and proxy_url
                 and self._should_mark_download_proxy_failure(e, pre_proxy_url)
             )
-            transport_failed = (
-                self._error_status_code(e) is None
-                and not isinstance(e, FileTooLargeError)
-            )
+            transport_failed = self._error_status_code(e) is None
             if proxy_failed or transport_failed:
                 await self._discard_download_client(task_id)
             if proxy_failed:

@@ -28,7 +28,6 @@ from app.base.http import HttpClient
 from app.base.minio import MinioClient
 from app.base.mongo import MongoClient
 from app.config.settings import settings
-from app.downloader.http_client import FileTooLargeError
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate
@@ -48,10 +47,6 @@ RETRY_MAX_DELAY: float = 60.0
 RETRY_ALERT_THRESHOLD: int = 10
 # 严重告警阈值：每 N 次连续重试输出 ERROR 日志，提示持续故障
 RETRY_CRITICAL_THRESHOLD: int = 50
-# 最大重试次数：达到后跳过该资源
-RETRY_MAX_ATTEMPTS: int = 5
-
-
 @dataclass(slots=True)
 class AssetDownloadJob:
     dl_info: dict[str, Any]
@@ -603,15 +598,12 @@ class DownloadWorker:
     def _is_retryable(exc: Exception) -> bool:
         """判断异常是否可重试。
 
-        - FileTooLargeError: 文件超限，重试无意义 → 不重试
-        - 403: Access Denied / 无权限 → 不重试（重试也是无权限）
-        - 404: 资源不存在 → 不重试（维持现有逻辑）
+        - 403: Access Denied / 无权限 → 可重试（代理或上游可能临时拒绝）
+        - 404: 资源不存在 → 不重试
         - 其他（5xx、网络超时、连接重置等）→ 可重试
         """
-        if isinstance(exc, FileTooLargeError):
-            return False
         status = DownloadWorker._extract_status_code(exc)
-        if status in (403, 404):
+        if status == 404:
             return False
         return True
 
@@ -682,21 +674,6 @@ class DownloadWorker:
                     retry_count, url, error_type, status, timestamp,
                 )
 
-                if retry_count >= RETRY_MAX_ATTEMPTS:
-                    logger.debug(
-                        "DownloadWorker timing: phase=http attempts=%d seconds=%.3f "
-                        "result=failed url=%s",
-                        retry_count,
-                        time.perf_counter() - started_at,
-                        url,
-                    )
-                    logger.warning(
-                        "DownloadWorker: reached max retries (%d), skipping: %s",
-                        RETRY_MAX_ATTEMPTS,
-                        url,
-                    )
-                    return None
-
                 # 阈值告警：连续重试达到预设阈值时触发通知
                 if retry_count % RETRY_CRITICAL_THRESHOLD == 0:
                     logger.error(
@@ -743,23 +720,56 @@ class DownloadWorker:
         if data is None:
             return None
 
-        try:
-            upload_started_at = time.perf_counter()
-            asset_path = await self._minio.upload_bytes(
-                data, template_name, data_type,
-                f"{record_id}/{filename}", content_type,
-            )
-            logger.debug(
-                "DownloadWorker timing: phase=minio record=%s seconds=%.3f file=%s",
-                record_id,
-                time.perf_counter() - upload_started_at,
-                filename,
-            )
-            logger.debug("DownloadWorker: uploaded %s -> %s", filename, asset_path)
-            return asset_path
-        except Exception:
-            logger.exception("DownloadWorker: MinIO upload failed for %s", filename)
-            return None
+        retry_count = 0
+        delay = RETRY_INITIAL_DELAY
+        upload_started_at = time.perf_counter()
+        while self._running:
+            try:
+                asset_path = await self._minio.upload_bytes(
+                    data, template_name, data_type,
+                    f"{record_id}/{filename}", content_type,
+                )
+                logger.debug(
+                    "DownloadWorker timing: phase=minio record=%s attempts=%d "
+                    "seconds=%.3f file=%s",
+                    record_id,
+                    retry_count + 1,
+                    time.perf_counter() - upload_started_at,
+                    filename,
+                )
+                logger.debug("DownloadWorker: uploaded %s -> %s", filename, asset_path)
+                return asset_path
+            except Exception as exc:
+                retry_count += 1
+                logger.warning(
+                    "DownloadWorker: MinIO upload retry %d for %s | error=%s",
+                    retry_count,
+                    filename,
+                    type(exc).__name__,
+                    exc_info=True,
+                )
+                if retry_count % RETRY_CRITICAL_THRESHOLD == 0:
+                    logger.error(
+                        "DownloadWorker: CRITICAL alert - %d MinIO upload retries "
+                        "for %s",
+                        retry_count,
+                        filename,
+                    )
+                elif retry_count % RETRY_ALERT_THRESHOLD == 0:
+                    logger.warning(
+                        "DownloadWorker: alert - %d MinIO upload retries for %s",
+                        retry_count,
+                        filename,
+                    )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, RETRY_MAX_DELAY)
+
+        logger.info(
+            "DownloadWorker: worker stopping, aborting MinIO upload for %s "
+            "(attempted %d retries)",
+            filename, retry_count,
+        )
+        return None
 
     async def _download_pending_asset(
         self,
