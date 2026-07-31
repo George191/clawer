@@ -222,9 +222,11 @@ class DownloadWorker:
                 data_type = meta["data_type"]
                 pending_by_url: dict[str, dict[str, Any]] = {}
                 skipped_existing = 0
+                expected_asset_keys = set()
 
                 for idx, dl_info in enumerate(download_urls):
                     asset_key = dl_info.get("asset_key", f"assets.{idx}")
+                    expected_asset_keys.add(asset_key)
                     if self._asset_exists(record, asset_key):
                         skipped_existing += 1
                         continue
@@ -276,10 +278,16 @@ class DownloadWorker:
                     updates.update(dict.fromkeys(asset_keys, asset_path))
 
                 downloaded_assets = len(updates)
+                existing_or_downloaded_assets = {
+                    asset_key
+                    for asset_key in expected_asset_keys
+                    if asset_key in updates or self._asset_exists(record, asset_key)
+                }
+                missing_asset_keys = expected_asset_keys - existing_or_downloaded_assets
 
                 if not self._running:
                     final_status = "pending"
-                elif failed_assets:
+                elif failed_assets or missing_asset_keys:
                     final_status = "failed"
                 elif downloaded_assets or skipped_existing:
                     final_status = "downloaded"
@@ -315,6 +323,12 @@ class DownloadWorker:
                         "DownloadWorker: %s has %d failed assets "
                         "(downloaded=%d, skipped_existing=%d)",
                         record_id, failed_assets, downloaded_assets, skipped_existing,
+                    )
+                    return False
+                if missing_asset_keys:
+                    logger.warning(
+                        "DownloadWorker: %s missing %d expected asset fields",
+                        record_id, len(missing_asset_keys),
                     )
                     return False
 
