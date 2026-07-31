@@ -48,7 +48,8 @@ RETRY_ALERT_THRESHOLD: int = 10
 # 严重告警阈值：每 N 次连续重试输出 ERROR 日志，提示持续故障
 RETRY_CRITICAL_THRESHOLD: int = 50
 # 403 可能是代理/上游临时拒绝，但长期 403 会占住下载 worker。
-RETRY_MAX_FORBIDDEN_ATTEMPTS: int = 10
+RETRY_MAX_FORBIDDEN_ATTEMPTS: int = 5
+FORBIDDEN_ASSET_SKIPPED = "__forbidden_asset_skipped__"
 @dataclass(slots=True)
 class AssetDownloadJob:
     dl_info: dict[str, Any]
@@ -267,18 +268,26 @@ class DownloadWorker:
 
                 updates: dict[str, str] = {}
                 failed_assets = 0
+                skipped_forbidden_asset_keys: set[str] = set()
                 for dl_info, asset_path in asset_results:
+                    asset_keys = list(dict.fromkeys(dl_info["asset_keys"]))
+                    if asset_path == FORBIDDEN_ASSET_SKIPPED:
+                        skipped_forbidden_asset_keys.update(asset_keys)
+                        continue
                     if not asset_path:
                         failed_assets += 1
                         continue
-                    asset_keys = list(dict.fromkeys(dl_info["asset_keys"]))
                     updates.update(dict.fromkeys(asset_keys, asset_path))
 
                 downloaded_assets = len(updates)
                 existing_or_downloaded_assets = {
                     asset_key
                     for asset_key in expected_asset_keys
-                    if asset_key in updates or self._asset_exists(record, asset_key)
+                    if (
+                        asset_key in updates
+                        or asset_key in skipped_forbidden_asset_keys
+                        or self._asset_exists(record, asset_key)
+                    )
                 }
                 missing_asset_keys = expected_asset_keys - existing_or_downloaded_assets
 
@@ -286,7 +295,7 @@ class DownloadWorker:
                     final_status = "pending"
                 elif failed_assets or missing_asset_keys:
                     final_status = "failed"
-                elif downloaded_assets or skipped_existing:
+                elif downloaded_assets or skipped_existing or skipped_forbidden_asset_keys:
                     final_status = "downloaded"
                 else:
                     final_status = "no_assets"
@@ -328,12 +337,20 @@ class DownloadWorker:
                         record_id, len(missing_asset_keys),
                     )
                     return False
+                if skipped_forbidden_asset_keys:
+                    logger.warning(
+                        "DownloadWorker: %s skipped %d forbidden asset fields",
+                        record_id, len(skipped_forbidden_asset_keys),
+                    )
 
-                if downloaded_assets or skipped_existing:
+                if downloaded_assets or skipped_existing or skipped_forbidden_asset_keys:
                     logger.info(
                         "DownloadWorker: downloaded %d assets for %s "
-                        "(skipped_existing=%d)",
-                        downloaded_assets, record_id, skipped_existing,
+                        "(skipped_existing=%d, skipped_forbidden=%d)",
+                        downloaded_assets,
+                        record_id,
+                        skipped_existing,
+                        len(skipped_forbidden_asset_keys),
                     )
                     if workspace_task_id and downloaded_assets:
                         await ai_collect_store.increment_task_stats(
@@ -685,7 +702,7 @@ class DownloadWorker:
                         RETRY_MAX_FORBIDDEN_ATTEMPTS,
                         url,
                     )
-                    return None
+                    return FORBIDDEN_ASSET_SKIPPED
 
                 # 阈值告警：连续重试达到预设阈值时触发通知
                 if retry_count % RETRY_CRITICAL_THRESHOLD == 0:
@@ -730,6 +747,8 @@ class DownloadWorker:
         content_type = MinioClient._guess_content_type(filename)
 
         data = await self._download_with_retry(url, use_proxy=use_proxy)
+        if data == FORBIDDEN_ASSET_SKIPPED:
+            return FORBIDDEN_ASSET_SKIPPED
         if data is None:
             return None
 
