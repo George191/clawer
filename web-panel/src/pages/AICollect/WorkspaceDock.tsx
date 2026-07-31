@@ -94,7 +94,7 @@ type TaskComposerMode = 'once' | 'recurring';
 type TaskRecurringMode = 'daily' | 'interval';
 type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
-type SiteKind = 'news' | 'patent' | 'intelligence' | 'warning' | 'signal' | 'game' | 'generic';
+type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'warning' | 'signal' | 'game' | 'generic';
 
 interface TemplateDraft {
   adapter: string;
@@ -540,7 +540,16 @@ const GamepadGlyph = () => (
   </svg>
 );
 
+const FinancialReportGlyph = () => (
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M6.5 3.5h7l4 4v13h-11z" />
+    <path d="M13.5 3.5v4h4" />
+    <path d="M9.5 16.5v-3M12 16.5v-5M14.5 16.5v-2" />
+  </svg>
+);
+
 const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tint: string }> = {
+  financial_report: { icon: <FinancialReportGlyph />, label: 'Financial report', tint: '#69D3B0' },
   news: { icon: <ReadOutlined />, label: '新闻', tint: '#BFA8FF' },
   patent: { icon: <ExperimentOutlined />, label: '专利', tint: '#8AB4FF' },
   intelligence: { icon: <RadarChartOutlined />, label: '情报', tint: '#7DD3FC' },
@@ -706,6 +715,7 @@ const toAvatarLabel = (value: string) => {
 
 const inferSiteKind = (value: string): SiteKind => {
   const text = value.toLowerCase();
+  if (/financial[_\s-]*report/.test(text)) return 'financial_report';
   if (text.includes('game') || text.includes('游戏')) return 'game';
   if (text.includes('patent') || text.includes('专利')) return 'patent';
   if (text.includes('warn') || text.includes('warning') || text.includes('告警')) return 'warning';
