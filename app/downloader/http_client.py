@@ -17,7 +17,9 @@ import socket
 import sys
 from urllib.parse import urlsplit, urlunsplit
 
-from curl_cffi import CurlOpt, requests as curl_requests
+from curl_cffi import CurlOpt
+from curl_cffi import requests as curl_requests
+from curl_cffi.requests.exceptions import ProxyError
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -114,6 +116,8 @@ class HttpClient:
         anything about the proxy, so retaining the lease avoids draining the
         shared pool on bad or expired asset URLs.
         """
+        if isinstance(error, ProxyError):
+            return True
         if not cls._should_mark_proxy_failure(error, pre_proxy_url):
             return False
         status_code = cls._error_status_code(error)
