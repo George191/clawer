@@ -17,6 +17,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
   const { onMessage, onOpen, onClose, onError, reconnectInterval = 3000 } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
+  const initialConnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const shouldReconnect = useRef(false);
 
@@ -59,15 +60,19 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
 
   useEffect(() => {
     shouldReconnect.current = true;
-    connect();
+    initialConnectTimer.current = setTimeout(connect, 0);
     return () => {
       shouldReconnect.current = false;
+      clearTimeout(initialConnectTimer.current);
       clearTimeout(reconnectTimer.current);
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws) {
+        ws.onopen = ws.readyState === WebSocket.CONNECTING ? () => ws.close() : null;
+        ws.onmessage = null;
+        ws.onerror = null;
         ws.onclose = null;
-        ws.close();
+        if (ws.readyState !== WebSocket.CONNECTING) ws.close();
       }
     };
   }, [connect]);
