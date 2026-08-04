@@ -19,6 +19,8 @@ from typing import Any
 
 from app.config.settings import settings
 
+KAFKA_MAX_MESSAGE_BYTES = 4 * 1024 * 1024
+
 
 def get_brokers(bootstrap_servers: str | None = None) -> list[str]:
     """获取 Kafka Broker 列表。
@@ -81,7 +83,7 @@ def build_producer_kwargs(**extra: Any) -> dict[str, Any]:
     kwargs.setdefault("key_serializer", lambda k: k.encode("utf-8") if k else None)
     kwargs.setdefault("acks", "all")
     kwargs.setdefault("enable_idempotence", settings.kafka_enable_idempotence)
-    kwargs.setdefault("max_request_size", 1048576)
+    kwargs.setdefault("max_request_size", KAFKA_MAX_MESSAGE_BYTES)
     kwargs.setdefault("request_timeout_ms", 30000)
     kwargs.setdefault("connections_max_idle_ms", 540000)
     return kwargs
@@ -100,6 +102,7 @@ def build_consumer_kwargs(**extra: Any) -> dict[str, Any]:
     kwargs.setdefault("auto_offset_reset", "earliest")
     kwargs.setdefault("enable_auto_commit", False)
     kwargs.setdefault("max_poll_records", 100)
+    kwargs.setdefault("max_partition_fetch_bytes", KAFKA_MAX_MESSAGE_BYTES)
     kwargs.setdefault("session_timeout_ms", 30000)
     kwargs.setdefault("heartbeat_interval_ms", 10000)
     return kwargs
