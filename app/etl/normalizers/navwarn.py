@@ -15,6 +15,15 @@ logger = get_logger(__name__)
 _NAVAREA_PREFIX_RE = re.compile(r"^(NAVAREA\s+[IVXLC\d]+)\b[\s\-:,.]*", re.IGNORECASE)
 _WARNING_SLASH_RE = re.compile(r"(?P<serial>\d{1,4})\s*/\s*(?P<year>\d{2,4})")
 _WARNING_YEAR_SERIAL_RE = re.compile(r"(?P<year>\d{2,4})\s*-\s*(?P<serial>\d{1,4})")
+_NGA_WARNING_HEADER_RE = re.compile(
+    r"^(?P<region>NAVAREA\s+[IVXLC\d]+|HYDROLANT|HYDROPAC|HYDROARC)"
+    r"\s+(?P<serial>\d{1,4})\s*/\s*(?P<year>\d{2,4})\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+_NGA_REGION_NAVAREA_IDS = {
+    "HYDROLANT": 4,
+    "HYDROPAC": 12,
+}
 
 _LAT_MIN, _LAT_MAX = -90.0, 90.0
 _LON_MIN, _LON_MAX = -180.0, 180.0
@@ -70,6 +79,56 @@ def _normalize_warning_number(
     else:
         warning_no_normalized = f"{serial_number:0{len(serial_text)}d}/{year_text}"
     return warning_no_normalized, warning_region or region_prefix, serial_number, warning_year
+
+
+def _navarea_id_from_region(region: str | None) -> int | None:
+    normalized = safe_str(region)
+    if not normalized:
+        return None
+    normalized = re.sub(r"\s+", " ", normalized).upper()
+    mapped = _NGA_REGION_NAVAREA_IDS.get(normalized)
+    if mapped is not None:
+        return mapped
+    match = re.fullmatch(r"NAVAREA\s+([IVXLC]+|\d+)", normalized)
+    if not match:
+        return None
+    value = match.group(1)
+    if value.isdigit():
+        return int(value)
+
+    roman_values = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
+    total = 0
+    previous = 0
+    for char in reversed(value):
+        current = roman_values[char]
+        total += -current if current < previous else current
+        previous = current
+    return total
+
+
+def _extract_nga_warning_header(
+    message_text: str | None,
+    reference_year: int | None = None,
+) -> tuple[str | None, str | None, int | None, int | None, int | None]:
+    text = safe_str(message_text)
+    match = _NGA_WARNING_HEADER_RE.search(text or "")
+    if not match:
+        return None, None, None, None, None
+
+    region = re.sub(r"\s+", " ", match.group("region")).upper()
+    serial_text = match.group("serial")
+    year_text = match.group("year")
+    serial_number = int(serial_text)
+    if len(year_text) == 3:
+        expected_short_year = f"{reference_year % 100:02d}" if reference_year else None
+        if expected_short_year != year_text[:2]:
+            return region, None, serial_number, None, _navarea_id_from_region(region)
+        year_text = expected_short_year
+        warning_year = reference_year
+    else:
+        warning_year = int(year_text) if len(year_text) == 4 else 2000 + int(year_text)
+    warning_no = f"{serial_number:0{len(serial_text)}d}/{year_text}"
+    return region, warning_no, serial_number, warning_year, _navarea_id_from_region(region)
 
 
 def _extract_coordinates(text: str | None) -> list[dict[str, Any]]:
@@ -321,6 +380,19 @@ def normalize_nga_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     normalized = _navwarn_common(record, "nga_navwarn")
     normalized["issued_at"] = _parse_nga_issue_time(record.get("issue_time"))
     quality_flags: list[str] = []
+
+    header_region, header_warning_no, header_serial, header_year, header_navarea = (
+        _extract_nga_warning_header(
+            normalized["message_text"],
+            normalized["issued_at"].year if normalized["issued_at"] else None,
+        )
+    )
+    if normalized["serial_number"] is None or normalized["warning_year"] is None:
+        normalized["warning_no"] = header_warning_no or normalized["warning_no"]
+        normalized["serial_number"] = header_serial
+        normalized["warning_year"] = header_year
+    normalized["region"] = normalized["region"] or header_region
+    normalized["navarea_id"] = normalized["navarea_id"] or header_navarea
 
     # ── NGA navwarn 专属清洗：异常值修正与字段规范化 ──
     (

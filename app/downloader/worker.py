@@ -43,6 +43,7 @@ logger = get_logger(__name__)
 RETRY_INITIAL_DELAY: float = 1.0
 # 最大重试延迟（秒），退避上限以避免请求风暴
 RETRY_MAX_DELAY: float = 60.0
+RETRY_MAX_ATTEMPTS: int = 5
 # 告警阈值：每 N 次连续重试输出 WARNING 日志
 RETRY_ALERT_THRESHOLD: int = 10
 # 严重告警阈值：每 N 次连续重试输出 ERROR 日志，提示持续故障
@@ -627,11 +628,11 @@ class DownloadWorker:
         return status != 404
 
     async def _download_with_retry(self, url: str, *, use_proxy: bool) -> bytes | None:
-        """带无限重试的资源下载。
+        """带有限重试的资源下载。
 
         策略：
         - 404 / ValueError → 立即返回 None，不重试
-        - 其他错误（5xx、网络超时等）→ 无限重试，指数退避
+        - 其他错误（5xx、网络超时等）→ 最多重试 RETRY_MAX_ATTEMPTS 次
         - worker 停止时退出循环，返回 None
 
         每次重试独立下载，失败后字节即被回收，无内存泄漏。
@@ -704,6 +705,14 @@ class DownloadWorker:
                     )
                     return FORBIDDEN_ASSET_SKIPPED
 
+                if retry_count >= RETRY_MAX_ATTEMPTS:
+                    logger.warning(
+                        "DownloadWorker: reached max retries (%d), marking asset failed: %s",
+                        RETRY_MAX_ATTEMPTS,
+                        url,
+                    )
+                    return None
+
                 # 阈值告警：连续重试达到预设阈值时触发通知
                 if retry_count % RETRY_CRITICAL_THRESHOLD == 0:
                     logger.error(
@@ -741,7 +750,7 @@ class DownloadWorker:
     ) -> str | None:
         """下载单个资源文件并上传到 MinIO。
 
-        下载阶段使用 _download_with_retry 实现无限重试；
+        下载阶段使用 _download_with_retry 实现有限重试；
         上传阶段失败不重试（MinIO 故障属基础设施问题，由上层处理）。
         """
         content_type = MinioClient._guess_content_type(filename)
