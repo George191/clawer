@@ -618,19 +618,19 @@ class DownloadWorker:
         """判断异常是否可重试。
 
         - 403: Access Denied / 无权限 → 有上限重试
-        - 404: 资源不存在 → 不重试
+        - 404 / ValueError: 资源不存在或请求参数无效 → 不重试
         - 其他（5xx、网络超时、连接重置等）→ 可重试
         """
-        status = DownloadWorker._extract_status_code(exc)
-        if status == 404:
+        if isinstance(exc, ValueError):
             return False
-        return True
+        status = DownloadWorker._extract_status_code(exc)
+        return status != 404
 
     async def _download_with_retry(self, url: str, *, use_proxy: bool) -> bytes | None:
         """带无限重试的资源下载。
 
         策略：
-        - 404 / 文件过大 → 立即返回 None，不重试
+        - 404 / ValueError → 立即返回 None，不重试
         - 其他错误（5xx、网络超时等）→ 无限重试，指数退避
         - worker 停止时退出循环，返回 None
 
