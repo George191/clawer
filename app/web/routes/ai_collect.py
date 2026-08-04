@@ -32,12 +32,17 @@ from app.web.utils.validation import (
 logger = get_logger(__name__)
 router = APIRouter()
 _PREFLIGHT_MAX_RETRIES = 3
+_PREFLIGHT_ATTEMPT_OVERHEAD = 10.0
 _BATCH_INPUT_MAX_BYTES = 128 * 1024 * 1024
 
 
 def _preflight_deadline() -> float:
     retry_backoff = sum(2**attempt for attempt in range(_PREFLIGHT_MAX_RETRIES - 1))
-    return ai_settings.page_fetch_timeout * _PREFLIGHT_MAX_RETRIES + retry_backoff
+    return (
+        (ai_settings.page_fetch_timeout + _PREFLIGHT_ATTEMPT_OVERHEAD)
+        * _PREFLIGHT_MAX_RETRIES
+        + retry_backoff
+    )
 
 
 class FieldOverride(BaseModel):
@@ -425,6 +430,7 @@ async def _analyze_events(
     existing_template_yaml: str = "",
 ) -> AsyncGenerator[AnalysisStreamEvent, None]:
     step_started_at: dict[str, int] = {}
+    current_stage = "fetch_page"
 
     def step_event(step: str, label: str, status: str) -> AnalysisStreamEvent:
         now = int(time.time() * 1000)
@@ -495,6 +501,7 @@ async def _analyze_events(
             page_warnings=preflight.page_warnings,
         )
 
+        current_stage = "generate_template"
         yield step_event("generate_template", "Generate template", "running")
         template_events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         template_task = asyncio.create_task(
@@ -528,7 +535,6 @@ async def _analyze_events(
             "key": next(reversed(template_dict), ""),
             "index": len(template_dict),
             "total": len(template_dict),
-            "templateYaml": template_yaml,
         })
         yield step_event("generate_template", "Generate template", "done")
         
@@ -559,6 +565,7 @@ async def _analyze_events(
             acquisition=acquisition,
         )
         
+        current_stage = "validate"
         yield step_event("validate", "Validate artifacts", "running")
         await asyncio.sleep(1)
         yield step_event("validate", "Validate artifacts", "done")
@@ -602,7 +609,26 @@ async def _analyze_events(
     except asyncio.CancelledError:
         logger.info("Analysis cancelled for %s", url)
     except Exception as exc:
-        yield _analysis_event("error", {"error": str(exc)})
+        exception_type = type(exc).__name__
+        stage_label = {
+            "fetch_page": "Page preflight",
+            "generate_template": "Template generation",
+            "validate": "Artifact validation",
+        }.get(current_stage, "Analysis")
+        message = str(exc).strip()
+        if not message:
+            suffix = "timed out" if isinstance(exc, TimeoutError) else f"failed ({exception_type})"
+            message = f"{stage_label} {suffix}"
+        yield _analysis_event(
+            "error",
+            {
+                "code": "ANALYZE_TIMEOUT" if isinstance(exc, TimeoutError) else "ANALYZE_ERROR",
+                "message": message,
+                "error": message,
+                "stage": current_stage,
+                "exceptionType": exception_type,
+            },
+        )
         logger.exception("Analysis failed for %s", url)
 
 

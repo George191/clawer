@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from pymongo import ReplaceOne
@@ -25,9 +25,6 @@ from app.storage.file_storage import StorageBackend
 from app.utils.path import get_nested_value
 
 logger = get_logger(__name__)
-
-DOWNLOAD_CLAIM_TIMEOUT = timedelta(hours=2)
-
 
 class MongoStorage(StorageBackend):
     def __init__(self) -> None:
@@ -409,6 +406,7 @@ class MongoStorage(StorageBackend):
                     "$or": [
                         {"_meta.download_status": "downloaded"},
                         {"_meta.download_status": "no_assets"},
+                        {"_meta.download_status": "failed"},
                     ],
                 },
             ],
@@ -453,8 +451,7 @@ class MongoStorage(StorageBackend):
         """
         await self._ensure_connection()
 
-        stale_before = datetime.now(timezone.utc) - DOWNLOAD_CLAIM_TIMEOUT
-        filter_query = self._download_claim_filter(stale_before)
+        filter_query = self._download_claim_filter()
 
         if template_name:
             collection = await self._get_collection(template_name)
@@ -485,22 +482,9 @@ class MongoStorage(StorageBackend):
             return results
 
     @staticmethod
-    def _download_claim_filter(stale_before: datetime) -> dict[str, Any]:
+    def _download_claim_filter() -> dict[str, Any]:
         return {
-            "$or": [
-                {"_meta.download_status": "pending"},
-                {
-                    "$and": [
-                        {"_meta.download_status": "downloading"},
-                        {
-                            "$or": [
-                                {"_meta.download_claimed_at": {"$lt": stale_before}},
-                                {"_meta.download_claimed_at": {"$exists": False}},
-                            ]
-                        },
-                    ]
-                },
-            ]
+            "_meta.download_status": {"$in": ["pending", "downloading"]},
         }
 
     async def _claim_pending_downloads_from_collection(

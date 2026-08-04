@@ -139,10 +139,16 @@ class TemplateAgent(BaseAgent):
         self.register_prompt(
             "generate_template",
             """
-                Create the final SiteTemplate YAML from captured evidence. Return no analysis.
+                Create the final SiteTemplate YAML from the user's request and captured evidence. Think carefully before answering, but return no analysis.
+
+                Analyze the user request before writing YAML:
+                - Decompose it into the collection goal, target entities, desired fields/resources, filters, scope and requested changes. Consider semantic equivalents and closely related data the user may mean, not only literal keywords.
+                - Explore multiple plausible interpretations and acquisition designs, including JSON versus HTML, list versus detail data, pagination, downloads and adapter needs. Compare them against all available evidence before choosing.
+                - Prefer the richest evidence-supported interpretation that fulfills the likely intent. Resolve ambiguity conservatively when evidence cannot distinguish the options, and never invent fields, endpoints or behavior.
+                - Apply every explicit user constraint that is supported by evidence. Preserve unrelated existing-template behavior during refinement.
 
                 Decision order:
-                1. Evidence wins. Prefer a successful XHR/fetch JSON response with a real record container and sample; otherwise use rendered HTML. Ignore login, CAPTCHA, maintenance, loading shells and HTML error responses.
+                1. User intent defines what to collect; evidence defines what can be claimed. Prefer a successful XHR/fetch JSON response with a real record container and sample; otherwise use rendered HTML. Ignore login, CAPTCHA, maintenance, loading shells and HTML error responses.
                 2. Infer only reusable structure from the closest historical templates: top-level order, request/field shapes, naming, dedup and resource patterns. Never copy another site's URL, selector, constant, field or unsupported behavior.
                 3. Preserve the existing template unless the user request or current evidence requires a change.
 
@@ -326,11 +332,12 @@ class TemplateAgent(BaseAgent):
                 )
             ).strip()
             streamed_response: list[str] = []
+            emitted_yaml = ""
             active_stage = ""
             first_chunk_received = False
 
             def emit_chunk(chunk: str) -> None:
-                nonlocal active_stage, first_chunk_received
+                nonlocal active_stage, emitted_yaml, first_chunk_received
                 streamed_response.append(chunk)
                 if not on_event:
                     return
@@ -344,18 +351,22 @@ class TemplateAgent(BaseAgent):
                 partial_yaml = self._extract_streaming_yaml("".join(streamed_response))
                 if not partial_yaml:
                     return
+                if not partial_yaml.startswith(emitted_yaml):
+                    return
+                delta = partial_yaml[len(emitted_yaml):]
+                emitted_yaml = partial_yaml
                 next_stage = self._streaming_template_stage(partial_yaml)
                 if next_stage != active_stage:
                     if active_stage:
                         on_event({"kind": "template_stage", "stage": active_stage, "status": "done"})
                     active_stage = next_stage
                     on_event({"kind": "template_stage", "stage": active_stage, "status": "running"})
-                on_event({
-                    "kind": "template_delta",
-                    "stage": active_stage,
-                    "content": chunk,
-                    "templateYaml": partial_yaml,
-                })
+                if delta:
+                    on_event({
+                        "kind": "template_delta",
+                        "stage": active_stage,
+                        "content": delta,
+                    })
 
             if on_event:
                 on_event({
@@ -382,12 +393,6 @@ class TemplateAgent(BaseAgent):
             previous_template_yaml = template_yaml
         if validation_error:
             raise RuntimeError(f"Template validation failed: {validation_error}")
-        if on_event:
-            on_event({
-                "kind": "template_delta",
-                "content": "Template generated",
-                "templateYaml": template_yaml,
-            })
         return template_yaml
 
     @staticmethod

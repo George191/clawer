@@ -1110,9 +1110,12 @@ const AICollect: React.FC = () => {
   const refinementTemplateChangedRef = useRef(false);
   const refinementPromptRef = useRef('');
   const adapterLiveCodeRef = useRef('');
+  const templateStreamRef = useRef('');
   const adapterEditorBodyRef = useRef<HTMLDivElement | null>(null);
   const adapterAutoScrollRef = useRef(true);
   const adapterLastScrollTopRef = useRef(0);
+  const templateAutoScrollRef = useRef(true);
+  const templateLastScrollTopRef = useRef(0);
   const analyzeStepRef = useRef('prepare');
   const analysisFeedIdRef = useRef(0);
   const simulationTimerRef = useRef<number | null>(null);
@@ -1209,8 +1212,6 @@ const AICollect: React.FC = () => {
   const qualityScore = mode === 'publish' ? 94 : mode === 'dryrun' ? 86 : mode === 'contract' ? 88 : 92;
   const activeStepIndex = processStepOrder.indexOf(activeProcessStep);
   const activeTemplate = useMemo(() => {
-    if (!templateCatalog.length) return { id: 'empty', fileName: 'empty.yaml', displayName: 'Template', entries: [], raw: '' };
-
     if (workspaceTemplateYaml) {
       const generatedName = workspaceTemplateYaml.match(/^name:\s*["']?([^\s"']+)/m)?.[1] ?? 'generated_template';
       const generatedTitle = workspaceTemplateYaml.match(/^display_name:\s*["']?([^\r\n"']+)/m)?.[1]
@@ -1224,6 +1225,8 @@ const AICollect: React.FC = () => {
         raw: workspaceTemplateYaml,
       };
     }
+
+    if (!templateCatalog.length) return { id: 'empty', fileName: 'empty.yaml', displayName: 'Template', entries: [], raw: '' };
 
     const signal = `${templateId} ${submittedPrompt} ${intent} ${url}`.toLowerCase();
     const matchedTemplate = templateCatalog.find((template) => signal.includes(template.id.toLowerCase()));
@@ -1573,6 +1576,24 @@ const AICollect: React.FC = () => {
       content,
     }));
   }, [adapterStreamingCode, adapterWriting, workspaceAdapterCode]);
+  useEffect(() => {
+    if (!templateAutoScrollRef.current) return;
+    const templateBody = templateScrollRef.current;
+    if (!templateBody) return;
+    templateBody.scrollTop = templateBody.scrollHeight;
+    templateLastScrollTopRef.current = templateBody.scrollTop;
+  }, [analysisFeed, displayTemplatePanel, streamError, workspaceTemplateYaml]);
+  const handleTemplateScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const templateBody = event.currentTarget;
+    const distanceFromBottom = templateBody.scrollHeight - templateBody.scrollTop - templateBody.clientHeight;
+    const movedUp = templateBody.scrollTop < templateLastScrollTopRef.current - 1;
+    if (movedUp) {
+      templateAutoScrollRef.current = false;
+    } else if (distanceFromBottom <= 8) {
+      templateAutoScrollRef.current = true;
+    }
+    templateLastScrollTopRef.current = templateBody.scrollTop;
+  }, []);
   useEffect(() => {
     if (!adapterWriting || !adapterAutoScrollRef.current) return;
     const editorBody = adapterEditorBodyRef.current;
@@ -1950,12 +1971,19 @@ const AICollect: React.FC = () => {
         return;
       }
       if (data.kind === 'template_delta') {
-        const templateYaml = typeof data.templateYaml === 'string' ? data.templateYaml : '';
-        if (!templateYaml.trim()) return;
+        const delta = typeof data.content === 'string' ? data.content : '';
+        if (!delta) return;
+        templateStreamRef.current += delta;
+        const templateYaml = templateStreamRef.current;
         setWorkspaceTemplateYaml(templateYaml);
         setTemplateDraftEntries(parseTemplateEntries(templateYaml));
         setTemplateValueDrafts({});
         return;
+      }
+      if (data.kind === 'retry') {
+        templateStreamRef.current = '';
+        setWorkspaceTemplateYaml('');
+        setTemplateDraftEntries([]);
       }
       const content = typeof data.content === 'string'
         ? data.content
@@ -2046,10 +2074,12 @@ const AICollect: React.FC = () => {
 
     if (messagePayload.type === 'analyze_template_key') {
       const templateYaml = typeof data.templateYaml === 'string' ? data.templateYaml : '';
-      if (!templateYaml) return;
-      setWorkspaceTemplateYaml(templateYaml);
-      setTemplateDraftEntries(parseTemplateEntries(templateYaml));
-      setTemplateValueDrafts({});
+      if (templateYaml) {
+        templateStreamRef.current = templateYaml;
+        setWorkspaceTemplateYaml(templateYaml);
+        setTemplateDraftEntries(parseTemplateEntries(templateYaml));
+        setTemplateValueDrafts({});
+      }
       pushLiveLog(`[generate_template] analyzed key: ${String(data.key ?? '')}`);
       return;
     }
@@ -2081,6 +2111,7 @@ const AICollect: React.FC = () => {
       const agent = data.agent as { decision?: { requires_adapter?: boolean } } | undefined;
       setTemplateId(String(data.templateId ?? ''));
       if (templateYaml) {
+        templateStreamRef.current = templateYaml;
         setWorkspaceTemplateYaml(templateYaml);
         setTemplateDraftEntries(parseTemplateEntries(templateYaml));
         setTemplateValueDrafts({});
@@ -2105,6 +2136,13 @@ const AICollect: React.FC = () => {
       setTemplateGenerationComplete(false);
       setStreamingTemplateStage(null);
       const errorMessage = String(data.message ?? data.error ?? '分析服务暂不可用');
+      setBrowserAnalysisActive(false);
+      setUrlPreflight((previous) => previous ? {
+        ...previous,
+        ok: false,
+        errorCode: String(data.code ?? 'ANALYZE_ERROR'),
+        errorMessage,
+      } : previous);
       appendAnalysisFeed({ kind: 'error', content: errorMessage });
       setPreflightLoading(false);
       setStreamError(errorMessage);
@@ -2233,16 +2271,11 @@ const AICollect: React.FC = () => {
 
   useEffect(() => {
     const browserTab = sessionInspectorTabs.find((tab) => tab.kind === 'browser');
-    if (browserAnalysisActive) {
-      if (!browserTab && currentInspectorTab.kind === 'browser') {
-        openSessionInspector(currentInspectorTab);
-      }
-      return;
+    if (browserAnalysisActive && !browserTab && currentInspectorTab.kind === 'browser') {
+      openSessionInspector(currentInspectorTab);
     }
-    if (browserTab) closeSessionInspectorTab(browserTab.id);
   }, [
     browserAnalysisActive,
-    closeSessionInspectorTab,
     currentInspectorTab,
     openSessionInspector,
     sessionInspectorTabs,
@@ -2284,6 +2317,8 @@ const AICollect: React.FC = () => {
     adapterLiveCodeRef.current = '';
     adapterAutoScrollRef.current = true;
     adapterLastScrollTopRef.current = 0;
+    templateAutoScrollRef.current = true;
+    templateLastScrollTopRef.current = 0;
     refinementTemplateChangedRef.current = false;
     setWorkspaceAdapterCode('');
     setAdapterStreamingCode('');
@@ -2499,6 +2534,7 @@ const AICollect: React.FC = () => {
       ? { template: false, adapter: false }
       : { template: true, adapter: true });
     setShowAnalysisTiming(hasSession);
+    templateStreamRef.current = '';
     setWorkspaceTemplateYaml('');
     setWorkspaceAdapterFile('');
     setGeneratedAdapterRequired(false);
@@ -2512,7 +2548,26 @@ const AICollect: React.FC = () => {
     analysisFeedIdRef.current = 0;
     analyzeStepRef.current = 'prepare';
     setStreamError('');
-    setBrowserAnalysisActive(false);
+    setUrlPreflight({
+      ok: false,
+      url: targetUrl,
+      normalizedUrl: targetUrl,
+      host: new URL(targetUrl).host,
+      title: '',
+      requiresProxy: false,
+      proxyMode: 'direct',
+      previewUrl: targetUrl,
+      previewImage: '',
+      renderedBy: 'chrome',
+      networkEndpoints: [],
+      networkResponses: [],
+      browserEvents: [],
+      pageWarnings: [],
+      faviconUrl: '',
+      errorCode: '',
+      errorMessage: '',
+    });
+    setBrowserAnalysisActive(true);
     setRunStatus('running');
     setMode('explore');
     setExpandedStep('explore');
@@ -3818,7 +3873,11 @@ const AICollect: React.FC = () => {
         {renderSessionBrowserPreview()}
       </header>
 
-      <div className="ai-session-template-scroll" ref={templateScrollRef}>
+      <div
+        className="ai-session-template-scroll"
+        ref={templateScrollRef}
+        onScroll={handleTemplateScroll}
+      >
         <article className="ai-template-sheet">
           <div className="ai-template-sheet-body">
             {visibleTemplateStages.map(renderTemplateStageSection)}
@@ -3960,6 +4019,26 @@ const AICollect: React.FC = () => {
     );
   };
 
+  const renderBrowserViewport = (title: string) => {
+    if (urlPreflight?.previewImage) {
+      return (
+        <img
+          className="ai-browser-viewport-image"
+          src={urlPreflight.previewImage}
+          alt={`${title} 浏览器视口快照`}
+        />
+      );
+    }
+
+    const errorMessage = urlPreflight?.errorMessage || streamError;
+    return (
+      <div className={`ai-session-inspector-empty ${errorMessage ? 'is-error' : ''}`}>
+        <strong>{errorMessage ? 'Browser rendering failed' : 'Rendering target page'}</strong>
+        <span>{errorMessage || browserPreviewUrl || 'Waiting for browser navigation'}</span>
+      </div>
+    );
+  };
+
   const renderSessionSidePanel = () => (
     <aside className={`ai-session-side-panel is-${sessionSideMode}`}>
       <div className="ai-session-side-head">
@@ -3997,17 +4076,9 @@ const AICollect: React.FC = () => {
                 <LinkOutlined />
               </a>
             ) : null}
-          </div>
+        </div>
         <div className="ai-side-browser-viewport">
-          {urlPreflight?.previewImage ? (
-            <img
-              className="ai-browser-viewport-image"
-              src={urlPreflight.previewImage}
-              alt={`${browserPreviewTitle} 浏览器视口快照`}
-            />
-          ) : (
-            <div className="ai-side-browser-empty">暂无经过服务端验证的页面快照</div>
-          )}
+          {renderBrowserViewport(browserPreviewTitle)}
           </div>
         </div>
       ) : (
@@ -4111,18 +4182,7 @@ const AICollect: React.FC = () => {
           {activeInspectorTab.kind === 'browser' ? (
             <div className="ai-session-inspector-browser">
               <div className="ai-session-inspector-browser-frame">
-                {urlPreflight?.previewImage ? (
-                  <img
-                    className="ai-browser-viewport-image"
-                    src={urlPreflight.previewImage}
-                    alt={`${activeInspectorTab.title} 浏览器视口快照`}
-                  />
-                ) : (
-                  <div className="ai-session-inspector-empty">
-                    <strong>No verified browser snapshot</strong>
-                    <span>{activeInspectorTab.subtitle}</span>
-                  </div>
-                )}
+                {renderBrowserViewport(activeInspectorTab.title)}
               </div>
             </div>
           ) : (
@@ -4462,7 +4522,11 @@ const AICollect: React.FC = () => {
   const renderWorkflowTemplatePanel = () => (
     <section className={`ai-session-main-shell is-template ${expandingPinnedPanel === 'template' ? 'is-restoring-from-tab' : ''}`}>
       {renderWorkflowHeader()}
-      <div className="ai-session-template-scroll" ref={templateScrollRef}>
+      <div
+        className="ai-session-template-scroll"
+        ref={templateScrollRef}
+        onScroll={handleTemplateScroll}
+      >
         {renderAnalysisFeed()}
         {streamError ? (
           <Alert className="ai-session-inline-alert" type="warning" showIcon message={streamError} />

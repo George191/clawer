@@ -309,7 +309,9 @@ class FileStorage(StorageBackend):
             meta = data.get("_meta", {})
             sync_status = meta.get("sync_status")
             download_status = meta.get("download_status", "")
-            if sync_status != "synced" and download_status in ("downloaded", "no_assets"):
+            if sync_status != "synced" and download_status in (
+                "downloaded", "no_assets", "failed",
+            ):
                 results.append(data)
                 if len(results) >= limit:
                     break
