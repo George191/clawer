@@ -271,10 +271,17 @@ async def _handle_crawl(
     params = await _render_step_params(step, global_inputs, input_data)
 
     loader = TemplateLoader()
-    released = await loader.load_released(
-        step.template,
-        param_values=params,
-    )
+    try:
+        released = await loader.load_released(
+            step.template,
+            param_values=params,
+        )
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        return {"records": [], "errors": [str(e)]}
+    except Exception as e:
+        logger.error(f"Step '{step.id}' 加载模板 '{step.template}' 失败: {e}")
+        return {"records": [], "errors": [str(e)]}
     template = released.template
 
     engine = SpiderEngine(adapter_class=released.adapter_class)

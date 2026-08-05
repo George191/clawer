@@ -203,12 +203,19 @@ async def run_batch_from_config(
         batch_config: 批量配置
     """
     loader = TemplateLoader()
-    released = await loader.load_released(
-        template_name,
-        validate_params=False,
-    )
+    try:
+        released = await loader.load_released(
+            template_name,
+            validate_params=False,
+        )
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        return
+    except Exception as e:
+        logger.error(f"加载模板 '{template_name}' 失败: {e}")
+        return
     engine = SpiderEngine(adapter_class=released.adapter_class)
-    
+
     logger.info("=" * 80)
     logger.info(f"使用模板配置的批量参数: {template_name}")
     logger.info(f"  文件路径: {batch_config.file_path}")
@@ -313,10 +320,17 @@ async def run_from_list_file_stream(
     )
 
     loader = TemplateLoader()
-    released = await loader.load_released(
-        template_name,
-        validate_params=False,
-    )
+    try:
+        released = await loader.load_released(
+            template_name,
+            validate_params=False,
+        )
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        return False
+    except Exception as e:
+        logger.error(f"加载模板 '{template_name}' 失败: {e}")
+        return False
     engine = SpiderEngine(adapter_class=released.adapter_class)
     success_count = 0
     fail_count = 0
@@ -587,8 +601,8 @@ async def run_from_command_line(
                 adapter_classes[tmpl.name] = released.adapter_class
         except FileNotFoundError as e:
             logger.error(str(e))
-        except (RuntimeError, ValueError) as e:
-            logger.error(f"参数错误: {e}")
+        except Exception as e:
+            logger.error(f"加载模板 '{name}' 失败: {e}")
 
     if not templates:
         logger.error("没有找到有效的模板")

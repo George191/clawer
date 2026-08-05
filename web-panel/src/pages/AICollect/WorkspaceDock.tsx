@@ -71,6 +71,7 @@ interface WorkspaceDockProps {
   focusTask?: WorkspaceTask | null;
   releaseTaskDefaults?: {
     concurrency: number;
+    priority: number;
     respectRobots: boolean;
     driftGuard: boolean;
     params: Array<{ name: string; description: string; defaultValue: string; required: boolean }>;
@@ -211,6 +212,16 @@ const extractTemplateDataType = (yaml: string) => (
   yaml.match(/^\s*data_type\s*:\s*['"]?([^'"\r\n#]+)['"]?/m)?.[1]?.trim() || 'other'
 );
 
+const normalizePanelTemplateYaml = (yaml: string) => {
+  const lines = yaml.replace(/\r\n/g, '\n').split('\n')
+    .filter((line) => !/^priority\s*:/.test(line));
+  if (!lines.some((line) => /^download_use_proxy\s*:/.test(line))) {
+    const downloadIndex = lines.findIndex((line) => /^download\s*:/.test(line));
+    if (downloadIndex >= 0) lines.splice(downloadIndex, 0, 'download_use_proxy: null');
+  }
+  return lines.join('\n');
+};
+
 type TemplatePreviewStage = 'site' | 'param' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
 
 interface TemplatePreviewEntry {
@@ -245,7 +256,7 @@ const inferTemplatePreviewStage = (key: string, path: string): TemplatePreviewSt
   ) return 'request';
   if (path === 'list_pagination' || path.startsWith('list_pagination.')) return 'pagination';
   if (path === 'dedup_fields' || path.startsWith('dedup_fields')) return 'dedup';
-  if (path === 'download' || path.startsWith('download')) return 'download';
+  if (path === 'download_use_proxy' || path === 'download' || path.startsWith('download')) return 'download';
   if (path === 'list_fields' || path.startsWith('list_fields') || path === 'detail_fields' || path.startsWith('detail_fields')) return 'fields';
   if (['name', 'display_name', 'base_url', 'data_type', 'adapter', 'anti_crawl_enabled', 'description'].includes(path)) return 'site';
   if (['response_type', 'json_item_path', 'json_total_path', 'json_page_path', 'json_total_num_pages'].includes(key)) return 'response';
@@ -398,6 +409,9 @@ const renderCompactTemplatePreview = (yaml: string) => {
                 const fieldSectionRoot = entry.key.match(/^(list_fields|detail_fields)(?:\[|\.|$)/)?.[1] ?? null;
                 const previousFieldSectionRoot = displayEntries[index - 1]?.key.match(/^(list_fields|detail_fields)(?:\[|\.|$)/)?.[1] ?? null;
                 const showFieldSectionLabel = Boolean(fieldSectionRoot && fieldSectionRoot !== previousFieldSectionRoot);
+                const isDownloadField = Boolean(listItemKey?.startsWith('download['));
+                const previousIsDownloadField = Boolean(previousListItemKey?.startsWith('download['));
+                const showDownloadFieldsLabel = stage.id === 'download' && isDownloadField && !previousIsDownloadField;
                 const pageSectionRoot = stage.id === 'request'
                   ? entry.key.match(/^(list_page|list_request)(?:\[|\.|$)/)
                     ? 'list'
@@ -427,12 +441,18 @@ const renderCompactTemplatePreview = (yaml: string) => {
                 const isYamlListItem = Boolean(listItemKey);
                 const displayDepth = entry.depth
                   - (isYamlListItem ? 1 : 0)
+                  + (stage.id === 'download' && isYamlListItem ? 1 : 0)
                   + (pageSectionRoot ? 1 : 0);
                 return (
                   <React.Fragment key={entry.id}>
                     {showFieldSectionLabel ? (
                       <div className="ai-template-fields-subsection" role="heading" aria-level={3}>
                         {fieldSectionRoot === 'detail_fields' ? 'Details fields' : 'List fields'}
+                      </div>
+                    ) : null}
+                    {showDownloadFieldsLabel ? (
+                      <div className="ai-template-fields-subsection" role="heading" aria-level={3}>
+                        Fields
                       </div>
                     ) : null}
                     {showPageSectionLabel ? (
@@ -1002,6 +1022,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     maxEmptyPages: 2,
   });
   const [taskConcurrency, setTaskConcurrency] = useState(releaseTaskDefaults?.concurrency ?? 4);
+  const [taskPriority, setTaskPriority] = useState(releaseTaskDefaults?.priority ?? 50);
   const [taskRespectRobots, setTaskRespectRobots] = useState(releaseTaskDefaults?.respectRobots ?? true);
   const [taskDriftGuard, setTaskDriftGuard] = useState(releaseTaskDefaults?.driftGuard ?? true);
   const [taskBatchInput, setTaskBatchInput] = useState(false);
@@ -1022,10 +1043,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   useEffect(() => {
     if (!releaseTaskDefaults) return;
     setTaskConcurrency(releaseTaskDefaults.concurrency);
+    setTaskPriority(releaseTaskDefaults.priority);
     setTaskRespectRobots(releaseTaskDefaults.respectRobots);
     setTaskDriftGuard(releaseTaskDefaults.driftGuard);
   }, [
     releaseTaskDefaults?.concurrency,
+    releaseTaskDefaults?.priority,
     releaseTaskDefaults?.driftGuard,
     releaseTaskDefaults?.respectRobots,
   ]);
@@ -1092,7 +1115,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       adapter: item.adapter,
       adapterCode: item.adapter_code ?? current[item.id]?.adapterCode ?? '',
       notes: item.description,
-      yaml: item.yaml_content ?? current[item.id]?.yaml ?? '',
+      yaml: normalizePanelTemplateYaml(item.yaml_content ?? current[item.id]?.yaml ?? ''),
       savedAt: item.updated_at,
     }])));
   }, []);
@@ -1507,7 +1530,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     if (templateKey === selectedTemplateKey && onTemplateApply && ('yaml' in patch || 'adapter' in patch)) {
       const current = templateDrafts[templateKey];
       onTemplateApply({
-        yaml: patch.yaml ?? analysisTemplate?.yaml ?? current.yaml,
+        yaml: normalizePanelTemplateYaml(patch.yaml ?? analysisTemplate?.yaml ?? current.yaml),
         adapter: patch.adapter ?? analysisTemplate?.adapter ?? current.adapter,
         adapterCode: patch.adapterCode ?? analysisTemplate?.adapterCode ?? current.adapterCode,
       });
@@ -1519,7 +1542,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     if (templateSaveTimerRef.current) window.clearTimeout(templateSaveTimerRef.current);
     templateSaveTimerRef.current = window.setTimeout(() => {
       void updateWorkspaceTemplate(selectedTemplate.key, {
-        yaml_content: selectedTemplateDraft.yaml,
+        yaml_content: normalizePanelTemplateYaml(selectedTemplateDraft.yaml),
         adapter: selectedTemplateDraft.adapter,
         adapter_code: selectedTemplateDraft.adapterCode,
         description: selectedTemplateDraft.notes,
@@ -1685,7 +1708,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       avatar: toAvatarLabel(matchedTemplate?.owner || 'AI Collect'),
       comments: [
         `${taskComposerModeMeta[taskComposerDraft.scheduleMode].label} / ${formatIncrementalSummary(taskComposerDraft)}`,
-        `concurrency=${taskConcurrency}; robots=${taskRespectRobots}; drift_guard=${taskDriftGuard}${taskBatchInput ? `; batch=${taskBatchFile || 'pending'}:${taskBatchParam}` : ''}`,
+        `priority=${taskPriority}; concurrency=${taskConcurrency}; robots=${taskRespectRobots}; drift_guard=${taskDriftGuard}${taskBatchInput ? `; batch=${taskBatchFile || 'pending'}:${taskBatchParam}` : ''}`,
       ],
       subIssues: [],
     };
@@ -1706,6 +1729,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         },
         parameters: Object.fromEntries(taskComposerDraft.templateParams.map((item) => [item.key, item.value])),
         policies: {
+          priority: taskPriority,
           concurrency: taskConcurrency,
           incremental: taskComposerDraft.incremental,
           incremental_field: taskComposerDraft.incrementalField,
@@ -1742,7 +1766,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     } catch (error) {
       console.error('Failed to create task', error);
     }
-  }, [onTaskCreated, resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchObjectKey, taskBatchParam, taskBatchSize, taskBatchStartLine, taskComposerDraft, taskConcurrency, taskDriftGuard, taskRespectRobots, taskTemplateOptions]);
+  }, [onTaskCreated, resetTaskComposer, selectedTemplate, taskBatchDelay, taskBatchFile, taskBatchInput, taskBatchLimit, taskBatchObjectKey, taskBatchParam, taskBatchSize, taskBatchStartLine, taskComposerDraft, taskConcurrency, taskDriftGuard, taskPriority, taskRespectRobots, taskTemplateOptions]);
 
   const handleWorkspaceTaskAction = useCallback(async (
     taskKey: string,
@@ -2455,6 +2479,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
           ) : null}
 
+          <div className="workspace-dock-switch-row">
+            <div>
+              <strong>Priority</strong>
+              <small>Lower values run before higher values.</small>
+            </div>
+            <InputNumber min={0} max={100} value={taskPriority} onChange={(value) => setTaskPriority(value ?? 50)} />
+          </div>
           <div className="workspace-dock-switch-row">
             <div>
               <strong>Incremental Collect</strong>

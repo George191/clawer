@@ -522,7 +522,7 @@ const templateStepKeys: Record<ProcessStepKey, string[]> = {
     'list_request',
   ],
   structure: ['dedup_fields', 'list_fields', 'detail_fields', 'list_pagination'],
-  contract: ['download'],
+  contract: ['download_use_proxy', 'download'],
   dryrun: [],
   publish: [],
 };
@@ -677,7 +677,7 @@ const inferTemplateStep = (key: string, path: string): ProcessStepKey => {
   ) {
     return 'structure';
   }
-  if (path === 'download' || path.startsWith('download')) {
+  if (path === 'download_use_proxy' || path === 'download' || path.startsWith('download')) {
     return 'contract';
   }
   if (
@@ -719,7 +719,7 @@ const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
   if (path === 'dedup_fields' || path.startsWith('dedup_fields')) {
     return 'dedup';
   }
-  if (path === 'download' || path.startsWith('download')) {
+  if (path === 'download_use_proxy' || path === 'download' || path.startsWith('download')) {
     return 'download';
   }
   if (
@@ -914,6 +914,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
 
     const keyName = keyMatch[1];
     const rawValue = (keyMatch[2] ?? '').trim();
+    if (indent === 0 && keyName === 'priority') continue;
     const path = parentPath ? `${parentPath}.${keyName}` : keyName;
     let value = normalizeYamlValue(rawValue);
     let multiline = false;
@@ -1131,6 +1132,7 @@ const AICollect: React.FC = () => {
   const [maxPages, setMaxPages] = useState(20);
   const [scheduleMode, setScheduleMode] = useState('cron');
   const [concurrency, setConcurrency] = useState(4);
+  const [taskPriority, setTaskPriority] = useState(50);
   const [enableDriftGuard, setEnableDriftGuard] = useState(true);
   const [respectRobots, setRespectRobots] = useState(true);
   const [fields, setFields] = useState<FieldDef[]>(sampleFields);
@@ -2920,6 +2922,7 @@ const AICollect: React.FC = () => {
           },
           parameters,
           policies: {
+            priority: taskPriority,
             concurrency,
             incremental: releaseIncremental,
             respect_robots: respectRobots,
@@ -2948,7 +2951,7 @@ const AICollect: React.FC = () => {
       message.error('Release failed; no template or task was saved');
       pushLiveLog(`release failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, playReleaseCompletionAnimation, pushLiveLog, releaseBatchConfig, releaseBatchInput, releaseBatchObjectKey, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateDescription, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, templateId, workspaceTemplateYaml]);
+  }, [activeTemplate.id, activeTemplate.raw, adapterFileName, browserPreviewHost, browserPreviewTitle, concurrency, enableDriftGuard, generatedAdapterRequired, message, playReleaseCompletionAnimation, pushLiveLog, releaseBatchConfig, releaseBatchInput, releaseBatchObjectKey, releaseDailyTime, releaseEmptyPageLimit, releaseIncremental, releaseIntervalMinutes, releaseIntervalUnit, releaseScheduleKind, releaseTaskParamValues, releaseTemplateDescription, releaseTemplateParams, respectRobots, selectedCount, selectedReleaseAction, selectedTaskPublishMode, taskPriority, templateId, workspaceTemplateYaml]);
 
   const handleReleaseActionSelect = useCallback((action: ReleaseAction) => {
     setSelectedReleaseAction(action);
@@ -3510,6 +3513,7 @@ const AICollect: React.FC = () => {
           runPolicy: {
             scheduleMode,
             maxPages,
+            priority: taskPriority,
             concurrency,
             retry: 3,
             rateLimit: respectRobots ? '12 req/min' : 'custom',
@@ -3822,10 +3826,15 @@ const AICollect: React.FC = () => {
               isYamlListItem
               && yamlListItemKey !== previousYamlListItemKey
             );
+            const showDownloadFieldsLabel = stageId === 'download'
+              && yamlListRoot === 'download'
+              && !previousYamlListItemKey?.startsWith('download[');
             const flattenRootIndent = flattenedTemplateRootKeys.has(rootKey) && entry.key !== rootKey;
             const displayDepth = Math.max(
               0,
-              entry.depth - (isYamlListItem || flattenRootIndent ? 1 : 0),
+              entry.depth
+                - (isYamlListItem || flattenRootIndent ? 1 : 0)
+                + (stageId === 'download' && isYamlListItem ? 1 : 0),
             );
             const value = templateValueDrafts[entry.id] ?? entry.value;
             const isGroup = entry.nodeType === 'group';
@@ -3837,22 +3846,28 @@ const AICollect: React.FC = () => {
             const isTypingTarget = templateTypingActive && entry.id === lastValueEntryId;
 
             return (
-              <div
-                className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''} ${isGroup ? 'is-group' : ''} ${isItemGroup ? 'is-item-group' : ''} ${isRootGroup ? 'is-root-group' : ''} ${isYamlListItem ? 'is-yaml-list-item' : ''} ${isYamlListAnchor ? 'has-yaml-dash' : ''} ${extraClass}`}
-                key={entry.id}
-                style={{ ['--ai-template-depth' as string]: String(displayDepth) }}
-              >
-                <div className="ai-template-field-key">
-                  {isYamlListItem ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
-                  <span>{displayLabel}</span>
-                </div>
-                {isGroup ? null : (
-                  <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
-                    <pre>{displayValue || 'null'}</pre>
-                    {isTypingTarget ? <span className="ai-session-inspector-editor-caret" aria-hidden="true" /> : null}
+              <React.Fragment key={entry.id}>
+                {showDownloadFieldsLabel ? (
+                  <div className="ai-template-fields-subsection" role="heading" aria-level={3}>
+                    Fields
                   </div>
-                )}
-              </div>
+                ) : null}
+                <div
+                  className={`ai-template-field ${entry.multiline ? 'is-multiline' : ''} ${isGroup ? 'is-group' : ''} ${isItemGroup ? 'is-item-group' : ''} ${isRootGroup ? 'is-root-group' : ''} ${isYamlListItem ? 'is-yaml-list-item' : ''} ${isYamlListAnchor ? 'has-yaml-dash' : ''} ${extraClass}`}
+                  style={{ ['--ai-template-depth' as string]: String(displayDepth) }}
+                >
+                  <div className="ai-template-field-key">
+                    {isYamlListItem ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
+                    <span>{displayLabel}</span>
+                  </div>
+                  {isGroup ? null : (
+                    <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
+                      <pre>{displayValue || 'null'}</pre>
+                      {isTypingTarget ? <span className="ai-session-inspector-editor-caret" aria-hidden="true" /> : null}
+                    </div>
+                  )}
+                </div>
+              </React.Fragment>
             );
           })}
         </div>
@@ -4888,6 +4903,10 @@ const AICollect: React.FC = () => {
                       </section>
                     ) : null}
                     <div className="ai-session-task-policies">
+                      <label>
+                        <span><strong>Priority</strong><small>Lower values run first</small></span>
+                        <InputNumber min={0} max={100} value={taskPriority} onChange={(value) => setTaskPriority(value ?? 50)} />
+                      </label>
                       <label>
                         <span><strong>Incremental</strong><small>{releaseIncremental ? 'Continue from last boundary' : 'Collect full scope'}</small></span>
                         <Checkbox
@@ -9578,6 +9597,7 @@ const AICollect: React.FC = () => {
           }}
           releaseTaskDefaults={{
             concurrency,
+            priority: taskPriority,
             respectRobots,
             driftGuard: enableDriftGuard,
             params: releaseTemplateParams,

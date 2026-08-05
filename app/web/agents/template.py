@@ -61,6 +61,7 @@ list_fields:
     description: "Source title."
 dedup_fields:
   - title
+download_use_proxy: null
 download:
   - selector: download_url
     selector_type: json
@@ -78,6 +79,8 @@ separate top-level mapping with param_name/batch_size/start_line/limit/delay; ba
 are uploaded to MinIO when a task is created, so never emit file_path. Emit either
 only when analysis requires them. For a non-paginated source omit list_pagination. Omit
 download and all detail fields when unused instead of emitting empty mappings or lists.
+download_use_proxy belongs to the Download section and must only be emitted when download
+is emitted. Never emit template-level priority; task priority belongs to collection policy.
 """.strip()
 
 
@@ -713,6 +716,7 @@ class TemplateAgent(BaseAgent):
         else:
             template["adapter"] = ""
         template.setdefault("anti_crawl_enabled", None)
+        template.pop("priority", None)
 
         params = template.get("params")
         if isinstance(params, list):
@@ -742,6 +746,16 @@ class TemplateAgent(BaseAgent):
             template.pop("list_pagination")
         if template.get("download") == {}:
             template["download"] = []
+        if template.get("download"):
+            download_use_proxy = template.pop("download_use_proxy", None)
+            ordered_template: dict[str, Any] = {}
+            for key, value in template.items():
+                if key == "download":
+                    ordered_template["download_use_proxy"] = download_use_proxy
+                ordered_template[key] = value
+            template = ordered_template
+        else:
+            template.pop("download_use_proxy", None)
 
         template_yaml = yaml.safe_dump(template, allow_unicode=True, sort_keys=False).strip()
         description_block = "description: >\n" + textwrap.indent(description, "  ")

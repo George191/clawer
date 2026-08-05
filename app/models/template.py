@@ -136,10 +136,6 @@ class SiteTemplate(BaseModel):
     base_url: str = Field(description="网站基础URL")
     data_type: str = Field(description="数据类型: contract / patent / other")
     description: str = Field(default="", description="模板描述")
-    priority: int = Field(
-        default=50,
-        description="采集优先级 (0=最高, 100=最低, 默认50=普通)",
-    )
     adapter: str | None = Field(
         default=None,
         description="站点适配器名称, 如 google_patent, generic。留空则自动检测",

@@ -216,11 +216,10 @@ class SpiderEngine:
         result = CrawlResult(template.name, template.data_type)
 
         logger.info(
-            "Starting crawl: template=%s, data_type=%s, response_type=%s, priority=%d%s",
+            "Starting crawl: template=%s, data_type=%s, response_type=%s%s",
             template.name,
             template.data_type,
             template.response_type.value,
-            template.priority,
             f" (resume from page {resume_page})" if resume_page else "",
         )
 
