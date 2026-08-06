@@ -10,6 +10,7 @@ from typing import Any
 
 from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
+from app.crawler.batch_params import BatchParamNames, batch_param_identity
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -80,13 +81,15 @@ class PageCheckpointStore:
             self._connection.mark_unavailable()
             return None
 
-    async def save(self, page: int) -> None:
+    async def save(self, page: int, *, batch_index: int | None = None) -> None:
         redis = await self._connection.ensure_connected()
         if redis is None:
             return
         try:
             pipeline = redis.pipeline(transaction=True)
             pipeline.hset(self.key, "page", str(page))
+            if batch_index is not None:
+                pipeline.hset(self.key, "batch_index", str(batch_index))
             if self.task_id:
                 pipeline.hset(self.key, "task_id", self.task_id)
                 pipeline.hset(self.key, "template", self.namespace)
@@ -96,6 +99,24 @@ class PageCheckpointStore:
         except Exception as exc:
             logger.warning("写入 Redis 页断点失败: %s", exc)
             self._connection.mark_unavailable()
+
+    async def load_batch_index(self) -> int | None:
+        redis = await self._connection.ensure_connected()
+        if redis is None:
+            return None
+        try:
+            raw = await redis.hget(self.key, "batch_index")
+            if raw is None:
+                return None
+            batch_index = int(raw)
+            return batch_index if batch_index >= 0 else 0
+        except (TypeError, ValueError):
+            logger.warning("忽略无效 Redis 批次断点: key=%s", self.key)
+            return None
+        except Exception as exc:
+            logger.warning("读取 Redis 批次断点失败: %s", exc)
+            self._connection.mark_unavailable()
+            return None
 
     async def load_watermark(self) -> str | None:
         redis = await self._connection.ensure_connected()
@@ -119,7 +140,7 @@ class PageCheckpointStore:
                 await redis.delete(self.key)
                 return True
             pipeline = redis.pipeline(transaction=True)
-            pipeline.hdel(self.key, "page")
+            pipeline.hdel(self.key, "page", "batch_index")
             pipeline.hset(self.key, "watermark", watermark)
             if self.task_id:
                 pipeline.hset(self.key, "task_id", self.task_id)
@@ -156,7 +177,7 @@ class BatchCheckpointStore:
         self,
         template_name: str,
         file_path: str,
-        param_name: str,
+        param_name: BatchParamNames,
         start_line: int | None,
         limit: int | None,
         redis_client: Any = None,
@@ -176,14 +197,14 @@ class BatchCheckpointStore:
     def _checkpoint_key(
         template_name: str,
         file_path: str,
-        param_name: str,
+        param_name: BatchParamNames,
         start_line: int | None = None,
         limit: int | None = None,
     ) -> str:
         identity = "|".join((
             template_name,
             str(Path(file_path).resolve()),
-            param_name,
+            batch_param_identity(param_name),
         ))
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
         return f"checkpoint:{template_name}:{digest}"

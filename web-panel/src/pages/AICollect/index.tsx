@@ -1269,7 +1269,12 @@ const AICollect: React.FC = () => {
       const entry = templateDraftEntries.find((item) => item.key === key);
       return stripYamlQuotes(templateValueDrafts[entry?.id ?? key] ?? entry?.value ?? '');
     };
-    const paramName = getEntryValue('batch_params.param_name');
+    const paramName = getEntryValue('batch_params.param_name') || templateDraftEntries
+      .filter((entry) => /^batch_params\.param_name\[\d+\]$/.test(entry.key))
+      .sort((left, right) => left.key.localeCompare(right.key, undefined, { numeric: true }))
+      .map((entry) => stripYamlQuotes(templateValueDrafts[entry.id] ?? entry.value ?? ''))
+      .filter(Boolean)
+      .join(',');
     if (!paramName) return null;
     return {
       filePath: getEntryValue('batch_params.file_path'),
@@ -4660,8 +4665,9 @@ const AICollect: React.FC = () => {
     const batchParamName = releaseTaskParamValues.batch_param_name ?? releaseBatchConfig?.paramName ?? '';
     const selectedBatchFile = releaseTaskParamValues.list_file ?? '';
     const hasSelectedBatchFile = Boolean(selectedBatchFile);
+    const batchParamNames = batchParamName.split(',').map((name) => name.trim()).filter(Boolean);
     const visibleTaskParams = releaseTemplateParams.filter(
-      (param) => !(releaseBatchInput && batchParamName === param.name),
+      (param) => !(releaseBatchInput && batchParamNames.includes(param.name)),
     );
     const releaseCta = hasTaskComposer ? 'Publish & Create Task' : releaseActionMeta[selectedReleaseAction].cta;
 
@@ -4868,7 +4874,11 @@ const AICollect: React.FC = () => {
                                     <span>Inject into *</span>
                                     <Select
                                       value={batchParamName || undefined}
-                                      options={releaseTemplateParams.map((param) => ({ value: param.name, label: param.name }))}
+                                      disabled={batchParamNames.length > 1}
+                                      options={[
+                                        ...(batchParamNames.length > 1 ? [{ value: batchParamName, label: batchParamName }] : []),
+                                        ...releaseTemplateParams.map((param) => ({ value: param.name, label: param.name })),
+                                      ]}
                                       onChange={(value) => setReleaseTaskParamValues((prev) => ({ ...prev, batch_param_name: value }))}
                                     />
                                   </label>

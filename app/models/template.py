@@ -107,7 +107,15 @@ class BatchParamConfig(BaseModel):
     """批量参数配置（在模板 YAML 中定义）。"""
 
     file_path: str = Field(default="", description="Legacy local batch file path")
-    param_name: str = Field(description="参数名称，如 publication_number")
+    param_name: str | list[str] = Field(
+        description="参数名称；多字段批次使用字段名列表"
+    )
+    delimiter: str = Field(
+        default=",",
+        min_length=1,
+        max_length=1,
+        description="多字段批次文件的单字符分隔符",
+    )
     batch_size: int = Field(default=1, ge=1)
     start_line: int = Field(
         default=0, description="起始行号（0-based）"

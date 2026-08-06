@@ -26,6 +26,11 @@ from typing import Any, Generator, Optional
 
 from app.adapters import GenericAdapter
 from app.config.settings import settings
+from app.crawler.batch_params import (
+    BatchParamNames,
+    build_batch_params,
+    normalize_batch_param_names,
+)
 from app.engine.spider_engine import SpiderEngine
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger, setup_service_logging
@@ -40,7 +45,7 @@ class BatchParamReader:
     def __init__(
         self,
         file_path: str,
-        param_name: str,
+        param_name: BatchParamNames,
         start_line: int = 0,
         limit: Optional[int] = None,
     ):
@@ -215,6 +220,7 @@ async def run_batch_from_config(
         logger.error(f"加载模板 '{template_name}' 失败: {e}")
         return
     engine = SpiderEngine(adapter_class=released.adapter_class)
+    adapter_cls = released.adapter_class or GenericAdapter
 
     logger.info("=" * 80)
     logger.info(f"使用模板配置的批量参数: {template_name}")
@@ -238,7 +244,12 @@ async def run_batch_from_config(
         )
         
         for idx, (value, line_num) in enumerate(reader.read()):
-            params = {batch_config.param_name: value}
+            params = build_batch_params(
+                [value],
+                batch_config.param_name,
+                adapter_cls.build_batch_param_value,
+                delimiter=batch_config.delimiter,
+            )
             
             logger.info(f"[{idx + 1}] 处理第 {line_num} 行: {value}")
             
@@ -292,7 +303,7 @@ async def run_batch_from_config(
 async def run_from_list_file_stream(
     template_name: str,
     file_path: str,
-    param_name: str,
+    param_name: BatchParamNames,
     start_line: int | None = None,
     limit: Optional[int] = None,
     delay: float = 0,
@@ -318,6 +329,10 @@ async def run_from_list_file_stream(
         BatchCheckpointStore,
         CrawlRunState,
     )
+
+    if len(normalize_batch_param_names(param_name)) > 1 and batch_size != 1:
+        logger.info("Multi-field batch_params forces batch_size=1")
+        batch_size = 1
 
     loader = TemplateLoader()
     try:
@@ -453,8 +468,15 @@ async def run_from_list_file_stream(
             nonlocal run_state
             async with semaphore:
                 # 由适配器负责批次参数拼接（Google Patents: +OR+ 连接）
-                param_value = adapter_cls.build_batch_param_value(batch_data, param_name)
-                params = {param_name: param_value}
+                params = build_batch_params(
+                    batch_data,
+                    param_name,
+                    adapter_cls.build_batch_param_value,
+                    delimiter=(
+                        tmpl_meta.batch_params.delimiter
+                        if tmpl_meta.batch_params else ","
+                    ),
+                )
                 logger.info(
                     f"[批次 {idx + 1}/{batch_count}] 行 {start_line_num}-{end_line_num}, "
                     f"共 {len(batch_data)} 条: {batch_data[0]}...{batch_data[-1]}"

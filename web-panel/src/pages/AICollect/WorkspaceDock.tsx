@@ -878,16 +878,27 @@ const extractTaskBatchConfig = (yaml: string): TaskBatchConfig | null => {
   const batchIndex = lines.findIndex((line) => /^batch_params:\s*(?:#.*)?$/.test(line));
   if (batchIndex < 0) return null;
   const values: Record<string, string> = {};
+  const paramNames: string[] = [];
+  let readingParamNames = false;
   for (let index = batchIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
     if (line.trim() && !/^\s/.test(line)) break;
+    const listItem = line.trim().match(/^-\s+(.+)$/);
+    if (readingParamNames && listItem) {
+      paramNames.push(stripYamlScalar(listItem[1]));
+      continue;
+    }
     const match = line.trim().match(/^([a-z_]+):\s*(.*?)\s*(?:#.*)?$/);
-    if (match) values[match[1]] = stripYamlScalar(match[2]);
+    if (match) {
+      values[match[1]] = stripYamlScalar(match[2]);
+      readingParamNames = match[1] === 'param_name' && !values[match[1]];
+    }
   }
-  if (!values.param_name) return null;
+  const paramName = values.param_name || paramNames.filter(Boolean).join(',');
+  if (!paramName) return null;
   return {
     filePath: values.file_path ?? '',
-    paramName: values.param_name,
+    paramName,
     batchSize: values.batch_size || '1',
     startLine: values.start_line || '0',
     limit: values.limit ?? '',
@@ -2453,7 +2464,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                       <span>Inject Into *</span>
                       <Select
                         value={taskBatchParam || undefined}
-                        options={taskComposerDraft.templateParams.map((param) => ({ value: param.key, label: param.key }))}
+                        disabled={taskBatchParam.includes(',')}
+                        options={[
+                          ...(taskBatchParam.includes(',') ? [{ value: taskBatchParam, label: taskBatchParam }] : []),
+                          ...taskComposerDraft.templateParams.map((param) => ({ value: param.key, label: param.key })),
+                        ]}
                         onChange={setTaskBatchParam}
                       />
                     </label>

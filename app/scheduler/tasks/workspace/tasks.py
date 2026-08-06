@@ -9,6 +9,11 @@ from typing import Any
 from pymongo.errors import ConnectionFailure
 
 from app.adapters import BaseSiteAdapter, GenericAdapter
+from app.crawler.batch_params import (
+    BatchParamNames,
+    build_batch_params,
+    normalize_batch_param_names,
+)
 from app.crawler.checkpoint import PageCheckpointStore
 from app.crawler.incremental import build_time_watermark
 from app.engine.spider_engine import CrawlResult, SpiderEngine
@@ -64,9 +69,10 @@ async def _batch_parameter_sets(
         return []
 
     config = template.batch_params
-    param_name = str(batch.get("parameter") or (config.param_name if config else "")).strip()
-    if not param_name:
-        raise ValueError("Batch parameter name is required")
+    raw_param_names: BatchParamNames = batch.get("parameter") or (
+        config.param_name if config else ""
+    )
+    param_names = normalize_batch_param_names(raw_param_names)
 
     raw_values = batch.get("values")
     if isinstance(raw_values, list) and raw_values:
@@ -94,12 +100,20 @@ async def _batch_parameter_sets(
         raise ValueError("Batch parameter input contains no values")
 
     batch_size = max(1, int(batch.get("size", config.batch_size if config else 1) or 1))
+    if len(param_names) > 1 and batch_size != 1:
+        raise ValueError("Multi-field batch_params requires batch_size=1")
     builder = adapter_class or GenericAdapter
+    delimiter = config.delimiter if config else ","
     parameter_sets: list[tuple[dict[str, str], dict[str, Any]]] = []
     for offset in range(0, len(values), batch_size):
         chunk = values[offset:offset + batch_size]
         parameter_sets.append((
-            {param_name: builder.build_batch_param_value(chunk, param_name)},
+            build_batch_params(
+                chunk,
+                param_names,
+                builder.build_batch_param_value,
+                delimiter=delimiter,
+            ),
             {
                 "start_line": start_line + offset,
                 "end_line": start_line + offset + len(chunk) - 1,
@@ -174,9 +188,13 @@ async def _crawl_template(
                 f"Redis is required for incremental task {task_id}"
             )
         resume_page = await checkpoint_store.load()
-        if len(batch_parameter_sets) > 1:
+        loaded_batch_index = await checkpoint_store.load_batch_index()
+        resume_batch_index = loaded_batch_index or 0
+        if loaded_batch_index is None and len(batch_parameter_sets) > 1:
             resume_page = None
-            await checkpoint_store.clear()
+        if resume_batch_index >= len(batch_parameter_sets):
+            resume_batch_index = 0
+            resume_page = None
         redis_watermark = (
             await checkpoint_store.load_watermark()
             if policies.get("incremental") else None
@@ -203,6 +221,8 @@ async def _crawl_template(
         ) or 0)
         loader = TemplateLoader()
         for batch_index, (batch_params, batch_context) in enumerate(batch_parameter_sets):
+            if batch_index < resume_batch_index:
+                continue
             if not await _wait_until_runnable(task_id):
                 raise asyncio.CancelledError
             current_template = loader.load_content(
@@ -226,7 +246,10 @@ async def _crawl_template(
             ) -> None:
                 if not await _wait_until_runnable(task_id):
                     raise asyncio.CancelledError
-                await checkpoint_store.save(_page)
+                await checkpoint_store.save(
+                    _page,
+                    batch_index=_batch_index,
+                )
                 page_progress = _progress_percent(current) / batch_count
                 await ai_collect_store.update_task(
                     task_id,
@@ -241,7 +264,7 @@ async def _crawl_template(
 
             current_result = await engine.crawl_from_page(
                 current_template,
-                resume_page if batch_count == 1 else None,
+                resume_page if batch_index == resume_batch_index else None,
                 update_progress,
             )
             _merge_crawl_result(result, current_result)
@@ -259,6 +282,15 @@ async def _crawl_template(
                     "deleted_records": result.deleted_records,
                 },
             )
+            if batch_index + 1 < batch_count:
+                next_start_page = (
+                    template.list_pagination.start_page
+                    if template.list_pagination else 1
+                )
+                await checkpoint_store.save(
+                    next_start_page,
+                    batch_index=batch_index + 1,
+                )
             if delay > 0 and batch_index + 1 < batch_count:
                 await asyncio.sleep(delay)
         if not await _wait_until_runnable(task_id):
