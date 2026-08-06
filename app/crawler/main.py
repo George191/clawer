@@ -248,7 +248,6 @@ async def run_batch_from_config(
                 [value],
                 batch_config.param_name,
                 adapter_cls.build_batch_param_value,
-                delimiter=batch_config.delimiter,
             )
             
             logger.info(f"[{idx + 1}] 处理第 {line_num} 行: {value}")
@@ -304,6 +303,7 @@ async def run_from_list_file_stream(
     template_name: str,
     file_path: str,
     param_name: BatchParamNames,
+    template_params: dict[str, str] | None = None,
     start_line: int | None = None,
     limit: Optional[int] = None,
     delay: float = 0,
@@ -338,6 +338,7 @@ async def run_from_list_file_stream(
     try:
         released = await loader.load_released(
             template_name,
+            param_values=template_params or None,
             validate_params=False,
         )
     except FileNotFoundError as e:
@@ -472,10 +473,6 @@ async def run_from_list_file_stream(
                     batch_data,
                     param_name,
                     adapter_cls.build_batch_param_value,
-                    delimiter=(
-                        tmpl_meta.batch_params.delimiter
-                        if tmpl_meta.batch_params else ","
-                    ),
                 )
                 logger.info(
                     f"[批次 {idx + 1}/{batch_count}] 行 {start_line_num}-{end_line_num}, "
@@ -508,7 +505,7 @@ async def run_from_list_file_stream(
                 try:
                     tmpl = loader.load_content(
                         released.yaml_content,
-                        param_values=params,
+                        param_values={**(template_params or {}), **params},
                         source=released.template_key,
                     )
                     tmpl._crawl_context = {
@@ -794,10 +791,13 @@ def main() -> None:
         
         # --template-name 优先，否则从 --template 参数中提取模板名
         tmpl_name = args.template_name
+        template_params: dict[str, str] = {}
         if not tmpl_name and args.template_args:
             first_arg = args.template_args[0]
-            name, _ = parse_template_arg(first_arg)
+            name, template_params = parse_template_arg(first_arg)
             tmpl_name = name
+        elif args.template_args:
+            _, template_params = parse_template_arg(args.template_args[0])
         if not tmpl_name:
             logger.error("错误: 使用 --list-file 时必须指定 --template-name 或 --template")
             sys.exit(1)
@@ -806,6 +806,7 @@ def main() -> None:
             template_name=tmpl_name,
             file_path=args.list_file,
             param_name=args.list_param,
+            template_params=template_params,
             start_line=args.start,
             limit=args.limit,
             delay=args.delay,

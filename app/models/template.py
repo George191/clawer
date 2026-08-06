@@ -110,12 +110,6 @@ class BatchParamConfig(BaseModel):
     param_name: str | list[str] = Field(
         description="参数名称；多字段批次使用字段名列表"
     )
-    delimiter: str = Field(
-        default=",",
-        min_length=1,
-        max_length=1,
-        description="多字段批次文件的单字符分隔符",
-    )
     batch_size: int = Field(default=1, ge=1)
     start_line: int = Field(
         default=0, description="起始行号（0-based）"

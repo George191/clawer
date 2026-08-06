@@ -28,8 +28,6 @@ def batch_param_identity(value: BatchParamNames) -> str:
 def parse_batch_param_line(
     line: str,
     param_names: BatchParamNames,
-    *,
-    delimiter: str = ",",
 ) -> dict[str, str]:
     names = normalize_batch_param_names(param_names)
     if len(names) == 1:
@@ -37,10 +35,7 @@ def parse_batch_param_line(
         if not value:
             raise ValueError("Batch parameter value cannot be empty")
         return {names[0]: value}
-    if len(delimiter) != 1:
-        raise ValueError("Batch delimiter must be one character")
-
-    values = next(csv.reader([line], delimiter=delimiter, skipinitialspace=True))
+    values = next(csv.reader([line], delimiter=",", skipinitialspace=True))
     values = [value.strip() for value in values]
     if len(values) != len(names):
         raise ValueError(
@@ -56,16 +51,10 @@ def build_batch_params(
     batch_data: list[str],
     param_names: BatchParamNames,
     builder: Callable[[list[str], str], str],
-    *,
-    delimiter: str = ",",
 ) -> dict[str, str]:
     names = normalize_batch_param_names(param_names)
     if len(names) == 1:
         return {names[0]: builder(batch_data, names[0])}
     if len(batch_data) != 1:
         raise ValueError("Multi-field batch_params requires batch_size=1")
-    return parse_batch_param_line(
-        batch_data[0],
-        names,
-        delimiter=delimiter,
-    )
+    return parse_batch_param_line(batch_data[0], names)

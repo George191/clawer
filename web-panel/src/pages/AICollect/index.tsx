@@ -767,8 +767,11 @@ const isStructuredInlineYamlValue = (value: string) => {
   if (trimmed.startsWith('{') && trimmed.endsWith('}') && /[:,]/.test(trimmed.slice(1, -1))) return true;
   return false;
 };
-const yamlListPreviewRoots = new Set(['params', 'dedup_fields', 'list_fields', 'detail_fields', 'download']);
+const yamlListPreviewRoots = new Set(['params', 'batch_params.param_name', 'dedup_fields', 'list_fields', 'detail_fields', 'download']);
 const flattenedTemplateRootKeys = new Set(['list_pagination', 'dedup_fields', 'download']);
+const templateListItemKey = (key: string) => key.match(
+  /^(?:(?:params|dedup_fields|list_fields|detail_fields|download)\[\d+\]|batch_params\.param_name\[\d+\])(?=\.|$)/,
+)?.[0] ?? null;
 
 const parseTemplateEntries = (raw: string): TemplateEntry[] => {
   const entries: TemplateEntry[] = [];
@@ -810,7 +813,13 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
   };
 
   const pruneStacks = (indent: number, isListItem: boolean) => {
-    while (keyPathStack.length && keyPathStack[keyPathStack.length - 1].indent >= indent) {
+    while (
+      keyPathStack.length
+      && (
+        keyPathStack[keyPathStack.length - 1].indent > indent
+        || (!isListItem && keyPathStack[keyPathStack.length - 1].indent >= indent)
+      )
+    ) {
       keyPathStack.pop();
     }
     while (
@@ -835,7 +844,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
 
     const keyPathParent = keyPathStack[keyPathStack.length - 1];
     const listItemParent = listItemContextStack[listItemContextStack.length - 1];
-    const parentPath = listItemParent && (!keyPathParent || listItemParent.indent > keyPathParent.indent)
+    const parentPath = listItemParent && (!keyPathParent || listItemParent.indent >= keyPathParent.indent)
       ? listItemParent.path
       : keyPathParent?.path ?? '';
     const depth = Math.max(0, Math.floor(indent / 2));
@@ -3732,6 +3741,10 @@ const AICollect: React.FC = () => {
       };
     }
 
+    if (/^batch_params\.param_name\[\d+\]$/.test(entry.key)) {
+      return { label: normalizedValue };
+    }
+
     const arrayChildMatch = entry.key.match(/^([a-z_]+)\[(\d+)\]\.(.+)$/);
     if (arrayChildMatch) {
       const [, rootKey, , childPath] = arrayChildMatch;
@@ -3818,8 +3831,8 @@ const AICollect: React.FC = () => {
             const currentGroupKey = getTemplateEntryGroupKey(entry, nextEntry);
             const nextGroupKey = nextEntry ? getTemplateEntryGroupKey(nextEntry, nextNextEntry) : null;
             const extraClass = currentGroupKey !== nextGroupKey ? 'is-group-end' : '';
-            const yamlListItemKey = entry.key.match(/^(params|dedup_fields|list_fields|detail_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
-            const previousYamlListItemKey = previousEntry?.key.match(/^(params|dedup_fields|list_fields|detail_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+            const yamlListItemKey = templateListItemKey(entry.key);
+            const previousYamlListItemKey = templateListItemKey(previousEntry?.key ?? '');
             const yamlListRoot = yamlListItemKey?.split('[')[0] ?? null;
             const rootKey = entry.key.match(/^([A-Za-z_][\w-]*)(?:\.|\[|$)/)?.[1] ?? entry.key;
             const isYamlListItem = Boolean(
@@ -3843,6 +3856,7 @@ const AICollect: React.FC = () => {
             );
             const value = templateValueDrafts[entry.id] ?? entry.value;
             const isGroup = entry.nodeType === 'group';
+            const isBatchParamNameItem = /^batch_params\.param_name\[\d+\]$/.test(entry.key);
             const isItemGroup = isGroup && /\[\d+\]$/.test(entry.key);
             const isRootGroup = isGroup && !entry.key.includes('.') && !/\[\d+\]$/.test(entry.key);
             const displayValue = entry.multiline ? value : stripYamlQuotes(value);
@@ -3865,7 +3879,7 @@ const AICollect: React.FC = () => {
                     {isYamlListItem ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
                     <span>{displayLabel}</span>
                   </div>
-                  {isGroup ? null : (
+                  {isGroup || isBatchParamNameItem ? null : (
                     <div className={`ai-template-field-value ${entry.multiline || label === 'description' ? 'is-rich' : ''}`}>
                       <pre>{displayValue || 'null'}</pre>
                       {isTypingTarget ? <span className="ai-session-inspector-editor-caret" aria-hidden="true" /> : null}

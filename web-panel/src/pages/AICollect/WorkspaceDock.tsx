@@ -266,7 +266,7 @@ const inferTemplatePreviewStage = (key: string, path: string): TemplatePreviewSt
 const parseTemplatePreviewEntries = (raw: string): TemplatePreviewEntry[] => {
   const entries: TemplatePreviewEntry[] = [];
   const lines = raw.replace(/\r\n/g, '\n').split('\n');
-  const pathStack: Array<{ indent: number; path: string }> = [];
+  const pathStack: Array<{ indent: number; path: string; listItem?: boolean }> = [];
   const listIndexes = new Map<string, number>();
   const collectBlockValue = (startIndex: number, parentIndent: number) => {
     const blockLines: string[] = [];
@@ -292,7 +292,19 @@ const parseTemplatePreviewEntries = (raw: string): TemplatePreviewEntry[] => {
     if (!trimmed || trimmed.startsWith('#')) continue;
 
     const indent = line.match(/^\s*/)?.[0].length ?? 0;
-    while (pathStack.length && pathStack[pathStack.length - 1].indent >= indent) pathStack.pop();
+    while (
+      pathStack.length
+      && (
+        pathStack[pathStack.length - 1].indent > indent
+        || (
+          pathStack[pathStack.length - 1].indent === indent
+          && (
+            !trimmed.startsWith('- ')
+            || pathStack[pathStack.length - 1].listItem
+          )
+        )
+      )
+    ) pathStack.pop();
     const parentPath = pathStack[pathStack.length - 1]?.path ?? '';
     const depth = Math.max(0, Math.floor(indent / 2));
 
@@ -328,7 +340,7 @@ const parseTemplatePreviewEntries = (raw: string): TemplatePreviewEntry[] => {
           group: !rawChildValue,
           stage: inferTemplatePreviewStage(childMatch[1], childPath),
         });
-        pathStack.push({ indent, path: itemPath });
+        pathStack.push({ indent, path: itemPath, listItem: true });
         if (!rawChildValue) pathStack.push({ indent: indent + 2, path: childPath });
       } else {
         entries.push({
@@ -368,6 +380,10 @@ const parseTemplatePreviewEntries = (raw: string): TemplatePreviewEntry[] => {
   return entries;
 };
 
+const templatePreviewListItemKey = (key: string) => key.match(
+  /^(?:(?:params|dedup_fields|list_fields|detail_fields|download)\[\d+\]|batch_params\.param_name\[\d+\])(?=\.|$)/,
+)?.[0] ?? null;
+
 const renderCompactTemplatePreview = (yaml: string) => {
   const entries = parseTemplatePreviewEntries(yaml);
   return (
@@ -380,6 +396,7 @@ const renderCompactTemplatePreview = (yaml: string) => {
             !entry.group
             || entry.key === 'params'
             || entry.key === 'batch_params'
+            || entry.key === 'batch_params.param_name'
             || entry.key === 'list_request'
             || entry.key === 'list_request.headers'
             || entry.key === 'detail_request'
@@ -401,11 +418,14 @@ const renderCompactTemplatePreview = (yaml: string) => {
             <div className="ai-template-stage-body">
               {displayEntries.map((entry, index) => {
                 const rawLabel = entry.key.split('.').pop() ?? entry.key;
-                const label = /^dedup_fields\[\d+\]$/.test(entry.key)
+                const isBatchParamNameItem = /^batch_params\.param_name\[\d+\]$/.test(entry.key);
+                const label = isBatchParamNameItem
+                  ? entry.value.replace(/^['"]|['"]$/g, '')
+                  : /^dedup_fields\[\d+\]$/.test(entry.key)
                   ? 'field'
                   : rawLabel.replace(/^([a-z_]+)\[(\d+)\]$/, '$1 $2');
-                const listItemKey = entry.key.match(/^(params|batch_params|dedup_fields|list_fields|detail_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
-                const previousListItemKey = displayEntries[index - 1]?.key.match(/^(params|batch_params|dedup_fields|list_fields|detail_fields|download)\[\d+\](?=\.|$)/)?.[0] ?? null;
+                const listItemKey = templatePreviewListItemKey(entry.key);
+                const previousListItemKey = templatePreviewListItemKey(displayEntries[index - 1]?.key ?? '');
                 const fieldSectionRoot = entry.key.match(/^(list_fields|detail_fields)(?:\[|\.|$)/)?.[1] ?? null;
                 const previousFieldSectionRoot = displayEntries[index - 1]?.key.match(/^(list_fields|detail_fields)(?:\[|\.|$)/)?.[1] ?? null;
                 const showFieldSectionLabel = Boolean(fieldSectionRoot && fieldSectionRoot !== previousFieldSectionRoot);
@@ -468,7 +488,7 @@ const renderCompactTemplatePreview = (yaml: string) => {
                         {listItemKey ? <i className="ai-template-field-dash" aria-hidden="true">-</i> : null}
                         <span>{label}</span>
                       </div>
-                      {entry.group ? null : (
+                      {entry.group || isBatchParamNameItem ? null : (
                         <div className={`ai-template-field-value ${entry.key === 'description' ? 'is-rich' : ''}`}>
                           <pre>{entry.value.replace(/^['"]|['"]$/g, '')}</pre>
                         </div>
@@ -645,6 +665,12 @@ const buildTaskRuntimeItem = (item: CollectTask): TaskRuntimeItem => {
   };
 };
 
+const versionTemplateUrl = (url?: string, updatedAt?: string) => {
+  if (!url || !updatedAt) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${encodeURIComponent(updatedAt)}`;
+};
+
 const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
   key: item.id,
   name: item.name,
@@ -663,7 +689,7 @@ const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
   taskCount: item.task_count,
   faviconUrl: item.favicon_url,
   dataType: item.data_type ?? extractTemplateDataType(item.yaml_content ?? ''),
-  templateUrl: item.template,
+  templateUrl: versionTemplateUrl(item.template, item.updated_at),
   templatePath: item.template_path,
 });
 
