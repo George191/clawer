@@ -1,0 +1,9 @@
+-r base.txt
+
+# Mongo to Kafka syncer plus AI Collect task-state integration.
+motor>=3.0
+aiokafka>=0.10
+redis>=5.0
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.30
+elasticsearch>=8.0

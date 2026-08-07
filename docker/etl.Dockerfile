@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # ============================================================
 # Stage 1: Build — compile wheels for all dependencies
 # ============================================================
@@ -24,8 +25,8 @@ RUN mkdir -p /data/tmp /data/pip-cache /data/wheels \
     libpq-dev \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
-COPY requirements.txt .
-RUN pip wheel --cache-dir=/data/pip-cache --wheel-dir=/data/wheels -r requirements.txt
+COPY requirements ./requirements
+RUN pip wheel --cache-dir=/data/pip-cache --wheel-dir=/data/wheels -r requirements/etl.txt
 
 # ============================================================
 # Stage 2: Runtime — ETL Service (RDS / ODS / ADS)
@@ -47,8 +48,8 @@ RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
     libpq5 \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
-COPY --from=builder /data/wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
+    pip install --no-cache-dir /wheels/*.whl
 
 COPY app/ ./app/
 

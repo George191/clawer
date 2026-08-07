@@ -1,0 +1,9 @@
+-r base.txt
+
+# ETL pipeline: Kafka, Redis offsets, Postgres, MinIO task artifacts, default PDF backend.
+aiokafka>=0.10
+redis>=5.0
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.30
+minio>=7.0
+PyMuPDF>=1.23.0

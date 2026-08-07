@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # ============================================================
 # Stage 1: Build the React panel
 # ============================================================
@@ -36,8 +37,8 @@ RUN mkdir -p /data/tmp /data/pip-cache /data/wheels \
     libssl-dev \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
-COPY requirements.txt .
-RUN pip wheel --cache-dir=/data/pip-cache --wheel-dir=/data/wheels -r requirements.txt
+COPY requirements ./requirements
+RUN pip wheel --cache-dir=/data/pip-cache --wheel-dir=/data/wheels -r requirements/web.txt
 
 # ============================================================
 # Stage 3: Runtime - Web service
@@ -65,8 +66,8 @@ RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
     fi \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
-COPY --from=builder /data/wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
+    pip install --no-cache-dir /wheels/*.whl
 
 COPY app/ ./app/
 COPY --from=frontend /static/ ./web-panel/dist/
