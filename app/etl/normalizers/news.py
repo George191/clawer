@@ -189,6 +189,19 @@ def normalize_ssc_press(record: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def normalize_unseenlabs_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "unseenlabs_news")
+    # cover_image -> thumbnail（_news_common 未覆盖此字段）
+    if not normalized.get("thumbnail"):
+        normalized["thumbnail"] = _media_source_url(record.get("cover_image"))
+    # category（单个字符串）-> news_type（JSON 数组，与 satellite_today/arstechnica 一致）
+    category = safe_str(record.get("category"))
+    normalized["news_type"] = json_dumps([category] if category else None)
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = None
+    return normalized
+
+
 register_normalizer("news", "ssc_news", normalize_ssc_news)
 register_normalizer("news", "blacksky_press", normalize_blacksky_press)
 register_normalizer("news", "blacksky_news", normalize_blacksky_news)
@@ -196,3 +209,4 @@ register_normalizer("news", "blacksky_posts", normalize_blacksky_posts)
 register_normalizer("news", "satellite_today", normalize_satellite_today)
 register_normalizer("news", "arstechnica", normalize_arstechnica)
 register_normalizer("news", "ssc_press", normalize_ssc_press)
+register_normalizer("news", "unseenlabs_news", normalize_unseenlabs_news)
