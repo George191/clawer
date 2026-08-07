@@ -37,6 +37,9 @@ def _media_source_url(value: Any) -> str | None:
     parsed = urlparse(text)
     if parsed.scheme in {"http", "https"} and parsed.netloc:
         return text
+    # 接受本地 MinIO 路径（如 news/<source>/<record_id>/<file>）
+    if "/" in text and not text.startswith(("data:", "javascript:")):
+        return text
     return None
 
 
@@ -190,8 +193,10 @@ def normalize_ssc_press(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_unseenlabs_news(record: dict[str, Any]) -> dict[str, Any]:
+    # 应用 assets 本地路径覆盖：cover_image 被替换为已下载的 MinIO 路径
+    record, _ = apply_asset_path_overrides(record)
     normalized = _news_common(record, "unseenlabs_news")
-    # cover_image -> thumbnail（_news_common 未覆盖此字段）
+    # cover_image -> thumbnail（_news_common 未读取此字段，单独映射）
     if not normalized.get("thumbnail"):
         normalized["thumbnail"] = _media_source_url(record.get("cover_image"))
     # category（单个字符串）-> news_type（JSON 数组，与 satellite_today/arstechnica 一致）
