@@ -21,6 +21,7 @@ FROM python:3.12-slim AS builder
 WORKDIR /app
 
 ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG DEBIAN_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ENV TMPDIR=/data/tmp \
     PIP_CACHE_DIR=/data/pip-cache \
@@ -30,7 +31,7 @@ ENV TMPDIR=/data/tmp \
 RUN mkdir -p /data/tmp /data/pip-cache /data/wheels \
     /data/apt-cache/archives/partial /data/apt-lists/partial \
     && sed -i \
-        -e "s|https\\?://deb.debian.org/debian-security|${DEBIAN_MIRROR}/debian-security|g" \
+        -e "s|https\\?://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
         -e "s|https\\?://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get \
@@ -58,10 +59,11 @@ FROM python:3.12-slim
 WORKDIR /app
 
 ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG DEBIAN_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
 ARG INSTALL_CHROMIUM=false
 RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
     && sed -i \
-        -e "s|https\\?://deb.debian.org/debian-security|${DEBIAN_MIRROR}/debian-security|g" \
+        -e "s|https\\?://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
         -e "s|https\\?://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
         /etc/apt/sources.list.d/debian.sources \
     && apt-get \
