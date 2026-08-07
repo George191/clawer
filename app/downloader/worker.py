@@ -126,6 +126,8 @@ class DownloadWorker:
                 if count == 0:
                     await self._log_startup_stats()
                     await asyncio.sleep(self._poll_interval)
+            except ValueError:
+                raise
             except Exception:
                 logger.exception("DownloadWorker loop error")
                 await asyncio.sleep(self._poll_interval)
@@ -441,6 +443,8 @@ class DownloadWorker:
                     s["name"], s["total"], s["pending_download"],
                     s["downloaded"], s["no_assets"], s["failed"],
                 )
+        except ValueError:
+            raise
         except Exception:
             logger.warning("DownloadWorker: failed to get collection stats")
 

@@ -574,10 +574,16 @@ class MongoStorage(StorageBackend):
         """
         await self._ensure_connection()
         stats = []
-        coll_names = (
-            [template_name] if template_name
-            else await self._db.list_collection_names()
-        )
+        if template_name:
+            all_colls = await self._db.list_collection_names()
+            if template_name not in all_colls:
+                raise ValueError(
+                    f"Collection '{template_name}' not found in MongoDB. "
+                    f"Available: {', '.join(sorted(all_colls))}"
+                )
+            coll_names = [template_name]
+        else:
+            coll_names = await self._db.list_collection_names()
         for coll_name in coll_names:
             collection = self._db[coll_name]
             total = await collection.count_documents({})
