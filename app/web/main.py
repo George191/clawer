@@ -25,7 +25,7 @@ from datetime import timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -128,6 +128,23 @@ def create_app() -> FastAPI:
     appy.include_router(ai_collect_router, prefix="/api")
     appy.include_router(scheduler_router, prefix="/api")
     appy.include_router(socket_router)
+
+    # Vite emits hashed bundles and fonts into these directories.
+    for static_name in ("assets", "fonts"):
+        static_path = _STATIC_DIR / static_name
+        if static_path.is_dir():
+            appy.mount(
+                f"/{static_name}",
+                StaticFiles(directory=static_path),
+                name=static_name,
+            )
+
+    @appy.get("/{asset_name}.svg", include_in_schema=False)
+    async def static_svg(asset_name: str):
+        asset_path = _STATIC_DIR / f"{asset_name}.svg"
+        if asset_path.is_file():
+            return FileResponse(asset_path)
+        raise HTTPException(status_code=404, detail="Static asset not found")
 
     # ── 健康检查 ─────────────────────────────────────────────────────────
     @appy.get("/api/health")
