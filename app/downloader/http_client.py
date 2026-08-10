@@ -474,6 +474,8 @@ class HttpClient:
                 if response.status_code in settings.http_retry_on_statuses:
                     raise DownloadError(url_display, response.status_code, "Retryable status code")
 
+                response.raise_for_status()
+
                 await self._after_request(
                     response=response,
                     proxy_url=proxy_url,
