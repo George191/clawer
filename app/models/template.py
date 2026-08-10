@@ -59,6 +59,13 @@ class FieldMapping(BaseModel):
     )
 
 
+class IncrementalConfig(BaseModel):
+    """Template-owned field and format used by incremental crawls."""
+
+    field: str = Field(description="Record time field or dotted path")
+    format: str = Field(description="datetime.strptime format for the record value")
+
+
 class PaginationConfig(BaseModel):
     type: PaginationType = Field(description="分页类型")
     next_selector: str | None = Field(default=None, description="下一页链接选择器")
@@ -168,6 +175,11 @@ class SiteTemplate(BaseModel):
     params: list[TemplateParam] = Field(
         default_factory=list,
         description="模板参数定义, 可在 list_page/detail_page 等字段中用 {param_name} 引用",
+    )
+
+    incremental: IncrementalConfig | None = Field(
+        default=None,
+        description="Template-owned time field and parser format for incremental crawls",
     )
 
     response_type: ResponseType = Field(

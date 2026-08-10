@@ -11,22 +11,6 @@ from app.utils.path import get_nested_value
 
 WATERMARK_LOOKBACK = timedelta(days=1)
 
-_TEMPLATE_TIME_RULES = {
-    "arstechnica": ("date", "%Y-%m-%d"),
-    "blacksky_news": ("modified", "%Y-%m-%dT%H:%M:%S"),
-    "blacksky_posts": ("modified", "%Y-%m-%dT%H:%M:%S"),
-    "blacksky_press": ("modified", "%Y-%m-%dT%H:%M:%S"),
-    "google_patent": ("patent.publication_date", "%Y-%m-%d"),
-    "nga_navwarn": ("issue_time", "%d%H%MZ %b %Y"),
-    "planet": ("modified", "%m/%d/%Y %I:%M:%S %p %z"),
-    "satellite_today": ("modified", "%Y-%m-%dT%H:%M:%S"),
-    "sealagom_navwarn": ("issue_time", "%d/%m/%Y, %H:%M"),
-    "ssc_news": ("date", "%B %d, %Y"),
-    "ssc_press": ("date", "%B %d, %Y"),
-    "unseenlabs_news": ("date", "%Y-%m-%d"),
-}
-
-
 @dataclass(frozen=True)
 class TimeWatermark:
     enabled: bool
@@ -77,21 +61,10 @@ def resolve_time_field(
     template: SiteTemplate,
     policies: dict[str, Any],
 ) -> str:
-    configured = str(policies.get("incremental_field") or "").strip()
-    if configured:
-        return configured
-    known_rule = _TEMPLATE_TIME_RULES.get(template.name)
-    if known_rule:
-        return known_rule[0]
-    available = {field.name for field in template.list_fields}
-    for candidate in (
-        "modified", "updated_at", "date", "issue_time",
-        "publication_date", "filing_date", "created_at",
-    ):
-        if candidate in available:
-            return candidate
+    if template.incremental is not None and template.incremental.field.strip():
+        return template.incremental.field
     raise ValueError(
-        f"Incremental crawl requires a time field: template={template.name}"
+        f"Incremental crawl requires template.incremental.field: template={template.name}"
     )
 
 
@@ -103,12 +76,7 @@ def build_time_watermark(
     if not policies.get("incremental"):
         return TimeWatermark(False, "", None, "")
     field = resolve_time_field(template, policies)
-    time_rule = _TEMPLATE_TIME_RULES.get(template.name)
-    if time_rule is None:
-        raise ValueError(
-            f"Incremental crawl has no time parser: template={template.name}"
-        )
-    record_time_format = time_rule[1]
+    record_time_format = template.incremental.format
     watermark = parse_watermark_time(redis_value) if redis_value else None
     if redis_value and watermark is None:
         raise ValueError(
