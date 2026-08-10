@@ -7,6 +7,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncGenerator, Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -16,6 +17,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from app.config.ai_settings import ai_settings
+from app.config.settings import settings
 from app.crawler.checkpoint import PageCheckpointStore
 from app.logger import get_logger
 from app.models.template import SiteTemplate
@@ -671,6 +673,340 @@ async def _generate_adapter_for_template(
         "testResult": {"passed": True, "sampleCount": len(analysis.get("sample_items") or [])},
         "warnings": adapter_result.warnings,
     }
+
+
+def _iso_datetime(value: Any) -> str:
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if value:
+        return str(value)
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _platform_status(enabled: bool) -> str:
+    return "healthy" if enabled else "inactive"
+
+
+def _template_field_count(template: dict[str, Any]) -> int:
+    metadata = template.get("metadata") or {}
+    if isinstance(metadata, dict):
+        field_count = metadata.get("field_count")
+        if isinstance(field_count, int):
+            return field_count
+    return 0
+
+
+def _task_status(status: str) -> str:
+    status = (status or "queued").lower()
+    return status if status in {"queued", "running", "completed", "failed", "paused"} else "queued"
+
+
+def _build_platform_sources(templates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for template in templates:
+        key = template.get("data_type")
+        group = groups.setdefault(
+            key,
+            {
+                "key": key,
+                "label": key.replace("_", " ").title(),
+                "count": 0,
+                "fieldCount": 0,
+                "domains": set(),
+                "templates": [],
+                "updatedAt": "",
+            },
+        )
+        group["count"] += 1
+        group["fieldCount"] += _template_field_count(template)
+        domain = str(template.get("domain") or "").strip()
+        if domain:
+            group["domains"].add(domain)
+        group["templates"].append(str(template.get("title") or template.get("name") or "template"))
+        updated_at = _iso_datetime(template.get("updated_at"))
+        if not group["updatedAt"] or updated_at > group["updatedAt"]:
+            group["updatedAt"] = updated_at
+
+    if not groups:
+        return [
+            {
+                "key": "other",
+                "label": "Other",
+                "count": 0,
+                "fieldCount": 0,
+                "domains": [],
+                "templates": [],
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+        ]
+
+    result = []
+    for group in groups.values():
+        result.append({
+            **group,
+            "domains": sorted(group["domains"])[:6],
+            "templates": group["templates"][:4],
+        })
+    return sorted(result, key=lambda item: item["count"], reverse=True)
+
+
+def _build_platform_tasks(
+    tasks: list[dict[str, Any]],
+    templates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    live_statuses = {"queued", "running", "paused", "failed"}
+    live_tasks = [
+        task for task in tasks if str(task.get("status") or "").lower() in live_statuses
+    ][:8]
+    if live_tasks:
+        return [
+            {
+                "id": str(task.get("id")),
+                "name": str(task.get("name") or task.get("template_name") or "Workspace task"),
+                "template": str(task.get("template_name") or ""),
+                "status": _task_status(str(task.get("status") or "")),
+                "progress": int(task.get("progress") or 0),
+                "records": int(task.get("records") or 0),
+                "startedAt": _iso_datetime(task.get("started_at") or task.get("updated_at")),
+                "kind": "live",
+                "stage": "crawler",
+                "mode": str((task.get("schedule") or {}).get("mode") or "manual"),
+            }
+            for task in live_tasks
+        ]
+
+    return [
+        {
+            "id": f"planned-{template.get('name')}-{template.get('version')}",
+            "name": str(template.get("title") or template.get("name") or "Recommended crawl"),
+            "template": str(template.get("name") or ""),
+            "status": "planned",
+            "progress": 0,
+            "records": 0,
+            "kind": "suggested",
+            "stage": "crawler",
+            "mode": "Create a workspace task",
+        }
+        for template in templates[:5]
+    ]
+
+
+def _build_platform_overview(
+    templates: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    live_task_count = sum(
+        1
+        for task in tasks
+        if str(task.get("status") or "").lower() in {"queued", "running", "paused"}
+    )
+    source_count = len({
+        str(template.get("domain") or "").strip()
+        for template in templates
+        if str(template.get("domain") or "").strip()
+    })
+    data_domain_count = len({
+        str(template.get("data_type") or "other")
+        for template in templates
+    })
+
+    stages = [
+        {
+            "key": "crawler",
+            "title": "Crawler",
+            "accent": "#8ab4ff",
+            "status": _platform_status(bool(settings.redis_url)),
+            "description": "Celery worker 执行 released template 采集任务，并写入 Mongo/File storage。",
+            "command": "celery -A app.scheduler.celery_app worker",
+            "primaryMetric": f"{live_task_count} live tasks",
+            "secondaryMetric": f"concurrency={settings.max_concurrent_tasks}",
+            "badge": "Celery Worker",
+            "dependencies": ["Redis", "MongoDB/MinIO", "Templates"],
+        },
+        {
+            "key": "downloader",
+            "title": "Downloader",
+            "accent": "#65d5a3",
+            "status": _platform_status(bool(settings.db_url and settings.minio_endpoint)),
+            "description": "扫描采集记录的 pending assets，下载资源并上传 MinIO。",
+            "command": "python -m app.downloader.main --poll 10",
+            "primaryMetric": f"asset concurrency={settings.download_asset_concurrency}",
+            "secondaryMetric": "pending/downloading/failed",
+            "badge": "Asset Worker",
+            "dependencies": ["MongoDB", "MinIO"],
+        },
+        {
+            "key": "syncer",
+            "title": "Syncer",
+            "accent": "#ffd166",
+            "status": _platform_status(bool(settings.db_url and settings.kafka_brokers)),
+            "description": "将已下载或无资源记录推送到 Kafka，供 ETL 消费。",
+            "command": "python -m app.syncer.main --poll 10",
+            "primaryMetric": settings.kafka_topic or "Kafka topic unset",
+            "secondaryMetric": "downloaded/no_assets/failed",
+            "badge": "Kafka Bridge",
+            "dependencies": ["MongoDB", "Kafka"],
+        },
+        {
+            "key": "etl",
+            "title": "ETL",
+            "accent": "#ff7a7a",
+            "status": _platform_status(bool(settings.kafka_brokers and settings.pg_url)),
+            "description": "RDS/ODS/TASK/DWD/DWS/DIM worker 消费 Kafka 并写入 Postgres 分层表。",
+            "command": "python -m app.etl.main --layer <layer>",
+            "primaryMetric": settings.etl_raw_topic or "raw topic unset",
+            "secondaryMetric": "Postgres partitioned tables",
+            "badge": "Six-layer Pipeline",
+            "dependencies": ["Kafka", "Postgres", "Redis offsets"],
+        },
+    ]
+    healthy_stage_count = sum(1 for stage in stages if stage["status"] == "healthy")
+    health_score = int(round(healthy_stage_count / len(stages) * 100))
+
+    recommendations = []
+    if not templates:
+        recommendations.append({
+            "title": "Create the first released template",
+            "detail": "平台还没有可调度的采集模板，先在 AI Collect 里发布一个模板。",
+            "action": "Open AI Collect",
+            "path": "/ai-collect",
+            "level": "warning",
+        })
+    if not settings.kafka_brokers:
+        recommendations.append({
+            "title": "Configure Kafka before ETL",
+            "detail": "Syncer 和 ETL 依赖 Kafka broker；未配置时链路只能停在采集/下载阶段。",
+            "action": "Open pipeline",
+            "path": "/pipeline",
+            "level": "critical",
+        })
+    if live_task_count == 0 and templates:
+        recommendations.append({
+            "title": "Schedule a workspace task",
+            "detail": "已有模板但当前没有运行中或排队任务，可以从任务中心创建采集。",
+            "action": "Open tasks",
+            "path": "/tasks",
+            "level": "info",
+        })
+    if not recommendations:
+        recommendations.append({
+            "title": "Monitor end-to-end throughput",
+            "detail": "链路配置完整，下一步关注 downloader/syncer/ETL 的积压和处理速度。",
+            "action": "Open monitoring",
+            "path": "/monitoring",
+            "level": "info",
+        })
+
+    return {
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "healthScore": health_score,
+            "templateCount": len(templates),
+            "sourceCount": source_count,
+            "liveTaskCount": live_task_count,
+            "dataDomainCount": data_domain_count,
+            "healthyStageCount": healthy_stage_count,
+        },
+        "stages": stages,
+        "sources": _build_platform_sources(templates),
+        "taskBoard": _build_platform_tasks(tasks, templates),
+        "etlLayers": [
+            {
+                "key": "rds",
+                "label": "RDS",
+                "schema": "rds_current",
+                "status": _platform_status(bool(settings.etl_raw_topic and settings.etl_rds_topic)),
+                "topicIn": settings.etl_raw_topic,
+                "topicOut": settings.etl_rds_topic,
+                "focus": "原始采集记录入库，保留 source payload 和元数据。",
+            },
+            {
+                "key": "ods",
+                "label": "ODS",
+                "schema": "ods_current",
+                "status": _platform_status(bool(settings.etl_rds_topic and settings.etl_ods_topic)),
+                "topicIn": settings.etl_rds_topic,
+                "topicOut": settings.etl_ods_topic,
+                "focus": "标准化字段、去重键和业务主键，供下游分析复用。",
+            },
+            {
+                "key": "task",
+                "label": "TASK",
+                "schema": "task_current",
+                "status": _platform_status(bool(settings.etl_task_topic and settings.etl_ads_topic)),
+                "topicIn": settings.etl_task_topic,
+                "topicOut": settings.etl_ads_topic,
+                "focus": "执行 PDF 转 Markdown 等任务型加工。",
+            },
+            {
+                "key": "dwd",
+                "label": "DWD",
+                "schema": "dwd_current",
+                "status": _platform_status(bool(settings.etl_ods_topic and settings.etl_dwd_topic)),
+                "topicIn": settings.etl_ods_topic,
+                "topicOut": settings.etl_dwd_topic,
+                "focus": "明细层沉淀面向分析的干净事实数据。",
+            },
+            {
+                "key": "dws",
+                "label": "DWS",
+                "schema": "dws_current",
+                "status": _platform_status(bool(settings.etl_dwd_topic and settings.etl_dws_topic)),
+                "topicIn": settings.etl_dwd_topic,
+                "topicOut": settings.etl_dws_topic,
+                "focus": "汇总层聚合指标，支撑看板和专题分析。",
+            },
+            {
+                "key": "dim",
+                "label": "DIM",
+                "schema": "dim_current",
+                "status": _platform_status(bool(settings.etl_dim_topic)),
+                "topicIn": settings.etl_ods_topic,
+                "topicOut": settings.etl_dim_topic,
+                "focus": "维护维度字典和稳定映射表。",
+            },
+        ],
+        "guardrails": [
+            {
+                "key": "anti_crawl",
+                "label": "Anti-crawl",
+                "value": "ON" if settings.anti_crawl_enabled else "OFF",
+                "hint": "采集请求是否启用代理池、身份轮换和站点适配降级。",
+                "status": _platform_status(settings.anti_crawl_enabled),
+            },
+            {
+                "key": "rate_limit",
+                "label": "Rate limit",
+                "value": "ON" if settings.rate_limit_enabled else "OFF",
+                "hint": "域名级速率控制，避免批量采集压垮源站或触发风控。",
+                "status": _platform_status(settings.rate_limit_enabled),
+            },
+            {
+                "key": "download_proxy",
+                "label": "Download proxy",
+                "value": "ON" if settings.download_use_proxy else "OFF",
+                "hint": "资源下载阶段是否走代理或隧道。",
+                "status": _platform_status(settings.download_use_proxy),
+            },
+            {
+                "key": "scheduler",
+                "label": "Scheduler",
+                "value": "ON" if settings.scheduler_enabled else "OFF",
+                "hint": "增强调度配置是否启用；Celery beat 仍负责周期投递。",
+                "status": _platform_status(settings.scheduler_enabled),
+            },
+        ],
+        "recommendations": recommendations[:4],
+    }
+
+
+@router.get("/ai/platform/overview")
+async def platform_overview():
+    templates, tasks = await asyncio.gather(
+        ai_collect_store.list_templates(),
+        ai_collect_store.list_tasks(),
+    )
+    return _build_platform_overview(templates, tasks)
 
 
 @router.post("/ai/preflight")
