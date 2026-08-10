@@ -24,6 +24,8 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
+_ADAPTER_EXHAUSTION_RELOAD_COOLDOWN_SECONDS = 60.0
+
 
 class ProxyPool:
     """通用代理池框架。
@@ -67,6 +69,7 @@ class ProxyPool:
 
         # 按模板适配器记录代理失败，避免单个源失败就全局删除代理。
         self._adapter_failures: dict[str, set[str]] = {}
+        self._last_adapter_exhaustion_reload: float = 0.0
 
     # ── 适配器管理 ──────────────────────────────────────────────────────────
 
@@ -324,16 +327,29 @@ class ProxyPool:
         ]
 
         if not candidates:
-            logger.warning(
-                "No proxy available for adapter %s after adapter-specific failures; reloading shared pool...",
-                adapter_name or "<unknown>",
-            )
-            await self.reload()
-            candidates = [
-                p
-                for p in self._healthy
-                if adapter_name not in self._adapter_failures.get(p.url, set())
-            ]
+            now = time.monotonic()
+            since_reload = now - self._last_adapter_exhaustion_reload
+            if since_reload >= _ADAPTER_EXHAUSTION_RELOAD_COOLDOWN_SECONDS:
+                logger.warning(
+                    "No proxy available for adapter %s after adapter-specific failures; reloading shared pool...",
+                    adapter_name or "<unknown>",
+                )
+                self._last_adapter_exhaustion_reload = now
+                await self.reload()
+                candidates = [
+                    p
+                    for p in self._healthy
+                    if adapter_name not in self._adapter_failures.get(p.url, set())
+                ]
+            elif adapter_name:
+                logger.warning(
+                    "No proxy available for adapter %s; reusing the current pool during the %.0fs reload cooldown",
+                    adapter_name,
+                    _ADAPTER_EXHAUSTION_RELOAD_COOLDOWN_SECONDS,
+                )
+                for failed_adapters in self._adapter_failures.values():
+                    failed_adapters.discard(adapter_name)
+                candidates = list(self._healthy)
 
         # 优先选择未被其他协程使用的健康代理
         available = [p for p in candidates if p.url not in in_use]
@@ -349,7 +365,7 @@ class ProxyPool:
         # 所有代理都在使用中，回退到轮询（同一代理可能被多协程共享）
         if not candidates:
             logger.warning(
-                "Still no proxy available for adapter %s after shared pool reload",
+                "Still no proxy available for adapter %s after pool recovery",
                 adapter_name or "<unknown>",
             )
             return None

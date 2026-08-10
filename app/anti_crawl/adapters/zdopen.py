@@ -79,14 +79,27 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
         query = "&".join(f"{k}={v}" for k, v in params.items())
         return f"{DEFAULT_ZDPEN_API_URL}?{query}"
 
+    async def _close_client(self) -> None:
+        """关闭并清理缓存的 HTTP 客户端。
+
+        run_async 每任务新建 event loop，旧 session 不能跨 loop 复用，
+        因此 _get_client 每次都会调用本方法清理上一次的 session。
+        """
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            except Exception as e:
+                logger.debug("Failed to close stale HTTP client: %s", e)
+            self._http_client = None
+
     async def _get_client(self) -> curl_requests.AsyncSession:
-        """获取或创建 HTTP 客户端。"""
-        if self._http_client is None:
-            timeout = self._config.get("timeout", 10)
-            self._http_client = curl_requests.AsyncSession(
-                timeout=timeout,
-                impersonate="chrome120",
-            )
+        """每次创建新的 HTTP 客户端（不跨 event loop 缓存，避免 run_async 新 loop 下旧 session 挂起）。"""
+        await self._close_client()
+        timeout = self._config.get("timeout", 10)
+        self._http_client = curl_requests.AsyncSession(
+            timeout=timeout,
+            impersonate="chrome120",
+        )
         return self._http_client
 
     async def fetch(self) -> list[ProxyInfo]:
@@ -236,6 +249,4 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
 
     async def close(self) -> None:
         """关闭 HTTP 客户端。"""
-        if self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
+        await self._close_client()

@@ -28,24 +28,13 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
-_worker_event_loop: asyncio.AbstractEventLoop | None = None
-_worker_event_loop_pid: int | None = None
-
-
 def run_async(awaitable: Any) -> Any:
-    """Run async Celery work on one persistent event loop per worker process."""
-    global _worker_event_loop, _worker_event_loop_pid
+    """Run async Celery work on a fresh event loop per task.
 
-    current_pid = os.getpid()
-    if (
-        _worker_event_loop is None
-        or _worker_event_loop.is_closed()
-        or _worker_event_loop_pid != current_pid
-    ):
-        _worker_event_loop = asyncio.new_event_loop()
-        _worker_event_loop_pid = current_pid
-        asyncio.set_event_loop(_worker_event_loop)
-    return _worker_event_loop.run_until_complete(awaitable)
+    每任务新建+关闭 event loop，避免 curl_cffi AsyncSession 在持久复用 loop 下挂起。
+    依赖 curl_cffi session 的组件（如 zdopen adapter）须每次新建 session，不可跨 loop 缓存。
+    """
+    return asyncio.run(awaitable)
 
 # ── Celery 导入（延迟处理，允许未安装时模块仍可被 import 检查） ──
 
