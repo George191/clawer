@@ -32,6 +32,7 @@ services:
     dns_opt:
       - "timeout:3"
       - "attempts:2"
+    network_mode: host
     build:
       context: .
       dockerfile: docker/crawler.Dockerfile
@@ -48,8 +49,8 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 3
-    networks:
-      - asiral-helio
+    # networks:
+    #   - asiral-helio
 
   celery-beat:
     build:
