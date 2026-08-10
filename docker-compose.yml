@@ -26,6 +26,12 @@ services:
 
   # ── 1. Crawler — 采集服务 ─────────────────────────────────
   crawler:
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    dns_opt:
+      - "timeout:3"
+      - "attempts:2"
     build:
       context: .
       dockerfile: docker/crawler.Dockerfile
