@@ -23,6 +23,7 @@ _TEMPLATE_TIME_RULES = {
     "sealagom_navwarn": ("issue_time", "%d/%m/%Y, %H:%M"),
     "ssc_news": ("date", "%B %d, %Y"),
     "ssc_press": ("date", "%B %d, %Y"),
+    "unseenlabs_news": ("date", "%Y-%m-%d"),
 }
 
 
