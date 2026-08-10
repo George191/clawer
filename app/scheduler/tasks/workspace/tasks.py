@@ -103,7 +103,6 @@ async def _batch_parameter_sets(
     if len(param_names) > 1 and batch_size != 1:
         raise ValueError("Multi-field batch_params requires batch_size=1")
     builder = adapter_class or GenericAdapter
-    delimiter = config.delimiter if config else ","
     parameter_sets: list[tuple[dict[str, str], dict[str, Any]]] = []
     for offset in range(0, len(values), batch_size):
         chunk = values[offset:offset + batch_size]
@@ -112,7 +111,6 @@ async def _batch_parameter_sets(
                 chunk,
                 param_names,
                 builder.build_batch_param_value,
-                delimiter=delimiter,
             ),
             {
                 "start_line": start_line + offset,
