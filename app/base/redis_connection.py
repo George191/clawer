@@ -59,6 +59,7 @@ class RedisConnection:
                 encoding="utf-8",
                 decode_responses=True,
                 socket_connect_timeout=self._socket_connect_timeout,
+                socket_timeout=self._socket_connect_timeout,
             )
             await self._client.ping()
             self._connected = True

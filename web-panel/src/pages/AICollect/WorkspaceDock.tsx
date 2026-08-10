@@ -29,6 +29,7 @@ import {
 import {
   createWorkspaceTask,
   deleteWorkspaceTask,
+  fetchWorkspaceTask,
   fetchWorkspaceTaskLogRuns,
   fetchWorkspaceTaskLogs,
   fetchWorkspaceTasks,
@@ -1200,6 +1201,26 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     });
     return undefined;
   }, [activePanel, refreshWorkspaceTasks]);
+
+  useEffect(() => {
+    if (activePanel !== 'tasks' || !selectedTaskKey) return undefined;
+    let active = true;
+    const refreshSelectedTask = async () => {
+      try {
+        const task = await fetchWorkspaceTask(selectedTaskKey);
+        if (active) applyWorkspaceTask(task);
+      } catch (error) {
+        console.error('Failed to refresh selected task', error);
+      }
+    };
+    const timer = window.setInterval(() => {
+      void refreshSelectedTask();
+    }, 3000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [activePanel, applyWorkspaceTask, selectedTaskKey]);
 
   useEffect(() => {
     if (activePanel !== 'tasks' || !focusTask) return;
