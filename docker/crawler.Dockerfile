@@ -52,8 +52,8 @@ RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
 COPY app/ ./app/
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser \
-    && mkdir -p /app/output \
-    && chown -R appuser:appuser /app
+    && mkdir -p /app/output /data \
+    && chown -R appuser:appuser /app /data
 USER appuser
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=10s --retries=3 \
