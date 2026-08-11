@@ -381,6 +381,7 @@ class HttpClient:
             响应文本。
         """
         config = config or RequestConfig()
+        force_direct = force_direct or config.force_direct
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)

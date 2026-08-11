@@ -101,6 +101,10 @@ class RequestConfig(BaseModel):
     form_data: dict[str, str] = Field(default_factory=dict, description="POST表单数据")
     cookies: dict[str, str] = Field(default_factory=dict, description="请求Cookies")
     encoding: str | None = Field(default=None, description="页面编码, 留空则自动检测")
+    force_direct: bool = Field(
+        default=False,
+        description="Bypass configured tunnel and pool proxies for this request",
+    )
 
 
 class TemplateParam(BaseModel):
