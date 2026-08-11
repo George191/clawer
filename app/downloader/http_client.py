@@ -364,7 +364,6 @@ class HttpClient:
         attempt: int = 0,
         no_timeout: bool = False,
         adapter_name: str | None = None,
-        proxy_region: str | None = None,
     ) -> str:
         """请求页面并返回文本内容。
 
@@ -414,25 +413,15 @@ class HttpClient:
 
         if force_direct:
             proxy_url = None
-        elif settings.tunnel_proxy_url and not proxy_region:
+        elif settings.tunnel_proxy_url:
             proxy_url = settings.tunnel_proxy_url
         elif _proxy_pool is not None and _proxy_pool.enabled and use_anti_crawl:
             pre_proxy_url = settings.proxy_pre_proxy_url or None
             lock = await self._get_lease_lock()
             async with lock:
-                proxy_url = await _proxy_pool.lease_proxy(
-                    task_id,
-                    adapter_name,
-                    proxy_region,
-                )
+                proxy_url = await _proxy_pool.lease_proxy(task_id, adapter_name)
                 if proxy_url:
                     self._leased_proxies[task_id] = proxy_url
-
-        if proxy_region and not proxy_url:
-            raise DownloadError(
-                url,
-                message=f"Proxy unavailable for required region: {proxy_region}",
-            )
 
         if proxy_url:
             self._last_proxy_urls[task_id] = proxy_url
@@ -508,12 +497,7 @@ class HttpClient:
                     and self._should_mark_proxy_failure(e, pre_proxy_url)
                 ):
                     await _proxy_pool.mark_failure(proxy_url, adapter_name)
-                    await self._release_failed_proxy(
-                        task_id,
-                        proxy_url,
-                        adapter_name,
-                        proxy_region,
-                    )
+                    await self._release_failed_proxy(task_id, proxy_url, adapter_name)
                 raise
 
     async def _release_failed_proxy(
@@ -521,7 +505,6 @@ class HttpClient:
         task_id: int,
         proxy_url: str,
         adapter_name: str | None = None,
-        proxy_region: str | None = None,
     ) -> None:
         """释放失效的协程代理并尝试获取新代理。"""
         lock = await self._get_lease_lock()
@@ -533,11 +516,7 @@ class HttpClient:
                 await _proxy_pool.release_proxy(task_id)
                 # 尝试为该协程分配新代理
                 if _proxy_pool is not None and _proxy_pool.enabled:
-                    new_proxy = await _proxy_pool.lease_proxy(
-                        task_id,
-                        adapter_name,
-                        proxy_region,
-                    )
+                    new_proxy = await _proxy_pool.lease_proxy(task_id, adapter_name)
                     if new_proxy:
                         self._leased_proxies[task_id] = new_proxy
                         logger.debug(f"[{new_proxy}] Replaced failed proxy {proxy_url} for task {task_id}")

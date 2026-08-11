@@ -319,7 +319,6 @@ class SpiderEngine:
                         url, template.list_request,
                         anti_crawl_enabled=template.effective_anti_crawl_enabled,
                         adapter_name=template.adapter,
-                        proxy_region=template.proxy_region,
                         page=current_page, attempt=attempt
                     )
                     records = await adapter.parse_list_response(current_page, html)
@@ -361,6 +360,11 @@ class SpiderEngine:
                     if isinstance(e, ConnectionFailure):
                         raise
                     adapter_action = await adapter.on_error(e, current_page, attempt)
+                    # A 403 is a transient proxy/identity failure. Keep the
+                    # shared retry path in control so the failed proxy can be
+                    # replaced instead of allowing an adapter to skip the page.
+                    if self._client._error_status_code(e) == 403:
+                        adapter_action = None
 
                     if adapter_action == "abort":
                         result.errors.append(f"List page {current_page}: {e}")
@@ -596,7 +600,6 @@ class SpiderEngine:
                     url, list_request,
                     anti_crawl_enabled=template.effective_anti_crawl_enabled,
                     adapter_name=template.adapter,
-                    proxy_region=template.proxy_region,
                     page=page, attempt=attempt
                 )
 
@@ -639,6 +642,8 @@ class SpiderEngine:
             except json.JSONDecodeError as e:
                 await self._client.mark_last_proxy_failed(template.adapter)
                 adapter_action = await adapter.on_error(e, page, attempt)
+                if self._client._error_status_code(e) == 403:
+                    adapter_action = None
                 if adapter_action == "abort":
                     result.errors.append(f"List page {page}: {e}")
                     return page, [], None, None, True
@@ -654,6 +659,8 @@ class SpiderEngine:
                     raise
 
                 adapter_action = await adapter.on_error(e, page, attempt)
+                if self._client._error_status_code(e) == 403:
+                    adapter_action = None
                 if adapter_action == "abort":
                     result.errors.append(f"List page {page}: {e}")
                     return page, [], None, None, True

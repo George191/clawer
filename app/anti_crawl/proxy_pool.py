@@ -27,13 +27,6 @@ logger = get_logger(__name__)
 _ADAPTER_EXHAUSTION_RELOAD_COOLDOWN_SECONDS = 60.0
 
 
-def _is_proxy_eligible_for_region(
-    proxy: ProxyInfo,
-    proxy_region: str | None,
-) -> bool:
-    return not proxy_region or proxy_region in proxy.region
-
-
 class ProxyPool:
     """通用代理池框架。
 
@@ -251,7 +244,6 @@ class ProxyPool:
         self,
         task_id: int,
         adapter_name: str | None = None,
-        proxy_region: str | None = None,
     ) -> str | None:
         """为指定协程分配独立代理 IP。
 
@@ -277,7 +269,6 @@ class ProxyPool:
                 if (
                     leased in self._healthy
                     and adapter_name not in failed_adapters
-                    and _is_proxy_eligible_for_region(leased, proxy_region)
                 ):
                     logger.debug("Task %d reusing leased proxy: %s", task_id, leased.url)
                     return leased.url
@@ -286,11 +277,7 @@ class ProxyPool:
                     del self._leases[task_id]
 
             # 分配新的独立代理
-            proxy = await self._allocate_unique_proxy(
-                task_id,
-                adapter_name,
-                proxy_region,
-            )
+            proxy = await self._allocate_unique_proxy(task_id, adapter_name)
             if proxy:
                 self._leases[task_id] = proxy
                 proxy.last_used = time.time()
@@ -314,7 +301,6 @@ class ProxyPool:
         self,
         task_id: int,
         adapter_name: str | None = None,
-        proxy_region: str | None = None,
     ) -> ProxyInfo | None:
         """为协程分配一个未被其他协程使用的代理。
 
@@ -345,7 +331,6 @@ class ProxyPool:
             p
             for p in self._healthy
             if adapter_name not in self._adapter_failures.get(p.url, set())
-            and _is_proxy_eligible_for_region(p, proxy_region)
         ]
 
         if not candidates:
@@ -362,7 +347,6 @@ class ProxyPool:
                     p
                     for p in self._healthy
                     if adapter_name not in self._adapter_failures.get(p.url, set())
-                    and _is_proxy_eligible_for_region(p, proxy_region)
                 ]
             elif adapter_name:
                 logger.warning(
@@ -372,11 +356,7 @@ class ProxyPool:
                 )
                 for failed_adapters in self._adapter_failures.values():
                     failed_adapters.discard(adapter_name)
-                candidates = [
-                    p
-                    for p in self._healthy
-                    if _is_proxy_eligible_for_region(p, proxy_region)
-                ]
+                candidates = list(self._healthy)
 
         # 优先选择未被其他协程使用的健康代理
         available = [p for p in candidates if p.url not in in_use]
