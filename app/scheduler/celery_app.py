@@ -28,13 +28,27 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
+
+async def _run_and_cleanup(awaitable: Any) -> Any:
+    """Run one task and release loop-bound async resources before loop shutdown."""
+    try:
+        return await awaitable
+    finally:
+        # Async SQLAlchemy/asyncpg connections are bound to the current loop.
+        # Celery tasks use a fresh loop, so dispose the process-global client
+        # before asyncio.run() closes that loop.
+        from app.storage.postgres_client import get_pg_client
+
+        await get_pg_client().close()
+
+
 def run_async(awaitable: Any) -> Any:
     """Run async Celery work on a fresh event loop per task.
 
     每任务新建+关闭 event loop，避免 curl_cffi AsyncSession 在持久复用 loop 下挂起。
     依赖 curl_cffi session 的组件（如 zdopen adapter）须每次新建 session，不可跨 loop 缓存。
     """
-    return asyncio.run(awaitable)
+    return asyncio.run(_run_and_cleanup(awaitable))
 
 # ── Celery 导入（延迟处理，允许未安装时模块仍可被 import 检查） ──
 
