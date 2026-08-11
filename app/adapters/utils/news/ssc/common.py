@@ -11,11 +11,10 @@ from urllib.parse import urljoin, urlparse
 from lxml import etree
 from lxml import html as lxml_html
 
-from app.adapters.utils.news import NewsBaseAdapter, _ATTACHMENT_EXTENSIONS
+from app.adapters.utils.news import _ATTACHMENT_EXTENSIONS, NewsBaseAdapter
 from app.downloader.http_client import HttpClient
 from app.models.template import RequestConfig
 from app.utils.runtime_control import controlled_sleep
-
 
 _PERMANENT_HTTP_STATUSES = {400, 404, 410}
 
