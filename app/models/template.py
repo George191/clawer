@@ -159,6 +159,11 @@ class SiteTemplate(BaseModel):
         ),
     )
 
+    proxy_region: str | None = Field(
+        default=None,
+        description="Proxy source region required by this template, matched as a substring",
+    )
+
     download_use_proxy: bool | None = Field(
         default=None,
         description=(

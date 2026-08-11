@@ -6,11 +6,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import time
+from pathlib import Path
 from typing import Any
 
 from curl_cffi import requests as curl_requests
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
+from app.config.settings import settings
 from app.logger import get_adapter_logger
 from app.utils.runtime_control import controlled_sleep
 
@@ -53,6 +58,10 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self._http_client: curl_requests.AsyncSession | None = None
+        self._cache_file = Path(
+            self._config.get("cache_file")
+            or Path(settings.output_dir) / ".proxy_cache" / "zdopen.json"
+        )
 
     @property
     def name(self) -> str:
@@ -87,7 +96,7 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
         """
         if self._http_client is not None:
             try:
-                await self._http_client.aclose()
+                await self._http_client.close()
             except Exception as e:
                 logger.debug("Failed to close stale HTTP client: %s", e)
             self._http_client = None
@@ -146,10 +155,18 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
 
             if code == ERROR_CODE_IP_IN_USE:
                 msg = data.get("msg", "Unknown error")
+                cached = await self._load_cached_proxies()
+                if cached:
+                    logger.info(
+                        "Provider extraction is busy (code=%s); using %d cached proxies",
+                        code,
+                        len(cached),
+                    )
+                    return cached
 
                 retries += 1
                 logger.warning(
-                    "ZdopenAPI returned code=%s: %s retrying in %ds (attempt %d)",
+                    "ZdopenAPI returned code=%s: %s; no valid cache, retrying in %ds (attempt %d)",
                     code,
                     msg,
                     wait_seconds,
@@ -160,8 +177,62 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
 
             proxy_list = self._extract_proxy_list(data)
             proxies = self._parse_proxy_items(proxy_list)
+            await self._save_cached_proxies(proxies)
             logger.info("Fetched %d proxies", len(proxies))
             return proxies
+
+    async def _load_cached_proxies(self) -> list[ProxyInfo]:
+        """Load a recent successful proxy response when the provider is busy."""
+        try:
+            payload = await asyncio.to_thread(
+                lambda: json.loads(self._cache_file.read_text(encoding="utf-8"))
+            )
+            if not isinstance(payload, dict):
+                return []
+            cached_at = float(payload.get("cached_at", 0))
+            if time.time() - cached_at > CACHE_MAX_AGE_SECONDS:
+                return []
+            items = payload.get("proxies", [])
+            if not isinstance(items, list):
+                return []
+
+            proxies: list[ProxyInfo] = []
+            for item in items:
+                if isinstance(item, str):
+                    url, region = item, ""
+                elif isinstance(item, dict):
+                    url = item.get("url")
+                    region = str(item.get("region") or "")
+                else:
+                    continue
+                if isinstance(url, str) and url.startswith(("http://", "https://")):
+                    proxies.append(ProxyInfo(url, region=region))
+            return proxies
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return []
+
+    async def _save_cached_proxies(self, proxies: list[ProxyInfo]) -> None:
+        """Cache proxy data without persisting Zdopen API credentials."""
+        if not proxies:
+            return
+        payload = {
+            "cached_at": time.time(),
+            "proxies": [
+                {"url": proxy.url, "region": proxy.region} for proxy in proxies
+            ],
+        }
+
+        def _write() -> None:
+            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+            self._cache_file.write_text(
+                json.dumps(payload, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+        try:
+            await asyncio.to_thread(_write)
+        except OSError as exc:
+            logger.warning("Failed to cache Zdopen proxies: %s", exc)
 
     def _extract_proxy_list(self, data: Any) -> list[dict]:
         """从 API 响应中提取代理条目列表。
@@ -243,7 +314,8 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
                 continue
 
             proxy_url = f"{protocol}://{ip}:{port}"
-            proxies.append(ProxyInfo(proxy_url))
+            region = str(item.get("adr") or "").strip()
+            proxies.append(ProxyInfo(proxy_url, region=region))
 
         return proxies
 

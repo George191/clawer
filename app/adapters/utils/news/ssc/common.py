@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 from copy import deepcopy
 from typing import Any
@@ -11,6 +12,46 @@ from lxml import etree
 from lxml import html as lxml_html
 
 from app.adapters.utils.news import NewsBaseAdapter, _ATTACHMENT_EXTENSIONS
+from app.downloader.http_client import HttpClient
+from app.models.template import RequestConfig
+from app.utils.runtime_control import controlled_sleep
+
+
+_PERMANENT_HTTP_STATUSES = {400, 404, 410}
+
+
+async def request_page_with_retry(
+    client: HttpClient,
+    url: str,
+    config: RequestConfig,
+    *,
+    anti_crawl_enabled: bool,
+    adapter_name: str,
+    proxy_region: str | None,
+    logger: Any,
+) -> str:
+    for attempt in itertools.count(1):
+        try:
+            return await client.request_page(
+                url,
+                config,
+                anti_crawl_enabled=anti_crawl_enabled,
+                adapter_name=adapter_name,
+                proxy_region=proxy_region,
+            )
+        except Exception as exc:
+            status_code = HttpClient._error_status_code(exc)
+            if status_code in _PERMANENT_HTTP_STATUSES:
+                raise
+            delay = min(2 ** attempt, 10)
+            logger.warning(
+                "SSC request failed: url=%s status=%s attempt=%d; retrying in %ds",
+                url,
+                status_code,
+                attempt,
+                delay,
+            )
+            await controlled_sleep(delay)
 
 
 def extract_meta_fields(html: str, record: dict) -> None:

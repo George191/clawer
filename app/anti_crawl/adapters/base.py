@@ -22,16 +22,18 @@ class ProxyInfo:
 
     Attributes:
         url: 代理 URL，格式如 http://host:port
+        region: 代理来源地区
         failures: 连续失败次数
         last_used: 上次使用时间戳
         last_check: 上次健康检查时间戳
         healthy: 当前是否健康
     """
 
-    __slots__ = ("url", "failures", "last_used", "last_check", "healthy")
+    __slots__ = ("url", "region", "failures", "last_used", "last_check", "healthy")
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, region: str = "") -> None:
         self.url: str = url
+        self.region: str = region
         self.failures: int = 0
         self.last_used: float = 0.0
         self.last_check: float = 0.0

@@ -319,6 +319,7 @@ class SpiderEngine:
                         url, template.list_request,
                         anti_crawl_enabled=template.effective_anti_crawl_enabled,
                         adapter_name=template.adapter,
+                        proxy_region=template.proxy_region,
                         page=current_page, attempt=attempt
                     )
                     records = await adapter.parse_list_response(current_page, html)
@@ -595,6 +596,7 @@ class SpiderEngine:
                     url, list_request,
                     anti_crawl_enabled=template.effective_anti_crawl_enabled,
                     adapter_name=template.adapter,
+                    proxy_region=template.proxy_region,
                     page=page, attempt=attempt
                 )
 
