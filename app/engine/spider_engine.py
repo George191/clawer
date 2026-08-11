@@ -379,6 +379,16 @@ class SpiderEngine:
                         page_succeeded = True  # 标记为已处理
                         page_skipped = True
                         break
+                    elif adapter_action == "rotate_proxy":
+                        await self._client.mark_last_proxy_failed(
+                            adapter_name=template.adapter,
+                        )
+                        logger.info(
+                            "[%s] Page %d rotating proxy after adapter request (attempt %d)",
+                            template.name, current_page, attempt + 1,
+                        )
+                        await asyncio.sleep(2)
+                        continue
                     # None → 继续下一次重试
 
             if not page_succeeded:
@@ -646,6 +656,16 @@ class SpiderEngine:
                     page_skipped = True
                     page_succeeded = True
                     break
+                elif adapter_action == "rotate_proxy":
+                    await self._client.mark_last_proxy_failed(
+                        adapter_name=template.adapter,
+                    )
+                    logger.info(
+                        "[%s] Page %d rotating proxy after adapter request (attempt %d)",
+                        template.name, page, attempt + 1,
+                    )
+                    await asyncio.sleep(2)
+                    continue
 
             except Exception as e:
                 if isinstance(e, ConnectionFailure):
@@ -662,6 +682,16 @@ class SpiderEngine:
                     page_skipped = True
                     page_succeeded = True
                     break
+                elif adapter_action == "rotate_proxy":
+                    await self._client.mark_last_proxy_failed(
+                        adapter_name=template.adapter,
+                    )
+                    logger.info(
+                        "[%s] Page %d rotating proxy after adapter request (attempt %d)",
+                        template.name, page, attempt + 1,
+                    )
+                    await asyncio.sleep(2)
+                    continue
                 # None → 继续下一次重试
 
         if not page_succeeded:

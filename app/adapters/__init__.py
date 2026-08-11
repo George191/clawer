@@ -236,6 +236,7 @@ class BaseSiteAdapter:
             "skip" → 跳过当前页
             "abort" → 终止采集
             "reset_session" → 重置会话后重试
+            "rotate_proxy" → 标记当前代理失败、换代理后重试当前页
         """
         return None
 
