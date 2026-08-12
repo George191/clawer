@@ -164,6 +164,42 @@ def extract_attachment_links(html: str, base_url: str) -> list[dict[str, str]]:
     return NewsBaseAdapter.dedupe_media_items(attachments)
 
 
+def extract_video_links(
+    wrapper: Any,
+    base_url: str,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Extract downloadable video sources separately from embedded players."""
+    videos: list[dict[str, str]] = []
+    embeds: list[dict[str, str]] = []
+
+    for node in wrapper.cssselect("video[src], video source[src]"):
+        raw_src = (node.get("src") or "").strip()
+        video_url = NewsBaseAdapter.clean_url(urljoin(base_url, raw_src))
+        if not video_url:
+            continue
+        item = {"url": video_url, "type": "video"}
+        media_type = (node.get("type") or "").strip()
+        if media_type:
+            item["media_type"] = media_type
+        videos.append(item)
+
+    for node in wrapper.cssselect("iframe[src]"):
+        raw_src = (node.get("src") or "").strip()
+        embed_url = NewsBaseAdapter.clean_url(urljoin(base_url, raw_src))
+        if not embed_url:
+            continue
+        item = {"url": embed_url, "type": "embed"}
+        title = re.sub(r"\s+", " ", node.get("title") or "").strip()
+        if title:
+            item["label"] = title
+        embeds.append(item)
+
+    return (
+        NewsBaseAdapter.dedupe_media_items(videos),
+        NewsBaseAdapter.dedupe_media_items(embeds),
+    )
+
+
 async def process_content_html(
     adapter: NewsBaseAdapter,
     record: dict[str, Any],
@@ -184,6 +220,12 @@ async def process_content_html(
     images = extract_images_from_wrapper(wrapper, base_url)
     if images:
         record["images"] = NewsBaseAdapter.dedupe_media_items(images)
+
+    videos, video_embeds = extract_video_links(wrapper, base_url)
+    if videos:
+        record["videos"] = videos
+    if video_embeds:
+        record["video_embeds"] = video_embeds
 
     record["content_html"] = _wrapper_html(wrapper)
 

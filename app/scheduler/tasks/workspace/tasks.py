@@ -59,6 +59,22 @@ def _progress_percent(result: CrawlResult) -> int:
     return min(99, int(result.pages_processed * 100 / result.total_pages))
 
 
+def _apply_task_concurrency(template: Any, policies: dict[str, Any]) -> int | None:
+    concurrency = policies.get("concurrency")
+    if concurrency is None:
+        return None
+    if (
+        isinstance(concurrency, bool)
+        or not isinstance(concurrency, int)
+        or not 1 <= concurrency <= 50
+    ):
+        raise ValueError("policies.concurrency must be an integer between 1 and 50")
+    if template.list_pagination is None:
+        return None
+    template.list_pagination.page_concurrency = concurrency
+    return concurrency
+
+
 async def _load_resume_position(
     checkpoint_store: PageCheckpointStore,
     *,
@@ -244,6 +260,13 @@ async def _crawl_template(
                 param_values={**params, **batch_params},
                 source=released.template_key,
             )
+            task_concurrency = _apply_task_concurrency(current_template, policies)
+            if task_concurrency is not None:
+                logger.info(
+                    "Workspace crawl task page concurrency: task=%s concurrency=%d",
+                    task_id,
+                    task_concurrency,
+                )
             current_template._crawl_context = {
                 "task_id": task_id,
                 "workspace_task_id": task_id,
