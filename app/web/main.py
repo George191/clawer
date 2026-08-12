@@ -263,6 +263,17 @@ def create_app() -> FastAPI:
             return FileResponse(index_path)
         return {"message": "API is running. Use /docs for Swagger UI."}
 
+    @appy.get("/{full_path:path}", include_in_schema=False, response_model=None)
+    async def spa_fallback(full_path: str):
+        """Return the SPA entry point for client-side browser routes."""
+        if full_path in {"api", "ws"} or full_path.startswith(("api/", "ws/")):
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        index_path = _STATIC_DIR / "index.html"
+        if index_path.is_file():
+            return FileResponse(index_path)
+        raise HTTPException(status_code=404, detail="Frontend build not found")
+
     return appy
 
 

@@ -528,6 +528,39 @@ const formatDateTime = (value: string) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
+const sortTaskLogRuns = (runs: WorkspaceTaskLogRun[]) => runs.sort((left, right) => (
+  new Date(right.started_at).getTime() - new Date(left.started_at).getTime()
+));
+
+const mergeTaskLogRun = (
+  runs: WorkspaceTaskLogRun[],
+  log: WorkspaceTaskLog,
+): { runs: WorkspaceTaskLogRun[]; isNewRun: boolean } => {
+  if (!log.run_id) return { runs, isNewRun: false };
+
+  const existingRun = runs.find((run) => run.id === log.run_id);
+  if (!existingRun) {
+    return {
+      runs: sortTaskLogRuns([{
+        id: log.run_id,
+        started_at: log.created_at,
+        ended_at: log.created_at,
+        log_count: 1,
+      }, ...runs]),
+      isNewRun: true,
+    };
+  }
+
+  return {
+    runs: sortTaskLogRuns(runs.map((run) => run.id === log.run_id ? {
+      ...run,
+      ended_at: log.created_at > run.ended_at ? log.created_at : run.ended_at,
+      log_count: run.log_count + 1,
+    } : run)),
+    isNewRun: false,
+  };
+};
+
 const consoleLogPrefixPattern = /^(\[)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})(:\s*)([A-Z]+)(\/)([^\]]+)(\])(\s*)/;
 
 const renderConsoleLogMessage = (message: string): React.ReactNode => {
@@ -1251,45 +1284,54 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         applyWorkspaceTask(message.data as WorkspaceTask);
       } else if (message.type === 'task_log' && message.task_id && message.data) {
         const log = message.data as WorkspaceTaskLog;
+        const mappedLog: TaskLog = {
+          createdAt: log.created_at,
+          time: formatDateTime(log.created_at),
+          level: log.level,
+          message: log.message,
+          runId: log.run_id,
+        };
         setTaskRuntime((current) => {
           const runtime = current[message.task_id!];
           if (!runtime) return current;
-          const mappedLog: TaskLog = {
-            createdAt: log.created_at,
-            time: formatDateTime(log.created_at),
-            level: log.level,
-            message: log.message,
-            runId: log.run_id,
-          };
           const duplicate = runtime.logs.some((item) => (
             item.runId === mappedLog.runId
             && item.createdAt === mappedLog.createdAt
             && item.message === mappedLog.message
           ));
           if (duplicate) return current;
-          const latestRun = runtime.logRuns[0];
-          const isNewRun = Boolean(log.run_id && latestRun?.id !== log.run_id);
-          const nextRuns = isNewRun
-            ? [{
-                id: log.run_id!,
-                started_at: log.created_at,
-                ended_at: log.created_at,
-                log_count: 1,
-              }, ...runtime.logRuns]
-            : runtime.logRuns.map((run, index) => index === 0 ? {
-                ...run,
-                ended_at: log.created_at,
-                log_count: run.log_count + 1,
-              } : run);
+          const { runs: nextRuns, isNewRun } = mergeTaskLogRun(runtime.logRuns, log);
+          const latestRunId = nextRuns[0]?.id ?? null;
+          const currentLogRunId = runtime.logs[runtime.logs.length - 1]?.runId ?? null;
+          const nextLogs = log.run_id === latestRunId
+            ? currentLogRunId === latestRunId
+              ? [...runtime.logs, mappedLog].slice(-200)
+              : [mappedLog]
+            : runtime.logs;
           return {
             ...current,
             [message.task_id!]: {
               ...runtime,
-              logs: isNewRun ? [mappedLog] : [...runtime.logs, mappedLog].slice(-200),
+              logs: nextLogs,
               logRuns: nextRuns,
               logRunCount: runtime.logRunCount + (isNewRun ? 1 : 0),
             },
           };
+        });
+        setHistoricalTaskLogs((current) => {
+          if (
+            !current
+            || current.taskId !== message.task_id
+            || current.runId !== log.run_id
+          ) return current;
+          const duplicateHistoricalLog = current.logs.some((item) => (
+            item.runId === mappedLog.runId
+            && item.createdAt === mappedLog.createdAt
+            && item.message === mappedLog.message
+          ));
+          return duplicateHistoricalLog
+            ? current
+            : { ...current, logs: [...current.logs, mappedLog].slice(-200) };
         });
       } else if (message.type === 'task_deleted' && message.task_id) {
         setTaskItems((current) => current.filter((item) => item.key !== message.task_id));
@@ -1421,10 +1463,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const latestTaskLogRunId = selectedTask?.runtime.logRuns[0]?.id ?? null;
 
   useEffect(() => {
-    setSelectedTaskLogRunId(latestTaskLogRunId);
+    setSelectedTaskLogRunId(null);
     setHistoricalTaskLogs(null);
     setTaskLogRunOpen(false);
-  }, [latestTaskLogRunId, selectedTaskKey]);
+  }, [selectedTaskKey]);
+
+  useEffect(() => {
+    setSelectedTaskLogRunId((current) => (
+      current && selectedTask?.runtime.logRuns.some((run) => run.id === current)
+        ? current
+        : latestTaskLogRunId
+    ));
+  }, [latestTaskLogRunId, selectedTask]);
 
   const handleTaskLogRunChange = useCallback(async (runId: string) => {
     if (!selectedTaskKey) return;
@@ -1454,6 +1504,27 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       setTaskLogsLoading(false);
     }
   }, [latestTaskLogRunId, selectedTaskKey]);
+
+  useEffect(() => {
+    if (
+      !selectedTaskLogRunId
+      || selectedTaskLogRunId === latestTaskLogRunId
+      || taskLogsLoading
+      || (
+        historicalTaskLogs?.taskId === selectedTaskKey
+        && historicalTaskLogs.runId === selectedTaskLogRunId
+      )
+    ) return;
+    void handleTaskLogRunChange(selectedTaskLogRunId);
+  }, [
+    handleTaskLogRunChange,
+    historicalTaskLogs?.runId,
+    historicalTaskLogs?.taskId,
+    latestTaskLogRunId,
+    selectedTaskKey,
+    selectedTaskLogRunId,
+    taskLogsLoading,
+  ]);
 
   const handleTaskLogRunPopupScroll = useCallback(async (
     event: React.UIEvent<HTMLDivElement>,
