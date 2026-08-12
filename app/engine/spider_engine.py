@@ -412,9 +412,14 @@ class SpiderEngine:
                 break
 
             if filtered.all_before_window:
+                watermark = template._crawl_context.get("incremental_watermark")
                 logger.info(
-                    "Incremental time window reached at page %d",
+                    "Stopping pagination at page %d: all records are before "
+                    "incremental watermark window (field=%s, watermark=%s, window_start=%s)",
                     current_page,
+                    watermark.field,
+                    watermark.value.isoformat(),
+                    watermark.window_start.isoformat(),
                 )
                 break
 
@@ -531,6 +536,15 @@ class SpiderEngine:
             await adapter.close()
             return all_records
         if filtered1.all_before_window:
+            watermark = template._crawl_context["incremental_watermark"]
+            logger.info(
+                "Stopping pagination at page %d: all records are before "
+                "incremental watermark window (field=%s, watermark=%s, window_start=%s)",
+                page1,
+                watermark.field,
+                watermark.value.isoformat(),
+                watermark.window_start.isoformat(),
+            )
             await adapter.close()
             return all_records
         if template.list_pagination is None:
@@ -799,6 +813,17 @@ class SpiderEngine:
                 or len(records) < results_per_page
                 or filtered.all_before_window
             ):
+                if filtered.all_before_window:
+                    watermark = template._crawl_context["incremental_watermark"]
+                    logger.info(
+                        "Stopping pagination at page %d: all records are before "
+                        "incremental watermark window "
+                        "(field=%s, watermark=%s, window_start=%s)",
+                        p,
+                        watermark.field,
+                        watermark.value.isoformat(),
+                        watermark.window_start.isoformat(),
+                    )
                 should_stop = True
 
         return should_stop, False

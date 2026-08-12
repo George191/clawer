@@ -274,7 +274,7 @@ async def fetch_wp_media_url(
     return await wp_request_json(
         client,
         url,
-        anti_crawl_enabled=False,
+        anti_crawl_enabled=True,
         adapter_name=adapter_name,
     )
 
