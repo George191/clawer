@@ -143,13 +143,23 @@ class SpiderEngine:
     ) -> BaseSiteAdapter:
         adapter_class = self._adapter_class or self._adapter_classes.get(template.name)
         if adapter_class is None:
-            return get_adapter(
+            adapter = get_adapter(
                 template.adapter,
                 template.base_url,
                 self._client,
                 **kwargs,
             )
-        return adapter_class(template.base_url, self._client, **kwargs)
+        else:
+            adapter = adapter_class(template.base_url, self._client, **kwargs)
+
+        async def save_streamed_records(records: list[dict[str, Any]]) -> int:
+            _, saved_count = await self._filter_and_save_page_records(
+                template, records, template._crawl_context["_crawl_result"]
+            )
+            return saved_count
+
+        adapter._stream_records_callback = save_streamed_records
+        return adapter
 
     async def _save_page_records(
         self,
@@ -214,6 +224,7 @@ class SpiderEngine:
         progress_callback: Callable[[int, CrawlResult], Awaitable[None]] | None = None,
     ) -> CrawlResult:
         result = CrawlResult(template.name, template.data_type)
+        template._crawl_context["_crawl_result"] = result
 
         logger.info(
             "Starting crawl: template=%s, data_type=%s, response_type=%s%s",
@@ -350,9 +361,17 @@ class SpiderEngine:
 
                     _init_enhancements()
 
-                    filtered, _ = await self._filter_and_save_page_records(
-                        template, records, result
-                    )
+                    if template._crawl_context.get("records_streamed"):
+                        filtered = filter_records_by_watermark(
+                            records,
+                            template._crawl_context.get(
+                                "incremental_watermark", TimeWatermark(False, "", None, "")
+                            ),
+                        )
+                    else:
+                        filtered, _ = await self._filter_and_save_page_records(
+                            template, records, result
+                        )
                     all_records.extend(filtered.records)
 
                     logger.info(
@@ -513,9 +532,18 @@ class SpiderEngine:
 
         # 处理第一页记录
         _init_enhancements()
-        filtered1, saved_count = await self._filter_and_save_page_records(
-            template, records1, result
-        )
+        if template._crawl_context.get("records_streamed"):
+            filtered1 = filter_records_by_watermark(
+                records1,
+                template._crawl_context.get(
+                    "incremental_watermark", TimeWatermark(False, "", None, "")
+                ),
+            )
+            saved_count = 0
+        else:
+            filtered1, saved_count = await self._filter_and_save_page_records(
+                template, records1, result
+            )
         all_records.extend(filtered1.records)
         if records1:
             await adapter.on_records_saved(
@@ -777,9 +805,18 @@ class SpiderEngine:
             page_task_id = template._crawl_context.get("page_task_ids", {}).get(
                 p, template._crawl_context.get("task_id", "standalone")
             )
-            filtered, saved_count = await self._filter_and_save_page_records(
-                template, records, result
-            )
+            if template._crawl_context.get("records_streamed"):
+                filtered = filter_records_by_watermark(
+                    records,
+                    template._crawl_context.get(
+                        "incremental_watermark", TimeWatermark(False, "", None, "")
+                    ),
+                )
+                saved_count = 0
+            else:
+                filtered, saved_count = await self._filter_and_save_page_records(
+                    template, records, result
+                )
             all_records.extend(filtered.records)
             if records:
                 await adapter.on_records_saved(

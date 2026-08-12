@@ -348,7 +348,7 @@ class HttpClient:
         """
         logger.info(
             "[Page %d attempt %d] %s %s | tunnel=%s | status_code=%d | anti_crawl=%s | task=%d",
-            page, attempt + 1, method, url_display, tunnel_info, response.status_code, use_anti_crawl, task_id
+            page, attempt, method, url_display, tunnel_info, response.status_code, use_anti_crawl, task_id
         )
 
         if _proxy_pool is not None and proxy_url:
