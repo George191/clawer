@@ -123,7 +123,7 @@ class BeatScheduleRegistry:
             name="workspace_recurring_dispatch",
             task="app.scheduler.tasks.workspace.dispatch_due",
             schedule=crontab(minute="*"),
-            options={"expires": 55},
+            options={"queue": "scheduler", "expires": 55},
         )
 
     # ── 数据库加载（数据驱动） ────────────────────────────────────────

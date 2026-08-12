@@ -100,6 +100,13 @@ class CeleryAppFactory:
             "task_acks_late": True,                    # 任务完成后才确认（故障恢复）
             "task_reject_on_worker_lost": True,        # Worker 异常退出时拒绝任务（重新入队）
             "worker_prefetch_multiplier": 1,           # 每次只预取 1 个任务（长任务场景）
+            "broker_transport_options": {
+                "visibility_timeout": 24 * 3600,
+            },
+            "result_backend_transport_options": {
+                "visibility_timeout": 24 * 3600,
+            },
+            "visibility_timeout": 24 * 3600,
 
             # ── 重试 ──
             "task_default_retry_delay": 60,            # 默认重试间隔 60s
