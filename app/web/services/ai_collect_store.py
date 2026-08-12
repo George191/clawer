@@ -1069,7 +1069,8 @@ class AICollectStore:
                                  SELECT latest.run_id
                                  FROM public.ai_collect_task_logs latest
                                  WHERE latest.task_id = task.id AND latest.run_id IS NOT NULL
-                                 ORDER BY latest.created_at DESC
+                                 GROUP BY latest.run_id
+                                 ORDER BY min(latest.created_at) DESC
                                  LIMIT 1
                                )
                                OR (

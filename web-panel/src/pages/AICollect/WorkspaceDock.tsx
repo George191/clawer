@@ -528,9 +528,20 @@ const formatDateTime = (value: string) => {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 };
 
-const sortTaskLogRuns = (runs: WorkspaceTaskLogRun[]) => runs.sort((left, right) => (
+const sortTaskLogRuns = (runs: WorkspaceTaskLogRun[]) => [...runs].sort((left, right) => (
   new Date(right.started_at).getTime() - new Date(left.started_at).getTime()
 ));
+
+const mergeTaskLogRuns = (
+  incoming: WorkspaceTaskLogRun[],
+  existing: WorkspaceTaskLogRun[],
+) => {
+  const incomingIds = new Set(incoming.map((run) => run.id));
+  return sortTaskLogRuns([
+    ...incoming,
+    ...existing.filter((run) => !incomingIds.has(run.id)),
+  ]);
+};
 
 const mergeTaskLogRun = (
   runs: WorkspaceTaskLogRun[],
@@ -1150,12 +1161,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       if (!runtime.logs.length && existing?.logs.length) {
         runtime.logs = existing.logs;
       }
-      if (
-        existing
-        && existing.logRuns.length > runtime.logRuns.length
-        && existing.logRuns[0]?.id === runtime.logRuns[0]?.id
-      ) {
-        runtime.logRuns = existing.logRuns;
+      if (existing) {
+        runtime.logRuns = mergeTaskLogRuns(runtime.logRuns, existing.logRuns);
+        runtime.logRunCount = Math.max(runtime.logRunCount, existing.logRunCount);
       }
       return { ...current, [item.id]: runtime };
     });
@@ -1169,12 +1177,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       if (!runtime.logs.length && existing?.logs.length) {
         runtime.logs = existing.logs;
       }
-      if (
-        existing
-        && existing.logRuns.length > runtime.logRuns.length
-        && existing.logRuns[0]?.id === runtime.logRuns[0]?.id
-      ) {
-        runtime.logRuns = existing.logRuns;
+      if (existing) {
+        runtime.logRuns = mergeTaskLogRuns(runtime.logRuns, existing.logRuns);
+        runtime.logRunCount = Math.max(runtime.logRunCount, existing.logRunCount);
       }
       return [item.id, runtime];
     })));
