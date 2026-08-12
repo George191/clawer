@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import yaml
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config.ai_settings import ai_settings
 from app.config.settings import settings
@@ -92,6 +92,20 @@ class WorkspaceTaskRequest(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     policies: dict[str, Any] = Field(default_factory=dict)
     owner: str = "AI Collect"
+
+    @field_validator("policies", mode="before")
+    @classmethod
+    def validate_policy_concurrency(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or "concurrency" not in value:
+            return value
+        concurrency = value["concurrency"]
+        if (
+            isinstance(concurrency, bool)
+            or not isinstance(concurrency, int)
+            or not 1 <= concurrency <= 50
+        ):
+            raise ValueError("policies.concurrency must be an integer between 1 and 50")
+        return value
 
 
 class WorkspaceReleaseRequest(BaseModel):

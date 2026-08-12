@@ -59,6 +59,25 @@ def _progress_percent(result: CrawlResult) -> int:
     return min(99, int(result.pages_processed * 100 / result.total_pages))
 
 
+async def _load_resume_position(
+    checkpoint_store: PageCheckpointStore,
+    *,
+    incremental: bool,
+    batch_count: int,
+) -> tuple[int | None, int]:
+    if incremental:
+        return None, 0
+
+    resume_page = await checkpoint_store.load()
+    loaded_batch_index = await checkpoint_store.load_batch_index()
+    resume_batch_index = loaded_batch_index or 0
+    if loaded_batch_index is None and batch_count > 1:
+        resume_page = None
+    if resume_batch_index >= batch_count:
+        return None, 0
+    return resume_page, resume_batch_index
+
+
 async def _batch_parameter_sets(
     template: Any,
     policies: dict[str, Any],
@@ -185,14 +204,11 @@ async def _crawl_template(
             raise RuntimeError(
                 f"Redis is required for incremental task {task_id}"
             )
-        resume_page = await checkpoint_store.load()
-        loaded_batch_index = await checkpoint_store.load_batch_index()
-        resume_batch_index = loaded_batch_index or 0
-        if loaded_batch_index is None and len(batch_parameter_sets) > 1:
-            resume_page = None
-        if resume_batch_index >= len(batch_parameter_sets):
-            resume_batch_index = 0
-            resume_page = None
+        resume_page, resume_batch_index = await _load_resume_position(
+            checkpoint_store,
+            incremental=bool(policies.get("incremental")),
+            batch_count=len(batch_parameter_sets),
+        )
         redis_watermark = (
             await checkpoint_store.load_watermark()
             if policies.get("incremental") else None
