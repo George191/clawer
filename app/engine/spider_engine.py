@@ -158,7 +158,13 @@ class SpiderEngine:
             )
             return saved_count
 
+        async def save_discovered_records(records: list[dict[str, Any]]) -> int:
+            return await self._save_page_records(
+                template, records, template._crawl_context["_crawl_result"]
+            )
+
         adapter._stream_records_callback = save_streamed_records
+        adapter._discovered_records_callback = save_discovered_records
         return adapter
 
     async def _save_page_records(
