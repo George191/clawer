@@ -74,7 +74,6 @@ services:
       dockerfile: docker/crawler.Dockerfile
     container_name: scheduler-worker
     restart: unless-stopped
-    network_mode: host
     env_file:
       - .env
     working_dir: /app
@@ -85,6 +84,8 @@ services:
       timeout: 10s
       start_period: 30s
       retries: 3
+    networks:
+      - asiral-helio
 
   downloader:
     build:
