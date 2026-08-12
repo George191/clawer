@@ -325,6 +325,19 @@ class SpiderEngine:
                     if records is None:
                         records = self._parser.parse_list(html, template.list_fields)
 
+                    watermark = template._crawl_context.get("incremental_watermark")
+                    if isinstance(watermark, TimeWatermark):
+                        list_filtered = filter_records_by_watermark(records, watermark)
+                        if list_filtered.all_before_window:
+                            filtered, _ = await self._filter_and_save_page_records(
+                                template, records, result
+                            )
+                            result.pages_processed += 1
+                            if progress_callback is not None:
+                                await progress_callback(current_page, result)
+                            page_succeeded = True
+                            break
+
                     records = await adapter.on_after_page(current_page, records)
 
                     if not records:
