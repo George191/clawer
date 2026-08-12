@@ -348,7 +348,7 @@ class HttpClient:
         """
         logger.info(
             "[Page %d attempt %d] %s %s | tunnel=%s | status_code=%d | anti_crawl=%s | task=%d",
-            page, attempt, method, url_display, tunnel_info, response.status_code, use_anti_crawl, task_id
+            page, attempt + 1, method, url_display, tunnel_info, response.status_code, use_anti_crawl, task_id
         )
 
         if _proxy_pool is not None and proxy_url:
@@ -364,6 +364,7 @@ class HttpClient:
         attempt: int = 0,
         no_timeout: bool = False,
         adapter_name: str | None = None,
+        rotate_proxy: bool = False,
     ) -> str:
         """请求页面并返回文本内容。
 
@@ -412,9 +413,14 @@ class HttpClient:
         pre_proxy_url = None
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
 
+        if rotate_proxy and _proxy_pool is not None and _proxy_pool.enabled:
+            await self._release_proxy_lease(task_id)
+
         if force_direct:
             proxy_url = None
-        elif settings.tunnel_proxy_url:
+        elif settings.tunnel_proxy_url and not (
+            rotate_proxy and _proxy_pool is not None and _proxy_pool.enabled
+        ):
             proxy_url = settings.tunnel_proxy_url
         elif _proxy_pool is not None and _proxy_pool.enabled and use_anti_crawl:
             pre_proxy_url = settings.proxy_pre_proxy_url or None
@@ -521,6 +527,15 @@ class HttpClient:
                     if new_proxy:
                         self._leased_proxies[task_id] = new_proxy
                         logger.debug(f"[{new_proxy}] Replaced failed proxy {proxy_url} for task {task_id}")
+
+    async def _release_proxy_lease(self, task_id: int) -> None:
+        """Release a healthy lease before a retry that must rotate IP."""
+        lock = await self._get_lease_lock()
+        async with lock:
+            proxy_url = self._leased_proxies.pop(task_id, None)
+            self._last_proxy_urls.pop(task_id, None)
+            if proxy_url and _proxy_pool is not None:
+                await _proxy_pool.release_proxy(task_id)
                         
     async def download_bytes(
         self,

@@ -9,7 +9,6 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from lxml import etree
-from tenacity import retry, stop_after_attempt, wait_exponential, stop_never
 
 from app.adapters.utils.news import NewsBaseAdapter
 from app.downloader.http_client import HttpClient
@@ -235,10 +234,6 @@ async def process_content_html(
 
     adapter.merge_external_links_from_content(record, base_url)
 
-@retry(
-    stop=stop_never,
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-)
 async def wp_request_json(
     client: HttpClient,
     url: str,
@@ -246,12 +241,26 @@ async def wp_request_json(
     adapter_name: str | None = None,
 ) -> Any:
     """Request JSON from a WordPress REST endpoint."""
-    text = await client.request_page(
-        url,
-        anti_crawl_enabled=anti_crawl_enabled,
-        adapter_name=adapter_name,
-    )
-    return json.loads(text)
+    attempt = 0
+    while True:
+        try:
+            text = await client.request_page(
+                url,
+                anti_crawl_enabled=anti_crawl_enabled,
+                adapter_name=adapter_name,
+                attempt=attempt,
+                rotate_proxy=attempt > 0,
+            )
+            return json.loads(text)
+        except Exception as exc:
+            attempt += 1
+            logger.warning(
+                "WordPress JSON request failed, rotating proxy and retrying in %.1fs "
+                "(attempt %d): %s",
+                delay,
+                attempt + 1,
+                exc,
+            )
 
 
 async def fetch_wp_media_url(
