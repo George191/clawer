@@ -255,10 +255,9 @@ async def wp_request_json(
         except Exception as exc:
             attempt += 1
             logger.warning(
-                "WordPress JSON request failed, rotating proxy and retrying in %.1fs "
+                "WordPress JSON request failed, rotating proxy and retrying"
                 "(attempt %d): %s",
-                delay,
-                attempt + 1,
+                attempt,
                 exc,
             )
 
