@@ -600,11 +600,11 @@ class SpiderEngine:
                 batch = remaining_pages[batch_start:batch_start + page_concurrency]
                 if progress_callback is not None:
                     await progress_callback(batch[0], result)
-                _, aborted = await self._fetch_and_process_batch(
+                should_stop, aborted = await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
                     start_page, dynamic_pages, result, all_records, progress_callback
                 )
-                if aborted:
+                if aborted or should_stop:
                     break
         else:
             # 未知总页数：逐批并行获取，遇空页或不足一页时终止
@@ -711,6 +711,10 @@ class SpiderEngine:
                 if adapter_action == "abort":
                     result.errors.append(f"List page {page}: {e}")
                     return page, [], None, None, True
+                if adapter_action == "stop":
+                    page_skipped = True
+                    page_succeeded = True
+                    break
                 if adapter_action == "reset_session":
                     await adapter.on_before_crawl(template)
                 elif adapter_action == "skip":
@@ -736,6 +740,10 @@ class SpiderEngine:
                 if adapter_action == "abort":
                     result.errors.append(f"List page {page}: {e}")
                     return page, [], None, None, True
+                elif adapter_action == "stop":
+                    page_skipped = True
+                    page_succeeded = True
+                    break
                 elif adapter_action == "reset_session":
                     await adapter.on_before_crawl(template)
                     continue
