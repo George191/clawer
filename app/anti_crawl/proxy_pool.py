@@ -158,13 +158,6 @@ class ProxyPool:
                 seen.add(p.url)
                 unique.append(p)
         self._proxies = unique
-        
-        # 过滤掉非HTTP/HTTPS的代理（排除socket相关协议）
-        self._proxies = [p for p in self._proxies if p.url.startswith('http://') or p.url.startswith('https://')]
-        
-        if not self._proxies:
-            logger.warning("Proxy pool is empty after filtering non-HTTP proxies")
-            return
 
         # 初始分类：全部标记为健康
         self._healthy = list(self._proxies)

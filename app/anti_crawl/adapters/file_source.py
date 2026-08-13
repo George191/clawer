@@ -70,15 +70,7 @@ class FileProxySourceAdapter(ProxySourceAdapter):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            
-            # 完全过滤socket协议，只保留http/https
-            if line.startswith('socks://') or line.startswith('socks5://') or line.startswith('socks4://') or line.startswith('socket://'):
-                continue
-            
-            # 确保协议是 http 或 https
-            if not (line.startswith('http://') or line.startswith('https://')):
-                continue
-            
+
             proxies.append(ProxyInfo(line))
 
         logger.info("Loaded %d proxies from %s", len(proxies), path)
