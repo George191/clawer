@@ -7,7 +7,9 @@ FROM python:3.12-slim AS builder
 WORKDIR /app
 
 ENV TMPDIR=/data/tmp \
-    PIP_CACHE_DIR=/data/pip-cache
+    PIP_CACHE_DIR=/data/pip-cache \
+    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
 RUN mkdir -p /data/tmp /data/pip-cache /data/wheels \
     /data/apt-cache/archives/partial /data/apt-lists/partial \
