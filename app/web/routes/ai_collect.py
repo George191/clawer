@@ -1334,18 +1334,42 @@ async def workspace_task_action(task_id: str, body: WorkspaceTaskActionRequest):
         await ai_collect_store.append_task_log(task_id, "warn", "任务已取消")
         return task
 
-    if body.action in {"pause", "resume"}:
-        current_status, next_status = (
-            ("running", "paused") if body.action == "pause" else ("paused", "running")
-        )
-        task = await ai_collect_store.set_active_task_status(task_id, current_status, next_status)
+    if body.action == "pause":
+        task = await ai_collect_store.set_active_task_status(task_id, "running", "paused")
         if task is None:
-            raise HTTPException(status_code=409, detail=f"Task cannot {body.action} from its current state")
-        await ai_collect_store.append_task_log(
-            task_id,
-            "info",
-            "任务已暂停" if body.action == "pause" else "任务已继续",
+            raise HTTPException(status_code=409, detail="Task cannot pause from its current state")
+        # 协作式暂停（任务内部轮询 status）在 engine.crawl_from_page 内部的抓取/重试
+        # 循环中不会被检查，因此必须 revoke terminate 真正停止 Celery 任务。
+        # checkpoint 保留，resume 时从断点续跑。
+        try:
+            from app.scheduler.celery_app import app as celery_app
+
+            celery_app.control.revoke(str(task.get("celery_task_id") or task_id), terminate=True)
+        except Exception:
+            logger.exception("Failed to revoke paused workspace task %s", task_id)
+        await ai_collect_store.append_task_log(task_id, "warn", "任务已暂停")
+        return task
+
+    if body.action == "resume":
+        celery_task_id = str(uuid.uuid4())
+        task = await ai_collect_store.set_active_task_status(
+            task_id, "paused", "running", celery_task_id=celery_task_id
         )
+        if task is None:
+            raise HTTPException(status_code=409, detail="Task cannot resume from its current state")
+        # pause 已 terminate 原 Celery 任务，resume 需重新入队，靠 checkpoint 续跑。
+        try:
+            from app.scheduler.celery_app import app as celery_app
+
+            celery_app.send_task(
+                "app.scheduler.tasks.workspace.crawl_template",
+                args=[task_id, str(task["template_name"]), dict(task.get("parameters") or {})],
+                task_id=celery_task_id,
+            )
+        except Exception as exc:
+            await ai_collect_store.update_task(task_id, {"status": "failed", "throughput": 0})
+            raise HTTPException(status_code=503, detail="Failed to enqueue crawler task") from exc
+        await ai_collect_store.append_task_log(task_id, "info", "任务已继续")
         return task
 
     actions: dict[str, dict[str, Any]] = {

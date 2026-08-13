@@ -1027,20 +1027,30 @@ class AICollectStore:
         task_id: str,
         current_status: str,
         next_status: str,
+        celery_task_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Transition an active task only from its expected current state."""
+        """Transition an active task only from its expected current state.
+
+        当传入 celery_task_id 时一并更新（resume 续跑需要新的 Celery 任务 id）。
+        """
         await self.initialize()
         task = await self._pg.fetch_one(
             """
             UPDATE public.ai_collect_tasks SET
                 status = :next_status,
+                celery_task_id = COALESCE(:celery_task_id, celery_task_id),
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
               AND status = :current_status
             RETURNING *
             """,
-            {"id": task_id, "current_status": current_status, "next_status": next_status},
+            {
+                "id": task_id,
+                "current_status": current_status,
+                "next_status": next_status,
+                "celery_task_id": celery_task_id,
+            },
         )
         if task:
             task["logs"] = []
