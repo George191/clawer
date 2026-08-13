@@ -7,9 +7,7 @@ FROM python:3.12-slim AS builder
 WORKDIR /app
 
 ENV TMPDIR=/data/tmp \
-    PIP_CACHE_DIR=/data/pip-cache \
-    PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
-    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+    PIP_CACHE_DIR=/data/pip-cache
 
 RUN mkdir -p /data/tmp /data/pip-cache /data/wheels \
     /data/apt-cache/archives/partial /data/apt-lists/partial \
@@ -26,6 +24,9 @@ RUN mkdir -p /data/tmp /data/pip-cache /data/wheels \
     libssl-dev \
     libpq-dev \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
+
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
 COPY requirements ./requirements
 RUN pip wheel --cache-dir=/data/pip-cache --wheel-dir=/data/wheels -r requirements/etl.txt
