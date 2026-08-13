@@ -208,13 +208,16 @@ async def process_content_html(
     """Process content_html into slides, body images, attachments, and links."""
     from lxml import html as lxml_html
 
+    rid = record.get("id")
     content_html = str(record.get("content_html") or "").strip()
     if not content_html:
+        logger.warning("[DEBUG pch] id=%s SKIP (empty content_html)", rid)
         return
 
     try:
         wrapper = lxml_html.fragment_fromstring(content_html, create_parent="div")
-    except Exception:
+    except Exception as e:
+        logger.warning("[DEBUG pch] id=%s lxml FAILED: %s", rid, e)
         return
 
     images = extract_images_from_wrapper(wrapper, base_url)
@@ -234,6 +237,7 @@ async def process_content_html(
         record["attachments"] = NewsBaseAdapter.dedupe_media_items(attachments)
 
     adapter.merge_external_links_from_content(record, base_url)
+    logger.warning("[DEBUG pch] id=%s DONE", rid)
 
 async def wp_request_json(
     client: HttpClient,
