@@ -241,7 +241,12 @@ async def wp_request_json(
     anti_crawl_enabled: bool = True,
     adapter_name: str | None = None,
 ) -> Any:
-    """Request JSON from a WordPress REST endpoint."""
+    """Request JSON from a WordPress REST endpoint.
+
+    无限重试（每次 rotate_proxy 换 IP），不 sleep 立刻下次。
+    依赖上层 enrich_cover_images_batch 的 gather 超时兜底，
+    防止代理彻底坏掉时 Celery 任务永久挂死。
+    """
     attempt = 0
     while True:
         try:
@@ -288,6 +293,56 @@ async def fetch_wp_media_url(
     )
 
 
+def _extract_embedded_media(record: dict[str, Any]) -> dict[str, Any] | None:
+    """从 _embedded.wp:featuredmedia 提取封面图完整 media 对象。
+
+    WP REST API 加 _embed=1 后返回的结构：
+        "_embedded": {
+            "wp:featuredmedia": [
+                {"source_url": "https://.../cover.jpg", "media_details": {...}}
+            ]
+        }
+    返回第一个 media 对象（dict），与 fetch_wp_media_url 返回结构一致。
+    """
+    embedded = record.get("_embedded")
+    if not isinstance(embedded, dict):
+        return None
+    media_list = embedded.get("wp:featuredmedia")
+    if not isinstance(media_list, list) or not media_list:
+        return None
+    first = media_list[0]
+    if isinstance(first, dict) and first.get("source_url"):
+        return first
+    return None
+
+
+def _extract_og_image_url(record: dict[str, Any]) -> str | None:
+    """从 yoast_head_json.og_image 提取封面图 URL。
+
+    Yoast SEO 的 og_image 结构因版本而异：
+    - 字符串: "https://example.com/img.jpg"
+    - 字符串数组: ["https://example.com/img.jpg"]
+    - 对象数组: [{"url": "https://example.com/img.jpg", "width": 1200, ...}]
+    """
+    yoast = record.get("yoast_head_json")
+    if not isinstance(yoast, dict):
+        return None
+    og = yoast.get("og_image")
+    if not og:
+        return None
+    if isinstance(og, str):
+        return og or None
+    if isinstance(og, list) and og:
+        first = og[0]
+        if isinstance(first, str):
+            return first or None
+        if isinstance(first, dict):
+            return first.get("url") or None
+    if isinstance(og, dict):
+        return og.get("url") or None
+    return None
+
+
 async def enrich_cover_images_batch(
     client: HttpClient,
     base_url: str,
@@ -295,12 +350,29 @@ async def enrich_cover_images_batch(
     cache: dict[int, str],
     adapter_name: str | None = None,
 ) -> None:
-    """Fetch cover image URLs and write the configured cover aliases."""
-    pending = [
-        (record, int(record.get("featured_media") or 0))
-        for record in records
-        if record.get("featured_media")
-    ]
+    """Fetch cover image URLs and write the configured cover aliases.
+
+    优先级：
+    1. _embedded.wp:featuredmedia（WP 默认，_embed=1 时内联，无需额外请求）
+    2. yoast_head_json.og_image（Yoast SEO 插件字段，URL 字符串）
+    3. media API 兜底（wp-json/wp/v2/media/{id}，依赖代理轮换）
+    """
+    pending = []
+    for record in records:
+        # 1. WP 默认：_embedded
+        embedded_media = _extract_embedded_media(record)
+        if embedded_media:
+            record["featured_media"] = embedded_media
+            continue
+        # 2. Yoast SEO 插件：yoast_head_json.og_image
+        og_url = _extract_og_image_url(record)
+        if og_url:
+            record["featured_media"] = {"source_url": og_url}
+            continue
+        # 3. 兜底：media API
+        media_id = int(record.get("featured_media") or 0)
+        if media_id:
+            pending.append((record, media_id))
     if not pending:
         return
 
@@ -315,10 +387,10 @@ async def enrich_cover_images_batch(
         if cover_obj:
             record["featured_media"] = cover_obj
 
-    # 兜底超时：单个 media 请求 hang 或 wp_request_json 无限重试时，
-    # 整个 gather 永不返回导致 Celery 任务挂死。此处用 asyncio.wait_for 兜底，
-    # 超时后取消所有子任务并抛出 TimeoutError。
-    gather_timeout = settings.http_request_timeout * 4
+    # 兜底超时：wp_request_json 无限重试换 IP 时，整个 gather 可能长时间不返回。
+    # 给 10 分钟（约 120 次换 IP 重试）让代理轮换最终命中好 IP，
+    # 超时后取消所有子任务并抛出 TimeoutError，防止 Celery 任务永久挂死。
+    gather_timeout = 600
     await asyncio.wait_for(
         asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending)),
         timeout=gather_timeout,
