@@ -227,18 +227,6 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
 
             if not ip or not port:
                 continue
-            
-            # 完全过滤socket协议，只保留http/https
-            if protocol.startswith('socks') or protocol.startswith('socket'):
-                continue
-
-            # 协议过滤
-            if protocol_filter and protocol != protocol_filter.lower():
-                continue
-            
-            # 确保协议是 http 或 https
-            if protocol not in ['http', 'https']:
-                continue
 
             proxy_url = f"{protocol}://{ip}:{port}"
             proxies.append(ProxyInfo(proxy_url))
