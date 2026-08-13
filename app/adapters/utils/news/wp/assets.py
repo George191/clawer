@@ -333,14 +333,15 @@ def _extract_og_image_url(record: dict[str, Any]) -> str | None:
     if isinstance(og, str):
         return og or None
     if isinstance(og, list) and og:
-        first = og[0]
-        if isinstance(first, str):
-            return first or None
-        if isinstance(first, dict):
-            return first.get("url") or None
+        items = []
+        for item in og:
+            if isinstance(item, str):
+                items.append(item or None)
+            if isinstance(item, dict):
+                items.append(item.get("url") or None)
+        return items
     if isinstance(og, dict):
         return og.get("url") or None
-    return None
 
 
 async def enrich_cover_images_batch(
