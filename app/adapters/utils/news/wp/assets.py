@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 from lxml import etree
 
 from app.adapters.utils.news import NewsBaseAdapter
+from app.config.settings import settings
 from app.downloader.http_client import HttpClient
 from app.logger import get_adapter_logger
 from app.models.template import RequestConfig
@@ -314,7 +315,14 @@ async def enrich_cover_images_batch(
         if cover_obj:
             record["featured_media"] = cover_obj
 
-    await asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending))
+    # 兜底超时：单个 media 请求 hang 或 wp_request_json 无限重试时，
+    # 整个 gather 永不返回导致 Celery 任务挂死。此处用 asyncio.wait_for 兜底，
+    # 超时后取消所有子任务并抛出 TimeoutError。
+    gather_timeout = settings.http_request_timeout * 4
+    await asyncio.wait_for(
+        asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending)),
+        timeout=gather_timeout,
+    )
 
 def cleanup_wp_fields(record: dict[str, Any]) -> None:
     """Remove WordPress API intermediate fields."""

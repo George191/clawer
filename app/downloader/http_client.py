@@ -438,74 +438,84 @@ class HttpClient:
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
         # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
-        async with await self._create_client(
-            proxy_url,
-            no_timeout=no_timeout,
-            pre_proxy_url=pre_proxy_url,
-        ) as client:
-            try:
-                request_kwargs = dict(
-                    method=config.method,
-                    url=url,
-                    headers=headers,
-                    params=config.params,
-                    cookies=cookies,
-                )
-                if config.method.upper() == "POST":
-                    request_kwargs["data"] = config.form_data
-        
-                tunnel_info = await self._before_request(
-                    client=client,
-                    proxy_url=proxy_url,
-                    pre_proxy_url=pre_proxy_url,
-                    url_display=url_display,
-                    page=page,
-                    attempt=attempt,
-                    method=config.method,
-                    use_anti_crawl=use_anti_crawl,
-                    task_id=task_id,
-                )
-                
-                response = await client.request(**request_kwargs)
+        async def _do_request() -> str:
+            async with await self._create_client(
+                proxy_url,
+                no_timeout=no_timeout,
+                pre_proxy_url=pre_proxy_url,
+            ) as client:
+                try:
+                    request_kwargs = dict(
+                        method=config.method,
+                        url=url,
+                        headers=headers,
+                        params=config.params,
+                        cookies=cookies,
+                    )
+                    if config.method.upper() == "POST":
+                        request_kwargs["data"] = config.form_data
 
-                if config.encoding:
-                    response.encoding = config.encoding
-
-                if _is_aws_waf_challenge(response.status_code, response.text):
-                    raise DownloadError(
-                        url_display,
-                        response.status_code,
-                        "AWS WAF challenge response",
+                    tunnel_info = await self._before_request(
+                        client=client,
+                        proxy_url=proxy_url,
+                        pre_proxy_url=pre_proxy_url,
+                        url_display=url_display,
+                        page=page,
+                        attempt=attempt,
+                        method=config.method,
+                        use_anti_crawl=use_anti_crawl,
+                        task_id=task_id,
                     )
 
-                if response.status_code in settings.http_retry_on_statuses:
-                    raise DownloadError(url_display, response.status_code, "Retryable status code")
+                    response = await client.request(**request_kwargs)
 
-                response.raise_for_status()
+                    if config.encoding:
+                        response.encoding = config.encoding
 
-                await self._after_request(
-                    response=response,
-                    proxy_url=proxy_url,
-                    url_display=url_display,
-                    page=page,
-                    attempt=attempt,
-                    method=config.method,
-                    tunnel_info=tunnel_info,
-                    use_anti_crawl=use_anti_crawl,
-                    task_id=task_id,
-                )
+                    if _is_aws_waf_challenge(response.status_code, response.text):
+                        raise DownloadError(
+                            url_display,
+                            response.status_code,
+                            "AWS WAF challenge response",
+                        )
 
-                return response.text
+                    if response.status_code in settings.http_retry_on_statuses:
+                        raise DownloadError(url_display, response.status_code, "Retryable status code")
 
-            except Exception as e:
-                if (
-                    _proxy_pool is not None
-                    and proxy_url
-                    and self._should_mark_proxy_failure(e, pre_proxy_url)
-                ):
-                    await _proxy_pool.mark_failure(proxy_url, adapter_name)
-                    await self._release_failed_proxy(task_id, proxy_url, adapter_name)
-                raise
+                    response.raise_for_status()
+
+                    await self._after_request(
+                        response=response,
+                        proxy_url=proxy_url,
+                        url_display=url_display,
+                        page=page,
+                        attempt=attempt,
+                        method=config.method,
+                        tunnel_info=tunnel_info,
+                        use_anti_crawl=use_anti_crawl,
+                        task_id=task_id,
+                    )
+
+                    return response.text
+
+                except Exception as e:
+                    if (
+                        _proxy_pool is not None
+                        and proxy_url
+                        and self._should_mark_proxy_failure(e, pre_proxy_url)
+                    ):
+                        await _proxy_pool.mark_failure(proxy_url, adapter_name)
+                        await self._release_failed_proxy(task_id, proxy_url, adapter_name)
+                    raise
+
+        if no_timeout:
+            return await _do_request()
+
+        # 兜底超时：curl_cffi 的 timeout 在隧道代理场景下可能不触发，
+        # AsyncSession.close() 也可能永久 hang，此处用 asyncio.wait_for 兜底，
+        # 防止 request_page 永不返回导致整个 Celery 任务挂死。
+        fallback_timeout = settings.http_request_timeout * 2
+        return await asyncio.wait_for(_do_request(), timeout=fallback_timeout)
 
     async def _release_failed_proxy(
         self,
