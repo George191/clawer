@@ -319,29 +319,33 @@ def _extract_embedded_media(record: dict[str, Any]) -> dict[str, Any] | None:
 def _extract_og_image_url(record: dict[str, Any]) -> str | None:
     """从 yoast_head_json.og_image 提取封面图 URL。
 
+    支持两种数据来源：
+    - record["og_image"]: list_fields 映射后的独立字段（selector=yoast_head_json.og_image）
+    - record["yoast_head_json"]["og_image"]: 完整 yoast 对象（未在 list_fields 映射时）
+
     Yoast SEO 的 og_image 结构因版本而异：
     - 字符串: "https://example.com/img.jpg"
     - 字符串数组: ["https://example.com/img.jpg"]
     - 对象数组: [{"url": "https://example.com/img.jpg", "width": 1200, ...}]
     """
-    yoast = record.get("yoast_head_json")
-    if not isinstance(yoast, dict):
-        return None
-    og = yoast.get("og_image")
+    og = record.get("og_image")
+    if og is None:
+        yoast = record.get("yoast_head_json")
+        if isinstance(yoast, dict):
+            og = yoast.get("og_image")
     if not og:
         return None
     if isinstance(og, str):
         return og or None
     if isinstance(og, list) and og:
-        items = []
-        for item in og:
-            if isinstance(item, str):
-                items.append(item or None)
-            if isinstance(item, dict):
-                items.append(item.get("url") or None)
-        return items
+        first = og[0]
+        if isinstance(first, str):
+            return first or None
+        if isinstance(first, dict):
+            return first.get("url") or None
     if isinstance(og, dict):
         return og.get("url") or None
+    return None
 
 
 async def enrich_cover_images_batch(
@@ -365,7 +369,7 @@ async def enrich_cover_images_batch(
         if embedded_media:
             record["featured_media"] = embedded_media
             continue
-        # 2. Yoast SEO 插件：yoast_head_json.og_image
+        # 2. Yoast SEO 插件：og_image（list_fields 映射的独立字段 或 yoast_head_json 完整对象）
         og_url = _extract_og_image_url(record)
         if og_url:
             record["featured_media"] = {"source_url": og_url}
