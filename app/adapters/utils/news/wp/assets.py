@@ -378,6 +378,10 @@ async def enrich_cover_images_batch(
         media_id = int(record.get("featured_media") or 0)
         if media_id:
             pending.append((record, media_id))
+    logger.warning(
+        "[DEBUG enrich] total=%d pending_media_api=%d",
+        len(records), len(pending),
+    )
     if not pending:
         return
 
