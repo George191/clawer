@@ -180,8 +180,15 @@ class SpiderEngine:
         if search_params:
             for record in records:
                 record["_meta_search_params"] = search_params
+        logger.warning(
+            "[DEBUG save] before storage.save_records template=%s records=%d",
+            template.name, len(records),
+        )
         record_ids = await self._storage.save_records(
             template.name, template.data_type, template.dedup_fields, records
+        )
+        logger.warning(
+            "[DEBUG save] after storage.save_records saved=%d", len(record_ids),
         )
         result.records.extend(records)
         saved_count = len(record_ids)
@@ -682,6 +689,9 @@ class SpiderEngine:
                     json_data, item_path, template.list_fields
                 )
                 records = await adapter.on_after_page(page, records)
+                logger.warning(
+                    "[DEBUG fetch] page=%d on_after_page done records=%d", page, len(records),
+                )
 
                 # 仅第一页提取分页元数据
                 if is_first and template.json_total_path:
@@ -797,6 +807,10 @@ class SpiderEngine:
             )
             for task in done:
                 page_result = task.result()
+                logger.warning(
+                    "[DEBUG batch] task done page=%s abort=%s records=%d",
+                    page_result[0], page_result[4], len(page_result[1] or []),
+                )
                 if page_result[4]:
                     for pending in tasks:
                         pending.cancel()
@@ -804,6 +818,7 @@ class SpiderEngine:
                         await asyncio.gather(*tasks, return_exceptions=True)
                     return False, True
                 batch_results.append(page_result)
+        logger.warning("[DEBUG batch] all tasks done, sorting %d results", len(batch_results))
         batch_results.sort(key=lambda item: item[0])
 
         should_stop = False
@@ -820,9 +835,11 @@ class SpiderEngine:
                 )
                 saved_count = 0
             else:
+                logger.warning("[DEBUG batch] page=%d before save records=%d", p, len(records))
                 filtered, saved_count = await self._filter_and_save_page_records(
                     template, records, result
                 )
+                logger.warning("[DEBUG batch] page=%d after save saved=%d", p, saved_count)
             all_records.extend(filtered.records)
             if records:
                 await adapter.on_records_saved(
@@ -849,7 +866,9 @@ class SpiderEngine:
 
             result.pages_processed += 1
             if progress_callback is not None:
+                logger.warning("[DEBUG batch] page=%d before progress_callback", p)
                 await progress_callback(p, result)
+                logger.warning("[DEBUG batch] page=%d after progress_callback", p)
 
             if (
                 not records
