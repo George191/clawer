@@ -364,6 +364,15 @@ async def enrich_cover_images_batch(
     """
     pending = []
     for record in records:
+        # [DEBUG] 临时诊断：确认 record 字段和提取结果
+        rid = record.get("id")
+        fm_raw = record.get("featured_media")
+        og_raw = record.get("og_image")
+        yoast_raw = record.get("yoast_head_json")
+        logger.warning(
+            "[DEBUG enrich] id=%s fm=%r og_image=%r yoast=%r",
+            rid, fm_raw, og_raw, yoast_raw,
+        )
         # 1. WP 默认：_embedded
         embedded_media = _extract_embedded_media(record)
         if embedded_media:
@@ -371,6 +380,7 @@ async def enrich_cover_images_batch(
             continue
         # 2. Yoast SEO 插件：og_image（list_fields 映射的独立字段 或 yoast_head_json 完整对象）
         og_url = _extract_og_image_url(record)
+        logger.warning("[DEBUG enrich] id=%s og_url=%r", rid, og_url)
         if og_url:
             record["featured_media"] = {"source_url": og_url}
             continue
