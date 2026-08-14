@@ -179,6 +179,7 @@ async def _crawl_template(
     task_id: str,
     template_name: str,
     parameters: dict[str, Any],
+    celery_task_id: str | None = None,
 ) -> dict[str, Any]:
     engine: SpiderEngine | None = None
     checkpoint_store: PageCheckpointStore | None = None
@@ -191,6 +192,18 @@ async def _crawl_template(
         if task is None:
             logger.warning("Skipping stale workspace crawl task: %s", task_id)
             return {"task_id": task_id, "status": "canceled"}
+        if celery_task_id is not None and (
+            task.get("status") != "running"
+            or str(task.get("celery_task_id") or "") != celery_task_id
+        ):
+            logger.warning(
+                "Skipping obsolete workspace crawl delivery: task=%s delivery=%s current=%s status=%s",
+                task_id,
+                celery_task_id,
+                task.get("celery_task_id"),
+                task.get("status"),
+            )
+            return {"task_id": task_id, "status": "stale"}
         log_capture = WorkspaceTaskLogCapture(task_id, run_id, ai_collect_store)
         log_capture.start()
         logger.info("Workspace crawl task started: %s", task_id)
@@ -409,7 +422,14 @@ def crawl_template(
 ) -> dict[str, Any]:
     """Run one released workspace template in a Celery worker."""
     try:
-        return run_async(_crawl_template(task_id, template_name, parameters))
+        return run_async(
+            _crawl_template(
+                task_id,
+                template_name,
+                parameters,
+                celery_task_id=str(self.request.id),
+            )
+        )
     except ConnectionFailure as exc:
         raise self.retry(exc=exc, countdown=60) from exc
 

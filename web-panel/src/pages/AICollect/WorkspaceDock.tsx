@@ -1241,26 +1241,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, [activePanel, refreshWorkspaceTasks]);
 
   useEffect(() => {
-    if (activePanel !== 'tasks' || !selectedTaskKey) return undefined;
-    let active = true;
-    const refreshSelectedTask = async () => {
-      try {
-        const task = await fetchWorkspaceTask(selectedTaskKey);
-        if (active) applyWorkspaceTask(task);
-      } catch (error) {
-        console.error('Failed to refresh selected task', error);
-      }
-    };
-    const timer = window.setInterval(() => {
-      void refreshSelectedTask();
-    }, 3000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [activePanel, applyWorkspaceTask, selectedTaskKey]);
-
-  useEffect(() => {
     if (activePanel !== 'tasks' || !focusTask) return;
     const mappedTask = mapWorkspaceTask(focusTask);
     setKeyword('');
@@ -1356,6 +1336,38 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     AI_ANALYZE_WS_URL,
     { onMessage: handleTaskSocketMessage },
   );
+
+  useEffect(() => {
+    const selectedStatus = selectedTaskKey ? taskRuntime[selectedTaskKey]?.status : null;
+    if (
+      activePanel !== 'tasks'
+      || !selectedTaskKey
+      || taskSocketConnected
+      || selectedStatus !== 'running'
+    ) return undefined;
+    let active = true;
+    const refreshSelectedTask = async () => {
+      try {
+        const task = await fetchWorkspaceTask(selectedTaskKey);
+        if (active) applyWorkspaceTask(task);
+      } catch (error) {
+        console.error('Failed to refresh selected task', error);
+      }
+    };
+    const timer = window.setInterval(() => {
+      void refreshSelectedTask();
+    }, 3000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [
+    activePanel,
+    applyWorkspaceTask,
+    selectedTaskKey,
+    selectedTaskKey ? taskRuntime[selectedTaskKey]?.status : null,
+    taskSocketConnected,
+  ]);
 
   useEffect(() => {
     if (activePanel !== 'tasks' || !taskSocketConnected) return undefined;
