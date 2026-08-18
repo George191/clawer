@@ -1174,7 +1174,7 @@ class AICollectStore:
         await self.initialize()
         return await self._pg.fetch_one(
             """
-            SELECT status, control_state, download_state, sync_state
+            SELECT status, control_state, download_state, sync_state, celery_task_id
             FROM public.ai_collect_tasks
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL

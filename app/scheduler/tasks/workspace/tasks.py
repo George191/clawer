@@ -42,15 +42,35 @@ def _status_after_success(schedule: dict[str, Any]) -> str:
     return "queued" if _is_recurring(schedule) else "completed"
 
 
-async def _wait_until_runnable(task_id: str) -> bool:
+async def _wait_until_runnable(
+    task_id: str,
+    celery_task_id: str | None = None,
+) -> bool:
     """Wait while paused and return false when the task was canceled."""
     while True:
         control = await ai_collect_store.get_task_control(task_id)
         if control is None or control.get("control_state") == "canceled":
             return False
+        if celery_task_id is not None and (
+            str(control.get("celery_task_id") or "") != celery_task_id
+        ):
+            return False
         if control.get("status") != "paused":
             return True
         await asyncio.sleep(1)
+
+
+async def _is_superseded(task_id: str, celery_task_id: str | None) -> bool:
+    if celery_task_id is None:
+        return False
+    try:
+        control = await ai_collect_store.get_task_control(task_id)
+    except Exception:
+        return False
+    return bool(
+        control
+        and str(control.get("celery_task_id") or "") != celery_task_id
+    )
 
 
 def _progress_percent(result: CrawlResult) -> int:
@@ -186,7 +206,9 @@ async def _crawl_template(
     log_capture: WorkspaceTaskLogCapture | None = None
     checkpoint_connected = False
     run_id = str(uuid.uuid4())
-    control_token = set_control_checkpoint(lambda: _wait_until_runnable(task_id))
+    control_token = set_control_checkpoint(
+        lambda: _wait_until_runnable(task_id, celery_task_id)
+    )
     try:
         task = await ai_collect_store.get_task(task_id)
         if task is None:
@@ -266,7 +288,7 @@ async def _crawl_template(
         for batch_index, (batch_params, batch_context) in enumerate(batch_parameter_sets):
             if batch_index < resume_batch_index:
                 continue
-            if not await _wait_until_runnable(task_id):
+            if not await _wait_until_runnable(task_id, celery_task_id):
                 raise asyncio.CancelledError
             current_template = loader.load_content(
                 released.yaml_content,
@@ -294,7 +316,7 @@ async def _crawl_template(
                 current: CrawlResult,
                 _batch_index: int = batch_index,
             ) -> None:
-                if not await _wait_until_runnable(task_id):
+                if not await _wait_until_runnable(task_id, celery_task_id):
                     raise asyncio.CancelledError
                 await checkpoint_store.save(
                     _page,
@@ -343,7 +365,7 @@ async def _crawl_template(
                 )
             if delay > 0 and batch_index + 1 < batch_count:
                 await asyncio.sleep(delay)
-        if not await _wait_until_runnable(task_id):
+        if not await _wait_until_runnable(task_id, celery_task_id):
             return {"task_id": task_id, "status": "canceled"}
 
         if incremental_watermark.enabled:
@@ -386,12 +408,25 @@ async def _crawl_template(
         logger.info("Workspace crawl task canceled: %s", task_id)
         return {"task_id": task_id, "status": "canceled"}
     except ConnectionFailure:
+        if await _is_superseded(task_id, celery_task_id):
+            logger.warning(
+                "Ignoring Mongo failure from superseded workspace task: %s",
+                task_id,
+            )
+            return {"task_id": task_id, "status": "stale"}
         logger.warning(
             "Workspace crawl task will retry after MongoDB connection failure: %s",
             task_id,
         )
         raise
     except Exception as exc:
+        if await _is_superseded(task_id, celery_task_id):
+            logger.warning(
+                "Ignoring error from superseded workspace task: %s: %s",
+                task_id,
+                exc,
+            )
+            return {"task_id": task_id, "status": "stale"}
         await ai_collect_store.update_task(
             task_id,
             {"status": "failed", "throughput": 0},
