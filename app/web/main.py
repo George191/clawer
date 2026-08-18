@@ -246,7 +246,12 @@ def create_app() -> FastAPI:
 
         checks["browser"] = "available" if browser_renderer.available() else "missing"
 
-        all_ok = all(v in ("connected", "disabled", "exists", "available") for v in checks.values())
+        # Browser rendering is a feature check, not a service-availability gate.
+        all_ok = all(
+            v in ("connected", "disabled", "exists")
+            for key, v in checks.items()
+            if key != "browser"
+        )
 
         return {
             "code": 0,
