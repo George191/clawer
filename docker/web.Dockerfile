@@ -59,6 +59,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ENV HOME=/home/appuser \
+    XDG_CONFIG_HOME=/home/appuser/.config \
+    XDG_CACHE_HOME=/home/appuser/.cache
+
 ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
 ARG DEBIAN_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
 ARG INSTALL_CHROMIUM=true
@@ -90,9 +94,9 @@ RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
 COPY app/ ./app/
 COPY --from=frontend /static/ ./web-panel/dist/
 
-RUN groupadd -r appuser && useradd -r -g appuser appuser \
-    && mkdir -p /app/output \
-    && chown -R appuser:appuser /app
+RUN groupadd -r appuser && useradd -r -m -d /home/appuser -g appuser appuser \
+    && mkdir -p /app/output /home/appuser/.config /home/appuser/.cache \
+    && chown -R appuser:appuser /app /home/appuser
 USER appuser
 
 EXPOSE 8000
