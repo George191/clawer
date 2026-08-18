@@ -47,7 +47,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-ARG INSTALL_CHROMIUM=false
+ARG INSTALL_CHROMIUM=true
 RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
     && apt-get \
         -o Dir::Cache::archives=/data/apt-cache/archives \
@@ -80,6 +80,6 @@ USER appuser
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import httpx; r=httpx.get('http://localhost:8000/api/health'); r.raise_for_status(); assert r.json()['data']['status'] == 'healthy'" || exit 1
+    CMD python -c "import httpx; r=httpx.get('http://localhost:8000/api/health'); r.raise_for_status(); payload=r.json(); assert payload['data']['status'] == 'healthy'; assert payload['data']['services']['browser'] == 'available'" || exit 1
 
 CMD ["uvicorn", "app.web.main:app", "--host", "0.0.0.0", "--port", "8000"]

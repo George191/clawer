@@ -241,7 +241,12 @@ def create_app() -> FastAPI:
         # ── 文件系统 ──
         checks["static_dir"] = "exists" if _STATIC_DIR.is_dir() else "missing"
 
-        all_ok = all(v in ("connected", "disabled", "exists") for v in checks.values())
+        # AI Collect browser preflight requires a system Chromium/Chrome binary.
+        from app.web.services.browser_renderer import browser_renderer
+
+        checks["browser"] = "available" if browser_renderer.available() else "missing"
+
+        all_ok = all(v in ("connected", "disabled", "exists", "available") for v in checks.values())
 
         return {
             "code": 0,
