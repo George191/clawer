@@ -6,11 +6,18 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG DEBIAN_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
+
 ENV TMPDIR=/data/tmp \
     PIP_CACHE_DIR=/data/pip-cache
 
 RUN mkdir -p /data/tmp /data/pip-cache /data/wheels \
     /data/apt-cache/archives/partial /data/apt-lists/partial \
+    && sed -i \
+        -e "s|https\\?://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
+        -e "s|https\\?://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources \
     && apt-get \
         -o Dir::Cache::archives=/data/apt-cache/archives \
         -o Dir::State::lists=/data/apt-lists \
@@ -37,7 +44,14 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+ARG DEBIAN_SECURITY_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian-security
+
 RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
+    && sed -i \
+        -e "s|https\\?://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
+        -e "s|https\\?://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources \
     && apt-get \
         -o Dir::Cache::archives=/data/apt-cache/archives \
         -o Dir::State::lists=/data/apt-lists \
