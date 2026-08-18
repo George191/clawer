@@ -26,6 +26,20 @@ from app.utils.path import get_nested_value
 
 logger = get_logger(__name__)
 
+_SYNC_READY_DOWNLOAD_STATUSES = ("downloaded", "no_assets", "failed")
+
+
+def _ready_to_sync_filter() -> dict[str, Any]:
+    """Select records the syncer can publish without scanning synced records."""
+    return {
+        "_meta.download_status": {"$in": _SYNC_READY_DOWNLOAD_STATUSES},
+        "$or": [
+            {"_meta.sync_status": "pending"},
+            {"_meta.sync_status": {"$exists": False}},
+        ],
+    }
+
+
 class MongoStorage(StorageBackend):
     def __init__(self) -> None:
         self._client = None
@@ -394,26 +408,11 @@ class MongoStorage(StorageBackend):
     ) -> list[dict[str, Any]]:
         await self._ensure_connection()
 
-        filter_query: dict[str, Any] = {
-            "$and": [
-                {
-                    "$or": [
-                        {"_meta.sync_status": {"$ne": "synced"}},
-                        {"_meta.sync_status": {"$exists": False}},
-                    ],
-                },
-                {
-                    "$or": [
-                        {"_meta.download_status": "downloaded"},
-                        {"_meta.download_status": "no_assets"},
-                        {"_meta.download_status": "failed"},
-                    ],
-                },
-            ],
-        }
+        filter_query = _ready_to_sync_filter()
 
         if template_name:
-            collection = await self._get_collection(template_name)
+            # The syncer must not block its hot path on create_index calls.
+            collection = self._db[self._get_collection_name(template_name)]
             cursor = collection.find(filter_query).limit(limit)
             results: list[dict[str, Any]] = []
             async for doc in cursor:
