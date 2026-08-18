@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import time
 from typing import Optional
 
@@ -133,11 +134,36 @@ class ProxyPool:
             logger.warning("No proxy adapters registered")
             return
 
-        # 并行从所有适配器获取代理
-        tasks = [adapter.fetch() for adapter in self._adapters]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # 先加载主源；仅当主源没有返回代理时才尝试备用源。
+        primary_adapters = [
+            adapter
+            for adapter in self._adapters
+            if not getattr(adapter, "_config", {}).get("fallback_only", False)
+        ]
+        fallback_adapters = [
+            adapter
+            for adapter in self._adapters
+            if getattr(adapter, "_config", {}).get("fallback_only", False)
+        ]
+        results = await asyncio.gather(
+            *(adapter.fetch() for adapter in primary_adapters),
+            return_exceptions=True,
+        )
 
-        for adapter, result in zip(self._adapters, results, strict=True):
+        if not any(isinstance(result, list) and result for result in results):
+            for adapter in fallback_adapters:
+                try:
+                    result = await adapter.fetch()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    result = exc
+                primary_adapters.append(adapter)
+                results.append(result)
+                if isinstance(result, list) and result:
+                    break
+
+        for adapter, result in zip(primary_adapters, results, strict=True):
             if isinstance(result, asyncio.CancelledError):
                 raise result
             if isinstance(result, Exception):
@@ -545,9 +571,8 @@ def _build_adapters_from_config() -> list[ProxySourceAdapter]:
     """从配置构建适配器列表。
 
     优先级：
-    1. SPIDER_PROXY_SOURCES (新多源配置)
-    2. SPIDER_PROXY_POOL_API_URL (旧单源 API 配置)
-    3. SPIDER_PROXY_POOL_FILE (旧文件配置)
+    1. SPIDER_PROXY_POOL_API_URLS (主备 API 列表)
+    2. SPIDER_PROXY_POOL_FILE (文件配置)
 
     Returns:
         适配器实例列表。
@@ -556,8 +581,17 @@ def _build_adapters_from_config() -> list[ProxySourceAdapter]:
 
     adapters: list[ProxySourceAdapter] = []
 
-    if settings.proxy_pool_api_url:
-        adapters.append(ZdopenAPIAdapter({"url": settings.proxy_pool_api_url}))
+    api_urls = [
+        url.strip()
+        for url in re.split(r"[,\r\n]+", settings.proxy_pool_api_urls)
+        if url.strip()
+    ]
+    if any(api_urls):
+        for api_url in api_urls:
+            if api_url:
+                adapters.append(
+                    ZdopenAPIAdapter({"url": api_url, "fallback_only": bool(adapters)})
+                )
     elif settings.proxy_pool_file:
         adapters.append(FileProxySourceAdapter({"file_path": settings.proxy_pool_file}))
 

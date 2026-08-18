@@ -144,7 +144,9 @@ class AppSettings(BaseSettings):
 
     # Proxy Pool
     proxy_pool_file: str = Field(default="", description="代理列表文件路径, 每行一个代理URL")
-    proxy_pool_api_url: str = Field(default="", description="代理池API地址, 返回JSON代理列表")
+    proxy_pool_api_urls: str = Field(
+        default="", description="代理池API地址列表, 使用逗号或换行分隔"
+    )
     proxy_rotation: str = Field(default="round_robin", description="代理轮换策略: round_robin | random")
     proxy_health_check_url: str = Field(default="https://httpbin.org/ip", description="代理健康检查URL")
     proxy_max_failures: int = Field(default=3, description="代理连续失败多少次后摘除")

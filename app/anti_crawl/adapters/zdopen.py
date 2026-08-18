@@ -19,11 +19,9 @@ logger = get_adapter_logger(__name__, "zdopen_api", "proxy")
 # 默认 API 基础 URL
 DEFAULT_ZDPEN_API_URL = "http://www.zdopen.com/FreeProxy/Get/"
 
-# 错误码 12012: 上一个客户端IP仍在提取中，请等待2分钟后更换
+# 错误码 12012: 上一个客户端IP仍在提取中，跳过当前源并尝试其他源
 ERROR_CODE_IP_IN_USE = "12012"
 ERROR_CODE_RATE_LIMIT = "12002"
-# 该错误的最小等待时间（秒）
-IP_IN_USE_WAIT_SECONDS = 60
 RATE_LIMIT_WAIT_SECONDS = 1
 
 
@@ -115,9 +113,6 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
         # Do not log the URL: query parameters may contain app_id/akey.
         logger.info("Fetching proxies from Zdopen API")
 
-        wait_seconds = IP_IN_USE_WAIT_SECONDS
-        retries = 0
-
         while 1:
             try:
                 client = await self._get_client()
@@ -145,16 +140,12 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
 
             if code == ERROR_CODE_IP_IN_USE:
                 msg = data.get("msg", "Unknown error")
-                retries += 1
                 logger.warning(
-                    "ZdopenAPI returned code=%s: %s; retrying in %ds (attempt %d)",
+                    "ZdopenAPI returned code=%s: %s; skipping this source so another configured source can be used",
                     code,
                     msg,
-                    wait_seconds,
-                    retries,
                 )
-                await controlled_sleep(wait_seconds)
-                continue
+                return []
 
             proxy_list = self._extract_proxy_list(data)
             proxies = self._parse_proxy_items(proxy_list)
