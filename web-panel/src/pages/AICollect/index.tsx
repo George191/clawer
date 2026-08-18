@@ -775,7 +775,15 @@ const templateListItemKey = (key: string) => key.match(
 
 const parseTemplateEntries = (raw: string): TemplateEntry[] => {
   const entries: TemplateEntry[] = [];
-  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const lines = raw.replace(/\r\n/g, '\n').replace(/\t/g, '  ').split('\n');
+  const indentationUnit = (() => {
+    const indents = lines
+      .map((line) => line.match(/^\s+/)?.[0].length ?? 0)
+      .filter((indent) => indent > 0);
+    if (!indents.length) return 2;
+    const gcd = (left: number, right: number): number => right ? gcd(right, left % right) : left;
+    return Math.max(1, indents.reduce(gcd));
+  })();
   const keyPathStack: Array<{ indent: number; path: string }> = [];
   const listItemContextStack: Array<{ indent: number; path: string }> = [];
   const listIndexMap = new Map<string, number>();
@@ -847,7 +855,7 @@ const parseTemplateEntries = (raw: string): TemplateEntry[] => {
     const parentPath = listItemParent && (!keyPathParent || listItemParent.indent >= keyPathParent.indent)
       ? listItemParent.path
       : keyPathParent?.path ?? '';
-    const depth = Math.max(0, Math.floor(indent / 2));
+    const depth = Math.max(0, Math.floor(indent / indentationUnit));
 
     const listItemMatch = trimmed.match(/^- (.+)$/);
     if (listItemMatch) {
@@ -1177,6 +1185,7 @@ const AICollect: React.FC = () => {
   const [analysisFeed, setAnalysisFeed] = useState<AnalysisFeedItem[]>([]);
   const [expandedAnalysisSteps, setExpandedAnalysisSteps] = useState<Set<string>>(new Set());
   const [analysisClock, setAnalysisClock] = useState(() => Date.now());
+  const [promptFeedback, setPromptFeedback] = useState('');
   const [promptGenerating, setPromptGenerating] = useState(false);
 
   const [templateValueDrafts, setTemplateValueDrafts] = useState<Record<string, string>>({});
@@ -1214,6 +1223,7 @@ const AICollect: React.FC = () => {
   const [inspectorExpanded, setInspectorExpanded] = useState(false);
   const [inspectorAnimating, setInspectorAnimating] = useState(false);
   const templateScrollRef = useRef<HTMLDivElement | null>(null);
+  const browserCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const templateStageSectionRefs = useRef<Partial<Record<TemplateStageId, HTMLElement | null>>>({});
   const inspectorTransitionTimerRef = useRef<number | null>(null);
   const releaseExitTimerRef = useRef<number | null>(null);
@@ -1599,6 +1609,23 @@ const AICollect: React.FC = () => {
     templateBody.scrollTop = templateBody.scrollHeight;
     templateLastScrollTopRef.current = templateBody.scrollTop;
   }, [analysisFeed, displayTemplatePanel, streamError, workspaceTemplateYaml]);
+  useEffect(() => {
+    const canvas = browserCanvasRef.current;
+    const previewImage = urlPreflight?.previewImage;
+    if (!canvas || !previewImage) return;
+    const image = new Image();
+    image.onload = () => {
+      const width = Math.max(320, Math.min(960, image.naturalWidth || 960));
+      const height = Math.max(220, Math.round(width * ((image.naturalHeight || 540) / (image.naturalWidth || 960))));
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (!context) return;
+      context.clearRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+    };
+    image.src = previewImage;
+  }, [urlPreflight?.previewImage]);
   const handleTemplateScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
     const templateBody = event.currentTarget;
     const distanceFromBottom = templateBody.scrollHeight - templateBody.scrollTop - templateBody.clientHeight;
@@ -1689,6 +1716,7 @@ const AICollect: React.FC = () => {
 
   useEffect(() => {
     if (!hasSession) {
+      setPromptFeedback('');
       setUrlPreflight(null);
       setHoveredStageGuideStep(null);
       setActiveTemplateStage(null);
@@ -2523,6 +2551,11 @@ const AICollect: React.FC = () => {
   const handleAnalyze = useCallback(async () => {
     if (preflightLoading) return;
     if (!analyzeSocketConnected) {
+      if (taskDraft.trim()) {
+        setPromptFeedback(`已收到你的调整：${taskDraft.trim()}。AI 将在分析连接就绪后继续校验当前模板。`);
+      } else if (intent.trim()) {
+        setPromptFeedback(`已收到目标：${intent.trim()}。AI 将在分析连接就绪后开始渲染页面。`);
+      }
       message.warning('分析连接正在建立，请稍后重试');
       return;
     }
@@ -2557,6 +2590,11 @@ const AICollect: React.FC = () => {
 
     setSubmittedPrompt(targetUrl);
     setTaskDraft('');
+    setPromptFeedback(
+      isRefinement
+        ? `已收到你的调整：${draftPrompt}。AI 将基于当前模板校验字段、列表结构与采集边界后再生成。`
+        : `已收到目标：${targetUrl}。AI 将先渲染页面并分析数据结构，再生成可校验的 YAML 模板。`,
+    );
     setIntent(targetUrl);
     resetSimulation();
     setAnalysisFeed([]);
@@ -4056,10 +4094,11 @@ const AICollect: React.FC = () => {
   const renderBrowserViewport = (title: string) => {
     if (urlPreflight?.previewImage) {
       return (
-        <img
-          className="ai-browser-viewport-image"
-          src={urlPreflight.previewImage}
-          alt={`${title} 浏览器视口快照`}
+        <canvas
+          ref={browserCanvasRef}
+          className="ai-browser-viewport-canvas"
+          role="img"
+          aria-label={`${title} 浏览器视口快照`}
         />
       );
     }
@@ -5011,6 +5050,12 @@ const AICollect: React.FC = () => {
     return (
       <section className="ai-session-prompt">
         <div className="ai-session-prompt-shell">
+          {promptFeedback ? (
+            <div className="ai-session-prompt-feedback" role="status" aria-live="polite">
+              <span className="ai-session-prompt-feedback-dot" aria-hidden="true" />
+              <span>{promptFeedback}</span>
+            </div>
+          ) : null}
           <div className="ai-session-prompt-main">
           <span className="ai-session-leading-icon" aria-hidden="true"><GlobalOutlined /></span>
           <TextArea
@@ -5442,6 +5487,30 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             animation: aiComposerDock 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+          }
+          .ai-session-prompt-feedback {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            max-width: 100%;
+            margin: 0 12px 8px;
+            padding: 9px 12px;
+            border: 1px solid rgba(138, 180, 255, 0.18);
+            border-radius: 10px;
+            background: rgba(28, 38, 58, 0.82);
+            color: rgba(235, 243, 255, 0.86);
+            font-size: 12px;
+            line-height: 1.5;
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+          }
+          .ai-session-prompt-feedback-dot {
+            width: 7px;
+            height: 7px;
+            flex: 0 0 7px;
+            margin-top: 5px;
+            border-radius: 50%;
+            background: #8ab4ff;
+            box-shadow: 0 0 0 4px rgba(138, 180, 255, 0.12);
           }
           .ai-session-prompt::before {
             content: '';
@@ -7079,7 +7148,7 @@ const AICollect: React.FC = () => {
             overflow-x: hidden;
             overflow-y: auto;
           }
-          .ai-session-inspector-browser-frame .ai-browser-viewport-image {
+          .ai-session-inspector-browser-frame .ai-browser-viewport-canvas {
             display: block;
             width: 100%;
             height: 100%;
@@ -7351,7 +7420,7 @@ const AICollect: React.FC = () => {
             align-items: center;
             justify-content: center;
           }
-          .ai-browser-viewport-image {
+          .ai-browser-viewport-canvas {
             display: block;
             width: 100%;
             height: 100%;
