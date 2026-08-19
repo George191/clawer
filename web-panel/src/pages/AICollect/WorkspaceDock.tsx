@@ -223,7 +223,7 @@ const normalizePanelTemplateYaml = (yaml: string) => {
   return lines.join('\n');
 };
 
-type TemplatePreviewStage = 'site' | 'param' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
+type TemplatePreviewStage = 'site' | 'param' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'incremental' | 'download';
 
 interface TemplatePreviewEntry {
   id: string;
@@ -242,6 +242,7 @@ const templatePreviewStages: Array<{ id: TemplatePreviewStage; title: string; de
   { id: 'pagination', title: 'Pagination', description: 'page turning strategy and continuation cursor' },
   { id: 'fields', title: 'Fields', description: 'list/detail fields, selectors and output schema' },
   { id: 'dedup', title: 'Dedup', description: 'unique fields and record identity contract' },
+  { id: 'incremental', title: 'Incremental', description: 'daily update field and date parsing format' },
   { id: 'download', title: 'Download', description: 'asset selectors, file types and download policy' },
 ];
 
@@ -257,6 +258,7 @@ const inferTemplatePreviewStage = (key: string, path: string): TemplatePreviewSt
   ) return 'request';
   if (path === 'list_pagination' || path.startsWith('list_pagination.')) return 'pagination';
   if (path === 'dedup_fields' || path.startsWith('dedup_fields')) return 'dedup';
+  if (path === 'incremental' || path.startsWith('incremental.')) return 'incremental';
   if (path === 'download_use_proxy' || path === 'download' || path.startsWith('download')) return 'download';
   if (path === 'list_fields' || path.startsWith('list_fields') || path === 'detail_fields' || path.startsWith('detail_fields')) return 'fields';
   if (['name', 'display_name', 'base_url', 'data_type', 'adapter', 'anti_crawl_enabled', 'description'].includes(path)) return 'site';
@@ -435,6 +437,8 @@ const renderCompactTemplatePreview = (yaml: string) => {
                 const showDownloadFieldsLabel = stage.id === 'download' && isDownloadField && !previousIsDownloadField;
                 const pageSectionRoot = stage.id === 'request'
                   ? entry.key.match(/^(list_page|list_request)(?:\[|\.|$)/)
+                    || entry.key === 'detail_url_selector'
+                    || entry.key === 'detail_url_selector_type'
                     ? 'list'
                     : entry.key.match(/^(detail_page|detail_request)(?:\[|\.|$)/)
                       ? 'detail'
@@ -442,6 +446,8 @@ const renderCompactTemplatePreview = (yaml: string) => {
                   : null;
                 const previousPageSectionRoot = stage.id === 'request'
                   ? displayEntries[index - 1]?.key.match(/^(list_page|list_request)(?:\[|\.|$)/)
+                    || displayEntries[index - 1]?.key === 'detail_url_selector'
+                    || displayEntries[index - 1]?.key === 'detail_url_selector_type'
                     ? 'list'
                     : displayEntries[index - 1]?.key.match(/^(detail_page|detail_request)(?:\[|\.|$)/)
                       ? 'detail'

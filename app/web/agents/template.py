@@ -33,9 +33,6 @@ data_type: analyzed_snake_case_type
 adapter: ""
 anti_crawl_enabled: null
 description: "One concise sentence."
-incremental:
-  field: date
-  format: "%Y-%m-%d"
 params:
   - name: query
     description: "Required query value."
@@ -64,6 +61,9 @@ list_fields:
     description: "Source title."
 dedup_fields:
   - title
+incremental:
+  field: date
+  format: "%Y-%m-%d"
 download_use_proxy: null
 download:
   - selector: download_url
@@ -164,7 +164,7 @@ class TemplateAgent(BaseAgent):
                 - Response: response_type, item/total paths and selectors must match the selected body, content type, record container and sample.
                 - Fields: emit only observed business fields, with one observed selector/source key per unique output name. Preserve source values; exclude UI IDs, ranks, duplicate aliases and derived values.
                 - Dedup/download: choose the smallest stable identity from emitted fields. Every dedup field and download selector must be emitted; downloads must be verified URLs/lists, not internal media IDs. Keep cover, body images and attachments distinct.
-                - Incremental: when a verified list field is a publication/update time, emit incremental.field with that field name and incremental.format with its exact datetime.strptime format; otherwise omit incremental.
+                - Incremental: emit it as its own top-level mapping near dedup_fields. When a verified list field is a publication/update time, emit incremental.field with that field name and incremental.format with its exact datetime.strptime format; use field=date and format="%Y-%m-%d" for plain YYYY-MM-DD dates. Otherwise omit incremental.
 
                 Use only the schema below. Omit unsupported optional sections and empty mappings/lists. Never invent evidence. Keep the required key order so the UI streams Site, Request, Response, Fields, Dedup and Download progressively.
 

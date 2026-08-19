@@ -201,7 +201,7 @@ type MissionTab = 'goal' | 'policy';
 type RunStatus = 'idle' | 'running' | 'paused' | 'completed' | 'ready';
 type ProcessStepKey = 'prepare' | 'entry' | 'structure' | 'contract' | 'dryrun' | 'publish';
 type TerminalLogLevel = 'info' | 'ok' | 'warn';
-type TemplateStageId = 'site' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'download';
+type TemplateStageId = 'site' | 'request' | 'response' | 'pagination' | 'fields' | 'dedup' | 'incremental' | 'download';
 type SessionWorkflowPhase = 'analyzing-template' | 'confirm-template' | 'generating-adapter' | 'release-template';
 type SessionGuideStepId = TemplateStageId | 'confirm-template' | 'generate-adapter' | 'save-template';
 type SessionInspectorTabKind = 'browser' | 'code';
@@ -566,6 +566,11 @@ const templateStageMeta: Record<TemplateStageId, {
     desc: 'unique fields and record identity contract',
     threshold: 'contract',
   },
+  incremental: {
+    title: 'Incremental',
+    desc: 'daily update field and date parsing format',
+    threshold: 'contract',
+  },
   download: {
     title: 'Download',
     desc: 'asset selectors, file types and download policy',
@@ -575,7 +580,7 @@ const templateStageMeta: Record<TemplateStageId, {
   },
 };
 
-const templateStageOrder: TemplateStageId[] = ['site', 'request', 'response', 'pagination', 'fields', 'dedup', 'download'];
+const templateStageOrder: TemplateStageId[] = ['site', 'request', 'response', 'pagination', 'fields', 'dedup', 'incremental', 'download'];
 const INSPECTOR_TRANSITION_MS = 360;
 
 const sessionGuideMeta: Record<Exclude<SessionGuideStepId, TemplateStageId>, { title: string; desc: string }> = {
@@ -677,6 +682,9 @@ const inferTemplateStep = (key: string, path: string): ProcessStepKey => {
   ) {
     return 'structure';
   }
+  if (path === 'incremental' || path.startsWith('incremental.')) {
+    return 'contract';
+  }
   if (path === 'download_use_proxy' || path === 'download' || path.startsWith('download')) {
     return 'contract';
   }
@@ -718,6 +726,9 @@ const inferTemplateStageId = (key: string, path: string): TemplateStageId => {
   }
   if (path === 'dedup_fields' || path.startsWith('dedup_fields')) {
     return 'dedup';
+  }
+  if (path === 'incremental' || path.startsWith('incremental.')) {
+    return 'incremental';
   }
   if (path === 'download_use_proxy' || path === 'download' || path.startsWith('download')) {
     return 'download';
@@ -1987,6 +1998,7 @@ const AICollect: React.FC = () => {
           response: 'structure',
           fields: 'structure',
           dedup: 'contract',
+          incremental: 'contract',
           download: 'contract',
           dedup_download: 'contract',
         };
@@ -1996,6 +2008,7 @@ const AICollect: React.FC = () => {
           response: 'response',
           fields: 'fields',
           dedup: 'dedup',
+          incremental: 'incremental',
           download: 'download',
           dedup_download: 'dedup',
         };
@@ -3831,6 +3844,15 @@ const AICollect: React.FC = () => {
     if (!stageEntries.length) return null;
     const lastValueEntryId = [...stageEntries].reverse().find((entry) => entry.nodeType === 'value')?.id;
     const getTemplateEntryGroupKey = (entry: TemplateEntry, nextEntry?: TemplateEntry) => {
+      if (
+        stageId === 'request'
+        && (
+          entry.key === 'detail_url_selector'
+          || entry.key === 'detail_url_selector_type'
+        )
+      ) {
+        return 'list_request';
+      }
       const rootGroupMatch = entry.key.match(/^([A-Za-z_][\w-]*)$/);
       if (entry.nodeType === 'group' && rootGroupMatch) {
         const rootKey = rootGroupMatch[1];
@@ -3892,12 +3914,32 @@ const AICollect: React.FC = () => {
             const showDownloadFieldsLabel = stageId === 'download'
               && yamlListRoot === 'download'
               && !previousYamlListItemKey?.startsWith('download[');
+            const pageSectionRoot = stageId === 'request'
+              ? entry.key.match(/^(list_page|list_request)(?:\[|\.|$)/)
+                || entry.key === 'detail_url_selector'
+                || entry.key === 'detail_url_selector_type'
+                ? 'list'
+                : entry.key.match(/^(detail_page|detail_request)(?:\[|\.|$)/)
+                  ? 'detail'
+                  : null
+              : null;
+            const previousPageSectionRoot = stageId === 'request'
+              ? previousEntry?.key.match(/^(list_page|list_request)(?:\[|\.|$)/)
+                || previousEntry?.key === 'detail_url_selector'
+                || previousEntry?.key === 'detail_url_selector_type'
+                ? 'list'
+                : previousEntry?.key.match(/^(detail_page|detail_request)(?:\[|\.|$)/)
+                  ? 'detail'
+                  : null
+              : null;
+            const showPageSectionLabel = Boolean(pageSectionRoot && pageSectionRoot !== previousPageSectionRoot);
             const flattenRootIndent = flattenedTemplateRootKeys.has(rootKey) && entry.key !== rootKey;
             const displayDepth = Math.max(
               0,
               entry.depth
                 - (isYamlListItem || flattenRootIndent ? 1 : 0)
-                + (stageId === 'download' && isYamlListItem ? 1 : 0),
+                + (stageId === 'download' && isYamlListItem ? 1 : 0)
+                + (pageSectionRoot ? 1 : 0),
             );
             const value = templateValueDrafts[entry.id] ?? entry.value;
             const isGroup = entry.nodeType === 'group';
@@ -3914,6 +3956,11 @@ const AICollect: React.FC = () => {
                 {showDownloadFieldsLabel ? (
                   <div className="ai-template-fields-subsection" role="heading" aria-level={3}>
                     Fields
+                  </div>
+                ) : null}
+                {showPageSectionLabel ? (
+                  <div className="ai-template-fields-subsection" role="heading" aria-level={3}>
+                    {pageSectionRoot === 'detail' ? 'Detail' : 'List'}
                   </div>
                 ) : null}
                 <div
