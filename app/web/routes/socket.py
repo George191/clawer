@@ -515,6 +515,10 @@ async def handle_start_analyze(connection: ClientConnection, message: dict[str, 
         viewport_width = max(320, min(int(message.get("viewport_width") or 1440), 3840))
     except (TypeError, ValueError):
         viewport_width = 1440
+    try:
+        viewport_height = max(240, min(int(message.get("viewport_height") or 1000), 3840))
+    except (TypeError, ValueError):
+        viewport_height = 1000
     if not url:
         await connection.send({"type": "analyze_error", "request_id": request_id, "data": {"code": "MISSING_URL", "message": "缺少url参数"}})
         return
@@ -535,6 +539,7 @@ async def handle_start_analyze(connection: ClientConnection, message: dict[str, 
             prompt,
             request_id,
             viewport_width,
+            viewport_height,
             existing_template_yaml,
         )
     )
@@ -557,6 +562,7 @@ async def _stream_analyze_results(
     prompt: str,
     request_id: str,
     viewport_width: int,
+    viewport_height: int,
     existing_template_yaml: str = "",
 ) -> None:
     """流式发送分析结果到客户端."""
@@ -565,6 +571,7 @@ async def _stream_analyze_results(
             url,
             prompt,
             viewport_width,
+            viewport_height,
             existing_template_yaml,
         ):
             await connection.send(

@@ -51,12 +51,25 @@ class BaseAgent:
             ) from exc
 
         logger.info("Loading model from: %s", self._model_path)
-        self._tokenizer = AutoTokenizer.from_pretrained(self._model_path, trust_remote_code=True)
+        model_path = Path(self._model_path)
+        if model_path.is_absolute() and not model_path.is_dir():
+            raise FileNotFoundError(
+                f"Local AI model directory does not exist: {model_path}. "
+                "Mount the host models directory at /app/models in the web container."
+            )
+
+        local_files_only = model_path.is_absolute()
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self._model_path,
+            trust_remote_code=True,
+            local_files_only=local_files_only,
+        )
         self._model = AutoModelForCausalLM.from_pretrained(
             self._model_path,
             device_map="auto",
             trust_remote_code=True,
             dtype=torch.float16,
+            local_files_only=local_files_only,
         )
         self._torch = torch
         self._model.generation_config.do_sample = False

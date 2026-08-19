@@ -121,6 +121,7 @@ class BrowserRenderer:
         url: str,
         use_proxy: bool,
         viewport_width: int,
+        viewport_height: int,
         on_event: Callable[[dict[str, object]], None] | None,
     ) -> BrowserRenderResult:
         try:
@@ -158,7 +159,7 @@ class BrowserRenderer:
             page = None
             try:
                 context = browser.new_context(
-                    viewport={"width": viewport_width, "height": 1000},
+                    viewport={"width": viewport_width, "height": viewport_height},
                     user_agent=settings.http_user_agent,
                     ignore_https_errors=not settings.http_verify_ssl,
                     locale="zh-CN",
@@ -349,14 +350,17 @@ class BrowserRenderer:
         url: str,
         use_proxy: bool = False,
         viewport_width: int = 1440,
+        viewport_height: int = 1000,
         on_event: Callable[[dict[str, object]], None] | None = None,
     ) -> BrowserRenderResult:
         safe_viewport_width = max(320, min(int(viewport_width), 3840))
+        safe_viewport_height = max(240, min(int(viewport_height), 3840))
         return await asyncio.to_thread(
             self._render_sync,
             url,
             use_proxy,
             safe_viewport_width,
+            safe_viewport_height,
             on_event,
         )
 

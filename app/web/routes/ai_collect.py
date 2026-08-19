@@ -324,6 +324,7 @@ async def _preflight(
     url: str,
     max_retries: int = _PREFLIGHT_MAX_RETRIES,
     viewport_width: int = 1440,
+    viewport_height: int = 1000,
     on_browser_event: Callable[[dict[str, object]], None] | None = None,
 ) -> UrlPreflightResponse:
     last_error = None
@@ -332,6 +333,7 @@ async def _preflight(
             result = await browser_renderer.render(
                 url,
                 viewport_width=viewport_width,
+                viewport_height=viewport_height,
                 on_event=on_browser_event,
             )
             logger.info("Preflight succeeded on attempt %d/%d for %s", attempt + 1, max_retries, url)
@@ -443,6 +445,7 @@ async def _analyze_events(
     url: str,
     prompt: str = "",
     viewport_width: int = 1440,
+    viewport_height: int = 1000,
     existing_template_yaml: str = "",
 ) -> AsyncGenerator[AnalysisStreamEvent, None]:
     step_started_at: dict[str, int] = {}
@@ -471,6 +474,7 @@ async def _analyze_events(
                 _preflight(
                     url,
                     viewport_width=viewport_width,
+                    viewport_height=viewport_height,
                     on_browser_event=lambda event: loop.call_soon_threadsafe(
                         browser_events.put_nowait,
                         event,
