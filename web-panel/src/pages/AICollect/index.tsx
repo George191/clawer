@@ -1224,6 +1224,7 @@ const AICollect: React.FC = () => {
   const [inspectorAnimating, setInspectorAnimating] = useState(false);
   const templateScrollRef = useRef<HTMLDivElement | null>(null);
   const browserCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const browserViewportRef = useRef<HTMLDivElement | null>(null);
   const templateStageSectionRefs = useRef<Partial<Record<TemplateStageId, HTMLElement | null>>>({});
   const inspectorTransitionTimerRef = useRef<number | null>(null);
   const releaseExitTimerRef = useRef<number | null>(null);
@@ -2554,7 +2555,7 @@ const AICollect: React.FC = () => {
       if (taskDraft.trim()) {
         setPromptFeedback(`已收到你的调整：${taskDraft.trim()}。AI 将在分析连接就绪后继续校验当前模板。`);
       } else if (intent.trim()) {
-        setPromptFeedback(`已收到目标：${intent.trim()}。AI 将在分析连接就绪后开始渲染页面。`);
+        setPromptFeedback(`已收到目标：${intent.trim()}。稍后将先渲染页面并分析数据结构，再生成数据资产。`);
       }
       message.warning('分析连接正在建立，请稍后重试');
       return;
@@ -2593,7 +2594,7 @@ const AICollect: React.FC = () => {
     setPromptFeedback(
       isRefinement
         ? `已收到你的调整：${draftPrompt}。AI 将基于当前模板校验字段、列表结构与采集边界后再生成。`
-        : `已收到目标：${targetUrl}。AI 将先渲染页面并分析数据结构，再生成可校验的 YAML 模板。`,
+        : `已收到目标：${targetUrl}。稍后将先渲染页面并分析数据结构，再生成数据资产。`,
     );
     setIntent(targetUrl);
     resetSimulation();
@@ -2628,21 +2629,27 @@ const AICollect: React.FC = () => {
     const requestId = globalThis.crypto?.randomUUID?.()
       ?? `analyze-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     analyzeRequestRef.current = { requestId, url: targetUrl, prompt: agentPrompt };
-    const sent = sendAnalyzeSocketMessage(JSON.stringify({
-      type: 'start_analyze',
-      request_id: requestId,
-      url: targetUrl,
-      prompt: agentPrompt,
-      current_template_yaml: isRefinement ? currentTemplateYaml : '',
-      current_adapter_code: isRefinement ? currentAdapterCode : '',
-      viewport_width: Math.round(window.innerWidth),
-    }));
-    if (!sent) {
-      analyzeRequestRef.current = null;
-      setPreflightLoading(false);
-      setRunStatus('completed');
-      setStreamError('分析连接尚未就绪，请重新发起分析。');
-    }
+    window.requestAnimationFrame(() => {
+      const viewport = browserViewportRef.current?.getBoundingClientRect();
+      const viewportWidth = Math.round(viewport?.width || window.innerWidth);
+      const viewportHeight = Math.round(viewport?.height || window.innerHeight * 0.7);
+      const sent = sendAnalyzeSocketMessage(JSON.stringify({
+        type: 'start_analyze',
+        request_id: requestId,
+        url: targetUrl,
+        prompt: agentPrompt,
+        current_template_yaml: isRefinement ? currentTemplateYaml : '',
+        current_adapter_code: isRefinement ? currentAdapterCode : '',
+        viewport_width: viewportWidth,
+        viewport_height: viewportHeight,
+      }));
+      if (!sent) {
+        analyzeRequestRef.current = null;
+        setPreflightLoading(false);
+        setRunStatus('completed');
+        setStreamError('分析连接尚未就绪，请重新发起分析。');
+      }
+    });
   }, [activeTemplate.raw, analyzeSocketConnected, hasSession, intent, message, preflightLoading, resetSimulation, sendAnalyzeSocketMessage, submittedPrompt, taskDraft, url, urlPreflight?.normalizedUrl, validateUrl, workspaceAdapterCode, workspaceTemplateYaml]);
 
   const handlePauseAnalysis = useCallback(() => {
@@ -4150,7 +4157,7 @@ const AICollect: React.FC = () => {
               </a>
             ) : null}
         </div>
-        <div className="ai-side-browser-viewport">
+        <div ref={browserViewportRef} className="ai-side-browser-viewport">
           {renderBrowserViewport(browserPreviewTitle)}
           </div>
         </div>
@@ -5050,12 +5057,6 @@ const AICollect: React.FC = () => {
     return (
       <section className="ai-session-prompt">
         <div className="ai-session-prompt-shell">
-          {promptFeedback ? (
-            <div className="ai-session-prompt-feedback" role="status" aria-live="polite">
-              <span className="ai-session-prompt-feedback-dot" aria-hidden="true" />
-              <span>{promptFeedback}</span>
-            </div>
-          ) : null}
           <div className="ai-session-prompt-main">
           <span className="ai-session-leading-icon" aria-hidden="true"><GlobalOutlined /></span>
           <TextArea
@@ -5203,6 +5204,12 @@ const AICollect: React.FC = () => {
       <div className="ai-context-card">
         <Text type="secondary" style={{ fontSize: 12 }}>下一步建议</Text>
         <div className="ai-tip-list">
+          {promptFeedback ? (
+            <div className="ai-tip-item" role="status" aria-live="polite">
+              <CheckCircleOutlined style={{ color: aura.accent, marginTop: 3 }} />
+              <Text>{promptFeedback}</Text>
+            </div>
+          ) : null}
           {nextStepTips[mode].map((tip) => (
             <div className="ai-tip-item" key={tip}>
               <CheckCircleOutlined style={{ color: aura.accent, marginTop: 3 }} />
@@ -5487,30 +5494,6 @@ const AICollect: React.FC = () => {
             display: flex;
             flex-direction: column;
             animation: aiComposerDock 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-          }
-          .ai-session-prompt-feedback {
-            display: flex;
-            align-items: flex-start;
-            gap: 8px;
-            max-width: 100%;
-            margin: 0 12px 8px;
-            padding: 9px 12px;
-            border: 1px solid rgba(138, 180, 255, 0.18);
-            border-radius: 10px;
-            background: rgba(28, 38, 58, 0.82);
-            color: rgba(235, 243, 255, 0.86);
-            font-size: 12px;
-            line-height: 1.5;
-            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
-          }
-          .ai-session-prompt-feedback-dot {
-            width: 7px;
-            height: 7px;
-            flex: 0 0 7px;
-            margin-top: 5px;
-            border-radius: 50%;
-            background: #8ab4ff;
-            box-shadow: 0 0 0 4px rgba(138, 180, 255, 0.12);
           }
           .ai-session-prompt::before {
             content: '';
