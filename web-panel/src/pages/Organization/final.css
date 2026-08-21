@@ -32,7 +32,8 @@
 .access-permission-toolbar{border:0;background:#1a1d27}
 html[data-theme='light'] .access-page{color:#172033}
 html[data-theme='light'] .access-tabs,html[data-theme='light'] .access-toolbar,html[data-theme='light'] .access-permission-toolbar,html[data-theme='light'] .access-stats .ant-card,html[data-theme='light'] .access-page .ant-table-thead>tr>th{background:#fff}
-html[data-theme='light'] .access-tabs button:hover,html[data-theme='light'] .access-tabs button.is-active,html[data-theme='light'] .access-page .ant-select-selector,html[data-theme='light'] .access-page .ant-input-affix-wrapper,html[data-theme='light'] .access-page .ant-btn-default,html[data-theme='light'] .access-page .ant-btn-primary{background:#edf0f4!important;color:#172033!important}
+html[data-theme='light'] .access-tabs button:hover,html[data-theme='light'] .access-tabs button.is-active{background:#f3f4f7!important;color:#172033!important}
+html[data-theme='light'] .access-page .ant-select-selector,html[data-theme='light'] .access-page .ant-input-affix-wrapper,html[data-theme='light'] .access-page .ant-btn-default,html[data-theme='light'] .access-page .ant-btn-primary{background:#edf0f4!important;color:#172033!important}
 html[data-theme='light'] .access-page .ant-select:hover .ant-select-selector,html[data-theme='light'] .access-page .ant-input-affix-wrapper:hover,html[data-theme='light'] .access-page .ant-btn-default:hover,html[data-theme='light'] .access-page .ant-btn-primary:hover{background:#dfe3e9!important;color:#172033!important}
 html[data-theme='light'] .access-page .ant-card{background:#fff!important}
 html[data-theme='light'] .access-role-card,html[data-theme='light'] .access-project-card,html[data-theme='light'] .access-add-card{background:#f1f3f6!important;box-shadow:0 3px 10px rgba(23,32,51,.08)!important}
@@ -134,9 +135,9 @@ html[data-theme='light'] .access-detail-tabs button:hover,html[data-theme='light
 .access-page .ant-pagination .ant-select-selector{border:0!important;background:#343947!important;color:#b7bdc8!important}
 .access-page .ant-pagination .ant-select:hover .ant-select-selector{background:#292e3b!important}
 .access-page .ant-pagination .ant-select-arrow{color:#9299a6!important}
-.access-export-menu .ant-dropdown-menu{min-width:150px;padding:6px;background:#242836;box-shadow:0 8px 24px rgba(0,0,0,.28)}
+.access-export-menu .ant-dropdown-menu{min-width:150px;padding:6px;background:#343947;box-shadow:0 8px 24px rgba(0,0,0,.28)}
 .access-export-menu .ant-dropdown-menu-item{min-height:34px;padding:7px 10px;color:#c4c9d2;font-size:12px}
-.access-export-menu .ant-dropdown-menu-item:hover{background:#1d202b!important;color:#e4e7eb!important}
+.access-export-menu .ant-dropdown-menu-item:hover{background:#292e3b!important;color:#e4e7eb!important}
 .access-export-menu .ant-dropdown-menu-item-icon{color:#9299a6;font-size:13px}
 html[data-theme='light'] .access-role-label{color:#4b5563}
 html[data-theme='light'] .access-page .ant-pagination .ant-pagination-item,html[data-theme='light'] .access-page .ant-pagination .ant-pagination-prev,html[data-theme='light'] .access-page .ant-pagination .ant-pagination-next{background:#edf0f4!important}
@@ -145,6 +146,6 @@ html[data-theme='light'] .access-page .ant-pagination .ant-pagination-item-activ
 html[data-theme='light'] .access-page .ant-pagination .ant-pagination-item-active a{color:#343947!important}
 html[data-theme='light'] .access-page .ant-pagination .ant-select-selector{background:#edf0f4!important;color:#4b5563!important}
 html[data-theme='light'] .access-page .ant-pagination .ant-select:hover .ant-select-selector{background:#dfe3e9!important}
-html[data-theme='light'] .access-export-menu .ant-dropdown-menu{background:#fff}
+html[data-theme='light'] .access-export-menu .ant-dropdown-menu{background:#edf0f4}
 html[data-theme='light'] .access-export-menu .ant-dropdown-menu-item{color:#4b5563}
-html[data-theme='light'] .access-export-menu .ant-dropdown-menu-item:hover{background:#eef1f5!important;color:#172033!important}
+html[data-theme='light'] .access-export-menu .ant-dropdown-menu-item:hover{background:#dfe3e9!important;color:#172033!important}
