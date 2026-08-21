@@ -23,6 +23,8 @@ class TemplateCreateRequest(BaseModel):
     data_type: str = Field(default="other", description="Business data type")
     description: str = Field(default="", description="Template description")
     yaml_content: str = Field(default="", description="Complete YAML content")
+    product_domain: str = Field(default="ai-collect", description="Owning product domain")
+    template_kind: str = Field(default="collection", description="Template catalog type")
 
 
 class TemplateUpdateRequest(BaseModel):
@@ -106,7 +108,10 @@ async def create_template(body: TemplateCreateRequest) -> dict[str, Any]:
         "adapter": "",
         "adapter_code": "",
         "description": str(raw.get("description") or body.description),
-        "metadata": {},
+        "metadata": {
+            "product_domain": body.product_domain,
+            "template_kind": body.template_kind,
+        },
     })
     logger.info("Created MinIO template: %s@%s", body.name, version)
     return {"name": body.name, "message": "Template created"}

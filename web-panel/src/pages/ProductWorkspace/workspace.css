@@ -587,8 +587,7 @@
 }
 
 .pipeline-node:hover {
-  transform: translate(-50%, calc(-50% - 2px));
-  border-color: color-mix(in srgb, var(--workspace-accent) 50%, var(--workspace-border));
+  background: color-mix(in srgb, var(--workspace-surface-strong) 88%, #000);
 }
 
 .pipeline-node--dimmed {

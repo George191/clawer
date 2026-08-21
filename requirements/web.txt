@@ -1,7 +1,7 @@
 -r base.txt
 
 # Web API and panel runtime.
-fastapi>=0.111
+fastapi>=0.140.5,<1.0
 uvicorn[standard]>=0.30
 jinja2>=3.1
 python-multipart>=0.0.9
@@ -10,6 +10,27 @@ openpyxl>=3.1
 websockets>=12
 anyio>=4.3
 playwright>=1.55,<2
+
+# Standard FastAPI backend modules (auth, tenancy, RAG and structured logging).
+pydantic>=2.12.5
+sqlmodel>=0.0.21
+alembic>=1.12
+fastapi-pagination>=0.12
+fastapi-filter>=2.0
+email-validator>=2.1
+passlib[bcrypt]>=1.7
+bcrypt==4.0.1
+PyJWT>=2.8
+sentry-sdk[fastapi]>=1.40
+emails>=0.6
+aiologger>=0.7
+aioboto3>=14.1
+pymilvus>=2.5
+numpy>=1.26
+langchain>=0.3
+langchain-community>=0.3
+langchain-ollama>=0.3
+langchain-text-splitters>=0.3
 
 # Infrastructure clients used by routes, health checks, and AI Collect.
 motor>=3.0

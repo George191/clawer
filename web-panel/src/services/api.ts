@@ -26,6 +26,10 @@ import type {
   WorkspaceTemplate,
   WorkspaceTask,
   AdapterResult,
+  AutomationWorkflow,
+  SchedulerTaskConfig,
+  ProductDomain,
+  CurrentUserContext,
 } from './types';
 
 // ── 全局 Loading 状态 ──
@@ -103,7 +107,7 @@ function unwrap<T>(body: unknown): T {
 }
 
 // ── Axios 实例 ──
-const BASE_URL = '/api';
+const BASE_URL = '/api/v1';
 
 const client = axios.create({
   baseURL: BASE_URL,
@@ -111,10 +115,15 @@ const client = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+export const fetchCurrentUserContext = (): Promise<CurrentUserContext> =>
+  client.get('/users/me/context').then((r) => unwrap<CurrentUserContext>(r.data));
+
 // 请求拦截器
 client.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     setLoading(true);
+    const token = localStorage.getItem('access_token');
+    if (token) config.headers.Authorization = `Bearer ${token}`;
     return config;
   },
   (error) => {
@@ -150,6 +159,10 @@ export const fetchDashboardMetrics = (): Promise<DashboardMetrics> =>
 
 export const fetchDashboardAlerts = (): Promise<Alert[]> =>
   client.get('/dashboard/alerts').then((r) => unwrap<Alert[]>(r.data));
+
+export const DASHBOARD_WS_URL = `${
+  location.protocol === 'https:' ? 'wss:' : 'ws:'
+}//${location.host}/ws`;
 
 // ============================================================
 //  ETL Layers
@@ -240,6 +253,15 @@ export const deleteTask = (taskId: string): Promise<void> =>
 export const fetchTemplates = (): Promise<TemplateInfo[]> =>
   client.get('/templates').then((r) => unwrap<TemplateInfo[]>(r.data));
 
+export const automationCreateTemplate = (body: {
+  name: string; display_name: string; base_url: string; data_type: string; description: string; yaml_content?: string;
+  product_domain: ProductDomain; template_kind: string;
+}): Promise<{ name: string; message: string }> =>
+  client.post('/templates', body).then((r) => unwrap(r.data));
+
+export const automationDeleteTemplate = (name: string): Promise<void> =>
+  client.delete(`/templates/${encodeURIComponent(name)}`).then(() => undefined);
+
 // ============================================================
 //  Monitoring
 // ============================================================
@@ -295,6 +317,39 @@ export const aiTaskAction = (
   body: WorkspaceTaskActionRequest,
 ): Promise<WorkspaceTask> =>
   client.post(`/ai/workspace/tasks/${taskId}/action`, body).then((r) => unwrap<WorkspaceTask>(r.data));
+
+export const aiDeleteWorkspaceTask = (taskId: string): Promise<void> =>
+  client.delete(`/ai/workspace/tasks/${taskId}`).then(() => undefined);
+
+export const automationFetchWorkflows = (): Promise<AutomationWorkflow[]> =>
+  client.get('/automation/workflows').then((r) => unwrap<AutomationWorkflow[]>(r.data));
+
+export const automationCreateWorkflow = (body: Omit<AutomationWorkflow, 'id' | 'created_at' | 'updated_at'>): Promise<AutomationWorkflow> =>
+  client.post('/automation/workflows', body).then((r) => unwrap<AutomationWorkflow>(r.data));
+
+export const automationUpdateWorkflow = (name: string, body: Partial<AutomationWorkflow>): Promise<AutomationWorkflow> =>
+  client.put(`/automation/workflows/${encodeURIComponent(name)}`, body).then((r) => unwrap<AutomationWorkflow>(r.data));
+
+export const automationDeleteWorkflow = (name: string): Promise<void> =>
+  client.delete(`/automation/workflows/${encodeURIComponent(name)}`).then(() => undefined);
+
+export const automationFetchSchedules = (): Promise<SchedulerTaskConfig[]> =>
+  client.get('/scheduler/tasks').then((r) => unwrap<SchedulerTaskConfig[]>(r.data));
+
+export const automationCreateSchedule = (body: Omit<SchedulerTaskConfig, 'id' | 'created_at' | 'updated_at'>): Promise<SchedulerTaskConfig> =>
+  client.post('/scheduler/tasks', body).then((r) => unwrap<SchedulerTaskConfig>(r.data));
+
+export const automationUpdateSchedule = (name: string, body: Partial<SchedulerTaskConfig>): Promise<SchedulerTaskConfig> =>
+  client.put(`/scheduler/tasks/${encodeURIComponent(name)}`, body).then((r) => unwrap<SchedulerTaskConfig>(r.data));
+
+export const automationToggleSchedule = (name: string, enabled: boolean): Promise<SchedulerTaskConfig> =>
+  client.post(`/scheduler/tasks/${encodeURIComponent(name)}/toggle`, { enabled }).then((r) => unwrap<SchedulerTaskConfig>(r.data));
+
+export const automationDeleteSchedule = (name: string): Promise<void> =>
+  client.delete(`/scheduler/tasks/${encodeURIComponent(name)}`).then(() => undefined);
+
+export const automationReloadSchedules = (): Promise<{ loaded: boolean; task_count: number; message: string }> =>
+  client.post('/scheduler/reload').then((r) => unwrap(r.data));
 
 export const aiFetchPlatformOverview = (): Promise<Record<string, unknown>> =>
   client.get('/ai/platform/overview').then((r) => unwrap<Record<string, unknown>>(r.data));

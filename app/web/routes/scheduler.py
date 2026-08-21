@@ -23,6 +23,7 @@ from app.scheduler.task_repository import TaskConfig, TaskRepository
 logger = get_logger(__name__)
 
 router = APIRouter()
+VALID_PRODUCT_DOMAINS = {"ai-collect", "data-lake", "etl-pipeline", "data-cockpit", "platform"}
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -34,6 +35,7 @@ class TaskConfigCreate(BaseModel):
 
     task_name: str = Field(..., description="任务名（唯一标识）", examples=["google_patent_daily"])
     task_path: str = Field(..., description="Celery task 路径", examples=["app.scheduler.tasks.google_patent.crawl_daily"])
+    product_domain: str = Field("platform", description="所属产品域")
     description: str | None = Field(None, description="任务描述")
 
     schedule_type: str = Field("crontab", description="调度类型: crontab / interval")
@@ -60,6 +62,7 @@ class TaskConfigUpdate(BaseModel):
     """更新任务配置请求体（部分更新）。"""
 
     task_path: str | None = None
+    product_domain: str | None = None
     description: str | None = None
 
     schedule_type: str | None = None
@@ -83,6 +86,7 @@ class TaskConfigResponse(BaseModel):
     id: int | None = None
     task_name: str
     task_path: str
+    product_domain: str
     description: str | None = None
 
     schedule_type: str
@@ -126,6 +130,7 @@ def _config_to_response(cfg: TaskConfig) -> TaskConfigResponse:
         id=cfg.id,
         task_name=cfg.task_name,
         task_path=cfg.task_path,
+        product_domain=cfg.product_domain,
         description=cfg.description,
         schedule_type=cfg.schedule_type,
         cron_minute=cfg.cron_minute,
@@ -178,10 +183,13 @@ async def create_task(req: TaskConfigCreate) -> dict[str, Any]:
     # 校验调度类型
     if req.schedule_type == "interval" and (not req.interval_seconds or req.interval_seconds <= 0):
         raise HTTPException(status_code=400, detail="interval 调度类型必须指定 interval_seconds > 0")
+    if req.product_domain not in VALID_PRODUCT_DOMAINS:
+        raise HTTPException(status_code=400, detail="无效的产品域")
 
     config = TaskConfig(
         task_name=req.task_name,
         task_path=req.task_path,
+        product_domain=req.product_domain,
         description=req.description,
         schedule_type=req.schedule_type,
         cron_minute=req.cron_minute,
@@ -212,6 +220,8 @@ async def update_task(task_name: str, req: TaskConfigUpdate) -> dict[str, Any]:
     updates = {k: v for k, v in req.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="没有可更新的字段")
+    if updates.get("product_domain") not in (None, *VALID_PRODUCT_DOMAINS):
+        raise HTTPException(status_code=400, detail="无效的产品域")
 
     try:
         updated = await repo.update(task_name, updates, updated_by="api")

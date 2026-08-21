@@ -284,9 +284,7 @@ const Templates: React.FC = () => {
             transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
           }
           .template-card:hover {
-            border-color: ${aura.cyan};
-            background: #22282E;
-            transform: translateY(-1px);
+            background: #1D2329;
           }
           .template-icon {
             color: ${aura.text};

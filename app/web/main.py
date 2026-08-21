@@ -1,292 +1,48 @@
-"""Web API 主入口 — FastAPI 管理面板后端。
+import sentry_sdk
 
-提供统一的 REST API 和 WebSocket 端点，配置 CORS、静态文件服务、
-全局异常处理和基础设施健康检查。
-
-启动方式:
-    uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload
-"""
-
-from __future__ import annotations
-
-import os
-
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-
-import asyncio
-import sys
-
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-
-from contextlib import asynccontextmanager
-from datetime import timezone
-from pathlib import Path
-from typing import Any
-
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
-from app.config.settings import settings
-from app.logger import configure_adapter_logging, get_logger
-from app.web.routes.ai_collect import router as ai_collect_router
-from app.web.routes.dashboard import router as dashboard_router
-from app.web.routes.etl import router as etl_router
-from app.web.routes.monitor import router as monitor_router
-from app.web.routes.scheduler import router as scheduler_router
+from starlette.middleware.cors import CORSMiddleware
+
+from app.web.api.routes import api_router
+from app.web.core.config import settings
+from app.web.core.exceptions import register_exception_handlers
+from app.web.core.middleware import register_middleware
 from app.web.routes.socket import router as socket_router
-from app.web.routes.socket import start_task_event_listener, stop_task_event_listener
-from app.web.routes.tasks import router as tasks_router
-from app.web.routes.templates import router as templates_router
-
-logger = get_logger(__name__)
-
-# ── 静态文件路径 ─────────────────────────────────────────────────────────────
-_STATIC_DIR = (Path(__file__).resolve().parent.parent.parent / "web-panel" / "dist").resolve()
+from fastapi_pagination import add_pagination as register_pagination
 
 
-# ── Lifespan ─────────────────────────────────────────────────────────────────
+def custom_generate_unique_id(route: APIRoute) -> str:
+    return f"{route.tags[0]}-{route.name}"
 
 
-@asynccontextmanager
-async def lifespan(appy: FastAPI):
-    """应用生命周期：启动时初始化、关闭时清理。"""
-    configure_adapter_logging(settings.log_level)
-    logger.info("=" * 50)
-    logger.info("Web API starting on port 8000")
-    logger.info("  Templates dir: %s", settings.template_dir)
-    logger.info("  Static files:  %s (exists=%s)", _STATIC_DIR, _STATIC_DIR.exists())
-    logger.info("  MongoDB:       %s", "enabled" if settings.db_url else "disabled")
-    logger.info("  Kafka:         %s", "enabled" if settings.kafka_brokers else "disabled")
-    logger.info("=" * 50)
-    from app.web.services.ai_collect_store import ai_collect_store
-    await ai_collect_store.initialize()
-    await start_task_event_listener()
-    yield
-    await stop_task_event_listener()
-    from app.web.services.task_events import close_task_event_publisher
-    await close_task_event_publisher()
-    from app.storage.postgres_client import get_pg_client
-    await get_pg_client().close()
-    logger.info("Web API shutting down")
+if settings.SENTRY_DSN and settings.ENVIRONMENT != "local":
+    sentry_sdk.init(dsn=str(settings.SENTRY_DSN), enable_tracing=True)
 
 
-# ── App Factory ──────────────────────────────────────────────────────────────
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    generate_unique_id_function=custom_generate_unique_id,
+)
 
-
-def create_app() -> FastAPI:
-    """创建并配置 FastAPI 应用实例。"""
-
-    appy = FastAPI(
-        title="Patent Crawler API",
-        description="分布式智能爬虫框架 — Web 管理面板后端",
-        version="0.1.0",
-        lifespan=lifespan,
-    )
-
-    # ── CORS 中间件 ──────────────────────────────────────────────────────
-    appy.add_middleware(
+# Set all CORS enabled origins
+if settings.all_cors_origins:
+    app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://localhost:5173",
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:5173",
-        ],
+        allow_origins=settings.all_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    # ── 全局异常处理 ─────────────────────────────────────────────────────
-    @appy.exception_handler(Exception)
-    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-        """捕获所有未处理异常，返回统一的 JSON 错误格式。"""
-        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+register_exception_handlers(app)
+register_middleware(app)
+register_pagination(app)
 
-        status_code = 500
-        if hasattr(exc, "status_code"):
-            status_code = getattr(exc, "status_code")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
-        return JSONResponse(
-            status_code=status_code,
-            content={
-                "error": str(exc),
-                "code": status_code,
-            },
-        )
-
-    # ── 注册路由 ─────────────────────────────────────────────────────────────────
-    appy.include_router(dashboard_router, prefix="/api")
-    appy.include_router(etl_router, prefix="/api")
-    appy.include_router(tasks_router, prefix="/api")
-    appy.include_router(templates_router, prefix="/api")
-    appy.include_router(monitor_router, prefix="/api")
-    appy.include_router(ai_collect_router, prefix="/api")
-    appy.include_router(scheduler_router, prefix="/api")
-    appy.include_router(socket_router)
-
-    # Vite emits hashed bundles and fonts into these directories.
-    for static_name in ("assets", "fonts"):
-        static_path = _STATIC_DIR / static_name
-        if static_path.is_dir():
-            appy.mount(
-                f"/{static_name}",
-                StaticFiles(directory=static_path),
-                name=static_name,
-            )
-
-    @appy.get("/{asset_name}.svg", include_in_schema=False)
-    async def static_svg(asset_name: str):
-        asset_path = _STATIC_DIR / f"{asset_name}.svg"
-        if asset_path.is_file():
-            return FileResponse(asset_path)
-        raise HTTPException(status_code=404, detail="Static asset not found")
-
-    # ── 健康检查 ─────────────────────────────────────────────────────────
-    @appy.get("/api/health")
-    async def health_check() -> dict[str, Any]:
-        """基础设施健康检查。
-
-        返回各外部服务的真实连接状态（非 mock）。
-        响应格式: { code: 0, data: { status: ..., services: ... }, ... }
-        """
-        from datetime import datetime as dt
-
-        checks: dict[str, str] = {}
-
-        # ── MongoDB ──
-        if settings.db_url:
-            try:
-                from motor.motor_asyncio import AsyncIOMotorClient
-                mongo_client = AsyncIOMotorClient(settings.db_url, serverSelectionTimeoutMS=3000)
-                await mongo_client.admin.command("ping")
-                checks["mongodb"] = "connected"
-                mongo_client.close()
-            except Exception:
-                checks["mongodb"] = "unreachable"
-        else:
-            checks["mongodb"] = "disabled"
-
-        # ── Redis ──
-        if settings.redis_url:
-            try:
-                import redis.asyncio as aioredis
-                r = aioredis.from_url(
-                    settings.checkpoint_redis_url,
-                    socket_connect_timeout=2,
-                )
-                await r.ping()
-                checks["redis"] = "connected"
-                await r.close()
-            except Exception:
-                checks["redis"] = "unreachable"
-        else:
-            checks["redis"] = "disabled"
-
-        # ── MinIO ──
-        if settings.minio_endpoint:
-            try:
-                from minio import Minio
-                minio_client = Minio(
-                    settings.minio_endpoint,
-                    access_key=settings.minio_access_key,
-                    secret_key=settings.minio_secret_key,
-                    secure=settings.minio_secure,
-                )
-                minio_client.list_buckets()
-                checks["minio"] = "connected"
-            except Exception:
-                checks["minio"] = "unreachable"
-        else:
-            checks["minio"] = "disabled"
-
-        # ── Kafka ──
-        if settings.kafka_brokers:
-            try:
-                from aiokafka.admin import AIOKafkaAdminClient, NewTopic
-
-                from app.base.kafka_config import build_admin_client_kwargs
-                admin = AIOKafkaAdminClient(**build_admin_client_kwargs())
-                await admin.start()
-                await admin.list_topics()
-                topics_to_create = [settings.kafka_topic, settings.etl_rds_topic, settings.etl_ods_topic]
-                existing_topics = await admin.list_topics()
-                for topic in topics_to_create:
-                    if topic and topic not in existing_topics:
-                        await admin.create_topics([NewTopic(name=topic, num_partitions=3, replication_factor=1)])
-                        logger.info("Created Kafka topic: %s", topic)
-                checks["kafka"] = "connected"
-                await admin.close()
-            except Exception:
-                checks["kafka"] = "unreachable"
-        else:
-            checks["kafka"] = "disabled"
-
-        # ── Postgres ──
-        if settings.pg_url and settings.pg_url != settings.__class__.model_fields["pg_url"].default:
-            try:
-                from app.storage.postgres_client import get_pg_client
-                pg = get_pg_client()
-                await pg.connect()
-                checks["postgres"] = "connected" if pg._connected else "unreachable"
-            except Exception:
-                checks["postgres"] = "unreachable"
-        else:
-            checks["postgres"] = "disabled"
-
-        # ── 文件系统 ──
-        checks["static_dir"] = "exists" if _STATIC_DIR.is_dir() else "missing"
-
-        # AI Collect browser preflight requires a system Chromium/Chrome binary.
-        from app.web.services.browser_renderer import browser_renderer
-
-        checks["browser"] = "available" if browser_renderer.available() else "missing"
-
-        # Browser rendering is a feature check, not a service-availability gate.
-        all_ok = all(
-            v in ("connected", "disabled", "exists")
-            for key, v in checks.items()
-            if key != "browser"
-        )
-
-        return {
-            "code": 0,
-            "data": {
-                "status": "healthy" if all_ok else "degraded",
-                "services": checks,
-            },
-            "message": "success",
-            "timestamp": dt.now(timezone.utc).isoformat(),
-        }
-
-    # ── 静态文件 + SPA fallback ─────────────────────────────────────────
-
-    @appy.get("/", response_model=None)
-    async def spa_root():
-        """根路径：生产模式下返回 React SPA index.html。"""
-        index_path = _STATIC_DIR / "index.html"
-        if index_path.exists():
-            return FileResponse(index_path)
-        return {"message": "API is running. Use /docs for Swagger UI."}
-
-    @appy.get("/{full_path:path}", include_in_schema=False, response_model=None)
-    async def spa_fallback(full_path: str):
-        """Return the SPA entry point for client-side browser routes."""
-        if full_path in {"api", "ws"} or full_path.startswith(("api/", "ws/")):
-            raise HTTPException(status_code=404, detail="Not Found")
-
-        index_path = _STATIC_DIR / "index.html"
-        if index_path.is_file():
-            return FileResponse(index_path)
-        raise HTTPException(status_code=404, detail="Frontend build not found")
-
-    return appy
-
-
-# ── 应用实例 ─────────────────────────────────────────────────────────────────
-
-app = create_app()
+app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(socket_router)

@@ -502,7 +502,7 @@ const Monitoring: React.FC = () => {
             box-shadow: none;
           }
           .monitor-actions .ant-btn:hover {
-            border-color: ${aura.purple};
+            background: ${aura.surface};
             color: ${aura.text};
           }
           .monitor-actions .ant-input-affix-wrapper {
@@ -708,7 +708,7 @@ const Monitoring: React.FC = () => {
             cursor: pointer;
           }
           .source-block:hover {
-            border-color: ${aura.border};
+            background: ${aura.surface};
           }
           .source-block-head {
             display: flex;

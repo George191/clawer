@@ -81,7 +81,7 @@ interface ServiceDef {
 
 const services: ServiceDef[] = [
   // AI 采集线
-  { name: 'ai-agent',       line: 'ai-collect', desc: 'AI 智能采集引擎' },
+  { name: 'ai-agent',       line: 'ai-collect', desc: 'Collect 数据抓取引擎' },
   { name: 'crawler-engine', line: 'ai-collect', desc: '爬虫调度引擎' },
   { name: 'browser-render', line: 'ai-collect', desc: '浏览器渲染池' },
   { name: 'identity-pool',  line: 'ai-collect', desc: '身份代理池' },
@@ -106,7 +106,7 @@ const services: ServiceDef[] = [
 ];
 
 const productLineMeta: Record<ProductLine, { label: string; icon: string; color: string }> = {
-  'ai-collect':  { label: 'AI 智能采集', icon: '🤖', color: aura.purple },
+  'ai-collect':  { label: 'Collect', icon: '🤖', color: aura.purple },
   'sync':        { label: '数据同步',     icon: '🔄', color: aura.blue },
   'etl':         { label: 'ETL 加工',     icon: '⚡', color: aura.cyan },
   'governance':  { label: '数据治理',     icon: '🛡', color: aura.green },
@@ -502,7 +502,7 @@ const LogExplorer: React.FC = () => {
             box-shadow: none;
           }
           .log-actions .ant-btn:hover {
-            border-color: ${aura.cyan};
+            background: ${aura.surface};
             color: ${aura.text};
           }
           .log-actions .ant-btn.is-active {
@@ -623,7 +623,7 @@ const LogExplorer: React.FC = () => {
             transition: all 0.15s;
           }
           .line-chip:hover {
-            border-color: ${aura.border};
+            background: ${aura.surface};
             color: ${aura.text};
           }
           .line-chip.is-active {

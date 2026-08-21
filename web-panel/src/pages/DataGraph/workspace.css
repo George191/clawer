@@ -1,0 +1,17 @@
+.graph-workspace { color: #e4e7eb; min-height: calc(100vh - 100px); }
+.graph-page-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; }
+.graph-page-header h2 { margin: 4px 0 0; color: inherit; }
+.graph-kicker, .panel-label { color: #8ab4ff !important; font-size: 10px; letter-spacing: .14em; font-weight: 700; }
+.graph-shell { display: grid; grid-template-columns: 230px minmax(400px, 1fr) 320px; min-height: 690px; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; overflow: hidden; background: #12141a; }
+.graph-filter-panel, .graph-inspector { background: #1a1d27; padding: 16px; }
+.graph-filter-panel { border-right: 1px solid rgba(255,255,255,.08); }
+.graph-inspector { border-left: 1px solid rgba(255,255,255,.08); }
+.panel-label { display: block; margin: 24px 0 10px; }
+.saved-view { padding: 9px 10px; border-radius: 5px; color: #94a3b8; font-size: 12px; margin-bottom: 3px; }
+.saved-view.active { color: #dceaff; background: rgba(1,139,255,.13); border-left: 2px solid #018bff; }
+.legend-row { display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 11px; padding: 4px; }.legend-row i { width: 8px; height: 8px; border-radius: 50%; }
+.graph-canvas { position: relative; min-width: 0; background-color: #12141a; background-image: linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px); background-size: 28px 28px; }
+.canvas-toolbar { position: absolute; z-index: 2; top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; color: #6b7280; font-size: 10px; pointer-events: none; }
+.inspector-title h4 { margin: 10px 0 3px; color: inherit; }.inspector-card { margin-top: 24px; background: #171a22; }.inspector-card .ant-card-body { display: grid; gap: 8px; }
+@media (max-width: 1100px) { .graph-shell { grid-template-columns: 190px 1fr; }.graph-inspector { grid-column: 1 / -1; border-left: 0; border-top: 1px solid rgba(255,255,255,.08); }.graph-page-header { align-items: flex-start; gap: 18px; } }
+@media (max-width: 720px) { .graph-shell { display: block; }.graph-filter-panel { display: none; }.graph-canvas { height: 540px; }.graph-page-header { display: block; }.graph-page-header > .ant-space { margin-top: 16px; } }

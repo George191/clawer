@@ -75,6 +75,36 @@ body {
  *   Glass Morphism (玻璃拟态)
  * ============================================ */
 
+/* Keep the restrained platform chrome: hover must not introduce a new outline. */
+.ant-btn:hover,
+.ant-btn:focus-visible {
+  box-shadow: none !important;
+}
+
+.ant-btn-default,
+.ant-btn-default:hover {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+.ant-btn-default:hover {
+  background: #1d202b !important;
+  color: #e4e7eb !important;
+}
+
+.ant-btn-text:hover,
+.ant-btn-text:focus-visible {
+  border-color: transparent !important;
+}
+
+.ant-btn-text:not(.ant-btn-dangerous):hover {
+  background: #1d202b !important;
+  color: #e4e7eb !important;
+}
+
+.header-context-button:not(.is-enabled):hover {
+  background: transparent !important;
+}
+
 .glass-card {
   background: rgba(36, 40, 54, 0.8) !important;
   backdrop-filter: blur(12px);
@@ -84,10 +114,7 @@ body {
   transition: all 0.2s ease;
 }
 .glass-card:hover {
-  background: rgba(36, 40, 54, 0.95) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  background: rgba(31, 35, 47, 0.98) !important;
 }
 .glass-card-light {
   background: rgba(255, 255, 255, 0.8) !important;
@@ -160,8 +187,7 @@ body {
   transition: opacity 0.3s ease;
 }
 .metric-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  background: rgba(25, 31, 44, 0.96);
 }
 .metric-card:hover::after { opacity: 1; }
 .metric-card .metric-value {
@@ -186,7 +212,7 @@ body {
   border: 1px solid #E2E8F0;
 }
 .light-mode .metric-card:hover {
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+  background: #F1F5F9;
 }
 .light-mode .metric-card .metric-value {
   background: linear-gradient(135deg, #0F172A 0%, #334155 100%);
@@ -463,9 +489,8 @@ body {
   letter-spacing: -0.01em;
 }
 .use-case-tab:hover {
-  border-color: rgba(255, 255, 255, 0.15);
   color: #CBD5E1;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.14);
 }
 .use-case-tab.active {
   background: rgba(59, 130, 246, 0.15);
@@ -487,9 +512,7 @@ body {
   overflow: hidden;
 }
 .premium-card:hover {
-  border-color: rgba(255, 255, 255, 0.1);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  background: rgba(11, 17, 31, 0.78);
 }
 .premium-card .card-icon {
   width: 44px; height: 44px;
@@ -543,8 +566,7 @@ body {
   border-color: #E2E8F0;
 }
 .light-mode .premium-card:hover {
-  border-color: #CBD5E1;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.06);
+  background: #F1F5F9;
 }
 .light-mode .premium-card h4 { color: #0F172A; }
 .light-mode .premium-card p { color: #64748B; }
@@ -710,7 +732,7 @@ body {
   filter: blur(8px);
 }
 .btn-glow:hover::after {
-  opacity: 0.6;
+  opacity: 0;
 }
 
 /* Gradient animated background */
@@ -796,13 +818,34 @@ body {
  *   Primary Button Override
  * ============================================ */
 
-.ant-btn-primary {
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
+.ant-btn-primary,
+.ant-btn-primary:hover {
+  border-color: transparent !important;
+  background: #018bff !important;
+  box-shadow: none !important;
   transition: all 0.25s ease;
 }
 .ant-btn-primary:hover {
-  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
-  transform: translateY(-1px);
+  background: #006fc9 !important;
+}
+
+html[data-theme='light'] .ant-btn-default,
+html[data-theme='light'] .ant-btn-default:hover,
+.light-mode .ant-btn-default,
+.light-mode .ant-btn-default:hover {
+  border-color: #d7dce3 !important;
+}
+
+html[data-theme='light'] .ant-btn-default:hover,
+.light-mode .ant-btn-default:hover {
+  background: #eef1f5 !important;
+  color: #172033 !important;
+}
+
+html[data-theme='light'] .ant-btn-text:not(.ant-btn-dangerous):hover,
+.light-mode .ant-btn-text:not(.ant-btn-dangerous):hover {
+  background: #eef1f5 !important;
+  color: #172033 !important;
 }
 
 /* ============================================

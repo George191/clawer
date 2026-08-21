@@ -7,9 +7,11 @@ interface DashboardStore {
   alerts: Alert[];
   loading: boolean;
   error: string | null;
+  updatedAt: string | null;
 
   fetchMetrics: () => Promise<void>;
   fetchAlerts: () => Promise<void>;
+  applySnapshot: (metrics: DashboardMetrics, alerts: Alert[], updatedAt: string) => void;
 }
 
 let metricsRequest: Promise<void> | null = null;
@@ -20,6 +22,7 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
   alerts: [],
   loading: false,
   error: null,
+  updatedAt: null,
 
   fetchMetrics: () => {
     if (metricsRequest) return metricsRequest;
@@ -55,4 +58,12 @@ export const useDashboardStore = create<DashboardStore>((set) => ({
     })();
     return alertsRequest;
   },
+
+  applySnapshot: (metrics, alerts, updatedAt) => set({
+    metrics,
+    alerts,
+    updatedAt,
+    loading: false,
+    error: null,
+  }),
 }));

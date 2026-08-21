@@ -1,0 +1,93 @@
+import copy
+import os
+from typing import Any, AsyncGenerator, AsyncIterator
+from langchain_community.document_loaders import (
+    PyMuPDFLoader,
+    UnstructuredWordDocumentLoader,
+    UnstructuredPowerPointLoader,
+    UnstructuredExcelLoader,
+    TextLoader,
+    UnstructuredHTMLLoader,
+    UnstructuredMarkdownLoader
+)
+from langchain_community.document_loaders.base import BaseLoader 
+from langchain_core.documents.base import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_ollama import OllamaEmbeddings
+
+from app.web.api.models import Embedding, Upload
+from app.web.core.config import settings
+from app.web.core.storage.milvus import MilvusClient
+
+
+# 支持不同类型文件的处理器
+FILE_LOADERS: dict[str, type[BaseLoader]] = {
+    "application/pdf": PyMuPDFLoader,
+    "application/msword": UnstructuredWordDocumentLoader,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": UnstructuredWordDocumentLoader,
+    "application/vnd.ms-powerpoint": UnstructuredPowerPointLoader,
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": UnstructuredPowerPointLoader,
+    "application/vnd.ms-excel": UnstructuredExcelLoader,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": UnstructuredExcelLoader,
+    "text/plain": TextLoader,
+    "text/html": UnstructuredHTMLLoader,
+    "text/markdown": UnstructuredMarkdownLoader,
+}
+
+
+def get_loader(file_type: str) -> BaseLoader:
+    """
+    根据 MIME 类型返回合适的 Loader 类
+    """
+    loader_class = FILE_LOADERS.get(file_type)
+    if not loader_class:
+        raise ValueError(f"Unsupported file type: {file_type}")
+    return loader_class
+
+
+async def file_to_embeddings(
+    file: Upload, 
+    embeddings: OllamaEmbeddings = OllamaEmbeddings(model="mxbai-embed-large"),
+    
+) -> AsyncGenerator[Embedding, Any]:
+    
+    bucket_name: str = settings.AWS_S3_BUCKET_NAME
+    endpoint_url: str = settings.AWS_S3_ENDPOINT_URL
+    remote_path: str = file.file_path
+
+    file_path: str = os.path.join(endpoint_url, bucket_name, remote_path)
+
+    loader_class: type[BaseLoader] = get_loader(file.file_type)
+    loader = loader_class(file_path)
+    documents: AsyncIterator[Document] = loader.alazy_load()
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=file.chunk_size,
+        chunk_overlap=file.chunk_overlap,
+    )
+    text_splitter.split_documents(documents)
+
+    async for doc in documents:
+
+        text = doc.page_content
+        metadata = doc.metadata or {}
+
+        index = 0
+        previous_chunk_len = 0
+        for chunk in text_splitter.split_text(text):
+
+            metadata_copy = copy.deepcopy(metadata)
+            offset = index + previous_chunk_len - text_splitter._chunk_overlap
+            index = text.find(chunk, max(0, offset))
+            metadata_copy["start_index"] = index
+            previous_chunk_len = len(chunk)
+            
+            embedding = Embedding.model_validate({
+                "embedding": embeddings.embed_query(chunk),
+                "document": chunk,
+                "cmetadata": metadata_copy,
+                "upload_id": file.id,
+                "owner_id": file.owner_id,
+                "team_id": file.team_id
+            })
+            yield embedding

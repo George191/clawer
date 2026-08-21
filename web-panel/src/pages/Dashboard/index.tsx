@@ -1,564 +1,475 @@
-import React from 'react';
-import { Badge, Button, Result, Space, Spin, Typography } from 'antd';
-import {
-  ApiOutlined,
-  ClockCircleOutlined,
-  DatabaseOutlined,
-  RocketOutlined,
-  RobotOutlined,
-  SafetyCertificateOutlined,
-  ThunderboltOutlined,
-} from '@ant-design/icons';
-import ErrorBoundary from '@/components/ErrorBoundary';
-import { usePolling } from '@/hooks/usePolling';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowRightOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
+import { Button, Select, Skeleton } from 'antd';
+import { useNavigate } from 'react-router-dom';
+import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from '@/pages/AICollect/palette';
+import { DASHBOARD_WS_URL } from '@/services/api';
+import type { Alert, DashboardMetrics, PipelineNodeData } from '@/services/types';
 import { useDashboardStore } from '@/stores/dashboard';
-import AlertList from './AlertList';
-import { ChartsGrid } from './Charts';
-import PipelineTopology from './PipelineTopology';
-import TopMetrics from './TopMetrics';
+import './style.css';
 
-const { Title, Text } = Typography;
+type TimeWindow = 15 | 30 | 60;
 
-const aura = workspacePalette;
+interface RecentTask {
+  id: string;
+  name: string;
+  source?: string;
+  status?: string;
+  progress?: number;
+  records?: number;
+  updated_at?: string;
+}
 
-const Dashboard: React.FC = () => {
-  const { metrics, loading, error, fetchMetrics } = useDashboardStore();
+interface DashboardSnapshot {
+  type: 'dashboard_snapshot';
+  timestamp?: string;
+  data?: {
+    metrics?: DashboardMetrics;
+    alerts?: Alert[];
+    recent_tasks?: RecentTask[];
+  };
+}
 
-  usePolling(fetchMetrics, 5000);
+const PIPELINE_STAGES = ['Crawl', 'RDS', 'ODS', 'TASK', 'DWD', 'DWS', 'ADS'];
+const numberFormatter = new Intl.NumberFormat('zh-CN');
+const compactFormatter = new Intl.NumberFormat('zh-CN', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
 
-  if (error && !metrics) {
-    return (
-      <ErrorBoundary>
-        <Result
-          status="error"
-          title="数据加载失败"
-          subTitle={error}
-          extra={<Button type="primary" onClick={fetchMetrics}>重试</Button>}
-        />
-      </ErrorBoundary>
-    );
-  }
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
 
-  if (loading && !metrics) {
-    return (
-      <ErrorBoundary>
-        <div
-          style={{
-            minHeight: 'calc(100vh - 120px)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-          }}
-        >
-          <Spin size="large" />
-        </div>
-      </ErrorBoundary>
-    );
-  }
+const formatNumber = (value: unknown) =>
+  isFiniteNumber(value) ? numberFormatter.format(value) : '--';
 
-  const howItWorksSteps = [
-    {
-      num: '01',
-      title: '配置采集任务',
-      desc: '选择模板、输入参数、声明抓取边界，让 AI 在一开始就明确采集目标、翻页策略和质量基线。',
-      icon: <RobotOutlined />,
-      accent: aura.accent,
-      chips: ['模板驱动', '入口识别', '字段意图'],
-    },
-    {
-      num: '02',
-      title: '穿行智能管道',
-      desc: '原始数据经过 Crawl、RDS、ODS、DWD、DWS 分层流转，下载、同步、标准化和质量门禁同步发生。',
-      icon: <DatabaseOutlined />,
-      accent: aura.success,
-      chips: ['Mongo / MinIO', 'Kafka Sync', 'ETL 分层'],
-    },
-    {
-      num: '03',
-      title: '生成 AI 洞察',
-      desc: '系统基于实时指标和质量信号自动发现异常、聚合主题视角，并为后续数据服务提供稳定输入。',
-      icon: <RocketOutlined />,
-      accent: aura.warning,
-      chips: ['实时监控', '异常发现', '洞察输出'],
-    },
-  ];
+const formatCompact = (value: unknown) =>
+  isFiniteNumber(value) ? compactFormatter.format(value) : '--';
 
+const formatTime = (value?: string | null) => {
+  if (!value) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--';
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+};
+
+const formatAlertTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '--';
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const makeLinePath = (values: number[], width: number, height: number, padding = 8) => {
+  if (!values.length) return '';
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  return values.map((value, index) => {
+    const x = values.length === 1
+      ? width / 2
+      : padding + (index / (values.length - 1)) * (width - padding * 2);
+    const y = padding + ((max - value) / range) * (height - padding * 2);
+    return `${index === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+  }).join(' ');
+};
+
+const Sparkline: React.FC<{ values: number[]; tone?: 'accent' | 'warning' }> = ({
+  values,
+  tone = 'accent',
+}) => {
+  if (!values.length) return <span className="dashboard-spark-empty">暂无趋势</span>;
+  const path = makeLinePath(values, 104, 34, 3);
   return (
-    <ErrorBoundary>
-      <style>
-        {`
-          .dashboard-step-page {
-            min-height: calc(100vh - 48px);
-            margin: 0;
-            padding: 26px 20px 56px;
-            background:
-              linear-gradient(180deg, rgba(15, 18, 26, 0.96) 0%, rgba(23, 26, 34, 0.98) 100%),
-              radial-gradient(90% 68% at 50% 0%, rgba(138, 180, 255, 0.18) 0%, rgba(138, 180, 255, 0.05) 44%, rgba(23, 26, 34, 0) 72%);
-          }
-          .dashboard-step-shell {
-            width: min(1480px, 100%);
-            margin: 0 auto;
-            display: flex;
-            flex-direction: column;
-            gap: 28px;
-          }
-          .dashboard-hero-shell {
-            position: relative;
-            overflow: hidden;
-            border-radius: 20px;
-            border: 1px solid ${aura.border};
-            background:
-              linear-gradient(145deg, rgba(34, 39, 51, 0.96) 0%, rgba(19, 23, 31, 0.98) 100%);
-            box-shadow: ${aura.shadow};
-            padding: 30px;
-          }
-          .dashboard-hero-shell::before {
-            content: '';
-            position: absolute;
-            inset: 0;
-            background:
-              linear-gradient(90deg, rgba(138, 180, 255, 0.12), rgba(138, 180, 255, 0) 42%),
-              linear-gradient(180deg, rgba(101, 213, 163, 0.06), rgba(101, 213, 163, 0) 40%);
-            pointer-events: none;
-          }
-          .dashboard-hero-grid {
-            position: relative;
-            z-index: 1;
-            display: grid;
-            grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.9fr);
-            gap: 24px;
-            align-items: stretch;
-          }
-          .dashboard-hero-kicker {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 10px;
-            border-radius: 999px;
-            border: 1px solid rgba(138, 180, 255, 0.18);
-            background: rgba(138, 180, 255, 0.08);
-            color: ${aura.accent};
-            font-size: 12px;
-            font-weight: 600;
-          }
-          .dashboard-hero-title {
-            margin: 16px 0 0;
-            color: ${aura.text};
-            font-size: clamp(30px, 4vw, 38px);
-            line-height: 1.14;
-            letter-spacing: 0;
-          }
-          .dashboard-hero-copy {
-            margin-top: 14px;
-            max-width: 760px;
-            color: ${aura.muted};
-            font-size: 15px;
-            line-height: 1.85;
-          }
-          .dashboard-hero-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 14px;
-            margin-top: 20px;
-          }
-          .dashboard-hero-meta span {
-            color: ${aura.subtle};
-            font-size: 12px;
-          }
-          .dashboard-hero-side {
-            border-radius: 18px;
-            border: 1px solid ${aura.borderSoft};
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
-            padding: 20px;
-            backdrop-filter: ${aura.backdrop};
-            display: grid;
-            gap: 16px;
-          }
-          .dashboard-side-label {
-            color: ${aura.subtle};
-            font-size: 12px;
-          }
-          .dashboard-side-value {
-            margin-top: 8px;
-            color: ${aura.text};
-            font-size: 28px;
-            font-weight: 800;
-            line-height: 1;
-          }
-          .dashboard-side-grid {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 12px;
-          }
-          .dashboard-side-card {
-            border-radius: 14px;
-            border: 1px solid ${aura.borderSoft};
-            background: rgba(255, 255, 255, 0.03);
-            padding: 14px;
-          }
-          .dashboard-side-card strong {
-            display: block;
-            margin-top: 8px;
-            color: ${aura.text};
-            font-size: 18px;
-            font-weight: 700;
-          }
-          .dashboard-section-head {
-            display: flex;
-            align-items: end;
-            justify-content: space-between;
-            gap: 16px;
-            margin-bottom: 14px;
-          }
-          .dashboard-section-head h2 {
-            margin: 0;
-            color: ${aura.text};
-            font-size: 20px;
-            line-height: 1.2;
-          }
-          .dashboard-section-head p {
-            margin: 8px 0 0;
-            color: ${aura.subtle};
-            font-size: 13px;
-            line-height: 1.7;
-          }
-          .dashboard-flow-shell {
-            border-radius: 20px;
-            border: 1px solid ${aura.border};
-            background: linear-gradient(180deg, rgba(26, 31, 40, 0.95), rgba(20, 24, 32, 0.98));
-            box-shadow: ${aura.shadow};
-            padding: 28px;
-          }
-          .dashboard-flow-grid {
-            display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
-            gap: 16px;
-          }
-          .dashboard-flow-card {
-            position: relative;
-            overflow: hidden;
-            min-height: 250px;
-            border-radius: 18px;
-            border: 1px solid ${aura.borderSoft};
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
-            padding: 22px 20px 20px;
-          }
-          .dashboard-flow-card::before {
-            content: '';
-            position: absolute;
-            inset: 0 auto auto 0;
-            width: 100%;
-            height: 3px;
-            background: var(--step-accent);
-            opacity: 0.92;
-          }
-          .dashboard-flow-number {
-            position: absolute;
-            right: 18px;
-            top: 16px;
-            color: color-mix(in srgb, var(--step-accent) 22%, transparent);
-            font-size: 60px;
-            font-weight: 800;
-            line-height: 0.9;
-            letter-spacing: 0;
-          }
-          .dashboard-flow-icon {
-            width: 42px;
-            height: 42px;
-            border-radius: 12px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            color: ${aura.text};
-            background: color-mix(in srgb, var(--step-accent) 22%, rgba(255, 255, 255, 0.05));
-            box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--step-accent) 34%, transparent);
-            font-size: 18px;
-          }
-          .dashboard-flow-title {
-            margin-top: 18px;
-            color: ${aura.text};
-            font-size: 20px;
-            font-weight: 700;
-            line-height: 1.25;
-          }
-          .dashboard-flow-desc {
-            margin-top: 12px;
-            color: ${aura.muted};
-            font-size: 14px;
-            line-height: 1.85;
-          }
-          .dashboard-flow-chips {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 18px;
-          }
-          .dashboard-flow-chip {
-            padding: 5px 10px;
-            border-radius: 999px;
-            border: 1px solid ${aura.borderSoft};
-            background: rgba(255, 255, 255, 0.03);
-            color: ${aura.subtle};
-            font-size: 12px;
-            line-height: 1;
-          }
-          .dashboard-cta-shell {
-            border-radius: 20px;
-            border: 1px solid rgba(138, 180, 255, 0.16);
-            background:
-              linear-gradient(180deg, rgba(23, 27, 36, 0.98), rgba(18, 22, 30, 1)),
-              radial-gradient(80% 120% at 0% 0%, rgba(138, 180, 255, 0.12) 0%, transparent 52%);
-            box-shadow: ${aura.shadow};
-            padding: 34px 28px;
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            gap: 24px;
-            align-items: center;
-          }
-          .dashboard-cta-shell h3 {
-            margin: 12px 0 0;
-            color: ${aura.text};
-            font-size: 26px;
-            line-height: 1.2;
-          }
-          .dashboard-cta-shell p {
-            margin: 12px 0 0;
-            color: ${aura.muted};
-            font-size: 14px;
-            line-height: 1.8;
-            max-width: 720px;
-          }
-          .dashboard-cta-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            justify-content: flex-end;
-          }
-          .dashboard-cta-shell .ant-btn {
-            height: 42px;
-            padding-inline: 22px;
-            border-radius: 10px;
-            font-weight: 600;
-          }
-          .dashboard-cta-shell .ant-btn-primary {
-            background: ${aura.accentSoft};
-            border-color: rgba(138, 180, 255, 0.18);
-            color: ${aura.text};
-            box-shadow: none;
-          }
-          .dashboard-cta-shell .ant-btn-default {
-            background: rgba(255, 255, 255, 0.03);
-            border-color: ${aura.border};
-            color: ${aura.text};
-          }
-          @media (max-width: 1180px) {
-            .dashboard-hero-grid,
-            .dashboard-cta-shell {
-              grid-template-columns: 1fr;
-            }
-            .dashboard-cta-actions {
-              justify-content: flex-start;
-            }
-            .dashboard-flow-grid {
-              grid-template-columns: 1fr;
-            }
-          }
-          @media (max-width: 768px) {
-            .dashboard-step-page {
-              padding: 18px 12px 42px;
-            }
-            .dashboard-step-shell {
-              gap: 22px;
-            }
-            .dashboard-hero-shell,
-            .dashboard-flow-shell,
-            .dashboard-cta-shell {
-              border-radius: 18px;
-              padding: 22px 18px;
-            }
-            .dashboard-side-grid {
-              grid-template-columns: 1fr 1fr;
-            }
-            .dashboard-flow-card {
-              min-height: 0;
-            }
-            .dashboard-flow-number {
-              font-size: 46px;
-            }
-          }
-        `}
-      </style>
-
-      <div className="dashboard-step-page">
-        <div className="dashboard-step-shell">
-          <section className="dashboard-hero-shell">
-            <div className="dashboard-hero-grid">
-              <div>
-                <span className="dashboard-hero-kicker">
-                  <ThunderboltOutlined />
-                  AI Collect Mission Board
-                </span>
-                <Title level={1} className="dashboard-hero-title">
-                  智能采集 Step Center
-                </Title>
-                <p className="dashboard-hero-copy">
-                  这页聚焦展示采集任务从配置、穿行管道到生成洞察的完整三步路径。整体视觉沿用智能采集首页的深色玻璃质感，四周保持充足留白，让关键流程在更清爽的空间里被看见。
-                </p>
-                <div className="dashboard-hero-meta">
-                  <Badge
-                    status="processing"
-                    text={<span style={{ color: aura.accent, fontSize: 12, fontWeight: 500 }}>实时更新 · 5s 刷新</span>}
-                  />
-                  <span>{metrics?.tasks?.total || 0} 个任务</span>
-                  <span>{metrics?.tasks?.running || 0} 个运行中</span>
-                  <span>{metrics?.data_volume?.daily_increment || 0} 条今日新增</span>
-                </div>
-              </div>
-
-              <aside className="dashboard-hero-side">
-                <div>
-                  <Text className="dashboard-side-label">当前运行态</Text>
-                  <div className="dashboard-side-value">{metrics?.tasks?.running || 0}</div>
-                  <Text style={{ color: aura.muted }}>活跃采集任务正在推进端到端链路</Text>
-                </div>
-                <div className="dashboard-side-grid">
-                  <div className="dashboard-side-card">
-                    <Text className="dashboard-side-label">Kafka Lag</Text>
-                    <strong>{metrics?.kafka_lag?.total ?? 0}</strong>
-                  </div>
-                  <div className="dashboard-side-card">
-                    <Text className="dashboard-side-label">ETL 吞吐</Text>
-                    <strong>{metrics?.etl_throughput?.current ?? 0}</strong>
-                  </div>
-                  <div className="dashboard-side-card">
-                    <Text className="dashboard-side-label">数据总量</Text>
-                    <strong>{metrics?.data_volume?.total ?? 0}</strong>
-                  </div>
-                  <div className="dashboard-side-card">
-                    <Text className="dashboard-side-label">失败任务</Text>
-                    <strong>{metrics?.tasks?.failed ?? 0}</strong>
-                  </div>
-                </div>
-              </aside>
-            </div>
-          </section>
-
-          <section>
-            <div className="dashboard-section-head">
-              <div>
-                <h2>实时指标视图</h2>
-                <p>保留现有监控能力，只对外层空间和视觉节奏做收口，让页面更像采集工作台而不是传统报表页。</p>
-              </div>
-            </div>
-            <TopMetrics metrics={metrics} loading={loading} />
-          </section>
-
-          <section>
-            <div className="dashboard-section-head">
-              <div>
-                <h2>管道拓扑</h2>
-                <p>观察采集流进入 RDS、ODS、DWD、DWS 等层级时的节点健康度与吞吐节奏。</p>
-              </div>
-            </div>
-            <PipelineTopology nodes={metrics?.pipeline_nodes ?? []} />
-          </section>
-
-          <section>
-            <div className="dashboard-section-head">
-              <div>
-                <h2>趋势与质量</h2>
-                <p>把吞吐、Lag、错误率和状态分布留在主视区，方便继续配合 step 流程解释系统如何工作。</p>
-              </div>
-            </div>
-            <ChartsGrid metrics={metrics} />
-          </section>
-
-          <section>
-            <div className="dashboard-section-head">
-              <div>
-                <h2>告警视图</h2>
-                <p>把最近的异常、质量提示和链路抖动放在流程段落前，形成先看态势、再看动作路径的阅读顺序。</p>
-              </div>
-            </div>
-            <AlertList />
-          </section>
-
-          <section className="dashboard-flow-shell">
-            <div className="dashboard-section-head">
-              <div>
-                <h2>How It Works</h2>
-                <p>三步流程严格参考智能采集首页的冷色、发光、毛玻璃语言，同时保留更适合阅读说明页的舒展留白。</p>
-              </div>
-              <TagOutline />
-            </div>
-            <div className="dashboard-flow-grid">
-              {howItWorksSteps.map((step) => (
-                <article
-                  key={step.num}
-                  className="dashboard-flow-card"
-                  style={{ ['--step-accent' as string]: step.accent }}
-                >
-                  <div className="dashboard-flow-number">{step.num}</div>
-                  <div className="dashboard-flow-icon">{step.icon}</div>
-                  <div className="dashboard-flow-title">{step.title}</div>
-                  <p className="dashboard-flow-desc">{step.desc}</p>
-                  <div className="dashboard-flow-chips">
-                    {step.chips.map((chip) => (
-                      <span className="dashboard-flow-chip" key={chip}>{chip}</span>
-                    ))}
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section className="dashboard-cta-shell">
-            <div>
-              <span className="dashboard-hero-kicker">
-                <SafetyCertificateOutlined />
-                Next Action
-              </span>
-              <h3>继续进入智能采集工作台</h3>
-              <p>
-                这页负责把 step 逻辑讲清楚，真正的操作入口仍然回到智能采集首页。你可以直接发起 URL 分析、生成字段合约、试跑数据样本，再把模板发布到任务编排链路里。
-              </p>
-            </div>
-            <div className="dashboard-cta-actions">
-              <Button type="primary" icon={<RocketOutlined />} href="/ai-collect">
-                打开智能采集
-              </Button>
-              <Button icon={<ApiOutlined />} href="/tasks">
-                查看任务中心
-              </Button>
-              <Button icon={<ClockCircleOutlined />} href="/monitor">
-                查看实时监控
-              </Button>
-            </div>
-          </section>
-        </div>
-      </div>
-    </ErrorBoundary>
+    <svg className={`dashboard-spark dashboard-spark--${tone}`} viewBox="0 0 104 34" aria-hidden="true">
+      <path d={path} />
+    </svg>
   );
 };
 
-const TagOutline: React.FC = () => (
-  <Space
-    size={8}
-    style={{
-      padding: '6px 10px',
-      borderRadius: 999,
-      border: `1px solid ${aura.borderSoft}`,
-      background: 'rgba(255,255,255,0.03)',
-      color: aura.subtle,
-      fontSize: 12,
-      fontWeight: 500,
-      whiteSpace: 'nowrap',
-    }}
-  >
-    <ApiOutlined style={{ color: aura.accent }} />
-    采集首页视觉参考
-  </Space>
-);
+const TrendChart: React.FC<{
+  points: { ts: string; v: number }[];
+  alerts: Alert[];
+}> = ({ points, alerts }) => {
+  const width = 760;
+  const height = 230;
+  const paddingX = 18;
+  const paddingY = 18;
+  const values = points.map((point) => point.v);
+  const path = makeLinePath(values, width, height, paddingY);
+  const firstTime = points.length ? new Date(points[0].ts).getTime() : Number.NaN;
+  const lastTime = points.length ? new Date(points[points.length - 1].ts).getTime() : Number.NaN;
+  const eventMarkers = alerts.flatMap((alert) => {
+    const time = new Date(alert.time).getTime();
+    if (!Number.isFinite(time) || !Number.isFinite(firstTime) || !Number.isFinite(lastTime)) return [];
+    if (time < firstTime || time > lastTime || lastTime === firstTime) return [];
+    return [{
+      id: alert.id,
+      x: paddingX + ((time - firstTime) / (lastTime - firstTime)) * (width - paddingX * 2),
+      level: alert.level,
+    }];
+  });
+
+  if (!points.length) {
+    return <div className="dashboard-chart-empty">当前时间范围内暂无吞吐趋势</div>;
+  }
+
+  return (
+    <div className="dashboard-chart-wrap">
+      <svg className="dashboard-trend-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label="ETL 吞吐趋势">
+        {[0.25, 0.5, 0.75].map((ratio) => (
+          <line key={ratio} x1="0" x2={width} y1={height * ratio} y2={height * ratio} className="dashboard-grid-line" />
+        ))}
+        <defs>
+          <linearGradient id="dashboardTrendFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={workspacePalette.accent} stopOpacity="0.24" />
+            <stop offset="1" stopColor={workspacePalette.accent} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={`${path} L ${width - paddingY} ${height - paddingY} L ${paddingY} ${height - paddingY} Z`} className="dashboard-trend-area" />
+        <path d={path} className="dashboard-trend-line" />
+        {eventMarkers.map((marker) => (
+          <g key={marker.id}>
+            <line x1={marker.x} x2={marker.x} y1="10" y2={height - 12} className={`dashboard-event-line dashboard-event-line--${marker.level}`} />
+            <circle cx={marker.x} cy="18" r="4" className={`dashboard-event-dot dashboard-event-dot--${marker.level}`} />
+          </g>
+        ))}
+      </svg>
+      <div className="dashboard-chart-axis">
+        <span>{formatTime(points[0]?.ts)}</span>
+        <span>{formatTime(points[points.length - 1]?.ts)}</span>
+      </div>
+    </div>
+  );
+};
+
+const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
+  const {
+    metrics,
+    alerts,
+    loading,
+    error,
+    updatedAt,
+    fetchMetrics,
+    fetchAlerts,
+    applySnapshot,
+  } = useDashboardStore();
+  const [timeWindow, setTimeWindow] = useState<TimeWindow>(15);
+  const [recentTasks, setRecentTasks] = useState<RecentTask[]>([]);
+  const [hasConnected, setHasConnected] = useState(false);
+  const [connectionInterrupted, setConnectionInterrupted] = useState(false);
+  const [waitingForSnapshot, setWaitingForSnapshot] = useState(true);
+  const fallbackRequested = useRef(false);
+
+  const handleMessage = useCallback((raw: string) => {
+    try {
+      const message = JSON.parse(raw) as DashboardSnapshot;
+      if (message.type !== 'dashboard_snapshot' || !message.data?.metrics) return;
+      applySnapshot(
+        message.data.metrics,
+        Array.isArray(message.data.alerts) ? message.data.alerts : [],
+        message.timestamp || new Date().toISOString(),
+      );
+      setRecentTasks(Array.isArray(message.data.recent_tasks) ? message.data.recent_tasks.slice(0, 5) : []);
+      setWaitingForSnapshot(false);
+    } catch {
+      // Ignore messages that do not belong to the dashboard channel.
+    }
+  }, [applySnapshot]);
+
+  const { connected, send } = useWebSocket(DASHBOARD_WS_URL, {
+    onMessage: handleMessage,
+    onOpen: () => {
+      setHasConnected(true);
+      setConnectionInterrupted(false);
+    },
+    onClose: () => setConnectionInterrupted(true),
+  });
+
+  useEffect(() => {
+    if (!connected) return;
+    setWaitingForSnapshot(true);
+    send(JSON.stringify({ type: 'subscribe', channel: 'dashboard:main' }));
+  }, [connected, send]);
+
+  useEffect(() => {
+    const fallbackTimer = window.setTimeout(() => {
+      if (useDashboardStore.getState().metrics || fallbackRequested.current) return;
+      fallbackRequested.current = true;
+      void Promise.all([fetchMetrics(), fetchAlerts()]).finally(() => setWaitingForSnapshot(false));
+    }, 6000);
+    return () => window.clearTimeout(fallbackTimer);
+  }, [fetchAlerts, fetchMetrics]);
+
+  const activeAlerts = useMemo(
+    () => alerts.filter((alert) => alert.status === 'active'),
+    [alerts],
+  );
+
+  const history = useMemo(() => {
+    const rawHistory = metrics?.etl_throughput?.history;
+    if (!Array.isArray(rawHistory)) return [];
+    const cutoff = Date.now() - timeWindow * 60 * 1000;
+    return rawHistory.filter((point) => {
+      const timestamp = new Date(point.ts).getTime();
+      return Number.isFinite(timestamp) && timestamp >= cutoff && isFiniteNumber(point.v);
+    });
+  }, [metrics, timeWindow]);
+
+  const taskCounts = metrics?.tasks;
+  const failedTasks = isFiniteNumber(taskCounts?.failed) ? taskCounts.failed : 0;
+  const hasAttention = activeAlerts.length > 0 || failedTasks > 0;
+  const topAlerts = activeAlerts.slice(0, 3);
+
+  const summaryText = metrics
+    ? `当前 ${formatNumber(taskCounts?.running)} 个任务运行中，ETL 处理速率 ${formatNumber(metrics.etl_throughput?.current)} msg/s，Kafka Lag 为 ${formatNumber(metrics.kafka_lag?.total)}，失败任务 ${formatNumber(taskCounts?.failed)} 个。`
+    : '正在等待实时快照，收到数据后将在这里汇总当前运行情况。';
+
+  const largestLag = useMemo(() => {
+    const entries = Object.entries(metrics?.kafka_lag?.by_layer || {})
+      .filter((entry): entry is [string, number] => isFiniteNumber(entry[1]));
+    return entries.sort((a, b) => b[1] - a[1])[0];
+  }, [metrics]);
+
+  const pipelineNodes = Array.isArray(metrics?.pipeline_nodes) ? metrics.pipeline_nodes : [];
+  const resolvePipelineStage = (stage: string): { node?: PipelineNodeData; lag?: number } => {
+    const node = pipelineNodes.find((item) => item.name?.toLowerCase() === stage.toLowerCase());
+    if (node) return { node };
+    const lagEntry = Object.entries(metrics?.kafka_lag?.by_layer || {})
+      .find(([key]) => key.toLowerCase() === stage.toLowerCase());
+    return { lag: lagEntry && isFiniteNumber(lagEntry[1]) ? lagEntry[1] : undefined };
+  };
+
+  const distribution = [
+    { key: 'running', label: '运行中', value: taskCounts?.running, color: workspacePalette.accent },
+    { key: 'completed', label: '已完成', value: taskCounts?.completed, color: workspacePalette.success },
+    { key: 'failed', label: '失败', value: taskCounts?.failed, color: workspacePalette.danger },
+  ];
+  const distributionTotal = distribution.reduce(
+    (sum, item) => sum + (isFiniteNumber(item.value) ? Math.max(item.value, 0) : 0),
+    0,
+  );
+  let ringOffset = 0;
+  const ringStops = distribution.map((item) => {
+    const start = distributionTotal ? (ringOffset / distributionTotal) * 100 : 0;
+    ringOffset += isFiniteNumber(item.value) ? Math.max(item.value, 0) : 0;
+    const end = distributionTotal ? (ringOffset / distributionTotal) * 100 : 0;
+    return `${item.color} ${start}% ${end}%`;
+  });
+  const ringStyle = distributionTotal
+    ? { background: `conic-gradient(${ringStops.join(', ')})` }
+    : undefined;
+
+  const wsLabel = connected
+    ? waitingForSnapshot ? 'WS 已连接 · 等待快照' : 'WS 已连接'
+    : metrics ? '数据更新已暂停' : connectionInterrupted || hasConnected ? 'WS 重连中' : 'WS 连接中';
+  const wsTone = connected ? 'connected' : connectionInterrupted || hasConnected || metrics ? 'stale' : 'connecting';
+  const showLoading = !metrics && (loading || waitingForSnapshot);
+
+  return (
+    <div className="dashboard-v2">
+      <header className="dashboard-page-head">
+        <div>
+          <h1>数据运营概览</h1>
+          <p>当前项目域、租户与团队的实时运行摘要</p>
+        </div>
+        <div className="dashboard-controls">
+          <Select<TimeWindow>
+            value={timeWindow}
+            onChange={setTimeWindow}
+            className="dashboard-time-select"
+            options={[
+              { value: 15, label: '最近 15 分钟' },
+              { value: 30, label: '最近 30 分钟' },
+              { value: 60, label: '最近 1 小时' },
+            ]}
+          />
+          <span className="dashboard-context-pill">全部来源</span>
+          <span className={`dashboard-connection dashboard-connection--${wsTone}`}>
+            <i />
+            <span>{wsLabel}</span>
+            {updatedAt && <small>更新于 {formatTime(updatedAt)}</small>}
+          </span>
+        </div>
+      </header>
+
+      {error && <div className="dashboard-error-banner">REST 降级数据暂不可用：{error}</div>}
+
+      {showLoading ? (
+        <div className="dashboard-loading" aria-label="正在加载 Dashboard">
+          <Skeleton active paragraph={{ rows: 14 }} title={{ width: '28%' }} />
+        </div>
+      ) : (
+        <>
+          <section className="dashboard-hero-grid">
+            <article className={`dashboard-card dashboard-summary ${hasAttention ? 'dashboard-summary--attention' : ''}`}>
+              <div className={`dashboard-summary-kicker ${hasAttention ? 'dashboard-summary-kicker--attention' : ''}`}>
+                {hasAttention ? <ExclamationCircleFilled /> : <CheckCircleFilled />}
+                {hasAttention ? '存在待处理事项' : metrics ? '运行状态良好' : '等待实时数据'}
+              </div>
+              <h2>{!metrics ? '等待实时运行快照' : hasAttention ? '有事项需要关注' : '今日数据链路运行平稳'}</h2>
+              <p>{summaryText}</p>
+              <div className="dashboard-summary-actions">
+                <Button type="primary" onClick={() => navigate('/tasks')}>查看运行任务 <ArrowRightOutlined /></Button>
+                <Button onClick={() => navigate('/monitor')}>打开实时监控</Button>
+              </div>
+            </article>
+
+            <aside className="dashboard-card dashboard-attention">
+              <div className="dashboard-section-head">
+                <div>
+                  <h3>需要关注</h3>
+                  <p>影响当前运行的活动事项</p>
+                </div>
+                <span>{topAlerts.length || failedTasks ? `${topAlerts.length || 1} 个进行中` : '暂无事项'}</span>
+              </div>
+              <div className="dashboard-attention-list">
+                {topAlerts.map((alert) => (
+                  <button type="button" className="dashboard-issue" key={alert.id} onClick={() => navigate('/monitor')}>
+                    <i className={`dashboard-severity dashboard-severity--${alert.level}`} />
+                    <span>
+                      <b>{alert.message}</b>
+                      <small>{alert.source || '未知来源'} · {formatAlertTime(alert.time)}</small>
+                    </span>
+                    <ArrowRightOutlined />
+                  </button>
+                ))}
+                {!topAlerts.length && failedTasks > 0 && (
+                  <button type="button" className="dashboard-issue" onClick={() => navigate('/tasks')}>
+                    <i className="dashboard-severity dashboard-severity--critical" />
+                    <span>
+                      <b>{failedTasks} 个任务处于失败状态</b>
+                      <small>前往任务中心查看失败原因和重试状态</small>
+                    </span>
+                    <ArrowRightOutlined />
+                  </button>
+                )}
+                {!topAlerts.length && failedTasks === 0 && (
+                  <div className="dashboard-healthy-empty">
+                    <CheckCircleFilled />
+                    <div><b>当前没有需要处理的告警</b><span>数据链路将持续通过 WebSocket 更新</span></div>
+                  </div>
+                )}
+              </div>
+            </aside>
+          </section>
+
+          <section className="dashboard-kpi-grid">
+            <article className="dashboard-card dashboard-kpi">
+              <div className="dashboard-kpi-head"><span>运行任务</span><em>{failedTasks ? '有失败' : metrics ? '正常' : '--'}</em></div>
+              <div className="dashboard-kpi-value">{formatNumber(taskCounts?.running)} <small>/ {formatNumber(taskCounts?.total)}</small></div>
+              <div className="dashboard-kpi-foot"><span>当前活动 / 任务总数</span></div>
+            </article>
+            <article className="dashboard-card dashboard-kpi">
+              <div className="dashboard-kpi-head"><span>今日新增</span><em>records</em></div>
+              <div className="dashboard-kpi-value">{formatCompact(metrics?.data_volume?.daily_increment)}</div>
+              <div className="dashboard-kpi-foot"><span>累计 {formatCompact(metrics?.data_volume?.total)}</span></div>
+            </article>
+            <article className="dashboard-card dashboard-kpi">
+              <div className="dashboard-kpi-head"><span>ETL 吞吐</span><em>msg/s</em></div>
+              <div className="dashboard-kpi-value">{formatCompact(metrics?.etl_throughput?.current)} <small>msg/s</small></div>
+              <div className="dashboard-kpi-foot"><span>最近 {timeWindow} 分钟</span><Sparkline values={history.map((point) => point.v)} /></div>
+            </article>
+            <article className="dashboard-card dashboard-kpi">
+              <div className="dashboard-kpi-head"><span>Kafka Lag</span><em className={isFiniteNumber(metrics?.kafka_lag?.total) && metrics!.kafka_lag.total > 0 ? 'is-warning' : ''}>消息积压</em></div>
+              <div className="dashboard-kpi-value">{formatNumber(metrics?.kafka_lag?.total)}</div>
+              <div className="dashboard-kpi-foot">
+                <span>{largestLag ? `最大 ${largestLag[0]} · ${formatNumber(largestLag[1])}` : '暂无分层数据'}</span>
+              </div>
+            </article>
+          </section>
+
+          <section className="dashboard-analytics-grid">
+            <article className="dashboard-card dashboard-chart-card">
+              <div className="dashboard-panel-head">
+                <div><h3>处理速率与数据流入</h3><p>最近 {timeWindow} 分钟 · 仅叠加落在当前时间范围内的告警事件</p></div>
+                <span>最新 {formatNumber(metrics?.etl_throughput?.current)} msg/s</span>
+              </div>
+              <TrendChart points={history} alerts={activeAlerts} />
+            </article>
+
+            <article className="dashboard-card dashboard-distribution-card">
+              <div className="dashboard-panel-head">
+                <div><h3>任务状态</h3><p>{formatNumber(taskCounts?.total)} 个任务</p></div>
+                <button type="button" onClick={() => navigate('/tasks')}>查看全部 <ArrowRightOutlined /></button>
+              </div>
+              <div className="dashboard-distribution">
+                <div className={`dashboard-ring ${distributionTotal ? '' : 'dashboard-ring--empty'}`} style={ringStyle}>
+                  <div><b>{formatNumber(metrics ? distributionTotal : undefined)}</b><span>已分类</span></div>
+                </div>
+                <div className="dashboard-distribution-list">
+                  {distribution.map((item) => (
+                    <div key={item.key}><span><i style={{ background: item.color }} />{item.label}</span><b>{formatNumber(item.value)}</b></div>
+                  ))}
+                </div>
+              </div>
+              <div className="dashboard-distribution-note">
+                状态构成仅使用当前任务计数，不对未提供的状态进行推算。
+              </div>
+            </article>
+          </section>
+
+          <section className="dashboard-card dashboard-pipeline">
+            <div className="dashboard-section-head">
+              <div><h3>数据管道健康</h3><p>从采集到服务的实时处理状态</p></div>
+              <button type="button" onClick={() => navigate('/monitor')}>查看管道详情 <ArrowRightOutlined /></button>
+            </div>
+            <div className="dashboard-pipeline-flow">
+              {PIPELINE_STAGES.map((stage) => {
+                const { node, lag } = resolvePipelineStage(stage);
+                const value = node && isFiniteNumber(node.throughput)
+                  ? `${formatCompact(node.throughput)}/s`
+                  : isFiniteNumber(lag) ? `Lag ${formatNumber(lag)}` : '--';
+                const detail = node && isFiniteNumber(node.lag) ? `Lag ${formatNumber(node.lag)}` : '实时指标未提供';
+                return (
+                  <button type="button" className={`dashboard-stage dashboard-stage--${node?.status || 'unknown'}`} key={stage} onClick={() => navigate('/monitor')}>
+                    <span><b>{stage}</b><i /></span>
+                    <strong>{value}</strong>
+                    <small>{value === '--' ? '实时指标未提供' : detail}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="dashboard-card dashboard-recent-tasks">
+            <div className="dashboard-panel-head">
+              <div><h3>最近任务</h3><p>跨采集、同步与 ETL 的最新运行记录</p></div>
+              <button type="button" onClick={() => navigate('/tasks')}>查看全部任务 <ArrowRightOutlined /></button>
+            </div>
+            {recentTasks.length ? (
+              <div className="dashboard-task-table">
+                <div className="dashboard-task-row dashboard-task-row--head">
+                  <span>任务</span><span>来源</span><span>状态</span><span>进度</span><span>记录数</span><span>更新时间</span>
+                </div>
+                {recentTasks.map((task) => (
+                  <div className="dashboard-task-row" key={task.id}>
+                    <b>{task.name || '--'}</b>
+                    <span>{task.source || '--'}</span>
+                    <span>{task.status || '--'}</span>
+                    <span>{isFiniteNumber(task.progress) ? `${task.progress}%` : '--'}</span>
+                    <span>{formatNumber(task.records)}</span>
+                    <span>{formatTime(task.updated_at)}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="dashboard-tasks-empty">
+                <span>当前 Dashboard 快照暂未提供任务明细</span>
+                <Button onClick={() => navigate('/tasks')}>前往任务中心</Button>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+};
 
 export default Dashboard;

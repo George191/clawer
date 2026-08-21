@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -93,14 +94,42 @@ class BrowserRenderer:
 
     @staticmethod
     def available() -> bool:
-        return any(path.is_file() for path in _CHROME_PATHS)
+        configured_path = str(ai_settings.browser_executable_path or "").strip()
+        if configured_path and Path(configured_path).is_file():
+            return True
+        if any(path.is_file() for path in _CHROME_PATHS):
+            return True
+        try:
+            from playwright.sync_api import sync_playwright
+
+            with sync_playwright() as playwright:
+                return Path(playwright.chromium.executable_path).is_file()
+        except (ImportError, OSError, RuntimeError):
+            return False
 
     @staticmethod
-    def _executable_path() -> str:
-        path = next((path for path in _CHROME_PATHS if path.is_file()), None)
-        if path is None:
-            raise RuntimeError("Chrome or Edge is not installed")
-        return str(path)
+    def _executable_path(playwright: object) -> str | None:
+        configured_path = str(ai_settings.browser_executable_path or "").strip()
+        if configured_path:
+            path = Path(configured_path)
+            if not path.is_file():
+                raise RuntimeError(f"Configured browser executable does not exist: {configured_path}")
+            return str(path)
+
+        # A Playwright channel (for example ``chrome`` or ``msedge``) is an
+        # explicit selection and must not be shadowed by the first system path
+        # found in the fallback list below.
+        if str(ai_settings.browser_channel or "").strip():
+            return None
+
+        system_path = next((path for path in _CHROME_PATHS if path.is_file()), None)
+        if system_path is not None:
+            return str(system_path)
+
+        bundled_path = getattr(getattr(playwright, "chromium", None), "executable_path", "")
+        if bundled_path and Path(str(bundled_path)).is_file():
+            return str(bundled_path)
+        return None
 
     @staticmethod
     def _proxy_config(proxy_url: str) -> dict[str, str] | None:
@@ -150,13 +179,29 @@ class BrowserRenderer:
 
         add_browser_event("navigation_requested", url, label="Open target URL")
         proxy = self._proxy_config(settings.tunnel_proxy_url) if use_proxy else None
+        if not ai_settings.browser_enabled:
+            raise RuntimeError("Browser rendering is disabled by SPIDER_AI_BROWSER_ENABLED")
+
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(
-                executable_path=self._executable_path(),
-                headless=True,
-                proxy=proxy,
-            )
+            executable_path = self._executable_path(playwright)
+            launch_kwargs: dict[str, object] = {
+                "headless": ai_settings.browser_headless,
+                "proxy": proxy,
+                "timeout": max(1, int(ai_settings.page_fetch_timeout * 1000)),
+            }
+            if executable_path:
+                launch_kwargs["executable_path"] = executable_path
+            elif ai_settings.browser_channel:
+                launch_kwargs["channel"] = ai_settings.browser_channel.strip()
+            args: list[str] = ["--disable-dev-shm-usage"]
+            if ai_settings.browser_no_sandbox or (
+                os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() == 0
+            ):
+                args.extend(["--no-sandbox", "--disable-setuid-sandbox"])
+            launch_kwargs["args"] = args
+            browser = playwright.chromium.launch(**launch_kwargs)
             page = None
+            context = None
             try:
                 context = browser.new_context(
                     viewport={"width": viewport_width, "height": viewport_height},
@@ -276,7 +321,7 @@ class BrowserRenderer:
                 favicon_href = page.locator('link[rel~="icon"]').last.get_attribute("href") if page.locator('link[rel~="icon"]').count() else ""
                 discovered_links = page.eval_on_selector_all(
                     "a[href]",
-                    """
+                    r"""
                     (elements) => elements.slice(0, 80).map((element) => ({
                         href: element.href,
                         text: (element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
@@ -331,6 +376,8 @@ class BrowserRenderer:
                     page.url if page is not None else url,
                     label="Browser closed",
                 )
+                if context is not None:
+                    context.close()
                 browser.close()
 
     @staticmethod
@@ -353,6 +400,8 @@ class BrowserRenderer:
         viewport_height: int = 1000,
         on_event: Callable[[dict[str, object]], None] | None = None,
     ) -> BrowserRenderResult:
+        if not ai_settings.browser_enabled:
+            raise RuntimeError("Browser rendering is disabled by SPIDER_AI_BROWSER_ENABLED")
         safe_viewport_width = max(320, min(int(viewport_width), 3840))
         safe_viewport_height = max(240, min(int(viewport_height), 3840))
         return await asyncio.to_thread(

@@ -1,13 +1,13 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { ConfigProvider, App as AntApp, theme as antTheme, message } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import enUS from 'antd/locale/en_US';
 import MainLayout from '@/layouts/MainLayout';
 import { useThemeStore } from '@/stores/settings';
 import { themeTokens } from './theme/tokens';
 import { darkTheme } from './theme/dark';
 import { lightTheme } from './theme/light';
 
-import CommandCenter from '@/pages/CommandCenter';
 import Dashboard from '@/pages/Dashboard';
 import DataLake from '@/pages/DataLake';
 import DataExplorer from '@/pages/DataExplorer';
@@ -17,9 +17,18 @@ import AICollect from '@/pages/AICollect';
 import AICollectGovernance from '@/pages/AICollectGovernance';
 import LogExplorer from '@/pages/LogExplorer';
 import WorkspacePage from '@/pages/WorkspacePage';
+import Login from '@/pages/Login';
+import ResetPassword from '@/pages/Login/ResetPassword';
+import DataGraph from '@/pages/DataGraph';
+import Organization from '@/pages/Organization';
+import AutomationCenter from '@/pages/AutomationCenter';
+import AccountSettings from '@/pages/AccountSettings';
+import SystemSettings from '@/pages/SystemSettings';
+import AuthLayout from '@/pages/Login/AuthLayout';
 
 const App: React.FC = () => {
-  const { mode } = useThemeStore();
+  const { mode, language } = useThemeStore();
+  const location = useLocation();
 
   const isDark = mode === 'dark';
   const currentToken = isDark ? darkTheme : lightTheme;
@@ -36,25 +45,41 @@ const App: React.FC = () => {
 
   return (
     <ConfigProvider
-      locale={zhCN}
+      locale={language === 'en-US' ? enUS : zhCN}
       theme={{
         algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
         token: mergedToken,
       }}
     >
       <AntApp>
-        <MainLayout>
+        {['/login', '/reset-password'].includes(location.pathname) ? (
+          <AuthLayout>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
+            </Routes>
+          </AuthLayout>
+        ) : (
+          <MainLayout>
           <Routes>
-            <Route path="/" element={<CommandCenter />} />
+            <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/cockpit" element={<Dashboard />} />
+            <Route path="/cockpit/metrics" element={<Monitoring />} />
+            <Route path="/cockpit/quality" element={<WorkspacePage />} />
             <Route path="/explorer" element={<DataExplorer />} />
-            <Route path="/tasks" element={<Navigate to="/ai-collect?panel=tasks" replace />} />
+            <Route path="/tasks" element={<Navigate to="/automation/runs" replace />} />
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/logs" element={<LogExplorer />} />
             <Route path="/pipeline" element={<Pipeline />} />
-            <Route path="/pipeline/tasks" element={<WorkspacePage />} />
-            <Route path="/pipeline/templates" element={<WorkspacePage />} />
-            <Route path="/pipeline/schedule" element={<WorkspacePage />} />
+            <Route path="/pipeline/tasks" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
+            <Route path="/pipeline/templates" element={<Navigate to="/automation/templates?domain=etl-pipeline" replace />} />
+            <Route path="/pipeline/schedule" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
+            <Route path="/automation" element={<Navigate to="/automation/templates" replace />} />
+            <Route path="/automation/templates" element={<AutomationCenter />} />
+            <Route path="/automation/workflows" element={<AutomationCenter />} />
+            <Route path="/automation/schedules" element={<AutomationCenter />} />
+            <Route path="/automation/runs" element={<AutomationCenter />} />
             <Route path="/pipeline/releases" element={<WorkspacePage />} />
             <Route path="/pipeline/alerts" element={<WorkspacePage />} />
             <Route path="/templates" element={<Navigate to="/ai-collect?panel=templates" replace />} />
@@ -65,25 +90,30 @@ const App: React.FC = () => {
             <Route path="/lake/catalog" element={<DataLake />} />
             <Route path="/lake/metadata" element={<WorkspacePage />} />
             <Route path="/lake/quality" element={<WorkspacePage />} />
-            <Route path="/lake/lineage" element={<WorkspacePage />} />
+            <Route path="/lake/lineage" element={<DataGraph />} />
             <Route path="/lake/security" element={<WorkspacePage />} />
             <Route path="/lake/market" element={<WorkspacePage />} />
             <Route path="/data-api" element={<WorkspacePage />} />
             {/* Legacy sidebar routes */}
             <Route path="/instances" element={<WorkspacePage />} />
             <Route path="/import" element={<Navigate to="/ai-collect" replace />} />
-            <Route path="/graph-analytics" element={<WorkspacePage />} />
+            <Route path="/graph-analytics" element={<DataGraph />} />
             <Route path="/explore" element={<DataExplorer />} />
             <Route path="/dashboards" element={<Dashboard />} />
             <Route path="/query" element={<DataExplorer />} />
             <Route path="/metrics" element={<Monitoring />} />
-            <Route path="/project-users" element={<WorkspacePage />} />
+            <Route path="/organization" element={<Organization />} />
+            <Route path="/organization/users/:userId" element={<Organization />} />
+            <Route path="/account/settings" element={<AccountSettings />} />
+            <Route path="/settings" element={<SystemSettings />} />
+            <Route path="/project-users" element={<Organization />} />
             <Route path="/billing" element={<WorkspacePage />} />
             <Route path="/project-settings" element={<WorkspacePage />} />
             <Route path="/learning" element={<WorkspacePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </MainLayout>
+          </MainLayout>
+        )}
       </AntApp>
     </ConfigProvider>
   );

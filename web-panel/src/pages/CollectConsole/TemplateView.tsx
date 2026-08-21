@@ -105,9 +105,7 @@ const TemplateView: React.FC<Props> = ({ keyword }) => {
           transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
         }
         .cc-tpl-card:hover {
-          border-color: ${aiAura.accent};
-          background: #232828;
-          transform: translateY(-1px);
+          background: #202525;
         }
         .cc-tpl-icon {
           color: ${aiAura.text};

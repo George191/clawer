@@ -100,6 +100,28 @@ class AISettings(BaseSettings):
         default=30.0,
         description="页面抓取超时（秒）",
     )
+
+    # ── Browser renderer ──
+    browser_enabled: bool = Field(
+        default=True,
+        description="是否启用基于 Playwright Chromium 的浏览器渲染",
+    )
+    browser_headless: bool = Field(
+        default=True,
+        description="浏览器是否以无头模式运行；服务端采集应保持为 true",
+    )
+    browser_executable_path: str = Field(
+        default="",
+        description="可选的 Chrome/Chromium/Edge 可执行文件路径，留空时使用系统浏览器或 Playwright 浏览器",
+    )
+    browser_channel: str = Field(
+        default="",
+        description="可选的 Playwright 浏览器 channel，例如 chrome 或 msedge；设置后优先使用该 channel",
+    )
+    browser_no_sandbox: bool = Field(
+        default=False,
+        description="是否显式禁用 Chromium sandbox；仅在隔离容器且明确需要时启用",
+    )
     max_html_chars_for_llm: int = Field(
         default=30000,
         description="发送给 LLM 的 HTML 片段最大字符数（控制 token 成本）",

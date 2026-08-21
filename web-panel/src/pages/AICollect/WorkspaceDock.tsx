@@ -3352,9 +3352,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
         }
         .workspace-dock-selectable:hover {
-          border-color: rgba(138, 180, 255, 0.18);
-          background: rgba(255, 255, 255, 0.05);
-          transform: translateY(-1px);
+          background: rgba(0, 0, 0, 0.16);
         }
         .workspace-dock-selectable.is-selected {
           border-color: rgba(138, 180, 255, 0.24);
@@ -4295,10 +4293,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           transition: border-color 160ms ease, color 160ms ease, background 160ms ease, transform 160ms ease;
         }
         .workspace-dock-inline-action:hover:not(:disabled) {
-          border-color: ${aura.border};
           color: ${aura.text};
-          background: rgba(255, 255, 255, 0.065);
-          transform: translateY(-1px);
+          background: rgba(0, 0, 0, 0.18);
         }
         .workspace-dock-inline-action:disabled {
           opacity: 0.38;
@@ -4311,8 +4307,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: #DCE8FF;
         }
         .workspace-dock-inline-action.is-primary:hover:not(:disabled) {
-          border-color: rgba(138, 180, 255, 0.58);
-          background: rgba(138, 180, 255, 0.2);
+          background: rgba(138, 180, 255, 0.24);
           color: #F5F8FF;
         }
         .workspace-dock-inline-action.is-icon-only {
@@ -4328,10 +4323,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 8px 20px rgba(0, 0, 0, 0.18);
         }
         .workspace-dock-inline-action.is-icon-only:hover:not(:disabled) {
-          border-color: rgba(138, 180, 255, 0.42);
           background:
-            linear-gradient(180deg, rgba(138, 180, 255, 0.26), rgba(138, 180, 255, 0.12)),
-            rgba(255, 255, 255, 0.05);
+            linear-gradient(180deg, rgba(138, 180, 255, 0.3), rgba(138, 180, 255, 0.16)),
+            rgba(255, 255, 255, 0.07);
         }
         .workspace-dock-inline-action.is-icon-only .anticon {
           font-size: 14px;

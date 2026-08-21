@@ -305,6 +305,46 @@ export interface WorkspaceTask {
   logs?: { level: string; message: string; created_at: string }[];
 }
 
+export type ProductDomain = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'platform';
+
+export interface CurrentUserContext {
+  user: { id: string; full_name?: string | null; email: string };
+  tenants: Array<{ id: string; name: string }>;
+  teams: Array<{ id: string; name: string; tenant_id: string }>;
+}
+
+export interface AutomationWorkflow {
+  id?: number;
+  name: string;
+  product_domain: ProductDomain;
+  description: string;
+  nodes: Array<{ name: string; type?: string; template?: string }>;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SchedulerTaskConfig {
+  id?: number;
+  task_name: string;
+  task_path: string;
+  product_domain: ProductDomain;
+  description?: string;
+  schedule_type: 'crontab' | 'interval';
+  cron_minute: string;
+  cron_hour: string;
+  cron_day_of_week: string;
+  cron_day_of_month: string;
+  cron_month_of_year: string;
+  interval_seconds?: number;
+  args: unknown[];
+  kwargs: Record<string, unknown>;
+  options: Record<string, unknown>;
+  enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface AdapterResult {
   adapterId: string;
   code: string;

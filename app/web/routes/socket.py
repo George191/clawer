@@ -70,6 +70,7 @@ class ClientConnection:
         self._closed = False
         self.analyze_task: asyncio.Task[None] | None = None
         self.adapter_task: asyncio.Task[None] | None = None
+        self.dashboard_task: asyncio.Task[None] | None = None
 
     async def send(self, message: dict[str, Any]) -> bool:
         """发送消息到客户端."""
@@ -89,6 +90,8 @@ class ClientConnection:
             self.analyze_task.cancel()
         if self.adapter_task and not self.adapter_task.done():
             self.adapter_task.cancel()
+        if self.dashboard_task and not self.dashboard_task.done():
+            self.dashboard_task.cancel()
         async with self._send_lock:
             if self._closed:
                 return
@@ -455,6 +458,9 @@ async def handle_subscribe(connection: ClientConnection, message: dict[str, Any]
     if channel.startswith("task:"):
         task_id = channel.removeprefix("task:")
         await _send_task_snapshot(task_id, connection)
+    elif channel == "dashboard:main":
+        if connection.dashboard_task is None or connection.dashboard_task.done():
+            connection.dashboard_task = asyncio.create_task(_stream_dashboard(connection))
 
     await connection.send({"type": "subscribed", "channel": channel})
 
@@ -467,7 +473,38 @@ async def handle_unsubscribe(connection: ClientConnection, message: dict[str, An
         return
 
     await manager.unsubscribe(connection.client_id, channel)
+    if channel == "dashboard:main" and connection.dashboard_task is not None:
+        connection.dashboard_task.cancel()
+        connection.dashboard_task = None
     await connection.send({"type": "unsubscribed", "channel": channel})
+
+
+async def _stream_dashboard(connection: ClientConnection) -> None:
+    """Push dashboard snapshots over the existing shared WebSocket connection."""
+    from app.web.routes.dashboard import get_alerts, get_metrics
+
+    try:
+        while "dashboard:main" in connection.subscriptions:
+            metrics_response, alerts_response = await asyncio.gather(get_metrics(), get_alerts())
+            await connection.send(
+                {
+                    "type": "dashboard_snapshot",
+                    "channel": "dashboard:main",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "data": {
+                        "metrics": metrics_response["data"],
+                        "alerts": alerts_response["data"],
+                    },
+                }
+            )
+            await asyncio.sleep(5)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("Dashboard WebSocket stream failed for %s: %s", connection.client_id, exc)
+        await connection.send(
+            {"type": "error", "code": "DASHBOARD_STREAM_FAILED", "message": str(exc)}
+        )
 
 
 async def handle_command(connection: ClientConnection, message: dict[str, Any]) -> None:

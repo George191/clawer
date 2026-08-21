@@ -19,7 +19,7 @@ from app.storage.postgres_client import PostgresClient, get_pg_client
 logger = get_logger(__name__)
 
 TABLE_NAME = "public.scheduler_tasks"
-_DDL_PATH = Path(__file__).resolve().parent.parent.parent.parent / "scripts" / "init_scheduler_tasks.sql"
+_DDL_PATH = Path(__file__).resolve().parent / "sql" / "init_scheduler_tasks.sql"
 _READY = False
 
 
@@ -33,6 +33,7 @@ class TaskConfig:
 
     task_name: str
     task_path: str
+    product_domain: str = "platform"
     schedule_type: str = "crontab"  # crontab / interval
 
     # crontab 字段
@@ -127,15 +128,10 @@ class TaskRepository:
             "SELECT to_regclass(:table_name) AS reg",
             {"table_name": TABLE_NAME},
         )
-        if row and row.get("reg"):
-            _READY = True
-            return
-
-        # 执行初始化 SQL
         if _DDL_PATH.exists():
             ddl = _DDL_PATH.read_text(encoding="utf-8")
             await pg.init_schema([ddl])
-            logger.info("scheduler_tasks table initialized with seed data")
+            logger.info("scheduler_tasks schema ensured")
         else:
             raise FileNotFoundError(f"DDL script not found: {_DDL_PATH}")
 
@@ -148,7 +144,7 @@ class TaskRepository:
         await self.ensure_table()
         rows = await self._get_pg().fetch_all(
             f"""
-            SELECT id, task_name, task_path, description,
+            SELECT id, task_name, task_path, product_domain, description,
                    schedule_type, cron_minute, cron_hour, cron_day_of_week,
                    cron_day_of_month, cron_month_of_year, interval_seconds,
                    args, kwargs, options, enabled,
@@ -164,7 +160,7 @@ class TaskRepository:
         await self.ensure_table()
         rows = await self._get_pg().fetch_all(
             f"""
-            SELECT id, task_name, task_path, description,
+            SELECT id, task_name, task_path, product_domain, description,
                    schedule_type, cron_minute, cron_hour, cron_day_of_week,
                    cron_day_of_month, cron_month_of_year, interval_seconds,
                    args, kwargs, options, enabled,
@@ -181,7 +177,7 @@ class TaskRepository:
         await self.ensure_table()
         row = await self._get_pg().fetch_one(
             f"""
-            SELECT id, task_name, task_path, description,
+            SELECT id, task_name, task_path, product_domain, description,
                    schedule_type, cron_minute, cron_hour, cron_day_of_week,
                    cron_day_of_month, cron_month_of_year, interval_seconds,
                    args, kwargs, options, enabled,
@@ -209,12 +205,12 @@ class TaskRepository:
         await self._get_pg().execute(
             f"""
             INSERT INTO {TABLE_NAME} (
-                task_name, task_path, description,
+                task_name, task_path, product_domain, description,
                 schedule_type, cron_minute, cron_hour, cron_day_of_week,
                 cron_day_of_month, cron_month_of_year, interval_seconds,
                 args, kwargs, options, enabled, updated_by
             ) VALUES (
-                :task_name, :task_path, :description,
+                :task_name, :task_path, :product_domain, :description,
                 :schedule_type, :cron_minute, :cron_hour, :cron_day_of_week,
                 :cron_day_of_month, :cron_month_of_year, :interval_seconds,
                 CAST(:args AS jsonb), CAST(:kwargs AS jsonb), CAST(:options AS jsonb),
@@ -224,6 +220,7 @@ class TaskRepository:
             {
                 "task_name": config.task_name,
                 "task_path": config.task_path,
+                "product_domain": config.product_domain,
                 "description": config.description,
                 "schedule_type": config.schedule_type,
                 "cron_minute": config.cron_minute,
@@ -261,7 +258,7 @@ class TaskRepository:
         await self.ensure_table()
 
         allowed_fields = {
-            "task_path", "description", "schedule_type",
+            "task_path", "product_domain", "description", "schedule_type",
             "cron_minute", "cron_hour", "cron_day_of_week",
             "cron_day_of_month", "cron_month_of_year", "interval_seconds",
             "enabled",
@@ -317,6 +314,7 @@ class TaskRepository:
             id=row.get("id"),
             task_name=row["task_name"],
             task_path=row["task_path"],
+            product_domain=row.get("product_domain", "platform"),
             description=row.get("description"),
             schedule_type=row.get("schedule_type", "crontab"),
             cron_minute=row.get("cron_minute", "*"),

@@ -179,8 +179,8 @@ const DataExplorer: React.FC = () => {
                           padding: '8px 10px', borderRadius: 6, cursor: 'pointer', transition: 'all 0.2s',
                           border: `1px solid ${token.colorBorderSecondary}`, background: token.colorBgContainer,
                         }}
-                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = token.colorPrimary; e.currentTarget.style.background = token.colorFillAlter; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = token.colorBorderSecondary; e.currentTarget.style.background = token.colorBgContainer; }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = token.colorFillSecondary; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = token.colorBgContainer; }}
                       >
                         <div style={{ fontSize: 11, color: token.colorTextTertiary, marginBottom: 3, display: 'flex', justifyContent: 'space-between' }}>
                           <span>{item.timestamp}</span>

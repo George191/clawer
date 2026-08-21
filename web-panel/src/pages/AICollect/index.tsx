@@ -5891,7 +5891,7 @@ const AICollect: React.FC = () => {
           }
           .ai-session-stage-bar:hover span,
           .ai-session-stage-bar:focus-visible span {
-            transform: translateX(1px);
+            color: rgba(255, 255, 255, 0.82);
           }
           .ai-session-stage-bar.is-visible span {
             opacity: 0.96;
@@ -5946,9 +5946,7 @@ const AICollect: React.FC = () => {
           }
           .ai-session-pinned-tab:hover,
           .ai-session-pinned-tab:focus-visible {
-            border-color: rgba(255, 255, 255, 0.14);
-            background: rgba(52, 58, 71, 0.96);
-            transform: translateY(-1px);
+            background: rgba(24, 29, 40, 0.98);
           }
           .ai-session-pinned-tab.is-entering {
             animation: ai-session-template-tab-enter 360ms cubic-bezier(0.2, 0.82, 0.28, 1);
@@ -6156,8 +6154,7 @@ const AICollect: React.FC = () => {
             transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
           }
           .ai-template-stage-add:hover {
-            border-color: rgba(138, 180, 255, 0.32);
-            background: rgba(138, 180, 255, 0.12);
+            background: rgba(138, 180, 255, 0.18);
             color: #ffffff;
           }
           .ai-template-stage-body {
@@ -6181,8 +6178,7 @@ const AICollect: React.FC = () => {
           }
           .ai-template-stage-section:hover .ai-template-stage-body,
           .ai-template-stage-section:focus-within .ai-template-stage-body {
-            background: rgba(255, 255, 255, 0.04);
-            box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+            background: rgba(0, 0, 0, 0.14);
           }
           .ai-template-confirm-bar {
             display: flex;
@@ -6223,8 +6219,7 @@ const AICollect: React.FC = () => {
             font-weight: 600;
           }
           .ai-template-confirm-btn:hover {
-            border-color: rgba(129, 216, 208, 0.56) !important;
-            background: rgba(129, 216, 208, 0.22) !important;
+            background: rgba(129, 216, 208, 0.26) !important;
             color: #f1fffd !important;
           }
           .ai-session-inline-alert {
@@ -6473,9 +6468,7 @@ const AICollect: React.FC = () => {
           .ai-session-release-action:focus-visible,
           .ai-session-release-action.is-selected {
             color: #ffffff;
-            border-color: rgba(138, 180, 255, 0.28);
-            background: rgba(138, 180, 255, 0.1);
-            transform: translateY(-1px);
+            background: rgba(138, 180, 255, 0.15);
           }
           .ai-session-release-action .anticon {
             font-size: 15px;
@@ -6867,8 +6860,7 @@ const AICollect: React.FC = () => {
             font-size: 11px;
           }
           .ai-session-time-picker-dropdown .ant-picker-ok .ant-btn:hover {
-            border-color: rgba(129, 216, 208, 0.58);
-            background: rgba(129, 216, 208, 0.24);
+            background: rgba(129, 216, 208, 0.28);
           }
           .ai-session-release-footer {
             display: flex;
@@ -7329,7 +7321,7 @@ const AICollect: React.FC = () => {
           .ai-session-side-hotspot:hover,
           .ai-session-side-hotspot.is-open {
             color: rgba(255, 255, 255, 0.72);
-            transform: translateX(-2px);
+            background: rgba(255, 255, 255, 0.055);
           }
           .ai-session-side-trigger-icon {
             width: 20px;
@@ -7748,7 +7740,9 @@ const AICollect: React.FC = () => {
           .ai-template-number-input:focus-within .ant-input-number-handler {
             color: rgba(255, 255, 255, 0.9);
           }
-          .ai-template-number-input:hover .ant-input-number-handler-wrap,
+          .ai-template-number-input:hover .ant-input-number-handler-wrap {
+            background: rgba(0, 0, 0, 0.16) !important;
+          }
           .ai-template-number-input:focus-within .ant-input-number-handler-wrap {
             border-color: rgba(255, 255, 255, 0.3) !important;
             background: rgba(255, 255, 255, 0.08) !important;
@@ -7774,7 +7768,9 @@ const AICollect: React.FC = () => {
             background: rgba(255, 255, 255, 0.025) !important;
             padding-inline: 6px !important;
           }
-          .ai-template-field-value .ant-select:hover .ant-select-selector,
+          .ai-template-field-value .ant-select:hover .ant-select-selector {
+            background: rgba(0, 0, 0, 0.14) !important;
+          }
           .ai-template-field-value .ant-select-focused .ant-select-selector {
             border-color: rgba(255, 255, 255, 0.3) !important;
             box-shadow: none !important;

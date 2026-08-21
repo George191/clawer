@@ -4,7 +4,6 @@ import {
   Button,
   Space,
   Dropdown,
-  Badge,
   Progress,
 } from 'antd';
 import {
@@ -15,18 +14,18 @@ import {
   BellOutlined,
   BookOutlined,
   BranchesOutlined,
-  CodeOutlined,
+  CloseOutlined,
   ControlOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
   DownOutlined,
   ExperimentOutlined,
-  FieldTimeOutlined,
   FileSearchOutlined,
   FileTextOutlined,
   HistoryOutlined,
   LineChartOutlined,
   LogoutOutlined,
+  MailOutlined,
   MenuOutlined,
   PushpinOutlined,
   RightOutlined,
@@ -39,6 +38,8 @@ import {
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
+import { fetchCurrentUserContext } from '@/services/api';
+import type { CurrentUserContext } from '@/services/types';
 
 const { Header, Content } = Layout;
 
@@ -52,7 +53,7 @@ const PROJECT_LOGO_SIZE = 28;
 const PROJECT_LOGO_EXPANDED_X = 26;
 const PROJECT_LOGO_COLLAPSED_X = (SIDER_COLLAPSED - PROJECT_LOGO_SIZE) / 2;
 const PRODUCT_NAME_ZH = 'Asiral Helio';
-type ProjectKey = 'ai-collect' | 'data-lake' | 'etl-pipeline';
+type ProjectKey = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit';
 
 const TemplateNavIcon: React.FC = () => (
   <span style={{ width: 21, height: 21, display: 'grid', placeItems: 'center' }} aria-hidden="true">
@@ -88,18 +89,20 @@ interface ProjectConfig {
   key: ProjectKey;
   label: string;
   shortLabel: string;
+  icon: React.ReactNode;
   defaultPath: string;
   accent: string;
   sections: SidebarSection[];
 }
 
-const projectOrder: ProjectKey[] = ['ai-collect', 'data-lake', 'etl-pipeline'];
+const projectOrder: ProjectKey[] = ['ai-collect', 'data-lake', 'etl-pipeline', 'data-cockpit'];
 
 const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'ai-collect': {
     key: 'ai-collect',
-    label: 'AI 智能采集',
-    shortLabel: 'AI Collect',
+    label: '数据抓取',
+    shortLabel: 'Collect',
+    icon: <RobotOutlined />,
     defaultPath: '/ai-collect',
     accent: '#7C3AED',
     sections: [
@@ -107,7 +110,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         key: 'capture',
         label: '采集编排',
         children: [
-          { key: '/ai-collect', icon: <RobotOutlined />, label: '智能采集' },
+          { key: '/ai-collect', icon: <RobotOutlined />, label: '数据抓取' },
         ],
       },
       {
@@ -132,7 +135,8 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'data-lake': {
     key: 'data-lake',
     label: '数据湖',
-    shortLabel: 'Data Lake',
+    shortLabel: 'Lake',
+    icon: <DatabaseOutlined />,
     defaultPath: '/lake/catalog',
     accent: '#059669',
     sections: [
@@ -167,7 +171,8 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'etl-pipeline': {
     key: 'etl-pipeline',
     label: 'ETL 管道',
-    shortLabel: 'ETL Pipeline',
+    shortLabel: 'Pileline',
+    icon: <ApartmentOutlined />,
     defaultPath: '/pipeline',
     accent: '#0EA5E9',
     sections: [
@@ -176,15 +181,12 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         label: '管道开发',
         children: [
           { key: '/pipeline', icon: <ApartmentOutlined />, label: '管道画布' },
-          { key: '/pipeline/tasks', icon: <ScheduleOutlined />, label: '任务中心', badge: 12 },
-          { key: '/pipeline/templates', icon: <CodeOutlined />, label: '处理器模板' },
         ],
       },
       {
         key: 'orchestration',
         label: '调度运行',
         children: [
-          { key: '/pipeline/schedule', icon: <FieldTimeOutlined />, label: '编排调度' },
           { key: '/monitor', icon: <LineChartOutlined />, label: '监控指标' },
           { key: '/logs', icon: <HistoryOutlined />, label: '运行日志' },
         ],
@@ -197,6 +199,21 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
           { key: '/pipeline/alerts', icon: <BellOutlined />, label: '告警规则' },
         ],
       },
+    ],
+  },
+  'data-cockpit': {
+    key: 'data-cockpit',
+    label: '数据驾驶舱',
+    shortLabel: 'Cockpit',
+    icon: <BarChartOutlined />,
+    defaultPath: '/cockpit',
+    accent: '#F59E0B',
+    sections: [
+      { key: 'overview', label: '运营总览', children: [{ key: '/cockpit', icon: <BarChartOutlined />, label: '驾驶舱总览' }] },
+      { key: 'insights', label: '分析洞察', children: [
+        { key: '/cockpit/metrics', icon: <LineChartOutlined />, label: '指标分析' },
+        { key: '/cockpit/quality', icon: <AuditOutlined />, label: '数据质量' },
+      ] },
     ],
   },
 };
@@ -216,9 +233,9 @@ const explicitRouteProject: Record<string, ProjectKey> = {
   '/explorer': 'data-lake',
   '/data-api': 'data-lake',
   '/pipeline': 'etl-pipeline',
-  '/pipeline/tasks': 'etl-pipeline',
-  '/pipeline/templates': 'etl-pipeline',
-  '/pipeline/schedule': 'etl-pipeline',
+  '/cockpit': 'data-cockpit',
+  '/cockpit/metrics': 'data-cockpit',
+  '/cockpit/quality': 'data-cockpit',
   '/pipeline/releases': 'etl-pipeline',
   '/pipeline/alerts': 'etl-pipeline',
 };
@@ -227,7 +244,7 @@ const legacyRouteToSidebarKey: Record<string, string> = {
   '/': '/',
   '/instances': '/lake/catalog',
   '/import': '/ai-collect',
-  '/tasks': '/ai-collect',
+  '/tasks': '/tasks',
   '/templates': '/ai-collect',
   '/graph-analytics': '/lake/lineage',
   '/explore': '/explorer',
@@ -258,6 +275,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [isMobile, setIsMobile] = useState(false);
   const [settledCollapsed, setSettledCollapsed] = useState(false);
   const [projectTextReady, setProjectTextReady] = useState(true);
+  const [currentTenant, setCurrentTenant] = useState<string | null>(null);
+  const [currentTeam, setCurrentTeam] = useState<string | null>(null);
+  const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -267,10 +288,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const routedProject = useMemo(() => resolveProjectByPath(location.pathname), [location.pathname]);
   const activeProjectKey = routedProject ?? currentProject;
   const activeProject = projectConfigs[activeProjectKey];
-  const activeAiWorkspacePanel = activeProjectKey === 'ai-collect'
-    ? new URLSearchParams(location.search).get('panel')
-    : null;
-  const hideSidebar = activeProjectKey === 'ai-collect';
+  const isAutomationSurface = location.pathname.startsWith('/automation');
+  const isPlatformManagementSurface = location.pathname.startsWith('/organization');
+  const isSystemSettingsSurface = location.pathname.startsWith('/settings');
+  const hideSidebar = activeProjectKey === 'ai-collect' || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
@@ -309,6 +330,31 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   useEffect(() => {
     document.title = `${PRODUCT_NAME_ZH} · ${activeProject.label}`;
   }, [activeProject.label]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCurrentUserContext()
+      .then((context) => {
+        if (cancelled) return;
+        setCurrentUserContext(context);
+        const firstTenant = context.tenants[0]?.id ?? null;
+        setCurrentTenant(firstTenant);
+        setCurrentTeam(context.teams.find((team) => team.tenant_id === firstTenant)?.id ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentUserContext(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const currentTenantOptions = currentUserContext?.tenants ?? [];
+  const currentTeamOptions = currentUserContext?.teams.filter((team) => team.tenant_id === currentTenant) ?? [];
+  const currentTenantName = currentTenantOptions.find((tenant) => tenant.id === currentTenant)?.name ?? 'No tenant';
+  const currentTeamName = currentTeamOptions.find((team) => team.id === currentTeam)?.name ?? 'No team';
+  const currentUserName = currentUserContext?.user.full_name?.trim()
+    || currentUserContext?.user.email.split('@')[0]
+    || 'Account';
+  const currentUserEmail = currentUserContext?.user.email ?? '';
 
   const collapsed = isMobile ? manualCollapsed : !pinned && manualCollapsed;
   const projectTextVisible = !collapsed && projectTextReady;
@@ -365,6 +411,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     }
   };
 
+  const logout = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    navigate('/login', { replace: true });
+  };
+
   const overlayShellStyle: React.CSSProperties = {
     padding: '6px 0',
     borderRadius: 18,
@@ -392,12 +444,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
   const bindOverlayHover = (
     event: React.MouseEvent<HTMLButtonElement>,
-    options?: { accent?: string; outline?: string },
+    options?: { accent?: string },
   ) => {
     event.currentTarget.style.background = options?.accent ?? palette.hover;
-    if (options?.outline) {
-      event.currentTarget.style.boxShadow = `inset 0 0 0 1px ${options.outline}`;
-    }
   };
 
   const resetOverlayHover = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -407,10 +456,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
   const renderProjectPanel = () => (
     <div style={{ ...overlayShellStyle, width: 296 }}>
-      <div style={{ padding: '8px 14px 10px' }}>
-        <div style={{ color: palette.text, fontSize: 13, fontWeight: 600 }}>项目域切换</div>
-        <div style={{ color: palette.secondary, fontSize: 12, marginTop: 3 }}>选择当前工作域，主界面会同步切换到对应产品模块。</div>
-      </div>
       {projectOrder.map((key, index) => {
         const project = projectConfigs[key];
         const isActive = key === activeProjectKey;
@@ -426,7 +471,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               }}
               onMouseEnter={(event) => bindOverlayHover(event, {
                 accent: isActive ? (isDark ? 'rgba(143, 227, 232, 0.12)' : '#E0F2FE') : palette.hover,
-                outline: isActive ? (isDark ? '#8FE3E8' : '#0EA5E9') : undefined,
               })}
               onMouseLeave={resetOverlayHover}
             >
@@ -445,14 +489,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   flexShrink: 0,
                 }}
               >
-                {project.shortLabel.slice(0, 1)}
+                {project.icon}
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 13, fontWeight: isActive ? 600 : 500 }}>{project.label}</span>
-                <span style={{ display: 'block', fontSize: 12, color: palette.secondary, marginTop: 2 }}>{project.shortLabel}</span>
+                <span style={{ display: 'block', fontSize: 13, fontWeight: isActive ? 600 : 500 }}>{project.shortLabel}</span>
               </span>
               {isActive ? (
-                <span style={{ color: activeProject.accent, fontSize: 12, fontWeight: 600 }}>当前</span>
+                <span style={{ color: palette.muted, fontSize: 12, fontWeight: 500 }}>Current</span>
               ) : (
                 <RightOutlined style={{ color: palette.secondary, fontSize: 12 }} />
               )}
@@ -467,47 +510,76 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     <div
       style={{
         ...overlayShellStyle,
-        width: 320,
+        width: 300,
+        padding: '6px 0',
+        overflow: 'hidden',
       }}
     >
-      <div style={{ padding: '8px 14px 10px' }}>
-        <div style={{ color: palette.text, fontSize: 13, fontWeight: 600 }}>通知中心</div>
-        <div style={{ color: palette.secondary, fontSize: 12, marginTop: 3 }}>3 条未读，按产品运行事件实时聚合。</div>
+      <div style={{ minHeight: 44, padding: '6px 14px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ flex: 1, color: palette.text, fontSize: 13, fontWeight: 600 }}>Notifications</span>
+        <span style={{ padding: '2px 6px', borderRadius: 4, background: 'rgba(13, 147, 148, 0.12)', color: '#38C4C4', fontSize: 9, fontWeight: 600 }}>3 New</span>
+        <button type="button" aria-label="Mark all as read" title="Mark all as read" style={{ width: 28, height: 28, padding: 0, display: 'grid', placeItems: 'center', border: 0, borderRadius: 5, background: 'transparent', color: palette.secondary, cursor: 'pointer' }}>
+          <MailOutlined />
+        </button>
       </div>
+      <div style={{ height: 1, margin: '0 14px 4px', background: palette.border }} />
       {[
-        { title: '采集任务完成', desc: 'Google Patent 模板已写入 ODS 层', color: '#10B981', icon: <RobotOutlined /> },
-        { title: '质量规则告警', desc: 'navwarn.content 缺失率超过阈值', color: '#F59E0B', icon: <AuditOutlined /> },
-        { title: 'ETL 调度提示', desc: 'DWD 聚合任务将在 18:30 执行', color: '#0EA5E9', icon: <ScheduleOutlined /> },
-      ].map(({ title, desc, color, icon }, index) => (
-        <button
+        { title: '采集任务完成', desc: 'Google Patent 模板已写入 ODS 层', time: '1h ago', color: '#28C76F', tint: 'rgba(40, 199, 111, 0.14)', icon: <RobotOutlined /> },
+        { title: '质量规则告警', desc: 'navwarn.content 缺失率超过阈值', time: '4h ago', color: '#FF9F43', tint: 'rgba(255, 159, 67, 0.14)', icon: <AuditOutlined /> },
+        { title: 'ETL 调度提示', desc: 'DWD 聚合任务将在 18:30 执行', time: 'Yesterday', color: '#0D9394', tint: 'rgba(13, 147, 148, 0.14)', icon: <ScheduleOutlined /> },
+      ].map(({ title, desc, time, color, tint, icon }) => (
+        <div
           key={title}
-          type="button"
           style={{
-            ...overlayRowStyle,
-            marginTop: index === 0 ? 0 : 4,
+            minHeight: 84,
+            width: 'calc(100% - 14px)',
+            margin: '0 7px',
+            padding: '10px 8px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 10,
             background: 'transparent',
+            borderRadius: 6,
+            cursor: 'pointer',
+            boxSizing: 'border-box',
           }}
-          onMouseEnter={(event) => bindOverlayHover(event)}
-          onMouseLeave={resetOverlayHover}
+          onMouseEnter={(event) => {
+            event.currentTarget.style.background = palette.hover;
+            const dismissButton = event.currentTarget.querySelector<HTMLButtonElement>('[data-notification-dismiss]');
+            if (dismissButton) dismissButton.style.opacity = '1';
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.background = 'transparent';
+            const dismissButton = event.currentTarget.querySelector<HTMLButtonElement>('[data-notification-dismiss]');
+            if (dismissButton) dismissButton.style.opacity = '0.35';
+          }}
         >
-          <span style={{ width: 26, display: 'inline-flex', justifyContent: 'center', color, fontSize: 15, flexShrink: 0 }}>
+          <span style={{ width: 34, height: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', background: tint, color, fontSize: 14, flexShrink: 0 }}>
             {icon}
           </span>
           <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: 'block', color: palette.text, fontSize: 13, fontWeight: 600 }}>{title}</span>
-            <span style={{ display: 'block', color: palette.secondary, fontSize: 12, marginTop: 2 }}>{desc}</span>
+            <span style={{ display: 'block', overflow: 'hidden', color: palette.text, fontSize: 12, fontWeight: 600, lineHeight: '18px', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+            <span style={{ display: 'block', overflow: 'hidden', color: palette.secondary, fontSize: 10, lineHeight: '17px', marginTop: 4, textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{desc}</span>
+            <span style={{ display: 'block', overflow: 'hidden', color: palette.muted, fontSize: 9, lineHeight: '15px', marginTop: 4, textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{time}</span>
           </span>
-        </button>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 3, flexShrink: 0 }}>
+            <span aria-label="Unread" style={{ width: 6, height: 6, borderRadius: '50%', background: '#0D9394' }} />
+            <button data-notification-dismiss type="button" aria-label={`Dismiss ${title}`} style={{ width: 18, height: 18, padding: 0, border: 0, background: 'transparent', color: palette.muted, cursor: 'pointer', fontSize: 10, opacity: 0.35, transition: 'opacity 120ms ease' }}><CloseOutlined /></button>
+          </span>
+        </div>
       ))}
+      <div style={{ height: 1, margin: '4px 14px 6px', background: palette.border }} />
+      <div style={{ padding: '0 7px' }}>
+        <Button type="primary" block style={{ height: 32, borderRadius: 5, borderColor: '#0D9394', background: '#0D9394', fontSize: 11, boxShadow: 'none' }}>View all notifications</Button>
+      </div>
     </div>
   );
 
   const renderAccountPanel = () => {
     const accountRows = [
-      { key: 'account', icon: <SettingOutlined />, label: 'Account settings', onClick: undefined },
-      { key: 'theme', icon: <SkinOutlined />, label: 'Theme', onClick: toggle },
+      { key: 'account', icon: <SettingOutlined />, label: 'Account settings', onClick: () => { setAccountMenuOpen(false); navigate('/account/settings'); } },
+      { key: 'theme', icon: <SkinOutlined />, label: 'Theme', onClick: () => { setAccountMenuOpen(false); toggle(); } },
       { key: 'legal', icon: <SafetyCertificateOutlined />, label: 'Legal', onClick: undefined },
-      { key: 'logout', icon: <LogoutOutlined />, label: 'Log out', onClick: undefined },
     ];
 
     return (
@@ -518,12 +590,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         }}
       >
         <div style={{ padding: '8px 14px 9px' }}>
-          <div style={{ color: palette.text, fontSize: 13, fontWeight: 600 }}>Blank George</div>
-          <div style={{ color: palette.secondary, fontSize: 12, marginTop: 3 }}>zhouy674896488@gmail.com</div>
+          <div style={{ color: palette.text, fontSize: 13, fontWeight: 600 }}>{currentUserName}</div>
+          {currentUserEmail ? <div style={{ color: palette.secondary, fontSize: 12, marginTop: 3 }}>{currentUserEmail}</div> : null}
         </div>
         {accountRows.map((item, index) => (
           <React.Fragment key={item.key}>
-            {index === 1 || index === 3 ? <div style={{ height: 1, background: palette.border, margin: '6px 14px' }} /> : null}
+            {index === 1 ? <div style={{ height: 1, background: palette.border, margin: '6px 14px' }} /> : null}
             <button
               type="button"
               onClick={item.onClick}
@@ -532,12 +604,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 minHeight: 36,
                 padding: '0 8px',
                 gap: 8,
-                color: item.key === 'logout' ? palette.text : overlayRowStyle.color,
+                color: overlayRowStyle.color,
               }}
               onMouseEnter={(event) => {
                 bindOverlayHover(event, item.key === 'account' ? {
                   accent: isDark ? 'rgba(143, 227, 232, 0.12)' : '#E0F2FE',
-                  outline: isDark ? '#8FE3E8' : '#0EA5E9',
                 } : undefined);
               }}
               onMouseLeave={resetOverlayHover}
@@ -554,6 +625,30 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             </button>
           </React.Fragment>
         ))}
+        <div style={{ height: 1, background: palette.border, margin: '6px 14px' }} />
+        <button
+          type="button"
+          onClick={() => { setAccountMenuOpen(false); logout(); }}
+          style={{
+            ...overlayRowStyle,
+            minHeight: 38,
+            margin: '0 7px',
+            width: 'calc(100% - 14px)',
+            boxSizing: 'border-box',
+            padding: '0 8px',
+            gap: 8,
+            borderRadius: 9,
+            color: isDark ? '#ff9b9b' : '#DC2626',
+            background: isDark ? 'rgba(239, 68, 68, 0.08)' : '#FEF2F2',
+          }}
+          onMouseEnter={(event) => bindOverlayHover(event, {
+            accent: isDark ? 'rgba(239, 68, 68, 0.16)' : '#FEE2E2',
+          })}
+          onMouseLeave={resetOverlayHover}
+        >
+          <span style={{ width: 26, display: 'inline-flex', justifyContent: 'center', color: 'inherit', fontSize: 15 }}><LogoutOutlined /></span>
+          <span style={{ flex: 1, textAlign: 'left', fontWeight: 600 }}>Log out</span>
+        </button>
       </div>
     );
   };
@@ -629,48 +724,86 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     maxWidth: 260,
                   }}
                 >
+                  <span style={{ color: activeProject.accent, display: 'inline-flex', fontSize: 13 }}>
+                    {activeProject.icon}
+                  </span>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {activeProject.label}
+                    {activeProject.shortLabel}
                   </span>
                   <DownOutlined style={{ color: palette.secondary, fontSize: 10 }} />
                 </button>
+              </Dropdown>
+              <span style={{ width: 1, height: 18, background: palette.border, margin: '0 4px' }} />
+              <Dropdown
+                disabled={currentTenantOptions.length <= 1}
+                menu={{
+                  selectedKeys: currentTenant ? [currentTenant] : [],
+                  onClick: ({ key }) => {
+                    const tenantId = String(key);
+                    setCurrentTenant(tenantId);
+                    setCurrentTeam(currentUserContext?.teams.find((team) => team.tenant_id === tenantId)?.id ?? null);
+                  },
+                  items: currentTenantOptions.map((tenant) => ({ key: tenant.id, label: tenant.name })),
+                }}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  className={currentTenantOptions.length > 1 ? 'header-context-button is-enabled' : 'header-context-button'}
+                  style={{ color: palette.secondary, border: 'none', cursor: currentTenantOptions.length > 1 ? 'pointer' : 'default' }}
+                >
+                  {currentTenantName}<DownOutlined style={{ marginLeft: 4, fontSize: 9, color: currentTenantOptions.length > 1 ? palette.secondary : palette.muted }} />
+                </Button>
+              </Dropdown>
+              <Dropdown
+                disabled={currentTeamOptions.length <= 1}
+                menu={{
+                  selectedKeys: currentTeam ? [currentTeam] : [],
+                  onClick: ({ key }) => setCurrentTeam(String(key)),
+                  items: currentTeamOptions.map((team) => ({ key: team.id, label: team.name })),
+                }}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  className={currentTeamOptions.length > 1 ? 'header-context-button is-enabled' : 'header-context-button'}
+                  style={{ color: palette.secondary, border: 'none', cursor: currentTeamOptions.length > 1 ? 'pointer' : 'default' }}
+                >
+                  {currentTeamName}<DownOutlined style={{ marginLeft: 4, fontSize: 9, color: currentTeamOptions.length > 1 ? palette.secondary : palette.muted }} />
+                </Button>
               </Dropdown>
             </div>
           )}
         </div>
 
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 4 }}>
-          {activeProjectKey === 'ai-collect' ? (
-            <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 2, marginRight: 6, paddingRight: 8, borderRight: `1px solid ${palette.border}` }}>
-              {([
-                { panel: 'templates', label: '模板管理', icon: <TemplateNavIcon /> },
-                { panel: 'tasks', label: '任务调度', icon: <TaskNavIcon /> },
-              ] as const).map((item) => {
-                const isActive = activeAiWorkspacePanel === item.panel;
-                return (
-                  <Button
-                    key={item.panel}
-                    data-ai-workspace-panel={item.panel}
-                    type="text"
-                    icon={item.icon}
-                    aria-label={item.label}
-                    title={item.label}
-                    onClick={() => navigate(isActive ? '/ai-collect' : `/ai-collect?panel=${item.panel}`)}
-                    style={{
-                      width: 34,
-                      height: 34,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: isActive ? palette.text : palette.secondary,
-                      border: 'none',
-                      fontSize: 15,
-                    }}
-                  />
-                );
-              })}
-            </div>
-          ) : null}
+          <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 2, marginRight: 6, paddingRight: 8, borderRight: `1px solid ${palette.border}` }}>
+            <Button
+              type="text"
+              onClick={() => navigate(`/automation/templates?domain=${activeProjectKey}`)}
+              style={{ color: isAutomationSurface ? palette.text : palette.secondary, background: isAutomationSurface ? palette.hover : 'transparent', border: 'none' }}
+            >
+              Automation
+            </Button>
+            <Button
+              type="text"
+              aria-label="Access"
+              title="Access"
+              onClick={() => navigate('/organization')}
+              style={{ color: isPlatformManagementSurface ? palette.text : palette.secondary, background: isPlatformManagementSurface ? palette.hover : 'transparent', border: 'none' }}
+            >
+              Access
+            </Button>
+            <Button
+              type="text"
+              aria-label="Settings"
+              title="Settings"
+              onClick={() => navigate('/settings')}
+              style={{ color: isSystemSettingsSurface ? palette.text : palette.secondary, background: isSystemSettingsSurface ? palette.hover : 'transparent', border: 'none' }}
+            >
+              Settings
+            </Button>
+          </div>
           <Dropdown
             trigger={['click']}
             placement="bottomRight"
@@ -686,25 +819,32 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                padding: 0,
                 color: palette.secondary,
                 border: 'none',
-                fontSize: 15,
+                borderRadius: '50%',
+                boxShadow: 'none',
+                outline: 'none',
+                fontSize: 18,
               }}
             >
-              <Badge dot offset={[-3, 4]}>
+              <span style={{ position: 'relative', width: 18, height: 18, display: 'grid', placeItems: 'center', color: palette.secondary }}>
                 <BellOutlined />
-              </Badge>
+                <span style={{ position: 'absolute', top: -1, right: -1, width: 7, height: 7, borderRadius: '50%', border: `2px solid ${palette.header}`, background: '#EA5455', boxSizing: 'border-box' }} />
+              </span>
             </Button>
           </Dropdown>
           <Dropdown
             trigger={['click']}
             placement="bottomRight"
+            open={accountMenuOpen}
+            onOpenChange={setAccountMenuOpen}
             menu={{ items: [] }}
             popupRender={renderAccountPanel}
           >
             <Button
               type="text"
-              aria-label="打开账户菜单"
+              aria-label="Open account menu"
               style={{
                 height: 34,
                 display: 'flex',
@@ -1059,7 +1199,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             background: palette.appBg,
           }}
         >
-          <Content style={{ padding: isMobile ? 16 : 24, minHeight: 280 }}>
+          <Content style={{ minHeight: 280 }}>
             <div className={isDark ? '' : 'light-mode'}>
               {children}
             </div>

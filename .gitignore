@@ -2,13 +2,16 @@
 *.DS_Store
 *.log
 
-.venv
+.venv/
 .vscode/
 .trae/
 .agents/
 .codex/
 .pytest_cache/
 
+docs/
+scripts/
+outputs/
 static/
 logs/
 models/
