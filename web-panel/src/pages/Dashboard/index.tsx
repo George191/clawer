@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
-import { Button, Select, Skeleton } from 'antd';
+import { App, Button, Select, Skeleton } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from '@/pages/AICollect/palette';
@@ -11,23 +11,12 @@ import './style.css';
 
 type TimeWindow = 15 | 30 | 60;
 
-interface RecentTask {
-  id: string;
-  name: string;
-  source?: string;
-  status?: string;
-  progress?: number;
-  records?: number;
-  updated_at?: string;
-}
-
 interface DashboardSnapshot {
   type: 'dashboard_snapshot';
   timestamp?: string;
   data?: {
     metrics?: DashboardMetrics;
     alerts?: Alert[];
-    recent_tasks?: RecentTask[];
   };
 }
 
@@ -150,6 +139,7 @@ const TrendChart: React.FC<{
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const { message } = App.useApp();
   const {
     metrics,
     alerts,
@@ -161,7 +151,6 @@ const Dashboard: React.FC = () => {
     applySnapshot,
   } = useDashboardStore();
   const [timeWindow, setTimeWindow] = useState<TimeWindow>(15);
-  const [recentTasks, setRecentTasks] = useState<RecentTask[]>([]);
   const [hasConnected, setHasConnected] = useState(false);
   const [connectionInterrupted, setConnectionInterrupted] = useState(false);
   const [waitingForSnapshot, setWaitingForSnapshot] = useState(true);
@@ -176,7 +165,6 @@ const Dashboard: React.FC = () => {
         Array.isArray(message.data.alerts) ? message.data.alerts : [],
         message.timestamp || new Date().toISOString(),
       );
-      setRecentTasks(Array.isArray(message.data.recent_tasks) ? message.data.recent_tasks.slice(0, 5) : []);
       setWaitingForSnapshot(false);
     } catch {
       // Ignore messages that do not belong to the dashboard channel.
@@ -206,6 +194,15 @@ const Dashboard: React.FC = () => {
     }, 6000);
     return () => window.clearTimeout(fallbackTimer);
   }, [fetchAlerts, fetchMetrics]);
+
+  useEffect(() => {
+    if (!error) return;
+    message.warning({
+      key: 'dashboard-data-unavailable',
+      content: '部分实时数据暂不可用，系统将继续重试。',
+      duration: 3,
+    });
+  }, [error, message]);
 
   const activeAlerts = useMemo(
     () => alerts.filter((alert) => alert.status === 'active'),
@@ -238,6 +235,21 @@ const Dashboard: React.FC = () => {
   }, [metrics]);
 
   const pipelineNodes = Array.isArray(metrics?.pipeline_nodes) ? metrics.pipeline_nodes : [];
+  const runningNodes = pipelineNodes.filter((node) => node.status === 'running').length;
+  const errorNodes = pipelineNodes.filter((node) => node.status === 'error').length;
+  const errorRateValues = Array.isArray(metrics?.error_rate_history)
+    ? metrics.error_rate_history.map((point) => point.v).filter(isFiniteNumber)
+    : [];
+  const latestErrorRate = errorRateValues[errorRateValues.length - 1];
+  const errorThreshold = metrics?.error_threshold;
+  const lagHistoryValues = Array.isArray(metrics?.kafka_lag_history)
+    ? metrics.kafka_lag_history.map((point) => point.v).filter(isFiniteNumber)
+    : [];
+  const latestLagSample = lagHistoryValues[lagHistoryValues.length - 1];
+  const previousLagSample = lagHistoryValues[lagHistoryValues.length - 2];
+  const lagDelta = isFiniteNumber(latestLagSample) && isFiniteNumber(previousLagSample)
+    ? latestLagSample - previousLagSample
+    : undefined;
   const resolvePipelineStage = (stage: string): { node?: PipelineNodeData; lag?: number } => {
     const node = pipelineNodes.find((item) => item.name?.toLowerCase() === stage.toLowerCase());
     if (node) return { node };
@@ -274,33 +286,6 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="dashboard-v2">
-      <header className="dashboard-page-head">
-        <div>
-          <h1>数据运营概览</h1>
-          <p>当前项目域、租户与团队的实时运行摘要</p>
-        </div>
-        <div className="dashboard-controls">
-          <Select<TimeWindow>
-            value={timeWindow}
-            onChange={setTimeWindow}
-            className="dashboard-time-select"
-            options={[
-              { value: 15, label: '最近 15 分钟' },
-              { value: 30, label: '最近 30 分钟' },
-              { value: 60, label: '最近 1 小时' },
-            ]}
-          />
-          <span className="dashboard-context-pill">全部来源</span>
-          <span className={`dashboard-connection dashboard-connection--${wsTone}`}>
-            <i />
-            <span>{wsLabel}</span>
-            {updatedAt && <small>更新于 {formatTime(updatedAt)}</small>}
-          </span>
-        </div>
-      </header>
-
-      {error && <div className="dashboard-error-banner">REST 降级数据暂不可用：{error}</div>}
-
       {showLoading ? (
         <div className="dashboard-loading" aria-label="正在加载 Dashboard">
           <Skeleton active paragraph={{ rows: 14 }} title={{ width: '28%' }} />
@@ -309,9 +294,29 @@ const Dashboard: React.FC = () => {
         <>
           <section className="dashboard-hero-grid">
             <article className={`dashboard-card dashboard-summary ${hasAttention ? 'dashboard-summary--attention' : ''}`}>
-              <div className={`dashboard-summary-kicker ${hasAttention ? 'dashboard-summary-kicker--attention' : ''}`}>
-                {hasAttention ? <ExclamationCircleFilled /> : <CheckCircleFilled />}
-                {hasAttention ? '存在待处理事项' : metrics ? '运行状态良好' : '等待实时数据'}
+              <div className="dashboard-summary-top">
+                <div className={`dashboard-summary-kicker ${hasAttention ? 'dashboard-summary-kicker--attention' : ''}`}>
+                  {hasAttention ? <ExclamationCircleFilled /> : <CheckCircleFilled />}
+                  {hasAttention ? '存在待处理事项' : metrics ? '运行状态良好' : '等待实时数据'}
+                </div>
+                <div className="dashboard-controls">
+                  <Select<TimeWindow>
+                    value={timeWindow}
+                    onChange={setTimeWindow}
+                    className="dashboard-time-select"
+                    options={[
+                      { value: 15, label: '最近 15 分钟' },
+                      { value: 30, label: '最近 30 分钟' },
+                      { value: 60, label: '最近 1 小时' },
+                    ]}
+                  />
+                  <span className="dashboard-context-pill">全部来源</span>
+                  <span className={`dashboard-connection dashboard-connection--${wsTone}`}>
+                    <i />
+                    <span>{wsLabel}</span>
+                    {updatedAt && <small>更新于 {formatTime(updatedAt)}</small>}
+                  </span>
+                </div>
               </div>
               <h2>{!metrics ? '等待实时运行快照' : hasAttention ? '有事项需要关注' : '今日数据链路运行平稳'}</h2>
               <p>{summaryText}</p>
@@ -436,35 +441,34 @@ const Dashboard: React.FC = () => {
                 );
               })}
             </div>
-          </section>
-
-          <section className="dashboard-card dashboard-recent-tasks">
-            <div className="dashboard-panel-head">
-              <div><h3>最近任务</h3><p>跨采集、同步与 ETL 的最新运行记录</p></div>
-              <button type="button" onClick={() => navigate('/tasks')}>查看全部任务 <ArrowRightOutlined /></button>
+            <div className="dashboard-signal-grid">
+              <div className="dashboard-signal">
+                <span>错误率</span>
+                <strong className={isFiniteNumber(latestErrorRate) && isFiniteNumber(errorThreshold) && latestErrorRate > errorThreshold ? 'is-warning' : ''}>
+                  {isFiniteNumber(latestErrorRate) ? `${latestErrorRate.toFixed(2)}%` : '--'}
+                </strong>
+                <small>阈值 {isFiniteNumber(errorThreshold) ? `${errorThreshold.toFixed(2)}%` : '--'}</small>
+                <Sparkline values={errorRateValues} tone="warning" />
+              </div>
+              <div className="dashboard-signal">
+                <span>积压趋势</span>
+                <strong>{formatNumber(metrics?.kafka_lag?.total)}</strong>
+                <small>{isFiniteNumber(lagDelta) ? `较上一采样 ${lagDelta > 0 ? '+' : ''}${formatNumber(lagDelta)}` : '暂无趋势数据'}</small>
+                <Sparkline values={lagHistoryValues} tone={isFiniteNumber(lagDelta) && lagDelta > 0 ? 'warning' : 'accent'} />
+              </div>
+              <div className="dashboard-signal">
+                <span>在线节点</span>
+                <strong>{pipelineNodes.length ? `${runningNodes} / ${pipelineNodes.length}` : '--'}</strong>
+                <small>{pipelineNodes.length ? `${errorNodes} 个异常节点` : '暂无节点数据'}</small>
+                <div className="dashboard-signal-progress"><i style={{ width: pipelineNodes.length ? `${(runningNodes / pipelineNodes.length) * 100}%` : '0%' }} /></div>
+              </div>
+              <div className="dashboard-signal">
+                <span>实时快照</span>
+                <strong>{updatedAt ? formatTime(updatedAt) : '--'}</strong>
+                <small>{connected ? 'WebSocket 已连接' : metrics ? '保留最后快照' : '等待实时快照'}</small>
+                <span className={`dashboard-signal-state dashboard-signal-state--${wsTone}`}><i />{wsLabel}</span>
+              </div>
             </div>
-            {recentTasks.length ? (
-              <div className="dashboard-task-table">
-                <div className="dashboard-task-row dashboard-task-row--head">
-                  <span>任务</span><span>来源</span><span>状态</span><span>进度</span><span>记录数</span><span>更新时间</span>
-                </div>
-                {recentTasks.map((task) => (
-                  <div className="dashboard-task-row" key={task.id}>
-                    <b>{task.name || '--'}</b>
-                    <span>{task.source || '--'}</span>
-                    <span>{task.status || '--'}</span>
-                    <span>{isFiniteNumber(task.progress) ? `${task.progress}%` : '--'}</span>
-                    <span>{formatNumber(task.records)}</span>
-                    <span>{formatTime(task.updated_at)}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="dashboard-tasks-empty">
-                <span>当前 Dashboard 快照暂未提供任务明细</span>
-                <Button onClick={() => navigate('/tasks')}>前往任务中心</Button>
-              </div>
-            )}
           </section>
         </>
       )}

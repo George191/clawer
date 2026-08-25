@@ -15,6 +15,7 @@ import {
   BookOutlined,
   BranchesOutlined,
   CloseOutlined,
+  CodeOutlined,
   ControlOutlined,
   DatabaseOutlined,
   DeploymentUnitOutlined,
@@ -28,13 +29,13 @@ import {
   MailOutlined,
   MenuOutlined,
   PushpinOutlined,
+  QuestionCircleOutlined,
   RightOutlined,
   RobotOutlined,
   SafetyCertificateOutlined,
   ScheduleOutlined,
   SearchOutlined,
   SettingOutlined,
-  SkinOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
@@ -49,11 +50,11 @@ const SIDER_COLLAPSED = 58;
 const SIDER_PROJECT_H = 77;
 const SIDER_FOOTER_H = 92;
 const SIDER_TRANSITION_MS = 200;
-const PROJECT_LOGO_SIZE = 28;
+const PROJECT_LOGO_SIZE = 26;
 const PROJECT_LOGO_EXPANDED_X = 26;
 const PROJECT_LOGO_COLLAPSED_X = (SIDER_COLLAPSED - PROJECT_LOGO_SIZE) / 2;
 const PRODUCT_NAME_ZH = 'Asiral Helio';
-type ProjectKey = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit';
+type ProjectKey = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'knowledge-graph' | 'knowledge-rag';
 
 const TemplateNavIcon: React.FC = () => (
   <span style={{ width: 21, height: 21, display: 'grid', placeItems: 'center' }} aria-hidden="true">
@@ -89,19 +90,21 @@ interface ProjectConfig {
   key: ProjectKey;
   label: string;
   shortLabel: string;
+  enabled?: boolean;
   icon: React.ReactNode;
   defaultPath: string;
   accent: string;
   sections: SidebarSection[];
 }
 
-const projectOrder: ProjectKey[] = ['ai-collect', 'data-lake', 'etl-pipeline', 'data-cockpit'];
+const projectOrder: ProjectKey[] = ['ai-collect', 'data-lake', 'etl-pipeline', 'data-cockpit', 'knowledge-graph', 'knowledge-rag'];
 
 const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'ai-collect': {
     key: 'ai-collect',
     label: '数据抓取',
-    shortLabel: 'Collect',
+    shortLabel: 'Scout',
+    enabled: true,
     icon: <RobotOutlined />,
     defaultPath: '/ai-collect',
     accent: '#7C3AED',
@@ -135,7 +138,8 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'data-lake': {
     key: 'data-lake',
     label: '数据湖',
-    shortLabel: 'Lake',
+    shortLabel: 'Vault',
+    enabled: false,
     icon: <DatabaseOutlined />,
     defaultPath: '/lake/catalog',
     accent: '#059669',
@@ -171,24 +175,21 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'etl-pipeline': {
     key: 'etl-pipeline',
     label: 'ETL 管道',
-    shortLabel: 'Pileline',
+    shortLabel: 'Flow',
+    enabled: true,
     icon: <ApartmentOutlined />,
     defaultPath: '/pipeline',
     accent: '#0EA5E9',
     sections: [
       {
-        key: 'development',
-        label: '管道开发',
+        key: 'lifecycle',
+        label: 'ETL 生命周期',
         children: [
-          { key: '/pipeline', icon: <ApartmentOutlined />, label: '管道画布' },
-        ],
-      },
-      {
-        key: 'orchestration',
-        label: '调度运行',
-        children: [
-          { key: '/monitor', icon: <LineChartOutlined />, label: '监控指标' },
-          { key: '/logs', icon: <HistoryOutlined />, label: '运行日志' },
+          { key: '/pipeline', icon: <ApartmentOutlined />, label: '生命周期总览' },
+          { key: '/pipeline/layers', icon: <DatabaseOutlined />, label: '数据分层' },
+          { key: '/pipeline/transforms', icon: <CodeOutlined />, label: '转换资产' },
+          { key: '/pipeline/quality', icon: <ExperimentOutlined />, label: '质量门禁' },
+          { key: '/pipeline/lineage', icon: <BranchesOutlined />, label: '血缘影响' },
         ],
       },
       {
@@ -204,7 +205,8 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'data-cockpit': {
     key: 'data-cockpit',
     label: '数据驾驶舱',
-    shortLabel: 'Cockpit',
+    shortLabel: 'Atlas',
+    enabled: true,
     icon: <BarChartOutlined />,
     defaultPath: '/cockpit',
     accent: '#F59E0B',
@@ -213,6 +215,44 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
       { key: 'insights', label: '分析洞察', children: [
         { key: '/cockpit/metrics', icon: <LineChartOutlined />, label: '指标分析' },
         { key: '/cockpit/quality', icon: <AuditOutlined />, label: '数据质量' },
+      ] },
+    ],
+  },
+  'knowledge-graph': {
+    key: 'knowledge-graph',
+    label: '知识图谱',
+    shortLabel: 'Graph',
+    enabled: true,
+    icon: <DeploymentUnitOutlined />,
+    defaultPath: '/knowledge-graph',
+    accent: '#8B5CF6',
+    sections: [
+      { key: 'graph', label: '图谱资产', children: [
+        { key: '/knowledge-graph', icon: <DeploymentUnitOutlined />, label: '图谱总览' },
+        { key: '/knowledge-graph/entities', icon: <BranchesOutlined />, label: '实体关系' },
+      ] },
+      { key: 'governance', label: '图谱治理', children: [
+        { key: '/knowledge-graph/quality', icon: <ExperimentOutlined />, label: '质量校验' },
+        { key: '/knowledge-graph/lineage', icon: <AuditOutlined />, label: '来源血缘' },
+      ] },
+    ],
+  },
+  'knowledge-rag': {
+    key: 'knowledge-rag',
+    label: '知识库 RAG',
+    shortLabel: 'RAG',
+    enabled: true,
+    icon: <BookOutlined />,
+    defaultPath: '/knowledge-rag',
+    accent: '#0D9488',
+    sections: [
+      { key: 'knowledge', label: '知识资产', children: [
+        { key: '/knowledge-rag', icon: <BookOutlined />, label: '知识库总览' },
+        { key: '/knowledge-rag/documents', icon: <FileTextOutlined />, label: '文档资产' },
+      ] },
+      { key: 'retrieval', label: '检索服务', children: [
+        { key: '/knowledge-rag/indexes', icon: <DatabaseOutlined />, label: '索引管理' },
+        { key: '/knowledge-rag/evaluation', icon: <ExperimentOutlined />, label: '召回评测' },
       ] },
     ],
   },
@@ -233,11 +273,23 @@ const explicitRouteProject: Record<string, ProjectKey> = {
   '/explorer': 'data-lake',
   '/data-api': 'data-lake',
   '/pipeline': 'etl-pipeline',
+  '/pipeline/layers': 'etl-pipeline',
+  '/pipeline/transforms': 'etl-pipeline',
+  '/pipeline/quality': 'etl-pipeline',
+  '/pipeline/lineage': 'etl-pipeline',
   '/cockpit': 'data-cockpit',
   '/cockpit/metrics': 'data-cockpit',
   '/cockpit/quality': 'data-cockpit',
   '/pipeline/releases': 'etl-pipeline',
   '/pipeline/alerts': 'etl-pipeline',
+  '/knowledge-graph': 'knowledge-graph',
+  '/knowledge-graph/entities': 'knowledge-graph',
+  '/knowledge-graph/quality': 'knowledge-graph',
+  '/knowledge-graph/lineage': 'knowledge-graph',
+  '/knowledge-rag': 'knowledge-rag',
+  '/knowledge-rag/documents': 'knowledge-rag',
+  '/knowledge-rag/indexes': 'knowledge-rag',
+  '/knowledge-rag/evaluation': 'knowledge-rag',
 };
 
 const legacyRouteToSidebarKey: Record<string, string> = {
@@ -269,6 +321,12 @@ interface MainLayoutProps {
   children: React.ReactNode;
 }
 
+const MOCK_USER_CONTEXT: CurrentUserContext = {
+  user: { id: 'mock-user', full_name: 'Demo User', email: 'demo@asiral-helio.local' },
+  tenants: [{ id: 'mock-tenant', name: 'Astral Operations' }],
+  teams: [{ id: 'mock-team', name: 'Data Operations', tenant_id: 'mock-tenant' }],
+};
+
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [manualCollapsed, setManualCollapsed] = useState(false);
   const [pinned, setPinned] = useState(true);
@@ -277,12 +335,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [projectTextReady, setProjectTextReady] = useState(true);
   const [currentTenant, setCurrentTenant] = useState<string | null>(null);
   const [currentTeam, setCurrentTeam] = useState<string | null>(null);
-  const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
+  const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(MOCK_USER_CONTEXT);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   const location = useLocation();
   const navigate = useNavigate();
-  const { mode, toggle } = useThemeStore();
+  const { mode } = useThemeStore();
   const isDark = mode === 'dark';
   const [currentProject, setCurrentProject] = useState<ProjectKey>(() => resolveProjectByPath(location.pathname) ?? 'etl-pipeline');
   const routedProject = useMemo(() => resolveProjectByPath(location.pathname), [location.pathname]);
@@ -291,7 +349,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const isAutomationSurface = location.pathname.startsWith('/automation');
   const isPlatformManagementSurface = location.pathname.startsWith('/organization');
   const isSystemSettingsSurface = location.pathname.startsWith('/settings');
-  const hideSidebar = activeProjectKey === 'ai-collect' || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
+  const isAtlasSurface = activeProjectKey === 'data-cockpit';
+  const hideSidebar = activeProjectKey === 'ai-collect' || isAtlasSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
@@ -328,7 +387,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }, [currentProject, routedProject]);
 
   useEffect(() => {
-    document.title = `${PRODUCT_NAME_ZH} · ${activeProject.label}`;
+    document.title = `${activeProject.shortLabel} - ${PRODUCT_NAME_ZH}`;
   }, [activeProject.label]);
 
   useEffect(() => {
@@ -336,13 +395,18 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     fetchCurrentUserContext()
       .then((context) => {
         if (cancelled) return;
-        setCurrentUserContext(context);
-        const firstTenant = context.tenants[0]?.id ?? null;
+        const nextContext = context.tenants.length > 0 && context.teams.length > 0 ? context : MOCK_USER_CONTEXT;
+        setCurrentUserContext(nextContext);
+        const firstTenant = nextContext.tenants[0]?.id ?? null;
         setCurrentTenant(firstTenant);
-        setCurrentTeam(context.teams.find((team) => team.tenant_id === firstTenant)?.id ?? null);
+        setCurrentTeam(nextContext.teams.find((team) => team.tenant_id === firstTenant)?.id ?? null);
       })
       .catch(() => {
-        if (!cancelled) setCurrentUserContext(null);
+        if (!cancelled) {
+          setCurrentUserContext(MOCK_USER_CONTEXT);
+          setCurrentTenant(MOCK_USER_CONTEXT.tenants[0].id);
+          setCurrentTeam(MOCK_USER_CONTEXT.teams[0].id);
+        }
       });
     return () => { cancelled = true; };
   }, []);
@@ -455,31 +519,35 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const renderProjectPanel = () => (
-    <div style={{ ...overlayShellStyle, width: 296 }}>
-      {projectOrder.map((key, index) => {
+    <div style={{ ...overlayShellStyle, width: 248 }}>
+      {projectOrder.map((key) => {
         const project = projectConfigs[key];
         const isActive = key === activeProjectKey;
+        const isDisabled = project.enabled === false;
         return (
           <React.Fragment key={key}>
-            {index > 0 ? <div style={{ height: 1, background: palette.border, margin: '4px 14px' }} /> : null}
             <button
               type="button"
-              onClick={() => handleProjectChange(key)}
+              disabled={isDisabled}
+              aria-disabled={isDisabled}
+              onClick={() => { if (!isDisabled) handleProjectChange(key); }}
               style={{
                 ...overlayRowStyle,
-                color: isActive ? palette.text : palette.text,
+                color: isDisabled ? palette.muted : palette.text,
+                opacity: isDisabled ? 0.62 : 1,
+                cursor: isDisabled ? 'not-allowed' : 'pointer',
               }}
-              onMouseEnter={(event) => bindOverlayHover(event, {
+              onMouseEnter={(event) => { if (!isDisabled) bindOverlayHover(event, {
                 accent: isActive ? (isDark ? 'rgba(143, 227, 232, 0.12)' : '#E0F2FE') : palette.hover,
-              })}
+              }); }}
               onMouseLeave={resetOverlayHover}
             >
               <span
                 style={{
-                  width: 26,
-                  height: 26,
+                  width: PROJECT_LOGO_SIZE,
+                  height: PROJECT_LOGO_SIZE,
                   borderRadius: 7,
-                  background: `linear-gradient(135deg, ${project.accent}, #1D4ED8)`,
+                  background: isDisabled ? (isDark ? 'rgba(148, 163, 184, 0.22)' : '#E2E8F0') : `linear-gradient(135deg, ${project.accent}, #1D4ED8)`,
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -489,12 +557,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   flexShrink: 0,
                 }}
               >
-                {project.icon}
+                {project.shortLabel.slice(0, 1)}
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: 'block', fontSize: 13, fontWeight: isActive ? 600 : 500 }}>{project.shortLabel}</span>
               </span>
-              {isActive ? (
+              {isDisabled ? (
+                <span style={{ color: palette.muted, fontSize: 11, fontWeight: 500 }}>Not enabled yet</span>
+              ) : isActive ? (
                 <span style={{ color: palette.muted, fontSize: 12, fontWeight: 500 }}>Current</span>
               ) : (
                 <RightOutlined style={{ color: palette.secondary, fontSize: 12 }} />
@@ -578,8 +648,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const renderAccountPanel = () => {
     const accountRows = [
       { key: 'account', icon: <SettingOutlined />, label: 'Account settings', onClick: () => { setAccountMenuOpen(false); navigate('/account/settings'); } },
-      { key: 'theme', icon: <SkinOutlined />, label: 'Theme', onClick: () => { setAccountMenuOpen(false); toggle(); } },
-      { key: 'legal', icon: <SafetyCertificateOutlined />, label: 'Legal', onClick: undefined },
+      { key: 'faq', icon: <QuestionCircleOutlined />, label: 'FAQ', onClick: () => { setAccountMenuOpen(false); navigate('/faq'); } },
+      { key: 'legal', icon: <SafetyCertificateOutlined />, label: 'Legal', onClick: () => { setAccountMenuOpen(false); navigate('/legal/privacy'); } },
     ];
 
     return (
@@ -595,7 +665,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         </div>
         {accountRows.map((item, index) => (
           <React.Fragment key={item.key}>
-            {index === 1 ? <div style={{ height: 1, background: palette.border, margin: '6px 14px' }} /> : null}
             <button
               type="button"
               onClick={item.onClick}
@@ -617,11 +686,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 {item.icon}
               </span>
               <span style={{ flex: 1 }}>{item.label}</span>
-              {item.key === 'theme' || item.key === 'legal' ? (
-                <span style={{ display: 'inline-flex', alignItems: 'center', color: palette.secondary, fontSize: 12 }}>
-                  <RightOutlined style={{ fontSize: 12 }} />
-                </span>
-              ) : null}
             </button>
           </React.Fragment>
         ))}
@@ -700,40 +764,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               style={{ height: 28, width: 'auto' }}
             />
           </button>
-
           {!isMobile && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-              <Dropdown
-                trigger={['click']}
-                menu={{ items: [] }}
-                popupRender={renderProjectPanel}
-              >
-                <button
-                  type="button"
-                  style={{
-                    border: 'none',
-                    background: 'transparent',
-                    color: palette.text,
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    padding: '3px 6px',
-                    borderRadius: 6,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    maxWidth: 260,
-                  }}
-                >
-                  <span style={{ color: activeProject.accent, display: 'inline-flex', fontSize: 13 }}>
-                    {activeProject.icon}
-                  </span>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {activeProject.shortLabel}
-                  </span>
-                  <DownOutlined style={{ color: palette.secondary, fontSize: 10 }} />
-                </button>
-              </Dropdown>
-              <span style={{ width: 1, height: 18, background: palette.border, margin: '0 4px' }} />
               <Dropdown
                 disabled={currentTenantOptions.length <= 1}
                 menu={{
@@ -770,6 +802,22 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   style={{ color: palette.secondary, border: 'none', cursor: currentTeamOptions.length > 1 ? 'pointer' : 'default' }}
                 >
                   {currentTeamName}<DownOutlined style={{ marginLeft: 4, fontSize: 9, color: currentTeamOptions.length > 1 ? palette.secondary : palette.muted }} />
+                </Button>
+              </Dropdown>
+              <Dropdown
+                trigger={['click']}
+                menu={{ items: [] }}
+                popupRender={renderProjectPanel}
+              >
+                <Button
+                  type="text"
+                  size="small"
+                  className="header-context-button is-enabled project-domain-switch"
+                  style={{ color: palette.secondary, background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 10 }}
+                >
+                  <span style={{ width: PROJECT_LOGO_SIZE, height: PROJECT_LOGO_SIZE, borderRadius: 7, background: `linear-gradient(135deg, ${activeProject.accent}, #1D4ED8)`, color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 }}>{activeProject.shortLabel.slice(0, 1)}</span>
+                  <span>{activeProject.shortLabel}</span>
+                  <DownOutlined style={{ color: palette.secondary, fontSize: 9 }} />
                 </Button>
               </Dropdown>
             </div>
@@ -926,27 +974,19 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               justifyContent: 'center',
             }}
           >
-            <Dropdown
-              trigger={['click']}
-              menu={{ items: [] }}
-              popupRender={renderProjectPanel}
-            >
-              <button
-                type="button"
+            <div
                 style={{
                   width: '100%',
                   height: 48,
                   border: 'none',
                   borderRadius: 8,
-                  background: collapsed && settledCollapsed ? 'transparent' : isDark ? 'rgba(255, 255, 255, 0.04)' : '#F8FAFC',
                   color: palette.text,
                   display: 'block',
                   padding: 0,
-                  cursor: 'pointer',
+                  cursor: 'default',
                   textAlign: 'left',
                   overflow: 'hidden',
                   position: 'relative',
-                  transition: 'background 0.15s ease',
                 }}
               >
                 <span
@@ -961,7 +1001,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    color: '#fff',
+                  color: '#fff',
                     fontWeight: 800,
                     transition: `left ${SIDER_TRANSITION_MS}ms ease`,
                   }}
@@ -983,24 +1023,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                       }}
                     >
                       <span style={{ display: 'block', fontSize: 13, fontWeight: 700 }}>
-                        {activeProject.label}
+                        {activeProject.shortLabel}
                       </span>
                     </span>
-                    <DownOutlined
-                      style={{
-                        position: 'absolute',
-                        right: 10,
-                        top: 19,
-                        color: palette.secondary,
-                        fontSize: 10,
-                        opacity: projectTextVisible ? 1 : 0,
-                        transition: 'opacity 0.12s ease',
-                      }}
-                    />
                   </>
                 )}
-              </button>
-            </Dropdown>
+            </div>
           </div>
 
           <nav style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '10px 0' }} className="neo4j-sidebar-scroll">
@@ -1201,7 +1229,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         >
           <Content style={{ minHeight: 280 }}>
             <div className={isDark ? '' : 'light-mode'}>
-              {children}
+              {isAtlasSurface ? null : children}
             </div>
           </Content>
         </main>

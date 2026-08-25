@@ -69,6 +69,29 @@ class OffsetManager:
             logger.warning("OffsetManager: save_offset failed: %s", e)
             self._connection.mark_unavailable()
 
+    async def set_offset(
+        self,
+        consumer_group: str,
+        topic: str,
+        partition: int,
+        offset: int,
+    ) -> bool:
+        """Persist an operator-approved resume position for the next worker start."""
+        redis = await self._get_redis()
+        if redis is None:
+            return False
+        try:
+            await redis.set(
+                self._make_key(consumer_group, topic, partition),
+                str(offset),
+                ex=OFFSET_TTL_SECONDS,
+            )
+            return True
+        except Exception as e:
+            logger.warning("OffsetManager: set_offset failed: %s", e)
+            self._connection.mark_unavailable()
+            return False
+
     async def load_offsets(
         self,
         consumer_group: str,

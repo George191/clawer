@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config.settings import settings
 from app.etl.table_layout import normalize_table_role, schema_name_for
@@ -14,6 +15,7 @@ from app.storage.etl_metadata_store import (
     list_registered_ddl_records,
     save_registered_ddl,
 )
+from app.web.api.dependencies.common import CurrentActiveSuperuser
 
 logger = get_logger(__name__)
 
@@ -31,6 +33,15 @@ _KNOWN_LAYERS = [
 ]
 
 _handler_store: dict[str, str] = {}
+
+_LAYER_STREAMS = {
+    "rds": ("etl_rds_consumer_group", "etl_raw_topic"),
+    "ods": ("etl_ods_consumer_group", "etl_rds_topic"),
+    "task": ("etl_task_consumer_group", "etl_ods_topic"),
+    "dwd": ("etl_dwd_consumer_group", "etl_ods_topic"),
+    "dws": ("etl_dws_consumer_group", "etl_dwd_topic"),
+    "dim": ("etl_dim_consumer_group", "etl_ods_topic"),
+}
 
 
 def _ok(data: Any, message: str = "success") -> dict[str, Any]:
@@ -176,6 +187,22 @@ async def _get_layer_tables(
     ]
 
 
+async def _get_table_partitions(pg, schema_name: str, table: str) -> list[str]:
+    rows = await pg.fetch_all(
+        """
+        SELECT child.relname AS name
+        FROM pg_inherits i
+        JOIN pg_class parent ON parent.oid = i.inhparent
+        JOIN pg_namespace parent_ns ON parent_ns.oid = parent.relnamespace
+        JOIN pg_class child ON child.oid = i.inhrelid
+        WHERE parent_ns.nspname = :schema_name AND parent.relname = :table
+        ORDER BY child.relname
+        """,
+        {"schema_name": schema_name, "table": table},
+    )
+    return [str(row["name"]) for row in rows]
+
+
 @router.get("/etl/layers")
 async def get_layers() -> dict[str, Any]:
     pg_ok = await _pg_available()
@@ -224,6 +251,32 @@ async def get_layers() -> dict[str, Any]:
     return _ok(layers)
 
 
+@router.get("/etl/schemas")
+async def get_etl_schemas() -> dict[str, Any]:
+    """Catalog ETL schemas; ts_meta is governance metadata, not a data layer."""
+    if not await _pg_available():
+        return _ok([])
+    try:
+        from app.storage.postgres_client import get_pg_client
+
+        rows = await get_pg_client().fetch_all(
+            """
+            SELECT n.nspname AS name, count(c.oid)::int AS table_count
+            FROM pg_namespace n
+            LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p')
+            WHERE n.nspname = 'ts_meta' OR n.nspname ~ '^ts_(rds|ods|task|dwd|dws|dim|ads)(_hist)?$'
+            GROUP BY n.nspname ORDER BY n.nspname
+            """
+        )
+        return _ok([
+            {"name": row["name"], "tableCount": row["table_count"], "kind": "metadata" if row["name"] == "ts_meta" else "data"}
+            for row in rows
+        ])
+    except Exception as exc:
+        logger.warning("Failed to list ETL schemas: %s", exc)
+        return _ok([])
+
+
 @router.get("/etl/{layer}/tables")
 async def get_layer_tables_route(
     layer: str,
@@ -251,6 +304,7 @@ async def get_table_data(
     layer: str,
     table: str,
     table_role: str = Query(default="current", alias="tableRole"),
+    partition: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=5000),
 ) -> dict[str, Any]:
     if not await _pg_available():
@@ -265,8 +319,16 @@ async def get_table_data(
 
         pg = get_pg_client()
         started_at = datetime.now(timezone.utc)
+        schema_name = _schema_name(layer, table_role)
+        target_table = table
+        if partition:
+            partition = _require_identifier(partition, "partition")
+            partitions = await _get_table_partitions(pg, schema_name, table)
+            if partition not in partitions:
+                raise HTTPException(status_code=404, detail="Unknown table partition")
+            target_table = partition
         rows = await pg.fetch_all(
-            f'SELECT * FROM "{_schema_name(layer, table_role)}"."{table}" LIMIT :limit',
+            f'SELECT * FROM "{schema_name}"."{target_table}" LIMIT :limit',
             {"limit": limit},
         )
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
@@ -284,6 +346,94 @@ async def get_table_data(
         error_msg = f"Query failed for {layer}/{table}: {e}"
         logger.warning(error_msg)
         raise HTTPException(status_code=500, detail=error_msg)
+
+
+@router.get("/etl/{layer}/{table}/partitions")
+async def get_table_partitions(
+    layer: str, table: str, table_role: str = Query(default="current", alias="tableRole"),
+) -> dict[str, Any]:
+    if not await _pg_available():
+        return _ok([])
+    layer, table = _require_layer(layer), _require_identifier(table, "table")
+    try:
+        from app.storage.postgres_client import get_pg_client
+
+        partitions = await _get_table_partitions(get_pg_client(), _schema_name(layer, table_role), table)
+        return _ok([{"name": name} for name in partitions])
+    except Exception as exc:
+        logger.warning("Failed to load partitions for %s/%s: %s", layer, table, exc)
+        return _ok([])
+
+
+@router.get("/etl/{layer}/{table}/stream")
+async def get_table_stream_state(layer: str, table: str) -> dict[str, Any]:
+    """Return persisted consumer position; no synthetic lag or throughput is reported."""
+    layer, table = _require_layer(layer), _require_identifier(table, "table")
+    group_setting, topic_setting = _LAYER_STREAMS.get(layer, (None, None))
+    if not group_setting or not topic_setting:
+        return _ok({"available": False, "reason": "This layer has no configured consumer stream."})
+    consumer_group, topic = getattr(settings, group_setting, ""), getattr(settings, topic_setting, "")
+    if not consumer_group or not topic:
+        return _ok({"available": False, "reason": "Kafka consumer configuration is unavailable."})
+    from app.etl.offset_manager import get_offset_manager
+
+    offsets = await get_offset_manager().load_offsets(consumer_group, topic)
+    return _ok({
+        "available": True,
+        "consumerGroup": consumer_group,
+        "topic": topic,
+        "offsets": [{"partition": partition, "offset": offset} for partition, offset in sorted(offsets.items())],
+        "throughput": None,
+        "throughputReason": "No windowed throughput snapshot is persisted by the ETL worker.",
+        "appliesTo": f"{layer}/{table}",
+    })
+
+
+@router.put("/etl/{layer}/{table}/offset")
+async def set_table_stream_offset(
+    layer: str,
+    table: str,
+    body: dict[str, Any],
+    current_user: CurrentActiveSuperuser,
+) -> dict[str, Any]:
+    """Set one Redis resume point; it is applied only after the worker restarts."""
+    layer, table = _require_layer(layer), _require_identifier(table, "table")
+    if body.get("confirmation") != "SET OFFSET":
+        raise HTTPException(status_code=400, detail="confirmation must equal SET OFFSET")
+    partition, offset = body.get("partition"), body.get("offset")
+    if not isinstance(partition, int) or partition < 0 or not isinstance(offset, int) or offset < 0:
+        raise HTTPException(status_code=400, detail="partition and offset must be non-negative integers")
+    group_setting, topic_setting = _LAYER_STREAMS.get(layer, (None, None))
+    consumer_group = getattr(settings, group_setting, "") if group_setting else ""
+    topic = getattr(settings, topic_setting, "") if topic_setting else ""
+    if not consumer_group or not topic:
+        raise HTTPException(status_code=409, detail="Layer has no configured consumer stream")
+    from app.etl.offset_manager import get_offset_manager
+
+    if not await get_offset_manager().set_offset(consumer_group, topic, partition, offset):
+        raise HTTPException(status_code=503, detail="ETL Redis is unavailable")
+    logger.warning("ETL offset changed by user=%s: %s/%s %s/%s/%s -> %s", current_user.id, layer, table, consumer_group, topic, partition, offset)
+    return _ok({"restartRequired": True, "consumerGroup": consumer_group, "topic": topic, "partition": partition, "offset": offset})
+
+
+@router.get("/etl/{layer}/{table}/script")
+async def get_layer_script(layer: str, table: str) -> dict[str, Any]:
+    """Expose the deployed layer implementation for inspection, never as an editable draft."""
+    layer, table = _require_layer(layer), _require_identifier(table, "table")
+    source_path = Path(__file__).resolve().parents[2] / "etl" / f"ts_{layer}.py"
+    if not source_path.is_file():
+        return _ok({"available": False, "reason": "No layer implementation file exists.", "code": ""})
+    try:
+        return _ok({
+            "available": True,
+            "path": str(source_path),
+            "language": "python",
+            "code": source_path.read_text(encoding="utf-8"),
+            "table": table,
+        })
+    except OSError as exc:
+        logger.warning("Failed to read layer script for %s: %s", layer, exc)
+        return _ok({"available": False, "reason": "Layer script cannot be read.", "code": ""})
 
 
 @router.post("/etl/query")

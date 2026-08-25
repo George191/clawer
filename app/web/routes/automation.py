@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.scheduler.workflow_repository import WorkflowDefinition, WorkflowRepository
 
 router = APIRouter()
-VALID_DOMAINS = {"ai-collect", "data-lake", "etl-pipeline", "data-cockpit", "platform"}
+VALID_DOMAINS = {"ai-collect", "data-lake", "etl-pipeline", "data-cockpit", "knowledge-graph", "knowledge-rag", "platform"}
 
 
 class WorkflowCreate(BaseModel):

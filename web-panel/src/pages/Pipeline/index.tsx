@@ -1,262 +1,60 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ApartmentOutlined,
-  CheckCircleFilled,
-  ReloadOutlined,
-  SearchOutlined,
-  WarningFilled,
-} from '@ant-design/icons';
-import { Button, Empty, Input, Spin, theme } from 'antd';
-import ErrorBoundary from '@/components/ErrorBoundary';
-import { fetchLayers } from '@/services/api';
-import type { LayerNode } from '@/services/types';
+import React, { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Button, InputNumber, Modal, Select, Spin, Tag, Tabs, message } from 'antd';
+import { AlertOutlined, ApartmentOutlined, BranchesOutlined, CheckCircleFilled, CloudServerOutlined, CodeOutlined, DeploymentUnitOutlined, ExperimentOutlined, ReloadOutlined, RightOutlined, SearchOutlined, SettingOutlined, TableOutlined, ThunderboltFilled, WarningFilled } from '@ant-design/icons';
 import '../ProductWorkspace/workspace.css';
+import { fetchLayerScript, fetchLayerTables, fetchLayers, fetchTableData, fetchTablePartitions, fetchTableStream, setTableOffset } from '../../services/api';
+import type { LayerNode, LayerTable, QueryResult, EtlPartition, EtlStreamState } from '../../services/types';
 
-const PIPELINE_ACCENT = '#0EA5E9';
-
-const PIPELINE_LAYOUT: Record<string, { x: number; y: number }> = {
-  rds: { x: 9, y: 45 },
-  ods: { x: 25, y: 45 },
-  task: { x: 43, y: 45 },
-  dwd: { x: 63, y: 24 },
-  dws: { x: 63, y: 66 },
-  dim: { x: 25, y: 82 },
-  ads: { x: 86, y: 45 },
-};
-
-const statusLabel: Record<LayerNode['status'], string> = {
-  running: '运行中',
-  stopped: '未启动',
-  error: '异常',
-};
-
-const layerShortName = (layer: LayerNode) => layer.key.toUpperCase();
+const assets = [
+  { name: 'sec_filing_index', owner: 'Data Operations', lifecycle: 'Production', layer: 'RDS → ODS', quality: '99.8%', version: 'v18' },
+  { name: 'vessel_events_dwd', owner: 'Maritime Data', lifecycle: 'Production', layer: 'ODS → DWD', quality: '98.4%', version: 'v7' },
+  { name: 'patent_documents_ads', owner: 'Research Lab', lifecycle: 'Degraded', layer: 'DWD → ADS', quality: '91.2%', version: 'v12' },
+  { name: 'organization_snapshot', owner: 'Data Operations', lifecycle: 'Review', layer: 'RDS → DWS', quality: '97.6%', version: 'v3' },
+];
+const navItems = [
+  { path: '/pipeline', label: 'Overview', icon: <ApartmentOutlined /> },
+  { path: '/pipeline/layers', label: 'Data layers', icon: <TableOutlined /> },
+  { path: '/pipeline/transforms', label: 'Transforms', icon: <CodeOutlined /> },
+  { path: '/pipeline/quality', label: 'Quality', icon: <ExperimentOutlined /> },
+  { path: '/pipeline/lineage', label: 'Lineage', icon: <BranchesOutlined /> },
+  { path: '/pipeline/releases', label: 'Releases', icon: <DeploymentUnitOutlined /> },
+  { path: '/pipeline/alerts', label: 'Alerts', icon: <AlertOutlined /> },
+];
 
 const Pipeline: React.FC = () => {
-  const { token } = theme.useToken();
-  const [layers, setLayers] = useState<LayerNode[]>([]);
-  const [selectedKey, setSelectedKey] = useState<string>('');
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  const loadLayers = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const result = await fetchLayers();
-      setLayers(result);
-      setSelectedKey((current) => (
-        current && result.some((layer) => layer.key === current)
-          ? current
-          : result.find((layer) => layer.status === 'running')?.key ?? result[0]?.key ?? ''
-      ));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '无法读取 ETL 管道状态');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadLayers();
-  }, [loadLayers]);
-
-  const matchingLayerKeys = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
-    if (!keyword) return new Set(layers.map((layer) => layer.key));
-    return new Set(
-      layers
-        .filter((layer) => layer.key.includes(keyword) || layer.label.toLowerCase().includes(keyword))
-        .map((layer) => layer.key),
-    );
-  }, [layers, query]);
-
-  const selectedLayer = useMemo(
-    () => layers.find((layer) => layer.key === selectedKey) ?? null,
-    [layers, selectedKey],
-  );
-
-  const runningCount = useMemo(
-    () => layers.reduce((count, layer) => count + (layer.status === 'running' ? 1 : 0), 0),
-    [layers],
-  );
-
-  const workspaceStyle = {
-    '--workspace-accent': PIPELINE_ACCENT,
-    '--workspace-bg': token.colorBgLayout,
-    '--workspace-surface': token.colorBgContainer,
-    '--workspace-surface-strong': token.colorBgElevated,
-    '--workspace-border': token.colorBorder,
-    '--workspace-border-soft': token.colorBorderSecondary,
-    '--workspace-text': token.colorText,
-    '--workspace-text-muted': token.colorTextSecondary,
-    '--workspace-fill': token.colorFillAlter,
-  } as React.CSSProperties;
-
-  return (
-    <ErrorBoundary>
-      <main className="product-workspace" style={workspaceStyle} data-testid="pipeline-workspace">
-        <header className="product-workspace__header">
-          <div>
-            <h1>ETL 管道工作台</h1>
-            <p>沿数据分层查看处理链路、运行状态与当前积压。</p>
-          </div>
-          <div className="product-workspace__header-actions">
-            <span className="product-workspace__health">
-              <span className="product-workspace__health-dot" />
-              {runningCount}/{layers.length || 0} 层运行
-            </span>
-            <Button
-              aria-label="刷新管道状态"
-              icon={<ReloadOutlined />}
-              onClick={() => void loadLayers()}
-              loading={loading}
-            >
-              刷新
-            </Button>
-          </div>
-        </header>
-
-        <section className="product-command" aria-label="管道节点搜索">
-          <SearchOutlined aria-hidden="true" />
-          <Input
-            variant="borderless"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索数据层或处理节点"
-            allowClear
-          />
-          <span className="product-command__hint">选择节点查看运行事实</span>
-        </section>
-
-        <section className="product-workspace__grid product-workspace__grid--pipeline">
-          <aside className="product-panel product-panel--rail" aria-label="管道概览">
-            <div className="product-panel__heading">
-              <span>主数据管道</span>
-              <span>{layers.length} 层</span>
-            </div>
-            <button
-              type="button"
-              className="pipeline-run-card pipeline-run-card--active"
-              aria-pressed="true"
-            >
-              <span className="pipeline-run-card__icon"><ApartmentOutlined /></span>
-              <span>
-                <strong>Lakehouse Main</strong>
-                <small>采集入湖 · 标准化 · 交付</small>
-              </span>
-            </button>
-            <div className="product-panel__section-label">运行事实</div>
-            <dl className="fact-list">
-              <div><dt>运行层</dt><dd>{runningCount}</dd></div>
-              <div><dt>停止层</dt><dd>{layers.length - runningCount}</dd></div>
-              <div><dt>总表数</dt><dd>{layers.reduce((sum, layer) => sum + (layer.tables ?? 0), 0)}</dd></div>
-            </dl>
-          </aside>
-
-          <section className="product-panel product-panel--canvas" aria-label="ETL 管道拓扑">
-            <div className="product-panel__heading">
-              <span>处理链路</span>
-              <span>RDS → ADS</span>
-            </div>
-            {loading ? (
-              <div className="product-panel__state"><Spin /><span>正在读取管道状态</span></div>
-            ) : error ? (
-              <div className="product-panel__state product-panel__state--error">
-                <WarningFilled />
-                <strong>管道状态不可用</strong>
-                <span>{error}</span>
-                <Button onClick={() => void loadLayers()}>重新加载</Button>
-              </div>
-            ) : (
-              <div className="pipeline-map" aria-label="ETL 处理节点">
-                <svg className="pipeline-map__links" viewBox="0 0 1000 420" preserveAspectRatio="none" aria-hidden="true">
-                  <defs>
-                    <marker id="pipeline-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                      <path d="M0 0L8 4L0 8Z" />
-                    </marker>
-                  </defs>
-                  <path d="M130 189H210" />
-                  <path d="M290 189H390" />
-                  <path d="M475 175C525 175 540 101 590 101" />
-                  <path d="M475 205C525 205 540 277 590 277" />
-                  <path d="M680 101C755 101 760 174 820 186" />
-                  <path d="M680 277C755 277 760 204 820 192" />
-                  <path className="pipeline-map__link--aux" d="M250 225V330" />
-                </svg>
-                {layers.map((layer) => {
-                  const selected = layer.key === selectedKey;
-                  const matches = matchingLayerKeys.has(layer.key);
-                  const position = PIPELINE_LAYOUT[layer.key] ?? { x: 50, y: 50 };
-                  return (
-                    <button
-                      type="button"
-                      key={layer.key}
-                      data-testid={`pipeline-node-${layer.key}`}
-                      className={`pipeline-node${selected ? ' pipeline-node--selected' : ''}${matches ? '' : ' pipeline-node--dimmed'}`}
-                      style={{ left: `${position.x}%`, top: `${position.y}%` }}
-                      onClick={() => setSelectedKey(layer.key)}
-                      aria-pressed={selected}
-                    >
-                      <span className={`pipeline-node__status pipeline-node__status--${layer.status}`}>
-                        {layer.status === 'running' ? <CheckCircleFilled /> : <WarningFilled />}
-                      </span>
-                      <span className="pipeline-node__code">{layerShortName(layer)}</span>
-                      <strong>{layer.label.replace(`${layerShortName(layer)} `, '')}</strong>
-                      <small>{layer.tables ?? 0} 张表</small>
-                    </button>
-                  );
-                })}
-                {query && matchingLayerKeys.size === 0 ? (
-                  <div className="pipeline-map__no-match">没有匹配节点，拓扑保持完整显示</div>
-                ) : null}
-              </div>
-            )}
-            <div className="pipeline-canvas__legend">
-              <span><i className="legend-dot legend-dot--running" />运行中</span>
-              <span><i className="legend-dot legend-dot--stopped" />未启动</span>
-              <span>点击节点切换检查器</span>
-            </div>
-          </section>
-
-          <aside className="product-panel product-panel--inspector" aria-label="节点检查器">
-            <div className="product-panel__heading">
-              <span>节点检查器</span>
-              <span>实时</span>
-            </div>
-            {selectedLayer ? (
-              <div className="inspector-content">
-                <div className="inspector-title">
-                  <span className="inspector-title__mark">{layerShortName(selectedLayer).slice(0, 1)}</span>
-                  <div>
-                    <strong>{selectedLayer.label}</strong>
-                    <span>{layerShortName(selectedLayer)} layer</span>
-                  </div>
-                </div>
-                <div className={`inspector-status inspector-status--${selectedLayer.status}`}>
-                  <span>{statusLabel[selectedLayer.status]}</span>
-                  <span>{selectedLayer.status === 'running' ? '服务已发现表结构' : '等待层级表就绪'}</span>
-                </div>
-                <dl className="inspector-facts">
-                  <div><dt>数据表</dt><dd>{selectedLayer.tables ?? 0}</dd></div>
-                  <div><dt>处理速率</dt><dd>{selectedLayer.rate.toFixed(1)} msg/s</dd></div>
-                  <div><dt>当前积压</dt><dd>{selectedLayer.lag}</dd></div>
-                  <div><dt>Schema</dt><dd>{selectedLayer.key}</dd></div>
-                </dl>
-                <div className="inspector-note">
-                  <strong>工作方式</strong>
-                  <p>选择数据层后，检查器只展示后端返回的运行事实；处理器编辑与发布仍由对应工作区完成。</p>
-                </div>
-              </div>
-            ) : (
-              <div className="product-panel__state"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请选择处理节点" /></div>
-            )}
-          </aside>
-        </section>
-      </main>
-    </ErrorBoundary>
-  );
+  const navigate = useNavigate(); const { pathname } = useLocation();
+  const active = navItems.find((item) => pathname === item.path)?.path ?? '/pipeline';
+  const title = navItems.find((item) => item.path === active)?.label ?? 'Overview';
+  return <main className="flow-console" data-testid="pipeline-workspace"><header className="flow-header"><div><div className="flow-eyebrow"><span className="flow-live-dot" /> ETL LIFECYCLE</div><h1>{title === 'Overview' ? 'ETL lifecycle overview' : title}</h1><p>Manage ETL assets from layer definition and validation through release, observability and retirement.</p></div><div className="flow-header-actions"><Button icon={<ReloadOutlined />}>Refresh</Button><Button type="primary" onClick={() => navigate('/automation/templates?domain=etl-pipeline')}>Open Automation Center</Button></div></header><div className="flow-shell"><aside className="flow-rail"><div className="flow-workspace-switch"><span className="flow-project-mark">F</span><span><strong>Flow</strong><small>ETL lifecycle</small></span></div><div className="flow-rail-label">Lifecycle</div>{navItems.map((item) => <button key={item.path} className={active === item.path ? 'is-active' : ''} onClick={() => navigate(item.path)}>{item.icon}<span>{item.label}</span>{item.path === '/pipeline/alerts' && <b>3</b>}</button>)}<div className="flow-rail-footer"><CloudServerOutlined /><span>ETL services</span><i>Healthy</i></div></aside><section className="flow-content">{active === '/pipeline' ? <Overview navigate={navigate} /> : <LifecycleView mode={active} />}</section></div></main>;
+};
+const Kpi: React.FC<{ label: string; value: string; trend: string; tone: string }> = ({ label, value, trend, tone }) => <div className={`flow-kpi tone-${tone}`}><span>{label}</span><strong>{value}</strong><small>{trend}</small></div>;
+const Stage: React.FC<{ title: string; detail: string; status: string }> = ({ title, detail, status }) => <div className={`flow-stage is-${status}`}><span>{status === 'live' ? <ThunderboltFilled /> : <CheckCircleFilled />}</span><strong>{title}</strong><small>{detail}</small></div>;
+const Overview: React.FC<{ navigate: ReturnType<typeof useNavigate> }> = ({ navigate }) => <><section className="flow-kpis"><Kpi label="ETL assets" value="105" trend="Across 5 layers" tone="cyan" /><Kpi label="Production" value="87" trend="8 in review" tone="green" /><Kpi label="Quality pass" value="98.2%" trend="Last validation" tone="violet" /><Kpi label="Lifecycle issues" value="3" trend="1 critical" tone="amber" /></section><section className="flow-grid-main"><div className="flow-card flow-topology"><div className="flow-card-head"><div><h2>Data-layer lifecycle</h2><p>Current assets and publication state across ETL layers</p></div><Tag color="success">Governed</Tag></div><div className="flow-topology-map"><Stage title="RDS" detail="12 raw assets" status="done" /><span className="flow-link" /><Stage title="ODS" detail="28 standardized" status="done" /><span className="flow-link" /><Stage title="DWD" detail="46 detailed" status="live" /><span className="flow-link" /><Stage title="DWS / ADS" detail="19 published" status="idle" /></div><div className="flow-card-foot"><span><i className="dot dot-green" />Schema compatible</span><span>Last validation <strong>14:32:08</strong></span><Button type="link" onClick={() => navigate('/pipeline/layers')}>Explore layers →</Button></div></div><div className="flow-card flow-attention"><div className="flow-card-head"><div><h2>Lifecycle attention</h2><p>Quality, compatibility and release issues</p></div><AlertOutlined /></div><div className="flow-incident"><WarningFilled /><div><strong>patent_documents_ads</strong><span>Quality gate below threshold</span></div><Button size="small">Inspect</Button></div><div className="flow-incident"><BranchesOutlined /><div><strong>vessel_events_dwd</strong><span>Schema change affects 3 assets</span></div><Button size="small">Impact</Button></div><div className="flow-attention-link" onClick={() => navigate('/pipeline/alerts')}>Open lifecycle issues <RightOutlined /></div></div></section><section className="flow-card flow-runs"><div className="flow-card-head"><div><h2>Managed ETL assets</h2><p>Lifecycle, quality and release state</p></div><Button type="link" onClick={() => navigate('/pipeline/layers')}>View all →</Button></div><AssetTable /></section></>;
+const AssetTable: React.FC = () => <div className="flow-table"><div className="flow-table-row flow-table-head"><span>ETL asset</span><span>Layer path</span><span>Lifecycle</span><span>Quality</span><span>Version</span><span /></div>{assets.map((asset) => <div className="flow-table-row" key={asset.name}><span><strong>{asset.name}</strong><small>{asset.owner}</small></span><span>{asset.layer}</span><span><Tag color={asset.lifecycle === 'Production' ? 'success' : asset.lifecycle === 'Degraded' ? 'error' : 'processing'}>{asset.lifecycle}</Tag></span><span>{asset.quality}</span><span>{asset.version}</span><span><Button type="text" icon={<RightOutlined />} /></span></div>)}</div>;
+const LifecycleView: React.FC<{ mode: string }> = ({ mode }) => {
+  if (mode === '/pipeline/layers') return <DataLayers />;
+  const meta: Record<string, [string, string, string[]]> = {
+    '/pipeline/transforms': ['Transformation assets', 'Code, dependencies and validation state for each deployed layer.', ['ODS normalizers', 'TASK handlers', 'DWD materializations']],
+    '/pipeline/quality': ['Quality gates', 'Contract checks are evaluated before downstream publication.', ['Schema compatibility', 'Required-field validation', 'Freshness and volume']],
+    '/pipeline/lineage': ['Lineage and impact', 'Trace the actual Kafka, table and handler relationships before release.', ['Upstream source → RDS', 'RDS → ODS standardization', 'ODS/TASK → DWD/DWS']],
+    '/pipeline/releases': ['Lifecycle releases', 'Review code and schema changes; deployment remains owned by Automation Center.', ['Draft', 'Validation', 'Approved']],
+    '/pipeline/alerts': ['Lifecycle issues', 'Quality failures, schema conflicts, freshness risks and service health.', ['No synthetic alerts', 'Connect a live snapshot to populate this view.']],
+  };
+  const [title, copy, items] = meta[mode] ?? meta['/pipeline/transforms'];
+  return <div className="flow-card flow-list-view"><div className="flow-card-head"><div><h2>{title}</h2><p>{copy}</p></div><div className="flow-list-tools"><Button icon={<SearchOutlined />}>Search</Button><Button icon={<SettingOutlined />}>Filters</Button></div></div><div className="flow-asset-grid">{items.map((item) => <div className="flow-asset-card" key={item}><CodeOutlined /><strong>{item}</strong><span>Lifecycle metadata is available when the connected ETL snapshot reports this asset.</span><Tag>Awaiting snapshot</Tag></div>)}</div><div className="flow-empty-state flow-empty-state--compact"><span>Execution orchestration, schedules and task runs remain in Automation Center.</span></div></div>;
 };
 
+const DataLayers: React.FC = () => {
+  const [layers, setLayers] = useState<LayerNode[]>([]); const [layer, setLayer] = useState('rds'); const [tables, setTables] = useState<LayerTable[]>([]); const [table, setTable] = useState<LayerTable | null>(null); const [partitions, setPartitions] = useState<EtlPartition[]>([]); const [partition, setPartition] = useState<string>(); const [data, setData] = useState<QueryResult>(); const [stream, setStream] = useState<EtlStreamState>(); const [loading, setLoading] = useState(false); const [offsetOpen, setOffsetOpen] = useState(false); const [offset, setOffset] = useState<number>();
+  useEffect(() => { fetchLayers().then((value) => { setLayers(value); if (value[0]) setLayer(value[0].key); }).catch(() => message.warning('ETL layer metadata unavailable')); }, []);
+  useEffect(() => { setLoading(true); fetchLayerTables(layer).then((value) => setTables(value)).catch(() => setTables([])).finally(() => setLoading(false)); setTable(null); }, [layer]);
+  useEffect(() => { if (!table) return; Promise.all([fetchTablePartitions(layer, table.name), fetchTableStream(layer, table.name)]).then(([parts, state]) => { setPartitions(parts); setStream(state); setPartition(undefined); }).catch(() => { setPartitions([]); setStream(undefined); }); }, [layer, table]);
+  const inspect = (selected: LayerTable) => { setTable(selected); fetchTableData(layer, selected.name, 50).then(setData).catch(() => message.error('表数据查询失败')); };
+  const queryPartition = (value?: string) => { setPartition(value); if (table) fetchTableData(layer, table.name, 50, value).then(setData).catch(() => message.error('分区查询失败')); };
+  const saveOffset = async () => { if (!table || offset === undefined) return; const partitionNumber = stream?.offsets?.[0]?.partition ?? 0; await setTableOffset(layer, table.name, partitionNumber, offset); message.success('Offset 已保存，重启对应 ETL worker 后生效'); setOffsetOpen(false); };
+  return <div className="flow-layers"><div className="flow-card-head flow-layers-head"><div><h2>Data layers</h2><p>PostgreSQL catalog + ts_meta governance registry. Select a layer, schema table and physical partition.</p></div><Tag color="blue">Read-first</Tag></div><div className="flow-layer-layout"><aside className="flow-layer-tree"><div className="flow-tree-label">ETL layers</div>{layers.map((item) => <button className={layer === item.key ? 'is-active' : ''} key={item.key} onClick={() => setLayer(item.key)}><span>{item.key.toUpperCase()}</span><small>{item.tables ?? 0} tables</small></button>)}<div className="flow-tree-note"><strong>ts_meta</strong><span>DDL registry / governance metadata</span></div></aside><section className="flow-layer-main"><div className="flow-card flow-table-card"><div className="flow-card-head"><div><h2>{layer.toUpperCase()} tables</h2><p>Schema: ts_{layer}. Click a table to inspect partitions and stream state.</p></div>{loading && <Spin size="small" />}</div><div className="flow-table"><div className="flow-table-row flow-table-head"><span>Table</span><span>Partitioned</span><span>Rows</span><span>Size</span><span /></div>{tables.map((item) => <button className={`flow-table-row flow-table-button ${table?.name === item.name ? 'is-selected' : ''}`} key={item.name} onClick={() => inspect(item)}><span><strong>{item.name}</strong><small>{item.schemaName}</small></span><span>{item.partitioned ? <Tag color="cyan">yes</Tag> : 'no'}</span><span>{item.rowCount}</span><span>{item.size}</span><span><RightOutlined /></span></button>)}</div></div>{table && <div className="flow-card flow-inspector"><div className="flow-card-head"><div><h2>{table.name}</h2><p>Partition data, throughput and Kafka/Redis resume controls</p></div><Button danger size="small" onClick={() => setOffsetOpen(true)}>Adjust offset</Button></div><Tabs items={[{ key: 'data', label: 'Partition data', children: <><div className="flow-inspector-toolbar"><Select allowClear placeholder="All partitions" value={partition} onChange={queryPartition} options={partitions.map((item) => ({ label: item.name, value: item.name }))} style={{ width: 220 }} /><span>{data ? `${data.rowCount} rows · ${data.elapsed}s` : 'Select a partition to query'}</span></div><div className="flow-data-preview">{data?.columns.map((column) => <span key={column}>{column}</span>)}{data?.rows.slice(0, 5).map((row, index) => <pre key={index}>{JSON.stringify(row)}</pre>)}</div></> }, { key: 'stream', label: 'Stream health', children: <div className="flow-stream-grid"><div><span>Topic</span><strong>{stream?.topic ?? 'Unavailable'}</strong></div><div><span>Consumer group</span><strong>{stream?.consumerGroup ?? 'Unavailable'}</strong></div><div><span>Throughput</span><strong>{stream?.throughput == null ? 'Unavailable' : `${stream.throughput}/s`}</strong><small>{stream?.throughputReason}</small></div><div><span>Redis offsets</span><strong>{stream?.offsets?.length ?? 0} partitions</strong></div></div> }, { key: 'script', label: 'Layer script', children: <ScriptPreview layer={layer} table={table.name} /> }]} /></div>}</section></div><Modal title="Adjust Redis offset" open={offsetOpen} onCancel={() => setOffsetOpen(false)} onOk={saveOffset} okText="Confirm SET OFFSET"><p>This writes a resume position for the configured consumer group. Worker restart is required; the current running worker is not interrupted.</p><InputNumber min={0} value={offset} onChange={(value) => setOffset(value ?? undefined)} placeholder="Kafka offset" style={{ width: '100%' }} /></Modal></div>;
+};
+
+const ScriptPreview: React.FC<{ layer: string; table: string }> = ({ layer, table }) => { const [code, setCode] = useState('Loading deployed script…'); useEffect(() => { fetchLayerScript(layer, table).then((result) => setCode(result.available ? result.code : result.reason ?? 'Script unavailable')).catch(() => setCode('Script unavailable')); }, [layer, table]); return <div className="flow-script"><div className="flow-script-note">Deployed source (read-only) · edits belong in the ETL repository and release workflow.</div><pre>{code}</pre></div>; };
 export default Pipeline;

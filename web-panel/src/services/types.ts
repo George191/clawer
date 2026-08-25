@@ -66,6 +66,9 @@ export interface LayerNode {
 
 export interface LayerTable {
   name: string;
+  schemaName?: string;
+  tableRole?: 'current' | 'history';
+  partitioned?: boolean;
   rowCount: number;
   size: string;
   updatedAt: string;
@@ -305,7 +308,27 @@ export interface WorkspaceTask {
   logs?: { level: string; message: string; created_at: string }[];
 }
 
-export type ProductDomain = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'platform';
+export interface EtlPartition { name: string; }
+
+export interface EtlStreamState {
+  available: boolean;
+  reason?: string;
+  consumerGroup?: string;
+  topic?: string;
+  offsets?: { partition: number; offset: number }[];
+  throughput: number | null;
+  throughputReason?: string;
+}
+
+export interface EtlScript {
+  available: boolean;
+  reason?: string;
+  path?: string;
+  language?: string;
+  code: string;
+}
+
+export type ProductDomain = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'knowledge-graph' | 'knowledge-rag' | 'platform';
 
 export interface CurrentUserContext {
   user: { id: string; full_name?: string | null; email: string };

@@ -35,6 +35,8 @@ const domainMeta: Record<ProductDomain, { label: string; color: string; classNam
   'data-lake': { label: 'Lake', color: 'green', className: 'is-lake', icon: <DatabaseOutlined /> },
   'etl-pipeline': { label: 'Pileline', color: 'blue', className: 'is-etl', icon: <ApartmentOutlined /> },
   'data-cockpit': { label: 'Cockpit', color: 'gold', className: 'is-cockpit', icon: <BarChartOutlined /> },
+  'knowledge-graph': { label: 'Knowledge Graph', color: 'purple', className: 'is-graph', icon: <DeploymentUnitOutlined /> },
+  'knowledge-rag': { label: 'Knowledge RAG', color: 'cyan', className: 'is-rag', icon: <DatabaseOutlined /> },
   platform: { label: 'Platform', color: 'default', className: 'is-platform', icon: <SettingOutlined /> },
 };
 
@@ -346,12 +348,12 @@ const AutomationCenter: React.FC = () => {
       <div><Typography.Text className="automation-kicker">AUTOMATION FOUNDATION</Typography.Text><Typography.Title level={2}>Automation Center</Typography.Title></div>
     </header>
 
-    <div className="automation-tabs-row">
+    <div className="access-tabs automation-tabs">
       <Segmented value={section} onChange={(value) => changeSection(String(value))} options={[
         { label: 'Templates', value: 'templates', icon: <CodeOutlined /> }, { label: 'Workflows', value: 'workflows', icon: <ApartmentOutlined /> },
         { label: 'Schedules', value: 'schedules', icon: <FieldTimeOutlined /> }, { label: 'Runs', value: 'runs', icon: <ClockCircleOutlined /> },
       ]} />
-      <Space wrap className="automation-filters"><Select<DomainFilter> value={domain} onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} /><Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section === 'templates' ? <Upload accept=".yaml,.yml,.json" maxCount={1} showUploadList={false} beforeUpload={openTemplateUpload}><Button icon={<UploadOutlined />}>Upload</Button></Upload> : <Button icon={<PlusOutlined />} onClick={openCreate}>Create Record</Button>}</Space>
+      <Space wrap className="automation-filters"><Select<DomainFilter> value={domain} onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} /><Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section === 'templates' ? <Upload accept=".yaml,.yml,.json" maxCount={1} showUploadList={false} beforeUpload={openTemplateUpload}><Button icon={<UploadOutlined />}>Upload</Button></Upload> : <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
     </div>
 
     {loadFailures > 0 && <Alert className="automation-load-alert" type="warning" showIcon message="Some automation data is temporarily unavailable. Available content remains usable." />}

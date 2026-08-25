@@ -24,6 +24,8 @@ import Organization from '@/pages/Organization';
 import AutomationCenter from '@/pages/AutomationCenter';
 import AccountSettings from '@/pages/AccountSettings';
 import SystemSettings from '@/pages/SystemSettings';
+import FAQ from '@/pages/FAQ';
+import Legal from '@/pages/Legal';
 import AuthLayout from '@/pages/Login/AuthLayout';
 
 const App: React.FC = () => {
@@ -72,6 +74,12 @@ const App: React.FC = () => {
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/logs" element={<LogExplorer />} />
             <Route path="/pipeline" element={<Pipeline />} />
+            <Route path="/pipeline/runs" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
+            <Route path="/pipeline/schedules" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
+            <Route path="/pipeline/layers" element={<Pipeline />} />
+            <Route path="/pipeline/transforms" element={<Pipeline />} />
+            <Route path="/pipeline/quality" element={<Pipeline />} />
+            <Route path="/pipeline/lineage" element={<Pipeline />} />
             <Route path="/pipeline/tasks" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
             <Route path="/pipeline/templates" element={<Navigate to="/automation/templates?domain=etl-pipeline" replace />} />
             <Route path="/pipeline/schedule" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
@@ -94,6 +102,14 @@ const App: React.FC = () => {
             <Route path="/lake/security" element={<WorkspacePage />} />
             <Route path="/lake/market" element={<WorkspacePage />} />
             <Route path="/data-api" element={<WorkspacePage />} />
+            <Route path="/knowledge-graph" element={<WorkspacePage />} />
+            <Route path="/knowledge-graph/entities" element={<WorkspacePage />} />
+            <Route path="/knowledge-graph/quality" element={<WorkspacePage />} />
+            <Route path="/knowledge-graph/lineage" element={<WorkspacePage />} />
+            <Route path="/knowledge-rag" element={<WorkspacePage />} />
+            <Route path="/knowledge-rag/documents" element={<WorkspacePage />} />
+            <Route path="/knowledge-rag/indexes" element={<WorkspacePage />} />
+            <Route path="/knowledge-rag/evaluation" element={<WorkspacePage />} />
             {/* Legacy sidebar routes */}
             <Route path="/instances" element={<WorkspacePage />} />
             <Route path="/import" element={<Navigate to="/ai-collect" replace />} />
@@ -106,6 +122,8 @@ const App: React.FC = () => {
             <Route path="/organization/users/:userId" element={<Organization />} />
             <Route path="/account/settings" element={<AccountSettings />} />
             <Route path="/settings" element={<SystemSettings />} />
+            <Route path="/faq" element={<FAQ />} />
+            <Route path="/legal/:section" element={<Legal />} />
             <Route path="/project-users" element={<Organization />} />
             <Route path="/billing" element={<WorkspacePage />} />
             <Route path="/project-settings" element={<WorkspacePage />} />

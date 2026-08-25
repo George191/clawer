@@ -105,6 +105,13 @@ body {
   background: transparent !important;
 }
 
+.project-domain-switch:hover,
+.project-domain-switch:focus,
+.project-domain-switch:active,
+.project-domain-switch.ant-btn-clicked {
+  background: transparent !important;
+}
+
 .glass-card {
   background: rgba(36, 40, 54, 0.8) !important;
   backdrop-filter: blur(12px);
@@ -954,4 +961,60 @@ h4.ant-typography { letter-spacing: -0.01em; }
   .metric-card .metric-value { font-size: 24px; }
   .hero-section { padding: 24px 12px 20px; }
   .step-number { font-size: 32px; }
+}
+
+/* Shared Access / Automation tabs. */
+.access-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: #1a1d27;
+}
+
+.access-tabs > button,
+.access-tabs .ant-segmented-item {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.access-tabs:not(.automation-tabs) { gap: 2px; }
+.access-tabs > button { padding: 5px 9px; }
+.access-tabs > button:hover,
+.access-tabs .ant-segmented-item:hover { background: #12151d; color: #e4e7eb; }
+.access-tabs > button.is-active,
+.access-tabs .ant-segmented-item-selected,
+.access-tabs .ant-segmented-thumb { background: #242836; color: #e4e7eb; box-shadow: none; }
+.access-tabs .is-active::after { display: none; }
+.access-tabs .ant-segmented { padding: 0; background: transparent; }
+.access-tabs .ant-segmented-group { gap: 4px; }
+.access-tabs .ant-segmented-item-label { min-height: 32px; padding: 5px 12px; line-height: 22px; }
+.automation-tabs { justify-content: space-between; gap: 16px; }
+.automation-tabs .automation-filters { margin-left: auto; }
+.automation-tabs .automation-filters .ant-select,
+.automation-tabs .automation-filters .ant-select-selector,
+.automation-tabs .automation-filters .ant-input-affix-wrapper,
+.automation-tabs .automation-filters .ant-btn { height: 32px !important; min-height: 32px !important; }
+.automation-tabs .automation-filters .ant-input-affix-wrapper { padding-block: 4px !important; }
+.automation-tabs .automation-filters .ant-btn { padding-block: 4px !important; }
+
+html[data-theme='light'] .access-tabs { background: #fff; }
+html[data-theme='light'] .access-tabs > button:hover,
+html[data-theme='light'] .access-tabs > button.is-active,
+html[data-theme='light'] .access-tabs .ant-segmented-item:hover,
+html[data-theme='light'] .access-tabs .ant-segmented-item-selected,
+html[data-theme='light'] .access-tabs .ant-segmented-thumb { background: #f3f4f7 !important; color: #172033 !important; }
+
+@media (max-width: 680px) {
+  .access-tabs { overflow-x: auto; }
+  .access-tabs > button { white-space: nowrap; }
 }

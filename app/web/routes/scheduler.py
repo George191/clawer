@@ -23,7 +23,7 @@ from app.scheduler.task_repository import TaskConfig, TaskRepository
 logger = get_logger(__name__)
 
 router = APIRouter()
-VALID_PRODUCT_DOMAINS = {"ai-collect", "data-lake", "etl-pipeline", "data-cockpit", "platform"}
+VALID_PRODUCT_DOMAINS = {"ai-collect", "data-lake", "etl-pipeline", "data-cockpit", "knowledge-graph", "knowledge-rag", "platform"}
 
 
 # ══════════════════════════════════════════════════════════════════════

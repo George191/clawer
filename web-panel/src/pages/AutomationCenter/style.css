@@ -28,22 +28,6 @@
   letter-spacing: .14em;
 }
 
-.automation-tabs-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 14px;
-  border: 0;
-  border-radius: 8px;
-  background: #1a1d27;
-}
-
-.automation-tabs-row .ant-segmented-item { background: transparent; }
-.automation-tabs-row .ant-segmented-item:hover { background: #12151d; color: #e4e7eb; }
-.automation-tabs-row .ant-segmented-item-selected,
-.automation-tabs-row .ant-segmented-thumb { background: #242836; box-shadow: none; }
-
 .automation-domain-select { min-width: 170px; }
 .automation-search { width: 250px; }
 
@@ -213,13 +197,8 @@ html[data-theme='light'] .automation-filters .ant-btn-default:hover,
 html[data-theme='light'] .automation-filters .ant-btn-primary:hover { background: #dfe3e9 !important; }
 html[data-theme='light'] .automation-filters .ant-btn-default:hover,
 html[data-theme='light'] .automation-filters .ant-btn-default:focus-visible { color: #172033 !important; }
-html[data-theme='light'] .automation-tabs-row,
 html[data-theme='light'] .automation-stats > div,
 html[data-theme='light'] .automation-table-card { background: #fff; }
-html[data-theme='light'] .automation-tabs-row .ant-segmented-item { background: transparent; }
-html[data-theme='light'] .automation-tabs-row .ant-segmented-item:hover { background: #f3f4f7; color: #172033; }
-html[data-theme='light'] .automation-tabs-row .ant-segmented-item-selected,
-html[data-theme='light'] .automation-tabs-row .ant-segmented-thumb { background: #f3f4f7; }
 html[data-theme='light'] .automation-stats { background: transparent; }
 html[data-theme='light'] .automation-stats strong { color: #172033; }
 html[data-theme='light'] .automation-page .ant-pagination .ant-pagination-item,
@@ -235,7 +214,7 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
 
 @media (max-width: 900px) {
   .automation-header,
-  .automation-tabs-row { align-items: flex-start; flex-direction: column; }
+  .automation-tabs { align-items: flex-start; flex-direction: column; }
   .automation-search { width: min(250px, 100%); }
 }
 

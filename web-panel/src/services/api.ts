@@ -8,6 +8,9 @@ import type {
   TaskInfo,
   TemplateInfo,
   HandlerCode,
+  EtlPartition,
+  EtlScript,
+  EtlStreamState,
   KafkaTopic,
   RedisOffset,
   SchedulerItem,
@@ -170,17 +173,30 @@ export const DASHBOARD_WS_URL = `${
 export const fetchLayers = (): Promise<LayerNode[]> =>
   client.get('/etl/layers').then((r) => unwrap<LayerNode[]>(r.data));
 
-export const fetchLayerTables = (layer: string): Promise<LayerTable[]> =>
-  client.get(`/etl/${layer}/tables`).then((r) => unwrap<LayerTable[]>(r.data));
+export const fetchLayerTables = (layer: string, tableRole = 'current'): Promise<LayerTable[]> =>
+  client.get(`/etl/${layer}/tables`, { params: { tableRole } }).then((r) => unwrap<LayerTable[]>(r.data));
 
 export const fetchTableData = (
   layer: string,
   table: string,
   limit = 50,
+  partition?: string,
 ): Promise<QueryResult> =>
   client
-    .get(`/etl/${layer}/${table}/data`, { params: { limit } })
+    .get(`/etl/${layer}/${table}/data`, { params: { limit, partition } })
     .then((r) => unwrap<QueryResult>(r.data));
+
+export const fetchTablePartitions = (layer: string, table: string): Promise<EtlPartition[]> =>
+  client.get(`/etl/${layer}/${table}/partitions`).then((r) => unwrap<EtlPartition[]>(r.data));
+
+export const fetchTableStream = (layer: string, table: string): Promise<EtlStreamState> =>
+  client.get(`/etl/${layer}/${table}/stream`).then((r) => unwrap<EtlStreamState>(r.data));
+
+export const setTableOffset = (layer: string, table: string, partition: number, offset: number): Promise<{ restartRequired: boolean }> =>
+  client.put(`/etl/${layer}/${table}/offset`, { partition, offset, confirmation: 'SET OFFSET' }).then((r) => unwrap<{ restartRequired: boolean }>(r.data));
+
+export const fetchLayerScript = (layer: string, table: string): Promise<EtlScript> =>
+  client.get(`/etl/${layer}/${table}/script`).then((r) => unwrap<EtlScript>(r.data));
 
 export const executeQuery = (sql: string): Promise<QueryResult> =>
   client.post('/etl/query', { sql }).then((r) => unwrap<QueryResult>(r.data));
