@@ -6,10 +6,10 @@ import '../ProductWorkspace/workspace.css';
 import type { LayerNode, LayerTable, QueryResult, EtlPartition, EtlStreamState } from '../../services/types';
 
 const pageMeta: Record<string, { title: string; description: string }> = {
-  '/pipeline/layers': { title: 'Data layers', description: 'Browse source-backed tables, partitions, stream positions and deployed layer code.' },
-  '/pipeline/transforms': { title: 'Transformation assets', description: 'Review deployed transformations, their dependencies and validation state.' },
-  '/pipeline/quality': { title: 'Quality gates', description: 'Assess output contracts before downstream publication.' },
-  '/pipeline/lineage': { title: 'Lineage and impact', description: 'Trace ETL dependencies and assess downstream impact.' },
+  '/flow/layers': { title: 'Data layers', description: 'Browse source-backed tables, partitions, stream positions and deployed layer code.' },
+  '/flow/transforms': { title: 'Transformation assets', description: 'Review deployed transformations, their dependencies and validation state.' },
+  '/flow/quality': { title: 'Quality gates', description: 'Assess output contracts before downstream publication.' },
+  '/flow/lineage': { title: 'Lineage and impact', description: 'Trace ETL dependencies and assess downstream impact.' },
 };
 const mockLayers: LayerNode[] = [
   { key: 'rds', label: 'RDS', icon: 'DatabaseOutlined', status: 'running', rate: 842, lag: 12, tables: 12 },
@@ -29,18 +29,18 @@ const mockPartitions: EtlPartition[] = [{ name: 'p2026_08_24' }, { name: 'p2026_
 
 const Pipeline: React.FC = () => {
   const { pathname } = useLocation();
-  const active = pageMeta[pathname] ? pathname : '/pipeline/layers';
+  const active = pageMeta[pathname] ? pathname : '/flow/layers';
   const page = pageMeta[active];
   return <main className="flow-console" data-testid="pipeline-workspace"><header className="flow-header"><div><div className="flow-eyebrow"><span className="flow-live-dot" /> ETL LIFECYCLE</div><h1>{page.title}</h1><p>{page.description}</p></div></header><section className="flow-core"><LifecycleView mode={active} /></section></main>;
 };
 const LifecycleView: React.FC<{ mode: string }> = ({ mode }) => {
-  if (mode === '/pipeline/layers') return <DataLayersWorkspace />;
+  if (mode === '/flow/layers') return <DataLayersWorkspace />;
   const meta: Record<string, [string, string, string[]]> = {
-    '/pipeline/transforms': ['Transformation assets', 'Code, dependencies and validation state for each deployed layer.', ['ODS normalizers', 'TASK handlers', 'DWD materializations']],
-    '/pipeline/quality': ['Quality gates', 'Contract checks are evaluated before downstream publication.', ['Schema compatibility', 'Required-field validation', 'Freshness and volume']],
-    '/pipeline/lineage': ['Lineage and impact', 'Trace the actual Kafka, table and handler relationships before release.', ['Upstream source → RDS', 'RDS → ODS standardization', 'ODS/TASK → DWD/DWS']],
+    '/flow/transforms': ['Transformation assets', 'Code, dependencies and validation state for each deployed layer.', ['ODS normalizers', 'TASK handlers', 'DWD materializations']],
+    '/flow/quality': ['Quality gates', 'Contract checks are evaluated before downstream publication.', ['Schema compatibility', 'Required-field validation', 'Freshness and volume']],
+    '/flow/lineage': ['Lineage and impact', 'Trace the actual Kafka, table and handler relationships before release.', ['Upstream source → RDS', 'RDS → ODS standardization', 'ODS/TASK → DWD/DWS']],
   };
-  const [title, copy, items] = meta[mode] ?? meta['/pipeline/transforms'];
+  const [title, copy, items] = meta[mode] ?? meta['/flow/transforms'];
   return <div className="flow-card flow-list-view"><div className="flow-card-head"><div><h2>{title}</h2><p>{copy}</p></div><div className="flow-list-tools"><Button icon={<SearchOutlined />}>Search</Button><Button icon={<SettingOutlined />}>Filters</Button></div></div><div className="flow-asset-grid">{items.map((item) => <div className="flow-asset-card" key={item}><CodeOutlined /><strong>{item}</strong><span>Lifecycle metadata is available when the connected ETL snapshot reports this asset.</span><Tag>Awaiting snapshot</Tag></div>)}</div><div className="flow-empty-state flow-empty-state--compact"><span>Execution orchestration, schedules and task runs remain in Automation Center.</span></div></div>;
 };
 

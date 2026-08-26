@@ -66,50 +66,49 @@ const App: React.FC = () => {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/cockpit" element={<Dashboard />} />
-            <Route path="/cockpit/metrics" element={<Monitoring />} />
-            <Route path="/cockpit/quality" element={<WorkspacePage />} />
+            <Route path="/atlas" element={<Dashboard />} />
+            <Route path="/atlas/metrics" element={<Monitoring />} />
+            <Route path="/atlas/quality" element={<WorkspacePage />} />
             <Route path="/explorer" element={<DataExplorer />} />
             <Route path="/tasks" element={<Navigate to="/automation/runs" replace />} />
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/logs" element={<LogExplorer />} />
-            <Route path="/pipeline" element={<Navigate to="/pipeline/layers" replace />} />
-            <Route path="/pipeline/runs" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
-            <Route path="/pipeline/schedules" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
-            <Route path="/pipeline/layers" element={<Pipeline />} />
-            <Route path="/pipeline/transforms" element={<Pipeline />} />
-            <Route path="/pipeline/quality" element={<Pipeline />} />
-            <Route path="/pipeline/lineage" element={<Pipeline />} />
-            <Route path="/pipeline/tasks" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
-            <Route path="/pipeline/templates" element={<Navigate to="/automation/workflows?domain=etl-pipeline" replace />} />
-            <Route path="/pipeline/schedule" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
+            <Route path="/flow" element={<Navigate to="/flow/layers" replace />} />
+            <Route path="/flow/runs" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
+            <Route path="/flow/schedules" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
+            <Route path="/flow/layers" element={<Pipeline />} />
+            <Route path="/flow/transforms" element={<Pipeline />} />
+            <Route path="/flow/quality" element={<Pipeline />} />
+            <Route path="/flow/lineage" element={<Pipeline />} />
+            <Route path="/flow/tasks" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
+            <Route path="/flow/templates" element={<Navigate to="/automation/workflows?domain=etl-pipeline" replace />} />
+            <Route path="/flow/schedule" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
             <Route path="/automation" element={<Navigate to="/automation/workflows" replace />} />
             <Route path="/automation/workflows" element={<AutomationCenter />} />
             <Route path="/automation/schedules" element={<AutomationCenter />} />
             <Route path="/automation/runs" element={<AutomationCenter />} />
-            <Route path="/templates" element={<Navigate to="/ai-collect?panel=templates" replace />} />
-            <Route path="/ai-collect" element={<AICollect />} />
+            <Route path="/scout" element={<AICollect />} />
             <Route path="/source-strategy" element={<AICollectGovernance />} />
             <Route path="/anti-crawl" element={<AICollectGovernance />} />
             <Route path="/field-mapping" element={<AICollectGovernance />} />
-            <Route path="/lake/catalog" element={<DataLake />} />
-            <Route path="/lake/metadata" element={<WorkspacePage />} />
-            <Route path="/lake/quality" element={<WorkspacePage />} />
-            <Route path="/lake/lineage" element={<DataGraph />} />
-            <Route path="/lake/security" element={<WorkspacePage />} />
-            <Route path="/lake/market" element={<WorkspacePage />} />
+            <Route path="/vault/catalog" element={<DataLake />} />
+            <Route path="/vault/metadata" element={<WorkspacePage />} />
+            <Route path="/vault/quality" element={<WorkspacePage />} />
+            <Route path="/vault/lineage" element={<DataGraph />} />
+            <Route path="/vault/security" element={<WorkspacePage />} />
+            <Route path="/vault/market" element={<WorkspacePage />} />
             <Route path="/data-api" element={<WorkspacePage />} />
-            <Route path="/knowledge-graph" element={<WorkspacePage />} />
-            <Route path="/knowledge-graph/entities" element={<WorkspacePage />} />
-            <Route path="/knowledge-graph/quality" element={<WorkspacePage />} />
-            <Route path="/knowledge-graph/lineage" element={<WorkspacePage />} />
-            <Route path="/knowledge-rag" element={<WorkspacePage />} />
-            <Route path="/knowledge-rag/documents" element={<WorkspacePage />} />
-            <Route path="/knowledge-rag/indexes" element={<WorkspacePage />} />
-            <Route path="/knowledge-rag/evaluation" element={<WorkspacePage />} />
+            <Route path="/graph" element={<WorkspacePage />} />
+            <Route path="/graph/entities" element={<WorkspacePage />} />
+            <Route path="/graph/quality" element={<WorkspacePage />} />
+            <Route path="/graph/lineage" element={<WorkspacePage />} />
+            <Route path="/rag" element={<WorkspacePage />} />
+            <Route path="/rag/documents" element={<WorkspacePage />} />
+            <Route path="/rag/indexes" element={<WorkspacePage />} />
+            <Route path="/rag/evaluation" element={<WorkspacePage />} />
             {/* Legacy sidebar routes */}
             <Route path="/instances" element={<WorkspacePage />} />
-            <Route path="/import" element={<Navigate to="/ai-collect" replace />} />
+            <Route path="/import" element={<Navigate to="/scout" replace />} />
             <Route path="/graph-analytics" element={<DataGraph />} />
             <Route path="/explore" element={<DataExplorer />} />
             <Route path="/dashboards" element={<Dashboard />} />

@@ -107,14 +107,14 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     shortLabel: 'Scout',
     enabled: true,
     icon: <RobotOutlined />,
-    defaultPath: '/ai-collect',
+    defaultPath: '/scout',
     accent: '#7C3AED',
     sections: [
       {
         key: 'capture',
         label: 'Collection',
         children: [
-          { key: '/ai-collect', icon: <RobotOutlined />, label: 'Data Collection' },
+          { key: '/scout', icon: <RobotOutlined />, label: 'Scout' },
         ],
       },
       {
@@ -142,25 +142,25 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     shortLabel: 'Vault',
     enabled: false,
     icon: <DatabaseOutlined />,
-    defaultPath: '/lake/catalog',
+    defaultPath: '/vault/catalog',
     accent: '#059669',
     sections: [
       {
         key: 'catalog',
         label: 'Catalog',
         children: [
-          { key: '/lake/catalog', icon: <DatabaseOutlined />, label: 'Data Catalog' },
+          { key: '/vault/catalog', icon: <DatabaseOutlined />, label: 'Data Catalog' },
           { key: '/explorer', icon: <SearchOutlined />, label: 'Layer Explorer' },
-          { key: '/lake/metadata', icon: <BookOutlined />, label: 'Metadata' },
+          { key: '/vault/metadata', icon: <BookOutlined />, label: 'Metadata' },
         ],
       },
       {
         key: 'governance',
         label: 'Governance',
         children: [
-          { key: '/lake/quality', icon: <ExperimentOutlined />, label: 'Quality Rules' },
-          { key: '/lake/lineage', icon: <BranchesOutlined />, label: 'Lineage' },
-          { key: '/lake/security', icon: <AuditOutlined />, label: 'Access Audit' },
+          { key: '/vault/quality', icon: <ExperimentOutlined />, label: 'Quality Rules' },
+          { key: '/vault/lineage', icon: <BranchesOutlined />, label: 'Lineage' },
+          { key: '/vault/security', icon: <AuditOutlined />, label: 'Access Audit' },
         ],
       },
       {
@@ -168,7 +168,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         label: 'Serving',
         children: [
           { key: '/data-api', icon: <ApiOutlined />, label: '数据 API' },
-          { key: '/lake/market', icon: <BarChartOutlined />, label: 'Metrics Market' },
+          { key: '/vault/market', icon: <BarChartOutlined />, label: 'Metrics Market' },
         ],
       },
     ],
@@ -179,17 +179,17 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     shortLabel: 'Flow',
     enabled: true,
     icon: <ApartmentOutlined />,
-    defaultPath: '/pipeline/layers',
+    defaultPath: '/flow/layers',
     accent: '#0EA5E9',
     sections: [
       {
         key: 'lifecycle',
         label: 'ETL Lifecycle',
         children: [
-          { key: '/pipeline/layers', icon: <DatabaseOutlined />, label: 'Data Layers' },
-          { key: '/pipeline/transforms', icon: <CodeOutlined />, label: 'Transforms' },
-          { key: '/pipeline/quality', icon: <ExperimentOutlined />, label: 'Quality Gates' },
-          { key: '/pipeline/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
+          { key: '/flow/layers', icon: <DatabaseOutlined />, label: 'Data Layers' },
+          { key: '/flow/transforms', icon: <CodeOutlined />, label: 'Transforms' },
+          { key: '/flow/quality', icon: <ExperimentOutlined />, label: 'Quality Gates' },
+          { key: '/flow/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
         ],
       },
     ],
@@ -200,13 +200,13 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     shortLabel: 'Atlas',
     enabled: true,
     icon: <BarChartOutlined />,
-    defaultPath: '/cockpit',
+    defaultPath: '/atlas',
     accent: '#F59E0B',
     sections: [
-      { key: 'overview', label: 'Overview', children: [{ key: '/cockpit', icon: <BarChartOutlined />, label: 'Cockpit Overview' }] },
+      { key: 'overview', label: 'Overview', children: [{ key: '/atlas', icon: <BarChartOutlined />, label: 'Cockpit Overview' }] },
       { key: 'insights', label: 'Insights', children: [
-        { key: '/cockpit/metrics', icon: <LineChartOutlined />, label: 'Metrics' },
-        { key: '/cockpit/quality', icon: <AuditOutlined />, label: 'Data Quality' },
+        { key: '/atlas/metrics', icon: <LineChartOutlined />, label: 'Metrics' },
+        { key: '/atlas/quality', icon: <AuditOutlined />, label: 'Data Quality' },
       ] },
     ],
   },
@@ -216,18 +216,9 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     shortLabel: 'Graph',
     enabled: true,
     icon: <DeploymentUnitOutlined />,
-    defaultPath: '/knowledge-graph',
+    defaultPath: '/graph',
     accent: '#8B5CF6',
-    sections: [
-      { key: 'graph', label: 'Graph Assets', children: [
-        { key: '/knowledge-graph', icon: <DeploymentUnitOutlined />, label: 'Graph Overview' },
-        { key: '/knowledge-graph/entities', icon: <BranchesOutlined />, label: 'Entities & Relations' },
-      ] },
-      { key: 'governance', label: 'Governance', children: [
-        { key: '/knowledge-graph/quality', icon: <ExperimentOutlined />, label: 'Quality Checks' },
-        { key: '/knowledge-graph/lineage', icon: <AuditOutlined />, label: 'Source Lineage' },
-      ] },
-    ],
+    sections: [],
   },
   'knowledge-rag': {
     key: 'knowledge-rag',
@@ -235,60 +226,50 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     shortLabel: 'RAG',
     enabled: true,
     icon: <BookOutlined />,
-    defaultPath: '/knowledge-rag',
+    defaultPath: '/rag',
     accent: '#0D9488',
-    sections: [
-      { key: 'knowledge', label: 'Knowledge Assets', children: [
-        { key: '/knowledge-rag', icon: <BookOutlined />, label: 'Knowledge Overview' },
-        { key: '/knowledge-rag/documents', icon: <FileTextOutlined />, label: 'Documents' },
-      ] },
-      { key: 'retrieval', label: 'Retrieval', children: [
-        { key: '/knowledge-rag/indexes', icon: <DatabaseOutlined />, label: 'Indexes' },
-        { key: '/knowledge-rag/evaluation', icon: <ExperimentOutlined />, label: 'Evaluation' },
-      ] },
-    ],
+    sections: [],
   },
 };
 
 const explicitRouteProject: Record<string, ProjectKey> = {
   '/': 'ai-collect',
-  '/ai-collect': 'ai-collect',
+  '/scout': 'ai-collect',
   '/source-strategy': 'ai-collect',
   '/anti-crawl': 'ai-collect',
   '/field-mapping': 'ai-collect',
-  '/lake/catalog': 'data-lake',
-  '/lake/metadata': 'data-lake',
-  '/lake/quality': 'data-lake',
-  '/lake/lineage': 'data-lake',
-  '/lake/security': 'data-lake',
-  '/lake/market': 'data-lake',
+  '/vault/catalog': 'data-lake',
+  '/vault/metadata': 'data-lake',
+  '/vault/quality': 'data-lake',
+  '/vault/lineage': 'data-lake',
+  '/vault/security': 'data-lake',
+  '/vault/market': 'data-lake',
   '/explorer': 'data-lake',
   '/data-api': 'data-lake',
-  '/pipeline': 'etl-pipeline',
-  '/pipeline/layers': 'etl-pipeline',
-  '/pipeline/transforms': 'etl-pipeline',
-  '/pipeline/quality': 'etl-pipeline',
-  '/pipeline/lineage': 'etl-pipeline',
-  '/cockpit': 'data-cockpit',
-  '/cockpit/metrics': 'data-cockpit',
-  '/cockpit/quality': 'data-cockpit',
-  '/knowledge-graph': 'knowledge-graph',
-  '/knowledge-graph/entities': 'knowledge-graph',
-  '/knowledge-graph/quality': 'knowledge-graph',
-  '/knowledge-graph/lineage': 'knowledge-graph',
-  '/knowledge-rag': 'knowledge-rag',
-  '/knowledge-rag/documents': 'knowledge-rag',
-  '/knowledge-rag/indexes': 'knowledge-rag',
-  '/knowledge-rag/evaluation': 'knowledge-rag',
+  '/flow': 'etl-pipeline',
+  '/flow/layers': 'etl-pipeline',
+  '/flow/transforms': 'etl-pipeline',
+  '/flow/quality': 'etl-pipeline',
+  '/flow/lineage': 'etl-pipeline',
+  '/atlas': 'data-cockpit',
+  '/atlas/metrics': 'data-cockpit',
+  '/atlas/quality': 'data-cockpit',
+  '/graph': 'knowledge-graph',
+  '/graph/entities': 'knowledge-graph',
+  '/graph/quality': 'knowledge-graph',
+  '/graph/lineage': 'knowledge-graph',
+  '/rag': 'knowledge-rag',
+  '/rag/documents': 'knowledge-rag',
+  '/rag/indexes': 'knowledge-rag',
+  '/rag/evaluation': 'knowledge-rag',
 };
 
 const legacyRouteToSidebarKey: Record<string, string> = {
   '/': '/',
-  '/instances': '/lake/catalog',
-  '/import': '/ai-collect',
+  '/instances': '/vault/catalog',
+  '/import': '/scout',
   '/tasks': '/tasks',
-  '/templates': '/ai-collect',
-  '/graph-analytics': '/lake/lineage',
+  '/graph-analytics': '/vault/lineage',
   '/explore': '/explorer',
   '/dashboards': '/',
   '/query': '/explorer',
@@ -340,7 +321,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const isPlatformManagementSurface = location.pathname.startsWith('/organization');
   const isSystemSettingsSurface = location.pathname.startsWith('/settings');
   const isAtlasSurface = activeProjectKey === 'data-cockpit';
-  const hideSidebar = activeProjectKey === 'ai-collect' || isAtlasSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
+  const isGraphSurface = activeProjectKey === 'knowledge-graph';
+  const isRagSurface = activeProjectKey === 'knowledge-rag';
+  useEffect(() => {
+    if (location.pathname.startsWith('/automation') || !new URLSearchParams(location.search).has('domain')) return;
+    const next = new URLSearchParams(location.search);
+    next.delete('domain');
+    navigate(`${location.pathname}${next.toString() ? `?${next.toString()}` : ''}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+  const hideSidebar = activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
@@ -824,7 +813,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 2, marginRight: 6, paddingRight: 8, borderRight: `1px solid ${palette.border}` }}>
             <Button
               type="text"
-              onClick={() => navigate(`/automation/workflows?domain=${activeProjectKey}`)}
+              onClick={() => navigate('/automation/workflows')}
               className="header-shortcut-button"
               style={{ color: isAutomationSurface ? palette.text : palette.secondary, background: isAutomationSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
             >
@@ -1201,7 +1190,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         >
           <Content style={{ minHeight: 280 }}>
             <div className={isDark ? '' : 'light-mode'}>
-              {isAtlasSurface ? null : children}
+              {isAtlasSurface || isGraphSurface || isRagSurface ? null : children}
             </div>
           </Content>
         </main>

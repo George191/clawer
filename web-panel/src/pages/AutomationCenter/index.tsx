@@ -30,12 +30,12 @@ type DomainFilter = ProductDomain | 'all';
 type SelectedRecord = AutomationWorkflow | SchedulerTaskConfig | WorkspaceTask;
 
 const domainMeta: Record<ProductDomain, { label: string; color: string; className: string; icon: React.ReactNode }> = {
-  'ai-collect': { label: 'Collect', color: 'purple', className: 'is-ai', icon: <RobotOutlined /> },
-  'data-lake': { label: 'Lake', color: 'green', className: 'is-lake', icon: <DatabaseOutlined /> },
-  'etl-pipeline': { label: 'Pileline', color: 'blue', className: 'is-etl', icon: <ApartmentOutlined /> },
-  'data-cockpit': { label: 'Cockpit', color: 'gold', className: 'is-cockpit', icon: <BarChartOutlined /> },
-  'knowledge-graph': { label: 'Knowledge Graph', color: 'purple', className: 'is-graph', icon: <DeploymentUnitOutlined /> },
-  'knowledge-rag': { label: 'Knowledge RAG', color: 'cyan', className: 'is-rag', icon: <DatabaseOutlined /> },
+  'ai-collect': { label: 'Scout', color: 'purple', className: 'is-ai', icon: <RobotOutlined /> },
+  'data-lake': { label: 'Vault', color: 'green', className: 'is-lake', icon: <DatabaseOutlined /> },
+  'etl-pipeline': { label: 'Flow', color: 'blue', className: 'is-etl', icon: <ApartmentOutlined /> },
+  'data-cockpit': { label: 'Atlas', color: 'gold', className: 'is-cockpit', icon: <BarChartOutlined /> },
+  'knowledge-graph': { label: 'Graph', color: 'purple', className: 'is-graph', icon: <DeploymentUnitOutlined /> },
+  'knowledge-rag': { label: 'RAG', color: 'cyan', className: 'is-rag', icon: <DatabaseOutlined /> },
   platform: { label: 'Platform', color: 'default', className: 'is-platform', icon: <SettingOutlined /> },
 };
 
@@ -83,7 +83,9 @@ const AutomationCenter: React.FC = () => {
   const [form] = Form.useForm();
   const section = sectionByPath(location.pathname);
   const requestedDomain = searchParams.get('domain') as DomainFilter | null;
-  const domain: DomainFilter = requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? requestedDomain : 'all';
+  const domain: DomainFilter = requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta)
+    ? requestedDomain
+    : 'all';
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadFailures, setLoadFailures] = useState(0);
@@ -112,7 +114,7 @@ const AutomationCenter: React.FC = () => {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const changeSection = (value: string) => navigate(`/automation/${value}?domain=${domain}`);
+  const changeSection = (value: string) => navigate(`/automation/${value}${requestedDomain ? `?domain=${domain}` : ''}`);
   const changeDomain = (value: DomainFilter) => {
     const next = new URLSearchParams(searchParams);
     next.set('domain', value);
@@ -281,7 +283,7 @@ const AutomationCenter: React.FC = () => {
         { label: 'Workflows', value: 'workflows', icon: <ApartmentOutlined /> },
         { label: 'Schedules', value: 'schedules', icon: <FieldTimeOutlined /> }, { label: 'Runs', value: 'runs', icon: <ClockCircleOutlined /> },
       ]} />
-      <Space wrap className="automation-filters"><Select<DomainFilter> value={domain} onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} /><Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
+      <Space wrap className="automation-filters"><Select<DomainFilter> value={requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? domain : undefined} placeholder="Select domain" onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} /><Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
     </div>
 
     {loadFailures > 0 && <Alert className="automation-load-alert" type="warning" showIcon message="Some automation data is temporarily unavailable. Available content remains usable." />}

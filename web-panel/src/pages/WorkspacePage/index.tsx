@@ -68,7 +68,7 @@ const fallbackRows: WorkspaceRow[] = [
 ];
 
 const catalog: Record<string, WorkspaceConfig> = {
-  '/lake/catalog': {
+  '/vault/catalog': {
     title: '数据目录',
     subtitle: '统一查看入湖资产、分层表、主题域和数据服务可用状态',
     icon: <DatabaseOutlined />,
@@ -82,7 +82,7 @@ const catalog: Record<string, WorkspaceConfig> = {
     timeline: ['RDS 原始层完成分区归档', 'ODS 标准层更新 16 张表', 'DWS 指标宽表发布到集市'],
     rows: fallbackRows,
   },
-  '/lake/metadata': {
+  '/vault/metadata': {
     title: '元数据管理',
     subtitle: '字段、血缘、分区、负责人和业务口径的统一登记面板',
     icon: <CloudServerOutlined />,
@@ -96,7 +96,7 @@ const catalog: Record<string, WorkspaceConfig> = {
     timeline: ['采集模板字段自动写入元数据', '新增 patent_owner 业务口径', '分区热度统计已刷新'],
     rows: fallbackRows,
   },
-  '/lake/quality': {
+  '/vault/quality': {
     title: '质量规则',
     subtitle: '配置完整性、唯一性、枚举、时效和跨层一致性规则',
     icon: <ExperimentOutlined />,
@@ -110,7 +110,7 @@ const catalog: Record<string, WorkspaceConfig> = {
     timeline: ['navwarn.content 缺失率触达阈值', 'patent_id 唯一性检查通过', 'DWD 与 ODS 行数校验完成'],
     rows: fallbackRows,
   },
-  '/lake/lineage': {
+  '/vault/lineage': {
     title: '血缘关系',
     subtitle: '查看从采集源到 ADS 服务的字段级和任务级血缘',
     icon: <BranchesOutlined />,
@@ -124,7 +124,7 @@ const catalog: Record<string, WorkspaceConfig> = {
     timeline: ['google_patent 采集源关联 7 张下游表', 'ADS 指标服务新增 API 血缘', 'DWD 处理器依赖刷新完成'],
     rows: fallbackRows,
   },
-  '/lake/security': {
+  '/vault/security': {
     title: '权限审计',
     subtitle: '审计数据资产授权、访问记录和敏感字段使用情况',
     icon: <AuditOutlined />,
@@ -138,7 +138,7 @@ const catalog: Record<string, WorkspaceConfig> = {
     timeline: ['ADS API 访问白名单更新', '字段脱敏策略命中 328 次', '管理员审计报告已生成'],
     rows: fallbackRows,
   },
-  '/lake/market': {
+  '/vault/market': {
     title: '指标集市',
     subtitle: '沉淀可复用指标、维度和数据产品，支撑 API 与看板消费',
     icon: <ApiOutlined />,
@@ -208,7 +208,7 @@ const catalog: Record<string, WorkspaceConfig> = {
     timeline: ['patent_owner 建议映射到 dim_company', 'navwarn_area 识别为地理维度', 'abstract 字段类型建议为 text'],
     rows: fallbackRows,
   },
-  '/pipeline/schedule': {
+  '/flow/schedule': {
     title: '编排调度',
     subtitle: '配置周期调度、依赖关系、并发槽位和失败补偿策略',
     icon: <FieldTimeOutlined />,
@@ -269,8 +269,8 @@ const catalog: Record<string, WorkspaceConfig> = {
 function getConfig(pathname: string): WorkspaceConfig {
   const exact = catalog[pathname];
   if (exact) return exact;
-  if (pathname === '/instances') return catalog['/lake/catalog'];
-  if (pathname === '/graph-analytics') return catalog['/lake/lineage'];
+  if (pathname === '/instances') return catalog['/vault/catalog'];
+  if (pathname === '/graph-analytics') return catalog['/vault/lineage'];
   if (pathname === '/billing') return {
     title: '资源计量',
     subtitle: '查看采集、存储、计算和 API 调用消耗，作为成本看板入口',
@@ -285,7 +285,7 @@ function getConfig(pathname: string): WorkspaceConfig {
     timeline: ['ETL 高峰任务消耗增长 9%', '对象存储冷归档节省 14%', 'API 调用成本保持稳定'],
     rows: fallbackRows,
   };
-  return catalog['/lake/catalog'];
+  return catalog['/vault/catalog'];
 }
 
 const WorkspacePage: React.FC = () => {

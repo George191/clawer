@@ -465,7 +465,7 @@ const CommandCenter: React.FC = () => {
             <Button
               type="primary"
               icon={<ThunderboltOutlined />}
-              onClick={() => navigate('/ai-collect')}
+              onClick={() => navigate('/scout')}
               style={{ background: palette.accent, borderColor: palette.accent, color: '#111827' }}
             >
               发起智能采集
@@ -479,7 +479,7 @@ const CommandCenter: React.FC = () => {
             </Button>
             <Button
               icon={<BranchesOutlined />}
-              onClick={() => navigate('/pipeline')}
+              onClick={() => navigate('/flow')}
               style={{ background: 'transparent', borderColor: palette.border, color: palette.text }}
             >
               打开 ETL 管道
@@ -644,7 +644,7 @@ const CommandCenter: React.FC = () => {
               <Button
                 type="text"
                 icon={<ExperimentOutlined />}
-                onClick={() => navigate('/pipeline')}
+                onClick={() => navigate('/flow')}
                 style={{ color: palette.accent }}
               >
                 打开管道画布
