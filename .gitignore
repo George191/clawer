@@ -14,7 +14,7 @@ scripts/
 outputs/
 static/
 logs/
-models/
+LLM/
 data/
 node_modules/
 certificate/

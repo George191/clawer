@@ -2,33 +2,32 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, App, Badge, Button, Card, ConfigProvider, Descriptions, Drawer, Dropdown, Empty, Form, Input,
   InputNumber, Modal, Popconfirm, Progress, Segmented, Select, Space, Spin, Switch,
-  Table, Tag, Timeline, Typography, Upload,
+  Table, Tag, Timeline, Typography,
 } from 'antd';
 import enUS from 'antd/locale/en_US';
 import {
-  ApartmentOutlined, BarChartOutlined, ClockCircleOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined,
+  ApartmentOutlined, BarChartOutlined, ClockCircleOutlined, DatabaseOutlined, DeleteOutlined,
   DeploymentUnitOutlined,
   EditOutlined, EllipsisOutlined, FieldTimeOutlined, PauseOutlined, PlayCircleOutlined,
-  PlusOutlined, ReloadOutlined, RobotOutlined, SearchOutlined, SettingOutlined, StopOutlined, UploadOutlined,
+  PlusOutlined, ReloadOutlined, RobotOutlined, SearchOutlined, SettingOutlined, StopOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   aiCreateWorkspaceTask, aiDeleteWorkspaceTask, aiFetchWorkspaceTasks,
-  aiFetchWorkspaceTemplates, aiTaskAction, aiUpdateWorkspaceTemplate,
-  automationCreateSchedule, automationCreateTemplate, automationCreateWorkflow,
-  automationDeleteSchedule, automationDeleteTemplate, automationDeleteWorkflow,
+  aiTaskAction,
+  automationCreateSchedule, automationCreateWorkflow,
+  automationDeleteSchedule, automationDeleteWorkflow,
   automationFetchSchedules, automationFetchWorkflows, automationReloadSchedules,
   automationToggleSchedule, automationUpdateSchedule, automationUpdateWorkflow,
 } from '@/services/api';
 import type {
   AutomationWorkflow, ProductDomain, SchedulerTaskConfig, WorkspaceTask,
-  WorkspaceTemplate,
 } from '@/services/types';
 import './style.css';
 
-type Section = 'templates' | 'workflows' | 'schedules' | 'runs';
+type Section = 'workflows' | 'schedules' | 'runs';
 type DomainFilter = ProductDomain | 'all';
-type SelectedRecord = WorkspaceTemplate | AutomationWorkflow | SchedulerTaskConfig | WorkspaceTask;
+type SelectedRecord = AutomationWorkflow | SchedulerTaskConfig | WorkspaceTask;
 
 const domainMeta: Record<ProductDomain, { label: string; color: string; className: string; icon: React.ReactNode }> = {
   'ai-collect': { label: 'Collect', color: 'purple', className: 'is-ai', icon: <RobotOutlined /> },
@@ -41,25 +40,19 @@ const domainMeta: Record<ProductDomain, { label: string; color: string; classNam
 };
 
 const sectionMeta: Record<Section, { label: string; description: string }> = {
-  templates: { label: 'Templates', description: 'Reusable collection templates, processors, and platform capabilities' },
   workflows: { label: 'Workflows', description: 'Compose templates and execution nodes into reusable workflows' },
   schedules: { label: 'Schedules', description: 'Manage recurring triggers, queues, and retry policies' },
   runs: { label: 'Runs', description: '' },
 };
 const objectLabel: Record<Section, string> = {
-  templates: 'Template', workflows: 'Workflow', schedules: 'Schedule', runs: 'Run',
+  workflows: 'Workflow', schedules: 'Schedule', runs: 'Run',
 };
 
 const sectionByPath = (pathname: string): Section => {
   if (pathname.includes('/schedules')) return 'schedules';
   if (pathname.includes('/runs')) return 'runs';
   if (pathname.includes('/workflows')) return 'workflows';
-  return 'templates';
-};
-
-const templateDomain = (item: WorkspaceTemplate): ProductDomain => {
-  const domain = String(item.metadata?.product_domain ?? 'ai-collect') as ProductDomain;
-  return domain in domainMeta ? domain : 'ai-collect';
+  return 'workflows';
 };
 
 const taskDomain = (item: WorkspaceTask): ProductDomain => {
@@ -95,7 +88,6 @@ const AutomationCenter: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [loadFailures, setLoadFailures] = useState(0);
   const [mutating, setMutating] = useState(false);
-  const [templates, setTemplates] = useState<WorkspaceTemplate[]>([]);
   const [workflows, setWorkflows] = useState<AutomationWorkflow[]>([]);
   const [schedules, setSchedules] = useState<SchedulerTaskConfig[]>([]);
   const [runs, setRuns] = useState<WorkspaceTask[]>([]);
@@ -106,13 +98,11 @@ const AutomationCenter: React.FC = () => {
   const refresh = useCallback(async (announce = false) => {
     setLoading(true);
     const results = await Promise.allSettled([
-      aiFetchWorkspaceTemplates(), automationFetchWorkflows(),
-      automationFetchSchedules(), aiFetchWorkspaceTasks(),
+      automationFetchWorkflows(), automationFetchSchedules(), aiFetchWorkspaceTasks(),
     ]);
-    if (results[0].status === 'fulfilled') setTemplates(results[0].value.items);
-    if (results[1].status === 'fulfilled') setWorkflows(results[1].value);
-    if (results[2].status === 'fulfilled') setSchedules(results[2].value);
-    if (results[3].status === 'fulfilled') setRuns(results[3].value.items);
+    if (results[0].status === 'fulfilled') setWorkflows(results[0].value);
+    if (results[1].status === 'fulfilled') setSchedules(results[1].value);
+    if (results[2].status === 'fulfilled') setRuns(results[2].value.items);
     const failed = results.filter((result) => result.status === 'rejected').length;
     setLoadFailures(failed);
     if (failed && announce) message.warning(`${failed} automation data sources are unavailable`);
@@ -131,8 +121,6 @@ const AutomationCenter: React.FC = () => {
 
   const domainTag = (value: ProductDomain) => <Tag color={domainMeta[value].color}>{domainMeta[value].label}</Tag>;
   const matches = (text: string) => text.toLowerCase().includes(keyword.trim().toLowerCase());
-  const filteredTemplates = useMemo(() => templates.filter((item) =>
-    (domain === 'all' || templateDomain(item) === domain) && matches(`${item.title} ${item.name} ${item.description}`)), [templates, domain, keyword]);
   const filteredWorkflows = useMemo(() => workflows.filter((item) =>
     (domain === 'all' || item.product_domain === domain) && matches(`${item.name} ${item.description}`)), [workflows, domain, keyword]);
   const filteredSchedules = useMemo(() => schedules.filter((item) =>
@@ -147,44 +135,9 @@ const AutomationCenter: React.FC = () => {
     setEditorOpen(true);
   };
 
-  const openTemplateUpload = async (file: File) => {
-    try {
-      const yamlContent = await file.text();
-      const baseName = file.name.replace(/\.(ya?ml|json)$/i, '').replace(/[^a-zA-Z0-9_-]+/g, '_');
-      let imported: Record<string, unknown> = {};
-      if (file.name.toLowerCase().endsWith('.json')) {
-        const parsed = JSON.parse(yamlContent);
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) imported = parsed as Record<string, unknown>;
-      } else {
-        for (const key of ['name', 'title', 'display_name', 'base_url', 'data_type', 'description', 'product_domain']) {
-          const match = yamlContent.match(new RegExp(`^${key}:\\s*["']?([^\\r\\n"']+)["']?\\s*$`, 'm'));
-          if (match) imported[key] = match[1].trim();
-        }
-      }
-      setEditing(null);
-      form.resetFields();
-      form.setFieldsValue({
-        name: imported.name || baseName,
-        title: imported.display_name || imported.title || baseName,
-        base_url: imported.base_url || 'https://example.com',
-        data_type: imported.data_type || 'collection',
-        description: imported.description || '',
-        product_domain: typeof imported.product_domain === 'string' && imported.product_domain in domainMeta ? imported.product_domain : (domain === 'all' ? 'ai-collect' : domain),
-        yaml_content: yamlContent,
-      });
-      setEditorOpen(true);
-    } catch {
-      message.error('Unable to read this template file');
-    }
-    return false;
-  };
-
   const openEdit = (record: SelectedRecord) => {
     setEditing(record);
-    if (section === 'templates') {
-      const item = record as WorkspaceTemplate;
-      form.setFieldsValue({ name: item.name, title: item.title, description: item.description, yaml_content: item.yaml_content, product_domain: templateDomain(item) });
-    } else if (section === 'workflows') {
+    if (section === 'workflows') {
       const item = record as AutomationWorkflow;
       form.setFieldsValue({ ...item, nodes: item.nodes.map((node) => node.name).join('\n') });
     } else if (section === 'schedules') {
@@ -197,20 +150,7 @@ const AutomationCenter: React.FC = () => {
     const values = await form.validateFields();
     setMutating(true);
     try {
-      if (section === 'templates') {
-        if (editing) {
-          await aiUpdateWorkspaceTemplate(String((editing as WorkspaceTemplate).id), {
-            yaml_content: values.yaml_content || (editing as WorkspaceTemplate).yaml_content || '',
-            description: values.description,
-          });
-        } else {
-          await automationCreateTemplate({
-            name: values.name, display_name: values.title, base_url: values.base_url,
-            data_type: values.data_type, description: values.description ?? '', yaml_content: values.yaml_content,
-            product_domain: values.product_domain, template_kind: values.data_type,
-          });
-        }
-      } else if (section === 'workflows') {
+      if (section === 'workflows') {
         const payload = {
           name: values.name,
           product_domain: values.product_domain as ProductDomain,
@@ -236,9 +176,7 @@ const AutomationCenter: React.FC = () => {
       } else {
         await aiCreateWorkspaceTask({
           name: values.name, template_name: values.template_name,
-          template_version: templates.find((item) => item.name === values.template_name)?.version ?? 'v1.0',
-          schedule: { mode: 'once' }, parameters: { product_domain: values.product_domain },
-          policies: {}, owner: values.owner ?? 'Current User',
+          template_version: 'v1.0', schedule: { mode: 'once' }, parameters: { product_domain: values.product_domain }, policies: {}, owner: values.owner ?? 'Current User',
         });
       }
       message.success(editing ? 'Changes saved' : 'Created successfully');
@@ -252,8 +190,7 @@ const AutomationCenter: React.FC = () => {
   const remove = async (record: SelectedRecord) => {
     setMutating(true);
     try {
-      if (section === 'templates') await automationDeleteTemplate((record as WorkspaceTemplate).name);
-      else if (section === 'workflows') await automationDeleteWorkflow((record as AutomationWorkflow).name);
+      if (section === 'workflows') await automationDeleteWorkflow((record as AutomationWorkflow).name);
       else if (section === 'schedules') {
         await automationDeleteSchedule((record as SchedulerTaskConfig).task_name);
         const reload = await automationReloadSchedules();
@@ -300,15 +237,6 @@ const AutomationCenter: React.FC = () => {
     </Space>;
   };
 
-  const templateColumns = [
-    { title: 'Template', dataIndex: 'title', render: (_: string, item: WorkspaceTemplate) => <div className="automation-name"><CodeOutlined /><span><strong>{item.title || item.name}</strong><small>{item.name}@{item.version}</small></span></div> },
-    { title: 'Domain', width: 140, render: (_: unknown, item: WorkspaceTemplate) => domainTag(templateDomain(item)) },
-    { title: 'Type', width: 130, render: (_: unknown, item: WorkspaceTemplate) => item.data_type || 'Collection' },
-    { title: 'Status', width: 110, render: (_: unknown, item: WorkspaceTemplate) => <Badge status={item.status === 'active' ? 'success' : 'default'} text={item.status === 'active' ? 'Published' : item.status} /> },
-    { title: 'References', width: 100, render: (_: unknown, item: WorkspaceTemplate) => `${item.task_count ?? 0} runs` },
-    { title: 'Updated', width: 110, render: (_: unknown, item: WorkspaceTemplate) => relativeTime(item.updated_at) },
-    { title: '', width: 82, render: (_: unknown, item: WorkspaceTemplate) => rowActions(item) },
-  ];
   const workflowColumns = [
     { title: 'Workflow', dataIndex: 'name', render: (_: string, item: AutomationWorkflow) => <div className="automation-name"><ApartmentOutlined /><span><strong>{item.name}</strong><small>{item.description || 'No description'}</small></span></div> },
     { title: 'Domain', width: 140, render: (_: unknown, item: AutomationWorkflow) => domainTag(item.product_domain) },
@@ -335,13 +263,13 @@ const AutomationCenter: React.FC = () => {
     { title: '', width: 58, render: (_: unknown, item: WorkspaceTask) => rowActions(item) },
   ];
 
-  const currentData = section === 'templates' ? filteredTemplates : section === 'workflows' ? filteredWorkflows : section === 'schedules' ? filteredSchedules : filteredRuns;
-  const currentColumns = section === 'templates' ? templateColumns : section === 'workflows' ? workflowColumns : section === 'schedules' ? scheduleColumns : runColumns;
+  const currentData = section === 'workflows' ? filteredWorkflows : section === 'schedules' ? filteredSchedules : filteredRuns;
+  const currentColumns = section === 'workflows' ? workflowColumns : section === 'schedules' ? scheduleColumns : runColumns;
   const running = runs.filter((item) => item.status === 'running').length;
   const attention = runs.filter((item) => item.status === 'failed').length;
 
   const detailName = detail && ('task_name' in detail ? detail.task_name : detail.name);
-  const editorTitle = section === 'templates' && !editing ? 'Import Template' : `${editing ? 'Edit' : 'Create'} ${objectLabel[section]}`;
+  const editorTitle = `${editing ? 'Edit' : 'Create'} ${objectLabel[section]}`;
 
   return <ConfigProvider locale={enUS}><div className="automation-page">
     <header className="automation-header">
@@ -350,10 +278,10 @@ const AutomationCenter: React.FC = () => {
 
     <div className="access-tabs automation-tabs">
       <Segmented value={section} onChange={(value) => changeSection(String(value))} options={[
-        { label: 'Templates', value: 'templates', icon: <CodeOutlined /> }, { label: 'Workflows', value: 'workflows', icon: <ApartmentOutlined /> },
+        { label: 'Workflows', value: 'workflows', icon: <ApartmentOutlined /> },
         { label: 'Schedules', value: 'schedules', icon: <FieldTimeOutlined /> }, { label: 'Runs', value: 'runs', icon: <ClockCircleOutlined /> },
       ]} />
-      <Space wrap className="automation-filters"><Select<DomainFilter> value={domain} onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} /><Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section === 'templates' ? <Upload accept=".yaml,.yml,.json" maxCount={1} showUploadList={false} beforeUpload={openTemplateUpload}><Button icon={<UploadOutlined />}>Upload</Button></Upload> : <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
+      <Space wrap className="automation-filters"><Select<DomainFilter> value={domain} onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} /><Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
     </div>
 
     {loadFailures > 0 && <Alert className="automation-load-alert" type="warning" showIcon message="Some automation data is temporarily unavailable. Available content remains usable." />}
@@ -368,14 +296,8 @@ const AutomationCenter: React.FC = () => {
 
     <Modal title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : section === 'templates' ? 'Import' : 'Create'} width={640} forceRender>
       <Form form={form} layout="vertical" className="automation-form">
-        {section === 'templates' && <>
-          <Form.Item name="name" label="Template Key" rules={[{ required: true }]}><Input disabled={Boolean(editing)} placeholder="e.g. google_patent" /></Form.Item>
-          {!editing && <><Form.Item name="title" label="Display Name" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="product_domain" label="Domain" rules={[{ required: true }]}><Select options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /></Form.Item><Form.Item name="base_url" label="Base URL" rules={[{ required: true, type: 'url' }]}><Input placeholder="https://example.com" /></Form.Item><Form.Item name="data_type" label="Template Type" initialValue="collection"><Select options={[{ value: 'collection', label: 'Collection Template' }, { value: 'processor', label: 'ETL Processor' }, { value: 'system', label: 'System Task' }]} /></Form.Item></>}
-          <Form.Item name="description" label="Description"><Input.TextArea rows={2} /></Form.Item><Form.Item name="yaml_content" label="YAML Content"><Input.TextArea rows={editing ? 12 : 7} className="automation-code" placeholder="Leave blank to generate a minimal template" /></Form.Item>
-        </>}
         {section === 'workflows' && <><Form.Item name="name" label="Workflow Name" rules={[{ required: true }]}><Input disabled={Boolean(editing)} /></Form.Item><Form.Item name="product_domain" label="Domain" rules={[{ required: true }]}><Select options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /></Form.Item><Form.Item name="description" label="Description"><Input.TextArea rows={2} /></Form.Item><Form.Item name="nodes" label="Execution Nodes" extra="One node per line, executed in order"><Input.TextArea rows={6} placeholder={'Collect data\nNormalize fields\nWrite to ODS'} /></Form.Item><Form.Item name="enabled" label="Enabled" valuePropName="checked"><Switch /></Form.Item></>}
         {section === 'schedules' && <><Form.Item name="task_name" label="Schedule Name" rules={[{ required: true }]}><Input disabled={Boolean(editing)} /></Form.Item><Form.Item name="task_path" label="Celery Task Path" rules={[{ required: true }]}><Input placeholder="app.scheduler.tasks.workspace.dispatch_due" /></Form.Item><Form.Item name="product_domain" label="Domain" rules={[{ required: true }]}><Select options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /></Form.Item><Form.Item name="description" label="Description"><Input /></Form.Item><Form.Item name="schedule_type" label="Trigger Type"><Segmented options={[{ value: 'crontab', label: 'Cron' }, { value: 'interval', label: 'Interval' }]} /></Form.Item><Form.Item noStyle shouldUpdate={(previous, current) => previous.schedule_type !== current.schedule_type}>{({ getFieldValue }) => getFieldValue('schedule_type') === 'interval' ? <Form.Item name="interval_seconds" label="Interval Seconds" rules={[{ required: true }]}><InputNumber min={10} style={{ width: '100%' }} /></Form.Item> : <Space align="start"><Form.Item name="cron_minute" label="Minute"><Input /></Form.Item><Form.Item name="cron_hour" label="Hour"><Input /></Form.Item></Space>}</Form.Item><Form.Item name="enabled" label="Enabled" valuePropName="checked"><Switch /></Form.Item></>}
-        {section === 'runs' && <><Form.Item name="name" label="Run Name" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="template_name" label="Template" rules={[{ required: true }]}><Select showSearch options={templates.map((item) => ({ value: item.name, label: `${item.title || item.name} @ ${item.version}` }))} /></Form.Item><Form.Item name="product_domain" label="Domain" rules={[{ required: true }]}><Select options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /></Form.Item><Form.Item name="owner" label="Owner"><Input placeholder="Current User" /></Form.Item></>}
       </Form>
     </Modal>
 

@@ -824,7 +824,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 2, marginRight: 6, paddingRight: 8, borderRight: `1px solid ${palette.border}` }}>
             <Button
               type="text"
-              onClick={() => navigate(`/automation/templates?domain=${activeProjectKey}`)}
+              onClick={() => navigate(`/automation/workflows?domain=${activeProjectKey}`)}
               className="header-shortcut-button"
               style={{ color: isAutomationSurface ? palette.text : palette.secondary, background: isAutomationSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
             >
