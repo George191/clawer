@@ -36,6 +36,7 @@ import {
   ScheduleOutlined,
   SearchOutlined,
   SettingOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
@@ -102,7 +103,7 @@ const projectOrder: ProjectKey[] = ['ai-collect', 'data-lake', 'etl-pipeline', '
 const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   'ai-collect': {
     key: 'ai-collect',
-    label: '数据抓取',
+    label: 'Data Collection',
     shortLabel: 'Scout',
     enabled: true,
     icon: <RobotOutlined />,
@@ -111,33 +112,33 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     sections: [
       {
         key: 'capture',
-        label: '采集编排',
+        label: 'Collection',
         children: [
-          { key: '/ai-collect', icon: <RobotOutlined />, label: '数据抓取' },
+          { key: '/ai-collect', icon: <RobotOutlined />, label: 'Data Collection' },
         ],
       },
       {
         key: 'runtime',
-        label: '运行观测',
+        label: 'Operations',
         children: [
-          { key: '/monitor', icon: <LineChartOutlined />, label: '实时监控' },
-          { key: '/logs', icon: <FileTextOutlined />, label: '日志追踪' },
+          { key: '/monitor', icon: <LineChartOutlined />, label: 'Monitoring' },
+          { key: '/logs', icon: <FileTextOutlined />, label: 'Logs' },
         ],
       },
       {
         key: 'strategy',
-        label: '策略治理',
+        label: 'Governance',
         children: [
-          { key: '/source-strategy', icon: <ControlOutlined />, label: '源站策略' },
-          { key: '/anti-crawl', icon: <SafetyCertificateOutlined />, label: '反爬身份' },
-          { key: '/field-mapping', icon: <FileSearchOutlined />, label: '字段识别' },
+          { key: '/source-strategy', icon: <ControlOutlined />, label: 'Source Strategy' },
+          { key: '/anti-crawl', icon: <SafetyCertificateOutlined />, label: 'Anti-crawl Identity' },
+          { key: '/field-mapping', icon: <FileSearchOutlined />, label: 'Field Discovery' },
         ],
       },
     ],
   },
   'data-lake': {
     key: 'data-lake',
-    label: '数据湖',
+    label: 'Data Lake',
     shortLabel: 'Vault',
     enabled: false,
     icon: <DatabaseOutlined />,
@@ -146,113 +147,104 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     sections: [
       {
         key: 'catalog',
-        label: '湖仓目录',
+        label: 'Catalog',
         children: [
-          { key: '/lake/catalog', icon: <DatabaseOutlined />, label: '数据目录' },
-          { key: '/explorer', icon: <SearchOutlined />, label: '分层浏览' },
-          { key: '/lake/metadata', icon: <BookOutlined />, label: '元数据' },
+          { key: '/lake/catalog', icon: <DatabaseOutlined />, label: 'Data Catalog' },
+          { key: '/explorer', icon: <SearchOutlined />, label: 'Layer Explorer' },
+          { key: '/lake/metadata', icon: <BookOutlined />, label: 'Metadata' },
         ],
       },
       {
         key: 'governance',
-        label: '治理质量',
+        label: 'Governance',
         children: [
-          { key: '/lake/quality', icon: <ExperimentOutlined />, label: '质量规则' },
-          { key: '/lake/lineage', icon: <BranchesOutlined />, label: '血缘关系' },
-          { key: '/lake/security', icon: <AuditOutlined />, label: '权限审计' },
+          { key: '/lake/quality', icon: <ExperimentOutlined />, label: 'Quality Rules' },
+          { key: '/lake/lineage', icon: <BranchesOutlined />, label: 'Lineage' },
+          { key: '/lake/security', icon: <AuditOutlined />, label: 'Access Audit' },
         ],
       },
       {
         key: 'serving',
-        label: '服务输出',
+        label: 'Serving',
         children: [
           { key: '/data-api', icon: <ApiOutlined />, label: '数据 API' },
-          { key: '/lake/market', icon: <BarChartOutlined />, label: '指标集市' },
+          { key: '/lake/market', icon: <BarChartOutlined />, label: 'Metrics Market' },
         ],
       },
     ],
   },
   'etl-pipeline': {
     key: 'etl-pipeline',
-    label: 'ETL 管道',
+    label: 'ETL Pipeline',
     shortLabel: 'Flow',
     enabled: true,
     icon: <ApartmentOutlined />,
-    defaultPath: '/pipeline',
+    defaultPath: '/pipeline/layers',
     accent: '#0EA5E9',
     sections: [
       {
         key: 'lifecycle',
-        label: 'ETL 生命周期',
+        label: 'ETL Lifecycle',
         children: [
-          { key: '/pipeline', icon: <ApartmentOutlined />, label: '生命周期总览' },
-          { key: '/pipeline/layers', icon: <DatabaseOutlined />, label: '数据分层' },
-          { key: '/pipeline/transforms', icon: <CodeOutlined />, label: '转换资产' },
-          { key: '/pipeline/quality', icon: <ExperimentOutlined />, label: '质量门禁' },
-          { key: '/pipeline/lineage', icon: <BranchesOutlined />, label: '血缘影响' },
-        ],
-      },
-      {
-        key: 'delivery',
-        label: '发布交付',
-        children: [
-          { key: '/pipeline/releases', icon: <DeploymentUnitOutlined />, label: '版本发布' },
-          { key: '/pipeline/alerts', icon: <BellOutlined />, label: '告警规则' },
+          { key: '/pipeline/layers', icon: <DatabaseOutlined />, label: 'Data Layers' },
+          { key: '/pipeline/transforms', icon: <CodeOutlined />, label: 'Transforms' },
+          { key: '/pipeline/quality', icon: <ExperimentOutlined />, label: 'Quality Gates' },
+          { key: '/pipeline/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
         ],
       },
     ],
   },
   'data-cockpit': {
     key: 'data-cockpit',
-    label: '数据驾驶舱',
+    label: 'Data Cockpit',
     shortLabel: 'Atlas',
     enabled: true,
     icon: <BarChartOutlined />,
     defaultPath: '/cockpit',
     accent: '#F59E0B',
     sections: [
-      { key: 'overview', label: '运营总览', children: [{ key: '/cockpit', icon: <BarChartOutlined />, label: '驾驶舱总览' }] },
-      { key: 'insights', label: '分析洞察', children: [
-        { key: '/cockpit/metrics', icon: <LineChartOutlined />, label: '指标分析' },
-        { key: '/cockpit/quality', icon: <AuditOutlined />, label: '数据质量' },
+      { key: 'overview', label: 'Overview', children: [{ key: '/cockpit', icon: <BarChartOutlined />, label: 'Cockpit Overview' }] },
+      { key: 'insights', label: 'Insights', children: [
+        { key: '/cockpit/metrics', icon: <LineChartOutlined />, label: 'Metrics' },
+        { key: '/cockpit/quality', icon: <AuditOutlined />, label: 'Data Quality' },
       ] },
     ],
   },
   'knowledge-graph': {
     key: 'knowledge-graph',
-    label: '知识图谱',
+    label: 'Knowledge Graph',
     shortLabel: 'Graph',
     enabled: true,
     icon: <DeploymentUnitOutlined />,
     defaultPath: '/knowledge-graph',
     accent: '#8B5CF6',
     sections: [
-      { key: 'graph', label: '图谱资产', children: [
-        { key: '/knowledge-graph', icon: <DeploymentUnitOutlined />, label: '图谱总览' },
-        { key: '/knowledge-graph/entities', icon: <BranchesOutlined />, label: '实体关系' },
+      { key: 'graph', label: 'Graph Assets', children: [
+        { key: '/knowledge-graph', icon: <DeploymentUnitOutlined />, label: 'Graph Overview' },
+        { key: '/knowledge-graph/entities', icon: <BranchesOutlined />, label: 'Entities & Relations' },
       ] },
-      { key: 'governance', label: '图谱治理', children: [
-        { key: '/knowledge-graph/quality', icon: <ExperimentOutlined />, label: '质量校验' },
-        { key: '/knowledge-graph/lineage', icon: <AuditOutlined />, label: '来源血缘' },
+      { key: 'governance', label: 'Governance', children: [
+        { key: '/knowledge-graph/quality', icon: <ExperimentOutlined />, label: 'Quality Checks' },
+        { key: '/knowledge-graph/lineage', icon: <AuditOutlined />, label: 'Source Lineage' },
       ] },
     ],
   },
   'knowledge-rag': {
     key: 'knowledge-rag',
-    label: '知识库 RAG',
+    label: 'Knowledge RAG',
     shortLabel: 'RAG',
     enabled: true,
     icon: <BookOutlined />,
     defaultPath: '/knowledge-rag',
     accent: '#0D9488',
     sections: [
-      { key: 'knowledge', label: '知识资产', children: [
-        { key: '/knowledge-rag', icon: <BookOutlined />, label: '知识库总览' },
-        { key: '/knowledge-rag/documents', icon: <FileTextOutlined />, label: '文档资产' },
+      { key: 'knowledge', label: 'Knowledge Assets', children: [
+        { key: '/knowledge-rag', icon: <BookOutlined />, label: 'Knowledge Overview' },
+        { key: '/knowledge-rag/documents', icon: <FileTextOutlined />, label: 'Documents' },
       ] },
-      { key: 'retrieval', label: '检索服务', children: [
-        { key: '/knowledge-rag/indexes', icon: <DatabaseOutlined />, label: '索引管理' },
-        { key: '/knowledge-rag/evaluation', icon: <ExperimentOutlined />, label: '召回评测' },
+      { key: 'retrieval', label: 'Retrieval', children: [
+        { key: '/knowledge-rag/indexes', icon: <DatabaseOutlined />, label: 'Indexes' },
+        { key: '/knowledge-rag/evaluation', icon: <ExperimentOutlined />, label: 'Evaluation' },
       ] },
     ],
   },
@@ -280,8 +272,6 @@ const explicitRouteProject: Record<string, ProjectKey> = {
   '/cockpit': 'data-cockpit',
   '/cockpit/metrics': 'data-cockpit',
   '/cockpit/quality': 'data-cockpit',
-  '/pipeline/releases': 'etl-pipeline',
-  '/pipeline/alerts': 'etl-pipeline',
   '/knowledge-graph': 'knowledge-graph',
   '/knowledge-graph/entities': 'knowledge-graph',
   '/knowledge-graph/quality': 'knowledge-graph',
@@ -519,7 +509,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const renderProjectPanel = () => (
-    <div style={{ ...overlayShellStyle, width: 248 }}>
+    <div style={{ ...overlayShellStyle, width: 224, padding: '4px 0', borderRadius: 14 }}>
       {projectOrder.map((key) => {
         const project = projectConfigs[key];
         const isActive = key === activeProjectKey;
@@ -533,6 +523,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               onClick={() => { if (!isDisabled) handleProjectChange(key); }}
               style={{
                 ...overlayRowStyle,
+                minHeight: 34,
+                padding: '6px 10px',
+                gap: 8,
+                fontSize: 12,
                 color: isDisabled ? palette.muted : palette.text,
                 opacity: isDisabled ? 0.62 : 1,
                 cursor: isDisabled ? 'not-allowed' : 'pointer',
@@ -544,15 +538,15 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             >
               <span
                 style={{
-                  width: PROJECT_LOGO_SIZE,
-                  height: PROJECT_LOGO_SIZE,
-                  borderRadius: 7,
+                  width: 18,
+                  height: 18,
+                  borderRadius: 5,
                   background: isDisabled ? (isDark ? 'rgba(148, 163, 184, 0.22)' : '#E2E8F0') : `linear-gradient(135deg, ${project.accent}, #1D4ED8)`,
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   color: '#fff',
-                  fontSize: 12,
+                  fontSize: 9,
                   fontWeight: 800,
                   flexShrink: 0,
                 }}
@@ -560,14 +554,14 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 {project.shortLabel.slice(0, 1)}
               </span>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 13, fontWeight: isActive ? 600 : 500 }}>{project.shortLabel}</span>
+                <span style={{ display: 'block', fontSize: 11, fontWeight: isActive ? 600 : 500 }}>{project.shortLabel}</span>
               </span>
               {isDisabled ? (
                 <span style={{ color: palette.muted, fontSize: 11, fontWeight: 500 }}>Not enabled yet</span>
               ) : isActive ? (
-                <span style={{ color: palette.muted, fontSize: 12, fontWeight: 500 }}>Current</span>
+                <span style={{ color: palette.muted, fontSize: 9, fontWeight: 500 }}>Current</span>
               ) : (
-                <RightOutlined style={{ color: palette.secondary, fontSize: 12 }} />
+                <RightOutlined style={{ color: palette.secondary, fontSize: 9 }} />
               )}
             </button>
           </React.Fragment>
@@ -656,12 +650,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       <div
         style={{
           ...overlayShellStyle,
-          width: 276,
+          width: 252,
         }}
       >
-        <div style={{ padding: '8px 14px 9px' }}>
-          <div style={{ color: palette.text, fontSize: 13, fontWeight: 600 }}>{currentUserName}</div>
-          {currentUserEmail ? <div style={{ color: palette.secondary, fontSize: 12, marginTop: 3 }}>{currentUserEmail}</div> : null}
+        <div style={{ padding: '7px 12px 8px' }}>
+          <div style={{ color: palette.text, fontSize: 12, fontWeight: 600 }}>{currentUserName}</div>
+          {currentUserEmail ? <div style={{ color: palette.secondary, fontSize: 11, marginTop: 2 }}>{currentUserEmail}</div> : null}
         </div>
         {accountRows.map((item, index) => (
           <React.Fragment key={item.key}>
@@ -670,10 +664,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               onClick={item.onClick}
               style={{
                 ...overlayRowStyle,
-                minHeight: 36,
+                minHeight: 32,
                 padding: '0 8px',
-                gap: 8,
+                gap: 7,
                 color: overlayRowStyle.color,
+                fontSize: 12,
               }}
               onMouseEnter={(event) => {
                 bindOverlayHover(event, item.key === 'account' ? {
@@ -682,7 +677,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               }}
               onMouseLeave={resetOverlayHover}
             >
-              <span style={{ width: 26, display: 'inline-flex', justifyContent: 'center', color: palette.secondary, fontSize: 15 }}>
+              <span style={{ width: 24, display: 'inline-flex', justifyContent: 'center', color: palette.secondary, fontSize: 14 }}>
                 {item.icon}
               </span>
               <span style={{ flex: 1 }}>{item.label}</span>
@@ -695,12 +690,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           onClick={() => { setAccountMenuOpen(false); logout(); }}
           style={{
             ...overlayRowStyle,
-            minHeight: 38,
+            minHeight: 34,
             margin: '0 7px',
             width: 'calc(100% - 14px)',
             boxSizing: 'border-box',
             padding: '0 8px',
-            gap: 8,
+            gap: 7,
             borderRadius: 9,
             color: isDark ? '#ff9b9b' : '#DC2626',
             background: isDark ? 'rgba(239, 68, 68, 0.08)' : '#FEF2F2',
@@ -710,8 +705,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           })}
           onMouseLeave={resetOverlayHover}
         >
-          <span style={{ width: 26, display: 'inline-flex', justifyContent: 'center', color: 'inherit', fontSize: 15 }}><LogoutOutlined /></span>
-          <span style={{ flex: 1, textAlign: 'left', fontWeight: 600 }}>Log out</span>
+          <span style={{ width: 24, display: 'inline-flex', justifyContent: 'center', color: 'inherit', fontSize: 14 }}><LogoutOutlined /></span>
+          <span style={{ flex: 1, textAlign: 'left', fontWeight: 600, fontSize: 12 }}>Log out</span>
         </button>
       </div>
     );
@@ -765,7 +760,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             />
           </button>
           {!isMobile && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <div className="header-context-group" style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
               <Dropdown
                 disabled={currentTenantOptions.length <= 1}
                 menu={{
@@ -782,9 +777,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   type="text"
                   size="small"
                   className={currentTenantOptions.length > 1 ? 'header-context-button is-enabled' : 'header-context-button'}
-                  style={{ color: palette.secondary, border: 'none', cursor: currentTenantOptions.length > 1 ? 'pointer' : 'default' }}
+                  style={{ color: palette.secondary, border: 'none', cursor: currentTenantOptions.length > 1 ? 'pointer' : 'default', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 0 }}
                 >
-                  {currentTenantName}<DownOutlined style={{ marginLeft: 4, fontSize: 9, color: currentTenantOptions.length > 1 ? palette.secondary : palette.muted }} />
+                  <span className="header-context-label" style={{ color: palette.muted }}>TENANT:</span><span className="header-context-value">{currentTenantName}</span><DownOutlined className="header-context-arrow" style={{ color: currentTenantOptions.length > 1 ? palette.secondary : palette.muted }} />
                 </Button>
               </Dropdown>
               <Dropdown
@@ -799,9 +794,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   type="text"
                   size="small"
                   className={currentTeamOptions.length > 1 ? 'header-context-button is-enabled' : 'header-context-button'}
-                  style={{ color: palette.secondary, border: 'none', cursor: currentTeamOptions.length > 1 ? 'pointer' : 'default' }}
+                  style={{ color: palette.secondary, border: 'none', cursor: currentTeamOptions.length > 1 ? 'pointer' : 'default', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 0 }}
                 >
-                  {currentTeamName}<DownOutlined style={{ marginLeft: 4, fontSize: 9, color: currentTeamOptions.length > 1 ? palette.secondary : palette.muted }} />
+                  <span className="header-context-label" style={{ color: palette.muted }}>TEAM:</span><span className="header-context-value">{currentTeamName}</span><DownOutlined className="header-context-arrow" style={{ color: currentTeamOptions.length > 1 ? palette.secondary : palette.muted }} />
                 </Button>
               </Dropdown>
               <Dropdown
@@ -813,10 +808,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   type="text"
                   size="small"
                   className="header-context-button is-enabled project-domain-switch"
-                  style={{ color: palette.secondary, background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 10 }}
+                  style={{ color: palette.secondary, background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 10 }}
                 >
-                  <span style={{ width: PROJECT_LOGO_SIZE, height: PROJECT_LOGO_SIZE, borderRadius: 7, background: `linear-gradient(135deg, ${activeProject.accent}, #1D4ED8)`, color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 }}>{activeProject.shortLabel.slice(0, 1)}</span>
-                  <span>{activeProject.shortLabel}</span>
+                  <span className="header-context-label" style={{ color: palette.muted }}>DOMAIN:</span>
+                  <span style={{ width: 20, height: 20, borderRadius: 5, background: `linear-gradient(135deg, ${activeProject.accent}, #1D4ED8)`, color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 800 }}>{activeProject.shortLabel.slice(0, 1)}</span>
+                  <span className="header-context-value">{activeProject.shortLabel}</span>
                   <DownOutlined style={{ color: palette.secondary, fontSize: 9 }} />
                 </Button>
               </Dropdown>
@@ -829,59 +825,35 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             <Button
               type="text"
               onClick={() => navigate(`/automation/templates?domain=${activeProjectKey}`)}
-              style={{ color: isAutomationSurface ? palette.text : palette.secondary, background: isAutomationSurface ? palette.hover : 'transparent', border: 'none' }}
+              className="header-shortcut-button"
+              style={{ color: isAutomationSurface ? palette.text : palette.secondary, background: isAutomationSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
             >
-              Automation
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><ThunderboltOutlined style={{ display: 'block', fontSize: 14 }} /></span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Automation</span>
             </Button>
             <Button
               type="text"
               aria-label="Access"
               title="Access"
               onClick={() => navigate('/organization')}
-              style={{ color: isPlatformManagementSurface ? palette.text : palette.secondary, background: isPlatformManagementSurface ? palette.hover : 'transparent', border: 'none' }}
+              className="header-shortcut-button"
+              style={{ color: isPlatformManagementSurface ? palette.text : palette.secondary, background: isPlatformManagementSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
             >
-              Access
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><SafetyCertificateOutlined style={{ display: 'block', fontSize: 14 }} /></span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Access</span>
             </Button>
             <Button
               type="text"
               aria-label="Settings"
               title="Settings"
               onClick={() => navigate('/settings')}
-              style={{ color: isSystemSettingsSurface ? palette.text : palette.secondary, background: isSystemSettingsSurface ? palette.hover : 'transparent', border: 'none' }}
+              className="header-shortcut-button"
+              style={{ color: isSystemSettingsSurface ? palette.text : palette.secondary, background: isSystemSettingsSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
             >
-              Settings
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><SettingOutlined style={{ display: 'block', fontSize: 14 }} /></span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Settings</span>
             </Button>
           </div>
-          <Dropdown
-            trigger={['click']}
-            placement="bottomRight"
-            menu={{ items: [] }}
-            popupRender={renderNotificationPanel}
-          >
-            <Button
-              type="text"
-              aria-label="打开通知中心"
-              style={{
-                width: 34,
-                height: 34,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 0,
-                color: palette.secondary,
-                border: 'none',
-                borderRadius: '50%',
-                boxShadow: 'none',
-                outline: 'none',
-                fontSize: 18,
-              }}
-            >
-              <span style={{ position: 'relative', width: 18, height: 18, display: 'grid', placeItems: 'center', color: palette.secondary }}>
-                <BellOutlined />
-                <span style={{ position: 'absolute', top: -1, right: -1, width: 7, height: 7, borderRadius: '50%', border: `2px solid ${palette.header}`, background: '#EA5455', boxSizing: 'border-box' }} />
-              </span>
-            </Button>
-          </Dropdown>
           <Dropdown
             trigger={['click']}
             placement="bottomRight"

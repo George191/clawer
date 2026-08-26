@@ -206,7 +206,12 @@ html[data-theme='light'] .access-export-menu .ant-dropdown-menu-item:hover{backg
 
 html[data-theme='light'] .access-project-title{color:#172033!important}
 .access-assigned-tag{display:inline-flex;align-items:center;min-height:20px;margin:2px 5px 2px 0;padding:2px 7px;border:0;border-radius:4px;font-size:10px;font-weight:600;line-height:16px}
-.access-assigned-tag.is-admin,.access-assigned-tag.is-operator,.access-assigned-tag.is-viewer{background:rgba(115,103,240,.14);color:#9b93f7}
+.access-assigned-tag.is-admin{background:rgba(234,84,85,.15);color:#ff8e91}
+.access-assigned-tag.is-operator{background:rgba(0,207,232,.14);color:#67def0}
+.access-assigned-tag.is-viewer{background:rgba(174,179,190,.16);color:#b9c0ca}
+html[data-theme='light'] .access-assigned-tag.is-admin{background:#ffe8e8;color:#c83a3d}
+html[data-theme='light'] .access-assigned-tag.is-operator{background:#e0f8fb;color:#047f91}
+html[data-theme='light'] .access-assigned-tag.is-viewer{background:#edf0f4;color:#667085}
 .access-list-panel .ant-table-tbody>tr:not(.ant-table-measure-row){height:62px}
 .access-list-panel .ant-table-tbody>tr:not(.ant-table-measure-row)>td{height:62px;max-height:62px;overflow:hidden;vertical-align:middle}
 .access-list-panel .ant-table-measure-row{height:0!important;visibility:hidden}

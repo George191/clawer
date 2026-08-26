@@ -8,7 +8,7 @@ from app.web.api.dependencies import (
 )
 from app.web.api.models import Embedding, EmbeddingCreate, EmbeddingOut, EmbeddingUpdate, Message
 
-from fastapi_pagination.ext.sqlmodel import paginate
+from fastapi_pagination.ext.sqlmodel import apaginate
 from fastapi_pagination.links import Page
 
 from fastapi_filter import FilterDepends
@@ -29,7 +29,7 @@ async def read_embeddings(
     """
     statement = embedding_filter.filter(statement)
     statement = embedding_filter.sort(statement)
-    return await paginate(session, statement)
+    return await apaginate(session, statement)
 
 
 @router.get("/{id}", response_model=EmbeddingOut)

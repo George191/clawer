@@ -15,7 +15,7 @@ from app.web.api.models import (
     TenantCreate,
     TenantOut,
 )
-from fastapi_pagination.ext.sqlmodel import paginate
+from fastapi_pagination.ext.sqlmodel import apaginate
 from fastapi_pagination.links import Page
 
 from fastapi_filter import FilterDepends
@@ -42,7 +42,7 @@ async def read_tenants(
     """
     statement = tenant_filter.filter(statement)
     statement = tenant_filter.sort(statement)
-    return await paginate(session, statement)
+    return await apaginate(session, statement)
 
 
 @router.post(

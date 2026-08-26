@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from app.web.api.dependencies import SessionDep, CurrentInstanceModel, CurrentTeamAndUser, ValidateUpdateInModel, InstanceStatementModel
 from app.web.api.models import Message, ModelCreate, Model, ModelOut, ModelUpdate
 
-from fastapi_pagination.ext.sqlmodel import paginate
+from fastapi_pagination.ext.sqlmodel import apaginate
 from fastapi_pagination.links import Page
 
 from fastapi_filter import FilterDepends
@@ -29,7 +29,7 @@ async def read_models(
     """
     statement = model_filter.filter(statement)
     statement = model_filter.sort(statement)
-    return await paginate(session, statement)
+    return await apaginate(session, statement)
 
 
 @router.post("/", response_model=Model)

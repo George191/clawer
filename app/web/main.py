@@ -10,7 +10,6 @@ from app.web.api.routes import api_router
 from app.web.core.config import settings
 from app.web.core.exceptions import register_exception_handlers
 from app.web.core.middleware import register_middleware
-from app.web.routes.socket import router as socket_router
 from fastapi_pagination import add_pagination as register_pagination
 
 
@@ -45,4 +44,3 @@ register_pagination(app)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
-app.include_router(socket_router)

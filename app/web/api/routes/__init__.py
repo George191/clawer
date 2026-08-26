@@ -1,8 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.web.api.dependencies.common import get_current_user
 
 from . import (
     login, user, utils, apikey, team, graph, model,
-    provider, thread, upload, dataset, embedding, collection
+    provider, thread, upload, dataset, embedding
 )
 from app.web.core.config import settings
 
@@ -21,8 +23,6 @@ api_router.include_router(thread.router)
 api_router.include_router(upload.router)
 api_router.include_router(dataset.router)
 api_router.include_router(embedding.router)
-api_router.include_router(collection.router)
-
 
 if settings.ENVIRONMENT == "local":
     ...

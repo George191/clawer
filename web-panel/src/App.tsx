@@ -73,7 +73,7 @@ const App: React.FC = () => {
             <Route path="/tasks" element={<Navigate to="/automation/runs" replace />} />
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/logs" element={<LogExplorer />} />
-            <Route path="/pipeline" element={<Pipeline />} />
+            <Route path="/pipeline" element={<Navigate to="/pipeline/layers" replace />} />
             <Route path="/pipeline/runs" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
             <Route path="/pipeline/schedules" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
             <Route path="/pipeline/layers" element={<Pipeline />} />
@@ -88,8 +88,6 @@ const App: React.FC = () => {
             <Route path="/automation/workflows" element={<AutomationCenter />} />
             <Route path="/automation/schedules" element={<AutomationCenter />} />
             <Route path="/automation/runs" element={<AutomationCenter />} />
-            <Route path="/pipeline/releases" element={<WorkspacePage />} />
-            <Route path="/pipeline/alerts" element={<WorkspacePage />} />
             <Route path="/templates" element={<Navigate to="/ai-collect?panel=templates" replace />} />
             <Route path="/ai-collect" element={<AICollect />} />
             <Route path="/source-strategy" element={<AICollectGovernance />} />

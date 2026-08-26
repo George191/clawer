@@ -8,7 +8,7 @@ from app.web.api.dependencies import (
 )
 from app.web.api.models import Dataset, DatasetCreate, DatasetOut, DatasetUpdate, Message
 
-from fastapi_pagination.ext.sqlmodel import paginate
+from fastapi_pagination.ext.sqlmodel import apaginate
 from fastapi_pagination.links import Page
 
 from fastapi_filter import FilterDepends
@@ -29,7 +29,7 @@ async def read_datasets(
     """
     statement = dataset_filter.filter(statement)
     statement = dataset_filter.sort(statement)
-    return await paginate(session, statement)
+    return await apaginate(session, statement)
 
 
 @router.get("/{id}", response_model=DatasetOut)

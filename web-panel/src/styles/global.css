@@ -105,11 +105,67 @@ body {
   background: transparent !important;
 }
 
+.header-context-button:hover,
+.header-context-button:focus,
+.header-context-button:active,
+.header-context-button.ant-btn-clicked {
+  background: transparent !important;
+}
+
 .project-domain-switch:hover,
 .project-domain-switch:focus,
 .project-domain-switch:active,
 .project-domain-switch.ant-btn-clicked {
   background: transparent !important;
+}
+.project-domain-switch:hover,
+.project-domain-switch:focus,
+.project-domain-switch:active,
+.project-domain-switch.ant-btn-clicked {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+.ant-btn-text.project-domain-switch:not(.ant-btn-dangerous):hover,
+.ant-btn-text.project-domain-switch:not(.ant-btn-dangerous):focus,
+.ant-btn-text.project-domain-switch:not(.ant-btn-dangerous):active {
+  background: transparent !important;
+  color: inherit !important;
+  box-shadow: none !important;
+}
+
+/* Header context selectors share one baseline and clearer label/value spacing. */
+.header-context-button {
+  height: 34px;
+  padding-inline: 8px !important;
+  gap: 10px !important;
+  align-items: center !important;
+  line-height: 1 !important;
+  vertical-align: middle;
+}
+.header-context-label {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 2px;
+  font-size: 10px;
+  line-height: 20px;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+.header-context-value {
+  display: inline-flex;
+  align-items: center;
+  line-height: 20px;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.header-shortcut-button > span:last-child { font-size: 12px; }
+.header-context-group .ant-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+}
+.header-context-arrow {
+  margin-left: 0 !important;
+  font-size: 9px;
 }
 
 .glass-card {

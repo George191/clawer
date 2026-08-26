@@ -7,7 +7,7 @@ from app.web.core.security import generate_apikey, generate_short_apikey, get_pa
 from app.web.api.models import ApiKey, ApiKeyCreate, ApiKeyOut, ApiKeyOutPublic, Message, ApiKeyUpdate
 from app.web.api.dependencies import SessionDep, CurrentTeamAndUser, CurrentInstanceApiKey, InstanceStatementApiKey
 
-from fastapi_pagination.ext.sqlmodel import paginate
+from fastapi_pagination.ext.sqlmodel import apaginate
 from fastapi_pagination.links import Page
 
 from fastapi_filter import FilterDepends
@@ -28,7 +28,7 @@ async def read_api_key(
     """Read api keys"""
     statement = api_key_filter.filter(statement)
     statement = api_key_filter.sort(statement)
-    return await paginate(session, statement)
+    return await apaginate(session, statement)
 
 
 @router.post("/", response_model=ApiKeyOut)
