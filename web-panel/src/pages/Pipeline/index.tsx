@@ -174,7 +174,7 @@ const DataLayersWorkspace: React.FC = () => {
     <div className="flow-layer-layout">
       <aside className="flow-layer-tree">
         <div className="flow-tree-label flow-tree-label--actions"><span>Data connectors</span><button type="button" aria-label="Add data connector" title="Add data connector" onClick={() => { setConnectorStep('type'); setConnectorSelectionActive(false); setDatabaseSearch(''); setCollectionOpen(true); }}><PlusOutlined /></button></div>
-        {mockLayers.map((item) => <button className={layer === item.key ? 'is-active' : ''} key={item.key} onClick={() => setLayer(item.key)}><span>{item.key.toUpperCase()}</span><small>{item.tables} tables</small></button>)}
+        {mockLayers.map((item) => <button className={`flow-connector-tree-item ${layer === item.key ? 'is-active' : ''}`} key={item.key} onClick={() => setLayer(item.key)}><PostgresIcon className="flow-connector-tree-icon" /><span className="flow-connector-tree-name"><strong>spider-prod · ts_{item.key}</strong><small>{item.tables} tables</small></span></button>)}
       </aside>
       <section className="flow-layer-main">
         <div className="flow-table-switcher">
