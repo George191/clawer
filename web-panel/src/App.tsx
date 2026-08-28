@@ -73,13 +73,9 @@ const App: React.FC = () => {
             <Route path="/tasks" element={<Navigate to="/automation/runs" replace />} />
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/logs" element={<LogExplorer />} />
-            <Route path="/flow" element={<Navigate to="/flow/layers" replace />} />
+            <Route path="/flow" element={<Pipeline />} />
             <Route path="/flow/runs" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
             <Route path="/flow/schedules" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
-            <Route path="/flow/layers" element={<Pipeline />} />
-            <Route path="/flow/transforms" element={<Pipeline />} />
-            <Route path="/flow/quality" element={<Pipeline />} />
-            <Route path="/flow/lineage" element={<Pipeline />} />
             <Route path="/flow/tasks" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
             <Route path="/flow/templates" element={<Navigate to="/automation/workflows?domain=etl-pipeline" replace />} />
             <Route path="/flow/schedule" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />

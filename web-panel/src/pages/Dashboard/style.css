@@ -18,6 +18,11 @@
   color: var(--dashboard-text);
 }
 
+/* Keep the root landing dashboard compact without changing shared dashboard routes. */
+.dashboard-v2--root {
+  zoom: 0.9;
+}
+
 .dashboard-section-head p,
 .dashboard-panel-head p {
   margin: 6px 0 0;

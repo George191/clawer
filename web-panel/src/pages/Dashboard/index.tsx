@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
 import { App, Button, Select, Skeleton } from 'antd';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from '@/pages/AICollect/palette';
 import { DASHBOARD_WS_URL } from '@/services/api';
@@ -138,6 +138,7 @@ const TrendChart: React.FC<{
 };
 
 const Dashboard: React.FC = () => {
+  const { pathname } = useLocation();
   const navigate = useNavigate();
   const { message } = App.useApp();
   const {
@@ -285,7 +286,7 @@ const Dashboard: React.FC = () => {
   const showLoading = !metrics && (loading || waitingForSnapshot);
 
   return (
-    <div className="dashboard-v2">
+    <div className={`dashboard-v2${pathname === '/' ? ' dashboard-v2--root' : ''}`}>
       {showLoading ? (
         <div className="dashboard-loading" aria-label="正在加载 Dashboard">
           <Skeleton active paragraph={{ rows: 14 }} title={{ width: '28%' }} />

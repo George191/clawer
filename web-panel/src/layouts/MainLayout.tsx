@@ -179,7 +179,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     shortLabel: 'Flow',
     enabled: true,
     icon: <ApartmentOutlined />,
-    defaultPath: '/flow/layers',
+    defaultPath: '/flow',
     accent: '#0EA5E9',
     sections: [
       {
@@ -247,10 +247,6 @@ const explicitRouteProject: Record<string, ProjectKey> = {
   '/explorer': 'data-lake',
   '/data-api': 'data-lake',
   '/flow': 'etl-pipeline',
-  '/flow/layers': 'etl-pipeline',
-  '/flow/transforms': 'etl-pipeline',
-  '/flow/quality': 'etl-pipeline',
-  '/flow/lineage': 'etl-pipeline',
   '/atlas': 'data-cockpit',
   '/atlas/metrics': 'data-cockpit',
   '/atlas/quality': 'data-cockpit',
@@ -329,7 +325,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     next.delete('domain');
     navigate(`${location.pathname}${next.toString() ? `?${next.toString()}` : ''}`, { replace: true });
   }, [location.pathname, location.search, navigate]);
-  const hideSidebar = activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
+  const hideSidebar = activeProjectKey === 'ai-collect' || activeProjectKey === 'etl-pipeline' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
