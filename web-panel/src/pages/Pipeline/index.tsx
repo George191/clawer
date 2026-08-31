@@ -200,7 +200,7 @@ const DataLayersWorkspace: React.FC = () => {
     setSelectedSchema(''); setSchemaNameDraft(''); setSchemaEditing(false);
   };
   const openCreateResource = () => { setSelectedSchema(''); setSchemaNameDraft(''); setResourceDatabase(''); setResourceSchema(''); setResourceSchemas([]); setResourcePanel('create'); };
-  const openEditResource = () => { if (!databaseName) return; setSelectedSchema(''); setSchemaNameDraft(''); setResourceDatabase(databaseName); setResourceSchema(''); setResourceSchemas([]); setResourcePanel('edit'); };
+  const openEditResource = () => { if (!databaseName) return; setSelectedSchema(''); setSchemaNameDraft(''); setResourceDatabase(databaseName); setResourceSchema(''); setResourceSchemas(Object.keys(schemaAliases)); setResourcePanel('edit'); };
   const saveResource = () => {
     const name = resourceDatabase.trim();
     const pendingSchema = resourceSchema.trim();
