@@ -1,11 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Checkbox, Dropdown, Input, InputNumber, Modal, Select, Spin, Table, Tag, Tabs, message } from 'antd';
 import { AlertOutlined, ApartmentOutlined, BranchesOutlined, CaretRightOutlined, CodeOutlined, DatabaseOutlined, DeleteOutlined, DownOutlined, EditOutlined, ExperimentOutlined, PlusOutlined, RightOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons';
 import '../ProductWorkspace/workspace.css';
 import type { LayerNode, LayerTable, QueryResult, EtlPartition, EtlStreamState } from '../../services/types';
 
 const pageMeta: Record<string, { title: string; description: string }> = {
+  '/flow': { title: 'Flow overview', description: 'Live topology of connectors, topics and ETL layers.' },
   '/flow/layers': { title: 'Data connectors', description: 'Browse PostgreSQL schemas, tables, stream positions and deployed connector code.' },
   '/flow/transforms': { title: 'Transformation assets', description: 'Review deployed transformations, their dependencies and validation state.' },
   '/flow/quality': { title: 'Quality gates', description: 'Assess output contracts before downstream publication.' },
@@ -30,7 +31,7 @@ const PostgresIcon: React.FC<{ className?: string }> = ({ className }) => <svg c
 const MongoDbIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" role="img" aria-label="MongoDB" fill="currentColor"><path d="M17.193 9.555c-1.264-5.58-4.252-7.414-4.573-8.115-.28-.394-.53-.954-.735-1.44-.036.495-.055.685-.523 1.184-.723.566-4.438 3.682-4.74 10.02-.282 5.912 4.27 9.435 4.888 9.884l.07.05A73.49 73.49 0 0 1 11.91 24h.481c.114-1.032.284-2.056.51-3.07.417-.296.604-.463.85-.693a11.342 11.342 0 0 0 3.639-8.464c.01-.814-.103-1.662-.197-2.218zm-5.336 8.195s0-8.291.275-8.29c.213 0 .49 10.695.49 10.695-.381-.045-.765-1.76-.765-2.405z" /></svg>;
 const ElasticsearchIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 512 512" role="img" aria-label="Elasticsearch" fillRule="evenodd" clipRule="evenodd" strokeLinejoin="round"><path d="M21.625 256c0 21.62 3.035 42.495 8.195 62.5h304.304c34.516 0 62.5-27.985 62.5-62.5 0-34.516-27.984-62.5-62.5-62.5H29.82a249.101 249.101 0 0 0-8.195 62.5" fill="#343741" /><path d="M442.308 125.718a240.051 240.051 0 0 0 24.324-25.968C420.796 42.637 350.527 6 271.624 6 172.855 6 87.863 63.46 47.304 146.625h341.664a78.627 78.627 0 0 0 53.328-20.907" fill="#fec514" /><path d="M388.968 365.374H47.316C87.88 448.538 172.856 506 271.624 506c78.907 0 149.172-36.652 195.008-93.75a238.559 238.559 0 0 0-24.324-25.968 78.682 78.682 0 0 0-53.34-20.907" fill="#00bfb3" /></svg>;
 const S3Icon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 512 512" role="img" aria-label="S3"><rect width="512" height="512" rx="15%" fill="#fff"/><path fill="#e05243" d="M260 348l-137 33V131l137 32z"/><path fill="#8c3123" d="M256 349l133 32V131l-133 32v186"/><path fill="#e05243" d="M256 64v97l58 14V93zm133 67v250l26-13V143zm-133 77v97l58-8v-82zm58 129l-58 14v97l58-29z"/><path fill="#8c3123" d="M256 448V351l-58-14v82zm-133-67V131l-26 13v238zm133-77v-97l-58 8v82zm-58-129l58-14V64l-58 29z"/><path fill="#5e1f18" d="M314 175l-58 11-58-11 58-15 58 15"/><path fill="#f2b0a9" d="M314 337l-58-11-58 11 58 16 58-16"/></svg>;
-const NavicatConnectionIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 1000 1000" role="img" aria-label="Database connection" fill="none"><path d="M584.77 365.58H687.48c73.93 0 134.42 60.49 134.42 134.42A134.83 134.83 0 0 1 687.48 634.42H584.77M415.23 634.42H312.52c-73.93 0-134.42-60.49-134.42-134.42A134.83 134.83 0 0 1 312.52 365.58H415.23" stroke="currentColor" strokeWidth="22" strokeLinecap="round" strokeMiterlimit="10"/><line x1="351.1" x2="648.9" y1="500" y2="500" stroke="currentColor" strokeWidth="22" strokeLinecap="round"/></svg>;
+const NavicatConnectionIcon: React.FC<{ className?: string }> = ({ className }) => <PostgresIcon className={className} />;
 const BackIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" role="img" aria-label="Back" fill="none"><path d="M15.5 6.5L10 12l5.5 5.5M10.5 12H19" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 const CloseIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" role="img" aria-label="Close" fill="none"><path d="M7 7l10 10M17 7L7 17" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>;
 const EditIcon: React.FC<{ className?: string }> = ({ className }) => <svg className={className} viewBox="0 0 24 24" role="img" aria-label="Edit" fill="none"><path d="M5.5 17.8V19h1.2l9.9-9.9-1.2-1.2-9.9 9.9Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="m14.7 7.9 1.4-1.4a1.7 1.7 0 0 1 2.4 2.4l-1.4 1.4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>;
@@ -38,11 +39,186 @@ const DeleteIcon: React.FC<{ className?: string }> = ({ className }) => <svg cla
 
 const Pipeline: React.FC = () => {
   const { pathname } = useLocation();
-  const active = '/flow/layers';
+  const active = pathname === '/flow' ? '/flow' : '/flow/layers';
   const page = pageMeta[active];
   return <main className="flow-console" data-testid="pipeline-workspace"><header className="flow-header"><div><div className="flow-eyebrow"><span className="flow-live-dot" /> ETL LIFECYCLE</div><h1>{page.title}</h1><p>{page.description}</p></div></header><section className="flow-core"><LifecycleView mode={active} /></section></main>;
 };
+const FlowHome: React.FC = () => {
+  const navigate = useNavigate();
+  const mapRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const layers = [{ key: 'rds', schema: 'ts_rds', rateIn: 842, rateOut: 796 }, { key: 'ods', schema: 'ts_ods', rateIn: 796, rateOut: 624 }, { key: 'task', schema: 'ts_task', rateIn: 624, rateOut: 588 }, { key: 'dwd', schema: 'ts_dwd', rateIn: 588, rateOut: 210 }, { key: 'dws', schema: 'ts_dws', rateIn: 210, rateOut: 164 }, { key: 'ads', schema: 'ts_ads', rateIn: 164, rateOut: 0 }];
+  const totalIn = layers.reduce((sum, l) => sum + l.rateIn, 0);
+  const totalOut = layers.reduce((sum, l) => sum + l.rateOut, 0);
+  const dataFlow = [
+    { route: 'rds', reverse: false },
+    { route: 'ods', reverse: true },
+    { route: 'ods', reverse: false },
+    { route: 'task', reverse: true },
+    { route: 'task', reverse: false },
+    { route: 'dwd', reverse: true },
+    { route: 'dwd', reverse: false },
+    { route: 'dws', reverse: true },
+    { route: 'dws', reverse: false },
+    { route: 'ads', reverse: true },
+  ];
+  useLayoutEffect(() => {
+    const map = mapRef.current;
+    const canvas = canvasRef.current;
+    if (!map || !canvas) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const core = map.querySelector<HTMLElement>('.flow-home-core');
+    const nodes = Array.from(map.querySelectorAll<HTMLElement>('.flow-home-layer'));
+    if (!core || !nodes.length) return;
+    let animationFrame = 0;
+    let disposed = false;
+    let previousGeometry = '';
+    let frameCount = 0;
+    let hoverTransitionUntil = 0;
+    let geometryDirty = true;
+    let coreX = 0;
+    let coreY = 0;
+    const curves: Record<string, { startX: number; startY: number; controlX: number; endY: number; endX: number }> = {};
+    const startedAt = performance.now();
+    const stageDuration = 1900;
+    const trackHoverTransition = () => { hoverTransitionUntil = performance.now() + 260; };
+    nodes.forEach((node) => {
+      node.addEventListener('pointerenter', trackHoverTransition);
+      node.addEventListener('pointerleave', trackHoverTransition);
+    });
+    const resizeObserver = new ResizeObserver(() => {
+      geometryDirty = true;
+    });
+    resizeObserver.observe(map);
+    resizeObserver.observe(core);
+    nodes.forEach((node) => resizeObserver.observe(node));
+    const beamEase = (progress: number) => {
+      const sample = (t: number, a: number, b: number) => 3 * (1 - t) ** 2 * t * a + 3 * (1 - t) * t ** 2 * b + t ** 3;
+      const derivative = (t: number, a: number, b: number) => 3 * (1 - t) ** 2 * a + 6 * (1 - t) * t * (b - a) + 3 * t ** 2 * (1 - b);
+      let t = progress;
+      for (let iteration = 0; iteration < 4; iteration += 1) {
+        const slope = derivative(t, .76, .24);
+        if (Math.abs(slope) < .001) break;
+        t = Math.max(0, Math.min(1, t - (sample(t, .76, .24) - progress) / slope));
+      }
+      return sample(t, 0, 1);
+    };
+    const updateRoutes = () => {
+      if (disposed) return;
+      const now = performance.now();
+      const shouldSyncGeometry = !previousGeometry
+        || now < hoverTransitionUntil
+        || geometryDirty
+        || (!geometryDirty && frameCount++ % 30 === 0);
+      if (shouldSyncGeometry) {
+        const mapRect = map.getBoundingClientRect();
+        const coreRect = core.getBoundingClientRect();
+        const nodeRects = nodes.map((node) => node.getBoundingClientRect());
+        const coreCenterX = coreRect.left + coreRect.width / 2;
+        const coreCenterY = coreRect.top + coreRect.height / 2;
+        const geometry = [mapRect.width, mapRect.height, coreRect.left, coreRect.top, coreRect.width, coreRect.height, ...nodeRects.flatMap((rect) => [rect.left, rect.top, rect.width, rect.height])].join(':');
+        if (geometry !== previousGeometry) {
+          nodeRects.forEach((nodeRect, index) => {
+            const onLeft = nodeRect.left + nodeRect.width / 2 < coreCenterX;
+            const startX = (onLeft ? nodeRect.right : nodeRect.left) - mapRect.left;
+            const startY = nodeRect.top + nodeRect.height / 2 - mapRect.top;
+            const endX = (onLeft ? coreRect.left : coreRect.right) - mapRect.left;
+            const endY = coreCenterY - mapRect.top;
+            const controlX = startX + (endX - startX) * .55;
+            const key = layers[index].key;
+            curves[key] = { startX, startY, controlX, endY, endX };
+          });
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          canvas.width = Math.round(mapRect.width * dpr);
+          canvas.height = Math.round(mapRect.height * dpr);
+          context.setTransform(dpr, 0, 0, dpr, 0, 0);
+          coreX = coreCenterX - mapRect.left;
+          coreY = coreCenterY - mapRect.top;
+          previousGeometry = geometry;
+          geometryDirty = false;
+        }
+      }
+      const elapsed = performance.now() - startedAt;
+      let coreActivity = 0;
+      context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      context.save();
+      context.strokeStyle = 'rgba(155,124,255,.72)';
+      context.lineWidth = 1;
+      context.setLineDash([6, 6]);
+      context.lineCap = 'round';
+      Object.values(curves).forEach((curve) => {
+        context.beginPath();
+        context.moveTo(curve.startX, curve.startY);
+        context.bezierCurveTo(curve.controlX, curve.startY, curve.controlX, curve.endY, curve.endX, curve.endY);
+        context.stroke();
+      });
+      context.restore();
+      const pointOnCurve = (curve: typeof curves[string], progress: number) => {
+        const t = progress;
+        const inverse = 1 - t;
+        return {
+          x: inverse * inverse * inverse * curve.startX + 3 * inverse * inverse * t * curve.controlX + 3 * inverse * t * t * curve.controlX + t * t * t * curve.endX,
+          y: inverse * inverse * inverse * curve.startY + 3 * inverse * inverse * t * curve.startY + 3 * inverse * t * t * curve.endY + t * t * t * curve.endY,
+        };
+      };
+      for (let packetIndex = 0; packetIndex < 8; packetIndex += 1) {
+        const packetElapsed = elapsed - packetIndex * stageDuration;
+        if (packetElapsed < 0) continue;
+        const cycleElapsed = packetElapsed % (stageDuration * dataFlow.length);
+        const stage = dataFlow[Math.floor(cycleElapsed / stageDuration)];
+        const curve = curves[stage.route];
+        if (!curve) continue;
+        const stageProgress = (cycleElapsed % stageDuration) / stageDuration;
+        const travelProgress = beamEase(stageProgress);
+        const point = pointOnCurve(curve, stage.reverse ? 1 - travelProgress : travelProgress);
+        const opacity = Math.min(stageProgress * 12, (1 - stageProgress) * 12, 1);
+        context.globalAlpha = opacity;
+        context.fillStyle = '#c4b5fd';
+        context.shadowColor = '#8b5cf6';
+        context.shadowBlur = 7;
+        context.beginPath();
+        context.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
+        context.fill();
+        coreActivity = Math.max(coreActivity, Math.max(0, ((stage.reverse ? 1 - stageProgress : stageProgress) - .72) / .28));
+      }
+      context.globalAlpha = 1;
+      context.shadowBlur = 5;
+      for (let index = 0; index < 3; index += 1) {
+        const angle = performance.now() / 120 + index * (Math.PI * 2 / 3);
+        const radius = 50 + index * 5;
+        context.globalAlpha = coreActivity * (1 - index * .12);
+        context.fillStyle = '#e5ddff';
+        context.beginPath();
+        context.arc(coreX + Math.cos(angle) * radius, coreY + Math.sin(angle) * radius, 2.4, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.globalAlpha = 1;
+      animationFrame = window.requestAnimationFrame(updateRoutes);
+    };
+    animationFrame = window.requestAnimationFrame(updateRoutes);
+    return () => {
+      disposed = true;
+      window.cancelAnimationFrame(animationFrame);
+      resizeObserver.disconnect();
+      nodes.forEach((node) => {
+        node.removeEventListener('pointerenter', trackHoverTransition);
+        node.removeEventListener('pointerleave', trackHoverTransition);
+      });
+    };
+  }, []);
+  return <div className="flow-home">
+    <div className="flow-home-heading"><div><div className="flow-eyebrow"><span className="flow-live-dot" /> FLOW OVERVIEW</div><h2>Connections in motion</h2><p>Watch data move through each ETL layer.</p></div><Button type="primary" onClick={() => navigate('/flow/layers')}>Open workspace <RightOutlined /></Button></div>
+    <div className="flow-home-map" ref={mapRef}>
+      <canvas className="flow-home-canvas" ref={canvasRef} aria-hidden="true" />
+      <div className="flow-home-sequence">{layers.map((item, index) => <React.Fragment key={item.key}><button type="button" className="flow-home-layer" onClick={() => navigate(`/flow/layers?resource=dw_etl&schema=${item.schema}&layer=${item.key}`)}><NavicatConnectionIcon /><span className="flow-home-layer-body"><span className="flow-home-layer-identity"><strong>{item.key.toUpperCase()}</strong><small>{item.schema}</small></span><span className="flow-home-layer-rate"><i>IN</i><b>{item.rateIn.toLocaleString()}</b><i>OUT</i><b>{item.rateOut.toLocaleString()}</b></span></span></button>{index < layers.length - 1 && <span className="flow-home-connector"><b>FLOW</b><i /></span>}</React.Fragment>)}</div>
+      <div className="flow-home-core" aria-hidden="true"><span className="flow-home-core-label">FLOW</span><strong>Asiral Helio</strong><div className="flow-home-core-throughput"><span><em>IN</em><b>{totalIn.toLocaleString()}</b></span><span><em>OUT</em><b>{totalOut.toLocaleString()}</b></span></div></div>
+    </div>
+    <div className="flow-home-status"><span><i />6 layers running</span><span>IN {totalIn.toLocaleString()} · OUT {totalOut.toLocaleString()} msg/s</span><span>Click a layer to open its resource</span></div>
+  </div>;
+};
 const LifecycleView: React.FC<{ mode: string }> = ({ mode }) => {
+  if (mode === '/flow') return <FlowHome />;
   if (mode === '/flow/layers') return <DataLayersWorkspace />;
   const meta: Record<string, [string, string, string[]]> = {
     '/flow/transforms': ['Transformation assets', 'Code, dependencies and validation state for each deployed layer.', ['ODS normalizers', 'TASK handlers', 'DWD materializations']],
@@ -68,6 +244,7 @@ const DataLayers: React.FC = () => {
 };
 
 const DataLayersWorkspace: React.FC = () => {
+  const { search } = useLocation();
   const [collectionOpen, setCollectionOpen] = useState(false);
   const [connectorStep, setConnectorStep] = useState<'type' | 'config'>('type');
   const [connectorDatabase, setConnectorDatabase] = useState<'postgres' | 'mongodb' | 'elasticsearch' | 's3'>('postgres');
@@ -86,6 +263,7 @@ const DataLayersWorkspace: React.FC = () => {
   const [databaseAliases, setDatabaseAliases] = useState<Record<string, string>>({ dw_etl: 'ETL warehouse', spider_prod: 'Production', analytics: 'Analytics' });
   const [schemaAliases, setSchemaAliases] = useState<Record<string, string>>({ ts_rds: 'Raw data', ts_ods: 'Operational data', ts_task: 'Task staging', ts_dwd: 'Detail warehouse', ts_dws: 'Summary warehouse' });
   const [layer, setLayer] = useState('rds');
+  useEffect(() => { const params = new URLSearchParams(search); const requestedLayer = params.get('layer'); const resource = params.get('resource'); const schema = params.get('schema'); if (requestedLayer && mockLayers.some((item) => item.key === requestedLayer)) setLayer(requestedLayer); if (resource) { setDatabaseName(resource); setExpandedDatabases((current) => ({ ...current, [resource]: true })); } if (schema) { setSelectedSchema(schema); setSchemaNameDraft(schema); } }, [search]);
   const [table, setTable] = useState<LayerTable>(mockTables.rds[0]);
   const [partition, setPartition] = useState<string>();
   const [offsetOpen, setOffsetOpen] = useState(false);
