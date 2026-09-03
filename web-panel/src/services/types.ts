@@ -59,7 +59,8 @@ export interface LayerNode {
   label: string;
   icon: string;
   status: 'running' | 'stopped' | 'error';
-  rate: number;
+  rateIn: number;
+  rateOut: number;
   lag: number;
   tables?: number;
 }

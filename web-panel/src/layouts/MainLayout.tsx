@@ -698,7 +698,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: palette.appBg }}>
+    <div style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: palette.appBg }}>
       <Header
         style={{
           position: 'fixed',
@@ -880,7 +880,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         </div>
       </Header>
 
-      <div style={{ display: 'flex', paddingTop: HEADER_H }}>
+      <div style={{ height: HEADER_H, flexShrink: 0 }} />
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {isMobile && !collapsed && !hideSidebar && (
           <button
             type="button"
@@ -1180,12 +1181,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             marginLeft: contentMarginLeft,
             transition: 'margin-left 0.2s ease',
             width: '100%',
-            minHeight: `calc(100vh - ${HEADER_H}px)`,
+            flex: 1,
+            minHeight: 0,
             background: palette.appBg,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
           }}
         >
-          <Content style={{ minHeight: 280 }}>
-            <div className={isDark ? '' : 'light-mode'}>
+          <Content style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div className={isDark ? '' : 'light-mode'} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               {isAtlasSurface || isGraphSurface || isRagSurface ? null : children}
             </div>
           </Content>

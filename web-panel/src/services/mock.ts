@@ -146,7 +146,7 @@ export function mockDashboardMetrics(): DashboardMetrics {
 // ==================== mockLayers ====================
 
 export function mockLayers(): LayerNode[] {
-  const layerDefs: Omit<LayerNode, 'rate' | 'lag'>[] = [
+  const layerDefs: Omit<LayerNode, 'rateIn' | 'rateOut' | 'lag'>[] = [
     { key: 'ods', label: 'ODS 操作数据层', icon: 'DatabaseOutlined', status: 'running' },
     { key: 'dwd', label: 'DWD 明细数据层', icon: 'TableOutlined', status: 'running' },
     { key: 'dws', label: 'DWS 汇总数据层', icon: 'BarChartOutlined', status: 'running' },
@@ -157,7 +157,8 @@ export function mockLayers(): LayerNode[] {
   ];
   return layerDefs.map((d) => ({
     ...d,
-    rate: randFloat(0.1, 20, 1),
+    rateIn: randFloat(0.1, 20, 1),
+    rateOut: randFloat(0.1, 18, 1),
     lag: rand(0, 500),
     status: d.status,
   }));

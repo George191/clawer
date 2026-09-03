@@ -92,7 +92,7 @@ function mapApiLayerToNode(apiLayer: ApiLayerNode): LayerNode {
   return {
     name: layout?.label ?? apiLayer.label,
     status: apiLayer.status as NodeStatus,
-    throughput: `${apiLayer.rate.toFixed(1)} msg/s`,
+    throughput: `IN ${apiLayer.rateIn.toFixed(1)} · OUT ${apiLayer.rateOut.toFixed(1)} msg/s`,
     x: layout?.x ?? 400,
     y: layout?.y ?? 300,
   };
