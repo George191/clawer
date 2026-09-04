@@ -1150,8 +1150,6 @@
 .flow-table-tabs{display:flex;align-items:flex-end;gap:0;flex:1;min-width:0;padding:3px 2px 0}
 .flow-table-tabs::-webkit-scrollbar{display:none}
 .flow-table-tabs button{display:flex;align-items:center;gap:6px;height:30px;max-width:200px;min-width:44px;margin:0;padding:0 10px 0 8px;border:0;background:transparent;color:#9ba8b8;font-size:10px;font-weight:500;cursor:pointer;transition:background .1s ease,color .1s ease;white-space:nowrap;overflow:visible;flex:none;position:relative;border-radius:8px 8px 0 0}
-.flow-table-tabs button+button::before{content:'';position:absolute;left:0;top:8px;width:1px;height:14px;background:rgba(190,202,216,.46);pointer-events:none}
-.flow-table-tabs button.is-active::before,.flow-table-tabs button.is-active+button::before{display:none}
 .flow-table-tabs button:hover{background:transparent;color:#9aa8b6}
 .flow-table-tabs button.is-active{background:linear-gradient(180deg,#2a2e35,#2c3038);color:#fff;z-index:3}
 .flow-table-tabs button.is-active:hover{background:linear-gradient(180deg,#2a2e35,#2c3038)}
