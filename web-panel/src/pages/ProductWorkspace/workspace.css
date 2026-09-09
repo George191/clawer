@@ -1403,6 +1403,12 @@ body:has(.flow-home){overflow:hidden}
 .flow-filter-rule.is-placeholder .flow-filter-row-check,.flow-filter-rule.is-placeholder .flow-filter-row-content{display:none}.flow-filter-rule.is-placeholder:before{content:'点击“＋”以添加筛选准则';color:#8d98a6;font-size:9.5px;line-height:16px}.flow-filter-rule.is-placeholder .flow-filter-row-end-actions .flow-filter-reorder,.flow-filter-rule.is-placeholder .flow-filter-row-end-actions .flow-filter-remove{display:none}.flow-filter-rule.is-placeholder .flow-filter-row-actions{margin-left:0}
 .flow-filter-rules{max-height:180px;overflow-y:auto;overflow-x:hidden}.flow-filter-row-actions{display:inline-flex;align-items:center;gap:3px}.flow-filter-row-end-actions{display:inline-flex;align-items:center;gap:3px;margin-left:auto}.flow-filter-row-end-actions .flow-filter-remove{margin-left:0}
 .flow-filter-rule:has(.flow-filter-field-link:empty) .flow-filter-row-check,.flow-filter-rule:has(.flow-filter-field-link:empty) .flow-filter-row-content{display:none}.flow-filter-placeholder{display:inline-flex;align-items:center;margin-left:6px;color:#8d98a6;font-size:9.5px;line-height:16px;white-space:nowrap}.flow-filter-rule:has(.flow-filter-field-link:empty) .flow-filter-row-end-actions{display:none}.flow-filter-rule:has(.flow-filter-field-link:empty) .flow-filter-row-actions{margin-left:0}
+.flow-filter-field-options button,.flow-filter-operator-dropdown .ant-dropdown-menu-item,.flow-filter-value-options label,.flow-filter-value-label{font-size:10.45px!important}
+.flow-filter-field-search input,.flow-filter-field-search .ant-input-affix-wrapper{font-size:10.45px!important}
+.flow-filter-value-popup>.ant-input{font-size:10.45px!important}
+.flow-filter-sort .flow-filter-sort-field{font-size:10.45px!important;color:#b09cff!important}.flow-filter-sort .flow-filter-sort-field:hover{text-decoration:underline!important}.flow-filter-sort .flow-filter-sort-field-wrap{color:#b09cff}.flow-filter-sort .flow-filter-sort-field-wrap .flow-filter-sort-chevron{color:#b09cff}
+.flow-filter-sort-field-wrap{width:auto!important;min-width:0!important;max-width:none!important;height:auto!important;padding:0 5px 0 7px;border-color:#8b82f8!important}.flow-filter-sort .flow-filter-sort-field{width:auto!important;height:auto!important;min-height:0!important;line-height:inherit!important}.flow-filter-sort .flow-filter-sort-direction,.flow-filter-sort .flow-filter-sort-direction .ant-select-selector,.flow-filter-sort .flow-filter-sort-direction .ant-select-selection-item{height:22px!important;line-height:22px!important}.flow-filter-sort .flow-filter-sort-add{width:20px!important;height:20px!important;min-width:20px!important;border-color:#8b82f8!important}
+.flow-filter-sort .flow-filter-sort-field-wrap>.ant-dropdown-trigger{display:inline-flex!important;align-items:center;flex:1 1 auto!important;min-width:0!important;width:auto!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .flow-filter-row-actions{order:1}.flow-filter-row-end-actions{order:2;margin-left:auto;position:relative;z-index:1}
 .flow-filter-remove{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;padding:0!important;font-size:9px!important}.flow-filter-remove .anticon{font-size:9px}
 
@@ -1459,3 +1465,21 @@ body:has(.flow-home){overflow:hidden}
 .flow-filter-rule.is-group-open.is-group-nested:before,.flow-filter-rule.is-group-close.is-group-nested:before{margin-left:calc((var(--filter-depth,1) - 1) * 14px)!important}
 
 .flow-filter-rule.is-nested .flow-filter-row-content,.flow-filter-rule.is-nested .flow-filter-row-actions{left:calc((var(--filter-depth,1) - 1) * 14px)!important}
+
+/* Group geometry: brackets align to the parent content; group conditions occupy the next level. */
+.flow-filter-rule.is-nested .flow-filter-row-content,.flow-filter-rule.is-nested .flow-filter-row-actions{left:calc(var(--filter-depth,1) * 14px)!important}
+.flow-filter-rule.is-group-open:before,.flow-filter-rule.is-group-close:before{margin-left:calc((var(--filter-depth,1) - 1) * 14px)!important}
+
+.flow-filter-rule.is-group-depth-0.is-group-open:before,.flow-filter-rule.is-group-depth-0.is-group-close:before{margin-left:0!important}.flow-filter-rule.is-group-depth-0.is-nested .flow-filter-row-content,.flow-filter-rule.is-group-depth-0.is-nested .flow-filter-row-actions{left:0!important}
+
+/* Unified recursive indentation: bracket and its level share the same depth offset. */
+.flow-filter-rule.is-group-open:before,.flow-filter-rule.is-group-close:before{margin-left:calc(var(--filter-depth,0) * 14px)!important}
+.flow-filter-rule.is-nested .flow-filter-row-content,.flow-filter-rule.is-nested .flow-filter-row-actions{left:calc(var(--filter-depth,1) * 14px)!important}
+.flow-filter-rule.is-group-depth-0.is-nested .flow-filter-row-content,.flow-filter-rule.is-group-depth-0.is-nested .flow-filter-row-actions{left:14px!important}
+
+.flow-filter-rule.is-group-open.is-group-nested:before,.flow-filter-rule.is-group-close.is-group-nested:before{margin-left:calc(var(--filter-depth,1) * 14px)!important}
+
+.flow-filter-rule.is-group-open .flow-filter-row-end-actions,.flow-filter-rule.is-group-close .flow-filter-row-end-actions{display:inline-flex!important}
+
+.flow-filter-sort{gap:8px;padding:7px 10px;min-height:42px;background:#202631}.flow-filter-sort strong{color:#f5f7fb;font-size:11px;font-weight:700}.flow-filter-sort-field{width:145px!important}.flow-filter-sort-field .ant-select-selector{height:28px!important;min-height:28px!important;border:1px solid #409eff!important;border-radius:6px!important;background:#202631!important;color:#9fc7ff!important;padding:0 10px!important}.flow-filter-sort-field .ant-select-selection-item{line-height:26px!important;color:#9fc7ff!important}.flow-filter-sort-field .ant-select-arrow{color:#9fc7ff!important}.flow-filter-sort-direction{width:28px!important}.flow-filter-sort-direction .ant-select-selector{height:28px!important;min-height:28px!important;border:0!important;background:transparent!important;padding:0 2px!important;color:#9fc7ff!important}.flow-filter-sort-direction .ant-select-selection-item{line-height:26px!important;color:#9fc7ff!important;font-size:15px!important;text-align:center}.flow-filter-sort-direction .ant-select-arrow{color:#9fc7ff!important;font-size:11px}
+.flow-filter-sort .flow-filter-sort-field{display:inline-flex;align-items:center;justify-content:space-between;box-sizing:border-box;width:145px!important;height:28px;padding:0 9px;border:1px solid #409eff;border-radius:6px;color:#9fc7ff;font-size:10px;line-height:26px;white-space:nowrap}.flow-filter-sort .flow-filter-sort-field:hover{text-decoration:none;background:rgba(64,158,255,.06)}.flow-filter-sort .flow-filter-sort-field .anticon{margin-left:8px;font-size:9px;color:#9fc7ff}
