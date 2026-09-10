@@ -20,6 +20,10 @@ _ODS_NEWS_TABLE = "ts_ods.ods_news"
 _ODS_PATENT_TABLE = "ts_ods.ods_patent"
 _ODS_NAVWARN_TABLE = "ts_ods.ods_navwarn"
 _ODS_INTELLIGENCE_TABLE = "ts_ods.ods_intelligence"
+_ODS_COMPANY_TABLE = "ts_ods.ods_company"
+_ODS_FILING_TABLE = "ts_ods.ods_filing"
+_ODS_FILING_DOCUMENT_TABLE = "ts_ods.ods_filing_document"
+_ODS_FINANCIAL_FACT_TABLE = "ts_ods.ods_financial_fact"
 
 # ODS 单条入库重试配置：仅针对可重试的连接/瞬时错误
 _ODS_WRITE_MAX_ATTEMPTS = 3
@@ -196,11 +200,103 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
 RETURNING *
 """
 
+ODS_COMPANY_INSERT = f"""
+INSERT INTO {_ODS_COMPANY_TABLE} (
+    record_id, data_source, data_type, cik, ticker, name, entity_name, entity_type,
+    sic, sic_description, fiscal_year_end, state_of_incorporation, state_of_location,
+    addresses, former_names, filing_date, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :cik, :ticker, :name, :entity_name, :entity_type,
+    :sic, :sic_description, :fiscal_year_end, :state_of_incorporation, :state_of_location,
+    CAST(:addresses AS jsonb), CAST(:former_names AS jsonb), CAST(:filing_date AS date),
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    cik = EXCLUDED.cik, ticker = EXCLUDED.ticker, name = EXCLUDED.name,
+    entity_name = EXCLUDED.entity_name, entity_type = EXCLUDED.entity_type,
+    sic = EXCLUDED.sic, sic_description = EXCLUDED.sic_description,
+    fiscal_year_end = EXCLUDED.fiscal_year_end,
+    state_of_incorporation = EXCLUDED.state_of_incorporation,
+    state_of_location = EXCLUDED.state_of_location, addresses = EXCLUDED.addresses,
+    former_names = EXCLUDED.former_names, filing_date = EXCLUDED.filing_date,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_FILING_INSERT = f"""
+INSERT INTO {_ODS_FILING_TABLE} (
+    record_id, data_source, data_type, cik, accession_number, form, filing_date,
+    report_date, acceptance_datetime, act, file_number, film_number, items,
+    core_type, size, is_xbrl, is_inline_xbrl, filing_base, filing_index_url,
+    filing_index_status, submission_documents, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :cik, :accession_number, :form, CAST(:filing_date AS date),
+    CAST(:report_date AS date), CAST(:acceptance_datetime AS timestamptz), :act, :file_number, :film_number, :items,
+    :core_type, CAST(:size AS bigint), CAST(:is_xbrl AS boolean), CAST(:is_inline_xbrl AS boolean), :filing_base,
+    :filing_index_url, :filing_index_status, CAST(:submission_documents AS jsonb),
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    cik = EXCLUDED.cik, accession_number = EXCLUDED.accession_number, form = EXCLUDED.form,
+    filing_date = EXCLUDED.filing_date, report_date = EXCLUDED.report_date,
+    acceptance_datetime = EXCLUDED.acceptance_datetime, act = EXCLUDED.act,
+    file_number = EXCLUDED.file_number, film_number = EXCLUDED.film_number,
+    items = EXCLUDED.items, core_type = EXCLUDED.core_type, size = EXCLUDED.size,
+    is_xbrl = EXCLUDED.is_xbrl, is_inline_xbrl = EXCLUDED.is_inline_xbrl,
+    filing_base = EXCLUDED.filing_base, filing_index_url = EXCLUDED.filing_index_url,
+    filing_index_status = EXCLUDED.filing_index_status,
+    submission_documents = EXCLUDED.submission_documents, updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_FILING_DOCUMENT_INSERT = """
+INSERT INTO {table_ref} (
+    record_id, data_source, data_type, filing_record_id, cik, accession_number, file_category,
+    sequence, description, document, doc_type, size, url, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :filing_record_id, :cik, :accession_number, :file_category,
+    :sequence, :description, :document, :doc_type, :size, :url,
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    filing_record_id = EXCLUDED.filing_record_id, cik = EXCLUDED.cik,
+    accession_number = EXCLUDED.accession_number, file_category = EXCLUDED.file_category,
+    sequence = EXCLUDED.sequence,
+    description = EXCLUDED.description, document = EXCLUDED.document,
+    doc_type = EXCLUDED.doc_type, size = EXCLUDED.size, url = EXCLUDED.url,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_FINANCIAL_FACT_INSERT = """
+INSERT INTO {table_ref} (
+    record_id, data_source, data_type, company_record_id, cik, taxonomy, concept,
+    unit, value, accession_number, fiscal_year, fiscal_period, filed, frame,
+    start_date, end_date, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :company_record_id, :cik, :taxonomy, :concept,
+    :unit, CAST(:value AS numeric), :accession_number, CAST(:fiscal_year AS integer), :fiscal_period,
+    :filed, :frame, :start_date, :end_date, CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    company_record_id = EXCLUDED.company_record_id, cik = EXCLUDED.cik,
+    taxonomy = EXCLUDED.taxonomy, concept = EXCLUDED.concept, unit = EXCLUDED.unit,
+    value = EXCLUDED.value, accession_number = EXCLUDED.accession_number,
+    fiscal_year = EXCLUDED.fiscal_year, fiscal_period = EXCLUDED.fiscal_period,
+    filed = EXCLUDED.filed, frame = EXCLUDED.frame, start_date = EXCLUDED.start_date,
+    end_date = EXCLUDED.end_date, updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
 _ODS_INSERT_SQL = {
     "news": ODS_NEWS_INSERT,
     "patent": ODS_PATENT_INSERT,
     "navwarn": ODS_NAVWARN_INSERT,
     "intelligence": ODS_INTELLIGENCE_INSERT,
+    "company": ODS_COMPANY_INSERT,
+    "filing": ODS_FILING_INSERT,
+    "filing_document": ODS_FILING_DOCUMENT_INSERT.format(table_ref=_ODS_FILING_DOCUMENT_TABLE),
+    "financial_fact": ODS_FINANCIAL_FACT_INSERT.format(table_ref=_ODS_FINANCIAL_FACT_TABLE),
 }
 
 
@@ -222,6 +318,18 @@ class TsOds(ETLBase):
 
     async def _handler_intelligence(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="intelligence")
+
+    async def _handler_company(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="company")
+
+    async def _handler_filing(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="filing")
+
+    async def _handler_filing_document(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="filing_document")
+
+    async def _handler_financial_fact(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="financial_fact")
 
     async def _write_current(
         self,
@@ -322,7 +430,6 @@ class TsOds(ETLBase):
         if not insert_sql:
             logger.warning("%s Unsupported ODS table: %s", self._log_prefix, table)
             return False
-
         try:
             data_type = message.get("data_type", "") or table
             data_source = message.get("data_source", "")
@@ -330,61 +437,53 @@ class TsOds(ETLBase):
 
             raw_data = message.get("raw_data", message)
             normalizer = get_normalizer(data_type, data_source)
-            normalized = normalizer(raw_data)
-
-            normalized_record_id = normalized.get("record_id") or record_id
-            if not normalized_record_id:
-                logger.warning("%s Normalized message missing record_id, table=%s", self._log_prefix, table)
+            normalized_records = normalizer(raw_data)
+            if isinstance(normalized_records, dict):
+                normalized_records = [normalized_records]
+            if not isinstance(normalized_records, list) or not normalized_records:
+                logger.warning("%s Normalizer returned no records, table=%s", self._log_prefix, table)
                 return False
-            if not self._validate_required_fields(
-                table=table,
-                data_source=normalized.get("data_source") or data_source,
-                normalized={
-                    **normalized,
-                    "record_id": normalized_record_id,
-                },
-            ):
-                return False
-
-            # navwarn 专属：字段级验证门禁（类型/长度/业务规则多重校验）
-            if table == "navwarn":
-                passed, validation_errors = self._validate_navwarn_record(normalized)
-                if not passed:
-                    logger.warning(
-                        "%s Navwarn record rejected by validation: %s | record_id=%s",
-                        self._log_prefix,
-                        "; ".join(validation_errors),
-                        normalized_record_id,
-                    )
-                    return False
 
             now = datetime.now(timezone.utc)
-            payload = {
-                **normalized,
-                "record_id": normalized_record_id,
-                "data_source": normalized.get("data_source") or data_source,
-                "data_type": normalized.get("data_type") or data_type,
-                "created_at": now,
-                "updated_at": now,
-            }
-            result = await self._execute_with_table_recovery(
-                table,
-                partial(self._write_current, table=table, payload=payload),
-                payload=payload,
-            )
+            result = None
+            emitted_payload: dict[str, Any] | None = None
+            for normalized in normalized_records:
+                if not isinstance(normalized, dict):
+                    continue
+                normalized_record_id = normalized.get("record_id") or record_id
+                output_table = normalized.get("data_type") or table
+                if not normalized_record_id or output_table not in _ODS_INSERT_SQL:
+                    logger.warning("%s Invalid normalized ODS record table=%s", self._log_prefix, output_table)
+                    return False
+                if output_table == "navwarn":
+                    passed, validation_errors = self._validate_navwarn_record(normalized)
+                    if not passed:
+                        logger.warning(
+                            "%s Navwarn record rejected by validation: %s | record_id=%s",
+                            self._log_prefix, "; ".join(validation_errors), normalized_record_id,
+                        )
+                        return False
+                if not self._validate_required_fields(table=output_table, data_source=normalized.get("data_source") or data_source, normalized=normalized):
+                    return False
+                payload = {**normalized, "record_id": normalized_record_id, "data_source": normalized.get("data_source") or data_source, "data_type": output_table, "created_at": now, "updated_at": now}
+                result = await self._execute_with_table_recovery(output_table, partial(self._write_current, table=output_table, payload=payload), payload=payload)
+                emitted_payload = payload
+
+            if emitted_payload is None:
+                return False
 
             await self._emit(
                 result,
-                record_id=normalized_record_id,
-                data_source=result.get("data_source") if result else normalized.get("data_source"),
-                data_type=result.get("data_type") if result else normalized.get("data_type"),
+                record_id=record_id or emitted_payload["record_id"],
+                data_source=result.get("data_source") if result else emitted_payload["data_source"],
+                data_type=data_type,
             )
             logger.debug(
                 "%s Normalized table=ods_%s record_id=%s source=%s",
                 self._log_prefix,
                 table,
-                normalized_record_id,
-                normalized.get("data_source"),
+                record_id or emitted_payload["record_id"],
+                emitted_payload["data_source"],
             )
             return True
         except Exception:

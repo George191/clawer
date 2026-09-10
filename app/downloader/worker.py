@@ -51,6 +51,17 @@ RETRY_CRITICAL_THRESHOLD: int = 50
 # 403 可能是代理/上游临时拒绝，但长期 403 会占住下载 worker。
 RETRY_MAX_FORBIDDEN_ATTEMPTS: int = 5
 FORBIDDEN_ASSET_SKIPPED = "__forbidden_asset_skipped__"
+
+# Some released templates use a business-specific Mongo collection name.
+# Keep the template name unchanged for loading its download configuration,
+# while routing the downloader query to the actual collection.
+DOWNLOAD_COLLECTION_OVERRIDES = {
+    "sec_edgar": "sec_edgar_filing",
+}
+DOWNLOAD_TEMPLATE_OVERRIDES = {
+    collection: template for template, collection in DOWNLOAD_COLLECTION_OVERRIDES.items()
+}
+
 @dataclass(slots=True)
 class AssetDownloadJob:
     dl_info: dict[str, Any]
@@ -102,6 +113,15 @@ class DownloadWorker:
         # 无下载需求模板缓存：避免重复加载无 download 配置的模板
         self._no_assets_templates: set[str] = set()
 
+    @property
+    def _query_template_name(self) -> str | None:
+        """Return the collection selector used by Mongo download queries."""
+        if self._template_name is None:
+            return None
+        return DOWNLOAD_COLLECTION_OVERRIDES.get(
+            self._template_name, self._template_name,
+        )
+
     async def run(self) -> None:
         self._running = True
         self._http = HttpClient()
@@ -134,7 +154,7 @@ class DownloadWorker:
 
     async def _process_batch(self) -> int:
         pending = await self._mongo.get_pending_downloads(
-            template_name=self._template_name,
+            template_name=self._query_template_name,
             limit=self._batch_size,
         )
         if not pending:
@@ -157,7 +177,8 @@ class DownloadWorker:
         """
         meta = record.get("_meta", {})
         record_id = meta.get("record_id", "")
-        template_name = meta.get("template", "")
+        collection_name = meta.get("template", "")
+        template_name = DOWNLOAD_TEMPLATE_OVERRIDES.get(collection_name, collection_name)
         workspace_task_id = str(
             (meta.get("search_params") or {}).get("__workspace_task_id") or ""
         )
@@ -171,7 +192,7 @@ class DownloadWorker:
             if task_control is None:
                 workspace_task_id = ""
             elif task_control.get("download_state") != "running":
-                await self._mongo.update_file_status(template_name, record_id, "pending")
+                await self._mongo.update_file_status(collection_name, record_id, "pending")
                 return False
 
         async with self._semaphore:
@@ -179,7 +200,7 @@ class DownloadWorker:
                 # 快速路径：模板已知无下载需求，直接标记
                 if template_name in self._no_assets_templates:
                     await self._mongo.update_file_status(
-                        template_name, record_id, "no_assets",
+                        collection_name, record_id, "no_assets",
                     )
                     return True
 
@@ -187,7 +208,7 @@ class DownloadWorker:
                 template = await self._get_template(template_name)
                 if template is None:
                     await self._mongo.update_file_status(
-                        template_name, record_id, "no_assets",
+                        collection_name, record_id, "no_assets",
                     )
                     return True
 
@@ -201,7 +222,7 @@ class DownloadWorker:
                         template_name,
                     )
                     await self._mongo.update_file_status(
-                        template_name, record_id, "no_assets",
+                        collection_name, record_id, "no_assets",
                     )
                     return True
 
@@ -215,7 +236,7 @@ class DownloadWorker:
 
                 if not download_urls:
                     await self._mongo.update_file_status(
-                        template_name, record_id, "no_assets",
+                        collection_name, record_id, "no_assets",
                     )
                     return True
 
@@ -250,7 +271,7 @@ class DownloadWorker:
                 if not pending_by_url:
                     status = "downloaded" if skipped_existing else "no_assets"
                     await self._mongo.update_file_status(
-                        template_name, record_id, status,
+                        collection_name, record_id, status,
                     )
                     logger.info(
                         "DownloadWorker: %s has %d existing assets, status=%s",
@@ -305,7 +326,7 @@ class DownloadWorker:
 
                 mongo_started_at = time.perf_counter()
                 await self._mongo.update_download_result(
-                    template_name,
+                    collection_name,
                     record_id,
                     updates,
                     final_status,
@@ -371,7 +392,7 @@ class DownloadWorker:
                 logger.exception("DownloadWorker: failed for %s", record_id)
                 try:
                     await self._mongo.update_file_status(
-                        template_name, record_id, "failed",
+                        collection_name, record_id, "failed",
                     )
                 except Exception:
                     pass
@@ -426,7 +447,7 @@ class DownloadWorker:
     async def _log_startup_stats(self) -> None:
         """启动时输出所有集合的下载状态概览。"""
         try:
-            stats = await self._mongo.get_collection_stats(self._template_name)
+            stats = await self._mongo.get_collection_stats(self._query_template_name)
             if not stats:
                 return
 

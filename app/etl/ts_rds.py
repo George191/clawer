@@ -50,6 +50,12 @@ class TsRds(ETLBase):
     async def _handler_intelligence(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="intelligence")
 
+    async def _handler_company(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="company")
+
+    async def _handler_filing(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="filing")
+
     async def _write_current(
         self,
         *,

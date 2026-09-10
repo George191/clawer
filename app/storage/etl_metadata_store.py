@@ -93,6 +93,36 @@ CREATE TABLE IF NOT EXISTS ts_rds.rds_intelligence (
 CREATE INDEX IF NOT EXISTS idx_rds_intelligence_data_source ON ts_rds.rds_intelligence (data_source);
 CREATE INDEX IF NOT EXISTS idx_rds_intelligence_created_at ON ts_rds.rds_intelligence (created_at DESC);
 """.strip(),
+    "company": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_company (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rds_company_cik
+    ON ts_rds.rds_company ((raw_data->>'cik'));
+""".strip(),
+    "filing": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_filing (
+    record_id TEXT PRIMARY KEY,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_rds_filing_accession
+    ON ts_rds.rds_filing ((raw_data->>'accession_number'));
+""".strip(),
 }
 
 _ODS_CURRENT_BASELINE_DDLS: dict[str, str] = {
@@ -205,6 +235,105 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_intelligence (
 CREATE INDEX IF NOT EXISTS idx_ods_intelligence_data_source ON ts_ods.ods_intelligence (data_source);
 CREATE INDEX IF NOT EXISTS idx_ods_intelligence_published_at ON ts_ods.ods_intelligence (source_published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ods_intelligence_updated_at ON ts_ods.ods_intelligence (updated_at DESC);
+""".strip(),
+    "company": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_company (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    cik TEXT,
+    ticker TEXT,
+    name TEXT,
+    entity_name TEXT,
+    entity_type TEXT,
+    sic TEXT,
+    sic_description TEXT,
+    fiscal_year_end TEXT,
+    state_of_incorporation TEXT,
+    state_of_location TEXT,
+    addresses JSONB,
+    former_names JSONB,
+    filing_date DATE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+);
+CREATE INDEX IF NOT EXISTS idx_ods_company_cik ON ts_ods.ods_company (cik);
+""".strip(),
+    "filing": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_filing (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    cik TEXT,
+    accession_number TEXT,
+    form TEXT,
+    filing_date DATE,
+    report_date DATE,
+    acceptance_datetime TIMESTAMPTZ,
+    act TEXT,
+    file_number TEXT,
+    film_number TEXT,
+    items TEXT,
+    core_type TEXT,
+    size BIGINT,
+    is_xbrl BOOLEAN,
+    is_inline_xbrl BOOLEAN,
+    filing_base TEXT,
+    filing_index_url TEXT,
+    filing_index_status TEXT,
+    submission_documents JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+);
+CREATE INDEX IF NOT EXISTS idx_ods_filing_accession ON ts_ods.ods_filing (accession_number);
+CREATE INDEX IF NOT EXISTS idx_ods_filing_cik ON ts_ods.ods_filing (cik);
+""".strip(),
+    "filing_document": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_filing_document (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    filing_record_id TEXT NOT NULL,
+    cik TEXT,
+    accession_number TEXT,
+    file_category TEXT,
+    sequence TEXT,
+    description TEXT,
+    document TEXT,
+    doc_type TEXT,
+    size TEXT,
+    url TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+);
+CREATE INDEX IF NOT EXISTS idx_ods_filing_document_filing ON ts_ods.ods_filing_document (filing_record_id);
+""".strip(),
+    "financial_fact": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_financial_fact (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    company_record_id TEXT NOT NULL,
+    cik TEXT,
+    taxonomy TEXT,
+    concept TEXT,
+    unit TEXT,
+    value NUMERIC,
+    accession_number TEXT,
+    fiscal_year INTEGER,
+    fiscal_period TEXT,
+    filed TEXT,
+    frame TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+);
+CREATE INDEX IF NOT EXISTS idx_ods_financial_fact_company ON ts_ods.ods_financial_fact (company_record_id);
 """.strip(),
 }
 
