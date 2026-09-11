@@ -18,7 +18,7 @@ from app.storage.postgres_client import PostgresClient
 _DDLREGISTRY_READY = False
 _CREATE_TABLE_RE = re.compile(
     r"(?P<statement>"
-    r"CREATE TABLE IF NOT EXISTS (?P<table_ref>[A-Za-z0-9_\".]+)\s*"
+    r"CREATE TABLE(?:\s+IF NOT EXISTS)?\s+(?P<table_ref>[A-Za-z0-9_\".]+)\s*"
     r"\((?P<body>.*?)\)\s*"
     r"(?:PARTITION BY\s+(?P<partition_type>RANGE|HASH)\s*"
     r"\((?P<partition_column>[^)]+)\))?\s*;)",
@@ -95,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_rds_intelligence_created_at ON ts_rds.rds_intelli
 """.strip(),
     "company": """
 CREATE TABLE IF NOT EXISTS ts_rds.rds_company (
-    record_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL,
     raw_data JSONB NOT NULL,
@@ -103,14 +103,15 @@ CREATE TABLE IF NOT EXISTS ts_rds.rds_company (
     kafka_partition INTEGER,
     kafka_topic TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
 );
 CREATE INDEX IF NOT EXISTS idx_rds_company_cik
     ON ts_rds.rds_company ((raw_data->>'cik'));
 """.strip(),
     "filing": """
 CREATE TABLE IF NOT EXISTS ts_rds.rds_filing (
-    record_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL,
     raw_data JSONB NOT NULL,
@@ -118,7 +119,8 @@ CREATE TABLE IF NOT EXISTS ts_rds.rds_filing (
     kafka_partition INTEGER,
     kafka_topic TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
 );
 CREATE INDEX IF NOT EXISTS idx_rds_filing_accession
     ON ts_rds.rds_filing ((raw_data->>'accession_number'));
@@ -126,6 +128,36 @@ CREATE INDEX IF NOT EXISTS idx_rds_filing_accession
 }
 
 _ODS_CURRENT_BASELINE_DDLS: dict[str, str] = {
+    "financial_fact": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_financial_fact (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'financial_fact',
+    cik TEXT NOT NULL,
+    entity_name TEXT,
+    taxonomy TEXT NOT NULL,
+    concept TEXT NOT NULL,
+    concept_label TEXT,
+    unit TEXT NOT NULL,
+    value NUMERIC NOT NULL,
+    accn TEXT NOT NULL,
+    form TEXT NOT NULL,
+    filed DATE NOT NULL,
+    fy INTEGER,
+    fp TEXT,
+    frame TEXT,
+    start_date DATE,
+    end_date DATE,
+    is_amendment BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_fin_fact_accn ON ts_ods.ods_financial_fact (accn);
+CREATE INDEX IF NOT EXISTS idx_fin_fact_cik_period ON ts_ods.ods_financial_fact (cik, end_date DESC);
+CREATE INDEX IF NOT EXISTS idx_fin_fact_concept ON ts_ods.ods_financial_fact (taxonomy, concept);
+CREATE INDEX IF NOT EXISTS idx_fin_fact_filed ON ts_ods.ods_financial_fact (filed DESC);
+""".strip(),
     "news": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_news (
     record_id TEXT NOT NULL,
@@ -237,103 +269,121 @@ CREATE INDEX IF NOT EXISTS idx_ods_intelligence_published_at ON ts_ods.ods_intel
 CREATE INDEX IF NOT EXISTS idx_ods_intelligence_updated_at ON ts_ods.ods_intelligence (updated_at DESC);
 """.strip(),
     "company": """
-CREATE TABLE IF NOT EXISTS ts_ods.ods_company (
-    record_id TEXT NOT NULL,
-    data_source TEXT NOT NULL,
-    data_type TEXT NOT NULL,
-    cik TEXT,
-    ticker TEXT,
-    name TEXT,
-    entity_name TEXT,
-    entity_type TEXT,
-    sic TEXT,
-    sic_description TEXT,
-    fiscal_year_end TEXT,
-    state_of_incorporation TEXT,
-    state_of_location TEXT,
-    addresses JSONB,
-    former_names JSONB,
-    filing_date DATE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (record_id, data_source, data_type)
+CREATE TABLE "ts_ods"."ods_company" (
+  "record_id" text COLLATE "pg_catalog"."default" NOT NULL,
+  "data_source" text COLLATE "pg_catalog"."default" NOT NULL,
+  "data_type" text COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'financial_company'::text,
+  "cik" text COLLATE "pg_catalog"."default" NOT NULL,
+  "name" text COLLATE "pg_catalog"."default" NOT NULL,
+  "entity_type" text COLLATE "pg_catalog"."default",
+  "exchanges" jsonb,
+  "tickers" jsonb,
+  "sic" text COLLATE "pg_catalog"."default",
+  "sic_description" text COLLATE "pg_catalog"."default",
+  "address" jsonb,
+  "website" text COLLATE "pg_catalog"."default",
+  "kafka_offset" int8,
+  "kafka_partition" int4,
+  "kafka_topic" text COLLATE "pg_catalog"."default",
+  "created_at" timestamptz(6) NOT NULL DEFAULT now(),
+    "updated_at" timestamptz(6) NOT NULL DEFAULT now()
+)
+PARTITION BY HASH (
+  "record_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
+  "data_source" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
+  "data_type" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops"
+)
+;
+-- ----------------------------
+-- Indexes structure for table ods_company
+-- ----------------------------
+CREATE INDEX IF NOT EXISTS "idx_ods_company_cik" ON "ts_ods"."ods_company" USING btree (
+  "cik" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
 );
-CREATE INDEX IF NOT EXISTS idx_ods_company_cik ON ts_ods.ods_company (cik);
+-- ----------------------------
+-- Primary Key structure for table ods_company
+-- ----------------------------
+ALTER TABLE "ts_ods"."ods_company" ADD CONSTRAINT "ods_company_pkey" PRIMARY KEY ("record_id", "data_source", "data_type");
 """.strip(),
     "filing": """
-CREATE TABLE IF NOT EXISTS ts_ods.ods_filing (
-    record_id TEXT NOT NULL,
-    data_source TEXT NOT NULL,
-    data_type TEXT NOT NULL,
-    cik TEXT,
-    accession_number TEXT,
-    form TEXT,
-    filing_date DATE,
-    report_date DATE,
-    acceptance_datetime TIMESTAMPTZ,
-    act TEXT,
-    file_number TEXT,
-    film_number TEXT,
-    items TEXT,
-    core_type TEXT,
-    size BIGINT,
-    is_xbrl BOOLEAN,
-    is_inline_xbrl BOOLEAN,
-    filing_base TEXT,
-    filing_index_url TEXT,
-    filing_index_status TEXT,
-    submission_documents JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (record_id, data_source, data_type)
+CREATE TABLE "ts_ods"."ods_filing" (
+  "record_id" text COLLATE "pg_catalog"."default" NOT NULL,
+  "data_source" text COLLATE "pg_catalog"."default" NOT NULL,
+  "data_type" text COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'filing'::text,
+  "cik" text COLLATE "pg_catalog"."default",
+  "accession_number" text COLLATE "pg_catalog"."default",
+  "form" text COLLATE "pg_catalog"."default",
+  "filing_date" date,
+  "report_date" date,
+  "acceptance_datetime" timestamptz(6),
+  "act" text COLLATE "pg_catalog"."default",
+  "file_number" text COLLATE "pg_catalog"."default",
+  "film_number" text COLLATE "pg_catalog"."default",
+  "items" text COLLATE "pg_catalog"."default",
+  "core_type" text COLLATE "pg_catalog"."default",
+  "size" int8,
+  "is_xbrl" bool,
+  "is_inline_xbrl" bool,
+  "filing_base" text COLLATE "pg_catalog"."default",
+  "filing_index_url" text COLLATE "pg_catalog"."default",
+  "kafka_offset" int8,
+  "kafka_partition" int4,
+  "kafka_topic" text COLLATE "pg_catalog"."default",
+  "created_at" timestamptz(6) NOT NULL DEFAULT now(),
+  "updated_at" timestamptz(6) NOT NULL DEFAULT now()
+)
+PARTITION BY HASH (
+  "record_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
+  "data_source" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
+  "data_type" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops"
+)
+;
+-- ----------------------------
+-- Indexes structure for table ods_filing
+-- ----------------------------
+CREATE INDEX "idx_ods_filing_accession" ON "ts_ods"."ods_filing" USING btree (
+  "accession_number" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
 );
-CREATE INDEX IF NOT EXISTS idx_ods_filing_accession ON ts_ods.ods_filing (accession_number);
-CREATE INDEX IF NOT EXISTS idx_ods_filing_cik ON ts_ods.ods_filing (cik);
+CREATE INDEX "idx_ods_filing_cik" ON "ts_ods"."ods_filing" USING btree (
+  "cik" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
+);
+-- ----------------------------
+-- Primary Key structure for table ods_filing
+-- ----------------------------
+ALTER TABLE "ts_ods"."ods_filing" ADD CONSTRAINT "ods_filing_pkey" PRIMARY KEY ("record_id", "data_source", "data_type");
 """.strip(),
     "filing_document": """
-CREATE TABLE IF NOT EXISTS ts_ods.ods_filing_document (
-    record_id TEXT NOT NULL,
-    data_source TEXT NOT NULL,
-    data_type TEXT NOT NULL,
-    filing_record_id TEXT NOT NULL,
-    cik TEXT,
-    accession_number TEXT,
-    file_category TEXT,
-    sequence TEXT,
-    description TEXT,
-    document TEXT,
-    doc_type TEXT,
-    size TEXT,
-    url TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (record_id, data_source, data_type)
+CREATE TABLE "ts_ods"."ods_filing_document" (
+  "record_id" text COLLATE "pg_catalog"."default" NOT NULL,
+  "data_source" text COLLATE "pg_catalog"."default" NOT NULL,
+  "data_type" text COLLATE "pg_catalog"."default" NOT NULL DEFAULT 'filing_document'::text,
+  "cik" text COLLATE "pg_catalog"."default",
+  "accession_number" text COLLATE "pg_catalog"."default",
+  "sequence" text COLLATE "pg_catalog"."default",
+  "description" text COLLATE "pg_catalog"."default",
+  "filename" text COLLATE "pg_catalog"."default",
+  "size" text COLLATE "pg_catalog"."default",
+  "url" text COLLATE "pg_catalog"."default",
+  "created_at" timestamptz(6) NOT NULL DEFAULT now(),
+  "updated_at" timestamptz(6) NOT NULL DEFAULT now(),
+  "doc_type" text COLLATE "pg_catalog"."default"
+)
+PARTITION BY HASH (
+  "record_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
+  "data_source" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
+  "data_type" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops"
+)
+;
+-- ----------------------------
+-- Indexes structure for table ods_filing_document
+-- ----------------------------
+CREATE INDEX "idx_ods_filing_document_accession" ON "ts_ods"."ods_filing_document" USING btree (
+  "accession_number" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
 );
-CREATE INDEX IF NOT EXISTS idx_ods_filing_document_filing ON ts_ods.ods_filing_document (filing_record_id);
-""".strip(),
-    "financial_fact": """
-CREATE TABLE IF NOT EXISTS ts_ods.ods_financial_fact (
-    record_id TEXT NOT NULL,
-    data_source TEXT NOT NULL,
-    data_type TEXT NOT NULL,
-    company_record_id TEXT NOT NULL,
-    cik TEXT,
-    taxonomy TEXT,
-    concept TEXT,
-    unit TEXT,
-    value NUMERIC,
-    accession_number TEXT,
-    fiscal_year INTEGER,
-    fiscal_period TEXT,
-    filed TEXT,
-    frame TEXT,
-    start_date TEXT,
-    end_date TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (record_id, data_source, data_type)
-);
-CREATE INDEX IF NOT EXISTS idx_ods_financial_fact_company ON ts_ods.ods_financial_fact (company_record_id);
+-- ----------------------------
+-- Primary Key structure for table ods_filing_document
+-- ----------------------------
+ALTER TABLE "ts_ods"."ods_filing_document" ADD CONSTRAINT "ods_filing_document_pkey" PRIMARY KEY ("record_id", "data_source", "data_type");
 """.strip(),
 }
 
@@ -598,21 +648,45 @@ def _build_current_ddl(
     current_ref = _current_table_ref(layer, logical_table)
     create_table = _parse_create_table_statement(current_ddl_sql)
     body = str(create_table["body"])
-    if layer == "rds":
-        body = _rewrite_rds_current_primary_key(body)
-    elif layer == "ods":
-        body = _rewrite_ods_current_primary_key(body)
+    is_export_ddl = bool(
+        re.search(
+            r"CREATE TABLE\s+\"[^\"]+\"\.\"[^\"]+\"",
+            current_ddl_sql,
+            re.IGNORECASE,
+        )
+    )
+    if not is_export_ddl:
+        if layer == "rds":
+            body = _rewrite_rds_current_primary_key(body)
+        elif layer == "ods":
+            body = _rewrite_ods_current_primary_key(body)
     statement = _build_create_table_statement(
         table_ref=current_ref,
         body=body,
         partition_type=partition_type,
         partition_column=partition_column,
     )
-    return _replace_create_table_statement(
+    rebuilt_ddl = _replace_create_table_statement(
         current_ddl_sql,
         statement=str(create_table["statement"]),
         replacement=statement,
     )
+    if is_export_ddl:
+        table_ref = re.escape(str(create_table["table_ref"]))
+        rebuilt_ddl = re.sub(
+            rf"ALTER TABLE\s+{table_ref}\s+ADD CONSTRAINT\s+[^;]+PRIMARY KEY\s*\([^;]+\)\s*;",
+            "",
+            rebuilt_ddl,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        rebuilt_ddl = re.sub(
+            r"(?m)^\s*CREATE INDEX\s+(?!IF NOT EXISTS\b)",
+            "CREATE INDEX IF NOT EXISTS ",
+            rebuilt_ddl,
+            flags=re.IGNORECASE,
+        )
+    return rebuilt_ddl
 
 
 async def _seed_current_registry_records(pg: PostgresClient) -> None:
@@ -625,10 +699,19 @@ async def _seed_current_registry_records(pg: PostgresClient) -> None:
         ORDER BY layer, table_name
         """
     )
-    current_rows: list[dict[str, Any]] = list(existing_rows)
+    # SEC company/filing DDL is part of the application contract. Replace the
+    # pre-standardization registry entries so a restart repairs old schemas.
+    current_rows: list[dict[str, Any]] = [
+        row for row in existing_rows
+        if not (
+            row["layer"] == "ods"
+            and logical_table_name(row["layer"], row["table_name"])
+            in {"company", "filing", "filing_document", "financial_fact"}
+        )
+    ]
     existing_keys = {
         (row["layer"], logical_table_name(row["layer"], row["table_name"]))
-        for row in existing_rows
+        for row in current_rows
     }
 
     for layer, tables in _baseline_current_ddls().items():

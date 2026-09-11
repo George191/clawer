@@ -437,6 +437,7 @@ class MongoStorage(StorageBackend):
         template_name: str | None = None,
         limit: int = 50,
         balanced: bool = True,
+        cik_values: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """获取待下载记录。
 
@@ -450,7 +451,7 @@ class MongoStorage(StorageBackend):
         """
         await self._ensure_connection()
 
-        filter_query = self._download_claim_filter()
+        filter_query = self._download_claim_filter(cik_values)
 
         if template_name:
             collection = await self._get_collection(template_name)
@@ -481,10 +482,13 @@ class MongoStorage(StorageBackend):
             return results
 
     @staticmethod
-    def _download_claim_filter() -> dict[str, Any]:
-        return {
+    def _download_claim_filter(cik_values: set[str] | None = None) -> dict[str, Any]:
+        query: dict[str, Any] = {
             "_meta.download_status": {"$in": ["pending", "downloading"]},
         }
+        if cik_values is not None:
+            query["cik"] = {"$in": sorted(cik_values)}
+        return query
 
     async def _claim_pending_downloads_from_collection(
         self,

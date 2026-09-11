@@ -9,19 +9,33 @@ from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_date, safe_datetime, safe_str
 
 
-def _int(value: Any) -> int | None:
-    try:
-        return int(value) if value not in (None, "") else None
-    except (TypeError, ValueError):
+def _meta(record: dict[str, Any]) -> dict[str, Any]:
+    value = record.get("_meta")
+    return value if isinstance(value, dict) else {}
+
+
+def _safe_bool(value: Any) -> bool | None:
+    if value is None:
         return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", ""}:
+        return False
+    return None
 
 
-def _normalize_filing(record: dict[str, Any]) -> dict[str, Any]:
-    meta = record.get("_meta", {}) or {}
+def _normalize_sec_edgar_filing(record: dict[str, Any]) -> dict[str, Any]:
+    meta = _meta(record)
+    record_id = safe_str(record.get("record_id"))
     return {
-        "record_id": safe_str(meta.get("record_id") or record.get("record_id")) or "",
-        "data_source": safe_str(meta.get("data_source") or meta.get("template")) or "filing",
-        "data_type": "filing",
+        "record_id": record_id,
+        "data_source": safe_str(record.get("data_source")),
+        "data_type": safe_str(record.get("data_type")),
         "cik": safe_str(record.get("cik")),
         "accession_number": safe_str(record.get("accession_number")),
         "form": safe_str(record.get("form")),
@@ -33,26 +47,23 @@ def _normalize_filing(record: dict[str, Any]) -> dict[str, Any]:
         "film_number": safe_str(record.get("film_number")),
         "items": safe_str(record.get("items")),
         "core_type": safe_str(record.get("core_type")),
-        "size": _int(record.get("size")),
-        "is_xbrl": record.get("is_xbrl"),
-        "is_inline_xbrl": record.get("is_inline_xbrl"),
+        "size": record.get("size"),
+        "is_xbrl": _safe_bool(record.get("is_xbrl")),
+        "is_inline_xbrl": _safe_bool(record.get("is_inline_xbrl")),
         "filing_base": safe_str(record.get("filing_base")),
         "filing_index_url": safe_str(record.get("filing_index_url")),
-        "filing_index_status": safe_str(record.get("filing_index_status")),
-        "submission_documents": json.dumps(record.get("submission_documents"), ensure_ascii=False)
-        if record.get("submission_documents") is not None else None,
     }
 
 
-def normalize_filing(record: dict[str, Any]) -> list[dict[str, Any]]:
-    from app.etl.normalizers.filing_document import normalize_filing_documents
+def normalize_sec_edgar_filing(record: dict[str, Any]) -> list[dict[str, Any]]:
+    from app.etl.normalizers.filing_document import normalize_sec_edgar_filing_documents
 
-    filing = _normalize_filing(record)
+    filing = _normalize_sec_edgar_filing(record)
     return [
         filing,
-        *normalize_filing_documents(record, "document_format_files"),
-        *normalize_filing_documents(record, "data_files"),
+        *normalize_sec_edgar_filing_documents(record, "document_format_files"),
+        *normalize_sec_edgar_filing_documents(record, "data_files"),
     ]
 
 
-register_normalizer("filing", "sec_edgar_filing", normalize_filing)
+register_normalizer("filing", "sec_edgar_filing", normalize_sec_edgar_filing)

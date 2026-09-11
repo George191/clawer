@@ -1,0 +1,86 @@
+name: planet_investors_news
+display_name: "Planet Investor Relations News"
+base_url: "https://investors.planet.com"
+data_type: news
+adapter: planet_investors_news
+anti_crawl_enabled: false
+description: >
+  采集 Planet Investor Relations 新闻列表及详情页内容。
+  列表页为服务器渲染 HTML，adapter 负责兼容历史 Q4 新闻页的列表容器并补充详情字段。
+
+response_type: html
+list_page: "/news/default.aspx"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    Connection: "close"
+  encoding: utf-8
+
+dedup_fields:
+  - url
+
+list_fields:
+  - name: title
+    selector: "article h1 a, article h2 a, article h3 a, .news-item h3 a, .module_item h3 a"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "新闻标题（adapter 兼容站点列表容器）"
+
+  - name: url
+    selector: "article h1 a, article h2 a, article h3 a, .news-item h3 a, .module_item h3 a"
+    selector_type: css
+    field_type: href
+    required: true
+    description: "新闻详情页链接"
+
+  - name: date
+    selector: "article time, article .date, .news-item .date, .module_item .date"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "发布日期"
+
+list_pagination:
+  type: next_page
+  next_selector: "a.next, a[rel='next'], .pagination .next a"
+  start_page: 1
+  max_pages: 1
+  results_per_page: 100
+
+detail_page: "{url}"
+detail_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+  encoding: utf-8
+
+detail_fields:
+  - name: content
+    selector: "article .content, article .entry-content, .news-detail, .module_item_detail, main article"
+    selector_type: css
+    field_type: html
+    required: false
+    description: "新闻详情正文容器"
+
+download:
+  - selector: "thumbnail"
+    selector_type: json
+    link_type: src
+    asset_type: thumbnail
+    description: "详情页 og:image 缩略图"
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    asset_type: attachment
+    description: "正文附件"
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    asset_type: image
+    description: "正文图片"

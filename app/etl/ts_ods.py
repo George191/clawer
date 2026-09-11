@@ -23,7 +23,6 @@ _ODS_INTELLIGENCE_TABLE = "ts_ods.ods_intelligence"
 _ODS_COMPANY_TABLE = "ts_ods.ods_company"
 _ODS_FILING_TABLE = "ts_ods.ods_filing"
 _ODS_FILING_DOCUMENT_TABLE = "ts_ods.ods_filing_document"
-_ODS_FINANCIAL_FACT_TABLE = "ts_ods.ods_financial_fact"
 
 # ODS 单条入库重试配置：仅针对可重试的连接/瞬时错误
 _ODS_WRITE_MAX_ATTEMPTS = 3
@@ -200,91 +199,94 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
 RETURNING *
 """
 
-ODS_COMPANY_INSERT = f"""
-INSERT INTO {_ODS_COMPANY_TABLE} (
-    record_id, data_source, data_type, cik, ticker, name, entity_name, entity_type,
-    sic, sic_description, fiscal_year_end, state_of_incorporation, state_of_location,
-    addresses, former_names, filing_date, created_at, updated_at
-) VALUES (
-    :record_id, :data_source, :data_type, :cik, :ticker, :name, :entity_name, :entity_type,
-    :sic, :sic_description, :fiscal_year_end, :state_of_incorporation, :state_of_location,
-    CAST(:addresses AS jsonb), CAST(:former_names AS jsonb), CAST(:filing_date AS date),
-    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
-)
-ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    cik = EXCLUDED.cik, ticker = EXCLUDED.ticker, name = EXCLUDED.name,
-    entity_name = EXCLUDED.entity_name, entity_type = EXCLUDED.entity_type,
-    sic = EXCLUDED.sic, sic_description = EXCLUDED.sic_description,
-    fiscal_year_end = EXCLUDED.fiscal_year_end,
-    state_of_incorporation = EXCLUDED.state_of_incorporation,
-    state_of_location = EXCLUDED.state_of_location, addresses = EXCLUDED.addresses,
-    former_names = EXCLUDED.former_names, filing_date = EXCLUDED.filing_date,
-    updated_at = EXCLUDED.updated_at
-RETURNING *
-"""
-
-ODS_FILING_INSERT = f"""
-INSERT INTO {_ODS_FILING_TABLE} (
-    record_id, data_source, data_type, cik, accession_number, form, filing_date,
-    report_date, acceptance_datetime, act, file_number, film_number, items,
-    core_type, size, is_xbrl, is_inline_xbrl, filing_base, filing_index_url,
-    filing_index_status, submission_documents, created_at, updated_at
-) VALUES (
-    :record_id, :data_source, :data_type, :cik, :accession_number, :form, CAST(:filing_date AS date),
-    CAST(:report_date AS date), CAST(:acceptance_datetime AS timestamptz), :act, :file_number, :film_number, :items,
-    :core_type, CAST(:size AS bigint), CAST(:is_xbrl AS boolean), CAST(:is_inline_xbrl AS boolean), :filing_base,
-    :filing_index_url, :filing_index_status, CAST(:submission_documents AS jsonb),
-    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
-)
-ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    cik = EXCLUDED.cik, accession_number = EXCLUDED.accession_number, form = EXCLUDED.form,
-    filing_date = EXCLUDED.filing_date, report_date = EXCLUDED.report_date,
-    acceptance_datetime = EXCLUDED.acceptance_datetime, act = EXCLUDED.act,
-    file_number = EXCLUDED.file_number, film_number = EXCLUDED.film_number,
-    items = EXCLUDED.items, core_type = EXCLUDED.core_type, size = EXCLUDED.size,
-    is_xbrl = EXCLUDED.is_xbrl, is_inline_xbrl = EXCLUDED.is_inline_xbrl,
-    filing_base = EXCLUDED.filing_base, filing_index_url = EXCLUDED.filing_index_url,
-    filing_index_status = EXCLUDED.filing_index_status,
-    submission_documents = EXCLUDED.submission_documents, updated_at = EXCLUDED.updated_at
-RETURNING *
-"""
-
 ODS_FILING_DOCUMENT_INSERT = """
 INSERT INTO {table_ref} (
-    record_id, data_source, data_type, filing_record_id, cik, accession_number, file_category,
-    sequence, description, document, doc_type, size, url, created_at, updated_at
+    record_id, data_source, data_type, cik, accession_number,
+    sequence, description, filename, size, url, created_at, updated_at
 ) VALUES (
-    :record_id, :data_source, :data_type, :filing_record_id, :cik, :accession_number, :file_category,
-    :sequence, :description, :document, :doc_type, :size, :url,
+    :record_id, :data_source, :data_type, :cik, :accession_number,
+    :sequence, :description, :filename, :size, :url,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    filing_record_id = EXCLUDED.filing_record_id, cik = EXCLUDED.cik,
-    accession_number = EXCLUDED.accession_number, file_category = EXCLUDED.file_category,
+    cik = EXCLUDED.cik,
+    accession_number = EXCLUDED.accession_number,
     sequence = EXCLUDED.sequence,
-    description = EXCLUDED.description, document = EXCLUDED.document,
-    doc_type = EXCLUDED.doc_type, size = EXCLUDED.size, url = EXCLUDED.url,
+    description = EXCLUDED.description, filename = EXCLUDED.filename,
+    size = EXCLUDED.size, url = EXCLUDED.url,
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
 
 ODS_FINANCIAL_FACT_INSERT = """
 INSERT INTO {table_ref} (
-    record_id, data_source, data_type, company_record_id, cik, taxonomy, concept,
-    unit, value, accession_number, fiscal_year, fiscal_period, filed, frame,
-    start_date, end_date, created_at, updated_at
+    record_id, data_source, data_type, cik, entity_name, taxonomy, concept,
+    concept_label, unit, value, accn, form, filed, fy, fp, frame,
+    start_date, end_date, is_amendment, created_at, updated_at
 ) VALUES (
-    :record_id, :data_source, :data_type, :company_record_id, :cik, :taxonomy, :concept,
-    :unit, CAST(:value AS numeric), :accession_number, CAST(:fiscal_year AS integer), :fiscal_period,
-    :filed, :frame, :start_date, :end_date, CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+    :record_id, :data_source, :data_type, :cik, :entity_name, :taxonomy, :concept,
+    :concept_label, :unit, CAST(:value AS numeric), :accn, :form,
+    CAST(:filed AS date), CAST(:fy AS integer), :fp, :frame,
+    CAST(:start_date AS date), CAST(:end_date AS date),
+    COALESCE(CAST(:is_amendment AS boolean), FALSE),
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    company_record_id = EXCLUDED.company_record_id, cik = EXCLUDED.cik,
-    taxonomy = EXCLUDED.taxonomy, concept = EXCLUDED.concept, unit = EXCLUDED.unit,
-    value = EXCLUDED.value, accession_number = EXCLUDED.accession_number,
-    fiscal_year = EXCLUDED.fiscal_year, fiscal_period = EXCLUDED.fiscal_period,
-    filed = EXCLUDED.filed, frame = EXCLUDED.frame, start_date = EXCLUDED.start_date,
-    end_date = EXCLUDED.end_date, updated_at = EXCLUDED.updated_at
+    cik = EXCLUDED.cik, entity_name = EXCLUDED.entity_name,
+    taxonomy = EXCLUDED.taxonomy, concept = EXCLUDED.concept,
+    concept_label = EXCLUDED.concept_label, unit = EXCLUDED.unit,
+    value = EXCLUDED.value, accn = EXCLUDED.accn, form = EXCLUDED.form,
+    filed = EXCLUDED.filed, fy = EXCLUDED.fy, fp = EXCLUDED.fp,
+    frame = EXCLUDED.frame, start_date = EXCLUDED.start_date,
+    end_date = EXCLUDED.end_date, is_amendment = EXCLUDED.is_amendment,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_COMPANY_STANDARD_INSERT = """
+INSERT INTO ts_ods.ods_company (
+    record_id, data_source, data_type, cik, name, entity_type, exchanges, tickers,
+    sic, sic_description, address, website, kafka_offset, kafka_partition,
+    kafka_topic, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :cik, :name, :entity_type, CAST(:exchanges AS jsonb),
+    CAST(:tickers AS jsonb), :sic, :sic_description, CAST(:address AS jsonb),
+    :website, NULL, NULL, NULL,
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    cik = EXCLUDED.cik, name = EXCLUDED.name, entity_type = EXCLUDED.entity_type,
+    exchanges = EXCLUDED.exchanges, tickers = EXCLUDED.tickers, sic = EXCLUDED.sic,
+    sic_description = EXCLUDED.sic_description, address = EXCLUDED.address,
+    website = EXCLUDED.website, updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_FILING_STANDARD_INSERT = """
+INSERT INTO ts_ods.ods_filing (
+    record_id, data_source, data_type, cik, accession_number, form, filing_date,
+    report_date, acceptance_datetime, act, file_number, film_number, items,
+    core_type, size, is_xbrl, is_inline_xbrl, filing_base, filing_index_url,
+    kafka_offset, kafka_partition, kafka_topic, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :cik, :accession_number, :form,
+    CAST(:filing_date AS date), CAST(:report_date AS date),
+    CAST(:acceptance_datetime AS timestamptz), :act, :file_number, :film_number, :items,
+    :core_type, CAST(:size AS bigint), CAST(:is_xbrl AS boolean),
+    CAST(:is_inline_xbrl AS boolean), :filing_base, :filing_index_url,
+    NULL, NULL, NULL,
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    cik = EXCLUDED.cik, accession_number = EXCLUDED.accession_number,
+    form = EXCLUDED.form, filing_date = EXCLUDED.filing_date,
+    report_date = EXCLUDED.report_date, acceptance_datetime = EXCLUDED.acceptance_datetime,
+    act = EXCLUDED.act, file_number = EXCLUDED.file_number,
+    film_number = EXCLUDED.film_number, items = EXCLUDED.items,
+    core_type = EXCLUDED.core_type, size = EXCLUDED.size,
+    is_xbrl = EXCLUDED.is_xbrl, is_inline_xbrl = EXCLUDED.is_inline_xbrl,
+    filing_base = EXCLUDED.filing_base, filing_index_url = EXCLUDED.filing_index_url,
+    updated_at = EXCLUDED.updated_at
 RETURNING *
 """
 
@@ -293,10 +295,10 @@ _ODS_INSERT_SQL = {
     "patent": ODS_PATENT_INSERT,
     "navwarn": ODS_NAVWARN_INSERT,
     "intelligence": ODS_INTELLIGENCE_INSERT,
-    "company": ODS_COMPANY_INSERT,
-    "filing": ODS_FILING_INSERT,
+    "company": ODS_COMPANY_STANDARD_INSERT,
+    "filing": ODS_FILING_STANDARD_INSERT,
     "filing_document": ODS_FILING_DOCUMENT_INSERT.format(table_ref=_ODS_FILING_DOCUMENT_TABLE),
-    "financial_fact": ODS_FINANCIAL_FACT_INSERT.format(table_ref=_ODS_FINANCIAL_FACT_TABLE),
+    "financial_fact": ODS_FINANCIAL_FACT_INSERT.format(table_ref="ts_ods.ods_financial_fact"),
 }
 
 

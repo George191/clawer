@@ -1,0 +1,85 @@
+name: planet_pulse_news
+display_name: "Planet Pulse News"
+base_url: "https://www.planet.com"
+data_type: news
+adapter: planet_pulse_news
+anti_crawl_enabled: false
+description: >
+  采集 Planet Pulse News 分类文章及详情页内容。
+  使用分类归档页分页，adapter 负责列表记录规范化和详情正文/媒体提取。
+
+response_type: html
+list_page: "/pulse/category/news/"
+list_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+    Connection: "close"
+  encoding: utf-8
+
+dedup_fields:
+  - url
+
+list_fields:
+  - name: title
+    selector: "article h1 a, article h2 a, article h3 a, .post h2 a, .post-card a"
+    selector_type: css
+    field_type: text
+    required: true
+    transform: strip
+    description: "Pulse 新闻标题（adapter 兼容站点列表容器）"
+
+  - name: url
+    selector: "article h1 a, article h2 a, article h3 a, .post h2 a, .post-card a"
+    selector_type: css
+    field_type: href
+    required: true
+    description: "Pulse 文章详情页链接"
+
+  - name: date
+    selector: "article time, article .date, .post .date, .post-card .date"
+    selector_type: css
+    field_type: text
+    required: false
+    transform: strip
+    description: "发布日期"
+
+list_pagination:
+  type: page_number
+  start_page: 1
+  max_pages: 0
+  results_per_page: 20
+
+detail_page: "{url}"
+detail_request:
+  method: GET
+  headers:
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.9"
+  encoding: utf-8
+
+detail_fields:
+  - name: content
+    selector: "article .entry-content, article .post-content, .post-content, main article"
+    selector_type: css
+    field_type: html
+    required: false
+    description: "Pulse 文章正文容器"
+
+download:
+  - selector: "thumbnail"
+    selector_type: json
+    link_type: src
+    asset_type: thumbnail
+    description: "详情页 og:image 缩略图"
+  - selector: "attachments"
+    selector_type: json
+    link_type: href
+    asset_type: attachment
+    description: "正文附件"
+  - selector: "images"
+    selector_type: json
+    link_type: src
+    asset_type: image
+    description: "正文图片"

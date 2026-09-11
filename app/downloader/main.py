@@ -4,6 +4,7 @@
     --template <name>    只处理指定模板（默认扫描所有模板）
     --poll <seconds>      轮询间隔（默认 10）
     --batch <n>           每次处理记录数（默认 50）
+    --cik-file <path>     只下载文件中 CIK 对应的 SEC 记录
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ async def run() -> None:
     template_name: str | None = None
     poll_interval = 10
     batch_size = 50
+    cik_file: str | None = None
 
     for i, arg in enumerate(sys.argv):
         if arg == "--template" and i + 1 < len(sys.argv):
@@ -34,11 +36,14 @@ async def run() -> None:
             poll_interval = int(sys.argv[i + 1])
         elif arg == "--batch" and i + 1 < len(sys.argv):
             batch_size = int(sys.argv[i + 1])
+        elif arg == "--cik-file" and i + 1 < len(sys.argv):
+            cik_file = sys.argv[i + 1]
 
     worker = DownloadWorker(
         poll_interval=poll_interval,
         batch_size=batch_size,
         template_name=template_name,
+        cik_file=cik_file,
     )
     try:
         await worker.run()

@@ -202,6 +202,20 @@ def normalize_unseenlabs_news(record: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def normalize_planet_investors_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "planet_investors_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_planet_pulse_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "planet_pulse_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
 register_normalizer("news", "ssc_news", normalize_ssc_news)
 register_normalizer("news", "blacksky_press", normalize_blacksky_press)
 register_normalizer("news", "blacksky_news", normalize_blacksky_news)
@@ -210,3 +224,5 @@ register_normalizer("news", "satellite_today", normalize_satellite_today)
 register_normalizer("news", "arstechnica", normalize_arstechnica)
 register_normalizer("news", "ssc_press", normalize_ssc_press)
 register_normalizer("news", "unseenlabs_news", normalize_unseenlabs_news)
+register_normalizer("news", "planet_investors_news", normalize_planet_investors_news)
+register_normalizer("news", "planet_pulse_news", normalize_planet_pulse_news)
