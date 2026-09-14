@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
@@ -14,20 +15,27 @@ def _meta(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_sec_edgar_filing_document(record: dict[str, Any]) -> dict[str, Any]:
+
+    def pick(name: str) -> Any:
+        return record.get(name)
+
+    def dump(value: Any) -> str | None:
+        return json.dumps(value, ensure_ascii=False) if value is not None else None
+    
     meta = _meta(record)
     record_id = safe_str(meta.get("record_id"))
     return {
         "record_id": record_id,
         "data_source": safe_str(meta.get("template")),
         "data_type": "filing_document",
-        "cik": safe_str(record.get("cik")),
-        "accession_number": safe_str(record.get("accession_number")),
-        "sequence": safe_str(record.get("sequence")),
-        "description": safe_str(record.get("description")),
-        "filename": safe_str(record.get("filename")),
-        "size": safe_str(record.get("size")),
-        "url": safe_str(record.get("url")),
-        "doc_type": safe_str(record.get("doc_type")),
+        "cik": safe_str(pick("cik")),
+        "accession_number": safe_str(pick("accession_number")),
+        "sequence": safe_str(pick("sequence")),
+        "description": safe_str(pick("description")),
+        "filename": safe_str(pick("filename")),
+        "size": safe_str(pick("size")),
+        "url": safe_str(pick("url")),
+        "doc_type": safe_str(pick("doc_type")),
     }
 
 

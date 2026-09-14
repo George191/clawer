@@ -190,16 +190,3 @@ def apply_asset_path_overrides(record: dict[str, Any]) -> tuple[dict[str, Any], 
         _set_path_value(merged, path, value)
         asset_paths.add(path)
     return merged, asset_paths
-
-
-def normalize_generic(record: dict[str, Any]) -> dict[str, Any]:
-    from app.etl.base import extract_meta
-
-    meta = extract_meta(record)
-    return {
-        "data_source": meta.get("data_source", ""),
-        "data_type": meta.get("data_type", "unknown"),
-        "record_id": meta.get("record_id", ""),
-        "title": safe_str(record.get("title")),
-        "description": safe_str(record.get("description") or record.get("abstract") or record.get("summary")),
-    }

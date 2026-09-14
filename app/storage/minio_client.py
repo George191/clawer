@@ -283,29 +283,28 @@ class MinioClient:
         self._executor.shutdown(wait=True, cancel_futures=True)
         self._client = None
 
-    @staticmethod
-    def _guess_content_type(filename: str) -> str:
-        ext = Path(filename).suffix.lower()
-        content_types = {
-            ".pdf": "application/pdf",
-            ".doc": "application/msword",
-            ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ".xls": "application/vnd.ms-excel",
-            ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            ".txt": "text/plain",
-            ".html": "text/html",
-            ".htm": "text/html",
-            ".xml": "application/xml",
-            ".json": "application/json",
-            ".zip": "application/zip",
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".gif": "image/gif",
-            ".tiff": "image/tiff",
-            ".tif": "image/tiff",
-        }
-        return content_types.get(ext, "application/octet-stream")
+def _guess_content_type(filename: str) -> str:
+    ext = Path(filename).suffix.lower()
+    content_types = {
+        ".pdf": "application/pdf",
+        ".doc": "application/msword",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xls": "application/vnd.ms-excel",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".txt": "text/plain",
+        ".html": "text/html",
+        ".htm": "text/html",
+        ".xml": "application/xml",
+        ".json": "application/json",
+        ".zip": "application/zip",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".tiff": "image/tiff",
+        ".tif": "image/tiff",
+    }
+    return content_types.get(ext, "application/octet-stream")
 
 
 _minio_client: MinioClient | None = None

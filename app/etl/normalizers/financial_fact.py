@@ -9,28 +9,40 @@ from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_str
 
 
+def _meta(record: dict[str, Any]) -> dict[str, Any]:
+    value = record.get("_meta")
+    return value if isinstance(value, dict) else {}
+
+
 def normalize_sec_edgar_financial_fact(record: dict[str, Any]) -> dict[str, Any]:
-    meta = record.get("_meta", {}) or {}
+
+    def pick(name: str) -> Any:
+        return record.get(name)
+
+    def dump(value: Any) -> str | None:
+        return json.dumps(value, ensure_ascii=False) if value is not None else None
+    
+    meta = _meta(record)
     return {
         "record_id": safe_str(meta.get("record_id")),
         "data_source": safe_str(meta.get("data_source")),
         "data_type": "financial_fact",
-        "cik": safe_str(record.get("cik")),
-        "entity_name": safe_str(record.get("entity_name")),
-        "form": safe_str(record.get("form")),
-        "taxonomy": safe_str(record.get("taxonomy")),
-        "concept": safe_str(record.get("concept")),
-        "concept_label": safe_str(record.get("concept_label")),
-        "unit": safe_str(record.get("unit")),
-        "value": record.get("value", record.get("val")),
-        "accn": safe_str(record.get("accn") or record.get("accession_number")),
-        "filed": safe_str(record.get("filed")),
-        "start_date": safe_str(record.get("start_date") or record.get("start")),
-        "end_date": safe_str(record.get("end_date") or record.get("end")),
-        "fy": record.get("fy"),
-        "fp": safe_str(record.get("fp")),
-        "frame": safe_str(record.get("frame")),
-        "is_amendment": record.get("is_amendment"),
+        "cik": safe_str(pick("cik")),
+        "entity_name": safe_str(pick("entity_name")),
+        "form": safe_str(pick("form")),
+        "taxonomy": safe_str(pick("taxonomy")),
+        "concept": safe_str(pick("concept")),
+        "concept_label": safe_str(pick("concept_label")),
+        "unit": safe_str(pick("unit")),
+        "value": pick("value"),
+        "accn": safe_str(pick("accn")),
+        "filed": safe_str(pick("filed")),
+        "start_date": safe_str(pick("start_date")),
+        "end_date": safe_str(pick("end_date")),
+        "fy": pick("fy"),
+        "fp": safe_str(pick("fp")),
+        "frame": safe_str(pick("frame")),
+        "is_amendment": pick("is_amendment"),
     }
 
 

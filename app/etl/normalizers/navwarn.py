@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -16,6 +17,11 @@ _NGA_REGION_NAVAREA_IDS = {
 
 _LAT_MIN, _LAT_MAX = -90.0, 90.0
 _LON_MIN, _LON_MAX = -180.0, 180.0
+
+
+def _meta(record: dict[str, Any]) -> dict[str, Any]:
+    value = record.get("_meta")
+    return value if isinstance(value, dict) else {}
 
 
 def _extract_coordinates(text: str | None) -> list[dict[str, Any]]:
@@ -78,25 +84,31 @@ def _navwarn_common(
 
     返回完整基础字段 dict（含 coordinate WKT）；issued_at 由源专属函数填充，
     """
-    meta = record.get("_meta", {})
+    def pick(name: str) -> Any:
+        return record.get(name)
 
-    message_text = safe_str(record.get("message_text"))
+    def dump(value: Any) -> str | None:
+        return json.dumps(value, ensure_ascii=False) if value is not None else None
+    
+    meta = _meta(record)
+
+    message_text = safe_str(pick("message_text"))
     coordinates = _extract_coordinates(message_text)
 
     return {
         "data_source": safe_str(meta.get("template")),
         "data_type": safe_str(meta.get("data_type")),
         "record_id": safe_str(meta.get("record_id")),
-        "navarea_id": safe_str(record.get("navarea_id")),
-        "warning_no": safe_str(record.get("warning_no")),
-        "serial_number": safe_str(record.get("serial_number")),
-        "warning_year": safe_str(record.get("warning_year")),
-        "region": safe_str(record.get("region")),
-        "subregion": safe_str(record.get("subregion")),
-        "oceans": safe_str(record.get("oceans")),
-        "dnc_region": safe_str(record.get("dnc_region")),
-        "status": safe_str(record.get("status")),
-        "category": safe_str(record.get("category")),
+        "navarea_id": pick("navarea_id"),
+        "warning_no": safe_str(pick("warning_no")),
+        "serial_number": pick("serial_number"),
+        "warning_year": pick("warning_year"),
+        "region": safe_str(pick("region")),
+        "subregion": safe_str(pick("subregion")),
+        "oceans": safe_str(pick("oceans")),
+        "dnc_region": safe_str(pick("dnc_region")),
+        "status": safe_str(pick("status")),
+        "category": safe_str(pick("category")),
         "message_text": message_text,
         "coordinate": _coordinates_to_wkt(coordinates),
     }
@@ -112,31 +124,63 @@ def _roman_to_int(value: str) -> int | None:
         previous = current
     return total
 
+
+def _parse_warning_no(
+    warning_no: str | None,
+) -> tuple[int | None, int | None, str | None]:
+    if not warning_no:
+        return None, None, None
+
+    match = re.fullmatch(
+        r"\s*(?P<left>\d+)\s*(?P<separator>[/\-])\s*"
+        r"(?P<right>\d+)\s*"
+        r"(?:\((?P<subregion>[^()]*)\))?\s*",
+        warning_no,
+    )
+    if not match:
+        return None, None, None
+
+    left = match.group("left")
+    right = match.group("right")
+    separator = match.group("separator")
+
+    # 496/26：序号/年份
+    # 21-0325：年份-序号
+    if separator == "-" and len(left) == 2 and len(right) == 4:
+        year_text = left
+        serial_text = right
+    else:
+        serial_text = left
+        year_text = right
+
+    serial_number = int(serial_text)
+
+    if len(year_text) == 2:
+        warning_year = 2000 + int(year_text)
+    else:
+        warning_year = int(year_text)
+
+    subregion = match.group("subregion")
+    subregion = subregion.strip() if subregion else None
+
+    return serial_number, warning_year, subregion
+
+
 def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     """sealagom_navwarn 专属字段映射 + 时间解析。"""
     warning_no = safe_str(record.get("warning_no"))
-    serial_text, year_text = "0", "0"
 
-    if "/" in warning_no:
-        # SealaGOM: 117/26 -> serial=117, year=2026
-        serial_text, year_text = (part.strip() for part in warning_no.split("/", 1))
+    serial_number, warning_year, subregion = _parse_warning_no(warning_no)
 
-    elif "-" in warning_no:
-        # SealaGOM: 21-0325 -> year=2021, serial=325
-        year_text, serial_text = (part.strip() for part in warning_no.split("-", 1))
+    record["serial_number"] = serial_number
+    record["warning_year"] = warning_year
+    record["subregion"] = subregion
 
-    record["serial_number"] = int(serial_text) if serial_text != "0" else None
-    record["warning_year"] = (
-        int(year_text)
-        if len(year_text) == 4
-        else 2000 + int(year_text) if year_text != "0" else None
-    )
-
-    region, navarea_id = record["sea_name"].split(" ")
+    region, navarea_id = record.get("sea_name").split(" ")
     record["region"] = region
     record["navarea_id"] = _roman_to_int(navarea_id)
-    record["warning_no"] = f"{year_text}/{serial_text}"
-    normalized = _navwarn_common(record, "sealagom")
+    record["warning_no"] = f"{warning_year}/{serial_number}"
+    normalized = _navwarn_common(record, "sealagom_navwarn")
     normalized["issued_at"] = safe_datetime(record.get("issue_time"))
     return normalized
 
@@ -147,12 +191,13 @@ def normalize_nga_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     serial_number = record.get("warning_no")
     issue_time = safe_datetime(record.get("issue_time"))
     warning_year = issue_time.year
+
     record["warning_year"] = warning_year
     record["warning_no"] = f"{str(warning_year)}/{serial_number}"
-    navarea = record["navarea"]
+    navarea = record.get("navarea")
     record["region"] = navarea
     record["navarea_id"] = _NGA_REGION_NAVAREA_IDS.get(navarea)
-    normalized = _navwarn_common(record, "nga")
+    normalized = _navwarn_common(record, "nga_navwarn")
     normalized["issued_at"] = issue_time
 
     return normalized

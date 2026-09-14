@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -14,6 +15,11 @@ from app.etl.normalizers.base import (
     safe_datetime,
     safe_str,
 )
+
+
+def _meta(record: dict[str, Any]) -> dict[str, Any]:
+    value = record.get("_meta")
+    return value if isinstance(value, dict) else {}
 
 
 def _normalize_satellite_today_news_types(record: dict[str, Any]) -> list[str]:
@@ -44,37 +50,44 @@ def _media_source_url(value: Any) -> str | None:
 
 
 def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
-    record, _ = apply_asset_path_overrides(record)
-    meta = record.get("_meta", {})
 
-    content_html = safe_str(record.get("content_html"))
-    summary_html = safe_str(record.get("summary_html"))
-    attachments = record.get("attachments")
-    images = record.get("images")
-    slides = record.get("slides")
-    tags = record.get("tags")
-    organization = record.get("organization")
+    def pick(name: str) -> Any:
+        return record.get(name)
+
+    def dump(value: Any) -> str | None:
+        return json.dumps(value, ensure_ascii=False) if value is not None else None
+    
+    meta = _meta(record)
+    record, _ = apply_asset_path_overrides(record)
+
+    content_html = safe_str(pick("content_html"))
+    summary_html = safe_str(pick("summary_html"))
+    attachments = pick("attachments")
+    images = pick("images")
+    slides = pick("slides")
+    tags = pick("tags")
+    organization = pick("organization")
 
     return {
         "data_source": safe_str(meta.get("template")),
         "data_type": safe_str(meta.get("data_type")),
         "record_id": safe_str(meta.get("record_id")),
-        "title": safe_str(record.get("title")),
-        "url": safe_str(record.get("url")),
-        "source_url": safe_str(record.get("source_url")),
+        "title": safe_str(pick("title")),
+        "url": safe_str(pick("url")),
+        "source_url": safe_str(pick("source_url")),
         "summary": html_to_text(summary_html),
         "content": html_to_text(content_html),
         "content_html": content_html,
         "summary_html": summary_html,
-        "author": safe_str(record.get("author")),
+        "author": safe_str(pick("author")),
         "news_type": None,
         "organization": json_dumps(organization),
         "tags": json_dumps(tags),
-        "external_links": json_dumps(record.get("external_links")),
+        "external_links": json_dumps(pick("external_links")),
         "attachments": json_dumps(attachments),
         "images": json_dumps(images),
         "slides": json_dumps(slides),
-        "thumbnail": _media_source_url(record.get("thumbnail")),
+        "thumbnail": _media_source_url(pick("thumbnail")),
     }
 
 
@@ -118,8 +131,11 @@ def normalize_ssc_news(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_blacksky_press(record: dict[str, Any]) -> dict[str, Any]:
-    record["thumbnail"] = _media_source_url(record.get("featured_media"))
-    record["summary_html"] = record["excerpt_html"]
+    record["thumbnail"] = record.get("featured_media")
+    if record.get("assets"):
+        record["assets"]["thumbnail"] = record["assets"].get("featured_media")
+
+    record["summary_html"] = record.get("excerpt_html")
     normalized = _news_common(record, "blacksky_press")
     normalized["source_published_at"] = safe_datetime(record.get("date"))
     normalized["source_updated_at"] = safe_datetime(record.get("modified"))
@@ -127,8 +143,11 @@ def normalize_blacksky_press(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_blacksky_news(record: dict[str, Any]) -> dict[str, Any]:
-    record["organization"] = record["source_names"]
-    record["thumbnail"] = _media_source_url(record.get("featured_media"))
+    record["thumbnail"] = record.get("featured_media")
+    if record.get("assets"):
+        record["assets"]["thumbnail"] = record["assets"].get("featured_media")
+
+    record["organization"] = record.get("source_names")
     normalized = _news_common(record, "blacksky_news")
     normalized["source_published_at"] = safe_datetime(record.get("date"))
     normalized["source_updated_at"] = safe_datetime(record.get("modified"))
@@ -136,8 +155,11 @@ def normalize_blacksky_news(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_blacksky_posts(record: dict[str, Any]) -> dict[str, Any]:
-    record["thumbnail"] = _media_source_url(record.get("featured_media"))
-    record["summary_html"] = record["excerpt_html"]
+    record["thumbnail"] = record.get("featured_media")
+    if record.get("assets"):
+        record["assets"]["thumbnail"] = record["assets"].get("featured_media")
+        
+    record["summary_html"] = record.get("excerpt_html")
     normalized = _news_common(record, "blacksky_posts")
     normalized["source_published_at"] = safe_datetime(record.get("date"))
     normalized["source_updated_at"] = safe_datetime(record.get("modified"))
@@ -145,7 +167,7 @@ def normalize_blacksky_posts(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_satellite_today(record: dict[str, Any]) -> dict[str, Any]:
-    record["tags"] = record["tag_names"]
+    record["tags"] = record.get("tag_names")
     normalized = _news_common(record, "satellite_today")
     normalized["news_type"] = json_dumps(_normalize_satellite_today_news_types(record))
     normalized["source_published_at"] = safe_datetime(record.get("date"))

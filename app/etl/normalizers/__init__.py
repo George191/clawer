@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from app.etl.normalizers.base import normalize_generic
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,7 +30,6 @@ def get_normalizer(
         "No source-specific normalizer registered for %s, fallback to generic",
         specific_key,
     )
-    return normalize_generic
 
 
 from app.etl.normalizers import (
