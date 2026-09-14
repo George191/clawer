@@ -100,14 +100,14 @@ INSERT INTO ts_ods.ods_patent (
     title, publication_number, application_number, assignee, inventor,
     publication_date, filing_date, priority_date, grant_date,
     abstract, claims, legal_status, ipc_classification, cpc_classification, patent_type,
-    url, thumbnail, figures, quality_score, quality_flags,
+    url, thumbnail, figures,
     created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
     :title, :publication_number, :application_number, :assignee, :inventor,
     CAST(:publication_date AS date), CAST(:filing_date AS date), CAST(:priority_date AS date), CAST(:grant_date AS date),
     :abstract, CAST(:claims AS jsonb), :legal_status, :ipc_classification, :cpc_classification, :patent_type,
-    :url, :thumbnail, CAST(:figures AS jsonb), CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
+    :url, :thumbnail, CAST(:figures AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
@@ -131,8 +131,6 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     url = {_prefer_text(_ODS_PATENT_TABLE, "url")},
     thumbnail = {_prefer_text(_ODS_PATENT_TABLE, "thumbnail")},
     figures = {_prefer_json(_ODS_PATENT_TABLE, "figures")},
-    quality_score = {_prefer_value(_ODS_PATENT_TABLE, "quality_score")},
-    quality_flags = {_prefer_json(_ODS_PATENT_TABLE, "quality_flags")},
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
@@ -141,17 +139,16 @@ ODS_NAVWARN_INSERT = f"""
 INSERT INTO ts_ods.ods_navwarn (
     record_id, data_source, data_type,
     navarea_id, warning_no, serial_number, warning_year, region,
-    issued_at, message_text, hazard_type, coordinate,
-    quality_score, quality_flags, created_at, updated_at
+    issued_at, message_text, category, status, subregion, oceans, dnc_region, coordinate,
+    created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
     CAST(:navarea_id AS integer), :warning_no, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :region,
-    CAST(:issued_at AS timestamptz), :message_text, :hazard_type,
+    CAST(:issued_at AS timestamptz), :message_text, :category, :status, :subregion, :oceans, :dnc_region,
     CASE
         WHEN NULLIF(BTRIM(CAST(:coordinate AS text)), '') IS NULL THEN NULL
         ELSE ST_GeogFromText(:coordinate)
     END,
-    CAST(:quality_score AS double precision), CAST(:quality_flags AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
@@ -164,10 +161,12 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     region = {_prefer_text(_ODS_NAVWARN_TABLE, "region")},
     issued_at = {_prefer_value(_ODS_NAVWARN_TABLE, "issued_at")},
     message_text = {_prefer_text(_ODS_NAVWARN_TABLE, "message_text")},
-    hazard_type = {_prefer_text(_ODS_NAVWARN_TABLE, "hazard_type")},
+    category = {_prefer_text(_ODS_NAVWARN_TABLE, "category")},
+    status = {_prefer_text(_ODS_NAVWARN_TABLE, "status")},
+    subregion = {_prefer_text(_ODS_NAVWARN_TABLE, "subregion")},
+    oceans = {_prefer_text(_ODS_NAVWARN_TABLE, "oceans")},
+    dnc_region = {_prefer_text(_ODS_NAVWARN_TABLE, "dnc_region")},
     coordinate = {_prefer_geography(_ODS_NAVWARN_TABLE, "coordinate")},
-    quality_score = {_prefer_value(_ODS_NAVWARN_TABLE, "quality_score")},
-    quality_flags = {_prefer_json(_ODS_NAVWARN_TABLE, "quality_flags")},
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
@@ -246,12 +245,11 @@ RETURNING *
 ODS_COMPANY_STANDARD_INSERT = """
 INSERT INTO ts_ods.ods_company (
     record_id, data_source, data_type, cik, name, entity_type, exchanges, tickers,
-    sic, sic_description, address, website, kafka_offset, kafka_partition,
-    kafka_topic, created_at, updated_at
+    sic, sic_description, address, website, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type, :cik, :name, :entity_type, CAST(:exchanges AS jsonb),
     CAST(:tickers AS jsonb), :sic, :sic_description, CAST(:address AS jsonb),
-    :website, NULL, NULL, NULL,
+    :website,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
@@ -267,14 +265,13 @@ INSERT INTO ts_ods.ods_filing (
     record_id, data_source, data_type, cik, accession_number, form, filing_date,
     report_date, acceptance_datetime, act, file_number, film_number, items,
     core_type, size, is_xbrl, is_inline_xbrl, filing_base, filing_index_url,
-    kafka_offset, kafka_partition, kafka_topic, created_at, updated_at
+    created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type, :cik, :accession_number, :form,
     CAST(:filing_date AS date), CAST(:report_date AS date),
     CAST(:acceptance_datetime AS timestamptz), :act, :file_number, :film_number, :items,
     :core_type, CAST(:size AS bigint), CAST(:is_xbrl AS boolean),
     CAST(:is_inline_xbrl AS boolean), :filing_base, :filing_index_url,
-    NULL, NULL, NULL,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET

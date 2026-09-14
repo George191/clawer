@@ -265,6 +265,15 @@ class MinioClient:
         except Exception:
             return False
 
+    async def get_object_content_type(self, object_key: str) -> str | None:
+        await self._ensure_connection()
+        try:
+            stat = await self._run_sync(self._client.stat_object, self._bucket, object_key)
+        except Exception as e:
+            logger.warning("MinIO stat_object failed for %s: %s", object_key, e)
+            return None
+        return str(getattr(stat, "content_type", "") or "").strip() or None
+
     async def remove_object(self, object_key: str) -> None:
         await self._ensure_connection()
         await self._run_sync(self._client.remove_object, self._bucket, object_key)

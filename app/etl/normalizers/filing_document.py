@@ -18,7 +18,7 @@ def normalize_sec_edgar_filing_document(record: dict[str, Any]) -> dict[str, Any
     record_id = safe_str(meta.get("record_id"))
     return {
         "record_id": record_id,
-        "data_source": safe_str(meta.get("data_source")),
+        "data_source": safe_str(meta.get("template")),
         "data_type": "filing_document",
         "cik": safe_str(record.get("cik")),
         "accession_number": safe_str(record.get("accession_number")),
@@ -38,11 +38,11 @@ def normalize_sec_edgar_filing_documents(
     if not isinstance(files, list):
         return []
     meta = _meta(record)
-    filing_id_value = safe_str(record.get("record_id"))
+    filing_id = safe_str(meta.get("record_id"))
     source = safe_str(record.get("data_source"))
     sequence = safe_str(record.get("sequence"))
     rows: list[dict[str, Any]] = []
-    for index, item in enumerate(files):
+    for _, item in enumerate(files):
         if not isinstance(item, dict):
             continue
         filename = safe_str(item.get("filename"))
@@ -55,7 +55,7 @@ def normalize_sec_edgar_filing_documents(
             "accession_number": record.get("accession_number"),
             "sequence": item.get("sequence"),
             "description": item.get("description"),
-            "filename": item.get("filename"),
+            "filename": filename,
             "size": item.get("size"),
             "url": item.get("url"),
             "doc_type": item.get("doc_type"),

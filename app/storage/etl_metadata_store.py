@@ -212,8 +212,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_patent (
     url TEXT,
     thumbnail TEXT,
     figures JSONB,
-    quality_score DOUBLE PRECISION,
-    quality_flags JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, data_type)
@@ -232,12 +230,14 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_navwarn (
     serial_number INTEGER,
     warning_year INTEGER,
     region TEXT,
+    subregion TEXT,
+    oceans TEXT,
+    dnc_region TEXT,
     issued_at TIMESTAMPTZ,
     message_text TEXT,
-    hazard_type TEXT,
+    category TEXT,
+    status TEXT,
     coordinate geography(Geometry, 4326),
-    quality_score DOUBLE PRECISION,
-    quality_flags JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, data_type)
@@ -282,9 +282,6 @@ CREATE TABLE "ts_ods"."ods_company" (
   "sic_description" text COLLATE "pg_catalog"."default",
   "address" jsonb,
   "website" text COLLATE "pg_catalog"."default",
-  "kafka_offset" int8,
-  "kafka_partition" int4,
-  "kafka_topic" text COLLATE "pg_catalog"."default",
   "created_at" timestamptz(6) NOT NULL DEFAULT now(),
     "updated_at" timestamptz(6) NOT NULL DEFAULT now()
 )
@@ -326,9 +323,6 @@ CREATE TABLE "ts_ods"."ods_filing" (
   "is_inline_xbrl" bool,
   "filing_base" text COLLATE "pg_catalog"."default",
   "filing_index_url" text COLLATE "pg_catalog"."default",
-  "kafka_offset" int8,
-  "kafka_partition" int4,
-  "kafka_topic" text COLLATE "pg_catalog"."default",
   "created_at" timestamptz(6) NOT NULL DEFAULT now(),
   "updated_at" timestamptz(6) NOT NULL DEFAULT now()
 )

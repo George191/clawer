@@ -31,10 +31,10 @@ def _safe_bool(value: Any) -> bool | None:
 
 def _normalize_sec_edgar_filing(record: dict[str, Any]) -> dict[str, Any]:
     meta = _meta(record)
-    record_id = safe_str(record.get("record_id"))
+    record_id = safe_str(meta.get("record_id"))
     return {
         "record_id": record_id,
-        "data_source": safe_str(record.get("data_source")),
+        "data_source": safe_str(meta.get("template")),
         "data_type": safe_str(record.get("data_type")),
         "cik": safe_str(record.get("cik")),
         "accession_number": safe_str(record.get("accession_number")),

@@ -76,6 +76,7 @@ def safe_datetime(val: Any) -> datetime | None:
         "%b %d, %Y",
         "%d %B %Y",
         "%d %b %Y",
+        "%d%H%MZ %b %Y"
     ]
     for fmt in formats:
         try:
@@ -95,13 +96,6 @@ def safe_datetime(val: Any) -> datetime | None:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
-
-
-def _pick_first(*vals: Any) -> Any:
-    for v in vals:
-        if v is not None:
-            return v
-    return None
 
 
 def json_dumps(value: Any) -> str | None:
@@ -208,6 +202,4 @@ def normalize_generic(record: dict[str, Any]) -> dict[str, Any]:
         "record_id": meta.get("record_id", ""),
         "title": safe_str(record.get("title")),
         "description": safe_str(record.get("description") or record.get("abstract") or record.get("summary")),
-        "quality_score": 1.0,
-        "quality_flags": "[]",
     }

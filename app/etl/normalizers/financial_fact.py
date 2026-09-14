@@ -12,7 +12,7 @@ from app.etl.normalizers.base import safe_str
 def normalize_sec_edgar_financial_fact(record: dict[str, Any]) -> dict[str, Any]:
     meta = record.get("_meta", {}) or {}
     return {
-        "record_id": safe_str(record.get("record_id")),
+        "record_id": safe_str(meta.get("record_id")),
         "data_source": safe_str(meta.get("data_source")),
         "data_type": "financial_fact",
         "cik": safe_str(record.get("cik")),
@@ -53,7 +53,7 @@ def normalize_sec_edgar_financial_facts(
                     rows.append(normalize_sec_edgar_financial_fact({
                         "_meta": {
                             "record_id": f"{company['record_id']}:fact:{taxonomy}:{concept}:{unit}:{index}",
-                            "data_source": company["data_source"],
+                            "data_source": company["template"],
                         },
                         "cik": company.get("cik"),
                         "entity_name": company.get("entity_name"),

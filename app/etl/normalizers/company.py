@@ -22,8 +22,8 @@ def _normalize_sec_edgar_company(record: dict[str, Any]) -> dict[str, Any]:
         return json.dumps(value, ensure_ascii=False) if value is not None else None
 
     return {
-        "record_id": safe_str(record.get("record_id")),
-        "data_source": safe_str(record.get("data_source")),
+        "record_id": safe_str(meta.get("record_id")),
+        "data_source": safe_str(meta.get("template")),
         "data_type": safe_str(record.get("data_type")),
         "cik": safe_str(pick("cik")),
         "name": safe_str(record.get("name")),
