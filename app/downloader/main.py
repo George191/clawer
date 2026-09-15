@@ -36,14 +36,11 @@ async def run() -> None:
             poll_interval = int(sys.argv[i + 1])
         elif arg == "--batch" and i + 1 < len(sys.argv):
             batch_size = int(sys.argv[i + 1])
-        elif arg == "--cik-file" and i + 1 < len(sys.argv):
-            cik_file = sys.argv[i + 1]
 
     worker = DownloadWorker(
         poll_interval=poll_interval,
         batch_size=batch_size,
         template_name=template_name,
-        cik_file=cik_file,
     )
     try:
         await worker.run()

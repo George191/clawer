@@ -375,59 +375,6 @@ class TsOds(ETLBase):
         # 理论不可达，防御性抛出
         raise last_error if last_error else RuntimeError("ODS write exhausted retries")
 
-    def _validate_required_fields(
-        self,
-        *,
-        table: str,
-        data_source: str,
-        normalized: dict[str, Any],
-    ) -> bool:
-        if table == "news" and normalized.get("source_published_at") is None:
-            logger.warning(
-                "%s Normalized news missing source_published_at, source=%s record_id=%s",
-                self._log_prefix,
-                data_source,
-                normalized.get("record_id"),
-            )
-            return False
-        return True
-
-    def _validate_navwarn_record(
-        self,
-        normalized: dict[str, Any],
-    ) -> tuple[bool, list[str]]:
-        """navwarn ODS 入库前字段级验证门禁。
-
-        覆盖字段类型、长度、业务规则（navarea_id 1-21、warning_year 范围、
-        serial_number>0、coordinate WKT 格式、quality_score 0-1）。
-
-        返回 (passed, error_messages)：
-        - passed=False 表示存在阻断性错误（必填缺失/类型错误），应拒绝入库
-        - 非阻断错误（范围/长度/格式）仅记录 warning，不阻断（normalizer 已清洗）
-        """
-        engine = create_navwarn_validation_engine()
-        result = engine.validate([normalized])
-
-        if not result.errors:
-            return True, []
-
-        blocking_rules = {"required", "type"}
-        blocking: list[str] = []
-        non_blocking: list[str] = []
-        for err in result.errors:
-            message = f"{err.field}({err.rule}): {err.message}"
-            if err.rule in blocking_rules:
-                blocking.append(message)
-            else:
-                non_blocking.append(message)
-
-        if non_blocking:
-            logger.warning(
-                "%s Navwarn validation warnings: %s",
-                self._log_prefix, "; ".join(non_blocking),
-            )
-        return (len(blocking) == 0), blocking
-
     async def _process_ods_record(self, message: dict[str, Any], table: str) -> bool:
         insert_sql = _ODS_INSERT_SQL.get(table)
         if not insert_sql:
@@ -458,16 +405,7 @@ class TsOds(ETLBase):
                 if not normalized_record_id or output_table not in _ODS_INSERT_SQL:
                     logger.warning("%s Invalid normalized ODS record table=%s", self._log_prefix, output_table)
                     return False
-                if output_table == "navwarn":
-                    passed, validation_errors = self._validate_navwarn_record(normalized)
-                    if not passed:
-                        logger.warning(
-                            "%s Navwarn record rejected by validation: %s | record_id=%s",
-                            self._log_prefix, "; ".join(validation_errors), normalized_record_id,
-                        )
-                        return False
-                if not self._validate_required_fields(table=output_table, data_source=normalized.get("data_source") or data_source, normalized=normalized):
-                    return False
+                
                 payload = {**normalized, "record_id": normalized_record_id, "data_source": normalized.get("data_source") or data_source, "data_type": output_table, "created_at": now, "updated_at": now}
                 result = await self._execute_with_table_recovery(output_table, partial(self._write_current, table=output_table, payload=payload), payload=payload)
                 emitted_payload = payload

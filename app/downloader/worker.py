@@ -97,12 +97,10 @@ class DownloadWorker:
         poll_interval: int = 10,
         batch_size: int = 50,
         template_name: str | None = None,
-        cik_file: str | None = None,
     ) -> None:
         self._poll_interval = poll_interval
         self._batch_size = batch_size
         self._template_name = template_name
-        self._cik_values = self._load_ciks(cik_file) if cik_file else None
         self._http: HttpClient | None = None
         self._minio: MinioClient | None = None
         self._mongo = MongoClient()
@@ -115,22 +113,6 @@ class DownloadWorker:
         self._template_cache: dict[str, SiteTemplate] = {}
         # 无下载需求模板缓存：避免重复加载无 download 配置的模板
         self._no_assets_templates: set[str] = set()
-
-    @staticmethod
-    def _load_ciks(path: str) -> set[str]:
-        values: set[str] = set()
-        for raw in Path(path).read_text(encoding="utf-8-sig").splitlines():
-            value = raw.strip()
-            if not value:
-                continue
-            if value.upper().startswith("CIK"):
-                value = value[3:]
-            if not value.isdigit() or len(value) > 10:
-                raise ValueError(f"Invalid CIK in {path}: {raw!r}")
-            values.add(value.zfill(10))
-        if not values:
-            raise ValueError(f"CIK file is empty: {path}")
-        return values
 
     @property
     def _query_template_name(self) -> str | None:
@@ -175,7 +157,6 @@ class DownloadWorker:
         pending = await self._mongo.get_pending_downloads(
             template_name=self._query_template_name,
             limit=self._batch_size,
-            cik_values=self._cik_values,
         )
         if not pending:
             return 0
