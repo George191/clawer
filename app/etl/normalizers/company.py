@@ -46,10 +46,10 @@ def _normalize_sec_edgar_company(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def normalize_sec_edgar_company(record: dict[str, Any]) -> list[dict[str, Any]]:
+def normalize_sec_edgar_company(record: dict[str, Any]) -> list[dict[str, Any]]:
 
     company = _normalize_sec_edgar_company(record)
-    return [company, *await normalize_sec_edgar_financial_facts(record, company)]
+    return [company, *normalize_sec_edgar_financial_facts(record, company)]
 
 
 register_normalizer("company", "sec_edgar_company", normalize_sec_edgar_company)
