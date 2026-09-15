@@ -139,12 +139,12 @@ ODS_NAVWARN_INSERT = f"""
 INSERT INTO ts_ods.ods_navwarn (
     record_id, data_source, data_type,
     navarea_id, warning_no, serial_number, warning_year, region,
-    issued_at, message_text, category, status, subregion, oceans, dnc_region, coordinate,
+    issued_at, message_text, category, status, sub_region, oceans, dnc_region, coordinate,
     created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
     CAST(:navarea_id AS integer), :warning_no, CAST(:serial_number AS integer), CAST(:warning_year AS integer), :region,
-    CAST(:issued_at AS timestamptz), :message_text, :category, :status, :subregion, :oceans, :dnc_region,
+    CAST(:issued_at AS timestamptz), :message_text, :category, :status, :sub_region, :oceans, :dnc_region,
     CASE
         WHEN NULLIF(BTRIM(CAST(:coordinate AS text)), '') IS NULL THEN NULL
         ELSE ST_GeogFromText(:coordinate)
@@ -163,7 +163,7 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     message_text = {_prefer_text(_ODS_NAVWARN_TABLE, "message_text")},
     category = {_prefer_text(_ODS_NAVWARN_TABLE, "category")},
     status = {_prefer_text(_ODS_NAVWARN_TABLE, "status")},
-    subregion = {_prefer_text(_ODS_NAVWARN_TABLE, "subregion")},
+    sub_region = {_prefer_text(_ODS_NAVWARN_TABLE, "sub_region")},
     oceans = {_prefer_text(_ODS_NAVWARN_TABLE, "oceans")},
     dnc_region = {_prefer_text(_ODS_NAVWARN_TABLE, "dnc_region")},
     coordinate = {_prefer_geography(_ODS_NAVWARN_TABLE, "coordinate")},
@@ -245,18 +245,22 @@ RETURNING *
 ODS_COMPANY_STANDARD_INSERT = """
 INSERT INTO ts_ods.ods_company (
     record_id, data_source, data_type, cik, name, entity_type, exchanges, tickers,
-    sic, sic_description, address, website, created_at, updated_at
+    sic, sic_description, address, website, created_at, updated_at, ein, description, category, phone, former_names, investor_website
 ) VALUES (
     :record_id, :data_source, :data_type, :cik, :name, :entity_type, CAST(:exchanges AS jsonb),
     CAST(:tickers AS jsonb), :sic, :sic_description, CAST(:address AS jsonb),
-    :website,
+    :website, :ein, :description, :category, :phone, CAST(:former_names AS jsonb),
+    :investor_website,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     cik = EXCLUDED.cik, name = EXCLUDED.name, entity_type = EXCLUDED.entity_type,
     exchanges = EXCLUDED.exchanges, tickers = EXCLUDED.tickers, sic = EXCLUDED.sic,
     sic_description = EXCLUDED.sic_description, address = EXCLUDED.address,
-    website = EXCLUDED.website, updated_at = EXCLUDED.updated_at
+    website = EXCLUDED.website, updated_at = EXCLUDED.updated_at,
+    ein = EXCLUDED.ein, description = EXCLUDED.description, category = EXCLUDED.category,
+    phone = EXCLUDED.phone, former_names = EXCLUDED.former_names,
+    investor_website = EXCLUDED.investor_website
 RETURNING *
 """
 

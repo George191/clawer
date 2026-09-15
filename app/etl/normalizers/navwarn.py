@@ -104,7 +104,7 @@ def _navwarn_common(
         "serial_number": pick("serial_number"),
         "warning_year": pick("warning_year"),
         "region": safe_str(pick("region")),
-        "subregion": safe_str(pick("subregion")),
+        "sub_region": safe_str(pick("sub_region")),
         "oceans": safe_str(pick("oceans")),
         "dnc_region": safe_str(pick("dnc_region")),
         "status": safe_str(pick("status")),
@@ -134,7 +134,7 @@ def _parse_warning_no(
     match = re.fullmatch(
         r"\s*(?P<left>\d+)\s*(?P<separator>[/\-])\s*"
         r"(?P<right>\d+)\s*"
-        r"(?:\((?P<subregion>[^()]*)\))?\s*",
+        r"(?:\((?P<sub_region>[^()]*)\))?\s*",
         warning_no,
     )
     if not match:
@@ -160,21 +160,21 @@ def _parse_warning_no(
     else:
         warning_year = int(year_text)
 
-    subregion = match.group("subregion")
-    subregion = subregion.strip() if subregion else None
+    sub_region = match.group("sub_region")
+    sub_region = sub_region.strip() if sub_region else None
 
-    return serial_number, warning_year, subregion
+    return serial_number, warning_year, sub_region
 
 
 def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     """sealagom_navwarn 专属字段映射 + 时间解析。"""
     warning_no = safe_str(record.get("warning_no"))
 
-    serial_number, warning_year, subregion = _parse_warning_no(warning_no)
+    serial_number, warning_year, sub_region = _parse_warning_no(warning_no)
 
     record["serial_number"] = serial_number
     record["warning_year"] = warning_year
-    record["subregion"] = subregion
+    record["sub_region"] = sub_region
 
     region, navarea_id = record.get("sea_name").split(" ")
     record["region"] = region

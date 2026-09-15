@@ -81,12 +81,12 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
         "summary_html": summary_html,
         "author": safe_str(pick("author")),
         "news_type": None,
-        "organization": json_dumps(organization),
-        "tags": json_dumps(tags),
-        "external_links": json_dumps(pick("external_links")),
-        "attachments": json_dumps(attachments),
-        "images": json_dumps(images),
-        "slides": json_dumps(slides),
+        "organization": dump(organization),
+        "tags": dump(tags),
+        "external_links": dump(pick("external_links")),
+        "attachments": dump(attachments),
+        "images": dump(images),
+        "slides": dump(slides),
         "thumbnail": _media_source_url(pick("thumbnail")),
     }
 

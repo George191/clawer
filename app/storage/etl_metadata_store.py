@@ -230,7 +230,7 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_navwarn (
     serial_number INTEGER,
     warning_year INTEGER,
     region TEXT,
-    subregion TEXT,
+    sub_region TEXT,
     oceans TEXT,
     dnc_region TEXT,
     issued_at TIMESTAMPTZ,
@@ -283,7 +283,13 @@ CREATE TABLE "ts_ods"."ods_company" (
   "address" jsonb,
   "website" text COLLATE "pg_catalog"."default",
   "created_at" timestamptz(6) NOT NULL DEFAULT now(),
-    "updated_at" timestamptz(6) NOT NULL DEFAULT now()
+  "updated_at" timestamptz(6) NOT NULL DEFAULT now(),
+  "ein" text COLLATE "pg_catalog"."default",
+  "description" text COLLATE "pg_catalog"."default",
+  "category" text COLLATE "pg_catalog"."default",
+  "phone" text COLLATE "pg_catalog"."default",
+  "former_names" jsonb,
+  "investor_website" text COLLATE "pg_catalog"."default"
 )
 PARTITION BY HASH (
   "record_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",

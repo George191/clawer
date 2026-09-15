@@ -37,6 +37,12 @@ def _normalize_sec_edgar_company(record: dict[str, Any]) -> dict[str, Any]:
         "sic_description": safe_str(pick("sic_description")),
         "address": dump(pick("address") or pick("addresses")),
         "website": safe_str(pick("website")),
+        "ein": safe_str(pick("ein")),
+        "description": safe_str(pick("description")),
+        "category": safe_str(pick("category")),
+        "phone": safe_str(pick("phone")),
+        "former_names": dump(pick("former_names")),
+        "investor_website": safe_str(pick("investor_website")),
     }
 
 
