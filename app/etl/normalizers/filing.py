@@ -53,7 +53,7 @@ def _normalize_sec_edgar_filing(record: dict[str, Any]) -> dict[str, Any]:
         "file_number": safe_str(pick("file_number")),
         "film_number": safe_str(pick("film_number")),
         "items": safe_str(pick("items")),
-        "core_type": safe_str(record.v("core_type")),
+        "core_type": safe_str(pick("core_type")),
         "size": pick("size"),
         "is_xbrl": _safe_bool(pick("is_xbrl")),
         "is_inline_xbrl": _safe_bool(pick("is_inline_xbrl")),
