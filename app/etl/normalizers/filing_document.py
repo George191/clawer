@@ -47,7 +47,7 @@ def normalize_sec_edgar_filing_documents(
         return []
     meta = _meta(record)
     filing_id = safe_str(meta.get("record_id"))
-    source = safe_str(record.get("data_source"))
+    source = safe_str(meta.get("template"))
     sequence = safe_str(record.get("sequence"))
     rows: list[dict[str, Any]] = []
     for _, item in enumerate(files):
