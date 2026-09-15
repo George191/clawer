@@ -5,7 +5,7 @@ from typing import Any
 
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import apply_asset_path_overrides, safe_datetime, safe_str
-from app.storage.minio_client import _guess_content_type
+from app.storage.minio_client import MinioClient
 
 
 def _meta(record: dict[str, Any]) -> dict[str, Any]:
@@ -26,7 +26,7 @@ def normalize_planet(record: dict[str, Any]) -> dict[str, Any]:
 
     minio_path = safe_str(pick("url"))
     file_type = (
-        _guess_content_type(minio_path)
+        MinioClient._guess_content_type(minio_path)
         if minio_path else None
     )
     data_source = safe_str(meta.get("template"))
