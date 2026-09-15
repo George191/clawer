@@ -65,7 +65,7 @@ def normalize_sec_edgar_financial_facts(
                     rows.append(normalize_sec_edgar_financial_fact({
                         "_meta": {
                             "record_id": f"{company['record_id']}:fact:{taxonomy}:{concept}:{unit}:{index}",
-                            "data_source": company["template"],
+                            "data_source": company["data_source"],
                         },
                         "cik": company.get("cik"),
                         "entity_name": company.get("entity_name"),
