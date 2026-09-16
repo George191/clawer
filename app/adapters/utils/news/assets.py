@@ -13,7 +13,6 @@ from urllib.parse import urljoin, urlparse
 from lxml import etree
 
 
-_WEB_PAGE_EXTENSIONS = {".htm", ".html", ".php", ".asp", ".aspx", ".jsp", ".jspx"}
 _IMAGE_EXTENSIONS = {
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
     ".tif", ".tiff", ".avif", ".ico",
@@ -136,7 +135,6 @@ def attachment_extension(url: str) -> str:
     return (
         ""
         if not extension
-        or extension in _WEB_PAGE_EXTENSIONS
         or extension in _NON_ATTACHMENT_EXTENSIONS
         else extension
     )
