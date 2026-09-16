@@ -341,13 +341,9 @@ class MongoStorage(StorageBackend):
         record_id: str,
         updates: dict[str, Any],
         download_status: str,
-        *,
-        unset_fields: set[str] | None = None,
     ) -> None:
         """Persist downloaded asset paths and final claim status atomically."""
         collection = await self._get_collection(template_name)
-        unset = {"_meta.download_claim_token": ""}
-        unset.update({field: "" for field in (unset_fields or set())})
         await collection.update_one(
             {"_meta.record_id": record_id},
             {
@@ -356,7 +352,7 @@ class MongoStorage(StorageBackend):
                     "_meta.download_status": download_status,
                     "_meta.updated_at": datetime.now(timezone.utc),
                 },
-                "$unset": unset,
+                "$unset": {"_meta.download_claim_token": ""},
             },
         )
         logger.debug(

@@ -260,7 +260,12 @@ class DownloadWorker:
                 for idx, dl_info in enumerate(download_urls):
                     asset_key = dl_info.get("asset_key", f"assets.{idx}")
                     expected_asset_keys.add(asset_key)
-                    if self._asset_exists(record, asset_key):
+                    is_attachment_candidate = (
+                        dl_info.get("selector") == "attachments"
+                        or asset_key == "assets.attachments"
+                        or asset_key.startswith("assets.attachments.")
+                    )
+                    if self._asset_exists(record, asset_key) and not is_attachment_candidate:
                         skipped_existing += 1
                         continue
 
@@ -274,9 +279,16 @@ class DownloadWorker:
                             "url": url,
                             "filename": dl_info["filename"],
                             "asset_keys": [],
+                            "is_attachment_candidate": False,
+                            "candidate_type": "",
                         },
                     )
                     pending["asset_keys"].append(asset_key)
+                    pending["is_attachment_candidate"] = (
+                        pending["is_attachment_candidate"] or is_attachment_candidate
+                    )
+                    if dl_info.get("candidate_type"):
+                        pending["candidate_type"] = dl_info["candidate_type"]
 
                 # The record may already have partial assets from a previous run.
                 if not pending_by_url:
@@ -303,13 +315,12 @@ class DownloadWorker:
 
                 updates: dict[str, str] = {}
                 failed_assets = 0
-                skipped_forbidden_asset_keys: set[str] = set()
                 external_asset_keys: set[str] = set()
                 external_urls: list[str] = []
                 for dl_info, result in asset_results:
                     asset_keys = list(dict.fromkeys(dl_info["asset_keys"]))
                     if result.kind == "skipped":
-                        skipped_forbidden_asset_keys.update(asset_keys)
+                        failed_assets += 1
                         continue
                     if result.kind == "external_link":
                         external_asset_keys.update(asset_keys)
@@ -326,7 +337,6 @@ class DownloadWorker:
                     for asset_key in expected_asset_keys
                     if (
                         asset_key in updates
-                        or asset_key in skipped_forbidden_asset_keys
                         or asset_key in external_asset_keys
                         or self._asset_exists(record, asset_key)
                     )
@@ -337,13 +347,47 @@ class DownloadWorker:
                     final_status = "pending"
                 elif failed_assets or missing_asset_keys:
                     final_status = "failed"
-                elif downloaded_assets or skipped_existing or skipped_forbidden_asset_keys:
+                elif downloaded_assets or skipped_existing:
                     final_status = "downloaded"
                 else:
                     final_status = "no_assets"
 
-                record_updates: dict[str, Any] = dict(updates)
-                unset_fields: set[str] = set()
+                attachment_asset_prefix = "assets.attachments."
+                attachment_updates = {
+                    key: value
+                    for key, value in updates.items()
+                    if key.startswith(attachment_asset_prefix)
+                }
+                external_attachment_keys = {
+                    key for key in external_asset_keys
+                    if key.startswith(attachment_asset_prefix)
+                }
+                record_updates: dict[str, Any] = {
+                    key: value
+                    for key, value in updates.items()
+                    if key not in attachment_updates
+                }
+                record_updates.update({
+                    key: "" for key in external_asset_keys
+                    if key not in external_attachment_keys
+                })
+                if attachment_updates or external_attachment_keys:
+                    existing_attachment_assets = (
+                        (record.get("assets") or {}).get("attachments") or {}
+                    )
+                    cleaned_attachment_assets = {
+                        str(index): dict(value) if isinstance(value, dict) else value
+                        for index, value in existing_attachment_assets.items()
+                    } if isinstance(existing_attachment_assets, dict) else {}
+                    for key, value in attachment_updates.items():
+                        match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
+                        if match:
+                            cleaned_attachment_assets[match.group(1)] = {"url": value}
+                    for key in external_attachment_keys:
+                        match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
+                        if match:
+                            cleaned_attachment_assets.pop(match.group(1), None)
+                    record_updates["assets.attachments"] = cleaned_attachment_assets
                 if external_urls:
                     external_set = set(external_urls)
                     attachments = [
@@ -363,10 +407,7 @@ class DownloadWorker:
                         *(url for url in (record.get("external_links") or []) if isinstance(url, str)),
                         *external_urls,
                     ]))
-                    if attachments:
-                        record_updates["attachments"] = attachments
-                    else:
-                        unset_fields.add("attachments")
+                    record_updates["attachments"] = attachments
                     record_updates["external_links"] = merged_external
                     if content_html != str(record.get("content_html") or ""):
                         record_updates["content_html"] = content_html
@@ -378,7 +419,6 @@ class DownloadWorker:
                     record_id,
                     record_updates,
                     final_status,
-                    unset_fields=unset_fields,
                 )
                 logger.debug(
                     "DownloadWorker timing: phase=mongo record=%s fields=%d "
@@ -410,20 +450,13 @@ class DownloadWorker:
                         record_id, len(missing_asset_keys),
                     )
                     return False
-                if skipped_forbidden_asset_keys:
-                    logger.warning(
-                        "DownloadWorker: %s skipped %d forbidden asset fields",
-                        record_id, len(skipped_forbidden_asset_keys),
-                    )
-
-                if downloaded_assets or skipped_existing or skipped_forbidden_asset_keys:
+                if downloaded_assets or skipped_existing:
                     logger.info(
                         "DownloadWorker: downloaded %d assets for %s "
-                        "(skipped_existing=%d, skipped_forbidden=%d)",
+                        "(skipped_existing=%d)",
                         downloaded_assets,
                         record_id,
                         skipped_existing,
-                        len(skipped_forbidden_asset_keys),
                     )
                     if workspace_task_id and downloaded_assets:
                         await ai_collect_store.increment_task_stats(
@@ -583,18 +616,27 @@ class DownloadWorker:
             urls = []
             for i, item in enumerate(raw_value):
                 if isinstance(item, dict):
+                    resource_index = i
+                    if selector == "attachments":
+                        placeholder_match = re.fullmatch(
+                            r"\{\{attachment_(\d+)\}\}",
+                            str(item.get("placeholder") or ""),
+                        )
+                        if placeholder_match:
+                            resource_index = int(placeholder_match.group(1))
                     # 复合对象：提取各字段 URL，保留字段名以区分
                     field_urls = self._extract_url_from_dict(
                         item, url_prefix,
                     )
                     for field_name, sub_url in field_urls:
                         filename = self._make_filename(
-                            sub_url, file_ext, suffix=f"_{i:05d}",
+                            sub_url, file_ext, suffix=f"_{resource_index:05d}",
                         )
                         urls.append({
                             "url": sub_url,
                             "filename": filename,
-                            "asset_key": f"assets.{selector}.{i}.{field_name}",
+                            "asset_key": f"assets.{selector}.{resource_index}.{field_name}",
+                            "candidate_type": str(item.get("type") or "").lower(),
                         })
                 elif isinstance(item, str):
                     full_url = url_prefix + item if url_prefix else item
@@ -725,6 +767,7 @@ class DownloadWorker:
             "verify you are human",
             "checking your browser",
             "just a moment...",
+            "zscaler directory authentication",
         )
         if any(marker in prefix for marker in markers):
             return True
@@ -879,12 +922,18 @@ class DownloadWorker:
         url = str(dl_info["url"])
         filename = str(dl_info["filename"])
 
+        if (
+            dl_info.get("is_attachment_candidate")
+            and dl_info.get("candidate_type") == "link"
+        ):
+            return AssetResult(kind="external_link", source_url=url, final_url=url)
+
         response = await self._download_with_retry(url, use_proxy=use_proxy)
         if response == FORBIDDEN_ASSET_SKIPPED:
             return AssetResult(kind="skipped", source_url=url)
         if not isinstance(response, DownloadResponse):
             return AssetResult(kind="failed", source_url=url)
-        if dl_info.get("selector") == "attachments" and self._is_html_response(response):
+        if dl_info.get("is_attachment_candidate") and self._is_html_response(response):
             if self._is_invalid_external_html(response):
                 return AssetResult(
                     kind="failed",
