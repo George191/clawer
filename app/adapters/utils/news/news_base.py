@@ -38,17 +38,6 @@ _NAV_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-_ATTACHMENT_EXTENSIONS = (
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".csv", ".txt", ".zip", ".rar", ".7z", ".json", ".xml",
-    ".kml", ".kmz", ".geojson", ".gdb", ".gpkg",
-)
-
-_IMAGE_EXTENSIONS = (
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
-    ".tif", ".tiff", ".avif", ".ico",
-)
-
 
 @register_adapter("news_base")
 class NewsBaseAdapter(BaseSiteAdapter):
@@ -68,15 +57,23 @@ class NewsBaseAdapter(BaseSiteAdapter):
             parsed = urlparse(base_url)
             self.site_domain = parsed.netloc.lower().replace("www.", "")
 
+    async def on_before_crawl(self, template: Any) -> None:
+        """Keep the active template for template-owned date parsing."""
+        self._template = template
+        await super().on_before_crawl(template)
+
     async def on_after_page(self, page: int, records: list[dict]) -> list[dict]:
         """列表页后处理：过滤空记录，标准化日期。"""
         enriched = []
         for record in records:
-            if not record.get("title") and not record.get("url"):
+            if not record.get("url"):
                 continue
             # 日期标准化
             if "date" in record and record["date"]:
-                record["date"] = self._normalize_date(record["date"])
+                template = getattr(self, "_template", None)
+                incremental = getattr(template, "incremental", None)
+                date_format = getattr(incremental, "format", None)
+                record["date"] = self._normalize_date(record["date"], date_format)
             enriched.append(record)
         return enriched
 
@@ -113,22 +110,19 @@ class NewsBaseAdapter(BaseSiteAdapter):
                 continue
 
             # 排除站内链接（仅排除主域名本身和 www 子域名，其他子域名视为外链）
-            # 例如 blacksky.com 和 www.blacksky.com 是站内，ir.blacksky.com 是外链
             if not domain:
                 continue
             if domain == self.site_domain or domain == f"www.{self.site_domain}":
                 continue
 
-            # 排除社交媒体
             if domain in _SOCIAL_DOMAINS:
                 continue
 
-            # 排除纯锚点 / 无协议
             if not parsed.scheme or parsed.scheme not in ("http", "https"):
                 continue
 
             # 去重（忽略 fragment）
-            if self.is_attachment_url(clean) or self.is_image_url(clean):
+            if self.is_attachment_url(clean) or self.is_image_url(clean) or self.is_video_url(clean):
                 continue
 
             if clean in seen:
@@ -187,7 +181,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
         external_links: list[str] = []
         for url in merged:
             clean = cls.clean_url(url)
-            if not clean or cls.is_attachment_url(clean) or cls.is_image_url(clean):
+            if not clean or cls.is_attachment_url(clean) or cls.is_image_url(clean) or cls.is_video_url(clean):
                 continue
             external_links.append(clean)
         return cls.dedupe_urls(external_links)
@@ -204,6 +198,15 @@ class NewsBaseAdapter(BaseSiteAdapter):
         content_html = str(record.get(content_field) or "").strip()
         if content_html:
             links = self.extract_external_links(content_html, base_url)
+            videos, embeds = self.extract_video_media(content_html, base_url)
+            if videos:
+                record["videos"] = self.dedupe_media_items(
+                    list(record.get("videos") or []) + videos
+                )
+            if embeds:
+                record["video_embeds"] = self.dedupe_media_items(
+                    list(record.get("video_embeds") or []) + embeds
+                )
 
         if not links and not existing:
             record.pop("external_links", None)
@@ -215,13 +218,39 @@ class NewsBaseAdapter(BaseSiteAdapter):
         else:
             record.pop("external_links", None)
 
+    @classmethod
+    def extract_video_media(
+        cls,
+        html: str,
+        base_url: str,
+    ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+        """Extract direct videos and embedded players from article HTML."""
+        from lxml import html as lxml_html
+        from app.adapters.utils.news.assets import extract_video_links
+
+        if not html:
+            return [], []
+        try:
+            wrapper = lxml_html.fragment_fromstring(html, create_parent="div")
+        except Exception:
+            return [], []
+
+        return extract_video_links(wrapper, base_url)
+
     @staticmethod
     def is_attachment_url(url: str) -> bool:
-        return bool(NewsBaseAdapter._attachment_extension(url))
+        from app.adapters.utils.news.assets import is_attachment_url
+        return is_attachment_url(url)
 
     @staticmethod
     def is_image_url(url: str) -> bool:
-        return bool(NewsBaseAdapter._image_extension(url))
+        from app.adapters.utils.news.assets import is_image_url
+        return is_image_url(url)
+
+    @staticmethod
+    def is_video_url(url: str) -> bool:
+        from app.adapters.utils.news.assets import is_video_url
+        return is_video_url(url)
 
     @staticmethod
     def clean_url(url: str) -> str:
@@ -237,62 +266,17 @@ class NewsBaseAdapter(BaseSiteAdapter):
         return clean
 
     @staticmethod
-    def _attachment_extension(url: str) -> str:
-        path = urlparse(url).path.lower()
-        for extension in _ATTACHMENT_EXTENSIONS:
-            if path.endswith(extension):
-                return extension
-        return ""
-
-    @staticmethod
-    def _image_extension(url: str) -> str:
-        path = urlparse(url).path.lower()
-        for extension in _IMAGE_EXTENSIONS:
-            if path.endswith(extension):
-                return extension
-        return ""
-
-    @staticmethod
-    def _normalize_date(date_str: str) -> str:
-        """将各种日期格式标准化为 ISO 8601。"""
+    def _normalize_date(date_str: str, date_format: str | None = None) -> str:
+        """Normalize a date using the format declared by the template."""
         if not date_str:
             return ""
-
-        date_str = date_str.strip()
-
-        # 尝试常见格式
-        formats = [
-            "%B %d, %Y",       # June 12, 2026
-            "%b %d, %Y",       # Jun 12, 2026
-            "%Y-%m-%d",        # 2026-06-12
-            "%m/%d/%Y",        # 06/12/2026
-            "%d/%m/%Y",        # 12/06/2026
-            "%Y年%m月%d日",     # 2026年06月12日
-            "%B %d %Y",        # June 12 2026
-            "%d %B %Y",        # 12 June 2026
-            "%d %b %Y",        # 12 Jun 2026
-        ]
-
-        for fmt in formats:
-            try:
-                dt = datetime.strptime(date_str, fmt)
-                return dt.strftime("%Y-%m-%d")
-            except ValueError:
-                continue
-
-        # 尝试提取日期模式
-        match = re.search(
-            r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", date_str,
-        )
-        if match:
-            y, m, d = match.groups()
-            try:
-                dt = datetime(int(y), int(m), int(d))
-                return dt.strftime("%Y-%m-%d")
-            except ValueError:
-                pass
-
-        return date_str  # 无法解析则原样返回
+        value = str(date_str).strip()
+        if not date_format:
+            return value
+        try:
+            return datetime.strptime(value, date_format).strftime("%Y-%m-%d")
+        except ValueError:
+            return value
 
     def on_request_headers(self, page: int) -> dict[str, str]:
         """默认新闻站点请求头。"""
