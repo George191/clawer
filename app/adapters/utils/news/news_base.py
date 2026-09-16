@@ -88,6 +88,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
             去重后的外链列表
         """
         from lxml import html as lxml_html
+        from app.adapters.utils.news.assets import is_media_file_url
 
         try:
             tree = lxml_html.fromstring(html)
@@ -122,7 +123,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
                 continue
 
             # 去重（忽略 fragment）
-            if self.is_attachment_url(clean) or self.is_image_url(clean) or self.is_video_url(clean):
+            if self.is_attachment_url(clean) or is_media_file_url(clean):
                 continue
 
             if clean in seen:
@@ -173,6 +174,8 @@ class NewsBaseAdapter(BaseSiteAdapter):
 
     @classmethod
     def merge_external_links(cls, existing: Any, incoming: list[str]) -> list[str]:
+        from app.adapters.utils.news.assets import is_media_file_url
+
         merged: list[str] = []
         if isinstance(existing, list):
             merged.extend(str(item) for item in existing if isinstance(item, str))
@@ -181,7 +184,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
         external_links: list[str] = []
         for url in merged:
             clean = cls.clean_url(url)
-            if not clean or cls.is_attachment_url(clean) or cls.is_image_url(clean) or cls.is_video_url(clean):
+            if not clean or cls.is_attachment_url(clean) or is_media_file_url(clean):
                 continue
             external_links.append(clean)
         return cls.dedupe_urls(external_links)
@@ -198,15 +201,17 @@ class NewsBaseAdapter(BaseSiteAdapter):
         content_html = str(record.get(content_field) or "").strip()
         if content_html:
             links = self.extract_external_links(content_html, base_url)
-            videos, embeds = self.extract_video_media(content_html, base_url)
+            videos = self.extract_video_media(content_html, base_url)
+            iframe = self.extract_iframe_media(content_html, base_url)
             if videos:
                 record["videos"] = self.dedupe_media_items(
                     list(record.get("videos") or []) + videos
                 )
-            if embeds:
-                record["video_embeds"] = self.dedupe_media_items(
-                    list(record.get("video_embeds") or []) + embeds
+            if iframe:
+                record["iframe"] = self.dedupe_media_items(
+                    list(record.get("iframe") or []) + iframe
                 )
+            record.pop("video_embeds", None)
 
         if not links and not existing:
             record.pop("external_links", None)
@@ -223,34 +228,43 @@ class NewsBaseAdapter(BaseSiteAdapter):
         cls,
         html: str,
         base_url: str,
-    ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-        """Extract direct videos and embedded players from article HTML."""
+    ) -> list[dict[str, str]]:
+        """Extract direct video resources from article HTML."""
         from lxml import html as lxml_html
-        from app.adapters.utils.news.assets import extract_video_links
+        from app.adapters.utils.news.assets import extract_videos_from_wrapper
 
         if not html:
-            return [], []
+            return []
         try:
             wrapper = lxml_html.fragment_fromstring(html, create_parent="div")
         except Exception:
-            return [], []
+            return []
 
-        return extract_video_links(wrapper, base_url)
+        return extract_videos_from_wrapper(wrapper, base_url)
+
+    @classmethod
+    def extract_iframe_media(
+        cls,
+        html: str,
+        base_url: str,
+    ) -> list[dict[str, str]]:
+        """Extract iframe players separately from downloadable videos."""
+        from lxml import html as lxml_html
+        from app.adapters.utils.news.assets import extract_iframes_from_wrapper
+
+        if not html:
+            return []
+        try:
+            wrapper = lxml_html.fragment_fromstring(html, create_parent="div")
+        except Exception:
+            return []
+
+        return extract_iframes_from_wrapper(wrapper, base_url)
 
     @staticmethod
     def is_attachment_url(url: str) -> bool:
         from app.adapters.utils.news.assets import is_attachment_url
         return is_attachment_url(url)
-
-    @staticmethod
-    def is_image_url(url: str) -> bool:
-        from app.adapters.utils.news.assets import is_image_url
-        return is_image_url(url)
-
-    @staticmethod
-    def is_video_url(url: str) -> bool:
-        from app.adapters.utils.news.assets import is_video_url
-        return is_video_url(url)
 
     @staticmethod
     def clean_url(url: str) -> str:

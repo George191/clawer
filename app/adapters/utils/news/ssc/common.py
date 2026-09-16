@@ -5,12 +5,13 @@ from __future__ import annotations
 import re
 from copy import deepcopy
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from lxml import etree
 from lxml import html as lxml_html
 
-from app.adapters.utils.news import _ATTACHMENT_EXTENSIONS, NewsBaseAdapter
+from app.adapters.utils.news import NewsBaseAdapter
+from app.adapters.utils.news.assets import attachment_extension
 def extract_meta_fields(html: str, record: dict) -> None:
     """提取 SSC 详情页 meta 信息：发布日期、机构、作者、电头。"""
     try:
@@ -186,8 +187,6 @@ def extract_attachments(html: str, record: dict, detail_url: str, content_field_
                 continue
 
             file_url = NewsBaseAdapter.clean_url(urljoin(detail_url, raw_url))
-            if NewsBaseAdapter.is_image_url(file_url):
-                continue
             if not _is_attachment_url(file_url) or file_url in seen:
                 continue
             seen.add(file_url)
@@ -263,11 +262,7 @@ def _is_attachment_url(url: str) -> bool:
 
 
 def _attachment_extension(url: str) -> str:
-    path = urlparse(url).path.lower()
-    for extension in _ATTACHMENT_EXTENSIONS:
-        if path.endswith(extension):
-            return extension
-    return ""
+    return attachment_extension(url)
 
 
 def _first_srcset_url(srcset: str) -> str:

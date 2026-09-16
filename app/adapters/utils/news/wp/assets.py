@@ -6,6 +6,7 @@ import asyncio
 import json
 from typing import Any
 
+from app.adapters.utils.news.assets import process_content_html
 from app.downloader.http_client import HttpClient
 from app.logger import get_adapter_logger
 
