@@ -15,6 +15,7 @@ import json
 import logging
 import socket
 import sys
+from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
 from curl_cffi import CurlOpt
@@ -72,6 +73,19 @@ class DownloadError(Exception):
         self.url = url
         self.status_code = status_code
         super().__init__(f"Download failed: {url} (status={status_code}): {message}")
+
+
+@dataclass(frozen=True, slots=True)
+class DownloadResponse:
+    source_url: str
+    final_url: str
+    status_code: int
+    headers: dict[str, str]
+    data: bytes
+
+    @property
+    def content_type(self) -> str:
+        return self.headers.get("content-type", "").split(";", 1)[0].strip().lower()
 
 
 class HttpClient:
@@ -547,13 +561,13 @@ class HttpClient:
             if proxy_url and _proxy_pool is not None:
                 await _proxy_pool.release_proxy(task_id)
                         
-    async def download_bytes(
+    async def download_response(
         self,
         url: str,
         config: RequestConfig | None = None,
         *,
         use_proxy: bool | None = None,
-    ) -> bytes:
+    ) -> DownloadResponse:
         config = config or RequestConfig()
         effective_use_proxy = settings.download_use_proxy if use_proxy is None else use_proxy
 
@@ -640,7 +654,13 @@ class HttpClient:
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
 
-            return data
+            return DownloadResponse(
+                source_url=url,
+                final_url=str(response.url or url),
+                status_code=response.status_code,
+                headers={str(k).lower(): str(v) for k, v in response.headers.items()},
+                data=data,
+            )
 
         except Exception as e:
             proxy_failed = (
@@ -655,6 +675,20 @@ class HttpClient:
                 await _proxy_pool.mark_failure(proxy_url)
                 await self._release_failed_proxy(task_id, proxy_url)
             raise
+
+    async def download_bytes(
+        self,
+        url: str,
+        config: RequestConfig | None = None,
+        *,
+        use_proxy: bool | None = None,
+    ) -> bytes:
+        response = await self.download_response(
+            url,
+            config,
+            use_proxy=use_proxy,
+        )
+        return response.data
 
     async def close(self) -> None:
         """关闭HTTP客户端资源。

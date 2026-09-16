@@ -1,5 +1,5 @@
 """HTTP 客户端基础组件 — 重新导出 HttpClient 和 DownloadError。"""
 
-from app.downloader.http_client import HttpClient, DownloadError
+from app.downloader.http_client import DownloadError, DownloadResponse, HttpClient
 
-__all__ = ["HttpClient", "DownloadError"]
+__all__ = ["HttpClient", "DownloadError", "DownloadResponse"]

@@ -88,8 +88,6 @@ class NewsBaseAdapter(BaseSiteAdapter):
             去重后的外链列表
         """
         from lxml import html as lxml_html
-        from app.adapters.utils.news.assets import is_media_file_url
-
         try:
             tree = lxml_html.fromstring(html)
         except Exception:
@@ -123,7 +121,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
                 continue
 
             # 去重（忽略 fragment）
-            if self.is_attachment_url(clean) or is_media_file_url(clean):
+            if self.is_attachment_url(clean):
                 continue
 
             if clean in seen:
@@ -174,8 +172,6 @@ class NewsBaseAdapter(BaseSiteAdapter):
 
     @classmethod
     def merge_external_links(cls, existing: Any, incoming: list[str]) -> list[str]:
-        from app.adapters.utils.news.assets import is_media_file_url
-
         merged: list[str] = []
         if isinstance(existing, list):
             merged.extend(str(item) for item in existing if isinstance(item, str))
@@ -184,7 +180,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
         external_links: list[str] = []
         for url in merged:
             clean = cls.clean_url(url)
-            if not clean or cls.is_attachment_url(clean) or is_media_file_url(clean):
+            if not clean or cls.is_attachment_url(clean):
                 continue
             external_links.append(clean)
         return cls.dedupe_urls(external_links)

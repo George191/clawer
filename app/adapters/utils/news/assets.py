@@ -13,16 +13,6 @@ from urllib.parse import urljoin, urlparse
 from lxml import etree
 
 
-_IMAGE_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
-    ".tif", ".tiff", ".avif", ".ico",
-}
-_VIDEO_EXTENSIONS = {
-    ".mp4", ".webm", ".ogg", ".ogv", ".mov", ".m4v", ".avi", ".mkv",
-}
-_NON_ATTACHMENT_EXTENSIONS = _IMAGE_EXTENSIONS | _VIDEO_EXTENSIONS
-
-
 def _base():
     # Lazy import avoids a cycle when NewsBaseAdapter delegates to this module.
     from app.adapters.utils.news import NewsBaseAdapter
@@ -126,18 +116,8 @@ def url_extension(url: str) -> str:
     return match.group(1) if match else ""
 
 
-def is_media_file_url(url: str) -> bool:
-    return url_extension(url) in _NON_ATTACHMENT_EXTENSIONS
-
-
 def attachment_extension(url: str) -> str:
-    extension = url_extension(url)
-    return (
-        ""
-        if not extension
-        or extension in _NON_ATTACHMENT_EXTENSIONS
-        else extension
-    )
+    return url_extension(url)
 
 
 def is_attachment_url(url: str) -> bool:
@@ -148,15 +128,17 @@ def extract_attachments_from_wrapper(
     wrapper: Any,
     base_url: str,
     excluded_urls: set[str] | None = None,
+    included_urls: set[str] | None = None,
 ) -> list[dict[str, str]]:
     Base = _base()
     out = []
     placeholders = {}
     excluded_urls = excluded_urls or set()
+    included_urls = included_urls or set()
     for link in wrapper.cssselect("a[href]"):
         url = Base.clean_url(urljoin(base_url, (link.get("href") or "").strip()))
         ext = attachment_extension(url)
-        if not url or url in excluded_urls or not ext:
+        if not url or url in excluded_urls or (not ext and url not in included_urls):
             continue
         if url in placeholders:
             link.set("href", placeholders[url])
@@ -164,7 +146,7 @@ def extract_attachments_from_wrapper(
         item = {
             "url": url,
             "placeholder": f"{{{{attachment_{len(out)}}}}}",
-            "type": ext.lstrip("."),
+            "type": ext.lstrip(".") or "link",
         }
         label = re.sub(r"\s+", " ", link.text_content()).strip()
         if label:
@@ -260,6 +242,7 @@ async def process_content_html(
     except Exception:
         return
     Base = _base()
+    candidate_external_urls = set(adapter.extract_external_links(content, base_url))
     images = extract_images_from_wrapper(wrapper, base_url)
     if images:
         record["images"] = Base.dedupe_media_items(images)
@@ -279,22 +262,9 @@ async def process_content_html(
         wrapper,
         base_url,
         excluded_urls=tagged_media_urls,
+        included_urls=candidate_external_urls,
     )
     if attachments:
         record["attachments"] = Base.dedupe_media_items(attachments)
     record["content_html"] = _wrapper_html(wrapper)
-    resource_urls = {
-        str(item.get("url") or "")
-        for field in ("images", "videos", "iframe", "attachments")
-        for item in (record.get(field) or [])
-        if isinstance(item, dict)
-    }
-    external_links = [
-        url
-        for url in adapter.extract_external_links(content, base_url)
-        if url not in resource_urls
-    ]
-    if external_links:
-        record["external_links"] = adapter.dedupe_urls(external_links)
-    else:
-        record.pop("external_links", None)
+    record.pop("external_links", None)

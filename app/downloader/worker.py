@@ -19,13 +19,14 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.base.http import HttpClient
+from app.base.http import DownloadResponse, HttpClient
 from app.base.minio import MinioClient
 from app.base.mongo import MongoClient
 from app.config.settings import settings
@@ -70,7 +71,16 @@ class AssetDownloadJob:
     data_type: str
     record_id: str
     use_proxy: bool
-    result: asyncio.Future[tuple[dict[str, Any], str | None]]
+    result: asyncio.Future[tuple[dict[str, Any], "AssetResult"]]
+
+
+@dataclass(frozen=True, slots=True)
+class AssetResult:
+    kind: str
+    source_url: str
+    final_url: str = ""
+    content_type: str = ""
+    asset_path: str | None = None
 
 
 class DownloadWorker:
@@ -294,15 +304,21 @@ class DownloadWorker:
                 updates: dict[str, str] = {}
                 failed_assets = 0
                 skipped_forbidden_asset_keys: set[str] = set()
-                for dl_info, asset_path in asset_results:
+                external_asset_keys: set[str] = set()
+                external_urls: list[str] = []
+                for dl_info, result in asset_results:
                     asset_keys = list(dict.fromkeys(dl_info["asset_keys"]))
-                    if asset_path == FORBIDDEN_ASSET_SKIPPED:
+                    if result.kind == "skipped":
                         skipped_forbidden_asset_keys.update(asset_keys)
                         continue
-                    if not asset_path:
+                    if result.kind == "external_link":
+                        external_asset_keys.update(asset_keys)
+                        external_urls.append(result.source_url)
+                        continue
+                    if result.kind != "file" or not result.asset_path:
                         failed_assets += 1
                         continue
-                    updates.update(dict.fromkeys(asset_keys, asset_path))
+                    updates.update(dict.fromkeys(asset_keys, result.asset_path))
 
                 downloaded_assets = len(updates)
                 existing_or_downloaded_assets = {
@@ -311,6 +327,7 @@ class DownloadWorker:
                     if (
                         asset_key in updates
                         or asset_key in skipped_forbidden_asset_keys
+                        or asset_key in external_asset_keys
                         or self._asset_exists(record, asset_key)
                     )
                 }
@@ -325,12 +342,43 @@ class DownloadWorker:
                 else:
                     final_status = "no_assets"
 
+                record_updates: dict[str, Any] = dict(updates)
+                unset_fields: set[str] = set()
+                if external_urls:
+                    external_set = set(external_urls)
+                    attachments = [
+                        item for item in (record.get("attachments") or [])
+                        if not isinstance(item, dict)
+                        or str(item.get("url") or "") not in external_set
+                    ]
+                    content_html = str(record.get("content_html") or "")
+                    for item in record.get("attachments") or []:
+                        if not isinstance(item, dict):
+                            continue
+                        source_url = str(item.get("url") or "")
+                        placeholder = str(item.get("placeholder") or "")
+                        if source_url in external_set and placeholder:
+                            content_html = content_html.replace(placeholder, source_url)
+                    merged_external = list(dict.fromkeys([
+                        *(url for url in (record.get("external_links") or []) if isinstance(url, str)),
+                        *external_urls,
+                    ]))
+                    if attachments:
+                        record_updates["attachments"] = attachments
+                    else:
+                        unset_fields.add("attachments")
+                    record_updates["external_links"] = merged_external
+                    if content_html != str(record.get("content_html") or ""):
+                        record_updates["content_html"] = content_html
+                    record_updates["_meta.sync_status"] = "pending"
+
                 mongo_started_at = time.perf_counter()
                 await self._mongo.update_download_result(
                     collection_name,
                     record_id,
-                    updates,
+                    record_updates,
                     final_status,
+                    unset_fields=unset_fields,
                 )
                 logger.debug(
                     "DownloadWorker timing: phase=mongo record=%s fields=%d "
@@ -500,6 +548,9 @@ class DownloadWorker:
                 selector_type, template_name,
             )
 
+        for item in urls:
+            item.setdefault("selector", download_config.selector)
+
         return urls
 
     def _extract_json_urls(
@@ -653,7 +704,54 @@ class DownloadWorker:
         status = DownloadWorker._extract_status_code(exc)
         return status != 404
 
-    async def _download_with_retry(self, url: str, *, use_proxy: bool) -> bytes | None:
+    @staticmethod
+    def _is_html_response(response: DownloadResponse) -> bool:
+        if response.content_type in {"text/html", "application/xhtml+xml"}:
+            return True
+        prefix = response.data[:1024].lstrip().lower()
+        return prefix.startswith((b"<!doctype html", b"<html"))
+
+    @staticmethod
+    def _is_invalid_external_html(response: DownloadResponse) -> bool:
+        prefix = response.data[:32768].decode("utf-8", errors="ignore").lower()
+        markers = (
+            "cf-chl-",
+            "challenge-platform",
+            "cloudflare ray id",
+            "window._cf_chl_opt",
+            "window.awswafcookiedomainlist",
+            "window.gokuprops",
+            "captcha",
+            "verify you are human",
+            "checking your browser",
+            "just a moment...",
+        )
+        if any(marker in prefix for marker in markers):
+            return True
+
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", prefix, re.DOTALL)
+        title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else ""
+        error_titles = (
+            "404",
+            "not found",
+            "access denied",
+            "forbidden",
+            "service unavailable",
+            "internal server error",
+            "bad gateway",
+        )
+        if any(marker in title for marker in error_titles):
+            return True
+
+        final_path = response.final_url.lower().split("?", 1)[0].rstrip("/")
+        login_path = final_path.endswith(("/login", "/signin", "/sign-in", "/auth"))
+        login_title = any(marker in title for marker in ("sign in", "signin", "log in", "login"))
+        password_form = bool(re.search(r"type\s*=\s*['\"]password['\"]", prefix))
+        return (login_path or login_title) and password_form
+
+    async def _download_with_retry(
+        self, url: str, *, use_proxy: bool
+    ) -> DownloadResponse | str | None:
         """带有限重试的资源下载。
 
         策略：
@@ -669,7 +767,7 @@ class DownloadWorker:
 
         while self._running:
             try:
-                data = await self._http.download_bytes(url, use_proxy=use_proxy)
+                response = await self._http.download_response(url, use_proxy=use_proxy)
                 logger.debug(
                     "DownloadWorker timing: phase=http attempts=%d seconds=%.3f url=%s",
                     retry_count + 1,
@@ -681,7 +779,7 @@ class DownloadWorker:
                         "DownloadWorker: succeeded after %d retries: %s",
                         retry_count, url,
                     )
-                return data
+                return response
             except Exception as exc:
                 # 不可重试错误：403 / 404 / 文件过大
                 if not self._is_retryable(exc):
@@ -767,25 +865,41 @@ class DownloadWorker:
 
     async def _download_asset_to_minio(
         self,
-        url: str,
+        dl_info: dict[str, Any],
         template_name: str,
         data_type: str,
         record_id: str,
-        filename: str,
         use_proxy: bool,
-    ) -> str | None:
+    ) -> AssetResult:
         """下载单个资源文件并上传到 MinIO。
 
         下载阶段使用 _download_with_retry 实现有限重试；
         上传阶段失败不重试（MinIO 故障属基础设施问题，由上层处理）。
         """
-        content_type = MinioClient._guess_content_type(filename)
+        url = str(dl_info["url"])
+        filename = str(dl_info["filename"])
 
-        data = await self._download_with_retry(url, use_proxy=use_proxy)
-        if data == FORBIDDEN_ASSET_SKIPPED:
-            return FORBIDDEN_ASSET_SKIPPED
-        if data is None:
-            return None
+        response = await self._download_with_retry(url, use_proxy=use_proxy)
+        if response == FORBIDDEN_ASSET_SKIPPED:
+            return AssetResult(kind="skipped", source_url=url)
+        if not isinstance(response, DownloadResponse):
+            return AssetResult(kind="failed", source_url=url)
+        if dl_info.get("selector") == "attachments" and self._is_html_response(response):
+            if self._is_invalid_external_html(response):
+                return AssetResult(
+                    kind="failed",
+                    source_url=url,
+                    final_url=response.final_url,
+                    content_type=response.content_type,
+                )
+            return AssetResult(
+                kind="external_link",
+                source_url=url,
+                final_url=response.final_url,
+                content_type=response.content_type,
+            )
+
+        content_type = response.content_type or MinioClient._guess_content_type(filename)
 
         retry_count = 0
         delay = RETRY_INITIAL_DELAY
@@ -793,7 +907,7 @@ class DownloadWorker:
         while self._running:
             try:
                 asset_path = await self._minio.upload_bytes(
-                    data, template_name, data_type,
+                    response.data, template_name, data_type,
                     f"{record_id}/{filename}", content_type,
                 )
                 logger.debug(
@@ -805,7 +919,13 @@ class DownloadWorker:
                     filename,
                 )
                 logger.debug("DownloadWorker: uploaded %s -> %s", filename, asset_path)
-                return asset_path
+                return AssetResult(
+                    kind="file",
+                    source_url=url,
+                    final_url=response.final_url,
+                    content_type=content_type,
+                    asset_path=asset_path,
+                )
             except Exception as exc:
                 retry_count += 1
                 logger.warning(
@@ -836,7 +956,7 @@ class DownloadWorker:
             "(attempted %d retries)",
             filename, retry_count,
         )
-        return None
+        return AssetResult(kind="failed", source_url=url)
 
     async def _download_pending_asset(
         self,
@@ -845,7 +965,7 @@ class DownloadWorker:
         data_type: str,
         record_id: str,
         use_proxy: bool,
-    ) -> tuple[dict[str, Any], str | None]:
+    ) -> tuple[dict[str, Any], AssetResult]:
         """Submit one asset to the fixed download worker pool."""
         assert self._asset_queue is not None
         result = asyncio.get_running_loop().create_future()
@@ -874,16 +994,15 @@ class DownloadWorker:
         while True:
             job = await self._asset_queue.get()
             try:
-                asset_path = await self._download_asset_to_minio(
-                    job.dl_info["url"],
+                asset_result = await self._download_asset_to_minio(
+                    job.dl_info,
                     job.template_name,
                     job.data_type,
                     job.record_id,
-                    job.dl_info["filename"],
                     job.use_proxy,
                 )
                 if not job.result.done():
-                    job.result.set_result((job.dl_info, asset_path))
+                    job.result.set_result((job.dl_info, asset_result))
             except asyncio.CancelledError:
                 if not job.result.done():
                     job.result.cancel()
