@@ -7,8 +7,9 @@ the implementation is intentionally independent of WordPress.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 from lxml import etree
 
@@ -124,6 +125,25 @@ def is_attachment_url(url: str) -> bool:
     return bool(attachment_extension(url))
 
 
+def _url_identity(url: str) -> str:
+    """Normalize equivalent URL encodings for classification comparisons only."""
+    try:
+        parsed = urlparse(url)
+        path = unicodedata.normalize("NFC", unquote(parsed.path))
+        # WordPress commonly links a resized <img> to the same full-size image.
+        path = re.sub(r"-\d+x\d+(?=\.[^./]+$)", "", path)
+        query = unicodedata.normalize("NFC", unquote(parsed.query))
+        return parsed._replace(
+            scheme=parsed.scheme.lower(),
+            netloc=parsed.netloc.lower(),
+            path=path,
+            query=query,
+            fragment="",
+        ).geturl()
+    except Exception:
+        return unicodedata.normalize("NFC", unquote(str(url or "")))
+
+
 def extract_attachments_from_wrapper(
     wrapper: Any,
     base_url: str,
@@ -133,15 +153,16 @@ def extract_attachments_from_wrapper(
     Base = _base()
     out = []
     placeholders = {}
-    excluded_urls = excluded_urls or set()
-    included_urls = included_urls or set()
+    excluded_keys = {_url_identity(url) for url in (excluded_urls or set())}
+    included_keys = {_url_identity(url) for url in (included_urls or set())}
     for link in wrapper.cssselect("a[href]"):
         url = Base.clean_url(urljoin(base_url, (link.get("href") or "").strip()))
         ext = attachment_extension(url)
-        if not url or url in excluded_urls or (not ext and url not in included_urls):
+        identity = _url_identity(url)
+        if not url or identity in excluded_keys or (not ext and identity not in included_keys):
             continue
-        if url in placeholders:
-            link.set("href", placeholders[url])
+        if identity in placeholders:
+            link.set("href", placeholders[identity])
             continue
         item = {
             "url": url,
@@ -152,7 +173,7 @@ def extract_attachments_from_wrapper(
         if label:
             item["label"] = label
         out.append(item)
-        placeholders[url] = item["placeholder"]
+        placeholders[identity] = item["placeholder"]
         link.set("href", item["placeholder"])
     return Base.dedupe_media_items(out)
 

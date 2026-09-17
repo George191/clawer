@@ -750,8 +750,8 @@ class DownloadWorker:
     def _is_html_response(response: DownloadResponse) -> bool:
         if response.content_type in {"text/html", "application/xhtml+xml"}:
             return True
-        prefix = response.data[:1024].lstrip().lower()
-        return prefix.startswith((b"<!doctype html", b"<html"))
+        prefix = response.data[:4096].lstrip(b"\xef\xbb\xbf\x00\t\r\n ").lower()
+        return bool(re.search(br"<(?:!doctype\s+html|html|head|body)(?:\s|>)", prefix))
 
     @staticmethod
     def _is_invalid_external_html(response: DownloadResponse) -> bool:
@@ -921,12 +921,6 @@ class DownloadWorker:
         """
         url = str(dl_info["url"])
         filename = str(dl_info["filename"])
-
-        if (
-            dl_info.get("is_attachment_candidate")
-            and dl_info.get("candidate_type") == "link"
-        ):
-            return AssetResult(kind="external_link", source_url=url, final_url=url)
 
         response = await self._download_with_retry(url, use_proxy=use_proxy)
         if response == FORBIDDEN_ASSET_SKIPPED:

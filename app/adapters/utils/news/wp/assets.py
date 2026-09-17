@@ -59,6 +59,21 @@ def _extract_embedded_author(record: dict[str, Any]) -> dict[str, Any] | None:
     return author or None
 
 
+def _normalize_author(record: dict[str, Any]) -> dict[str, Any] | None:
+    embedded_author = _extract_embedded_author(record)
+    if embedded_author:
+        return embedded_author
+
+    author: dict[str, Any] = {}
+    author_id = record.get("author_id")
+    if author_id not in (None, "", 0):
+        author["id"] = author_id
+    existing = record.get("author")
+    if isinstance(existing, str) and existing.strip():
+        author["name"] = existing.strip()
+    return author or None
+
+
 async def wp_request_json(
     client: HttpClient,
     url: str,
@@ -172,6 +187,33 @@ def _extract_og_image_url(record: dict[str, Any]) -> str | None:
     return None
 
 
+def _extract_og_image_media(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Map Yoast og_image metadata to the common featured_media shape."""
+    og = record.get("og_image")
+    if og is None:
+        yoast = record.get("yoast_head_json")
+        if isinstance(yoast, dict):
+            og = yoast.get("og_image")
+    if isinstance(og, list):
+        og = og[0] if og else None
+    if isinstance(og, str):
+        og = {"url": og}
+    if not isinstance(og, dict) or not og.get("url"):
+        return None
+
+    media: dict[str, Any] = {"source_url": og["url"]}
+    if og.get("type"):
+        media["mime_type"] = og["type"]
+    details = {
+        key: og[key]
+        for key in ("width", "height")
+        if og.get(key) not in (None, "")
+    }
+    if details:
+        media["media_details"] = details
+    return media
+
+
 async def enrich_cover_images_batch(
     client: HttpClient,
     base_url: str,
@@ -194,9 +236,9 @@ async def enrich_cover_images_batch(
             record["featured_media"] = embedded_media
             continue
         # 2. Yoast SEO 插件：og_image（list_fields 映射的独立字段 或 yoast_head_json 完整对象）
-        og_url = _extract_og_image_url(record)
-        if og_url:
-            record["featured_media"] = {"source_url": og_url}
+        og_media = _extract_og_image_media(record)
+        if og_media:
+            record["featured_media"] = og_media
             continue
         # 3. 兜底：media API
         media_id = int(record.get("featured_media") or 0)
@@ -229,7 +271,7 @@ async def enrich_cover_images_batch(
 
 def cleanup_wp_fields(record: dict[str, Any]) -> None:
     """Remove WordPress API intermediate fields."""
-    author = _extract_embedded_author(record)
+    author = _normalize_author(record)
     if author:
         record["author"] = author
 
@@ -238,6 +280,6 @@ def cleanup_wp_fields(record: dict[str, Any]) -> None:
         record["featured_media"] = featured_media
 
     for key in (
-        "category_ids", "tag_ids", "source_ids", "_embedded",
+        "category_ids", "tag_ids", "source_ids", "author_id", "_embedded",
     ):
         record.pop(key, None)
