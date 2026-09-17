@@ -281,5 +281,6 @@ def cleanup_wp_fields(record: dict[str, Any]) -> None:
 
     for key in (
         "category_ids", "tag_ids", "source_ids", "author_id", "_embedded",
+        "og_image", "yoast_head_json",
     ):
         record.pop(key, None)
