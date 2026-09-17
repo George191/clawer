@@ -13,6 +13,52 @@ from app.logger import get_adapter_logger
 logger = get_adapter_logger(__name__, "wp_assets")
 
 
+def _normalize_featured_media(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    normalized = {
+        key: value[key]
+        for key in ("source_url", "date", "author", "mime_type")
+        if value.get(key) not in (None, "")
+    }
+    details = value.get("media_details")
+    if isinstance(details, dict):
+        normalized_details = {
+            key: details[key]
+            for key in ("width", "height", "filesize", "sizes")
+            if details.get(key) not in (None, "")
+        }
+        if normalized_details:
+            normalized["media_details"] = normalized_details
+    return normalized or None
+
+
+def _extract_embedded_author(record: dict[str, Any]) -> dict[str, Any] | None:
+    embedded = record.get("_embedded")
+    if not isinstance(embedded, dict):
+        return None
+    authors = embedded.get("author")
+    if not isinstance(authors, list) or not authors or not isinstance(authors[0], dict):
+        return None
+
+    source = authors[0]
+    author = {
+        key: source[key]
+        for key in ("id", "name", "link")
+        if source.get(key) not in (None, "")
+    }
+    avatars = source.get("avatar_urls")
+    if isinstance(avatars, dict):
+        avatar = next(
+            (avatars.get(size) for size in ("96", "48", "24") if avatars.get(size)),
+            None,
+        )
+        if avatar:
+            author["avatar"] = avatar
+    return author or None
+
+
 async def wp_request_json(
     client: HttpClient,
     url: str,
@@ -72,7 +118,7 @@ async def fetch_wp_media_url(
 
 
 def _extract_embedded_media(record: dict[str, Any]) -> dict[str, Any] | None:
-    """从 _embedded.wp:featuredmedia 提取封面图完整 media 对象。
+    """从 _embedded.wp:featuredmedia 提取精简封面图对象。
 
     WP REST API 加 _embed=1 后返回的结构：
         "_embedded": {
@@ -80,7 +126,7 @@ def _extract_embedded_media(record: dict[str, Any]) -> dict[str, Any] | None:
                 {"source_url": "https://.../cover.jpg", "media_details": {...}}
             ]
         }
-    返回第一个 media 对象（dict），与 fetch_wp_media_url 返回结构一致。
+    返回仅包含下载与业务需要字段的 media 对象。
     """
     embedded = record.get("_embedded")
     if not isinstance(embedded, dict):
@@ -90,7 +136,7 @@ def _extract_embedded_media(record: dict[str, Any]) -> dict[str, Any] | None:
         return None
     first = media_list[0]
     if isinstance(first, dict) and first.get("source_url"):
-        return first
+        return _normalize_featured_media(first)
     return None
 
 
@@ -168,7 +214,9 @@ async def enrich_cover_images_batch(
             adapter_name,
         )
         if cover_obj:
-            record["featured_media"] = cover_obj
+            record["featured_media"] = (
+                _normalize_featured_media(cover_obj) or cover_obj
+            )
 
     # 兜底超时：wp_request_json 无限重试换 IP 时，整个 gather 可能长时间不返回。
     # 给 10 分钟（约 120 次换 IP 重试）让代理轮换最终命中好 IP，
@@ -181,7 +229,15 @@ async def enrich_cover_images_batch(
 
 def cleanup_wp_fields(record: dict[str, Any]) -> None:
     """Remove WordPress API intermediate fields."""
+    author = _extract_embedded_author(record)
+    if author:
+        record["author"] = author
+
+    featured_media = _normalize_featured_media(record.get("featured_media"))
+    if featured_media:
+        record["featured_media"] = featured_media
+
     for key in (
-        "category_ids", "tag_ids", "source_ids",
+        "category_ids", "tag_ids", "source_ids", "_embedded",
     ):
         record.pop(key, None)
