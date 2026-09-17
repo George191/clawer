@@ -250,7 +250,7 @@ def extract_iframes_from_wrapper(wrapper: Any, base_url: str) -> list[dict[str, 
     )
 
 
-async def process_content_html(
+def process_content_html(
     adapter: Any, record: dict[str, Any], base_url: str
 ) -> None:
     from lxml import html as lxml_html

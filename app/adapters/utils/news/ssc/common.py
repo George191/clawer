@@ -11,7 +11,11 @@ from lxml import etree
 from lxml import html as lxml_html
 
 from app.adapters.utils.news import NewsBaseAdapter
-from app.adapters.utils.news.assets import attachment_extension
+from app.adapters.utils.news.assets import (
+    attachment_extension,
+)
+
+
 def extract_meta_fields(html: str, record: dict) -> None:
     """提取 SSC 详情页 meta 信息：发布日期、机构、作者、电头。"""
     try:
@@ -52,7 +56,7 @@ def extract_meta_fields(html: str, record: dict) -> None:
 
 
 def extract_content(html: str, record: dict, detail_url: str, content_field_selector: str) -> None:
-    """提取正文容器 HTML，并同步清洗图片占位符。"""
+    """提取并清洗正文容器；媒体字段由共享新闻解析器统一处理。"""
     if not content_field_selector:
         return
 
@@ -72,47 +76,9 @@ def extract_content(html: str, record: dict, detail_url: str, content_field_sele
     for dateline in content_clone.cssselect("strong.article-detail-dateline"):
         dateline.drop_tree()
 
-    images: list[dict[str, str]] = []
-    placeholders: dict[str, str] = {}
-    for img in content_clone.cssselect("img"):
-        src = img.get("src") or img.get("data-src") or ""
-        if not src or src.startswith("data:"):
-            continue
-        if "/emoji/" in src or "emoji" in src.lower():
-            continue
-
-        full_url = NewsBaseAdapter.clean_url(urljoin(detail_url, src.strip()))
-        if not full_url:
-            continue
-        placeholder = placeholders.get(full_url)
-        if placeholder:
-            img.set("src", placeholder)
-            if "srcset" in img.attrib:
-                del img.attrib["srcset"]
-            if "data-src" in img.attrib:
-                del img.attrib["data-src"]
-            continue
-
-        placeholder = f"{{{{img_{len(images)}}}}}"
-        alt = (img.get("alt") or "").strip()
-        images.append({
-            "url": full_url,
-            "placeholder": placeholder,
-            "alt": alt,
-        })
-        placeholders[full_url] = placeholder
-        img.set("src", placeholder)
-        if "srcset" in img.attrib:
-            del img.attrib["srcset"]
-        if "data-src" in img.attrib:
-            del img.attrib["data-src"]
-
     content_html = etree.tostring(content_clone, encoding="unicode", method="html").strip()
     if content_html:
         record["content_html"] = content_html
-
-    if images:
-        record["images"] = NewsBaseAdapter.dedupe_media_items(images)
 
 
 def extract_slides(html: str, record: dict, detail_url: str, content_field_selector: str) -> None:
@@ -220,22 +186,6 @@ def extract_tags(html: str, record: dict) -> None:
 
     if tags:
         record["tags"] = tags
-
-
-def extract_external_links(adapter: NewsBaseAdapter, record: dict, detail_url: str) -> None:
-    """从 SSC 正文 HTML 提取外链。"""
-    existing = record.get("external_links") or []
-    external_links: list[str] = []
-    content_html = str(record.get("content_html") or "").strip()
-    if content_html:
-        external_links = adapter.extract_external_links(content_html, detail_url)
-
-    if external_links or existing:
-        merged = adapter.merge_external_links(existing, external_links)
-        if merged:
-            record["external_links"] = merged
-        else:
-            record.pop("external_links", None)
 
 
 def _find_content_nodes(tree: Any, content_field_selector: str) -> list[Any]:

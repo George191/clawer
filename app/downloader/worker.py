@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import re
 import time
 from dataclasses import dataclass
@@ -413,12 +414,25 @@ class DownloadWorker:
                         record_updates["content_html"] = content_html
                     record_updates["_meta.sync_status"] = "pending"
 
+                empty_asset_fields = self._empty_asset_fields(
+                    record, record_updates,
+                )
+                if "assets" in empty_asset_fields:
+                    record_updates = {
+                        key: value for key, value in record_updates.items()
+                        if key != "assets" and not key.startswith("assets.")
+                    }
+                else:
+                    for field in empty_asset_fields:
+                        record_updates.pop(field, None)
+
                 mongo_started_at = time.perf_counter()
                 await self._mongo.update_download_result(
                     collection_name,
                     record_id,
                     record_updates,
                     final_status,
+                    unset_fields=empty_asset_fields,
                 )
                 logger.debug(
                     "DownloadWorker timing: phase=mongo record=%s fields=%d "
@@ -498,6 +512,44 @@ class DownloadWorker:
                 current[part] = next_value
             current = next_value
         current[parts[-1]] = value
+
+    @classmethod
+    def _empty_asset_fields(
+        cls,
+        record: dict[str, Any],
+        updates: dict[str, Any],
+    ) -> set[str]:
+        """Return empty asset containers that should be removed from MongoDB."""
+        existing_assets = record.get("assets")
+        projected: dict[str, Any] = {
+            "assets": copy.deepcopy(existing_assets)
+            if isinstance(existing_assets, dict)
+            else {},
+        }
+        touched = isinstance(existing_assets, dict)
+        for key, value in updates.items():
+            if key == "assets":
+                projected["assets"] = copy.deepcopy(value)
+                touched = True
+            elif key.startswith("assets."):
+                cls._set_nested_value(projected, key, copy.deepcopy(value))
+                touched = True
+
+        assets = projected.get("assets")
+        if not touched or not isinstance(assets, dict):
+            return set()
+
+        empty_children = {
+            f"assets.{key}"
+            for key, value in assets.items()
+            if isinstance(value, (dict, list)) and not value
+        }
+        nonempty_children = {
+            key: value
+            for key, value in assets.items()
+            if f"assets.{key}" not in empty_children
+        }
+        return empty_children if nonempty_children else {"assets"}
 
     async def _get_template(self, template_name: str) -> SiteTemplate | None:
         """获取模板（带缓存）。"""
