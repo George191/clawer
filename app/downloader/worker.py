@@ -368,6 +368,7 @@ class DownloadWorker:
                     for key, value in updates.items()
                     if key not in attachment_updates
                 }
+                unset_fields: set[str] = set()
                 record_updates.update({
                     key: "" for key in external_asset_keys
                     if key not in external_attachment_keys
@@ -408,7 +409,12 @@ class DownloadWorker:
                         *(url for url in (record.get("external_links") or []) if isinstance(url, str)),
                         *external_urls,
                     ]))
-                    record_updates["attachments"] = attachments
+                    if attachments:
+                        record_updates["attachments"] = attachments
+                    else:
+                        # All attachment candidates were classified as external
+                        # links. Do not persist a meaningless empty array.
+                        unset_fields.add("attachments")
                     record_updates["external_links"] = merged_external
                     if content_html != str(record.get("content_html") or ""):
                         record_updates["content_html"] = content_html
@@ -432,7 +438,7 @@ class DownloadWorker:
                     record_id,
                     record_updates,
                     final_status,
-                    unset_fields=empty_asset_fields,
+                    unset_fields=empty_asset_fields | unset_fields,
                 )
                 logger.debug(
                     "DownloadWorker timing: phase=mongo record=%s fields=%d "
