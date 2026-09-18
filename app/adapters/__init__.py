@@ -171,6 +171,12 @@ class BaseSiteAdapter:
         """每页数据返回后。子类覆盖。"""
         return records
 
+    async def normalize_list_records(
+        self, page: int, records: list[dict]
+    ) -> list[dict]:
+        """Normalize list fields before incremental filtering and detail fetches."""
+        return records
+
     async def on_records_saved(
         self,
         task_id: int | str,

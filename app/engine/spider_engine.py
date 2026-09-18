@@ -32,6 +32,7 @@ from app.crawler.incremental import (
     FilteredRecords,
     TimeWatermark,
     filter_records_by_watermark,
+    parse_record_time,
 )
 from app.downloader.http_client import HttpClient
 from app.logger import get_logger
@@ -341,6 +342,7 @@ class SpiderEngine:
                     records = await adapter.parse_list_response(current_page, html)
                     if records is None:
                         records = self._parser.parse_list(html, template.list_fields)
+                    records = await adapter.normalize_list_records(current_page, records)
 
                     watermark = template._crawl_context.get("incremental_watermark")
                     if isinstance(watermark, TimeWatermark):
@@ -354,6 +356,15 @@ class SpiderEngine:
                                 await progress_callback(current_page, result)
                             page_succeeded = True
                             break
+                        records = [
+                            record
+                            for record in records
+                            if parse_record_time(
+                                get_nested_value(record, watermark.field),
+                                watermark.record_time_format,
+                            ) is None
+                            or record in list_filtered.records
+                        ]
 
                     records = await adapter.on_after_page(current_page, records)
 

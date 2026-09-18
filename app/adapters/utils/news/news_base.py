@@ -18,6 +18,8 @@ from datetime import datetime
 from urllib.parse import urljoin, urlparse
 from typing import Any
 
+from lxml import etree
+
 from app.adapters import BaseSiteAdapter, register_adapter
 from app.downloader.http_client import HttpClient
 from app.logger import get_adapter_logger
@@ -218,6 +220,87 @@ class NewsBaseAdapter(BaseSiteAdapter):
             record["external_links"] = merged
         else:
             record.pop("external_links", None)
+
+    def process_content_assets(
+        self,
+        record: dict[str, Any],
+        base_url: str,
+        content_field: str = "content_html",
+    ) -> None:
+        """Extract all正文 media with the shared placeholder rules."""
+        from lxml import html as lxml_html
+        from app.adapters.utils.news.assets import (
+            extract_attachments_from_wrapper,
+            extract_iframes_from_wrapper,
+            extract_images_from_wrapper,
+            extract_videos_from_wrapper,
+        )
+
+        content = str(record.get(content_field) or "").strip()
+        if not content:
+            self._drop_empty_media_fields(record)
+            record.pop("external_links", None)
+            return
+        try:
+            wrapper = lxml_html.fragment_fromstring(content, create_parent="div")
+        except Exception:
+            self._drop_empty_media_fields(record)
+            return
+
+        images = extract_images_from_wrapper(wrapper, base_url)
+        videos = extract_videos_from_wrapper(wrapper, base_url)
+        iframes = extract_iframes_from_wrapper(wrapper, base_url)
+        tagged_urls = {
+            str(item.get("url") or "")
+            for items in (images, videos, iframes)
+            for item in items
+            if isinstance(item, dict)
+        }
+        candidate_external = set(self.extract_external_links(content, base_url))
+        attachments = extract_attachments_from_wrapper(
+            wrapper,
+            base_url,
+            excluded_urls=tagged_urls,
+        )
+
+        record[content_field] = "".join(
+            etree.tostring(child, encoding="unicode", method="html")
+            for child in wrapper
+        ).strip()
+        extracted_by_key = (
+            ("images", images),
+            ("videos", videos),
+            ("iframe", iframes),
+            ("attachments", attachments),
+        )
+        for key, values in extracted_by_key:
+            existing = record.get(key)
+            merged = list(existing) if isinstance(existing, list) else []
+            merged.extend(values)
+            if merged:
+                record[key] = self.dedupe_media_items(merged)
+            else:
+                record.pop(key, None)
+
+        media_urls = tagged_urls | {
+            str(item.get("url") or "")
+            for key, _ in extracted_by_key
+            for item in (record.get(key) or [])
+            if isinstance(item, dict)
+        }
+        external = [url for url in candidate_external if url not in media_urls]
+        if external:
+            record["external_links"] = self.merge_external_links(
+                record.get("external_links"), external
+            )
+        else:
+            record.pop("external_links", None)
+
+    @staticmethod
+    def _drop_empty_media_fields(record: dict[str, Any]) -> None:
+        for key in ("images", "videos", "iframe", "attachments"):
+            if isinstance(record.get(key), list) and not record[key]:
+                record.pop(key, None)
 
     @classmethod
     def extract_video_media(
