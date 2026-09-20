@@ -448,6 +448,8 @@ class DownloadWorker:
                     record_updates["_meta.sync_status"] = "pending"
                 elif downloaded_assets or not_found_updates:
                     record_updates["_meta.sync_status"] = "pending"
+                if not_found_updates:
+                    record_updates["_meta.has_not_found_assets"] = True
 
                 empty_asset_fields = self._empty_asset_fields(
                     record, record_updates,

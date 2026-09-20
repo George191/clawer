@@ -19,6 +19,7 @@ def _document_record_id(source_item: dict[str, Any]) -> str:
     identity = {
         field: safe_str(source_item.get(field)) or ""
         for field in (
+            "accession_number",
             "url",
             "filename",
             "sequence",
@@ -81,9 +82,13 @@ def normalize_sec_edgar_filing_documents(
         if not source_url:
             continue
         filename = safe_str(item.get("filename"))
+        identity_source = {
+            **source_item,
+            "accession_number": record.get("accession_number"),
+        }
         document = {
             "_meta": {
-                "record_id": _document_record_id(source_item),
+                "record_id": _document_record_id(identity_source),
                 "data_source": source,
             },
             "cik": record.get("cik"),

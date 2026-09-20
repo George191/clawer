@@ -127,7 +127,8 @@ def _iter_asset_path_values(node: Any, path: tuple[str, ...] = ()) -> list[tuple
         return [(path, value)] if value else []
     if isinstance(node, dict):
         if node.get("status_code") == 404 and node.get("url") == "":
-            return [(path, "")]
+            target_path = path if path and path[-1] == "url" else (*path, "url")
+            return [(target_path, "")]
         values: list[tuple[tuple[str, ...], str]] = []
         for key, value in node.items():
             values.extend(_iter_asset_path_values(value, (*path, str(key))))
