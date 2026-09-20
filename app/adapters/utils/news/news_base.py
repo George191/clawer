@@ -209,7 +209,6 @@ class NewsBaseAdapter(BaseSiteAdapter):
                 record["iframe"] = self.dedupe_media_items(
                     list(record.get("iframe") or []) + iframe
                 )
-            record.pop("video_embeds", None)
 
         if not links and not existing:
             record.pop("external_links", None)
