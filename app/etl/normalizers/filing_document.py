@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
-from app.etl.normalizers.base import safe_str
+from app.etl.normalizers.base import apply_asset_path_overrides, safe_str
 
 
 def _meta(record: dict[str, Any]) -> dict[str, Any]:
     value = record.get("_meta")
     return value if isinstance(value, dict) else {}
+
+
+def _document_record_id(source_item: dict[str, Any]) -> str:
+    identity = {
+        field: safe_str(source_item.get(field)) or ""
+        for field in (
+            "url",
+            "filename",
+            "sequence",
+            "description",
+            "doc_type",
+            "size",
+        )
+    }
+    canonical = json.dumps(identity, ensure_ascii=False, sort_keys=True)
+    return hashlib.md5(canonical.encode("utf-8")).hexdigest()
 
 
 def normalize_sec_edgar_filing_document(record: dict[str, Any]) -> dict[str, Any]:
@@ -21,7 +38,7 @@ def normalize_sec_edgar_filing_document(record: dict[str, Any]) -> dict[str, Any
 
     def dump(value: Any) -> str | None:
         return json.dumps(value, ensure_ascii=False) if value is not None else None
-    
+
     meta = _meta(record)
     record_id = safe_str(meta.get("record_id"))
     return {
@@ -42,21 +59,31 @@ def normalize_sec_edgar_filing_document(record: dict[str, Any]) -> dict[str, Any
 def normalize_sec_edgar_filing_documents(
     record: dict[str, Any], field: str
 ) -> list[dict[str, Any]]:
-    files = record.get(field)
+    normalized_record, _ = apply_asset_path_overrides(record)
+    files = normalized_record.get(field)
+    source_files = record.get(field)
     if not isinstance(files, list):
         return []
     meta = _meta(record)
-    filing_id = safe_str(meta.get("record_id"))
     source = safe_str(meta.get("template"))
-    sequence = safe_str(record.get("sequence"))
     rows: list[dict[str, Any]] = []
-    for _, item in enumerate(files):
+    for index, item in enumerate(files):
         if not isinstance(item, dict):
             continue
+        source_item = (
+            source_files[index]
+            if isinstance(source_files, list)
+            and index < len(source_files)
+            and isinstance(source_files[index], dict)
+            else item
+        )
+        source_url = safe_str(source_item.get("url"))
+        if not source_url:
+            continue
         filename = safe_str(item.get("filename"))
-        rows.append(normalize_sec_edgar_filing_document({
+        document = {
             "_meta": {
-                "record_id": f"{filing_id}:document:{field}:{sequence}",
+                "record_id": _document_record_id(source_item),
                 "data_source": source,
             },
             "cik": record.get("cik"),
@@ -67,7 +94,8 @@ def normalize_sec_edgar_filing_documents(
             "size": item.get("size"),
             "url": item.get("url"),
             "doc_type": item.get("doc_type"),
-        }))
+        }
+        rows.append(normalize_sec_edgar_filing_document(document))
     return rows
 
 
