@@ -155,20 +155,17 @@ class MongoStorage(StorageBackend):
         if isinstance(value, dict):
             cleaned: dict[str, Any] = {}
             for key, item in value.items():
-                if item is None:
-                    continue
                 next_item = cls._drop_none_values(item)
-                if next_item is None:
+                if not cls._has_meaningful_value(next_item):
                     continue
                 cleaned[key] = next_item
             return cleaned
         if isinstance(value, list):
-            cleaned_list = [
-                cls._drop_none_values(item)
-                for item in value
-                if item is not None
+            cleaned_list = [cls._drop_none_values(item) for item in value]
+            return [
+                item for item in cleaned_list
+                if cls._has_meaningful_value(item)
             ]
-            return [item for item in cleaned_list if item is not None]
         return value
 
     async def save_record(self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any]) -> str:
