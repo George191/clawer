@@ -54,6 +54,12 @@ RETRY_CRITICAL_THRESHOLD: int = 50
 # 403 可能是代理/上游临时拒绝，但长期 403 会占住下载 worker。
 RETRY_MAX_FORBIDDEN_ATTEMPTS: int = 5
 FORBIDDEN_ASSET_SKIPPED = "__forbidden_asset_skipped__"
+NOT_FOUND_ASSET = "__not_found_asset__"
+NOT_FOUND_ASSET_MARKER = {
+    "url": "",
+    "description": "Source file returned HTTP 404; the file no longer exists.",
+    "status_code": 404,
+}
 
 # Some released templates use a business-specific Mongo collection name.
 # Keep the template name unchanged for loading its download configuration,
@@ -315,6 +321,7 @@ class DownloadWorker:
                 ))
 
                 updates: dict[str, str] = {}
+                not_found_updates: dict[str, dict[str, Any]] = {}
                 failed_assets = 0
                 external_asset_keys: set[str] = set()
                 external_urls: list[str] = []
@@ -327,6 +334,11 @@ class DownloadWorker:
                         external_asset_keys.update(asset_keys)
                         external_urls.append(result.source_url)
                         continue
+                    if result.kind == "not_found":
+                        not_found_updates.update(
+                            (key, dict(NOT_FOUND_ASSET_MARKER)) for key in asset_keys
+                        )
+                        continue
                     if result.kind != "file" or not result.asset_path:
                         failed_assets += 1
                         continue
@@ -338,6 +350,7 @@ class DownloadWorker:
                     for asset_key in expected_asset_keys
                     if (
                         asset_key in updates
+                        or asset_key in not_found_updates
                         or asset_key in external_asset_keys
                         or self._asset_exists(record, asset_key)
                     )
@@ -348,7 +361,7 @@ class DownloadWorker:
                     final_status = "pending"
                 elif failed_assets or missing_asset_keys:
                     final_status = "failed"
-                elif downloaded_assets or skipped_existing:
+                elif downloaded_assets or not_found_updates or skipped_existing:
                     final_status = "downloaded"
                 else:
                     final_status = "no_assets"
@@ -359,21 +372,31 @@ class DownloadWorker:
                     for key, value in updates.items()
                     if key.startswith(attachment_asset_prefix)
                 }
+                not_found_attachment_updates = {
+                    key: value
+                    for key, value in not_found_updates.items()
+                    if key.startswith(attachment_asset_prefix)
+                }
                 external_attachment_keys = {
                     key for key in external_asset_keys
                     if key.startswith(attachment_asset_prefix)
                 }
                 record_updates: dict[str, Any] = {
                     key: value
-                    for key, value in updates.items()
+                    for key, value in {**updates, **not_found_updates}.items()
                     if key not in attachment_updates
+                    and key not in not_found_attachment_updates
                 }
                 unset_fields: set[str] = set()
                 record_updates.update({
                     key: "" for key in external_asset_keys
                     if key not in external_attachment_keys
                 })
-                if attachment_updates or external_attachment_keys:
+                if (
+                    attachment_updates
+                    or not_found_attachment_updates
+                    or external_attachment_keys
+                ):
                     existing_attachment_assets = (
                         (record.get("assets") or {}).get("attachments") or {}
                     )
@@ -385,6 +408,10 @@ class DownloadWorker:
                         match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
                         if match:
                             cleaned_attachment_assets[match.group(1)] = {"url": value}
+                    for key, value in not_found_attachment_updates.items():
+                        match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
+                        if match:
+                            cleaned_attachment_assets[match.group(1)] = value
                     for key in external_attachment_keys:
                         match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
                         if match:
@@ -418,6 +445,8 @@ class DownloadWorker:
                     record_updates["external_links"] = merged_external
                     if content_html != str(record.get("content_html") or ""):
                         record_updates["content_html"] = content_html
+                    record_updates["_meta.sync_status"] = "pending"
+                elif downloaded_assets or not_found_updates:
                     record_updates["_meta.sync_status"] = "pending"
 
                 empty_asset_fields = self._empty_asset_fields(
@@ -470,7 +499,7 @@ class DownloadWorker:
                         record_id, len(missing_asset_keys),
                     )
                     return False
-                if downloaded_assets or skipped_existing:
+                if downloaded_assets or not_found_updates or skipped_existing:
                     logger.info(
                         "DownloadWorker: downloaded %d assets for %s "
                         "(skipped_existing=%d)",
@@ -504,7 +533,11 @@ class DownloadWorker:
     def _asset_exists(record: dict[str, Any], asset_key: str) -> bool:
         value = get_nested_value(record, asset_key)
         if isinstance(value, str):
-            return bool(value.strip())
+            if value.strip():
+                return True
+            parent_path = asset_key.rsplit(".", 1)[0]
+            parent = get_nested_value(record, parent_path)
+            return isinstance(parent, dict) and parent.get("status_code") == 404
         return value is not None
 
     @staticmethod
@@ -902,6 +935,7 @@ class DownloadWorker:
                             "DownloadWorker: 404 not found, skipping: %s",
                             url,
                         )
+                        return NOT_FOUND_ASSET
                     else:
                         logger.warning(
                             "DownloadWorker: non-retryable error, skipping: %s (%s)",
@@ -983,6 +1017,8 @@ class DownloadWorker:
         response = await self._download_with_retry(url, use_proxy=use_proxy)
         if response == FORBIDDEN_ASSET_SKIPPED:
             return AssetResult(kind="skipped", source_url=url)
+        if response == NOT_FOUND_ASSET:
+            return AssetResult(kind="not_found", source_url=url)
         if not isinstance(response, DownloadResponse):
             return AssetResult(kind="failed", source_url=url)
         if dl_info.get("is_attachment_candidate") and self._is_html_response(response):
