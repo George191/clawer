@@ -125,6 +125,21 @@ def _roman_to_int(value: str) -> int | None:
     return total
 
 
+def _navarea_id(value: str | None) -> int | None:
+    normalized = safe_str(value)
+    if not normalized:
+        return None
+    normalized = re.sub(r"\s+", " ", normalized).upper()
+    mapped = _NGA_REGION_NAVAREA_IDS.get(normalized)
+    if mapped is not None:
+        return mapped
+    match = re.fullmatch(r"NAVAREA\s+([IVXLCDM]+|\d+)", normalized)
+    if not match:
+        return None
+    identifier = match.group(1)
+    return _roman_to_int(identifier)
+
+
 def _parse_warning_no(
     warning_no: str | None,
 ) -> tuple[int | None, int | None, str | None]:
@@ -176,9 +191,9 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     record["warning_year"] = warning_year
     record["sub_region"] = sub_region
 
-    region, navarea_id = record.get("sea_name").split(" ")
+    region = safe_str(record.get("sea_name"))
     record["region"] = region
-    record["navarea_id"] = _roman_to_int(navarea_id)
+    record["navarea_id"] = _navarea_id(region)
     record["warning_no"] = f"{warning_year}/{serial_number}"
     normalized = _navwarn_common(record, "sealagom_navwarn")
     normalized["issued_at"] = safe_datetime(record.get("issue_time"))
@@ -193,10 +208,11 @@ def normalize_nga_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     warning_year = issue_time.year
 
     record["warning_year"] = warning_year
+    record["serial_number"] = serial_number
     record["warning_no"] = f"{str(warning_year)}/{serial_number}"
-    navarea = record.get("navarea")
+    navarea = safe_str(record.get("navarea"))
     record["region"] = navarea
-    record["navarea_id"] = _NGA_REGION_NAVAREA_IDS.get(navarea)
+    record["navarea_id"] = _navarea_id(navarea)
     normalized = _navwarn_common(record, "nga_navwarn")
     normalized["issued_at"] = issue_time
 
