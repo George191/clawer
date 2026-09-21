@@ -184,6 +184,34 @@ def _parse_warning_no(
 def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     """sealagom_navwarn 专属字段映射 + 时间解析。"""
     warning_no = safe_str(record.get("warning_no"))
+    region = safe_str(record.get("sea_name"))
+
+    if warning_no:
+        warning_prefix_match = re.fullmatch(
+            r"\s*(?P<area>[A-Za-z][A-Za-z0-9 _-]*?)\s+"
+            r"(?P<label>WARNING|MESSAGE)\s+"
+            r"(?P<number>\d+\s*[/\-]\s*\d+(?:\([^()]*\))?)\s*",
+            warning_no,
+            re.IGNORECASE,
+        )
+        if warning_prefix_match:
+            area = re.sub(
+                r"\s+", " ", warning_prefix_match.group("area")
+            ).strip().upper()
+            if (
+                not area.startswith("NAVAREA ")
+                and not safe_str(record.get("oceans"))
+            ):
+                record["oceans"] = area
+            warning_no = warning_prefix_match.group("number")
+        elif region:
+            warning_no = re.sub(
+                rf"^\s*{re.escape(region)}\s+",
+                "",
+                warning_no,
+                count=1,
+                flags=re.IGNORECASE,
+            )
 
     serial_number, warning_year, sub_region = _parse_warning_no(warning_no)
 
@@ -191,10 +219,13 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     record["warning_year"] = warning_year
     record["sub_region"] = sub_region
 
-    region = safe_str(record.get("sea_name"))
     record["region"] = region
     record["navarea_id"] = _navarea_id(region)
-    record["warning_no"] = f"{warning_year}/{serial_number}"
+    record["warning_no"] = (
+        f"{warning_year}/{serial_number}"
+        if warning_year is not None and serial_number is not None
+        else warning_no
+    )
     normalized = _navwarn_common(record, "sealagom_navwarn")
     normalized["issued_at"] = safe_datetime(record.get("issue_time"))
     return normalized
@@ -203,9 +234,21 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
 def normalize_nga_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     """nga_navwarn 专属字段映射 + 时间解析 + NGA 清洗。"""
 
-    serial_number = record.get("warning_no")
+    serial_number = int(record.get("warning_no"))
     issue_time = safe_datetime(record.get("issue_time"))
     warning_year = issue_time.year
+
+    if serial_number <= 0:
+        header_match = re.search(
+            r"^(?:NAVAREA\s+[IVXLCDM]+|HYDROLANT|HYDROPAC|HYDROARC)\s+"
+            r"(?P<serial>\d+)\s*/\s*(?P<year>\d{2,4})\b",
+            safe_str(record.get("message_text")) or "",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if header_match:
+            serial_number = int(header_match.group("serial"))
+            year_text = header_match.group("year")
+            warning_year = int(year_text) if len(year_text) == 4 else 2000 + int(year_text)
 
     record["warning_year"] = warning_year
     record["serial_number"] = serial_number
