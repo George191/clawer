@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
-from app.etl.normalizers.base import safe_str
+from app.etl.normalizers.base import safe_date, safe_str
 
 
 def _meta(record: dict[str, Any]) -> dict[str, Any]:
@@ -36,9 +36,9 @@ def normalize_sec_edgar_financial_fact(record: dict[str, Any]) -> dict[str, Any]
         "unit": safe_str(pick("unit")),
         "value": pick("value"),
         "accn": safe_str(pick("accn")),
-        "filed": safe_str(pick("filed")),
-        "start_date": safe_str(pick("start_date")),
-        "end_date": safe_str(pick("end_date")),
+        "filed": safe_date(pick("filed")),
+        "start_date": safe_date(pick("start_date")),
+        "end_date": safe_date(pick("end_date")),
         "fy": pick("fy"),
         "fp": safe_str(pick("fp")),
         "frame": safe_str(pick("frame")),
@@ -74,7 +74,7 @@ def normalize_sec_edgar_financial_facts(
                         "filed": value.get("filed"),
                         "end_date": value.get("end"),
                         "start_date": value.get("start"),
-                        "concept_label": spec.get("concept_label") or None,
+                        "concept_label": spec.get("concept_label"),
                         "taxonomy": taxonomy,
                         "concept": concept,
                         "unit": unit,
