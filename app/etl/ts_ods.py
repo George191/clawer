@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
@@ -245,7 +246,7 @@ RETURNING *
 ODS_COMPANY_STANDARD_INSERT = """
 INSERT INTO ts_ods.ods_company (
     record_id, data_source, data_type, cik, name, entity_type, exchanges, tickers,
-    sic, sic_description, address, website, created_at, updated_at, ein, description, category, phone, former_names, investor_website
+    sic, sic_description, address, website, ein, description, category, phone, former_names, investor_website, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type, :cik, :name, :entity_type, CAST(:exchanges AS jsonb),
     CAST(:tickers AS jsonb), :sic, :sic_description, CAST(:address AS jsonb),
@@ -388,10 +389,20 @@ class TsOds(ETLBase):
             raw_data = message.get("raw_data", message)
             normalizer = get_normalizer(data_type, data_source)
             normalized_records = normalizer(raw_data)
+            if inspect.isawaitable(normalized_records):
+                normalized_records = await normalized_records
             if isinstance(normalized_records, dict):
                 normalized_records = [normalized_records]
             if not isinstance(normalized_records, list) or not normalized_records:
-                logger.warning("%s Normalizer returned no records, table=%s", self._log_prefix, table)
+                logger.warning(
+                    "%s Normalizer returned no records, table=%s data_type=%s "
+                    "data_source=%s result_type=%s",
+                    self._log_prefix,
+                    table,
+                    data_type,
+                    data_source,
+                    type(normalized_records).__name__,
+                )
                 return False
 
             now = datetime.now(timezone.utc)
