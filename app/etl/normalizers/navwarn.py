@@ -199,6 +199,8 @@ def normalize_sealagom_navwarn(record: dict[str, Any]) -> dict[str, Any]:
                 r"\s+", " ", warning_prefix_match.group("area")
             ).strip().upper()
             if (
+                warning_prefix_match.group("label").upper() == "WARNING"
+                and
                 not area.startswith("NAVAREA ")
                 and not safe_str(record.get("oceans"))
             ):
