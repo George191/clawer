@@ -71,6 +71,41 @@ DOWNLOAD_TEMPLATE_OVERRIDES = {
     collection: template for template, collection in DOWNLOAD_COLLECTION_OVERRIDES.items()
 }
 
+
+def _remap_attachment_assets_after_external(
+    attachments: list[Any],
+    existing_assets: dict[str, Any],
+    attachment_updates: dict[str, str],
+    not_found_updates: dict[str, dict[str, Any]],
+    external_urls: set[str],
+) -> tuple[list[Any], dict[str, Any]]:
+    """Remove external attachments and compact their numeric asset indexes once."""
+    index_map: dict[str, str] = {}
+    remaining: list[Any] = []
+    for old_index, item in enumerate(attachments):
+        if isinstance(item, dict) and str(item.get("url") or "") in external_urls:
+            continue
+        index_map[str(old_index)] = str(len(remaining))
+        remaining.append(item)
+
+    remapped: dict[str, Any] = {}
+    if isinstance(existing_assets, dict):
+        for old_index, value in existing_assets.items():
+            new_index = index_map.get(str(old_index))
+            if new_index is not None:
+                remapped[new_index] = dict(value) if isinstance(value, dict) else value
+
+    for updates in (attachment_updates, not_found_updates):
+        for key, value in updates.items():
+            match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
+            if not match:
+                continue
+            new_index = index_map.get(match.group(1))
+            if new_index is not None:
+                remapped[new_index] = {"url": value} if isinstance(value, str) else value
+    return remaining, remapped
+
+
 @dataclass(slots=True)
 class AssetDownloadJob:
     dl_info: dict[str, Any]
@@ -419,13 +454,23 @@ class DownloadWorker:
                     record_updates["assets.attachments"] = cleaned_attachment_assets
                 if external_urls:
                     external_set = set(external_urls)
-                    attachments = [
-                        item for item in (record.get("attachments") or [])
-                        if not isinstance(item, dict)
-                        or str(item.get("url") or "") not in external_set
-                    ]
+                    original_attachments = record.get("attachments") or []
+                    # External-link classification removes entries from the source
+                    # list. Re-key both old assets and this batch's results once,
+                    # before the single Mongo update, so later items shift safely.
+                    attachments, remapped_attachment_assets = (
+                        _remap_attachment_assets_after_external(
+                            original_attachments,
+                            (record.get("assets") or {}).get("attachments") or {},
+                            attachment_updates,
+                            not_found_attachment_updates,
+                            external_set,
+                        )
+                    )
+                    record_updates["assets.attachments"] = remapped_attachment_assets
+
                     content_html = str(record.get("content_html") or "")
-                    for item in record.get("attachments") or []:
+                    for item in original_attachments:
                         if not isinstance(item, dict):
                             continue
                         source_url = str(item.get("url") or "")
