@@ -590,9 +590,16 @@ def _build_adapters_from_config() -> list[ProxySourceAdapter]:
         for api_url in api_urls:
             if api_url:
                 adapters.append(
-                    ZdopenAPIAdapter({"url": api_url, "fallback_only": bool(adapters)})
+                    ZdopenAPIAdapter({
+                        "url": api_url,
+                        "protocol_filter": "http,https",
+                        "fallback_only": bool(adapters),
+                    })
                 )
     elif settings.proxy_pool_file:
-        adapters.append(FileProxySourceAdapter({"file_path": settings.proxy_pool_file}))
+        adapters.append(FileProxySourceAdapter({
+            "file_path": settings.proxy_pool_file,
+            "protocol_filter": "http,https",
+        }))
 
     return adapters

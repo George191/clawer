@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
 from app.logger import get_adapter_logger
@@ -66,11 +67,23 @@ class FileProxySourceAdapter(ProxySourceAdapter):
             return []
 
         proxies: list[ProxyInfo] = []
+        protocol_filter = self._config.get("protocol_filter", "")
+        allowed_protocols = {
+            value.strip().lower()
+            for value in protocol_filter.split(",")
+            if value.strip()
+        } if isinstance(protocol_filter, str) else set()
         for line in content.splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
 
+            if allowed_protocols:
+                try:
+                    if urlsplit(line).scheme.lower() not in allowed_protocols:
+                        continue
+                except ValueError:
+                    continue
             proxies.append(ProxyInfo(line))
 
         logger.info("Loaded %d proxies from %s", len(proxies), path)

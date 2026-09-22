@@ -209,14 +209,21 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
             ProxyInfo 对象列表。
         """
         protocol_filter = self._config.get("protocol_filter", "")
+        allowed_protocols = {
+            value.strip().lower()
+            for value in protocol_filter.split(",")
+            if value.strip()
+        } if isinstance(protocol_filter, str) else set()
 
         proxies: list[ProxyInfo] = []
         for item in items:
             ip = item.get("ip", "").strip()
             port = item.get("port", "")
-            protocol = item.get("protocol", "http").strip().lower()
+            protocol = item.get("protocol", "").strip().lower()
 
             if not ip or not port:
+                continue
+            if allowed_protocols and protocol not in allowed_protocols:
                 continue
 
             proxy_url = f"{protocol}://{ip}:{port}"
