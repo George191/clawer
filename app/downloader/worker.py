@@ -19,9 +19,11 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 import copy
 import re
 import time
+from urllib.parse import unquote
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -70,40 +72,6 @@ DOWNLOAD_COLLECTION_OVERRIDES = {
 DOWNLOAD_TEMPLATE_OVERRIDES = {
     collection: template for template, collection in DOWNLOAD_COLLECTION_OVERRIDES.items()
 }
-
-
-def _remap_attachment_assets_after_external(
-    attachments: list[Any],
-    existing_assets: dict[str, Any],
-    attachment_updates: dict[str, str],
-    not_found_updates: dict[str, dict[str, Any]],
-    external_urls: set[str],
-) -> tuple[list[Any], dict[str, Any]]:
-    """Remove external attachments and compact their numeric asset indexes once."""
-    index_map: dict[str, str] = {}
-    remaining: list[Any] = []
-    for old_index, item in enumerate(attachments):
-        if isinstance(item, dict) and str(item.get("url") or "") in external_urls:
-            continue
-        index_map[str(old_index)] = str(len(remaining))
-        remaining.append(item)
-
-    remapped: dict[str, Any] = {}
-    if isinstance(existing_assets, dict):
-        for old_index, value in existing_assets.items():
-            new_index = index_map.get(str(old_index))
-            if new_index is not None:
-                remapped[new_index] = dict(value) if isinstance(value, dict) else value
-
-    for updates in (attachment_updates, not_found_updates):
-        for key, value in updates.items():
-            match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
-            if not match:
-                continue
-            new_index = index_map.get(match.group(1))
-            if new_index is not None:
-                remapped[new_index] = {"url": value} if isinstance(value, str) else value
-    return remaining, remapped
 
 
 @dataclass(slots=True)
@@ -266,7 +234,8 @@ class DownloadWorker:
                     return True
 
                 download_configs = template.download
-                if not download_configs:
+                data_type = str(meta.get("data_type") or template.data_type).lower()
+                if not download_configs and data_type != "news":
                     # 缓存该模板，后续扫描跳过
                     self._no_assets_templates.add(template_name)
                     logger.info(
@@ -279,13 +248,11 @@ class DownloadWorker:
                     )
                     return True
 
-                # 提取所有下载 URL（支持多资源配置：PDF + 插图 + 缩略图）
-                download_urls = []
-                for dc in download_configs:
-                    urls = self._extract_download_urls(
-                        record, dc, template_name,
-                    )
-                    download_urls.extend(urls)
+                # 新闻正文的所有 a[href] 都先存 external_links，下载时再通过
+                # Content-Type 将文件资源迁移为附件。
+                download_urls = self._extract_record_download_urls(
+                    record, download_configs, template_name, data_type,
+                )
 
                 if not download_urls:
                     await self._mongo.update_file_status(
@@ -294,7 +261,6 @@ class DownloadWorker:
                     return True
 
                 # 下载并上传到 MinIO
-                data_type = meta["data_type"]
                 pending_by_url: dict[str, dict[str, Any]] = {}
                 skipped_existing = 0
                 expected_asset_keys = set()
@@ -303,9 +269,7 @@ class DownloadWorker:
                     asset_key = dl_info.get("asset_key", f"assets.{idx}")
                     expected_asset_keys.add(asset_key)
                     is_attachment_candidate = (
-                        dl_info.get("selector") == "attachments"
-                        or asset_key == "assets.attachments"
-                        or asset_key.startswith("assets.attachments.")
+                        dl_info.get("source_field") == "external_links"
                     )
                     if self._asset_exists(record, asset_key) and not is_attachment_candidate:
                         skipped_existing += 1
@@ -401,97 +365,14 @@ class DownloadWorker:
                 else:
                     final_status = "no_assets"
 
-                attachment_asset_prefix = "assets.attachments."
-                attachment_updates = {
-                    key: value
-                    for key, value in updates.items()
-                    if key.startswith(attachment_asset_prefix)
-                }
-                not_found_attachment_updates = {
-                    key: value
-                    for key, value in not_found_updates.items()
-                    if key.startswith(attachment_asset_prefix)
-                }
-                external_attachment_keys = {
-                    key for key in external_asset_keys
-                    if key.startswith(attachment_asset_prefix)
-                }
-                record_updates: dict[str, Any] = {
-                    key: value
-                    for key, value in {**updates, **not_found_updates}.items()
-                    if key not in attachment_updates
-                    and key not in not_found_attachment_updates
-                }
-                unset_fields: set[str] = set()
-                record_updates.update({
-                    key: "" for key in external_asset_keys
-                    if key not in external_attachment_keys
-                })
-                if (
-                    attachment_updates
-                    or not_found_attachment_updates
-                    or external_attachment_keys
-                ):
-                    existing_attachment_assets = (
-                        (record.get("assets") or {}).get("attachments") or {}
+                if data_type == "news":
+                    record_updates, unset_fields = self._build_news_download_updates(
+                        record, download_urls, updates, external_urls,
                     )
-                    cleaned_attachment_assets = {
-                        str(index): dict(value) if isinstance(value, dict) else value
-                        for index, value in existing_attachment_assets.items()
-                    } if isinstance(existing_attachment_assets, dict) else {}
-                    for key, value in attachment_updates.items():
-                        match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
-                        if match:
-                            cleaned_attachment_assets[match.group(1)] = {"url": value}
-                    for key, value in not_found_attachment_updates.items():
-                        match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
-                        if match:
-                            cleaned_attachment_assets[match.group(1)] = value
-                    for key in external_attachment_keys:
-                        match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", key)
-                        if match:
-                            cleaned_attachment_assets.pop(match.group(1), None)
-                    record_updates["assets.attachments"] = cleaned_attachment_assets
-                if external_urls:
-                    external_set = set(external_urls)
-                    original_attachments = record.get("attachments") or []
-                    # External-link classification removes entries from the source
-                    # list. Re-key both old assets and this batch's results once,
-                    # before the single Mongo update, so later items shift safely.
-                    attachments, remapped_attachment_assets = (
-                        _remap_attachment_assets_after_external(
-                            original_attachments,
-                            (record.get("assets") or {}).get("attachments") or {},
-                            attachment_updates,
-                            not_found_attachment_updates,
-                            external_set,
-                        )
-                    )
-                    record_updates["assets.attachments"] = remapped_attachment_assets
-
-                    content_html = str(record.get("content_html") or "")
-                    for item in original_attachments:
-                        if not isinstance(item, dict):
-                            continue
-                        source_url = str(item.get("url") or "")
-                        placeholder = str(item.get("placeholder") or "")
-                        if source_url in external_set and placeholder:
-                            content_html = content_html.replace(placeholder, source_url)
-                    merged_external = list(dict.fromkeys([
-                        *(url for url in (record.get("external_links") or []) if isinstance(url, str)),
-                        *external_urls,
-                    ]))
-                    if attachments:
-                        record_updates["attachments"] = attachments
-                    else:
-                        # All attachment candidates were classified as external
-                        # links. Do not persist a meaningless empty array.
-                        unset_fields.add("attachments")
-                    record_updates["external_links"] = merged_external
-                    if content_html != str(record.get("content_html") or ""):
-                        record_updates["content_html"] = content_html
-                    record_updates["_meta.sync_status"] = "pending"
-                elif downloaded_assets or not_found_updates:
+                else:
+                    record_updates = {**updates, **not_found_updates}
+                    unset_fields = set()
+                if data_type != "news" and (downloaded_assets or not_found_updates):
                     record_updates["_meta.sync_status"] = "pending"
                 if not_found_updates:
                     record_updates["_meta.has_not_found_assets"] = True
@@ -689,6 +570,48 @@ class DownloadWorker:
         except Exception:
             logger.warning("DownloadWorker: failed to get collection stats")
 
+    def _extract_record_download_urls(
+        self,
+        record: dict[str, Any],
+        download_configs: list[Any],
+        template_name: str,
+        data_type: str,
+    ) -> list[dict[str, Any]]:
+        """Return the resources to download for one record."""
+        if data_type == "news":
+            return self._extract_news_download_urls(record)
+
+        urls: list[dict[str, Any]] = []
+        for download_config in download_configs:
+            urls.extend(self._extract_download_urls(
+                record, download_config, template_name,
+            ))
+        return urls
+
+    def _extract_news_download_urls(
+        self,
+        record: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Return news external links as candidates for MIME classification."""
+        external_links = record.get("external_links")
+        if not isinstance(external_links, list):
+            return []
+
+        urls: list[dict[str, Any]] = []
+        for index, url in enumerate(external_links):
+            if not isinstance(url, str) or not url.strip():
+                continue
+            clean_url = url.strip()
+            urls.append({
+                "url": clean_url,
+                "filename": self._make_filename(
+                    clean_url, suffix=f"_{index:05d}",
+                ),
+                "asset_key": f"assets.external_links.{index}",
+                "source_field": "external_links",
+            })
+        return urls
+
     def _extract_download_urls(
         self,
         record: dict[str, Any],
@@ -724,6 +647,62 @@ class DownloadWorker:
 
         return urls
 
+    @staticmethod
+    def _build_news_download_updates(
+        record: dict[str, Any],
+        download_urls: list[dict[str, Any]],
+        downloaded_assets: dict[str, str],
+        external_urls: list[str],
+    ) -> tuple[dict[str, Any], set[str]]:
+        """Move downloaded news files from external links into attachments."""
+        key_to_url = {
+            str(item.get("asset_key")): str(item.get("url") or "")
+            for item in download_urls
+        }
+        attachments = [
+            item for item in (record.get("attachments") or [])
+            if isinstance(item, dict)
+        ]
+        attachment_assets = dict(
+            ((record.get("assets") or {}).get("attachments") or {})
+        )
+        converted_urls: set[str] = set()
+        content_html = str(record.get("content_html") or "")
+
+        for asset_key, asset_path in downloaded_assets.items():
+            source_url = key_to_url.get(asset_key, "")
+            if not source_url:
+                continue
+            index = len(attachments)
+            placeholder = f"{{{{attachment_{index}}}}}"
+            attachments.append({
+                "url": source_url,
+                "placeholder": placeholder,
+                "type": "file",
+            })
+            attachment_assets[str(index)] = {"url": asset_path}
+            content_html = content_html.replace(source_url, placeholder)
+            converted_urls.add(source_url)
+
+        remaining_external = [
+            url for url in (record.get("external_links") or [])
+            if isinstance(url, str) and url not in converted_urls
+        ]
+        remaining_external.extend(
+            url for url in external_urls if url not in remaining_external
+        )
+        updates: dict[str, Any] = {"_meta.sync_status": "pending"}
+        unset_fields: set[str] = set()
+        if converted_urls:
+            updates["attachments"] = attachments
+            updates["assets.attachments"] = attachment_assets
+            updates["content_html"] = content_html
+        if remaining_external:
+            updates["external_links"] = list(dict.fromkeys(remaining_external))
+        else:
+            unset_fields.add("external_links")
+        return updates, unset_fields
+
     def _extract_json_urls(
         self,
         record: dict[str, Any],
@@ -744,7 +723,6 @@ class DownloadWorker:
 
         # 提取原始值
         raw_value = get_nested_value(record, selector)
-
         if raw_value is None:
             logger.debug("DownloadWorker: no value at path '%s'", selector)
             return []
@@ -755,13 +733,6 @@ class DownloadWorker:
             for i, item in enumerate(raw_value):
                 if isinstance(item, dict):
                     resource_index = i
-                    if selector == "attachments":
-                        placeholder_match = re.fullmatch(
-                            r"\{\{attachment_(\d+)\}\}",
-                            str(item.get("placeholder") or ""),
-                        )
-                        if placeholder_match:
-                            resource_index = int(placeholder_match.group(1))
                     # 复合对象：提取各字段 URL，保留字段名以区分
                     field_urls = self._extract_url_from_dict(
                         item, url_prefix,
@@ -837,24 +808,77 @@ class DownloadWorker:
         suffix: str = "",
     ) -> str:
         """从 URL 或扩展名生成文件名。"""
+        basename = DownloadWorker._url_basename(url)
         if file_ext:
             ext = file_ext.lstrip(".")
         else:
-            # 从 URL 中提取扩展名
-            path_part = url.split("?")[0]
-            if "." in path_part.rsplit("/", 1)[-1]:
-                ext = path_part.rsplit(".", 1)[-1].lower()
-            else:
-                ext = "bin"
+            match = re.search(r"\.([a-z0-9]{1,16})$", basename.lower())
+            ext = match.group(1) if match else "bin"
 
-        # 安全文件名
-        name_part = url.split("?")[0].rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        name_part = basename.rsplit(".", 1)[0]
         if not name_part or len(name_part) > 60:
             # URL 最后一段不合适，用 hash
             import hashlib
             name_part = hashlib.md5(url.encode()).hexdigest()[:12]
 
         return f"{name_part}{suffix}.{ext}"
+
+    @staticmethod
+    def _url_basename(url: str) -> str:
+        """Return the final URL path segment without query or fragment."""
+        path_part = url.split("?", 1)[0].split("#", 1)[0]
+        return path_part.rsplit("/", 1)[-1]
+
+    @staticmethod
+    def _content_disposition_filename(response: DownloadResponse) -> str:
+        """Return a safe server-provided filename, if one was supplied."""
+        header = next(
+            (
+                value for key, value in response.headers.items()
+                if key.lower() == "content-disposition"
+            ),
+            "",
+        )
+        if not header:
+            return ""
+
+        match = re.search(r"filename\*=\s*[^']*''([^;]+)", header, re.IGNORECASE)
+        if match:
+            filename = unquote(match.group(1).strip().strip('"'))
+        else:
+            match = re.search(r"filename\s*=\s*(?:\"([^\"]+)\"|([^;]+))", header, re.IGNORECASE)
+            filename = (match.group(1) or match.group(2)).strip() if match else ""
+        filename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+        filename = re.sub(r"[^A-Za-z0-9._() -]", "_", filename).strip(" .")
+        return filename[:120]
+
+    @classmethod
+    def _resolve_attachment_filename(
+        cls,
+        url: str,
+        response: DownloadResponse,
+        fallback: str,
+    ) -> str:
+        """Resolve a document candidate's name after receiving its response.
+
+        Server metadata wins. If it is absent, the URL basename is preserved.
+        The pre-download fallback is used only when the URL has no basename.
+        """
+        server_filename = cls._content_disposition_filename(response)
+        if server_filename:
+            return server_filename
+
+        basename = cls._url_basename(url)
+        if not basename:
+            return fallback
+
+        # Keep a real URL filename unchanged; append the response-derived
+        # suffix only for extensionless or unknown-name endpoints.
+        guessed_type, _ = mimetypes.guess_type(basename)
+        if guessed_type:
+            return basename
+        content_ext = mimetypes.guess_extension(response.content_type) or ""
+        return f"{basename}{content_ext}" if content_ext else basename
 
     @staticmethod
     def _extract_status_code(exc: Exception) -> int | None:
@@ -1082,7 +1106,11 @@ class DownloadWorker:
                 content_type=response.content_type,
             )
 
-        content_type = response.content_type or MinioClient._guess_content_type(filename)
+        # The HTTP response is the sole MIME source for uploaded content.
+        # Do not infer it from the URL or the generated filename.
+        content_type = response.content_type or "application/octet-stream"
+        if dl_info.get("is_attachment_candidate"):
+            filename = self._resolve_attachment_filename(url, response, filename)
 
         retry_count = 0
         delay = RETRY_INITIAL_DELAY

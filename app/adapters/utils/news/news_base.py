@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import re
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
@@ -130,6 +131,25 @@ class NewsBaseAdapter(BaseSiteAdapter):
 
         return external_links
 
+    def extract_anchor_links(self, html: str, base_url: str) -> list[str]:
+        """Extract every usable HTTP(S) URL from ``a[href]`` elements."""
+        from lxml import html as lxml_html
+
+        try:
+            tree = lxml_html.fromstring(html)
+        except Exception:
+            return []
+
+        links: list[str] = []
+        for tag in tree.iter("a"):
+            href = (tag.get("href") or "").strip()
+            if not href or _NAV_PATTERNS.match(href):
+                continue
+            clean = self.clean_url(urljoin(base_url, href))
+            if clean:
+                links.append(clean)
+        return self.dedupe_urls(links)
+
     @classmethod
     def dedupe_urls(cls, urls: list[str]) -> list[str]:
         deduped: list[str] = []
@@ -194,7 +214,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
         links: list[str] = []
         content_html = str(record.get(content_field) or "").strip()
         if content_html:
-            links = self.extract_external_links(content_html, base_url)
+            links = self.extract_anchor_links(content_html, base_url)
             videos = self.extract_video_media(content_html, base_url)
             iframe = self.extract_iframe_media(content_html, base_url)
             if videos:
@@ -225,7 +245,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
         """Extract all正文 media with the shared placeholder rules."""
         from lxml import html as lxml_html
         from app.adapters.utils.news.assets import (
-            extract_attachments_from_wrapper,
+            extract_audios_from_wrapper,
             extract_iframes_from_wrapper,
             extract_images_from_wrapper,
             extract_videos_from_wrapper,
@@ -242,19 +262,19 @@ class NewsBaseAdapter(BaseSiteAdapter):
             self._drop_empty_media_fields(record)
             return
 
-        images = extract_images_from_wrapper(wrapper, base_url)
-        videos = extract_videos_from_wrapper(wrapper, base_url)
-        iframes = extract_iframes_from_wrapper(wrapper, base_url)
-        tagged_urls = {
-            str(item.get("url") or "")
-            for items in (images, videos, iframes)
-            for item in items
-            if isinstance(item, dict)
-        }
-        candidate_external = set(self.extract_external_links(content, base_url))
-        # Document links remain external links until the downloader sees the
-        # response Content-Type; URL suffixes are not classification signals.
-        attachments: list[dict[str, str]] = []
+        # Extract preview metadata on a copy. The persisted article keeps raw
+        # resource URLs; attachments are classified later by the downloader.
+        preview_wrapper = deepcopy(wrapper)
+        images = extract_images_from_wrapper(preview_wrapper, base_url)
+        videos = extract_videos_from_wrapper(preview_wrapper, base_url)
+        audios = extract_audios_from_wrapper(preview_wrapper, base_url)
+        iframes = extract_iframes_from_wrapper(preview_wrapper, base_url)
+        candidate_external = self.extract_anchor_links(content, base_url)
+        for anchor in wrapper.iter("a"):
+            href = (anchor.get("href") or "").strip()
+            clean_url = self.clean_url(urljoin(base_url, href))
+            if clean_url:
+                anchor.set("href", clean_url)
 
         record[content_field] = "".join(
             etree.tostring(child, encoding="unicode", method="html")
@@ -263,8 +283,8 @@ class NewsBaseAdapter(BaseSiteAdapter):
         extracted_by_key = (
             ("images", images),
             ("videos", videos),
+            ("audios", audios),
             ("iframe", iframes),
-            ("attachments", attachments),
         )
         for key, values in extracted_by_key:
             existing = record.get(key)
@@ -275,13 +295,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
             else:
                 record.pop(key, None)
 
-        media_urls = tagged_urls | {
-            str(item.get("url") or "")
-            for key, _ in extracted_by_key
-            for item in (record.get(key) or [])
-            if isinstance(item, dict)
-        }
-        external = [url for url in candidate_external if url not in media_urls]
+        external = [url for url in candidate_external if url]
         if external:
             record["external_links"] = self.merge_external_links(
                 record.get("external_links"), external
@@ -291,7 +305,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
 
     @staticmethod
     def _drop_empty_media_fields(record: dict[str, Any]) -> None:
-        for key in ("images", "videos", "iframe", "attachments"):
+        for key in ("images", "videos", "audios", "iframe", "attachments"):
             if isinstance(record.get(key), list) and not record[key]:
                 record.pop(key, None)
 
