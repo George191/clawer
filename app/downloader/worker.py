@@ -198,6 +198,7 @@ class DownloadWorker:
         """
         meta = record.get("_meta", {})
         record_id = meta.get("record_id", "")
+        claim_token = str(meta.get("download_claim_token") or "")
         collection_name = meta.get("template", "")
         template_name = DOWNLOAD_TEMPLATE_OVERRIDES.get(collection_name, collection_name)
         workspace_task_id = str(
@@ -213,7 +214,9 @@ class DownloadWorker:
             if task_control is None:
                 workspace_task_id = ""
             elif task_control.get("download_state") != "running":
-                await self._mongo.update_file_status(collection_name, record_id, "pending")
+                await self._mongo.update_file_status(
+                    collection_name, record_id, "pending", claim_token=claim_token,
+                )
                 return False
 
         async with self._semaphore:
@@ -221,7 +224,7 @@ class DownloadWorker:
                 # 快速路径：模板已知无下载需求，直接标记
                 if template_name in self._no_assets_templates:
                     await self._mongo.update_file_status(
-                        collection_name, record_id, "no_assets",
+                        collection_name, record_id, "no_assets", claim_token=claim_token,
                     )
                     return True
 
@@ -229,7 +232,7 @@ class DownloadWorker:
                 template = await self._get_template(template_name)
                 if template is None:
                     await self._mongo.update_file_status(
-                        collection_name, record_id, "no_assets",
+                        collection_name, record_id, "no_assets", claim_token=claim_token,
                     )
                     return True
 
@@ -244,7 +247,7 @@ class DownloadWorker:
                         template_name,
                     )
                     await self._mongo.update_file_status(
-                        collection_name, record_id, "no_assets",
+                        collection_name, record_id, "no_assets", claim_token=claim_token,
                     )
                     return True
 
@@ -256,12 +259,13 @@ class DownloadWorker:
 
                 if not download_urls:
                     await self._mongo.update_file_status(
-                        collection_name, record_id, "no_assets",
+                        collection_name, record_id, "no_assets", claim_token=claim_token,
                     )
                     return True
 
                 # 下载并上传到 MinIO
                 pending_by_url: dict[str, dict[str, Any]] = {}
+                existing_updates: dict[str, str] = {}
                 skipped_existing = 0
                 expected_asset_keys = set()
 
@@ -272,6 +276,11 @@ class DownloadWorker:
                         "attachments",
                         "external_links",
                     }
+                    existing_path = self._existing_asset_path(record, asset_key)
+                    if existing_path:
+                        existing_updates[asset_key] = existing_path
+                        skipped_existing += 1
+                        continue
                     if self._asset_exists(record, asset_key) and not is_attachment_candidate:
                         skipped_existing += 1
                         continue
@@ -299,10 +308,32 @@ class DownloadWorker:
 
                 # The record may already have partial assets from a previous run.
                 if not pending_by_url:
-                    status = "downloaded" if skipped_existing else "no_assets"
-                    await self._mongo.update_file_status(
-                        collection_name, record_id, status,
-                    )
+                    if data_type == "news" and existing_updates:
+                        record_updates, unset_fields = self._build_news_download_updates(
+                            record,
+                            download_urls,
+                            existing_updates,
+                            [],
+                        )
+                        persisted = await self._mongo.update_download_result(
+                            collection_name,
+                            record_id,
+                            record_updates,
+                            "downloaded",
+                            unset_fields=unset_fields,
+                            claim_token=claim_token,
+                        )
+                        if not persisted:
+                            logger.warning(
+                                "DownloadWorker: stale claim result ignored for %s",
+                                record_id,
+                            )
+                            return False
+                    else:
+                        status = "downloaded" if skipped_existing else "no_assets"
+                        await self._mongo.update_file_status(
+                            collection_name, record_id, status, claim_token=claim_token,
+                        )
                     logger.info(
                         "DownloadWorker: %s has %d existing assets, status=%s",
                         record_id, skipped_existing, status,
@@ -320,7 +351,7 @@ class DownloadWorker:
                     for dl_info in pending_by_url.values()
                 ))
 
-                updates: dict[str, str] = {}
+                updates: dict[str, str] = dict(existing_updates)
                 not_found_updates: dict[str, dict[str, Any]] = {}
                 failed_assets = 0
                 external_asset_keys: set[str] = set()
@@ -396,13 +427,20 @@ class DownloadWorker:
                         record_updates.pop(field, None)
 
                 mongo_started_at = time.perf_counter()
-                await self._mongo.update_download_result(
+                persisted = await self._mongo.update_download_result(
                     collection_name,
                     record_id,
                     record_updates,
                     final_status,
                     unset_fields=empty_asset_fields | unset_fields,
+                    claim_token=claim_token,
                 )
+                if not persisted:
+                    logger.warning(
+                        "DownloadWorker: stale claim result ignored for %s",
+                        record_id,
+                    )
+                    return False
                 logger.debug(
                     "DownloadWorker timing: phase=mongo record=%s fields=%d "
                     "seconds=%.3f",
@@ -457,7 +495,7 @@ class DownloadWorker:
                 logger.exception("DownloadWorker: failed for %s", record_id)
                 try:
                     await self._mongo.update_file_status(
-                        collection_name, record_id, "failed",
+                        collection_name, record_id, "failed", claim_token=claim_token,
                     )
                 except Exception:
                     pass
@@ -473,6 +511,16 @@ class DownloadWorker:
             parent = get_nested_value(record, parent_path)
             return isinstance(parent, dict) and parent.get("status_code") == 404
         return value is not None
+
+    @staticmethod
+    def _existing_asset_path(record: dict[str, Any], asset_key: str) -> str:
+        """Return an already uploaded asset path, excluding 404 markers."""
+        value = get_nested_value(record, asset_key)
+        if isinstance(value, dict):
+            value = value.get("url")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return ""
 
     @staticmethod
     def _set_nested_value(record: dict[str, Any], asset_key: str, value: str) -> None:

@@ -297,10 +297,14 @@ class MongoStorage(StorageBackend):
         template_name: str,
         record_id: str,
         download_status: str,
-    ) -> None:
+        claim_token: str | None = None,
+    ) -> bool:
         collection = await self._get_collection(template_name)
-        await collection.update_one(
-            {"_meta.record_id": record_id},
+        query = {"_meta.record_id": record_id}
+        if claim_token:
+            query["_meta.download_claim_token"] = claim_token
+        result = await collection.update_one(
+            query,
             {
                 "$set": {
                     "_meta.download_status": download_status,
@@ -312,6 +316,7 @@ class MongoStorage(StorageBackend):
             },
         )
         logger.debug("Updated file_status for %s: %s", record_id, download_status)
+        return bool(result.matched_count)
 
 
     async def update_record_fields(
@@ -339,15 +344,19 @@ class MongoStorage(StorageBackend):
         updates: dict[str, Any],
         download_status: str,
         unset_fields: set[str] | None = None,
-    ) -> None:
+        claim_token: str | None = None,
+    ) -> bool:
         """Persist downloaded asset paths and final claim status atomically."""
         collection = await self._get_collection(template_name)
         fields_to_unset = {
             "_meta.download_claim_token": "",
             **{field: "" for field in (unset_fields or set())},
         }
-        await collection.update_one(
-            {"_meta.record_id": record_id},
+        query = {"_meta.record_id": record_id}
+        if claim_token:
+            query["_meta.download_claim_token"] = claim_token
+        result = await collection.update_one(
+            query,
             {
                 "$set": {
                     **updates,
@@ -363,6 +372,7 @@ class MongoStorage(StorageBackend):
             download_status,
             len(updates),
         )
+        return bool(result.matched_count)
 
     async def update_sync_status(
         self,
