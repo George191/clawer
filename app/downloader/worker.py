@@ -268,9 +268,10 @@ class DownloadWorker:
                 for idx, dl_info in enumerate(download_urls):
                     asset_key = dl_info.get("asset_key", f"assets.{idx}")
                     expected_asset_keys.add(asset_key)
-                    is_attachment_candidate = (
-                        dl_info.get("source_field") == "external_links"
-                    )
+                    is_attachment_candidate = dl_info.get("source_field") in {
+                        "attachments",
+                        "external_links",
+                    }
                     if self._asset_exists(record, asset_key) and not is_attachment_candidate:
                         skipped_existing += 1
                         continue
@@ -367,7 +368,12 @@ class DownloadWorker:
 
                 if data_type == "news":
                     record_updates, unset_fields = self._build_news_download_updates(
-                        record, download_urls, updates, external_urls,
+                        record,
+                        download_urls,
+                        updates,
+                        external_urls,
+                        not_found_updates=not_found_updates,
+                        external_asset_keys=external_asset_keys,
                     )
                 else:
                     record_updates = {**updates, **not_found_updates}
@@ -592,12 +598,38 @@ class DownloadWorker:
         self,
         record: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Return news external links as candidates for MIME classification."""
+        """Return existing attachments and external links for MIME classification.
+
+        Existing attachments must be downloaded by their original placeholder
+        index.  News records can contain an ``<a>`` wrapper around an ``<img>``;
+        the image and the linked original are intentionally separate assets.
+        """
+        urls: list[dict[str, Any]] = []
+        attachments = record.get("attachments")
+        if isinstance(attachments, list):
+            for fallback, item in enumerate(attachments):
+                if not isinstance(item, dict):
+                    continue
+                url = str(item.get("url") or "").strip()
+                if not url:
+                    continue
+                match = re.fullmatch(
+                    r"\{\{attachment_(\d+)\}\}",
+                    str(item.get("placeholder") or ""),
+                )
+                index = match.group(1) if match else str(fallback)
+                urls.append({
+                    "url": url,
+                    "filename": self._make_filename(url, suffix=f"_{index.zfill(5)}"),
+                    "asset_key": f"assets.attachments.{index}.url",
+                    "source_field": "attachments",
+                    "candidate_type": str(item.get("type") or "").lower(),
+                })
+
         external_links = record.get("external_links")
         if not isinstance(external_links, list):
-            return []
+            return urls
 
-        urls: list[dict[str, Any]] = []
         for index, url in enumerate(external_links):
             if not isinstance(url, str) or not url.strip():
                 continue
@@ -653,11 +685,19 @@ class DownloadWorker:
         download_urls: list[dict[str, Any]],
         downloaded_assets: dict[str, str],
         external_urls: list[str],
+        *,
+        not_found_updates: dict[str, dict[str, Any]] | None = None,
+        external_asset_keys: set[str] | None = None,
     ) -> tuple[dict[str, Any], set[str]]:
-        """Move downloaded news files from external links into attachments."""
+        """Persist existing attachment assets and migrate file-like external links."""
+        not_found_updates = not_found_updates or {}
+        external_asset_keys = external_asset_keys or set()
         key_to_url = {
             str(item.get("asset_key")): str(item.get("url") or "")
             for item in download_urls
+        }
+        key_to_info = {
+            str(item.get("asset_key")): item for item in download_urls
         }
         attachments = [
             item for item in (record.get("attachments") or [])
@@ -666,12 +706,77 @@ class DownloadWorker:
         attachment_assets = dict(
             ((record.get("assets") or {}).get("attachments") or {})
         )
+        attachment_index_by_url: dict[str, str] = {}
+        for fallback, item in enumerate(attachments):
+            if not isinstance(item, dict) or not item.get("url"):
+                continue
+            match = re.fullmatch(
+                r"\{\{attachment_(\d+)\}\}",
+                str(item.get("placeholder") or ""),
+            )
+            attachment_index_by_url[str(item["url"])] = (
+                match.group(1) if match else str(fallback)
+            )
         converted_urls: set[str] = set()
         content_html = str(record.get("content_html") or "")
+        attachment_changed = False
+
+        for asset_key, asset_path in downloaded_assets.items():
+            item = key_to_info.get(asset_key) or {}
+            if item.get("source_field") != "attachments":
+                continue
+            match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", asset_key)
+            if match:
+                attachment_assets[match.group(1)] = {"url": asset_path}
+                attachment_changed = True
+
+        for asset_key, marker in not_found_updates.items():
+            item = key_to_info.get(asset_key) or {}
+            if item.get("source_field") != "attachments":
+                continue
+            match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", asset_key)
+            if match:
+                attachment_assets[match.group(1)] = dict(marker)
+                attachment_changed = True
+
+        removed_attachment_urls: set[str] = set()
+        for asset_key in external_asset_keys:
+            item = key_to_info.get(asset_key) or {}
+            if item.get("source_field") != "attachments":
+                continue
+            source_url = key_to_url.get(asset_key, "")
+            if not source_url:
+                continue
+            removed_attachment_urls.add(source_url)
+            placeholder = ""
+            for attachment in attachments:
+                if isinstance(attachment, dict) and attachment.get("url") == source_url:
+                    placeholder = str(attachment.get("placeholder") or "")
+                    break
+            if placeholder:
+                content_html = content_html.replace(placeholder, source_url)
+            match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", asset_key)
+            if match:
+                attachment_assets.pop(match.group(1), None)
+                attachment_changed = True
+
+        if removed_attachment_urls:
+            attachment_changed = True
+            attachments = [
+                item for item in attachments
+                if str(item.get("url") or "") not in removed_attachment_urls
+            ]
 
         for asset_key, asset_path in downloaded_assets.items():
             source_url = key_to_url.get(asset_key, "")
             if not source_url:
+                continue
+            if (key_to_info.get(asset_key) or {}).get("source_field") == "attachments":
+                continue
+            existing_index = attachment_index_by_url.get(source_url)
+            if existing_index is not None:
+                attachment_assets[existing_index] = {"url": asset_path}
+                attachment_changed = True
                 continue
             index = len(attachments)
             placeholder = f"{{{{attachment_{index}}}}}"
@@ -693,7 +798,7 @@ class DownloadWorker:
         )
         updates: dict[str, Any] = {"_meta.sync_status": "pending"}
         unset_fields: set[str] = set()
-        if converted_urls:
+        if converted_urls or attachment_changed:
             updates["attachments"] = attachments
             updates["assets.attachments"] = attachment_assets
             updates["content_html"] = content_html
