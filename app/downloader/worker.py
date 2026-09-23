@@ -886,10 +886,9 @@ class DownloadWorker:
 
     @staticmethod
     def _is_html_response(response: DownloadResponse) -> bool:
-        if response.content_type in {"text/html", "application/xhtml+xml"}:
-            return True
-        prefix = response.data[:4096].lstrip(b"\xef\xbb\xbf\x00\t\r\n ").lower()
-        return bool(re.search(br"<(?:!doctype\s+html|html|head|body)(?:\s|>)", prefix))
+        # Trust the server-declared media type only.  Sniffing arbitrary
+        # attachment bytes can misclassify binary resources as HTML.
+        return response.content_type in {"text/html", "application/xhtml+xml"}
 
     @staticmethod
     def _is_invalid_external_html(response: DownloadResponse) -> bool:

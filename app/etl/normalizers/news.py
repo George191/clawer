@@ -65,6 +65,7 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
     attachments = pick("attachments")
     images = pick("images")
     videos = pick("videos")
+    audios = pick("audios")
     iframes = pick("iframe")
     slides = pick("slides")
     tags = pick("tags")
@@ -89,6 +90,7 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
         "attachments": dump(attachments),
         "images": dump(images),
         "videos": dump(videos),
+        "audios": dump(audios),
         "iframes": dump(iframes),
         "slides": dump(slides),
         "thumbnail": _media_source_url(pick("thumbnail")),

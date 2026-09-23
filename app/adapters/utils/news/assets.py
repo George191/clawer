@@ -110,21 +110,6 @@ def extract_images_from_html(
     return extract_images_from_wrapper(wrapper, base_url), _wrapper_html(wrapper)
 
 
-def url_extension(url: str) -> str:
-    path = urlparse(url).path.lower()
-    filename = path.rsplit("/", 1)[-1]
-    match = re.search(r"(\.[a-z0-9]{1,16})$", filename)
-    return match.group(1) if match else ""
-
-
-def attachment_extension(url: str) -> str:
-    return url_extension(url)
-
-
-def is_attachment_url(url: str) -> bool:
-    return bool(attachment_extension(url))
-
-
 def _url_identity(url: str) -> str:
     """Normalize equivalent URL encodings for classification comparisons only."""
     try:
@@ -157,9 +142,12 @@ def extract_attachments_from_wrapper(
     included_keys = {_url_identity(url) for url in (included_urls or set())}
     for link in wrapper.cssselect("a[href]"):
         url = Base.clean_url(urljoin(base_url, (link.get("href") or "").strip()))
-        ext = attachment_extension(url)
         identity = _url_identity(url)
-        if not url or identity in excluded_keys or (not ext and identity not in included_keys):
+        if (
+            not url
+            or identity in excluded_keys
+            or (included_urls is not None and identity not in included_keys)
+        ):
             continue
         if identity in placeholders:
             link.set("href", placeholders[identity])
@@ -167,7 +155,7 @@ def extract_attachments_from_wrapper(
         item = {
             "url": url,
             "placeholder": f"{{{{attachment_{len(out)}}}}}",
-            "type": ext.lstrip(".") or "link",
+            "type": "link",
         }
         label = re.sub(r"\s+", " ", link.text_content()).strip()
         if label:
@@ -238,6 +226,15 @@ def extract_videos_from_wrapper(wrapper: Any, base_url: str) -> list[dict[str, s
         base_url,
         kind="video",
         placeholder_prefix="video",
+    )
+
+
+def extract_audios_from_wrapper(wrapper: Any, base_url: str) -> list[dict[str, str]]:
+    return _extract_media_from_nodes(
+        wrapper.cssselect("audio[src], audio source[src]"),
+        base_url,
+        kind="audio",
+        placeholder_prefix="audio",
     )
 
 

@@ -60,7 +60,7 @@ INSERT INTO ts_ods.ods_news (
     title, url, source_url, source_published_at, source_updated_at,
     summary, content, content_html, summary_html,
     author, news_type, organization, tags, external_links,
-    attachments, images, slides, thumbnail, videos, iframes,
+    attachments, images, slides, thumbnail, videos, iframes, audios,
     created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
@@ -68,7 +68,7 @@ INSERT INTO ts_ods.ods_news (
     :summary, :content, :content_html, :summary_html,
     :author, CAST(:news_type AS jsonb), CAST(:organization AS jsonb), CAST(:tags AS jsonb), CAST(:external_links AS jsonb),
     CAST(:attachments AS jsonb), CAST(:images AS jsonb), CAST(:slides AS jsonb), :thumbnail,
-    CAST(:videos AS jsonb), CAST(:iframes AS jsonb),
+    CAST(:videos AS jsonb), CAST(:iframes AS jsonb), CAST(:audios AS jsonb),
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
@@ -94,6 +94,7 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     thumbnail = EXCLUDED.thumbnail,
     videos = EXCLUDED.videos,
     iframes = EXCLUDED.iframes,
+    audios = EXCLUDED.audios,
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """

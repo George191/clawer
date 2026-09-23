@@ -11,9 +11,6 @@ from lxml import etree
 from lxml import html as lxml_html
 
 from app.adapters.utils.news import NewsBaseAdapter
-from app.adapters.utils.news.assets import (
-    attachment_extension,
-)
 
 
 def extract_meta_fields(html: str, record: dict) -> None:
@@ -153,22 +150,23 @@ def extract_attachments(html: str, record: dict, detail_url: str, content_field_
                 continue
 
             file_url = NewsBaseAdapter.clean_url(urljoin(detail_url, raw_url))
-            if not _is_attachment_url(file_url) or file_url in seen:
+            if not file_url or file_url in seen:
                 continue
             seen.add(file_url)
 
             label = " ".join(link.text_content().split())
-            extension = _attachment_extension(file_url).lstrip(".")
             attachment: dict[str, str] = {
                 "url": file_url,
-                "type": extension or "file",
+                "type": "link",
             }
             if label:
                 attachment["label"] = label
             attachments.append(attachment)
 
     if attachments:
-        record["attachments"] = NewsBaseAdapter.dedupe_media_items(attachments)
+        record["external_links"] = NewsBaseAdapter.merge_unique_list(
+            record.get("external_links"), [item["url"] for item in attachments]
+        )
 
 
 def extract_tags(html: str, record: dict) -> None:
@@ -205,14 +203,6 @@ def _is_inside_any(node: Any, containers: list[Any]) -> bool:
             return True
         current = current.getparent()
     return False
-
-
-def _is_attachment_url(url: str) -> bool:
-    return bool(_attachment_extension(url))
-
-
-def _attachment_extension(url: str) -> str:
-    return attachment_extension(url)
 
 
 def _first_srcset_url(srcset: str) -> str:

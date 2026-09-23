@@ -122,10 +122,6 @@ class NewsBaseAdapter(BaseSiteAdapter):
             if not parsed.scheme or parsed.scheme not in ("http", "https"):
                 continue
 
-            # 去重（忽略 fragment）
-            if self.is_attachment_url(clean):
-                continue
-
             if clean in seen:
                 continue
             seen.add(clean)
@@ -182,7 +178,7 @@ class NewsBaseAdapter(BaseSiteAdapter):
         external_links: list[str] = []
         for url in merged:
             clean = cls.clean_url(url)
-            if not clean or cls.is_attachment_url(clean):
+            if not clean:
                 continue
             external_links.append(clean)
         return cls.dedupe_urls(external_links)
@@ -256,11 +252,9 @@ class NewsBaseAdapter(BaseSiteAdapter):
             if isinstance(item, dict)
         }
         candidate_external = set(self.extract_external_links(content, base_url))
-        attachments = extract_attachments_from_wrapper(
-            wrapper,
-            base_url,
-            excluded_urls=tagged_urls,
-        )
+        # Document links remain external links until the downloader sees the
+        # response Content-Type; URL suffixes are not classification signals.
+        attachments: list[dict[str, str]] = []
 
         record[content_field] = "".join(
             etree.tostring(child, encoding="unicode", method="html")
@@ -338,11 +332,6 @@ class NewsBaseAdapter(BaseSiteAdapter):
             return []
 
         return extract_iframes_from_wrapper(wrapper, base_url)
-
-    @staticmethod
-    def is_attachment_url(url: str) -> bool:
-        from app.adapters.utils.news.assets import is_attachment_url
-        return is_attachment_url(url)
 
     @staticmethod
     def clean_url(url: str) -> str:
