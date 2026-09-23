@@ -181,6 +181,8 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_news (
     images JSONB,
     slides JSONB,
     thumbnail TEXT,
+    videos JSONB,
+    iframes JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, data_type)
