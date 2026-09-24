@@ -523,6 +523,16 @@ class DownloadWorker:
         return ""
 
     @staticmethod
+    def _attachment_placeholder_index(item: Any, fallback: int) -> int | None:
+        if not isinstance(item, dict):
+            return fallback
+        match = re.fullmatch(
+            r"\{\{attachment_(\d+)\}\}",
+            str(item.get("placeholder") or ""),
+        )
+        return int(match.group(1)) if match else fallback
+
+    @staticmethod
     def _set_nested_value(record: dict[str, Any], asset_key: str, value: str) -> None:
         current: dict[str, Any] = record
         parts = asset_key.split(".")
@@ -826,7 +836,15 @@ class DownloadWorker:
                 attachment_assets[existing_index] = {"url": asset_path}
                 attachment_changed = True
                 continue
-            index = len(attachments)
+            used_indexes = {
+                value
+                for fallback, item in enumerate(attachments)
+                for value in [self._attachment_placeholder_index(item, fallback)]
+                if value is not None
+            }
+            index = 0
+            while index in used_indexes:
+                index += 1
             placeholder = f"{{{{attachment_{index}}}}}"
             attachments.append({
                 "url": source_url,
