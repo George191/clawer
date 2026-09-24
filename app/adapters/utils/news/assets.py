@@ -116,7 +116,6 @@ def _url_identity(url: str) -> str:
         parsed = urlparse(url)
         path = unicodedata.normalize("NFC", unquote(parsed.path))
         # WordPress commonly links a resized <img> to the same full-size image.
-        path = re.sub(r"-\d+x\d+(?=\.[^./]+$)", "", path)
         query = unicodedata.normalize("NFC", unquote(parsed.query))
         return parsed._replace(
             scheme=parsed.scheme.lower(),
