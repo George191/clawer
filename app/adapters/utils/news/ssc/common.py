@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 from lxml import etree
 from lxml import html as lxml_html
 
-from app.adapters.utils.news import NewsBaseAdapter
+from app.adapters.utils.news import assets
 
 
 def extract_meta_fields(html: str, record: dict) -> None:
@@ -110,7 +110,7 @@ def extract_slides(html: str, record: dict, detail_url: str, content_field_selec
         if not raw_src:
             continue
 
-        media_url = NewsBaseAdapter.clean_url(urljoin(detail_url, raw_src.strip()))
+        media_url = assets.clean_url(urljoin(detail_url, raw_src.strip()))
         if not media_url or media_url in seen:
             continue
         seen.add(media_url)
@@ -130,43 +130,7 @@ def extract_slides(html: str, record: dict, detail_url: str, content_field_selec
         slides.append(slide)
 
     if slides:
-        record["slides"] = NewsBaseAdapter.dedupe_media_items(slides)
-
-
-def extract_attachments(html: str, record: dict, detail_url: str, content_field_selector: str) -> None:
-    """提取 PDF 等附件链接。"""
-    try:
-        tree = lxml_html.fromstring(html)
-    except Exception:
-        return
-
-    attachments: list[dict] = []
-    seen: set[str] = set()
-
-    for content_node in _find_content_nodes(tree, content_field_selector):
-        for link in content_node.cssselect("a[href]"):
-            raw_url = (link.get("href") or "").strip()
-            if not raw_url:
-                continue
-
-            file_url = NewsBaseAdapter.clean_url(urljoin(detail_url, raw_url))
-            if not file_url or file_url in seen:
-                continue
-            seen.add(file_url)
-
-            label = " ".join(link.text_content().split())
-            attachment: dict[str, str] = {
-                "url": file_url,
-                "type": "link",
-            }
-            if label:
-                attachment["label"] = label
-            attachments.append(attachment)
-
-    if attachments:
-        record["external_links"] = NewsBaseAdapter.merge_unique_list(
-            record.get("external_links"), [item["url"] for item in attachments]
-        )
+        record["slides"] = assets.dedupe_media_items(slides)
 
 
 def extract_tags(html: str, record: dict) -> None:
