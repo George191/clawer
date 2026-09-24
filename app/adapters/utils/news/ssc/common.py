@@ -130,7 +130,7 @@ def extract_slides(html: str, record: dict, detail_url: str, content_field_selec
         slides.append(slide)
 
     if slides:
-        record["slides"] = assets.dedupe_media_items(slides)
+        record["slides"] = assets._dedupe_by_url(slides)
 
 
 def extract_tags(html: str, record: dict) -> None:
