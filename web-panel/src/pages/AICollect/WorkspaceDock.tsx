@@ -96,7 +96,7 @@ type TaskComposerMode = 'once' | 'recurring';
 type TaskRecurringMode = 'daily' | 'interval';
 type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
-type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'warning' | 'signal' | 'game' | 'generic';
+type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'warning' | 'signal' | 'game' | 'generic';
 
 interface TemplateDraft {
   adapter: string;
@@ -639,8 +639,21 @@ const FinancialReportGlyph = () => (
   </svg>
 );
 
+const SocialMediaGlyph = () => (
+  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4.5 3.5h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8l-4.5 3v-3a1 1 0 0 1-1-1v-7a2 2 0 0 1 2-2Z" />
+    <path d="M19.5 8.5a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2v3l-4.5-3h-4a2 2 0 0 1-2-2" />
+    <g fill="currentColor" stroke="none">
+      <circle cx="6.5" cy="8.5" r="0.8" />
+      <circle cx="9.5" cy="8.5" r="0.8" />
+      <circle cx="12.5" cy="8.5" r="0.8" />
+    </g>
+  </svg>
+);
+
 const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tint: string }> = {
   financial_report: { icon: <FinancialReportGlyph />, label: 'Financial report', tint: '#69D3B0' },
+  social_media: { icon: <SocialMediaGlyph />, label: 'Social media', tint: '#75CBFF' },
   news: { icon: <ReadOutlined />, label: '新闻', tint: '#BFA8FF' },
   patent: { icon: <ExperimentOutlined />, label: '专利', tint: '#8AB4FF' },
   intelligence: { icon: <RadarChartOutlined />, label: '情报', tint: '#7DD3FC' },
@@ -651,6 +664,7 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
 };
 
 const siteProfileRegistry: Record<string, SiteProfile> = {
+  twitter: { kind: 'social_media', brand: 'X / Twitter', logo: 'X', hue: '#75CBFF' },
   google_patent_contract: { kind: 'patent', brand: 'Google Patent', logo: 'GP', hue: '#7BA8FF' },
   sealagom_navwarn_contract: { kind: 'warning', brand: 'Navwarn', logo: 'NW', hue: '#66D5A3' },
   zdopen_notice_contract: { kind: 'news', brand: 'ZD Open', logo: 'ZD', hue: '#B08CFF' },
@@ -813,6 +827,7 @@ const toAvatarLabel = (value: string) => {
 const inferSiteKind = (value: string): SiteKind => {
   const text = value.toLowerCase();
   if (/financial[_\s-]*report/.test(text)) return 'financial_report';
+  if (/social[_\s-]*media|twitter|tweet|社交媒体/.test(text)) return 'social_media';
   if (text.includes('game') || text.includes('游戏')) return 'game';
   if (text.includes('patent') || text.includes('专利')) return 'patent';
   if (text.includes('warn') || text.includes('warning') || text.includes('告警')) return 'warning';
@@ -3141,10 +3156,17 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-glyph {
           width: 18px;
           height: 18px;
+          flex-shrink: 0;
           display: inline-flex;
           align-items: center;
           justify-content: center;
           color: inherit;
+        }
+        .workspace-glyph > svg {
+          display: block;
+          width: 100%;
+          height: 100%;
+          flex-shrink: 0;
         }
         .workspace-glyph .anticon {
           font-size: 18px;

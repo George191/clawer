@@ -137,6 +137,11 @@ SPIDER_CELERY_WORKER_REPLICAS=6
 Compose 仅开放 Nginx 入口；生产环境仍应配置 HTTPS。启动前必须确保
 容器网络能够访问 `.env` 中配置的所有外部服务地址。
 
+Twitter 使用 twscrape 时，构建服务器需先准备已导入登录会话的
+`data/twitter_accounts.db`。Crawler 镜像会将它复制到 `/app/data/twitter_accounts.db`，
+并明确设置为容器内 `appuser` 可读写，无需挂载。该文件仍不纳入 Git；含登录会话的镜像应仅供内部使用。
+更换会话后需重新构建并部署 crawler；容器重建会恢复镜像内的会话库初始状态。
+
 ### 3. 运行采集
 
 运行单个模板：

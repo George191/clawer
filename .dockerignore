@@ -11,7 +11,8 @@ __pycache__
 .env
 celerybeat*
 certificate
-data
+data/*
+!data/twitter_accounts.db
 DMIT-Rcbx3LcMXQ-ed25519
 logs
 models
