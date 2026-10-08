@@ -186,10 +186,12 @@ class BaseSiteAdapter:
         fetched_count: int,
         saved_count: int,
         cumulative_saved: int,
+        inserted_count: int = 0,
+        updated_count: int = 0,
     ) -> None:
         """每页记录持久化成功后。子类覆盖。"""
         self._site_logger.info(
-            "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
+            "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (inserted: %d, updated: %d, cumulative: %d)",
             task_id,
             self._crawl_context.get("batch_index", 1),
             self._crawl_context.get("batch_count", 1),
@@ -197,6 +199,8 @@ class BaseSiteAdapter:
             total_pages,
             fetched_count,
             saved_count,
+            inserted_count,
+            updated_count,
             cumulative_saved,
         )
 
