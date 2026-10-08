@@ -11,7 +11,7 @@
 设计原则
 --------
 - 引擎仅负责采集逻辑，不包含下载/MinIO/Kafka 等下游操作
-- 无限重试 + 指数退避，确保不因临时故障中断翻页
+- 瞬时故障立即重试，确保不因临时故障中断翻页
 - 适配器模式扩展站点特定行为（如 Google Patents 信令）
 """
 
@@ -44,6 +44,7 @@ from app.models.template import (
 from app.parser.template_parser import TemplateParser
 from app.storage.file_storage import FileStorage, StorageBackend
 from app.utils.path import get_nested_value
+from app.utils.runtime_control import check_control_state
 
 logger = get_logger(__name__)
 
@@ -436,7 +437,7 @@ class SpiderEngine:
                             "[%s] Page %d rotating proxy after adapter request (attempt %d)",
                             template.name, current_page, attempt + 1,
                         )
-                        await asyncio.sleep(2)
+                        await check_control_state()
                         continue
                     # None → 继续下一次重试
 
@@ -740,7 +741,7 @@ class SpiderEngine:
                         "[%s] Page %d rotating proxy after adapter request (attempt %d)",
                         template.name, page, attempt + 1,
                     )
-                    await asyncio.sleep(2)
+                    await check_control_state()
                     continue
 
             except Exception as e:
@@ -770,7 +771,7 @@ class SpiderEngine:
                         "[%s] Page %d rotating proxy after adapter request (attempt %d)",
                         template.name, page, attempt + 1,
                     )
-                    await asyncio.sleep(2)
+                    await check_control_state()
                     continue
                 # None → 继续下一次重试
 

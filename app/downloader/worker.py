@@ -37,6 +37,7 @@ from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate
 from app.utils.path import get_nested_value
+from app.utils.runtime_control import check_control_state
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
@@ -44,10 +45,6 @@ logger = get_logger(__name__)
 # ══════════════════════════════════════════════════════════════════════
 #  重试配置
 # ══════════════════════════════════════════════════════════════════════
-# 初始重试延迟（秒），指数退避起始值
-RETRY_INITIAL_DELAY: float = 1.0
-# 最大重试延迟（秒），退避上限以避免请求风暴
-RETRY_MAX_DELAY: float = 60.0
 RETRY_MAX_ATTEMPTS: int = 5
 # 告警阈值：每 N 次连续重试输出 WARNING 日志
 RETRY_ALERT_THRESHOLD: int = 10
@@ -162,6 +159,7 @@ class DownloadWorker:
         )
 
         while self._running:
+            await check_control_state()
             try:
                 count = await self._process_batch()
                 if count == 0:
@@ -171,7 +169,6 @@ class DownloadWorker:
                 raise
             except Exception:
                 logger.exception("DownloadWorker loop error")
-                await asyncio.sleep(self._poll_interval)
 
     async def _process_batch(self) -> int:
         pending = await self._mongo.get_pending_downloads(
@@ -186,7 +183,7 @@ class DownloadWorker:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         success = sum(1 for r in results if r is True)
         logger.info("DownloadWorker: completed %d/%d records", success, len(pending))
-        return success
+        return len(pending)
 
     async def _download_one(self, record: dict[str, Any]) -> bool:
         """处理单条记录的资源下载。
@@ -1137,10 +1134,10 @@ class DownloadWorker:
         每次重试独立下载，失败后字节即被回收，无内存泄漏。
         """
         retry_count = 0
-        delay = RETRY_INITIAL_DELAY
         started_at = time.perf_counter()
 
         while self._running:
+            await check_control_state()
             try:
                 response = await self._http.download_response(url, use_proxy=use_proxy)
                 logger.debug(
@@ -1184,7 +1181,7 @@ class DownloadWorker:
                         )
                     return None
 
-                # 可重试错误：记录并退避
+                # 可重试错误：记录后立即重试
                 retry_count += 1
                 error_type = type(exc).__name__
                 status = self._extract_status_code(exc)
@@ -1227,9 +1224,8 @@ class DownloadWorker:
                         retry_count, url, error_type,
                     )
 
-                # 指数退避，上限 RETRY_MAX_DELAY 以避免请求风暴
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, RETRY_MAX_DELAY)
+                if use_proxy:
+                    await self._http.mark_last_proxy_failed()
 
         # worker 已停止，退出重试循环
         logger.info(
@@ -1250,7 +1246,7 @@ class DownloadWorker:
         """下载单个资源文件并上传到 MinIO。
 
         下载阶段使用 _download_with_retry 实现有限重试；
-        上传阶段失败不重试（MinIO 故障属基础设施问题，由上层处理）。
+        上传阶段失败立即重试，直到成功或 worker 停止。
         """
         url = str(dl_info["url"])
         filename = str(dl_info["filename"])
@@ -1284,9 +1280,9 @@ class DownloadWorker:
             filename = self._resolve_attachment_filename(url, response, filename)
 
         retry_count = 0
-        delay = RETRY_INITIAL_DELAY
         upload_started_at = time.perf_counter()
         while self._running:
+            await check_control_state()
             try:
                 asset_path = await self._minio.upload_bytes(
                     response.data, template_name, data_type,
@@ -1330,8 +1326,6 @@ class DownloadWorker:
                         retry_count,
                         filename,
                     )
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, RETRY_MAX_DELAY)
 
         logger.info(
             "DownloadWorker: worker stopping, aborting MinIO upload for %s "

@@ -29,6 +29,7 @@ from app.models.workflow import (
     WorkflowResult,
     WorkflowStep,
 )
+from app.utils.runtime_control import check_control_state
 
 logger = get_logger(__name__)
 
@@ -156,6 +157,7 @@ class WorkflowEngine:
 
         last_error: Exception | None = None
         for attempt in range(step.retries + 1):
+            await check_control_state()
             try:
                 handler = _STEP_HANDLERS.get(step.type)
                 if handler is None:
@@ -182,8 +184,6 @@ class WorkflowEngine:
                     "Step '%s' failed (attempt %d/%d): %s",
                     step.id, attempt + 1, step.retries + 1, e,
                 )
-                if attempt < step.retries:
-                    await asyncio.sleep(2 ** attempt)
 
         # 全部重试失败
         result.status = StepStatus.FAILED

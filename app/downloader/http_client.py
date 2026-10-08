@@ -2,7 +2,7 @@
 
 功能：
 - 浏览器指纹模拟（Chrome / Firefox 等）
-- 自动重试 + 指数退避（tenacity）
+- 单次请求失败交由调用方处理重试
 - 流式下载（stream / download_bytes）支持大文件
 - 文件大小限制和临时文件清理
 - 代理支持和 Cookie 持久化

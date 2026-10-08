@@ -109,7 +109,7 @@ class CeleryAppFactory:
             "visibility_timeout": 24 * 3600,
 
             # ── 重试 ──
-            "task_default_retry_delay": 60,            # 默认重试间隔 60s
+            "task_default_retry_delay": 0,             # 失败后立即重试
             "task_default_max_retries": 3,             # 默认最多重试 3 次
 
             # ── 结果过期 ──

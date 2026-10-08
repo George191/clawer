@@ -466,7 +466,7 @@ def crawl_template(
             )
         )
     except ConnectionFailure as exc:
-        raise self.retry(exc=exc, countdown=60) from exc
+        raise self.retry(exc=exc, countdown=0) from exc
 
 
 async def _dispatch_due_workspace_tasks() -> dict[str, Any]:
