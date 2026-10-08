@@ -550,6 +550,8 @@ class SpiderEngine:
 
         # 处理第一页记录
         _init_enhancements()
+        inserted_before = result.inserted_records
+        updated_before = result.updated_records
         if template._crawl_context.get("records_streamed"):
             filtered1 = filter_records_by_watermark(
                 records1,
@@ -572,6 +574,8 @@ class SpiderEngine:
                 len(records1),
                 saved_count,
                 result.saved_records,
+                result.inserted_records - inserted_before,
+                result.updated_records - updated_before,
             )
         result.pages_processed = 1
         if progress_callback is not None:
@@ -674,7 +678,10 @@ class SpiderEngine:
                     "headers": {**template.list_request.headers, **extra_headers}
                 }) if extra_headers else template.list_request
 
-                text = await self._client.request_page(
+                request_list_page = getattr(
+                    adapter, "request_list_page", self._client.request_page,
+                )
+                text = await request_list_page(
                     url, list_request,
                     anti_crawl_enabled=template.effective_anti_crawl_enabled,
                     adapter_name=template.adapter,
@@ -831,6 +838,8 @@ class SpiderEngine:
             page_task_id = template._crawl_context.get("page_task_ids", {}).get(
                 p, template._crawl_context.get("task_id", "standalone")
             )
+            inserted_before = result.inserted_records
+            updated_before = result.updated_records
             if template._crawl_context.get("records_streamed"):
                 filtered = filter_records_by_watermark(
                     records,
@@ -853,10 +862,12 @@ class SpiderEngine:
                     len(records),
                     saved_count,
                     result.saved_records,
+                    result.inserted_records - inserted_before,
+                    result.updated_records - updated_before,
                 )
 
             logger.info(
-                "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (cumulative: %d)",
+                "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (inserted: %d, updated: %d, cumulative saved: %d)",
                 page_task_id,
                 template._crawl_context.get("batch_index", 1),
                 template._crawl_context.get("batch_count", 1),
@@ -864,6 +875,8 @@ class SpiderEngine:
                 dynamic_pages,
                 len(records),
                 saved_count,
+                result.inserted_records - inserted_before,
+                result.updated_records - updated_before,
                 result.saved_records,
             )
 
