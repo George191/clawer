@@ -11,3 +11,4 @@ asyncpg>=0.30
 jinja2>=3.1
 openpyxl>=3.1
 pandas>=2.0
+twscrape==0.20.1
