@@ -158,6 +158,153 @@ CREATE INDEX IF NOT EXISTS idx_fin_fact_cik_period ON ts_ods.ods_financial_fact 
 CREATE INDEX IF NOT EXISTS idx_fin_fact_concept ON ts_ods.ods_financial_fact (taxonomy, concept);
 CREATE INDEX IF NOT EXISTS idx_fin_fact_filed ON ts_ods.ods_financial_fact (filed DESC);
 """.strip(),
+    "social_account": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_social_account (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'social_account',
+    account_id BIGSERIAL NOT NULL,
+    platform TEXT NOT NULL,
+    platform_account_id TEXT NOT NULL,
+    username TEXT,
+    display_name TEXT,
+    profile_url TEXT,
+    avatar_url TEXT,
+    bio TEXT,
+    account_type TEXT,
+    is_verified BOOLEAN,
+    is_private BOOLEAN,
+    account_created_at TIMESTAMPTZ,
+    follower_count BIGINT,
+    following_count BIGINT,
+    content_count BIGINT,
+    location TEXT,
+    language TEXT,
+    extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+    captured_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_social_account_platform
+    ON ts_ods.ods_social_account (platform, platform_account_id);
+""".strip(),
+    "social_content": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_social_content (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'social_content',
+    content_id BIGSERIAL NOT NULL,
+    platform TEXT NOT NULL,
+    platform_content_id TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    author_account_id BIGINT,
+    parent_content_id BIGINT,
+    root_content_id BIGINT,
+    text_content TEXT,
+    language TEXT,
+    content_url TEXT,
+    published_at TIMESTAMPTZ,
+    edited_at TIMESTAMPTZ,
+    deleted_at TIMESTAMPTZ,
+    reply_count BIGINT,
+    like_count BIGINT,
+    repost_count BIGINT,
+    quote_count BIGINT,
+    view_count BIGINT,
+    is_sensitive BOOLEAN,
+    extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+    captured_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type),
+    CHECK (content_type IN ('post', 'comment', 'repost', 'quote'))
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_social_content_platform_id
+    ON ts_ods.ods_social_content (platform, platform_content_id, record_id);
+CREATE INDEX IF NOT EXISTS idx_social_content_author_time
+    ON ts_ods.ods_social_content (author_account_id, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_social_content_parent
+    ON ts_ods.ods_social_content (parent_content_id, published_at);
+""".strip(),
+    "social_media": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_social_media (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'social_media',
+    content_id BIGINT NOT NULL,
+    media_index INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    platform_media_id TEXT,
+    media_url TEXT,
+    preview_url TEXT,
+    width INTEGER,
+    height INTEGER,
+    duration_ms BIGINT,
+    alt_text TEXT,
+    extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_social_media_content
+    ON ts_ods.ods_social_media (content_id, media_index);
+""".strip(),
+    "social_hashtag": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_social_hashtag (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'social_hashtag',
+    hashtag_id BIGSERIAL NOT NULL,
+    platform TEXT NOT NULL,
+    hashtag_text TEXT NOT NULL,
+    normalized_text TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_social_hashtag_platform
+    ON ts_ods.ods_social_hashtag (platform, normalized_text);
+""".strip(),
+    "social_content_hashtag": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_social_content_hashtag (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'social_content_hashtag',
+    content_id BIGINT NOT NULL,
+    hashtag_id BIGINT NOT NULL,
+    hashtag_index INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_social_content_hashtag_content
+    ON ts_ods.ods_social_content_hashtag (content_id, hashtag_id);
+""".strip(),
+    "social_interaction": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_social_interaction (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'social_interaction',
+    interaction_id BIGSERIAL NOT NULL,
+    platform TEXT NOT NULL,
+    interaction_type TEXT NOT NULL,
+    actor_account_id BIGINT,
+    source_content_id BIGINT,
+    target_content_id BIGINT NOT NULL,
+    occurred_at TIMESTAMPTZ,
+    extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+    captured_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type),
+    CHECK (interaction_type IN ('like', 'comment', 'repost', 'quote', 'bookmark'))
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_social_interaction_target
+    ON ts_ods.ods_social_interaction (target_content_id, interaction_type);
+CREATE INDEX IF NOT EXISTS idx_social_interaction_actor
+    ON ts_ods.ods_social_interaction (actor_account_id, occurred_at DESC);
+""".strip(),
     "news": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_news (
     record_id TEXT NOT NULL,

@@ -66,6 +66,9 @@ RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
 RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
     pip install --no-cache-dir /wheels/*.whl
 
+COPY tools/patch_twscrape.py /tmp/patch_twscrape.py
+RUN python /tmp/patch_twscrape.py
+
 COPY app/ ./app/
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser \
