@@ -3983,10 +3983,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           padding: 0 10px 10px 10px;
         }
         .workspace-dock-detail.is-task-log-only .workspace-dock-log-panel {
-          flex: 0 0 auto;
-          height: auto;
+          flex: 1;
+          min-height: 0;
           border: none;
           background: transparent;
+        }
+        .workspace-dock-detail.is-task-log-only .workspace-dock-detail-body {
+          overflow: hidden;
         }
         .workspace-dock-metric-card span,
         .workspace-dock-history-head span,
@@ -4609,8 +4612,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           gap: 6px;
         }
         .workspace-dock-log-list.is-detail {
+          flex: 1;
+          min-height: 0;
           width: 100%;
           background: transparent;
+          overflow: auto;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+          overscroll-behavior: contain;
         }
         .workspace-dock-log-row {
           display: block;
