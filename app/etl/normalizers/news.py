@@ -212,6 +212,13 @@ def normalize_arstechnica(record: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def normalize_breakingdefense(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "breakingdefense")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
 def normalize_ssc_press(record: dict[str, Any]) -> dict[str, Any]:
     normalized = _news_common(record, "ssc_press")
     normalized["source_published_at"] = (
@@ -252,6 +259,7 @@ register_normalizer("news", "blacksky_news", normalize_blacksky_news)
 register_normalizer("news", "blacksky_posts", normalize_blacksky_posts)
 register_normalizer("news", "satellite_today", normalize_satellite_today)
 register_normalizer("news", "arstechnica", normalize_arstechnica)
+register_normalizer("news", "breakingdefense", normalize_breakingdefense)
 register_normalizer("news", "ssc_press", normalize_ssc_press)
 register_normalizer("news", "unseenlabs_news", normalize_unseenlabs_news)
 register_normalizer("news", "planet_investors_news", normalize_planet_investors_news)
