@@ -142,6 +142,7 @@ interface TaskRuntimeItem {
 
 interface DockTask extends CollectTask {
   productDomain: string;
+  faviconUrl?: string;
 }
 
 interface TaskRow extends DockTask {
@@ -782,6 +783,7 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   template: `${item.template_name}@${item.template_version}`,
   group: 'prototype',
   area: `${item.template_name.replace(/_/g, ' ')} workspace`,
+  faviconUrl: item.favicon_url,
   status: item.status,
   progress: item.progress,
   records: String(item.records),
@@ -1460,7 +1462,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     return {
       ...item,
       runtime,
-      site: template ? { ...site, kind: inferSiteKind(template.dataType || template.name), faviconUrl: template.faviconUrl } : site,
+      site: template
+        ? { ...site, kind: inferSiteKind(template.dataType || template.name), faviconUrl: item.faviconUrl || template.faviconUrl }
+        : { ...site, faviconUrl: item.faviconUrl },
       display: getTaskDisplay(runtime),
     };
   }), [taskItems, taskRuntime, templates]);

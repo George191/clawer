@@ -702,14 +702,21 @@ class AICollectStore:
 
     async def list_tasks(self) -> list[dict[str, Any]]:
         await self.initialize()
-        return await self._pg.fetch_all(
+        rows = await self._pg.fetch_all(
             """
-            SELECT task.*, '[]'::jsonb AS logs
+            SELECT task.*, template.icon AS template_icon, '[]'::jsonb AS logs
             FROM public.ai_collect_tasks task
+            LEFT JOIN public.ai_collect_templates template
+              ON template.name = task.template_name
+             AND template.version = task.template_version
             WHERE task.deleted_at IS NULL
             ORDER BY task.updated_at DESC
             """
         )
+        minio = get_business_metadata_minio_client()
+        for row in rows:
+            row["favicon_url"] = minio.build_object_url(str(row.pop("template_icon") or ""))
+        return rows
 
     async def append_task_log(self, task_id: str, level: str, message: str) -> None:
         await self.initialize()
@@ -1083,9 +1090,9 @@ class AICollectStore:
 
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
         await self.initialize()
-        return await self._pg.fetch_one(
+        task = await self._pg.fetch_one(
             """
-            SELECT task.*,
+            SELECT task.*, template.icon AS template_icon,
                    COALESCE((
                        SELECT jsonb_agg(log_row.payload ORDER BY log_row.created_at)
                        FROM (
@@ -1142,11 +1149,18 @@ class AICollectStore:
                     FROM public.ai_collect_task_logs
                     WHERE task_id = task.id AND run_id IS NOT NULL)::integer AS log_run_count
             FROM public.ai_collect_tasks task
-            WHERE id = CAST(:id AS uuid)
+            LEFT JOIN public.ai_collect_templates template
+              ON template.name = task.template_name
+             AND template.version = task.template_version
+            WHERE task.id = CAST(:id AS uuid)
               AND task.deleted_at IS NULL
             """,
             {"id": task_id},
         )
+        if task is not None:
+            minio = get_business_metadata_minio_client()
+            task["favicon_url"] = minio.build_object_url(str(task.pop("template_icon") or ""))
+        return task
 
     async def get_task_logs(self, task_id: str, run_id: str) -> list[dict[str, Any]]:
         await self.initialize()

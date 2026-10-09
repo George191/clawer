@@ -74,7 +74,7 @@ RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
     pip install --no-cache-dir /wheels/*.whl
 
 COPY app/ ./app/
-COPY --from=frontend /static/ ./web-panel/dist/
+COPY --from=frontend /static/ ./static/
 
 RUN groupadd -r appuser && useradd -r -m -d /home/appuser -g appuser appuser \
     && mkdir -p /app/output /home/appuser/.config /home/appuser/.cache \
