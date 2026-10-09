@@ -21,6 +21,7 @@ email-validator>=2.1
 passlib[bcrypt]>=1.7
 bcrypt==4.0.1
 PyJWT>=2.8
+cryptography>=42.0
 sentry-sdk[fastapi]>=1.40
 emails>=0.6
 aiologger>=0.7
