@@ -69,6 +69,9 @@ DOWNLOAD_COLLECTION_OVERRIDES = {
 DOWNLOAD_TEMPLATE_OVERRIDES = {
     collection: template for template, collection in DOWNLOAD_COLLECTION_OVERRIDES.items()
 }
+NEWS_ASSET_FIELDS = {
+    "attachments", "external_links", "images", "videos", "audios",
+}
 
 @dataclass(slots=True)
 class AssetDownloadJob:
@@ -641,6 +644,8 @@ class DownloadWorker:
         if data_type == "news":
             urls = self._extract_news_download_urls(record)
             for download_config in download_configs:
+                if str(download_config.selector) in NEWS_ASSET_FIELDS:
+                    continue
                 urls.extend(self._extract_download_urls(
                     record, download_config, template_name,
                 ))
@@ -805,7 +810,7 @@ class DownloadWorker:
         for asset_key, asset_path in downloaded_assets.items():
             item = key_to_info.get(asset_key) or {}
             if item.get("source_field") in {
-                "images", "videos", "audios", "iframe",
+                "images", "videos", "audios",
             }:
                 direct_asset_updates[asset_key] = asset_path
                 continue
@@ -817,7 +822,7 @@ class DownloadWorker:
         for asset_key, marker in not_found_updates.items():
             item = key_to_info.get(asset_key) or {}
             if item.get("source_field") in {
-                "images", "videos", "audios", "iframe",
+                "images", "videos", "audios",
             }:
                 direct_asset_updates[asset_key] = dict(marker)
                 continue
@@ -861,7 +866,7 @@ class DownloadWorker:
             if not source_url:
                 continue
             if (key_to_info.get(asset_key) or {}).get("source_field") in {
-                "attachments", "images", "videos", "audios", "iframe",
+                "attachments", "images", "videos", "audios",
             }:
                 continue
             existing_index = attachment_index_by_url.get(source_url)
