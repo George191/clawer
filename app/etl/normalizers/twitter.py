@@ -38,7 +38,11 @@ def _record_identity(value: str | None) -> dict[str, str]:
 
 def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize one twscrape Tweet dict; missing contract fields are errors."""
-    tweet = record
+    # The crawler keeps the API-facing projection at the top level and the
+    # lossless twscrape payload under source_tweet. Prefer the latter so
+    # referenced tweets and their original fields normalize identically.
+    source_tweet = record.get("source_tweet")
+    tweet = source_tweet if isinstance(source_tweet, dict) else record
     user = tweet["user"]
     tweet_id = safe_str(tweet["id"])
     author_id = safe_str(user["id"])
