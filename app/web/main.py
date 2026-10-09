@@ -56,3 +56,5 @@ app.add_api_route(
     tags=["health"],
     name="legacy_health",
 )
+
+app.mount("/", StaticFiles(directory="static", html=True), name="frontend")
