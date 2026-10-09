@@ -296,6 +296,136 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
 RETURNING *
 """
 
+ODS_SOCIAL_ACCOUNT_INSERT = """
+INSERT INTO ts_ods.ods_social_account (
+    record_id, data_source, data_type, account_id, platform, platform_account_id,
+    username, display_name, profile_url, avatar_url, bio, account_type,
+    is_verified, is_private, account_created_at, follower_count, following_count,
+    content_count, location, language, extra, captured_at,
+    created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :account_id, :platform, :platform_account_id,
+    :username, :display_name, :profile_url, :avatar_url, :bio, :account_type,
+    :is_verified, :is_private, CAST(:account_created_at AS timestamptz),
+    :follower_count, :following_count, :content_count, :location, :language,
+    CAST(:extra AS jsonb), CAST(:captured_at AS timestamptz),
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    account_id = EXCLUDED.account_id, platform = EXCLUDED.platform,
+    platform_account_id = EXCLUDED.platform_account_id, username = EXCLUDED.username,
+    display_name = EXCLUDED.display_name, profile_url = EXCLUDED.profile_url,
+    avatar_url = EXCLUDED.avatar_url, bio = EXCLUDED.bio,
+    account_type = EXCLUDED.account_type, is_verified = EXCLUDED.is_verified,
+    is_private = EXCLUDED.is_private, account_created_at = EXCLUDED.account_created_at,
+    follower_count = EXCLUDED.follower_count, following_count = EXCLUDED.following_count,
+    content_count = EXCLUDED.content_count, location = EXCLUDED.location,
+    language = EXCLUDED.language, extra = EXCLUDED.extra,
+    captured_at = EXCLUDED.captured_at, updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_SOCIAL_CONTENT_INSERT = """
+INSERT INTO ts_ods.ods_social_content (
+    record_id, data_source, data_type, content_id, platform, platform_content_id,
+    content_type, author_account_id, parent_content_id, root_content_id,
+    text_content, language, content_url, published_at, edited_at, deleted_at,
+    reply_count, like_count, repost_count, quote_count, view_count, is_sensitive,
+    extra, captured_at, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :content_id, :platform, :platform_content_id,
+    :content_type, :author_account_id, :parent_content_id, :root_content_id,
+    :text_content, :language, :content_url, CAST(:published_at AS timestamptz),
+    CAST(:edited_at AS timestamptz), CAST(:deleted_at AS timestamptz),
+    :reply_count, :like_count, :repost_count, :quote_count, :view_count,
+    :is_sensitive, CAST(:extra AS jsonb), CAST(:captured_at AS timestamptz),
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    content_id = EXCLUDED.content_id, platform = EXCLUDED.platform,
+    platform_content_id = EXCLUDED.platform_content_id, content_type = EXCLUDED.content_type,
+    author_account_id = EXCLUDED.author_account_id, parent_content_id = EXCLUDED.parent_content_id,
+    root_content_id = EXCLUDED.root_content_id, text_content = EXCLUDED.text_content,
+    language = EXCLUDED.language, content_url = EXCLUDED.content_url,
+    published_at = EXCLUDED.published_at, edited_at = EXCLUDED.edited_at,
+    deleted_at = EXCLUDED.deleted_at, reply_count = EXCLUDED.reply_count,
+    like_count = EXCLUDED.like_count, repost_count = EXCLUDED.repost_count,
+    quote_count = EXCLUDED.quote_count, view_count = EXCLUDED.view_count,
+    is_sensitive = EXCLUDED.is_sensitive, extra = EXCLUDED.extra,
+    captured_at = EXCLUDED.captured_at, updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_SOCIAL_MEDIA_INSERT = """
+INSERT INTO ts_ods.ods_social_media (
+    record_id, data_source, data_type, content_id, media_index, media_type,
+    platform_media_id, media_url, preview_url, width, height, duration_ms,
+    alt_text, extra, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :content_id, :media_index, :media_type,
+    :platform_media_id, :media_url, :preview_url, :width, :height, :duration_ms,
+    :alt_text, CAST(:extra AS jsonb), CAST(:created_at AS timestamptz),
+    CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    content_id = EXCLUDED.content_id, media_index = EXCLUDED.media_index,
+    media_type = EXCLUDED.media_type, platform_media_id = EXCLUDED.platform_media_id,
+    media_url = EXCLUDED.media_url, preview_url = EXCLUDED.preview_url,
+    width = EXCLUDED.width, height = EXCLUDED.height, duration_ms = EXCLUDED.duration_ms,
+    alt_text = EXCLUDED.alt_text, extra = EXCLUDED.extra, updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_SOCIAL_HASHTAG_INSERT = """
+INSERT INTO ts_ods.ods_social_hashtag (
+    record_id, data_source, data_type, hashtag_id, platform, hashtag_text,
+    normalized_text, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :hashtag_id, :platform, :hashtag_text,
+    :normalized_text, CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    hashtag_id = EXCLUDED.hashtag_id, platform = EXCLUDED.platform,
+    hashtag_text = EXCLUDED.hashtag_text, normalized_text = EXCLUDED.normalized_text,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_SOCIAL_CONTENT_HASHTAG_INSERT = """
+INSERT INTO ts_ods.ods_social_content_hashtag (
+    record_id, data_source, data_type, content_id, hashtag_id, hashtag_index,
+    created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :content_id, :hashtag_id, :hashtag_index,
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    content_id = EXCLUDED.content_id, hashtag_id = EXCLUDED.hashtag_id,
+    hashtag_index = EXCLUDED.hashtag_index, updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_SOCIAL_INTERACTION_INSERT = """
+INSERT INTO ts_ods.ods_social_interaction (
+    record_id, data_source, data_type, interaction_id, platform, interaction_type,
+    actor_account_id, source_content_id, target_content_id, occurred_at,
+    extra, captured_at, created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type, :interaction_id, :platform, :interaction_type,
+    :actor_account_id, :source_content_id, :target_content_id,
+    CAST(:occurred_at AS timestamptz), CAST(:extra AS jsonb),
+    CAST(:captured_at AS timestamptz), CAST(:created_at AS timestamptz),
+    CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    interaction_id = EXCLUDED.interaction_id, platform = EXCLUDED.platform,
+    interaction_type = EXCLUDED.interaction_type, actor_account_id = EXCLUDED.actor_account_id,
+    source_content_id = EXCLUDED.source_content_id, target_content_id = EXCLUDED.target_content_id,
+    occurred_at = EXCLUDED.occurred_at, extra = EXCLUDED.extra,
+    captured_at = EXCLUDED.captured_at, updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
 _ODS_INSERT_SQL = {
     "news": ODS_NEWS_INSERT,
     "patent": ODS_PATENT_INSERT,
@@ -305,6 +435,12 @@ _ODS_INSERT_SQL = {
     "filing": ODS_FILING_STANDARD_INSERT,
     "filing_document": ODS_FILING_DOCUMENT_INSERT.format(table_ref=_ODS_FILING_DOCUMENT_TABLE),
     "financial_fact": ODS_FINANCIAL_FACT_INSERT.format(table_ref="ts_ods.ods_financial_fact"),
+    "social_account": ODS_SOCIAL_ACCOUNT_INSERT,
+    "social_content": ODS_SOCIAL_CONTENT_INSERT,
+    "social_media": ODS_SOCIAL_MEDIA_INSERT,
+    "social_hashtag": ODS_SOCIAL_HASHTAG_INSERT,
+    "social_content_hashtag": ODS_SOCIAL_CONTENT_HASHTAG_INSERT,
+    "social_interaction": ODS_SOCIAL_INTERACTION_INSERT,
 }
 
 
@@ -338,6 +474,9 @@ class TsOds(ETLBase):
 
     async def _handler_financial_fact(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="financial_fact")
+
+    async def _handler_twitter(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="twitter")
 
     async def _write_current(
         self,

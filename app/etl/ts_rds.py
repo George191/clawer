@@ -56,6 +56,9 @@ class TsRds(ETLBase):
     async def _handler_filing(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="filing")
 
+    async def _handler_twitter(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="twitter")
+
     async def _write_current(
         self,
         *,

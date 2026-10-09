@@ -26,6 +26,9 @@ def get_normalizer(
     specific_key = f"{data_type}:{data_source}"
     if specific_key in _NORMALIZER_REGISTRY:
         return _NORMALIZER_REGISTRY[specific_key]
+    generic_key = f"{data_type}:*"
+    if generic_key in _NORMALIZER_REGISTRY:
+        return _NORMALIZER_REGISTRY[generic_key]
     logger.warning(
         "No source-specific normalizer registered for %s, fallback to generic",
         specific_key,
@@ -41,4 +44,5 @@ from app.etl.normalizers import (
     filing,  # noqa: E402, F401
     filing_document,  # noqa: E402, F401
     financial_fact,  # noqa: E402, F401
+    twitter,  # noqa: E402, F401
 )
