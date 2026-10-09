@@ -12,6 +12,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from app.config.settings import settings
 from app.etl.base import ETLBase
 from app.etl.normalizers import get_normalizer
+from app.etl.normalizers.twitter import normalize_twitter as _normalize_twitter  # noqa: F401
 from app.logger import get_logger
 from app.quality.validator import create_navwarn_validation_engine
 

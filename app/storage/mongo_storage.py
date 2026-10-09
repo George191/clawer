@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -22,6 +21,7 @@ from pymongo import ReplaceOne
 from app.config.settings import settings
 from app.logger import get_logger
 from app.storage.file_storage import StorageBackend
+from app.utils.record_id import resolve_record_id
 from app.utils.path import get_nested_value
 
 logger = get_logger(__name__)
@@ -86,8 +86,7 @@ class MongoStorage(StorageBackend):
         return collection
 
     def _resolve_record_id(self, record: dict[str, Any]) -> str:
-        content = json.dumps(record, sort_keys=True, ensure_ascii=False)
-        return hashlib.md5(content.encode()).hexdigest()
+        return resolve_record_id(record)
 
     @staticmethod
     def _business_content(record: dict[str, Any]) -> dict[str, Any]:
