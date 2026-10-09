@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import hashlib
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_date, safe_str
+from app.utils.record_id import resolve_record_id
 
 
 def _meta(record: dict[str, Any]) -> dict[str, Any]:
@@ -44,8 +44,7 @@ def _fact_record_id(
         "fp": safe_str(fp),
         "frame": safe_str(frame),
     }
-    canonical = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.md5(canonical.encode("utf-8")).hexdigest()
+    return resolve_record_id(identity)
 
 
 def normalize_sec_edgar_financial_fact(record: dict[str, Any]) -> dict[str, Any]:
