@@ -18,6 +18,14 @@ _publisher_connection = RedisConnection(settings.task_redis_url)
 
 async def publish_task_change(task_id: str) -> None:
     """Best-effort notification; PostgreSQL remains the source of truth."""
+    await _publish_change({"task_id": task_id})
+
+
+async def publish_automation_change(channel: str) -> None:
+    await _publish_change({"type": "automation_changed", "channel": channel})
+
+
+async def _publish_change(payload: dict) -> None:
     try:
         redis = await asyncio.wait_for(
             _publisher_connection.ensure_connected(),
@@ -25,21 +33,21 @@ async def publish_task_change(task_id: str) -> None:
         )
     except TimeoutError:
         _publisher_connection.mark_unavailable()
-        logger.warning("Timed out connecting task event publisher for %s", task_id)
+        logger.warning("Timed out connecting change event publisher")
         return
     if redis is None:
         return
     try:
         await asyncio.wait_for(
-            redis.publish(TASK_EVENT_CHANNEL, json.dumps({"task_id": task_id})),
+            redis.publish(TASK_EVENT_CHANNEL, json.dumps(payload)),
             timeout=_PUBLISH_TIMEOUT_SECONDS,
         )
     except TimeoutError:
         _publisher_connection.mark_unavailable()
-        logger.warning("Timed out publishing task change for %s", task_id)
+        logger.warning("Timed out publishing change event")
     except Exception as exc:
         _publisher_connection.mark_unavailable()
-        logger.warning("Failed to publish task change for %s: %s", task_id, exc)
+        logger.warning("Failed to publish change event: %s", exc)
 
 
 async def publish_task_log(task_id: str, log: dict) -> None:

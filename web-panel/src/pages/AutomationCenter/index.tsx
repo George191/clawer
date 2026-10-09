@@ -1,25 +1,29 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert, App, Badge, Button, Card, ConfigProvider, Descriptions, Drawer, Dropdown, Empty, Form, Input,
-  InputNumber, Modal, Popconfirm, Progress, Segmented, Select, Space, Spin, Switch,
+  Alert, App, Badge, Button, Card, ConfigProvider, Descriptions, Drawer, Empty, Form, Input,
+  InputNumber, Modal, Popconfirm, Segmented, Select, Space, Spin, Switch,
   Table, Tag, Timeline, Typography,
 } from 'antd';
 import enUS from 'antd/locale/en_US';
 import {
   ApartmentOutlined, BarChartOutlined, ClockCircleOutlined, DatabaseOutlined, DeleteOutlined,
   DeploymentUnitOutlined,
-  EditOutlined, EllipsisOutlined, FieldTimeOutlined, PauseOutlined, PlayCircleOutlined,
-  PlusOutlined, ReloadOutlined, RobotOutlined, SearchOutlined, SettingOutlined, StopOutlined,
+  EditOutlined, FieldTimeOutlined,
+  PlusOutlined, RobotOutlined, SearchOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  aiCreateWorkspaceTask, aiDeleteWorkspaceTask, aiFetchWorkspaceTasks,
-  aiTaskAction,
-  automationCreateSchedule, automationCreateWorkflow,
-  automationDeleteSchedule, automationDeleteWorkflow,
-  automationFetchSchedules, automationFetchWorkflows, automationReloadSchedules,
-  automationToggleSchedule, automationUpdateSchedule, automationUpdateWorkflow,
+  automationCreateWorkflow, automationDeleteWorkflow,
+  automationUpdateWorkflow,
 } from '@/services/api';
+import { AI_ANALYZE_WS_URL } from '@/services/aiApi';
+import {
+  automationCreateSchedule, automationDeleteSchedule,
+  automationReloadSchedules, automationToggleSchedule, automationUpdateSchedule,
+  mapWorkspaceSchedules, type AutomationSchedule,
+} from '@/services/scheduler';
+import { useWebSocket } from '@/hooks/useWebSocket';
+import WorkspaceDock from '@/pages/AICollect/WorkspaceDock';
 import type {
   AutomationWorkflow, ProductDomain, SchedulerTaskConfig, WorkspaceTask,
 } from '@/services/types';
@@ -27,7 +31,7 @@ import './style.css';
 
 type Section = 'workflows' | 'schedules' | 'runs';
 type DomainFilter = ProductDomain | 'all';
-type SelectedRecord = AutomationWorkflow | SchedulerTaskConfig | WorkspaceTask;
+type SelectedRecord = AutomationWorkflow | AutomationSchedule;
 
 const domainMeta: Record<ProductDomain, { label: string; color: string; className: string; icon: React.ReactNode }> = {
   'ai-collect': { label: 'Scout', color: 'purple', className: 'is-ai', icon: <RobotOutlined /> },
@@ -55,11 +59,6 @@ const sectionByPath = (pathname: string): Section => {
   return 'workflows';
 };
 
-const taskDomain = (item: WorkspaceTask): ProductDomain => {
-  const domain = String(item.parameters?.product_domain ?? 'ai-collect') as ProductDomain;
-  return domain in domainMeta ? domain : 'ai-collect';
-};
-
 const relativeTime = (value?: string) => {
   if (!value) return '—';
   const time = new Date(value).getTime();
@@ -71,9 +70,9 @@ const relativeTime = (value?: string) => {
   return `${Math.floor(minutes / 1440)}d ago`;
 };
 
-const formatSchedule = (item: SchedulerTaskConfig) => item.schedule_type === 'interval'
+const formatSchedule = (item: AutomationSchedule) => item.schedule_label ?? (item.schedule_type === 'interval'
   ? `Every ${item.interval_seconds ?? 60}s`
-  : `${item.cron_minute} ${item.cron_hour} ${item.cron_day_of_month} ${item.cron_month_of_year} ${item.cron_day_of_week}`;
+  : `${item.cron_minute} ${item.cron_hour} ${item.cron_day_of_month} ${item.cron_month_of_year} ${item.cron_day_of_week}`);
 
 const AutomationCenter: React.FC = () => {
   const { message } = App.useApp();
@@ -88,47 +87,91 @@ const AutomationCenter: React.FC = () => {
     : 'all';
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(true);
-  const [loadFailures, setLoadFailures] = useState(0);
+  const [streamAvailable, setStreamAvailable] = useState(false);
   const [mutating, setMutating] = useState(false);
   const [workflows, setWorkflows] = useState<AutomationWorkflow[]>([]);
-  const [schedules, setSchedules] = useState<SchedulerTaskConfig[]>([]);
-  const [runs, setRuns] = useState<WorkspaceTask[]>([]);
+  const [schedules, setSchedules] = useState<AutomationSchedule[]>([]);
+  const [workspaceSchedules, setWorkspaceSchedules] = useState<AutomationSchedule[]>([]);
+  const pendingSnapshots = useRef(new Set<string>());
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<SelectedRecord | null>(null);
   const [detail, setDetail] = useState<SelectedRecord | null>(null);
+  const tableCardRef = useRef<HTMLDivElement>(null);
+  const [tableBodyHeight, setTableBodyHeight] = useState(240);
 
-  const refresh = useCallback(async (announce = false) => {
-    setLoading(true);
-    const results = await Promise.allSettled([
-      automationFetchWorkflows(), automationFetchSchedules(), aiFetchWorkspaceTasks(),
-    ]);
-    if (results[0].status === 'fulfilled') setWorkflows(results[0].value);
-    if (results[1].status === 'fulfilled') setSchedules(results[1].value);
-    if (results[2].status === 'fulfilled') setRuns(results[2].value.items);
-    const failed = results.filter((result) => result.status === 'rejected').length;
-    setLoadFailures(failed);
-    if (failed && announce) message.warning(`${failed} automation data sources are unavailable`);
-    else if (announce) message.success('Automation data refreshed');
-    setLoading(false);
-  }, [message]);
+  const { connected, send } = useWebSocket(AI_ANALYZE_WS_URL, {
+    onMessage: (raw) => {
+      const event = JSON.parse(raw);
+      if (event.type === 'task_stream_status') {
+        setStreamAvailable(Boolean(event.data.available));
+        return;
+      }
+      if (section === 'workflows' && event.type === 'workflows_snapshot') {
+        setWorkflows(event.data);
+        pendingSnapshots.current.delete('workflows');
+      } else if (section === 'schedules') {
+        if (event.type === 'schedules_snapshot') {
+          setSchedules(event.data);
+          pendingSnapshots.current.delete('schedules');
+        } else if (event.type === 'tasks_snapshot') {
+          setWorkspaceSchedules(mapWorkspaceSchedules(event.data));
+          pendingSnapshots.current.delete('tasks');
+        } else if (event.type === 'task_detail') {
+          const task = event.data as WorkspaceTask;
+          setWorkspaceSchedules((current) => [
+            ...mapWorkspaceSchedules([task]),
+            ...current.filter((item) => item.workspace_task_id !== task.id),
+          ]);
+        } else if (event.type === 'task_deleted') {
+          setWorkspaceSchedules((current) => current.filter((item) => item.workspace_task_id !== event.task_id));
+        }
+      }
+      if (!pendingSnapshots.current.size) setLoading(false);
+    },
+    onClose: () => setStreamAvailable(false),
+  });
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    const channels = section === 'runs' ? [] : section === 'workflows' ? ['workflows'] : ['schedules', 'tasks'];
+    pendingSnapshots.current = new Set(channels);
+    setLoading(channels.length > 0);
+    if (!connected) return;
+    channels.forEach((channel) => send(JSON.stringify({ type: 'subscribe', channel })));
+    return () => {
+      channels.forEach((channel) => send(JSON.stringify({ type: 'unsubscribe', channel })));
+    };
+  }, [connected, section, send]);
 
-  const changeSection = (value: string) => navigate(`/automation/${value}${requestedDomain ? `?domain=${domain}` : ''}`);
+  const selectRun = useCallback((taskId: string | null) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (taskId) next.set('task', taskId);
+      else next.delete('task');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const viewRun = (id: string) => {
+    setDetail(null);
+    navigate(`/automation/runs?task=${encodeURIComponent(id)}`);
+  };
+
+  const changeSection = (value: string) => {
+    setDetail(null);
+    navigate(`/automation/${value}${requestedDomain ? `?domain=${domain}` : ''}`);
+  };
   const changeDomain = (value: DomainFilter) => {
     const next = new URLSearchParams(searchParams);
     next.set('domain', value);
     setSearchParams(next);
   };
 
-  const domainTag = (value: ProductDomain) => <Tag color={domainMeta[value].color}>{domainMeta[value].label}</Tag>;
+  const domainTag = (value: ProductDomain) => <Tag color={(domainMeta[value] ?? domainMeta.platform).color}>{(domainMeta[value] ?? domainMeta.platform).label}</Tag>;
   const matches = (text: string) => text.toLowerCase().includes(keyword.trim().toLowerCase());
   const filteredWorkflows = useMemo(() => workflows.filter((item) =>
     (domain === 'all' || item.product_domain === domain) && matches(`${item.name} ${item.description}`)), [workflows, domain, keyword]);
-  const filteredSchedules = useMemo(() => schedules.filter((item) =>
-    (domain === 'all' || item.product_domain === domain) && matches(`${item.task_name} ${item.task_path} ${item.description ?? ''}`)), [schedules, domain, keyword]);
-  const filteredRuns = useMemo(() => runs.filter((item) =>
-    (domain === 'all' || taskDomain(item) === domain) && matches(`${item.name} ${item.template_name} ${item.owner}`)), [runs, domain, keyword]);
+  const filteredSchedules = useMemo(() => [...workspaceSchedules, ...schedules].filter((item) =>
+    (domain === 'all' || item.product_domain === domain) && matches(`${item.display_name ?? item.task_name} ${item.task_path} ${item.description ?? ''}`)), [workspaceSchedules, schedules, domain, keyword]);
 
   const openCreate = () => {
     setEditing(null);
@@ -138,6 +181,10 @@ const AutomationCenter: React.FC = () => {
   };
 
   const openEdit = (record: SelectedRecord) => {
+    if ('workspace_task_id' in record && record.workspace_task_id) {
+      viewRun(record.workspace_task_id);
+      return;
+    }
     setEditing(record);
     if (section === 'workflows') {
       const item = record as AutomationWorkflow;
@@ -174,16 +221,10 @@ const AutomationCenter: React.FC = () => {
         if (editing) await automationUpdateSchedule((editing as SchedulerTaskConfig).task_name, payload);
         else await automationCreateSchedule(payload);
         const reload = await automationReloadSchedules();
-        if (!reload.loaded) message.warning(reload.message);
-      } else {
-        await aiCreateWorkspaceTask({
-          name: values.name, template_name: values.template_name,
-          template_version: 'v1.0', schedule: { mode: 'once' }, parameters: { product_domain: values.product_domain }, policies: {}, owner: values.owner ?? 'Current User',
-        });
+        if (!reload.loaded || reload.restart_required) message.warning(reload.message);
       }
       message.success(editing ? 'Changes saved' : 'Created successfully');
       setEditorOpen(false);
-      await refresh();
     } finally {
       setMutating(false);
     }
@@ -196,42 +237,24 @@ const AutomationCenter: React.FC = () => {
       else if (section === 'schedules') {
         await automationDeleteSchedule((record as SchedulerTaskConfig).task_name);
         const reload = await automationReloadSchedules();
-        if (!reload.loaded) message.warning(reload.message);
+        if (!reload.loaded || reload.restart_required) message.warning(reload.message);
       }
-      else await aiDeleteWorkspaceTask((record as WorkspaceTask).id);
       if (detail === record) setDetail(null);
       message.success('Deleted');
-      await refresh();
     } finally { setMutating(false); }
   };
 
-  const toggleSchedule = async (record: SchedulerTaskConfig, enabled: boolean) => {
+  const toggleSchedule = async (record: AutomationSchedule, enabled: boolean) => {
     await automationToggleSchedule(record.task_name, enabled);
     const reload = await automationReloadSchedules();
-    if (!reload.loaded) message.warning(reload.message);
+    if (!reload.loaded || reload.restart_required) message.warning(reload.message);
     message.success(enabled ? 'Schedule enabled' : 'Schedule paused');
-    await refresh();
-  };
-
-  const runAction = async (record: WorkspaceTask, action: string) => {
-    setMutating(true);
-    try {
-      await aiTaskAction(record.id, { action });
-      message.success({ start: 'Run submitted', pause: 'Run paused', resume: 'Run resumed', restart: 'Run restarted', cancel: 'Run cancelled' }[action] ?? 'Action completed');
-      await refresh();
-    } finally { setMutating(false); }
   };
 
   const rowActions = (record: SelectedRecord) => {
-    if (section === 'runs') {
-      const item = record as WorkspaceTask;
-      const items = [];
-      if (['queued', 'failed'].includes(item.status)) items.push({ key: 'start', label: 'Start', icon: <PlayCircleOutlined /> });
-      if (item.status === 'running') items.push({ key: 'pause', label: 'Pause', icon: <PauseOutlined /> });
-      if (item.status === 'paused') items.push({ key: 'resume', label: 'Resume', icon: <PlayCircleOutlined /> });
-      if (['running', 'paused', 'failed'].includes(item.status)) items.push({ key: 'restart', label: 'Restart', icon: <ReloadOutlined /> });
-      if (['running', 'paused', 'queued'].includes(item.status)) items.push({ key: 'cancel', label: 'Cancel', icon: <StopOutlined />, danger: true });
-      return <Dropdown menu={{ items, onClick: ({ key }) => void runAction(item, key) }}><Button type="text" icon={<EllipsisOutlined />} aria-label="Run actions" /></Dropdown>;
+    if ('workspace_task_id' in record && record.workspace_task_id) {
+      const taskId = record.workspace_task_id;
+      return <Button type="link" onClick={(event) => { event.stopPropagation(); viewRun(taskId); }}>View Run</Button>;
     }
     return <Space size={2}>
       <Button type="text" icon={<EditOutlined />} aria-label="Edit" onClick={(event) => { event.stopPropagation(); openEdit(record); }} />
@@ -248,29 +271,37 @@ const AutomationCenter: React.FC = () => {
     { title: '', width: 82, render: (_: unknown, item: AutomationWorkflow) => rowActions(item) },
   ];
   const scheduleColumns = [
-    { title: 'Schedule', dataIndex: 'task_name', render: (_: string, item: SchedulerTaskConfig) => <div className="automation-name"><FieldTimeOutlined /><span><strong>{item.task_name}</strong><small>{item.description || item.task_path}</small></span></div> },
-    { title: 'Domain', width: 140, render: (_: unknown, item: SchedulerTaskConfig) => domainTag(item.product_domain) },
-    { title: 'Trigger', width: 190, render: (_: unknown, item: SchedulerTaskConfig) => <Typography.Text code>{formatSchedule(item)}</Typography.Text> },
-    { title: 'Enabled', width: 90, render: (_: unknown, item: SchedulerTaskConfig) => <Switch size="small" checked={item.enabled} onChange={(checked) => void toggleSchedule(item, checked)} /> },
-    { title: 'Updated', width: 110, render: (_: unknown, item: SchedulerTaskConfig) => relativeTime(item.updated_at) },
-    { title: '', width: 82, render: (_: unknown, item: SchedulerTaskConfig) => rowActions(item) },
+    { title: 'Schedule', dataIndex: 'task_name', render: (_: string, item: AutomationSchedule) => <div className="automation-name"><FieldTimeOutlined /><span><strong>{item.display_name ?? item.task_name}</strong><small>{item.description || item.task_path}</small></span></div> },
+    { title: 'Domain', width: 140, render: (_: unknown, item: AutomationSchedule) => domainTag(item.product_domain) },
+    { title: 'Trigger', width: 190, render: (_: unknown, item: AutomationSchedule) => <Typography.Text code>{formatSchedule(item)}</Typography.Text> },
+    { title: 'Enabled', width: 90, render: (_: unknown, item: AutomationSchedule) => item.workspace_task_id
+      ? <Badge status={item.enabled ? 'success' : 'default'} text={item.enabled ? 'Enabled' : 'Paused'} />
+      : <Switch size="small" checked={item.enabled} onChange={(checked) => void toggleSchedule(item, checked)} /> },
+    { title: 'Updated', width: 110, render: (_: unknown, item: AutomationSchedule) => relativeTime(item.updated_at) },
+    { title: '', width: 100, render: (_: unknown, item: AutomationSchedule) => rowActions(item) },
   ];
-  const runColumns = [
-    { title: 'Run', dataIndex: 'name', render: (_: string, item: WorkspaceTask) => <div className="automation-name"><ClockCircleOutlined /><span><strong>{item.name}</strong><small>{item.template_name}@{item.template_version}</small></span></div> },
-    { title: 'Domain', width: 140, render: (_: unknown, item: WorkspaceTask) => domainTag(taskDomain(item)) },
-    { title: 'Status', width: 110, render: (_: unknown, item: WorkspaceTask) => <Badge status={item.status === 'running' ? 'processing' : item.status === 'completed' ? 'success' : item.status === 'failed' ? 'error' : 'default'} text={item.status} /> },
-    { title: 'Progress', width: 170, render: (_: unknown, item: WorkspaceTask) => <Progress percent={item.progress} size="small" status={item.status === 'failed' ? 'exception' : undefined} /> },
-    { title: 'Records', width: 100, dataIndex: 'records' },
-    { title: 'Updated', width: 110, render: (_: unknown, item: WorkspaceTask) => relativeTime(item.updated_at) },
-    { title: '', width: 58, render: (_: unknown, item: WorkspaceTask) => rowActions(item) },
-  ];
+  const currentData = section === 'workflows' ? filteredWorkflows : filteredSchedules;
+  const currentColumns = section === 'workflows' ? workflowColumns : scheduleColumns;
+  useLayoutEffect(() => {
+    const updateTableHeight = () => {
+      const card = tableCardRef.current;
+      if (!card) return;
+      const header = card.querySelector<HTMLElement>('.ant-table-thead');
+      const pagination = card.querySelector<HTMLElement>('.ant-pagination');
+      const paginationStyle = pagination ? getComputedStyle(pagination) : null;
+      const paginationMargins = paginationStyle
+        ? parseFloat(paginationStyle.marginTop) + parseFloat(paginationStyle.marginBottom)
+        : 0;
+      const fixedHeight = (header?.offsetHeight ?? 0) + (pagination?.offsetHeight ?? 0) + paginationMargins + 2;
+      setTableBodyHeight(Math.max(56, card.clientHeight - fixedHeight));
+    };
+    updateTableHeight();
+    const observer = new ResizeObserver(updateTableHeight);
+    if (tableCardRef.current) observer.observe(tableCardRef.current);
+    return () => observer.disconnect();
+  }, [currentData.length, loading, section]);
 
-  const currentData = section === 'workflows' ? filteredWorkflows : section === 'schedules' ? filteredSchedules : filteredRuns;
-  const currentColumns = section === 'workflows' ? workflowColumns : section === 'schedules' ? scheduleColumns : runColumns;
-  const running = runs.filter((item) => item.status === 'running').length;
-  const attention = runs.filter((item) => item.status === 'failed').length;
-
-  const detailName = detail && ('task_name' in detail ? detail.task_name : detail.name);
+  const detailName = detail && ('task_name' in detail ? detail.display_name ?? detail.task_name : detail.name);
   const editorTitle = `${editing ? 'Edit' : 'Create'} ${objectLabel[section]}`;
 
   return <ConfigProvider locale={enUS}><div className="automation-page">
@@ -286,15 +317,22 @@ const AutomationCenter: React.FC = () => {
       <Space wrap className="automation-filters"><Select<DomainFilter> value={requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? domain : undefined} placeholder="Select domain" onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} /><Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
     </div>
 
-    {loadFailures > 0 && <Alert className="automation-load-alert" type="warning" showIcon message="Some automation data is temporarily unavailable. Available content remains usable." />}
+    {section !== 'runs' && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
 
-    <div className="automation-stats">
-      <div><span>Current Objects</span><strong>{currentData.length}</strong></div><div><span>Running</span><strong>{running}</strong></div><div className={attention ? 'has-attention' : ''}><span>Needs Attention</span><strong>{attention}</strong></div>
-    </div>
-
-    <Card className="automation-table-card" styles={{ body: { padding: 0 } }}>
-      <Spin spinning={loading}><Table rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: 10, hideOnSinglePage: true }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
-    </Card>
+    {section === 'runs' ? <Card className="automation-task-panel" styles={{ body: { padding: 0 } }}>
+      <WorkspaceDock
+        activePanel="tasks"
+        embedded
+        taskDomain={domain}
+        taskKeyword={keyword}
+        taskId={searchParams.get('task')}
+        onTaskSelect={selectRun}
+        onToggle={() => changeSection('runs')}
+        onClose={() => selectRun(null)}
+      />
+    </Card> : <Card ref={tableCardRef} className="automation-table-card" styles={{ body: { padding: 0 } }}>
+      <Spin spinning={loading}><Table scroll={{ y: tableBodyHeight }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: 10, hideOnSinglePage: true }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
+    </Card>}
 
     <Modal title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={640} forceRender>
       <Form form={form} layout="vertical" className="automation-form">
@@ -303,11 +341,10 @@ const AutomationCenter: React.FC = () => {
       </Form>
     </Modal>
 
-    <Drawer title={detailName} open={Boolean(detail)} onClose={() => setDetail(null)} width={520} extra={detail && section !== 'runs' ? <Button icon={<EditOutlined />} onClick={() => openEdit(detail)}>Edit</Button> : null}>
+    <Drawer title={detailName} open={Boolean(detail)} onClose={() => { setDetail(null); if (searchParams.has('task')) { const next = new URLSearchParams(searchParams); next.delete('task'); setSearchParams(next); } }} width={520} extra={detail && section !== 'runs' ? <Button onClick={() => openEdit(detail)}>{'workspace_task_id' in detail ? 'View Run' : 'Edit'}</Button> : null}>
       {detail && <>
         <Descriptions column={1} bordered size="small" items={Object.entries(detail).filter(([key]) => !['yaml_content', 'metadata', 'parameters', 'policies', 'logs'].includes(key)).slice(0, 12).map(([key, value]) => ({ key, label: key, children: typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—') }))} />
         {section === 'workflows' && <><Typography.Title level={5} style={{ marginTop: 24 }}>Execution Path</Typography.Title><Timeline items={(detail as AutomationWorkflow).nodes.map((node, index) => ({ color: index === 0 ? 'blue' : 'gray', children: node.name }))} /></>}
-        {section === 'runs' && <><Typography.Title level={5} style={{ marginTop: 24 }}>Run Controls</Typography.Title><Space wrap>{['queued', 'failed'].includes((detail as WorkspaceTask).status) && <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => void runAction(detail as WorkspaceTask, 'start')}>Start</Button>}{(detail as WorkspaceTask).status === 'running' && <Button icon={<PauseOutlined />} onClick={() => void runAction(detail as WorkspaceTask, 'pause')}>Pause</Button>}{(detail as WorkspaceTask).status === 'paused' && <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => void runAction(detail as WorkspaceTask, 'resume')}>Resume</Button>}<Button icon={<ReloadOutlined />} onClick={() => void runAction(detail as WorkspaceTask, 'restart')}>Restart</Button><Popconfirm title="Cancel this run?" onConfirm={() => void runAction(detail as WorkspaceTask, 'cancel')}><Button danger icon={<StopOutlined />}>Cancel</Button></Popconfirm><Popconfirm title="Only stopped runs can be deleted. Continue?" onConfirm={() => void remove(detail)}><Button danger type="text" icon={<DeleteOutlined />}>Delete Record</Button></Popconfirm></Space></>}
       </>}
     </Drawer>
   </div></ConfigProvider>;

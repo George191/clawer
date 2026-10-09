@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Tooltip, Typography, Upload } from 'antd';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Table, Tooltip, Typography, Upload } from 'antd';
 import {
   BellOutlined,
   CaretRightOutlined,
@@ -63,6 +63,11 @@ export type WorkspacePanel = 'templates' | 'tasks';
 
 interface WorkspaceDockProps {
   activePanel: WorkspacePanel | null;
+  embedded?: boolean;
+  taskDomain?: string;
+  taskKeyword?: string;
+  taskId?: string | null;
+  onTaskSelect?: (taskId: string | null) => void;
   sessionActive?: boolean;
   onToggle: (panel: WorkspacePanel) => void;
   onClose: () => void;
@@ -135,7 +140,11 @@ interface TaskRuntimeItem {
   syncedRecords: number;
 }
 
-interface TaskRow extends CollectTask {
+interface DockTask extends CollectTask {
+  productDomain: string;
+}
+
+interface TaskRow extends DockTask {
   runtime: TaskRuntimeItem;
   site: SiteProfile;
   display: {
@@ -766,8 +775,9 @@ const fetchArtifactText = async (url: string, label: string) => {
   return response.text();
 };
 
-const mapWorkspaceTask = (item: WorkspaceTask): CollectTask => ({
+const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   key: item.id,
+  productDomain: String(item.parameters?.product_domain ?? 'ai-collect'),
   name: item.name.replace(/\s+task$/i, ''),
   template: `${item.template_name}@${item.template_version}`,
   group: 'prototype',
@@ -1080,6 +1090,11 @@ const getTaskDisplay = (runtime: TaskRuntimeItem) => {
 
 const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   activePanel,
+  embedded = false,
+  taskDomain = 'all',
+  taskKeyword,
+  taskId,
+  onTaskSelect,
   sessionActive = false,
   onToggle,
   onClose,
@@ -1104,7 +1119,22 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [templateDetailLoading, setTemplateDetailLoading] = useState(false);
   const [templateDetailError, setTemplateDetailError] = useState('');
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
-  const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null);
+  const [localSelectedTaskKey, setLocalSelectedTaskKey] = useState<string | null>(null);
+  const selectedTaskKey = embedded ? taskId ?? null : localSelectedTaskKey;
+  const taskSelectionRef = useRef({ embedded, taskId, onTaskSelect });
+  taskSelectionRef.current = { embedded, taskId, onTaskSelect };
+  const setSelectedTaskKey = useCallback((value: React.SetStateAction<string | null>) => {
+    const selection = taskSelectionRef.current;
+    if (selection.embedded) {
+      selection.onTaskSelect?.(typeof value === 'function' ? value(selection.taskId ?? null) : value);
+    } else setLocalSelectedTaskKey(value);
+  }, []);
+  const [taskTableHeight, setTaskTableHeight] = useState(240);
+  const [taskListLoading, setTaskListLoading] = useState(true);
+  const [taskListError, setTaskListError] = useState('');
+  const [taskDetailError, setTaskDetailError] = useState('');
+  const [taskStreamAvailable, setTaskStreamAvailable] = useState(true);
+  const [taskPage, setTaskPage] = useState(1);
   const [templateVisibleCount, setTemplateVisibleCount] = useState(defaultPageSize);
   const [taskVisibleCount, setTaskVisibleCount] = useState(defaultPageSize);
   const [pinnedTemplateKeys, setPinnedTemplateKeys] = useState<Record<string, true>>({});
@@ -1157,7 +1187,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   ]);
 
   const [templateDrafts, setTemplateDrafts] = useState<Record<string, TemplateDraft>>({});
-  const [taskItems, setTaskItems] = useState<CollectTask[]>([]);
+  const [taskItems, setTaskItems] = useState<DockTask[]>([]);
   const [taskRuntime, setTaskRuntime] = useState<Record<string, TaskRuntimeItem>>({});
   const [selectedTaskLogRunId, setSelectedTaskLogRunId] = useState<string | null>(null);
   const [historicalTaskLogs, setHistoricalTaskLogs] = useState<{
@@ -1239,7 +1269,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       if (revision === taskListRevisionRef.current) {
         applyWorkspaceTasks(items);
       }
+      setTaskListError('');
+    } catch (error) {
+      setTaskListError('Unable to load tasks.');
+      throw error;
     } finally {
+      setTaskListLoading(false);
       if (taskListRequestRef.current === request) {
         taskListRequestRef.current = null;
       }
@@ -1284,9 +1319,17 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       const message = JSON.parse(rawMessage) as {
         type?: string;
         task_id?: string;
-        data?: WorkspaceTask | WorkspaceTaskLog;
+        data?: WorkspaceTask | WorkspaceTask[] | WorkspaceTaskLog | { available: boolean };
       };
-      if (message.type === 'task_detail' && message.data) {
+      if (message.type === 'tasks_snapshot' && Array.isArray(message.data)) {
+        taskListRevisionRef.current += 1;
+        applyWorkspaceTasks(message.data);
+        setTaskListLoading(false);
+        setTaskListError('');
+      } else if (message.type === 'task_stream_status' && message.data && 'available' in message.data) {
+        setTaskStreamAvailable(message.data.available);
+      } else if (message.type === 'task_detail' && message.data) {
+        taskListRevisionRef.current += 1;
         applyWorkspaceTask(message.data as WorkspaceTask);
       } else if (message.type === 'task_log' && message.task_id && message.data) {
         const log = message.data as WorkspaceTaskLog;
@@ -1340,6 +1383,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             : { ...current, logs: [...current.logs, mappedLog].slice(-200) };
         });
       } else if (message.type === 'task_deleted' && message.task_id) {
+        taskListRevisionRef.current += 1;
         setTaskItems((current) => current.filter((item) => item.key !== message.task_id));
         setTaskRuntime((current) => {
           const next = { ...current };
@@ -1351,44 +1395,31 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     } catch (error) {
       console.error('Failed to handle task WebSocket message', error);
     }
-  }, [applyWorkspaceTask]);
+  }, [applyWorkspaceTask, applyWorkspaceTasks]);
 
   const { connected: taskSocketConnected, send: sendTaskSocketMessage } = useWebSocket(
     AI_ANALYZE_WS_URL,
     { onMessage: handleTaskSocketMessage },
   );
+  const taskRealtimeConnected = taskSocketConnected && taskStreamAvailable;
 
   useEffect(() => {
-    const selectedStatus = selectedTaskKey ? taskRuntime[selectedTaskKey]?.status : null;
-    if (
-      activePanel !== 'tasks'
-      || !selectedTaskKey
-      || taskSocketConnected
-      || selectedStatus !== 'running'
-    ) return undefined;
+    if (activePanel !== 'tasks' || !selectedTaskKey) return undefined;
     let active = true;
-    const refreshSelectedTask = async () => {
-      try {
-        const task = await fetchWorkspaceTask(selectedTaskKey);
-        if (active) applyWorkspaceTask(task);
-      } catch (error) {
-        console.error('Failed to refresh selected task', error);
+    setTaskDetailError('');
+    void fetchWorkspaceTask(selectedTaskKey).then((task) => {
+      if (active) {
+        applyWorkspaceTask(task);
+        setTaskDetailError('');
       }
-    };
-    const timer = window.setInterval(() => {
-      void refreshSelectedTask();
-    }, 3000);
+    }).catch((error) => {
+      if (active) setTaskDetailError('Unable to load task details and logs.');
+      console.error('Failed to load task details', error);
+    });
     return () => {
       active = false;
-      window.clearInterval(timer);
     };
-  }, [
-    activePanel,
-    applyWorkspaceTask,
-    selectedTaskKey,
-    selectedTaskKey ? taskRuntime[selectedTaskKey]?.status : null,
-    taskSocketConnected,
-  ]);
+  }, [activePanel, applyWorkspaceTask, selectedTaskKey]);
 
   useEffect(() => {
     if (activePanel !== 'tasks' || !taskSocketConnected) return undefined;
@@ -1436,18 +1467,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const taskRows = useMemo(() => allTaskRows
     .filter((item) => {
+      const query = (taskKeyword ?? keyword).trim().toLowerCase();
+      const matchDomain = taskDomain === 'all' || item.productDomain === taskDomain;
       const matchFilter = taskFilter === 'all' || item.runtime.status === taskFilter;
       const matchTemplate = !taskTemplateFilter || normalizeTemplateKey(item.template) === taskTemplateFilter;
-      const matchKeyword = !keyword
-        || `${item.name} ${item.template} ${item.area} ${item.owner}`.toLowerCase().includes(keyword.toLowerCase());
-      return matchFilter && matchTemplate && matchKeyword;
+      const matchKeyword = !query
+        || `${item.name} ${item.template} ${item.area} ${item.owner}`.toLowerCase().includes(query);
+      return matchDomain && matchFilter && matchTemplate && matchKeyword;
     })
     .sort((left, right) => {
       const leftPinned = Boolean(pinnedTaskKeys[left.key]);
       const rightPinned = Boolean(pinnedTaskKeys[right.key]);
       if (leftPinned === rightPinned) return 0;
       return leftPinned ? -1 : 1;
-    }), [allTaskRows, keyword, pinnedTaskKeys, taskFilter, taskTemplateFilter]);
+    }), [allTaskRows, keyword, pinnedTaskKeys, taskDomain, taskFilter, taskKeyword, taskTemplateFilter]);
 
   useEffect(() => {
     setTemplateVisibleCount(defaultPageSize);
@@ -1456,6 +1489,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   useEffect(() => {
     setTaskVisibleCount(defaultPageSize);
   }, [keyword, taskFilter, taskTemplateFilter]);
+
+  useEffect(() => {
+    setTaskPage(1);
+  }, [taskDomain, taskFilter, taskKeyword, taskTemplateFilter]);
 
   const selectedTemplate = useMemo(
     () => templates.find((item) => item.key === selectedTemplateKey) ?? null,
@@ -1510,13 +1547,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setSelectedTaskLogRunId((current) => (
       current && selectedTask?.runtime.logRuns.some((run) => run.id === current)
         ? current
-        : latestTaskLogRunId
+        : null
     ));
   }, [latestTaskLogRunId, selectedTask]);
 
   const handleTaskLogRunChange = useCallback(async (runId: string) => {
     if (!selectedTaskKey) return;
-    setSelectedTaskLogRunId(runId);
+    setSelectedTaskLogRunId(runId === latestTaskLogRunId ? null : runId);
     if (runId === latestTaskLogRunId) {
       setHistoricalTaskLogs(null);
       return;
@@ -1649,6 +1686,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, []);
 
   useEffect(() => {
+    if (embedded) return;
     const container = bodyScrollRef.current;
     if (!container) return undefined;
 
@@ -1672,7 +1710,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       observer?.disconnect();
       container.removeEventListener('scroll', handleScroll);
     };
-  }, [activePanel, loadMoreRows, syncBodyScrollState, visibleTaskRows.length, visibleTemplateRows.length]);
+  }, [activePanel, embedded, loadMoreRows, syncBodyScrollState, visibleTaskRows.length, visibleTemplateRows.length]);
 
   const hasDetail = activePanel === 'templates'
     ? Boolean(selectedTemplate) || taskComposerOpen
@@ -1680,6 +1718,23 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       ? Boolean(selectedTask)
       : false;
 
+  useLayoutEffect(() => {
+    const container = bodyScrollRef.current;
+    if (!embedded || !container) return;
+    const pagination = container.querySelector<HTMLElement>('.ant-pagination');
+    const update = () => {
+      const style = pagination ? getComputedStyle(pagination) : null;
+      const footerHeight = pagination
+        ? pagination.offsetHeight + parseFloat(style!.marginTop) + parseFloat(style!.marginBottom)
+        : 0;
+      setTaskTableHeight(Math.max(0, container.clientHeight - footerHeight));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(container);
+    if (pagination) observer.observe(pagination);
+    return () => observer.disconnect();
+  }, [embedded, hasDetail, taskRows.length]);
   const taskInsertedLines = selectedTask?.runtime.insertedRecords ?? 0;
   const taskUpdatedLines = selectedTask?.runtime.updatedRecords ?? 0;
   const taskDeletedLines = selectedTask?.runtime.deletedRecords ?? 0;
@@ -2101,73 +2156,75 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     </div>
   );
 
-  const renderTaskList = () => (
-    <div className="workspace-dock-list is-tasks">
-      {visibleTaskRows.map((item) => {
-        const isSelected = selectedTaskKey === item.key;
-        const isPinned = Boolean(pinnedTaskKeys[item.key]);
+  const renderTaskCard = (item: TaskRow) => {
+    const isSelected = selectedTaskKey === item.key;
+    const isPinned = Boolean(pinnedTaskKeys[item.key]);
 
-        return (
-          <button
-            type="button"
-            key={item.key}
-            className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''} ${isPinned ? 'is-pinned' : ''}`}
-            onClick={() => {
-              setTaskComposerOpen(false);
-              setSelectedTaskKey(item.key);
-            }}
-          >
-            <div className="workspace-dock-card-row">
-              <div className="workspace-dock-card-main">
-                <span className="workspace-dock-card-icon">
-                  <TaskPulseGlyph kind={item.site.kind} active={item.display.isRunning} />
+    return (
+      <button
+        type="button"
+        key={item.key}
+        className={`workspace-dock-card workspace-dock-selectable ${isSelected ? 'is-selected' : ''} ${isPinned ? 'is-pinned' : ''}`}
+        onClick={() => {
+          setTaskComposerOpen(false);
+          setSelectedTaskKey(item.key);
+        }}
+      >
+        <div className="workspace-dock-card-row">
+          <div className="workspace-dock-card-main">
+            <span className="workspace-dock-card-icon">
+              <TaskPulseGlyph kind={item.site.kind} active={item.display.isRunning} />
+            </span>
+            <div className="workspace-dock-card-copy">
+              <div className="workspace-dock-card-titleline">
+                <Text strong>{item.name}</Text>
+                <span className="workspace-dock-card-title-actions">
+                  <span
+                    className={`workspace-dock-card-pin ${isPinned ? 'is-pinned' : ''}`}
+                    title={isPinned ? 'Unpin task' : 'Pin task'}
+                    onClick={(event) => handleTaskPinClick(event, item.key)}
+                  >
+                    <PushpinOutlined />
+                  </span>
                 </span>
-                <div className="workspace-dock-card-copy">
-                  <div className="workspace-dock-card-titleline">
-                    <Text strong>{item.name}</Text>
-                    <span className="workspace-dock-card-title-actions">
-                      <span
-                        className={`workspace-dock-card-pin ${isPinned ? 'is-pinned' : ''}`}
-                        title={isPinned ? 'Unpin task' : 'Pin task'}
-                        onClick={(event) => handleTaskPinClick(event, item.key)}
-                      >
-                        <PushpinOutlined />
-                      </span>
-                    </span>
-                  </div>
-                  <div className="workspace-dock-card-subline">
-                    <Text type="secondary">{item.template}</Text>
-                    <span className="workspace-dock-card-runtime">
-                      <span className="workspace-dock-card-state" style={{ color: item.display.color }}>
-                        {item.display.icon}
-                        {item.display.label}
-                      </span>
-                      <span className={`workspace-dock-card-score ${item.display.isRunning ? 'is-live' : ''}`}>{item.runtime.progress}%</span>
-                    </span>
-                  </div>
-                </div>
+              </div>
+              <div className="workspace-dock-card-subline">
+                <Text type="secondary">{item.template}</Text>
+                <span className="workspace-dock-card-runtime">
+                  <span className="workspace-dock-card-state" style={{ color: item.display.color }}>
+                    {item.display.icon}
+                    {item.display.label}
+                  </span>
+                  <span className={`workspace-dock-card-score ${item.display.isRunning ? 'is-live' : ''}`}>{item.runtime.progress}%</span>
+                </span>
               </div>
             </div>
+          </div>
+        </div>
 
-            <div className="workspace-dock-card-meta">
-              <span><SiteLogoMark site={item.site} />{stripDecorativeSuffix(item.area)}</span>
-              <span>{formatCompactNumber(item.runtime.recordsValue)}</span>
-              <span>{item.owner}</span>
-            </div>
+        <div className="workspace-dock-card-meta">
+          <span><SiteLogoMark site={item.site} />{stripDecorativeSuffix(item.area)}</span>
+          <span>{formatCompactNumber(item.runtime.recordsValue)}</span>
+          <span>{item.owner}</span>
+        </div>
 
-            <div className="workspace-dock-card-footer">
-              <span>Next {formatTaskNextRunLabel(item.nextRun)}</span>
-              <span className={item.runtime.status === 'failed' || item.runtime.status === 'paused' ? 'is-alert' : ''}>
-                Lag {item.lag}
-              </span>
-            </div>
+        <div className="workspace-dock-card-footer">
+          <span>Next {formatTaskNextRunLabel(item.nextRun)}</span>
+          <span className={item.runtime.status === 'failed' || item.runtime.status === 'paused' ? 'is-alert' : ''}>
+            Lag {item.lag}
+          </span>
+        </div>
 
-            <div className={`workspace-dock-card-bar ${item.display.isRunning ? 'is-running' : ''}`}>
-              <i style={{ width: `${Math.max(item.runtime.progress, 6)}%`, background: item.display.color }} />
-            </div>
-          </button>
-        );
-      })}
+        <div className={`workspace-dock-card-bar ${item.display.isRunning ? 'is-running' : ''}`}>
+          <i style={{ width: `${Math.max(item.runtime.progress, 6)}%`, background: item.display.color }} />
+        </div>
+      </button>
+    );
+  };
+
+  const renderTaskList = () => (
+    <div className="workspace-dock-list is-tasks">
+      {visibleTaskRows.map(renderTaskCard)}
       {!taskRows.length && <div className="workspace-dock-empty">No matching tasks</div>}
     </div>
   );
@@ -4702,9 +4759,95 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             flex-direction: column;
           }
         }
+        .workspace-dock-shell.is-embedded {
+          position: relative;
+          inset: auto;
+          z-index: auto;
+          flex: 1;
+          min-height: 0;
+          pointer-events: auto;
+        }
+        .workspace-dock-shell.is-embedded .workspace-dock-hitbox {
+          display: none;
+        }
+        .workspace-dock-shell.is-embedded .workspace-dock-panel {
+          position: static;
+          width: 100% !important;
+          min-width: 0;
+          height: 100%;
+          border: 0;
+          border-radius: 8px;
+          box-shadow: none;
+          transform: none;
+        }
+        .workspace-dock-shell.is-embedded .workspace-dock-panel.is-detail .workspace-dock-stack {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+          grid-template-rows: minmax(0, 1fr);
+        }
+        .workspace-dock-shell.is-embedded .workspace-dock-master,
+        .workspace-dock-shell.is-embedded .workspace-dock-detail {
+          width: auto;
+          min-width: 0;
+        }
+        .workspace-dock-shell.is-embedded .workspace-dock-connection {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          color: ${aura.subtle};
+          font-size: 10px;
+        }
+        .workspace-dock-shell.is-embedded .workspace-dock-toolbar .ant-segmented {
+          max-width: 100%;
+          overflow-x: auto;
+        }
+        .workspace-dock-shell.is-embedded .workspace-dock-body {
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .workspace-dock-shell.is-embedded .workspace-dock-task-table {
+          padding: 0;
+          gap: 0;
+        }
+        .workspace-dock-task-table,
+        .workspace-dock-task-table > .ant-spin-nested-loading,
+        .workspace-dock-task-table > .ant-spin-nested-loading > .ant-spin-container {
+          display: flex;
+          flex: 1;
+          min-height: 0;
+          flex-direction: column;
+        }
+        .workspace-dock-task-table.ant-table-wrapper .ant-table {
+          flex: 1;
+          min-height: 0;
+          overflow: hidden;
+          background: transparent;
+        }
+        .workspace-dock-task-table .ant-table-container {
+          background: #242836;
+        }
+        .workspace-dock-task-table .ant-table-body {
+          overflow-y: auto !important;
+        }
+        .workspace-dock-task-table .ant-table-tbody > tr > td {
+          padding: 3px 8px;
+          border: 0;
+          background: transparent !important;
+        }
+        .workspace-dock-task-table .ant-table-pagination {
+          flex: none;
+          margin: 10px 14px 0 !important;
+        }
+        @media (max-width: 960px) {
+          .workspace-dock-shell.is-embedded .workspace-dock-panel.is-detail .workspace-dock-stack {
+            grid-template-columns: minmax(0, 1fr);
+            grid-template-rows: repeat(2, minmax(0, 1fr));
+          }
+        }
       `}</style>
 
-      <div className={`workspace-dock-shell ${activePanel ? 'is-open' : ''} ${sessionActive ? 'is-session' : ''}`}>
+      <div className={`workspace-dock-shell ${activePanel ? 'is-open' : ''} ${sessionActive ? 'is-session' : ''} ${embedded ? 'is-embedded' : ''}`}>
         <div
           className={`workspace-dock-hitbox ${activePanel ? 'is-open' : ''}`}
           onClick={onClose}
@@ -4718,7 +4861,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className="workspace-dock-stack">
               <section className="workspace-dock-master">
                 <div className="workspace-dock-toolbar">
-                  <div className="workspace-dock-toolbar-search-row">
+                  {taskKeyword === undefined && <div className="workspace-dock-toolbar-search-row">
                     <Input
                       allowClear
                       prefix={<SearchOutlined />}
@@ -4726,7 +4869,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                       onChange={(event) => setKeyword(event.target.value)}
                       placeholder={activePanel === 'templates' ? 'Search templates, domains, or adapters' : 'Search tasks or templates'}
                     />
-                  </div>
+                  </div>}
+                  {embedded && <div className="workspace-dock-connection" role="status">
+                    <span>{taskRealtimeConnected ? 'Live updates' : 'Reconnecting'}</span>
+                  </div>}
+                  {embedded && taskListError && <Alert type="error" showIcon message={taskListError} />}
+                  {embedded && taskDetailError && <Alert type="error" showIcon message={taskDetailError} />}
                   {activePanel === 'tasks' && taskTemplateFilter ? (
                     <button type="button" className="workspace-dock-template-filter" onClick={() => setTaskTemplateFilter(null)}>
                       template: {taskTemplateFilter} <CloseOutlined />
@@ -4764,8 +4912,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </div>
 
                 <div ref={bodyScrollRef} className="workspace-dock-body">
-                  {activePanel === 'templates' ? renderTemplateList() : renderTaskList()}
-                  {showBodyFade ? <div className="workspace-dock-bottom-fade" aria-hidden="true" /> : null}
+                  {embedded && activePanel === 'tasks' ? <Table<TaskRow>
+                    className="workspace-dock-task-table workspace-dock-list is-tasks"
+                    rowKey="key"
+                    showHeader={false}
+                    loading={taskListLoading}
+                    dataSource={taskRows}
+                    scroll={{ y: taskTableHeight }}
+                    pagination={{ current: Math.min(taskPage, Math.max(1, Math.ceil(taskRows.length / defaultPageSize))), onChange: setTaskPage, defaultPageSize, hideOnSinglePage: true, showSizeChanger: false }}
+                    columns={[{ key: 'task', render: (_: unknown, item: TaskRow) => renderTaskCard(item) }]}
+                    locale={{ emptyText: <div className="workspace-dock-empty">{taskListError || 'No matching tasks'}</div> }}
+                  /> : activePanel === 'templates' ? renderTemplateList() : renderTaskList()}
+                  {!embedded && showBodyFade ? <div className="workspace-dock-bottom-fade" aria-hidden="true" /> : null}
                 </div>
               </section>
 

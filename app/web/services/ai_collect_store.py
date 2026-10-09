@@ -1028,6 +1028,7 @@ class AICollectStore:
         current_status: str,
         next_status: str,
         celery_task_id: str | None = None,
+        expected_celery_task_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Transition an active task only from its expected current state.
 
@@ -1043,6 +1044,9 @@ class AICollectStore:
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
               AND status = :current_status
+              AND control_state IS DISTINCT FROM 'canceled'
+              AND (CAST(:expected_celery_task_id AS text) IS NULL
+                   OR celery_task_id = :expected_celery_task_id)
             RETURNING *
             """,
             {
@@ -1050,7 +1054,27 @@ class AICollectStore:
                 "current_status": current_status,
                 "next_status": next_status,
                 "celery_task_id": celery_task_id,
+                "expected_celery_task_id": expected_celery_task_id,
             },
+        )
+        if task:
+            task["logs"] = []
+            await publish_task_change(task_id)
+        return task
+
+    async def cancel_task(self, task_id: str) -> dict[str, Any] | None:
+        await self.initialize()
+        task = await self._pg.fetch_one(
+            """
+            UPDATE public.ai_collect_tasks SET
+                status = 'failed', control_state = 'canceled', throughput = 0,
+                download_state = 'paused', sync_state = 'canceled', updated_at = now()
+            WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL
+              AND status IN ('queued', 'running', 'paused', 'failed')
+              AND control_state IS DISTINCT FROM 'canceled'
+            RETURNING *
+            """,
+            {"id": task_id},
         )
         if task:
             task["logs"] = []

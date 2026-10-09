@@ -147,12 +147,6 @@ class BeatScheduleRegistry:
 
             repo = get_task_repository()
             configs = await repo.list_enabled()
-            if not configs:
-                logger.warning(
-                    "Database returned no enabled tasks; keeping in-memory defaults"
-                )
-                return False
-
             # 替换内存配置
             self._entries = {
                 cfg.task_name: cfg.to_beat_entry() for cfg in configs

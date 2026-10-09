@@ -7,6 +7,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 
 from app.web.api.routes import api_router
+from app.web.api.routes.health import health as health_check
+from app.web.api.routes.task_socket import router as task_socket_router
 from app.web.core.config import settings
 from app.web.core.exceptions import register_exception_handlers
 from app.web.core.middleware import register_middleware
@@ -44,3 +46,13 @@ register_pagination(app)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
+app.include_router(task_socket_router)
+# Keep the deployment health-check contract compatible with the existing
+# Docker and README references while the business API uses /api/v1.
+app.add_api_route(
+    "/api/health",
+    health_check,
+    methods=["GET"],
+    tags=["health"],
+    name="legacy_health",
+)
