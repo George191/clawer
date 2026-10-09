@@ -70,7 +70,6 @@ DOWNLOAD_TEMPLATE_OVERRIDES = {
     collection: template for template, collection in DOWNLOAD_COLLECTION_OVERRIDES.items()
 }
 
-
 @dataclass(slots=True)
 class AssetDownloadJob:
     dl_info: dict[str, Any]
@@ -640,7 +639,12 @@ class DownloadWorker:
     ) -> list[dict[str, Any]]:
         """Return the resources to download for one record."""
         if data_type == "news":
-            return self._extract_news_download_urls(record)
+            urls = self._extract_news_download_urls(record)
+            for download_config in download_configs:
+                urls.extend(self._extract_download_urls(
+                    record, download_config, template_name,
+                ))
+            return urls
 
         urls: list[dict[str, Any]] = []
         for download_config in download_configs:
@@ -653,13 +657,34 @@ class DownloadWorker:
         self,
         record: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        """Return existing attachments and external links for MIME classification.
+        """Return the fixed asset fields extracted by the news asset helper.
 
         Existing attachments must be downloaded by their original placeholder
         index.  News records can contain an ``<a>`` wrapper around an ``<img>``;
         the image and the linked original are intentionally separate assets.
         """
         urls: list[dict[str, Any]] = []
+        for field_name in ("images", "videos", "audios"):
+            values = record.get(field_name)
+            if not isinstance(values, list):
+                continue
+            for index, item in enumerate(values):
+                if isinstance(item, dict):
+                    url = str(item.get("url") or "").strip()
+                    asset_key = f"assets.{field_name}.{index}.url"
+                else:
+                    url = str(item or "").strip()
+                    asset_key = f"assets.{field_name}.{index}"
+                if not url:
+                    continue
+                urls.append({
+                    "url": url,
+                    "filename": self._make_filename(url, suffix=f"_{index:05d}"),
+                    "asset_key": asset_key,
+                    "source_field": field_name,
+                    "candidate_type": field_name.rstrip("s"),
+                })
+
         attachments = record.get("attachments")
         if isinstance(attachments, list):
             for fallback, item in enumerate(attachments):
@@ -775,10 +800,14 @@ class DownloadWorker:
         converted_urls: set[str] = set()
         content_html = str(record.get("content_html") or "")
         attachment_changed = False
+        direct_asset_updates: dict[str, Any] = {}
 
         for asset_key, asset_path in downloaded_assets.items():
             item = key_to_info.get(asset_key) or {}
-            if item.get("source_field") != "attachments":
+            if item.get("source_field") in {
+                "images", "videos", "audios", "iframe",
+            }:
+                direct_asset_updates[asset_key] = asset_path
                 continue
             match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", asset_key)
             if match:
@@ -787,6 +816,11 @@ class DownloadWorker:
 
         for asset_key, marker in not_found_updates.items():
             item = key_to_info.get(asset_key) or {}
+            if item.get("source_field") in {
+                "images", "videos", "audios", "iframe",
+            }:
+                direct_asset_updates[asset_key] = dict(marker)
+                continue
             if item.get("source_field") != "attachments":
                 continue
             match = re.fullmatch(r"assets\.attachments\.([^.]+)\.url", asset_key)
@@ -826,7 +860,9 @@ class DownloadWorker:
             source_url = key_to_url.get(asset_key, "")
             if not source_url:
                 continue
-            if (key_to_info.get(asset_key) or {}).get("source_field") == "attachments":
+            if (key_to_info.get(asset_key) or {}).get("source_field") in {
+                "attachments", "images", "videos", "audios", "iframe",
+            }:
                 continue
             existing_index = attachment_index_by_url.get(source_url)
             if existing_index is not None:
@@ -860,6 +896,7 @@ class DownloadWorker:
             url for url in external_urls if url not in remaining_external
         )
         updates: dict[str, Any] = {"_meta.sync_status": "pending"}
+        updates.update(direct_asset_updates)
         unset_fields: set[str] = set()
         if converted_urls or attachment_changed:
             updates["attachments"] = attachments
@@ -962,7 +999,9 @@ class DownloadWorker:
             (field_name, url) 元组列表，保留字段名用于 asset_key 区分。
         """
         results: list[tuple[str, str]] = []
-        for key in ("href", "src", "url", "link", "full", "thumbnail", "pdf"):
+        for key in (
+            "href", "src", "url", "link", "full", "thumbnail", "source_url", "pdf",
+        ):
             if key in data and data[key]:
                 val = str(data[key])
                 url = url_prefix + val if url_prefix else val
