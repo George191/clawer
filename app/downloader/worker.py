@@ -23,7 +23,7 @@ import mimetypes
 import copy
 import re
 import time
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -719,6 +719,9 @@ class DownloadWorker:
             if not isinstance(url, str) or not url.strip():
                 continue
             clean_url = url.strip()
+            # URLs ending with a slash are treated as page links, not download assets.
+            if urlsplit(clean_url).path.endswith("/"):
+                continue
             urls.append({
                 "url": clean_url,
                 "filename": self._make_filename(
