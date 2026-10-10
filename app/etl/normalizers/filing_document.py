@@ -53,6 +53,7 @@ def normalize_sec_edgar_filing_document(record: dict[str, Any]) -> dict[str, Any
         "filename": safe_str(pick("filename")),
         "size": safe_str(pick("size")),
         "url": safe_str(pick("url")),
+        "source_url": safe_str(pick("source_url")) or safe_str(pick("url")),
         "doc_type": safe_str(pick("doc_type")),
     }
 
@@ -98,6 +99,7 @@ def normalize_sec_edgar_filing_documents(
             "filename": filename,
             "size": item.get("size"),
             "url": item.get("url"),
+            "source_url": source_url,
             "doc_type": item.get("doc_type"),
         }
         rows.append(normalize_sec_edgar_filing_document(document))

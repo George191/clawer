@@ -6,7 +6,7 @@ import json
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
-from app.etl.normalizers.base import safe_datetime, safe_str
+from app.etl.normalizers.base import apply_asset_path_overrides, safe_datetime, safe_str
 from app.utils.record_id import resolve_record_id
 from app.utils.twitter_record import project_twitter_record
 
@@ -70,6 +70,7 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize one tweet without requiring the redundant source_tweet field."""
     source = record if "user" in record and "date" in record else None
     tweet = project_twitter_record(record, source, drop_source=True)
+    downloaded_tweet, asset_paths = apply_asset_path_overrides(tweet)
     user = tweet.get("author") or {"id": tweet["author_id"]}
     tweet_id = safe_str(tweet["id"])
     author_id = safe_str(user["id"])
@@ -157,6 +158,8 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
             "media_type": safe_str(media["type"]),
             "platform_media_id": media_id,
             "media_url": safe_str(media.get("url")),
+            "minio_path": safe_str(downloaded_tweet["media"][index].get("url"))
+            if ("media", str(index), "url") in asset_paths else None,
             "preview_url": safe_str(media.get("thumbnail_url") or media.get("preview")),
             "width": media.get("width"),
             "height": media.get("height"),

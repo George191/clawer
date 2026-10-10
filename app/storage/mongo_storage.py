@@ -30,6 +30,7 @@ from app.utils.sec_financial_facts import (
     iter_sec_financial_facts,
 )
 from app.utils.twitter_accounts import split_twitter_accounts, upsert_twitter_accounts
+from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)
 
@@ -120,14 +121,14 @@ class MongoStorage(StorageBackend):
         search_params: dict[str, Any],
         now: datetime,
     ) -> dict[str, Any]:
-        twitter_record = template_name in {"twitter", "tw_account", "tw_tweet"}
+        twitter_type = TWITTER_COLLECTION_TYPES.get(template_name)
         financial_fact = template_name == FACT_COLLECTION
         return {
             **record,
             "_meta": {
                 "template": template_name,
-                "data_type": "social_media" if twitter_record else data_type,
-                **({"data_source": "twitter"} if twitter_record else {}),
+                "data_type": twitter_type or data_type,
+                **({"data_source": "twitter"} if twitter_type else {}),
                 **({"data_source": "sec_edgar_company"} if financial_fact else {}),
                 "record_id": record_id,
                 "download_status": "no_assets" if financial_fact else "pending",

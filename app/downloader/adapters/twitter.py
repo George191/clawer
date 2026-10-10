@@ -2,8 +2,8 @@
 from .base import DownloadItem
 
 COLLECTION_ROUTES = {
-    "tw_account": ("twitter", "social_media"),
-    "tw_tweet": ("twitter", "social_media"),
+    "tw_account": ("twitter", "account"),
+    "tw_tweet": ("twitter", "tweet"),
 }
 
 

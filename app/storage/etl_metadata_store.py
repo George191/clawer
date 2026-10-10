@@ -285,6 +285,7 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_media (
     media_type TEXT NOT NULL,
     platform_media_id TEXT,
     media_url TEXT,
+    minio_path TEXT,
     preview_url TEXT,
     width INTEGER,
     height INTEGER,
@@ -297,6 +298,7 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_media (
 ) PARTITION BY HASH (record_id, data_source, data_type);
 CREATE INDEX IF NOT EXISTS idx_social_media_content
     ON ts_ods.ods_social_media (content_id, media_index);
+ALTER TABLE ts_ods.ods_social_media ADD COLUMN IF NOT EXISTS minio_path TEXT;
 """.strip(),
     "social_hashtag": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_social_hashtag (
@@ -562,6 +564,7 @@ CREATE TABLE "ts_ods"."ods_filing_document" (
   "filename" text COLLATE "pg_catalog"."default",
   "size" text COLLATE "pg_catalog"."default",
   "url" text COLLATE "pg_catalog"."default",
+  "source_url" text COLLATE "pg_catalog"."default",
   "created_at" timestamptz(6) NOT NULL DEFAULT now(),
   "updated_at" timestamptz(6) NOT NULL DEFAULT now(),
   "doc_type" text COLLATE "pg_catalog"."default"
@@ -582,6 +585,7 @@ CREATE INDEX "idx_ods_filing_document_accession" ON "ts_ods"."ods_filing_documen
 -- Primary Key structure for table ods_filing_document
 -- ----------------------------
 ALTER TABLE "ts_ods"."ods_filing_document" ADD CONSTRAINT "ods_filing_document_pkey" PRIMARY KEY ("record_id", "data_source", "data_type");
+ALTER TABLE ts_ods.ods_filing_document ADD COLUMN IF NOT EXISTS source_url TEXT;
 """.strip(),
 }
 
@@ -906,7 +910,7 @@ async def _seed_current_registry_records(pg: PostgresClient) -> None:
             and logical_table_name(row["layer"], row["table_name"])
             in {
                 "company", "filing", "filing_document", "financial_fact",
-                "social_account", "social_content", "social_hashtag", "social_interaction",
+                "social_account", "social_content", "social_media", "social_hashtag", "social_interaction",
             }
         )
     ]

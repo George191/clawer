@@ -3,6 +3,8 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 
+TWITTER_COLLECTION_TYPES = {"tw_account": "account", "tw_tweet": "tweet", "twitter": "tweet"}
+
 TWITTER_FIELDS = {
     "id": "id", "id_str": "id", "url": "url", "date": "created_at",
     "lang": "lang", "rawContent": "text", "conversationId": "conversation_id",
