@@ -277,6 +277,16 @@ class DownloadWorker:
             except DownloadError as exc:
                 if exc.status_code == 404:
                     return None
+                logger.warning(
+                    "DownloadWorker: retry %d/5 for %s | error=%s: %s | status=%s",
+                    attempt + 1,
+                    item.url,
+                    type(exc).__name__,
+                    exc,
+                    exc.status_code or 0,
+                )
+                if use_proxy:
+                    await self._http.mark_last_proxy_failed()
                 if attempt == 4:
                     raise
                 await asyncio.sleep(min(2 ** attempt, 8))
@@ -289,7 +299,8 @@ class DownloadWorker:
                     type(exc).__name__,
                     status_code or 0,
                 )
-                await self._http.release_current_task_proxy()
+                if use_proxy:
+                    await self._http.mark_last_proxy_failed()
                 if attempt == 4:
                     raise
                 await asyncio.sleep(min(2 ** attempt, 8))
