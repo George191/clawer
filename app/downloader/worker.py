@@ -97,8 +97,12 @@ class DownloadWorker:
         """Log pending counts for the selected template or all collections."""
         try:
             stats = await self._mongo.get_collection_stats(self._query_template_name)
-        except Exception:
-            logger.exception("DownloadWorker: failed to read pending summary")
+        except Exception as exc:
+            logger.error(
+                "DownloadWorker: failed to read pending summary | error=%s: %s",
+                type(exc).__name__,
+                exc,
+            )
             return
 
         pending = sum(int(item.get("pending_download") or 0) for item in stats)
@@ -162,8 +166,13 @@ class DownloadWorker:
                         item, template_name, data_type, record_id,
                         template.effective_download_use_proxy,
                     )
-                except Exception:
-                    logger.exception("Download failed: %s", item.url)
+                except Exception as exc:
+                    logger.error(
+                        "Download failed: %s | error=%s: %s",
+                        item.url,
+                        type(exc).__name__,
+                        exc,
+                    )
                     failed = True
                     continue
                 updates[item.asset_key] = path if path else dict(NOT_FOUND_ASSET)
@@ -173,8 +182,13 @@ class DownloadWorker:
                 "failed" if failed else "downloaded",
                 claim_token,
             )
-        except Exception:
-            logger.exception("DownloadWorker failed for %s", record_id)
+        except Exception as exc:
+            logger.error(
+                "DownloadWorker failed for %s | error=%s: %s",
+                record_id,
+                type(exc).__name__,
+                exc,
+            )
             await self._mongo.update_file_status(
                 collection, record_id, "failed", claim_token=claim_token,
             )
@@ -313,8 +327,13 @@ class DownloadWorker:
             released = await TemplateLoader().load_released(
                 name, validate_params=False, load_adapter=False,
             )
-        except Exception:
-            logger.exception("Cannot load template: %s", name)
+        except Exception as exc:
+            logger.error(
+                "Cannot load template: %s | error=%s: %s",
+                name,
+                type(exc).__name__,
+                exc,
+            )
             return None
         self._templates[name] = released.template
         return released.template
