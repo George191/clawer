@@ -83,6 +83,9 @@ class MongoStorage(StorageBackend):
                 await collection.create_index("author_id")
             if collection_name == FACT_COLLECTION:
                 await collection.create_index("cik")
+                await collection.create_index("_meta.sync_status")
+                self._initialized_collections.add(collection_name)
+                return collection
             await collection.create_index("_meta.download_status")
             await collection.create_index("_meta.download_claimed_at")
             await collection.create_index("_meta.sync_status")
@@ -187,7 +190,8 @@ class MongoStorage(StorageBackend):
         return ids[0]
 
     async def save_records(
-        self, template_name: str, data_type: str, dedup_fields: list[str], records: list[dict[str, Any]]
+        self, template_name: str, data_type: str, dedup_fields: list[str], records: list[dict[str, Any]],
+        *, sync_status: str | None = None,
     ) -> list[str]:
         if not records:
             return []
@@ -312,7 +316,9 @@ class MongoStorage(StorageBackend):
                         "updated_at", now
                     )
                     unchanged_count += 1
-                    if not search_params_changed:
+                    if not search_params_changed and (
+                        sync_status is None or final_record["_meta"]["sync_status"] == sync_status
+                    ):
                         continue
             else:
                 final_record = record_with_meta
@@ -321,6 +327,8 @@ class MongoStorage(StorageBackend):
                 final_record = self._drop_none_values(final_record)
                 inserted_count += 1
 
+            if sync_status is not None:
+                final_record["_meta"]["sync_status"] = sync_status
             operations.append(
                 ReplaceOne(
                     {"_meta.record_id": record_id},
