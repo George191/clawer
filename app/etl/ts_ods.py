@@ -299,13 +299,13 @@ RETURNING *
 
 ODS_SOCIAL_ACCOUNT_INSERT = """
 INSERT INTO ts_ods.ods_social_account (
-    record_id, data_source, data_type, account_id, platform, platform_account_id,
+    record_id, data_source, data_type, account_id, platform_account_id,
     username, display_name, profile_url, avatar_url, bio, account_type,
     is_verified, is_private, account_created_at, follower_count, following_count,
     content_count, location, language, extra, captured_at,
     created_at, updated_at
 ) VALUES (
-    :record_id, :data_source, :data_type, :account_id, :platform, :platform_account_id,
+    :record_id, :data_source, :data_type, :account_id, :platform_account_id,
     :username, :display_name, :profile_url, :avatar_url, :bio, :account_type,
     :is_verified, :is_private, CAST(:account_created_at AS timestamptz),
     :follower_count, :following_count, :content_count, :location, :language,
@@ -313,7 +313,7 @@ INSERT INTO ts_ods.ods_social_account (
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    account_id = EXCLUDED.account_id, platform = EXCLUDED.platform,
+    account_id = EXCLUDED.account_id,
     platform_account_id = EXCLUDED.platform_account_id, username = EXCLUDED.username,
     display_name = EXCLUDED.display_name, profile_url = EXCLUDED.profile_url,
     avatar_url = EXCLUDED.avatar_url, bio = EXCLUDED.bio,
@@ -328,13 +328,13 @@ RETURNING *
 
 ODS_SOCIAL_CONTENT_INSERT = """
 INSERT INTO ts_ods.ods_social_content (
-    record_id, data_source, data_type, content_id, platform, platform_content_id,
+    record_id, data_source, data_type, content_id, platform_content_id,
     content_type, author_account_id, parent_content_id, root_content_id,
     text_content, language, content_url, published_at, edited_at, deleted_at,
     reply_count, like_count, repost_count, quote_count, view_count, is_sensitive,
     extra, captured_at, created_at, updated_at
 ) VALUES (
-    :record_id, :data_source, :data_type, :content_id, :platform, :platform_content_id,
+    :record_id, :data_source, :data_type, :content_id, :platform_content_id,
     :content_type, :author_account_id, :parent_content_id, :root_content_id,
     :text_content, :language, :content_url, CAST(:published_at AS timestamptz),
     CAST(:edited_at AS timestamptz), CAST(:deleted_at AS timestamptz),
@@ -343,7 +343,7 @@ INSERT INTO ts_ods.ods_social_content (
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    content_id = EXCLUDED.content_id, platform = EXCLUDED.platform,
+    content_id = EXCLUDED.content_id,
     platform_content_id = EXCLUDED.platform_content_id, content_type = EXCLUDED.content_type,
     author_account_id = EXCLUDED.author_account_id, parent_content_id = EXCLUDED.parent_content_id,
     root_content_id = EXCLUDED.root_content_id, text_content = EXCLUDED.text_content,
@@ -379,14 +379,14 @@ RETURNING *
 
 ODS_SOCIAL_HASHTAG_INSERT = """
 INSERT INTO ts_ods.ods_social_hashtag (
-    record_id, data_source, data_type, hashtag_id, platform, hashtag_text,
+    record_id, data_source, data_type, hashtag_id, hashtag_text,
     normalized_text, created_at, updated_at
 ) VALUES (
-    :record_id, :data_source, :data_type, :hashtag_id, :platform, :hashtag_text,
+    :record_id, :data_source, :data_type, :hashtag_id, :hashtag_text,
     :normalized_text, CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    hashtag_id = EXCLUDED.hashtag_id, platform = EXCLUDED.platform,
+    hashtag_id = EXCLUDED.hashtag_id,
     hashtag_text = EXCLUDED.hashtag_text, normalized_text = EXCLUDED.normalized_text,
     updated_at = EXCLUDED.updated_at
 RETURNING *
@@ -408,18 +408,18 @@ RETURNING *
 
 ODS_SOCIAL_INTERACTION_INSERT = """
 INSERT INTO ts_ods.ods_social_interaction (
-    record_id, data_source, data_type, interaction_id, platform, interaction_type,
+    record_id, data_source, data_type, interaction_id, interaction_type,
     actor_account_id, source_content_id, target_content_id, occurred_at,
     extra, captured_at, created_at, updated_at
 ) VALUES (
-    :record_id, :data_source, :data_type, :interaction_id, :platform, :interaction_type,
+    :record_id, :data_source, :data_type, :interaction_id, :interaction_type,
     :actor_account_id, :source_content_id, :target_content_id,
     CAST(:occurred_at AS timestamptz), CAST(:extra AS jsonb),
     CAST(:captured_at AS timestamptz), CAST(:created_at AS timestamptz),
     CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    interaction_id = EXCLUDED.interaction_id, platform = EXCLUDED.platform,
+    interaction_id = EXCLUDED.interaction_id,
     interaction_type = EXCLUDED.interaction_type, actor_account_id = EXCLUDED.actor_account_id,
     source_content_id = EXCLUDED.source_content_id, target_content_id = EXCLUDED.target_content_id,
     occurred_at = EXCLUDED.occurred_at, extra = EXCLUDED.extra,
