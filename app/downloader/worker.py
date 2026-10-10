@@ -1305,14 +1305,14 @@ class DownloadWorker:
             return AssetResult(kind="not_found", source_url=url)
         if not isinstance(response, DownloadResponse):
             return AssetResult(kind="failed", source_url=url)
+        if self._is_invalid_external_html(response):
+            return AssetResult(
+                kind="failed",
+                source_url=url,
+                final_url=response.final_url,
+                content_type=response.content_type,
+            )
         if dl_info.get("is_attachment_candidate") and self._is_html_response(response):
-            if self._is_invalid_external_html(response):
-                return AssetResult(
-                    kind="failed",
-                    source_url=url,
-                    final_url=response.final_url,
-                    content_type=response.content_type,
-                )
             return AssetResult(
                 kind="external_link",
                 source_url=url,
