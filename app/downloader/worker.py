@@ -73,11 +73,17 @@ class DownloadWorker:
             "DownloadWorker started: poll=%ss batch=%s template=%s",
             self._poll_interval, self._batch_size, self._template_name or "ALL",
         )
+        await self._log_pending_summary()
         while self._running:
             records = await self._read_pending_records()
             if records:
+                logger.info(
+                    "DownloadWorker: claimed %d records for template=%s",
+                    len(records), self._template_name or "ALL",
+                )
                 await self._download_list(records)
             else:
+                await self._log_pending_summary()
                 await asyncio.sleep(self._poll_interval)
 
     async def _read_pending_records(self) -> list[dict[str, Any]]:
@@ -86,6 +92,28 @@ class DownloadWorker:
             template_name=self._query_template_name,
             limit=self._batch_size,
         )
+
+    async def _log_pending_summary(self) -> None:
+        """Log pending counts for the selected template or all collections."""
+        try:
+            stats = await self._mongo.get_collection_stats(self._query_template_name)
+        except Exception:
+            logger.exception("DownloadWorker: failed to read pending summary")
+            return
+
+        pending = sum(int(item.get("pending_download") or 0) for item in stats)
+        scope = self._template_name or "ALL"
+        logger.info(
+            "DownloadWorker: pending downloads=%d template=%s collections=%d",
+            pending, scope, len(stats),
+        )
+        for item in stats:
+            logger.info(
+                "DownloadWorker: collection=%s pending=%d total=%d",
+                item.get("name", ""),
+                int(item.get("pending_download") or 0),
+                int(item.get("total") or 0),
+            )
 
     async def _download_list(self, records: list[dict[str, Any]]) -> None:
         """Download a claimed record list with bounded concurrency."""
