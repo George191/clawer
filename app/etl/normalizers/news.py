@@ -34,7 +34,7 @@ def _normalize_satellite_today_news_types(record: dict[str, Any]) -> list[str]:
 
 def _media_source_url(value: Any) -> str | None:
     if isinstance(value, dict):
-        value = value.get("source_url")
+        value = value.get("url")
 
     text = safe_str(value)
     if not text:
