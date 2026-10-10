@@ -21,8 +21,9 @@ from pymongo import ReplaceOne
 from app.config.settings import settings
 from app.logger import get_logger
 from app.storage.file_storage import StorageBackend
-from app.utils.record_id import resolve_record_id
 from app.utils.path import get_nested_value
+from app.utils.record_id import resolve_record_id
+from app.utils.twitter_accounts import split_twitter_accounts, upsert_twitter_accounts
 
 logger = get_logger(__name__)
 
@@ -50,7 +51,7 @@ class MongoStorage(StorageBackend):
         }
 
     def _get_collection_name(self, template_name: str) -> str:
-        return template_name
+        return "tw_tweet" if template_name == "twitter" else template_name
 
     async def _ensure_connection(self) -> None:
         if self._db is not None:
@@ -72,6 +73,8 @@ class MongoStorage(StorageBackend):
         collection = self._db[collection_name]
         if collection_name not in self._initialized_collections:
             await collection.create_index("_meta.record_id", unique=True)
+            if collection_name == "tw_tweet":
+                await collection.create_index("author_id")
             await collection.create_index("_meta.download_status")
             await collection.create_index("_meta.download_claimed_at")
             await collection.create_index("_meta.sync_status")
@@ -179,6 +182,21 @@ class MongoStorage(StorageBackend):
 
         collection = await self._get_collection(template_name)
         now = datetime.now(timezone.utc)
+        if self._get_collection_name(template_name) == "tw_tweet":
+            account_collection = self._db["tw_account"]
+            if "tw_account" not in self._initialized_collections:
+                await account_collection.create_index("id", unique=True)
+                self._initialized_collections.add("tw_account")
+            stripped_records = []
+            profiles = {}
+            for record in records:
+                stripped, accounts = split_twitter_accounts(record)
+                stripped_records.append(stripped)
+                for account in accounts:
+                    profile = profiles.setdefault(account["id"], {})
+                    profile.update(account)
+            await upsert_twitter_accounts(account_collection, list(profiles.values()), now)
+            records = stripped_records
         prepared_records: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         pending_docs: dict[str, dict[str, Any]] = {}
         pending_search_params: dict[str, dict[str, Any]] = {}
@@ -232,7 +250,7 @@ class MongoStorage(StorageBackend):
             cleaned_record = pending_docs[record_id]
             search_params = pending_search_params[record_id]
             record_with_meta = self._build_record_with_meta(
-                template_name=template_name,
+                template_name=self._get_collection_name(template_name),
                 data_type=data_type,
                 record_id=record_id,
                 record=cleaned_record,
@@ -244,6 +262,9 @@ class MongoStorage(StorageBackend):
                 merged_record = self._merge_non_empty_fields(existing, record_with_meta)
                 final_record = merged_record if isinstance(merged_record, dict) else record_with_meta
                 final_record = self._drop_none_values(final_record)
+                if self._get_collection_name(template_name) == "tw_tweet":
+                    # Do not reintroduce legacy embedded authors during the merge.
+                    final_record, _ = split_twitter_accounts(final_record)
                 existing_meta = existing.get("_meta", {})
                 final_record["_meta"]["created_at"] = existing_meta.get("created_at", now)
                 final_record["_meta"]["download_status"] = existing_meta.get(
@@ -586,6 +607,7 @@ class MongoStorage(StorageBackend):
         await self._ensure_connection()
         stats = []
         if template_name:
+            template_name = self._get_collection_name(template_name)
             all_colls = await self._db.list_collection_names()
             if template_name not in all_colls:
                 raise ValueError(

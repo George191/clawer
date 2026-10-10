@@ -81,6 +81,8 @@ class PaginationConfig(BaseModel):
 
 class DownloadConfig(BaseModel):
     selector: str = Field(description="下载链接选择器或JSON路径")
+    collection: str | None = Field(default=None, description="仅处理指定 Mongo 集合，留空适用于所有集合")
+    recursive: str | None = Field(default=None, description="递归子对象路径，如 referenced_tweets[].tweet")
     selector_type: SelectorType = Field(default=SelectorType.CSS)
     link_type: FieldType = Field(default=FieldType.HREF, description="链接所在属性")
     file_extension: str | None = Field(default=None, description="强制文件扩展名, 如 pdf, png")

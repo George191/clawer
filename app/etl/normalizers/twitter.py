@@ -37,6 +37,36 @@ def _record_identity(value: str | None) -> dict[str, str]:
     return {"platform_id": value}
 
 
+def normalize_twitter_account(record: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the independent account collection after its assets are downloaded."""
+    user = {key: value for key, value in record.items() if key not in {"_id", "_meta"}}
+    author_id = safe_str(user["id"])
+    meta = record.get("_meta") or {}
+    return {
+        "data_type": "social_account",
+        "record_id": _record_id("account", _record_identity(author_id)),
+        "account_id": _stable_id("account", author_id),
+        "platform": "twitter",
+        "platform_account_id": author_id,
+        "username": safe_str(user.get("username")),
+        "display_name": safe_str(user.get("display_name")),
+        "profile_url": safe_str(user.get("url")),
+        "avatar_url": safe_str(user.get("avatar_url")),
+        "bio": safe_str(user.get("bio")),
+        "account_type": "user",
+        "is_verified": user.get("verified"),
+        "is_private": user.get("protected"),
+        "account_created_at": safe_datetime(user.get("created")),
+        "follower_count": user.get("followers_count"),
+        "following_count": user.get("friends_count"),
+        "content_count": user.get("statuses_count"),
+        "location": safe_str(user.get("location")),
+        "language": safe_str(user.get("lang")),
+        "extra": _json({"source_user": user}),
+        "captured_at": safe_datetime(meta.get("updated_at")),
+    }
+
+
 def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
     """Normalize one tweet without requiring the redundant source_tweet field."""
     source = record if "user" in record and "date" in record else None
@@ -188,5 +218,28 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
-register_normalizer("twitter", "twitter", normalize_twitter)
-register_normalizer("social_media", "twitter", normalize_twitter)
+async def normalize_twitter_account_linked(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Resolve the Mongo account link when profiles are no longer embedded."""
+    if record.get("author") or record.get("source_tweet") or record.get("user"):
+        return normalize_twitter(record)
+    from motor.motor_asyncio import AsyncIOMotorClient
+
+    from app.config.settings import settings
+
+    client = AsyncIOMotorClient(settings.db_url)
+    try:
+        account = await client[settings.db_name]["tw_account"].find_one(
+            {"id": str(record["author_id"])}, {"_id": 0, "_meta": 0},
+        )
+        if account is None:
+            raise ValueError(f"Twitter account not found: {record['author_id']}")
+        return normalize_twitter({**record, "author": account})
+    finally:
+        client.close()
+
+
+register_normalizer("twitter", "twitter", normalize_twitter_account_linked)
+register_normalizer("social_media", "twitter", normalize_twitter_account_linked)
+register_normalizer("twitter", "tw_tweet", normalize_twitter_account_linked)
+register_normalizer("social_media", "tw_tweet", normalize_twitter_account_linked)
+register_normalizer("twitter", "tw_account", normalize_twitter_account)
