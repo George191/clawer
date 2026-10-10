@@ -212,7 +212,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_account (
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL DEFAULT 'social_account',
     account_id BIGSERIAL NOT NULL,
-    platform TEXT NOT NULL,
     platform_account_id TEXT NOT NULL,
     username TEXT,
     display_name TEXT,
@@ -234,8 +233,9 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_account (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, data_type)
 ) PARTITION BY HASH (record_id, data_source, data_type);
-CREATE INDEX IF NOT EXISTS idx_social_account_platform
-    ON ts_ods.ods_social_account (platform, platform_account_id);
+ALTER TABLE ts_ods.ods_social_account DROP COLUMN IF EXISTS platform;
+CREATE INDEX IF NOT EXISTS idx_social_account_source_id
+    ON ts_ods.ods_social_account (data_source, platform_account_id);
 """.strip(),
     "social_content": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_social_content (
@@ -243,7 +243,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_content (
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL DEFAULT 'social_content',
     content_id BIGSERIAL NOT NULL,
-    platform TEXT NOT NULL,
     platform_content_id TEXT NOT NULL,
     content_type TEXT NOT NULL,
     author_account_id BIGINT,
@@ -268,8 +267,9 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_content (
     PRIMARY KEY (record_id, data_source, data_type),
     CHECK (content_type IN ('post', 'comment', 'repost', 'quote'))
 ) PARTITION BY HASH (record_id, data_source, data_type);
-CREATE INDEX IF NOT EXISTS idx_social_content_platform_id
-    ON ts_ods.ods_social_content (platform, platform_content_id, record_id);
+ALTER TABLE ts_ods.ods_social_content DROP COLUMN IF EXISTS platform;
+CREATE INDEX IF NOT EXISTS idx_social_content_source_id
+    ON ts_ods.ods_social_content (data_source, platform_content_id, record_id);
 CREATE INDEX IF NOT EXISTS idx_social_content_author_time
     ON ts_ods.ods_social_content (author_account_id, published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_social_content_parent
@@ -304,15 +304,15 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_hashtag (
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL DEFAULT 'social_hashtag',
     hashtag_id BIGSERIAL NOT NULL,
-    platform TEXT NOT NULL,
     hashtag_text TEXT NOT NULL,
     normalized_text TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, data_type)
 ) PARTITION BY HASH (record_id, data_source, data_type);
-CREATE INDEX IF NOT EXISTS idx_social_hashtag_platform
-    ON ts_ods.ods_social_hashtag (platform, normalized_text);
+ALTER TABLE ts_ods.ods_social_hashtag DROP COLUMN IF EXISTS platform;
+CREATE INDEX IF NOT EXISTS idx_social_hashtag_source
+    ON ts_ods.ods_social_hashtag (data_source, normalized_text);
 """.strip(),
     "social_content_hashtag": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_social_content_hashtag (
@@ -335,7 +335,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_interaction (
     data_source TEXT NOT NULL,
     data_type TEXT NOT NULL DEFAULT 'social_interaction',
     interaction_id BIGSERIAL NOT NULL,
-    platform TEXT NOT NULL,
     interaction_type TEXT NOT NULL,
     actor_account_id BIGINT,
     source_content_id BIGINT,
@@ -348,6 +347,7 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_interaction (
     PRIMARY KEY (record_id, data_source, data_type),
     CHECK (interaction_type IN ('like', 'comment', 'repost', 'quote', 'bookmark'))
 ) PARTITION BY HASH (record_id, data_source, data_type);
+ALTER TABLE ts_ods.ods_social_interaction DROP COLUMN IF EXISTS platform;
 CREATE INDEX IF NOT EXISTS idx_social_interaction_target
     ON ts_ods.ods_social_interaction (target_content_id, interaction_type);
 CREATE INDEX IF NOT EXISTS idx_social_interaction_actor
@@ -897,14 +897,17 @@ async def _seed_current_registry_records(pg: PostgresClient) -> None:
         ORDER BY layer, table_name
         """
     )
-    # SEC company/filing DDL is part of the application contract. Replace the
+    # SEC and social DDL is part of the application contract. Replace the
     # pre-standardization registry entries so a restart repairs old schemas.
     current_rows: list[dict[str, Any]] = [
         row for row in existing_rows
         if not (
             row["layer"] == "ods"
             and logical_table_name(row["layer"], row["table_name"])
-            in {"company", "filing", "filing_document", "financial_fact"}
+            in {
+                "company", "filing", "filing_document", "financial_fact",
+                "social_account", "social_content", "social_hashtag", "social_interaction",
+            }
         )
     ]
     existing_keys = {
