@@ -141,11 +141,11 @@ CREATE TABLE IF NOT EXISTS ts_rds.rds_filing (
 CREATE INDEX IF NOT EXISTS idx_rds_filing_accession
     ON ts_rds.rds_filing ((raw_data->>'accession_number'));
 """.strip(),
-    "twitter": """
-CREATE TABLE IF NOT EXISTS ts_rds.rds_twitter (
+    "account": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_account (
     record_id TEXT NOT NULL,
     data_source TEXT NOT NULL,
-    data_type TEXT NOT NULL DEFAULT 'twitter',
+    data_type TEXT NOT NULL DEFAULT 'account',
     raw_data JSONB NOT NULL,
     kafka_offset BIGINT,
     kafka_partition INTEGER,
@@ -154,8 +154,24 @@ CREATE TABLE IF NOT EXISTS ts_rds.rds_twitter (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, data_type)
 ) PARTITION BY HASH (record_id, data_source, data_type);
-CREATE INDEX IF NOT EXISTS idx_rds_twitter_source ON ts_rds.rds_twitter (data_source);
-CREATE INDEX IF NOT EXISTS idx_rds_twitter_updated_at ON ts_rds.rds_twitter (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rds_account_source ON ts_rds.rds_account (data_source);
+CREATE INDEX IF NOT EXISTS idx_rds_account_updated_at ON ts_rds.rds_account (updated_at DESC);
+""".strip(),
+    "tweet": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_tweet (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'tweet',
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_rds_tweet_source ON ts_rds.rds_tweet (data_source);
+CREATE INDEX IF NOT EXISTS idx_rds_tweet_updated_at ON ts_rds.rds_tweet (updated_at DESC);
 """.strip(),
 }
 

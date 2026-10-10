@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Iterator
 
-from app.utils.record_id import resolve_record_id
-
 FACT_COLLECTION = "sec_edgar_financial_fact"
 FACT_DEDUP_FIELDS = (
     "cik", "accn", "taxonomy", "concept", "unit", "filed", "start_date",
@@ -52,7 +50,6 @@ def iter_sec_financial_facts(record: dict[str, Any]) -> Iterator[dict[str, Any]]
         raise ValueError("SEC facts must be an object")
     meta = record.get("_meta") or {}
     cik = record.get("cik")
-    company_id = meta.get("record_id") or resolve_record_id({"cik": cik})
     search_params = record.get("_meta_search_params") or meta.get("search_params") or {}
     for taxonomy, concepts in facts.items():
         if not isinstance(concepts, dict):
@@ -69,7 +66,6 @@ def iter_sec_financial_facts(record: dict[str, Any]) -> Iterator[dict[str, Any]]
                     yield {
                         **observation,
                         "data_type": "financial_fact",
-                        "company_record_id": company_id,
                         "cik": cik,
                         "entity_name": record.get("name") or record.get("entity_name"),
                         "taxonomy": taxonomy,
