@@ -58,7 +58,7 @@ def normalize_sec_edgar_financial_fact(record: dict[str, Any]) -> dict[str, Any]
     meta = _meta(record)
     return {
         "record_id": safe_str(meta.get("record_id")),
-        "data_source": safe_str(meta.get("data_source")),
+        "data_source": safe_str(meta.get("data_source")) or "sec_edgar_company",
         "data_type": "financial_fact",
         "cik": safe_str(pick("cik")),
         "entity_name": safe_str(pick("entity_name")),
@@ -135,3 +135,4 @@ def normalize_sec_edgar_financial_facts(
 
 
 register_normalizer("financial_fact", "sec_edgar_company", normalize_sec_edgar_financial_fact)
+register_normalizer("financial_fact", "sec_edgar_financial_fact", normalize_sec_edgar_financial_fact)

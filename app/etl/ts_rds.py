@@ -53,11 +53,14 @@ class TsRds(ETLBase):
     async def _handler_company(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="company")
 
+    async def _handler_financial_fact(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="financial_fact")
+
     async def _handler_filing(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="filing")
 
-    async def _handler_twitter(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="twitter")
+    async def _handler_social_media(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="social_media")
 
     async def _write_current(
         self,

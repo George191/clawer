@@ -45,7 +45,8 @@ def twitter_account_operations(accounts, now, existing=None):
         changed_urls = [key for key in ("avatar_url", "banner_url")
                         if key in account and account[key] != old.get(key)]
         fields = {**account, "_meta.updated_at": now, "_meta.template": "tw_account",
-                  "_meta.data_type": "twitter", "_meta.record_id": resolve_record_id({"id": account_id}),
+                  "_meta.data_type": "social_media", "_meta.data_source": "twitter",
+                  "_meta.record_id": resolve_record_id({"id": account_id}),
                   "_meta.sync_status": "pending"}
         if changed_urls or not old.get("_meta", {}).get("download_status"):
             fields["_meta.download_status"] = "pending"

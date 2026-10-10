@@ -23,6 +23,12 @@ from app.logger import get_logger
 from app.storage.file_storage import StorageBackend
 from app.utils.path import get_nested_value
 from app.utils.record_id import resolve_record_id
+from app.utils.sec_financial_facts import (
+    FACT_COLLECTION,
+    FACT_DEDUP_FIELDS,
+    financial_fact_identity,
+    iter_sec_financial_facts,
+)
 from app.utils.twitter_accounts import split_twitter_accounts, upsert_twitter_accounts
 
 logger = get_logger(__name__)
@@ -75,6 +81,8 @@ class MongoStorage(StorageBackend):
             await collection.create_index("_meta.record_id", unique=True)
             if collection_name == "tw_tweet":
                 await collection.create_index("author_id")
+            if collection_name == FACT_COLLECTION:
+                await collection.create_index("cik")
             await collection.create_index("_meta.download_status")
             await collection.create_index("_meta.download_claimed_at")
             await collection.create_index("_meta.sync_status")
@@ -109,13 +117,17 @@ class MongoStorage(StorageBackend):
         search_params: dict[str, Any],
         now: datetime,
     ) -> dict[str, Any]:
+        twitter_record = template_name in {"twitter", "tw_account", "tw_tweet"}
+        financial_fact = template_name == FACT_COLLECTION
         return {
             **record,
             "_meta": {
                 "template": template_name,
-                "data_type": data_type,
+                "data_type": "social_media" if twitter_record else data_type,
+                **({"data_source": "twitter"} if twitter_record else {}),
+                **({"data_source": "sec_edgar_company"} if financial_fact else {}),
                 "record_id": record_id,
-                "download_status": "pending",
+                "download_status": "no_assets" if financial_fact else "pending",
                 "sync_status": "pending",
                 "search_params": search_params,
                 "created_at": now,
@@ -205,8 +217,12 @@ class MongoStorage(StorageBackend):
         for record in records:
             search_params = record.pop("_meta_search_params", None) or {}
             cleaned_record = self._drop_none_values(record)
+            if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in record:
+                cleaned_record["facts"] = record["facts"]
             record_id = self._resolve_record_id(
-                {f: get_nested_value(cleaned_record, f) for f in dedup_fields}
+                financial_fact_identity(cleaned_record)
+                if template_name == FACT_COLLECTION
+                else {f: get_nested_value(cleaned_record, f) for f in dedup_fields}
             )
             pending = pending_docs.get(record_id)
             if pending is not None:
@@ -216,6 +232,8 @@ class MongoStorage(StorageBackend):
                     if isinstance(merged_pending, dict)
                     else cleaned_record
                 )
+                if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in merged_pending:
+                    cleaned_record["facts"] = merged_pending["facts"]
             pending_docs[record_id] = cleaned_record
             pending_params = pending_search_params.get(record_id)
             if pending_params is not None:
@@ -261,6 +279,8 @@ class MongoStorage(StorageBackend):
             if existing:
                 merged_record = self._merge_non_empty_fields(existing, record_with_meta)
                 final_record = merged_record if isinstance(merged_record, dict) else record_with_meta
+                if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in final_record:
+                    await self._save_sec_company_facts(final_record)
                 final_record = self._drop_none_values(final_record)
                 if self._get_collection_name(template_name) == "tw_tweet":
                     # Do not reintroduce legacy embedded authors during the merge.
@@ -276,7 +296,11 @@ class MongoStorage(StorageBackend):
                 search_params_changed = existing_meta.get(
                     "search_params", {}
                 ) != final_record["_meta"].get("search_params", {})
-                if business_changed:
+                metadata_changed = any(
+                    existing_meta.get(key) != final_record["_meta"].get(key)
+                    for key in ("data_type", "data_source")
+                )
+                if business_changed or metadata_changed:
                     final_record["_meta"]["sync_status"] = "pending"
                     final_record["_meta"]["updated_at"] = now
                     updated_count += 1
@@ -291,7 +315,10 @@ class MongoStorage(StorageBackend):
                     if not search_params_changed:
                         continue
             else:
-                final_record = self._drop_none_values(record_with_meta)
+                final_record = record_with_meta
+                if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in final_record:
+                    await self._save_sec_company_facts(final_record)
+                final_record = self._drop_none_values(final_record)
                 inserted_count += 1
 
             operations.append(
@@ -311,6 +338,26 @@ class MongoStorage(StorageBackend):
             "deleted": 0,
         }
         return ids
+
+    async def _save_sec_company_facts(self, record: dict[str, Any]) -> None:
+        # Released SEC storage subclasses force company collection routing.
+        fact_storage = MongoStorage()
+        fact_storage._client = self._client
+        fact_storage._db = self._db
+        fact_storage._initialized_collections = self._initialized_collections
+        batch: list[dict[str, Any]] = []
+        count = 0
+        for fact in iter_sec_financial_facts(record):
+            count += 1
+            batch.append(fact)
+            if len(batch) == 500:
+                await fact_storage.save_records(FACT_COLLECTION, "financial_fact", list(FACT_DEDUP_FIELDS), batch)
+                batch = []
+        if batch:
+            await fact_storage.save_records(FACT_COLLECTION, "financial_fact", list(FACT_DEDUP_FIELDS), batch)
+        if record["facts"] and count == 0:
+            raise ValueError("Nonempty SEC facts contain no financial observations")
+        record.pop("facts")
 
     async def update_file_status(
         self,

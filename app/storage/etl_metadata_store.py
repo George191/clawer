@@ -109,6 +109,22 @@ CREATE TABLE IF NOT EXISTS ts_rds.rds_company (
 CREATE INDEX IF NOT EXISTS idx_rds_company_cik
     ON ts_rds.rds_company ((raw_data->>'cik'));
 """.strip(),
+    "financial_fact": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_financial_fact (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+);
+CREATE INDEX IF NOT EXISTS idx_rds_financial_fact_cik
+    ON ts_rds.rds_financial_fact ((raw_data->>'cik'));
+""".strip(),
     "filing": """
 CREATE TABLE IF NOT EXISTS ts_rds.rds_filing (
     record_id TEXT NOT NULL,

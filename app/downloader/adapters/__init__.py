@@ -19,6 +19,7 @@ def register_download_adapter(data_type: str, *, template_name: str | None = Non
 
 
 register_download_adapter("news")(news.download)
+register_download_adapter("twitter", template_name="twitter")(twitter.download)
 for adapter in (sec_edgar, twitter):
     for template_name, data_type in adapter.COLLECTION_ROUTES.values():
         register_download_adapter(data_type, template_name=template_name)(adapter.download)
