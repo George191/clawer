@@ -746,6 +746,29 @@ const versionTemplateUrl = (url?: string, updatedAt?: string) => {
   return `${url}${separator}v=${encodeURIComponent(updatedAt)}`;
 };
 
+const formatNextExecution = (item: WorkspaceTask): string | null => {
+  const schedule = item.schedule ?? {};
+  const mode = String(schedule.mode ?? '');
+  const recurringMode = mode === 'recurring' ? String(schedule.recurring_mode ?? '') : mode;
+  if (recurringMode !== 'interval') return null;
+
+  const value = Number(schedule.interval_value);
+  const unit = schedule.interval_unit === 'hour' ? 'hour' : 'minute';
+  const anchor = item.started_at ?? item.created_at;
+  if (!Number.isFinite(value) || value <= 0 || !anchor) return null;
+
+  const next = new Date(anchor);
+  next.setTime(next.getTime() + value * (unit === 'hour' ? 60 * 60 * 1000 : 60 * 1000));
+  if (Number.isNaN(next.getTime())) return null;
+  return new Intl.DateTimeFormat('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(next);
+};
+
 const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
   key: item.id,
   name: item.name,
@@ -790,7 +813,11 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   lag: item.status === 'running' ? 'live' : '-',
   nextRun: item.schedule?.mode === 'once'
     ? '一次性任务'
-    : String(item.schedule?.label ?? (item.status === 'running' ? 'Continuous' : 'Waiting')),
+    : (() => {
+      const nextExecution = formatNextExecution(item);
+      const scheduleLabel = String(item.schedule?.label ?? (item.status === 'running' ? 'Continuous' : 'Waiting'));
+      return nextExecution ? `${scheduleLabel}（下次执行：${nextExecution}）` : scheduleLabel;
+    })(),
   owner: item.owner,
   avatar: toAvatarLabel(item.owner),
   comments: [],
