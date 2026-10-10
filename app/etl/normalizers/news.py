@@ -213,6 +213,7 @@ def normalize_arstechnica(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_breakingdefense(record: dict[str, Any]) -> dict[str, Any]:
+    record["summary_html"] = record.get("excerpt_html")
     normalized = _news_common(record, "breakingdefense")
     normalized["source_published_at"] = safe_datetime(record.get("date"))
     normalized["source_updated_at"] = safe_datetime(record.get("modified"))
