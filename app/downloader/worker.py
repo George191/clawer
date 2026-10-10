@@ -70,7 +70,7 @@ DOWNLOAD_TEMPLATE_OVERRIDES = {
     collection: template for template, collection in DOWNLOAD_COLLECTION_OVERRIDES.items()
 }
 NEWS_ASSET_FIELDS = {
-    "attachments", "external_links", "images", "videos", "audios",
+    "attachments", "images", "videos", "audios",
 }
 
 @dataclass(slots=True)
@@ -271,10 +271,7 @@ class DownloadWorker:
                 for idx, dl_info in enumerate(download_urls):
                     asset_key = dl_info.get("asset_key", f"assets.{idx}")
                     expected_asset_keys.add(asset_key)
-                    is_attachment_candidate = dl_info.get("source_field") in {
-                        "attachments",
-                        "external_links",
-                    }
+                    is_attachment_candidate = dl_info.get("source_field") == "attachments"
                     existing_path = self._existing_asset_path(record, asset_key)
                     if existing_path:
                         existing_updates[asset_key] = existing_path
@@ -353,16 +350,10 @@ class DownloadWorker:
                 updates: dict[str, str] = dict(existing_updates)
                 not_found_updates: dict[str, dict[str, Any]] = {}
                 failed_assets = 0
-                external_asset_keys: set[str] = set()
-                external_urls: list[str] = []
                 for dl_info, result in asset_results:
                     asset_keys = list(dict.fromkeys(dl_info["asset_keys"]))
                     if result.kind == "skipped":
                         failed_assets += 1
-                        continue
-                    if result.kind == "external_link":
-                        external_asset_keys.update(asset_keys)
-                        external_urls.append(result.source_url)
                         continue
                     if result.kind == "not_found":
                         not_found_updates.update(
@@ -381,7 +372,6 @@ class DownloadWorker:
                     if (
                         asset_key in updates
                         or asset_key in not_found_updates
-                        or asset_key in external_asset_keys
                         or self._asset_exists(record, asset_key)
                     )
                 }
@@ -401,9 +391,7 @@ class DownloadWorker:
                         record,
                         download_urls,
                         updates,
-                        external_urls,
                         not_found_updates=not_found_updates,
-                        external_asset_keys=external_asset_keys,
                     )
                 else:
                     record_updates = {**updates, **not_found_updates}
@@ -880,7 +868,7 @@ class DownloadWorker:
             used_indexes = {
                 value
                 for fallback, item in enumerate(attachments)
-                for value in [self._attachment_placeholder_index(item, fallback)]
+                for value in [DownloadWorker._attachment_placeholder_index(item, fallback)]
                 if value is not None
             }
             index = 0
