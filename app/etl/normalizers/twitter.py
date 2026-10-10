@@ -1,4 +1,4 @@
-"""Normalizer for the current twscrape Tweet serialization."""
+"""Normalizer for canonical Twitter records and older twscrape records."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_datetime, safe_str
 from app.utils.record_id import resolve_record_id
+from app.utils.twitter_record import project_twitter_record
 
 
 def _json(value: Any) -> str:
@@ -37,19 +38,17 @@ def _record_identity(value: str | None) -> dict[str, str]:
 
 
 def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
-    """Normalize one twscrape Tweet dict; missing contract fields are errors."""
-    # The crawler keeps the API-facing projection at the top level and the
-    # lossless twscrape payload under source_tweet. Prefer the latter so
-    # referenced tweets and their original fields normalize identically.
-    source_tweet = record.get("source_tweet")
-    tweet = source_tweet if isinstance(source_tweet, dict) else record
-    user = tweet["user"]
+    """Normalize one tweet without requiring the redundant source_tweet field."""
+    source = record if "user" in record and "date" in record else None
+    tweet = project_twitter_record(record, source, drop_source=True)
+    user = tweet.get("author") or {"id": tweet["author_id"]}
     tweet_id = safe_str(tweet["id"])
     author_id = safe_str(user["id"])
-    created_at = safe_datetime(tweet["date"])
-    parent_id = safe_str(tweet["inReplyToTweetId"])
-    retweeted = tweet["retweetedTweet"]
-    quoted = tweet["quotedTweet"]
+    created_at = safe_datetime(tweet["created_at"])
+    references = {item["type"]: safe_str(item["id"])
+                  for item in tweet.get("referenced_tweets", [])}
+    parent_id = references.get("replied_to")
+    metrics = tweet.get("public_metrics") or {}
 
     content_type = "post"
     target_id = None
@@ -58,13 +57,13 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
         content_type = "comment"
         target_id = parent_id
         interaction_type = "comment"
-    if retweeted is not None:
+    if references.get("retweeted") is not None:
         content_type = "repost"
-        target_id = safe_str(retweeted["id"])
+        target_id = references["retweeted"]
         interaction_type = "repost"
-    if quoted is not None:
+    if references.get("quoted") is not None:
         content_type = "quote"
-        target_id = safe_str(quoted["id"])
+        target_id = references["quoted"]
         interaction_type = "quote"
 
     content_id = _stable_id("content", tweet_id)
@@ -76,20 +75,20 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
             "account_id": account_id,
             "platform": "twitter",
             "platform_account_id": author_id,
-            "username": safe_str(user["username"]),
-            "display_name": safe_str(user["displayname"]),
-            "profile_url": safe_str(user["url"]),
-            "avatar_url": safe_str(user["profileImageUrl"]),
-            "bio": safe_str(user["rawDescription"]),
+            "username": safe_str(user.get("username")),
+            "display_name": safe_str(user.get("display_name")),
+            "profile_url": safe_str(user.get("url")),
+            "avatar_url": safe_str(user.get("avatar_url")),
+            "bio": safe_str(user.get("bio")),
             "account_type": "user",
-            "is_verified": user["verified"],
-            "is_private": user["protected"],
-            "account_created_at": safe_datetime(user["created"]),
-            "follower_count": user["followersCount"],
-            "following_count": user["friendsCount"],
-            "content_count": user["statusesCount"],
-            "location": safe_str(user["location"]),
-            "language": safe_str(user["lang"]),
+            "is_verified": user.get("verified"),
+            "is_private": user.get("protected"),
+            "account_created_at": safe_datetime(user.get("created")),
+            "follower_count": user.get("followers_count"),
+            "following_count": user.get("friends_count"),
+            "content_count": user.get("statuses_count"),
+            "location": safe_str(user.get("location")),
+            "language": safe_str(user.get("lang")),
             "extra": _json({"source_user": user}),
             "captured_at": created_at,
         },
@@ -102,26 +101,27 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
             "content_type": content_type,
             "author_account_id": account_id,
             "parent_content_id": _stable_id("content", parent_id),
-            "root_content_id": _stable_id("content", safe_str(tweet["conversationId"])),
-            "text_content": safe_str(tweet["rawContent"]),
-            "language": safe_str(tweet["lang"]),
+            "root_content_id": _stable_id("content", safe_str(tweet.get("conversation_id"))),
+            "text_content": safe_str(tweet.get("text")),
+            "language": safe_str(tweet.get("lang")),
             "content_url": safe_str(tweet["url"]),
             "published_at": created_at,
             "edited_at": None,
             "deleted_at": None,
-            "reply_count": tweet["replyCount"],
-            "like_count": tweet["likeCount"],
-            "repost_count": tweet["retweetCount"],
-            "quote_count": tweet["quoteCount"],
-            "view_count": tweet["viewCount"],
-            "is_sensitive": tweet["possiblySensitive"],
-            "extra": _json({"source_tweet": tweet}),
+            "reply_count": metrics.get("reply_count"),
+            "like_count": metrics.get("like_count"),
+            "repost_count": metrics.get("retweet_count"),
+            "quote_count": metrics.get("quote_count"),
+            "view_count": metrics.get("impression_count"),
+            "is_sensitive": tweet.get("possibly_sensitive"),
+            "extra": _json({key: value for key, value in tweet.items()
+                            if key not in {"_id", "_meta"}}),
             "captured_at": created_at,
         },
     ]
 
-    for index, media in enumerate(tweet["media"]):
-        media_id = safe_str(media["mediaKey"])
+    for index, media in enumerate(tweet.get("media") or []):
+        media_id = safe_str(media.get("media_key") or media.get("mediaKey") or media.get("url"))
         result.append({
             "data_type": "social_media",
             "record_id": _record_id("media", {"content_id": tweet_id, "media_id": media_id}),
@@ -129,16 +129,16 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
             "media_index": index,
             "media_type": safe_str(media["type"]),
             "platform_media_id": media_id,
-            "media_url": safe_str(media["url"]),
-            "preview_url": safe_str(media["preview"]),
-            "width": media["width"],
-            "height": media["height"],
-            "duration_ms": media["duration"],
-            "alt_text": safe_str(media["altText"]),
+            "media_url": safe_str(media.get("url")),
+            "preview_url": safe_str(media.get("thumbnail_url") or media.get("preview")),
+            "width": media.get("width"),
+            "height": media.get("height"),
+            "duration_ms": media.get("duration"),
+            "alt_text": safe_str(media.get("alt_text") or media.get("altText")),
             "extra": _json({"source_media": media}),
         })
 
-    for index, hashtag_text in enumerate(tweet["hashtags"]):
+    for index, hashtag_text in enumerate(tweet.get("hashtags") or []):
         normalized_text = safe_str(hashtag_text).casefold()
         hashtag_id = _stable_id("hashtag", normalized_text)
         result.extend([
@@ -189,3 +189,4 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 register_normalizer("twitter", "twitter", normalize_twitter)
+register_normalizer("social_media", "twitter", normalize_twitter)

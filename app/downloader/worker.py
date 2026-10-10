@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import mimetypes
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
@@ -31,6 +32,12 @@ NOT_FOUND_ASSET = {
     "description": "Source file returned HTTP 404; the file no longer exists.",
     "status_code": 404,
 }
+ZSCALER_MARKERS = re.compile(
+    rb"zscaler directory authentication"
+    rb"|login\.zscaler(?:beta)?\.net"
+    rb"|<!--\s*username\.html",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,10 +314,13 @@ class DownloadWorker:
         if response is None:
             return None
         content_type = response.content_type or "application/octet-stream"
+        response_data = response.data
+        if ZSCALER_MARKERS.search(response_data[:32768]):
+            raise DownloadError(item.url, response.status_code, "Zscaler authentication page")
         if item.attachment and content_type.startswith("text/html"):
             raise DownloadError(item.url, response.status_code, "attachment is HTML")
         return await self._minio.upload_bytes(
-            response.data,
+            response_data,
             template_name,
             data_type,
             f"{record_id}/{item.filename}",
