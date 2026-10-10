@@ -760,9 +760,19 @@ const formatNextExecution = (item: WorkspaceTask): string | null => {
   const next = new Date(anchor);
   next.setTime(next.getTime() + value * (unit === 'hour' ? 60 * 60 * 1000 : 60 * 1000));
   if (Number.isNaN(next.getTime())) return null;
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
+  const now = new Date();
+  const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayOffset = Math.round((startOfDay(next) - startOfDay(now)) / (24 * 60 * 60 * 1000));
+  const time = new Intl.DateTimeFormat('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(next);
+  if (dayOffset === 0) return `Today ${time}`;
+  if (dayOffset === 1) return `Tomorrow ${time}`;
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
@@ -816,7 +826,7 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
     : (() => {
       const nextExecution = formatNextExecution(item);
       const scheduleLabel = String(item.schedule?.label ?? (item.status === 'running' ? 'Continuous' : 'Waiting'));
-      return nextExecution ? `${scheduleLabel}（下次执行：${nextExecution}）` : scheduleLabel;
+      return nextExecution ? `${scheduleLabel} (${nextExecution})` : scheduleLabel;
     })(),
   owner: item.owner,
   avatar: toAvatarLabel(item.owner),
@@ -2240,7 +2250,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         </div>
 
         <div className="workspace-dock-card-footer">
-          <span>Next {formatTaskNextRunLabel(item.nextRun)}</span>
+          <span>{formatTaskNextRunLabel(item.nextRun)}</span>
           <span className={item.runtime.status === 'failed' || item.runtime.status === 'paused' ? 'is-alert' : ''}>
             Lag {item.lag}
           </span>
