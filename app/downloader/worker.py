@@ -1,12 +1,10 @@
-"""Download configured resources and extracted news assets."""
+"""Download template resources using registered datatype adapters."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import mimetypes
-import re
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
 
@@ -14,38 +12,26 @@ from app.base.http import DownloadError, DownloadResponse, HttpClient
 from app.base.minio import MinioClient
 from app.base.mongo import MongoClient
 from app.config.settings import settings
+from app.downloader.adapters import (
+    DownloadItem,
+    collections_for_template,
+    get_download_adapter,
+    get_download_response_validator,
+    resolve_download_record,
+)
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate
+from app.utils.download_paths import iter_download_nodes, iter_download_values
 from app.utils.path import get_nested_value
 
 logger = get_logger(__name__)
 
-DOWNLOAD_COLLECTION_OVERRIDES = {"sec_edgar": "sec_edgar_filing"}
-DOWNLOAD_TEMPLATE_OVERRIDES = {
-    collection: template
-    for template, collection in DOWNLOAD_COLLECTION_OVERRIDES.items()
-}
-NEWS_ASSET_FIELDS = {"attachments", "images", "videos", "audios"}
 NOT_FOUND_ASSET = {
     "url": "",
     "description": "Source file returned HTTP 404; the file no longer exists.",
     "status_code": 404,
 }
-ZSCALER_MARKERS = re.compile(
-    rb"zscaler directory authentication"
-    rb"|login\.zscaler(?:beta)?\.net"
-    rb"|<!--\s*username\.html",
-    re.IGNORECASE,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class DownloadItem:
-    url: str
-    filename: str
-    asset_key: str
-    attachment: bool = False
 
 
 class DownloadWorker:
@@ -65,14 +51,7 @@ class DownloadWorker:
         self._mongo = MongoClient()
         self._templates: dict[str, SiteTemplate] = {}
         self._running = False
-
-    @property
-    def _query_template_name(self) -> str | None:
-        if self._template_name is None:
-            return None
-        return DOWNLOAD_COLLECTION_OVERRIDES.get(
-            self._template_name, self._template_name,
-        )
+        self._collection_cursor = 0
 
     async def run(self) -> None:
         self._running = True
@@ -95,15 +74,26 @@ class DownloadWorker:
 
     async def _read_pending_records(self) -> list[dict[str, Any]]:
         """Read and claim the next pending Mongo records."""
-        return await self._mongo.get_pending_downloads(
-            template_name=self._query_template_name,
-            limit=self._batch_size,
-        )
+        collections = collections_for_template(self._template_name)
+        start = self._collection_cursor % len(collections)
+        collections = collections[start:] + collections[:start]
+        self._collection_cursor += 1
+        records = []
+        for index, collection in enumerate(collections):
+            remaining = self._batch_size - len(records)
+            if remaining <= 0:
+                break
+            count = len(collections) - index
+            limit = (remaining + count - 1) // count
+            records.extend(await self._mongo.get_pending_downloads(template_name=collection, limit=limit))
+        return records
 
     async def _log_pending_summary(self) -> None:
         """Log pending counts for the selected template or all collections."""
         try:
-            stats = await self._mongo.get_collection_stats(self._query_template_name)
+            stats = []
+            for collection in collections_for_template(self._template_name):
+                stats += await self._mongo.get_collection_stats(collection)
         except Exception as exc:
             logger.error(
                 "DownloadWorker: failed to read pending summary | error=%s: %s",
@@ -137,9 +127,9 @@ class DownloadWorker:
         await asyncio.gather(*(download(record) for record in records))
 
     async def _download_record(self, record: dict[str, Any]) -> None:
-        meta = record.get("_meta")
+        meta = record.get("_meta") or {}
         collection = meta.get("template")
-        template_name = DOWNLOAD_TEMPLATE_OVERRIDES.get(collection, collection)
+        template_name, data_type = resolve_download_record(record)
         record_id = meta.get("record_id")
         claim_token = meta.get("download_claim_token")
         if not collection or not record_id:
@@ -151,11 +141,10 @@ class DownloadWorker:
                 await self._update_mongo(collection, record_id, {}, "no_assets", claim_token)
                 return
 
-            data_type = meta.get("data_type").lower()
             items = self._download_template_fields(record, template.download)
-
-            if data_type == "news":
-                items.extend(self._download_news_fields(record))
+            adapter = get_download_adapter(record)
+            if adapter is not None:
+                items.extend(adapter(record, template, self._filename))
 
             if not items:
                 await self._update_mongo(collection, record_id, {}, "no_assets", claim_token)
@@ -163,8 +152,12 @@ class DownloadWorker:
 
             updates: dict[str, Any] = {}
             failed = False
+            downloaded_urls = {
+                item.url: path for item in items
+                if (path := self._existing_path(record, item.asset_key))
+            }
             for item in items:
-                existing = self._existing_path(record, item.asset_key)
+                existing = downloaded_urls.get(item.url)
                 if existing:
                     updates[item.asset_key] = existing
                     continue
@@ -183,6 +176,8 @@ class DownloadWorker:
                     failed = True
                     continue
                 updates[item.asset_key] = path if path else dict(NOT_FOUND_ASSET)
+                if path:
+                    downloaded_urls[item.url] = path
 
             await self._update_mongo(
                 collection, record_id, updates,
@@ -200,32 +195,6 @@ class DownloadWorker:
                 collection, record_id, "failed", claim_token=claim_token,
             )
 
-    def _download_news_fields(
-        self,
-        record: dict[str, Any],
-    ) -> list[DownloadItem]:
-        """Download asset fields extracted by the news asset helper."""
-        items: list[DownloadItem] = []
-        for field in NEWS_ASSET_FIELDS:
-            values = record.get(field)
-            if not isinstance(values, list):
-                continue
-            for index, value in enumerate(values):
-                url = value.get("url") if isinstance(value, dict) else value
-                if not url:
-                    continue
-                items.append(DownloadItem(
-                    url=str(url),
-                    filename=self._filename(str(url), f"_{index:05d}"),
-                    asset_key=(
-                        f"assets.{field}.{index}.url"
-                        if isinstance(value, dict) else f"assets.{field}.{index}"
-                    ),
-                    attachment=field == "attachments",
-                ))
-
-        return items
-
     def _download_template_fields(
         self,
         record: dict[str, Any],
@@ -235,6 +204,23 @@ class DownloadWorker:
         for config in configs:
             selector_type = getattr(config.selector_type, "value", config.selector_type)
             if selector_type != "json":
+                continue
+            collection = getattr(config, "collection", None)
+            if collection and collection != (record.get("_meta") or {}).get("template"):
+                continue
+            recursive = getattr(config, "recursive", None)
+            if collection or recursive or "[]" in config.selector or "*" in config.selector:
+                for prefix, node in iter_download_nodes(record, recursive):
+                    for path, value in iter_download_values(node, config.selector):
+                        full_path = f"{prefix}.{path}" if prefix else path
+                        for field, url in self._urls_from_value(value, config):
+                            if not url:
+                                continue
+                            key = f"assets.{full_path}"
+                            if isinstance(value, dict):
+                                key += f".{field}"
+                            suffix = "_" + hashlib.md5(key.encode()).hexdigest()[:10]
+                            items.append(DownloadItem(url=url, filename=self._filename(url, suffix), asset_key=key))
                 continue
             value = get_nested_value(record, config.selector)
             values = value if isinstance(value, list) else [value]
@@ -315,8 +301,9 @@ class DownloadWorker:
             return None
         content_type = response.content_type or "application/octet-stream"
         response_data = response.data
-        if ZSCALER_MARKERS.search(response_data[:32768]):
-            raise DownloadError(item.url, response.status_code, "Zscaler authentication page")
+        validator = get_download_response_validator(template_name)
+        if validator is not None:
+            validator(item, response)
         if item.attachment and content_type.startswith("text/html"):
             raise DownloadError(item.url, response.status_code, "attachment is HTML")
         return await self._minio.upload_bytes(
