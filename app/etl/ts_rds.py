@@ -10,6 +10,7 @@ from sqlalchemy import text
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
 from app.logger import get_logger
+from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)
 
@@ -59,8 +60,22 @@ class TsRds(ETLBase):
     async def _handler_filing(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="filing")
 
+    async def _dispatch(self, message: dict[str, Any]) -> bool:
+        meta = message.get("_meta") or {}
+        data_type = TWITTER_COLLECTION_TYPES.get(meta.get("template"))
+        # The raw collection defines the type, including retained legacy Kafka messages.
+        if data_type:
+            message = {**message, "_meta": {**meta, "data_type": data_type, "data_source": "twitter"}}
+        return await super()._dispatch(message)
+
     async def _handler_social_media(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="social_media")
+
+    async def _handler_account(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="account")
+
+    async def _handler_tweet(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="tweet")
 
     async def _write_current(
         self,
@@ -87,6 +102,15 @@ class TsRds(ETLBase):
                 return False
 
             raw_data = json.loads(json.dumps(message, default=str))
+            if table in {"account", "tweet"}:
+                data_type = table
+                if data_source in {"twitter", "tw_account", "tw_tweet"}:
+                    data_source = "twitter"
+                raw_data["_meta"] = {
+                    **(raw_data.get("_meta") or {}),
+                    "data_source": data_source,
+                    "data_type": data_type,
+                }
             kafka_meta = message.get("_kafka_meta", {}) or {}
             now = datetime.now(timezone.utc)
             payload = {

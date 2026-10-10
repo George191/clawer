@@ -35,6 +35,8 @@ def resolve_download_record(record: dict[str, Any]) -> tuple[str, str]:
     meta = record.get("_meta") or {}
     collection = meta.get("template") or ""
     template_name, fallback_type = _COLLECTION_ROUTES.get(collection, (collection, ""))
+    if collection in twitter.COLLECTION_ROUTES:
+        return template_name, fallback_type
     return template_name, str(meta.get("data_type") or fallback_type).lower()
 
 

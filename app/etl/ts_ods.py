@@ -15,6 +15,7 @@ from app.etl.normalizers import get_normalizer
 from app.etl.normalizers.twitter import normalize_twitter as _normalize_twitter  # noqa: F401
 from app.logger import get_logger
 from app.quality.validator import create_navwarn_validation_engine
+from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)
 
@@ -207,10 +208,10 @@ RETURNING *
 ODS_FILING_DOCUMENT_INSERT = """
 INSERT INTO {table_ref} (
     record_id, data_source, data_type, cik, accession_number,
-    sequence, description, filename, size, url, created_at, updated_at
+    sequence, description, filename, size, url, source_url, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type, :cik, :accession_number,
-    :sequence, :description, :filename, :size, :url,
+    :sequence, :description, :filename, :size, :url, :source_url,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
@@ -219,6 +220,7 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     sequence = EXCLUDED.sequence,
     description = EXCLUDED.description, filename = EXCLUDED.filename,
     size = EXCLUDED.size, url = EXCLUDED.url,
+    source_url = EXCLUDED.source_url,
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
@@ -360,11 +362,11 @@ RETURNING *
 ODS_SOCIAL_MEDIA_INSERT = """
 INSERT INTO ts_ods.ods_social_media (
     record_id, data_source, data_type, content_id, media_index, media_type,
-    platform_media_id, media_url, preview_url, width, height, duration_ms,
+    platform_media_id, media_url, minio_path, preview_url, width, height, duration_ms,
     alt_text, extra, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type, :content_id, :media_index, :media_type,
-    :platform_media_id, :media_url, :preview_url, :width, :height, :duration_ms,
+    :platform_media_id, :media_url, :minio_path, :preview_url, :width, :height, :duration_ms,
     :alt_text, CAST(:extra AS jsonb), CAST(:created_at AS timestamptz),
     CAST(:updated_at AS timestamptz)
 )
@@ -372,6 +374,7 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     content_id = EXCLUDED.content_id, media_index = EXCLUDED.media_index,
     media_type = EXCLUDED.media_type, platform_media_id = EXCLUDED.platform_media_id,
     media_url = EXCLUDED.media_url, preview_url = EXCLUDED.preview_url,
+    minio_path = EXCLUDED.minio_path,
     width = EXCLUDED.width, height = EXCLUDED.height, duration_ms = EXCLUDED.duration_ms,
     alt_text = EXCLUDED.alt_text, extra = EXCLUDED.extra, updated_at = EXCLUDED.updated_at
 RETURNING *
@@ -452,6 +455,16 @@ class TsOds(ETLBase):
     _producer_topic = settings.etl_ods_topic
     _producer_client_id = "etl-ts-ods-producer"
 
+    async def _on_init_schema(self) -> None:
+        await super()._on_init_schema()
+        if "filing" in self._handlers and "filing_document" not in self._handlers:
+            await self._ensure_registered_table("filing_document", self._table_role, create_partitions=False)
+        if not self._handlers.keys() & {"account", "tweet", "social_media"}:
+            return
+        # Migrate fan-out tables before writes omit the old NOT NULL platform column.
+        for table in ("social_account", "social_content", "social_media", "social_hashtag", "social_interaction"):
+            await self._ensure_registered_table(table, self._table_role, create_partitions=False)
+
     async def _handler_news(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="news")
 
@@ -476,8 +489,24 @@ class TsOds(ETLBase):
     async def _handler_financial_fact(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="financial_fact")
 
+    async def _dispatch(self, message: dict[str, Any]) -> bool:
+        source = message.get("data_source")
+        if message.get("data_type") in {"twitter", "social_media"} and source in {"twitter", "tw_account", "tw_tweet"}:
+            raw_data = message.get("raw_data", message)
+            collection = (raw_data.get("_meta") or {}).get("template")
+            data_type = TWITTER_COLLECTION_TYPES.get(collection or source)
+            if data_type:
+                message = {**message, "data_type": data_type, "data_source": "twitter"}
+        return await super()._dispatch(message)
+
     async def _handler_social_media(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="social_media")
+
+    async def _handler_account(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="social_account")
+
+    async def _handler_tweet(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="social_content")
 
     async def _write_current(
         self,
