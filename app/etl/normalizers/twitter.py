@@ -238,16 +238,5 @@ async def normalize_twitter_account_linked(record: dict[str, Any]) -> list[dict[
         client.close()
 
 
-async def normalize_twitter_collection(record: dict[str, Any]) -> list[dict[str, Any]]:
-    """Collection identity, not datatype/source, distinguishes accounts from tweets."""
-    if (record.get("_meta") or {}).get("template") == "tw_account":
-        return [normalize_twitter_account(record)]
-    return await normalize_twitter_account_linked(record)
-
-
-register_normalizer("twitter", "twitter", normalize_twitter_collection)
-register_normalizer("social_media", "twitter", normalize_twitter_collection)
-register_normalizer("twitter", "tw_tweet", normalize_twitter_account_linked)
-register_normalizer("social_media", "tw_tweet", normalize_twitter_account_linked)
-register_normalizer("twitter", "tw_account", normalize_twitter_account)
-register_normalizer("social_media", "tw_account", normalize_twitter_account)
+register_normalizer("account", "twitter", normalize_twitter_account)
+register_normalizer("tweet", "twitter", normalize_twitter_account_linked)
