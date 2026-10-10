@@ -266,6 +266,19 @@ class DownloadWorker:
                 if attempt == 4:
                     raise
                 await asyncio.sleep(min(2 ** attempt, 8))
+            except Exception as exc:
+                status_code = getattr(exc, "status_code", None)
+                logger.warning(
+                    "DownloadWorker: retry %d/5 for %s | error=%s | status=%s",
+                    attempt + 1,
+                    item.url,
+                    type(exc).__name__,
+                    status_code or 0,
+                )
+                await self._http.release_current_task_proxy()
+                if attempt == 4:
+                    raise
+                await asyncio.sleep(min(2 ** attempt, 8))
         if response is None:
             return None
         content_type = response.content_type or "application/octet-stream"
