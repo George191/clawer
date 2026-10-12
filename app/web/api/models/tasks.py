@@ -12,12 +12,6 @@ class WorkspaceTaskRequest(BaseModel):
     policies: dict[str, Any] = Field(default_factory=dict)
     owner: str = "AI Collect"
 
-    @field_validator("policies")
-    @classmethod
-    def normalize_policies(cls, value: dict[str, Any]) -> dict[str, Any]:
-        # Time fields belong to the template; runtime watermarks belong to Redis.
-        return {key: item for key, item in value.items() if key not in {"watermark", "incremental_field"}}
-
 
 class TaskAction(BaseModel):
     action: Literal[
