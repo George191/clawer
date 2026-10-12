@@ -16,38 +16,11 @@ from app.logger import get_logger
 
 logger = get_logger(__name__)
 
-_ODS_PATENT_TABLE = "ts_ods.ods_patent"
-_ODS_NAVWARN_TABLE = "ts_ods.ods_navwarn"
-_ODS_INTELLIGENCE_TABLE = "ts_ods.ods_intelligence"
 _ODS_FILING_DOCUMENT_TABLE = "ts_ods.ods_filing_document"
 
 # ODS 单条入库重试配置：仅针对可重试的连接/瞬时错误
 _ODS_WRITE_MAX_ATTEMPTS = 3
 _ODS_WRITE_RETRY_WAIT = 0.5
-
-
-def _prefer_text(table_ref: str, column: str) -> str:
-    return f"COALESCE(NULLIF(BTRIM(EXCLUDED.{column}), ''), {table_ref}.{column})"
-
-
-def _prefer_value(table_ref: str, column: str) -> str:
-    return f"COALESCE(EXCLUDED.{column}, {table_ref}.{column})"
-
-
-def _prefer_json(table_ref: str, column: str) -> str:
-    return (
-        f"CASE "
-        f"WHEN EXCLUDED.{column} IS NULL "
-        f"OR EXCLUDED.{column} = '[]'::jsonb "
-        f"OR EXCLUDED.{column} = '{{}}'::jsonb "
-        f"OR EXCLUDED.{column} = 'null'::jsonb "
-        f"THEN {table_ref}.{column} "
-        f"ELSE EXCLUDED.{column} END"
-    )
-
-
-def _prefer_geography(table_ref: str, column: str) -> str:
-    return f"COALESCE(EXCLUDED.{column}, {table_ref}.{column})"
 
 
 ODS_NEWS_INSERT = f"""
@@ -95,7 +68,7 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
 RETURNING *
 """
 
-ODS_PATENT_INSERT = f"""
+ODS_PATENT_INSERT = """
 INSERT INTO ts_ods.ods_patent (
     record_id, data_source, data_type,
     title, publication_number, application_number, assignee, inventor,
@@ -114,29 +87,29 @@ INSERT INTO ts_ods.ods_patent (
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     data_source = EXCLUDED.data_source,
     data_type = EXCLUDED.data_type,
-    title = {_prefer_text(_ODS_PATENT_TABLE, "title")},
-    publication_number = {_prefer_text(_ODS_PATENT_TABLE, "publication_number")},
-    application_number = {_prefer_text(_ODS_PATENT_TABLE, "application_number")},
-    assignee = {_prefer_text(_ODS_PATENT_TABLE, "assignee")},
-    inventor = {_prefer_text(_ODS_PATENT_TABLE, "inventor")},
-    publication_date = {_prefer_value(_ODS_PATENT_TABLE, "publication_date")},
-    filing_date = {_prefer_value(_ODS_PATENT_TABLE, "filing_date")},
-    priority_date = {_prefer_value(_ODS_PATENT_TABLE, "priority_date")},
-    grant_date = {_prefer_value(_ODS_PATENT_TABLE, "grant_date")},
-    abstract = {_prefer_text(_ODS_PATENT_TABLE, "abstract")},
-    claims = {_prefer_json(_ODS_PATENT_TABLE, "claims")},
-    legal_status = {_prefer_text(_ODS_PATENT_TABLE, "legal_status")},
-    ipc_classification = {_prefer_text(_ODS_PATENT_TABLE, "ipc_classification")},
-    cpc_classification = {_prefer_text(_ODS_PATENT_TABLE, "cpc_classification")},
-    patent_type = {_prefer_text(_ODS_PATENT_TABLE, "patent_type")},
-    url = {_prefer_text(_ODS_PATENT_TABLE, "url")},
-    thumbnail = {_prefer_text(_ODS_PATENT_TABLE, "thumbnail")},
-    figures = {_prefer_json(_ODS_PATENT_TABLE, "figures")},
+    title = EXCLUDED.title,
+    publication_number = EXCLUDED.publication_number,
+    application_number = EXCLUDED.application_number,
+    assignee = EXCLUDED.assignee,
+    inventor = EXCLUDED.inventor,
+    publication_date = EXCLUDED.publication_date,
+    filing_date = EXCLUDED.filing_date,
+    priority_date = EXCLUDED.priority_date,
+    grant_date = EXCLUDED.grant_date,
+    abstract = EXCLUDED.abstract,
+    claims = EXCLUDED.claims,
+    legal_status = EXCLUDED.legal_status,
+    ipc_classification = EXCLUDED.ipc_classification,
+    cpc_classification = EXCLUDED.cpc_classification,
+    patent_type = EXCLUDED.patent_type,
+    url = EXCLUDED.url,
+    thumbnail = EXCLUDED.thumbnail,
+    figures = EXCLUDED.figures,
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
 
-ODS_NAVWARN_INSERT = f"""
+ODS_NAVWARN_INSERT = """
 INSERT INTO ts_ods.ods_navwarn (
     record_id, data_source, data_type,
     navarea_id, warning_no, serial_number, warning_year, region,
@@ -155,24 +128,24 @@ INSERT INTO ts_ods.ods_navwarn (
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     data_source = EXCLUDED.data_source,
     data_type = EXCLUDED.data_type,
-    navarea_id = {_prefer_value(_ODS_NAVWARN_TABLE, "navarea_id")},
-    warning_no = {_prefer_text(_ODS_NAVWARN_TABLE, "warning_no")},
-    serial_number = {_prefer_value(_ODS_NAVWARN_TABLE, "serial_number")},
-    warning_year = {_prefer_value(_ODS_NAVWARN_TABLE, "warning_year")},
-    region = {_prefer_text(_ODS_NAVWARN_TABLE, "region")},
-    issued_at = {_prefer_value(_ODS_NAVWARN_TABLE, "issued_at")},
-    message_text = {_prefer_text(_ODS_NAVWARN_TABLE, "message_text")},
-    category = {_prefer_text(_ODS_NAVWARN_TABLE, "category")},
-    status = {_prefer_text(_ODS_NAVWARN_TABLE, "status")},
-    sub_region = {_prefer_text(_ODS_NAVWARN_TABLE, "sub_region")},
-    oceans = {_prefer_text(_ODS_NAVWARN_TABLE, "oceans")},
-    dnc_region = {_prefer_text(_ODS_NAVWARN_TABLE, "dnc_region")},
-    coordinate = {_prefer_geography(_ODS_NAVWARN_TABLE, "coordinate")},
+    navarea_id = EXCLUDED.navarea_id,
+    warning_no = EXCLUDED.warning_no,
+    serial_number = EXCLUDED.serial_number,
+    warning_year = EXCLUDED.warning_year,
+    region = EXCLUDED.region,
+    issued_at = EXCLUDED.issued_at,
+    message_text = EXCLUDED.message_text,
+    category = EXCLUDED.category,
+    status = EXCLUDED.status,
+    sub_region = EXCLUDED.sub_region,
+    oceans = EXCLUDED.oceans,
+    dnc_region = EXCLUDED.dnc_region,
+    coordinate = EXCLUDED.coordinate,
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
 
-ODS_INTELLIGENCE_INSERT = f"""
+ODS_INTELLIGENCE_INSERT = """
 INSERT INTO ts_ods.ods_intelligence (
     record_id, data_source, data_type,
     title, url, source_published_at, source_updated_at, summary,
@@ -187,14 +160,14 @@ INSERT INTO ts_ods.ods_intelligence (
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     data_source = EXCLUDED.data_source,
     data_type = EXCLUDED.data_type,
-    title = {_prefer_text(_ODS_INTELLIGENCE_TABLE, "title")},
-    url = {_prefer_text(_ODS_INTELLIGENCE_TABLE, "url")},
-    source_published_at = {_prefer_value(_ODS_INTELLIGENCE_TABLE, "source_published_at")},
-    source_updated_at = {_prefer_value(_ODS_INTELLIGENCE_TABLE, "source_updated_at")},
-    summary = {_prefer_text(_ODS_INTELLIGENCE_TABLE, "summary")},
-    file_name = {_prefer_text(_ODS_INTELLIGENCE_TABLE, "file_name")},
-    file_size = {_prefer_text(_ODS_INTELLIGENCE_TABLE, "file_size")},
-    file_type = {_prefer_text(_ODS_INTELLIGENCE_TABLE, "file_type")},
+    title = EXCLUDED.title,
+    url = EXCLUDED.url,
+    source_published_at = EXCLUDED.source_published_at,
+    source_updated_at = EXCLUDED.source_updated_at,
+    summary = EXCLUDED.summary,
+    file_name = EXCLUDED.file_name,
+    file_size = EXCLUDED.file_size,
+    file_type = EXCLUDED.file_type,
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
