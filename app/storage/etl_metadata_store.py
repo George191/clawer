@@ -233,7 +233,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_account (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, data_type)
 ) PARTITION BY HASH (record_id, data_source, data_type);
-ALTER TABLE ts_ods.ods_social_account DROP COLUMN IF EXISTS platform;
 CREATE INDEX IF NOT EXISTS idx_social_account_source_id
     ON ts_ods.ods_social_account (data_source, platform_account_id);
 """.strip(),
@@ -267,7 +266,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_content (
     PRIMARY KEY (record_id, data_source, data_type),
     CHECK (content_type IN ('post', 'comment', 'repost', 'quote'))
 ) PARTITION BY HASH (record_id, data_source, data_type);
-ALTER TABLE ts_ods.ods_social_content DROP COLUMN IF EXISTS platform;
 CREATE INDEX IF NOT EXISTS idx_social_content_source_id
     ON ts_ods.ods_social_content (data_source, platform_content_id, record_id);
 CREATE INDEX IF NOT EXISTS idx_social_content_author_time
@@ -297,14 +295,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_media (
 ) PARTITION BY HASH (record_id, data_source, data_type);
 CREATE INDEX IF NOT EXISTS idx_social_media_content
     ON ts_ods.ods_social_media (content_id, media_index);
-DO $$ BEGIN ALTER TABLE ts_ods.ods_social_media RENAME COLUMN media_url TO source_url; EXCEPTION WHEN undefined_column THEN NULL; END $$;
-DO $$ BEGIN ALTER TABLE ts_ods.ods_social_media RENAME COLUMN minio_path TO url; EXCEPTION WHEN undefined_column THEN NULL; END $$;
-ALTER TABLE ts_ods.ods_social_media ADD COLUMN IF NOT EXISTS source_url TEXT;
-ALTER TABLE ts_ods.ods_social_media ADD COLUMN IF NOT EXISTS url TEXT;
-ALTER TABLE ts_ods.ods_social_media DROP COLUMN IF EXISTS preview_url;
-UPDATE ts_ods.ods_social_media
-SET source_url = COALESCE(NULLIF(BTRIM(source_url), ''), BTRIM(url)), url = NULL
-WHERE BTRIM(url) ~* '^(https?:)?//';
 """.strip(),
     "social_hashtag": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_social_hashtag (
@@ -318,7 +308,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_hashtag (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, data_type)
 ) PARTITION BY HASH (record_id, data_source, data_type);
-ALTER TABLE ts_ods.ods_social_hashtag DROP COLUMN IF EXISTS platform;
 CREATE INDEX IF NOT EXISTS idx_social_hashtag_source
     ON ts_ods.ods_social_hashtag (data_source, normalized_text);
 """.strip(),
@@ -355,7 +344,6 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_interaction (
     PRIMARY KEY (record_id, data_source, data_type),
     CHECK (interaction_type IN ('like', 'comment', 'repost', 'quote', 'bookmark'))
 ) PARTITION BY HASH (record_id, data_source, data_type);
-ALTER TABLE ts_ods.ods_social_interaction DROP COLUMN IF EXISTS platform;
 CREATE INDEX IF NOT EXISTS idx_social_interaction_target
     ON ts_ods.ods_social_interaction (target_content_id, interaction_type);
 CREATE INDEX IF NOT EXISTS idx_social_interaction_actor
@@ -495,7 +483,8 @@ CREATE TABLE "ts_ods"."ods_company" (
   "category" text COLLATE "pg_catalog"."default",
   "phone" text COLLATE "pg_catalog"."default",
   "former_names" jsonb,
-  "investor_website" text COLLATE "pg_catalog"."default"
+  "investor_website" text COLLATE "pg_catalog"."default",
+  PRIMARY KEY ("record_id", "data_source", "data_type")
 )
 PARTITION BY HASH (
   "record_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
@@ -509,10 +498,6 @@ PARTITION BY HASH (
 CREATE INDEX IF NOT EXISTS "idx_ods_company_cik" ON "ts_ods"."ods_company" USING btree (
   "cik" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
 );
--- ----------------------------
--- Primary Key structure for table ods_company
--- ----------------------------
-ALTER TABLE "ts_ods"."ods_company" ADD CONSTRAINT "ods_company_pkey" PRIMARY KEY ("record_id", "data_source", "data_type");
 """.strip(),
     "filing": """
 CREATE TABLE "ts_ods"."ods_filing" (
@@ -536,7 +521,8 @@ CREATE TABLE "ts_ods"."ods_filing" (
   "filing_base" text COLLATE "pg_catalog"."default",
   "filing_index_url" text COLLATE "pg_catalog"."default",
   "created_at" timestamptz(6) NOT NULL DEFAULT now(),
-  "updated_at" timestamptz(6) NOT NULL DEFAULT now()
+  "updated_at" timestamptz(6) NOT NULL DEFAULT now(),
+  PRIMARY KEY ("record_id", "data_source", "data_type")
 )
 PARTITION BY HASH (
   "record_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
@@ -553,10 +539,6 @@ CREATE INDEX "idx_ods_filing_accession" ON "ts_ods"."ods_filing" USING btree (
 CREATE INDEX "idx_ods_filing_cik" ON "ts_ods"."ods_filing" USING btree (
   "cik" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
 );
--- ----------------------------
--- Primary Key structure for table ods_filing
--- ----------------------------
-ALTER TABLE "ts_ods"."ods_filing" ADD CONSTRAINT "ods_filing_pkey" PRIMARY KEY ("record_id", "data_source", "data_type");
 """.strip(),
     "filing_document": """
 CREATE TABLE "ts_ods"."ods_filing_document" (
@@ -573,7 +555,8 @@ CREATE TABLE "ts_ods"."ods_filing_document" (
   "source_url" text COLLATE "pg_catalog"."default",
   "created_at" timestamptz(6) NOT NULL DEFAULT now(),
   "updated_at" timestamptz(6) NOT NULL DEFAULT now(),
-  "doc_type" text COLLATE "pg_catalog"."default"
+  "doc_type" text COLLATE "pg_catalog"."default",
+  PRIMARY KEY ("record_id", "data_source", "data_type")
 )
 PARTITION BY HASH (
   "record_id" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops",
@@ -587,14 +570,6 @@ PARTITION BY HASH (
 CREATE INDEX "idx_ods_filing_document_accession" ON "ts_ods"."ods_filing_document" USING btree (
   "accession_number" COLLATE "pg_catalog"."default" "pg_catalog"."text_ops" ASC NULLS LAST
 );
--- ----------------------------
--- Primary Key structure for table ods_filing_document
--- ----------------------------
-ALTER TABLE "ts_ods"."ods_filing_document" ADD CONSTRAINT "ods_filing_document_pkey" PRIMARY KEY ("record_id", "data_source", "data_type");
-ALTER TABLE ts_ods.ods_filing_document ADD COLUMN IF NOT EXISTS source_url TEXT;
-UPDATE ts_ods.ods_filing_document
-SET source_url = COALESCE(NULLIF(BTRIM(source_url), ''), BTRIM(url)), url = NULL
-WHERE BTRIM(url) ~* '^(https?:)?//';
 """.strip(),
 }
 
@@ -658,55 +633,17 @@ def _ddlregistry_bootstrap_sql() -> str:
         updated_by TEXT NULL,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS table_role TEXT NOT NULL DEFAULT 'current';
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS partition_type TEXT NOT NULL DEFAULT 'none';
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS partition_column TEXT NULL;
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS partition_granularity TEXT NULL;
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS partition_count INTEGER NULL;
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS description TEXT NULL;
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS updated_by TEXT NULL;
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-    ALTER TABLE {table_name}
-        ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-
-    ALTER TABLE {table_name}
-        DROP CONSTRAINT IF EXISTS ddlregistry_table_role_check;
-    ALTER TABLE {table_name}
-        ADD CONSTRAINT ddlregistry_table_role_check
-        CHECK (table_role IN ('current', 'history'));
-
-    ALTER TABLE {table_name}
-        DROP CONSTRAINT IF EXISTS ddlregistry_partition_type_check;
-    ALTER TABLE {table_name}
-        ADD CONSTRAINT ddlregistry_partition_type_check
-        CHECK (partition_type IN ('none', 'range', 'hash'));
-
-    ALTER TABLE {table_name}
-        DROP CONSTRAINT IF EXISTS ddlregistry_partition_granularity_check;
-    ALTER TABLE {table_name}
-        ADD CONSTRAINT ddlregistry_partition_granularity_check
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT ddlregistry_table_role_check
+            CHECK (table_role IN ('current', 'history')),
+        CONSTRAINT ddlregistry_partition_type_check
+            CHECK (partition_type IN ('none', 'range', 'hash')),
+        CONSTRAINT ddlregistry_partition_granularity_check
         CHECK (
             partition_granularity IS NULL
             OR partition_granularity IN ('month', 'year')
-        );
-
-    ALTER TABLE {table_name}
-        DROP CONSTRAINT IF EXISTS ddlregistry_partition_layout_check;
-    ALTER TABLE {table_name}
-        ADD CONSTRAINT ddlregistry_partition_layout_check
+        ),
+        CONSTRAINT ddlregistry_partition_layout_check
         CHECK (
             (
                 partition_type = 'none'
@@ -727,23 +664,14 @@ def _ddlregistry_bootstrap_sql() -> str:
                 AND partition_count IS NOT NULL
                 AND partition_count > 0
             )
-        );
+        )
+    );
 
     CREATE UNIQUE INDEX IF NOT EXISTS uq_ddlregistry_version
         ON {table_name} (layer, table_role, schema_name, table_name, version);
 
     CREATE INDEX IF NOT EXISTS idx_ddlregistry_lookup
         ON {table_name} (layer, table_role, schema_name, table_name, version DESC);
-
-    DELETE FROM {table_name} older
-    USING {table_name} newer
-    WHERE older.layer = newer.layer
-      AND older.table_role = newer.table_role
-      AND older.schema_name = newer.schema_name
-      AND older.table_name = newer.table_name
-      AND older.id < newer.id;
-
-    DROP INDEX IF EXISTS uq_ddlregistry_active_table;
 
     CREATE UNIQUE INDEX IF NOT EXISTS uq_ddlregistry_table
         ON {table_name} (layer, table_role, schema_name, table_name);
@@ -910,8 +838,8 @@ async def _seed_current_registry_records(pg: PostgresClient) -> None:
         ORDER BY layer, table_name
         """
     )
-    # SEC and social DDL is part of the application contract. Replace the
-    # pre-standardization registry entries so a restart repairs old schemas.
+    # Seed canonical creation DDL for SEC and social tables. Existing schemas
+    # are upgraded separately by maintenance scripts.
     current_rows: list[dict[str, Any]] = [
         row for row in existing_rows
         if not (
