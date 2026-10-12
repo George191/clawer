@@ -29,7 +29,7 @@ def _normalize_sec_edgar_company(record: dict[str, Any]) -> dict[str, Any]:
         "data_source": safe_str(meta.get("template")),
         "data_type": safe_str(pick("data_type")),
         "cik": safe_str(pick("cik")),
-        "name": safe_str(pick("name")),
+        "name": safe_str(pick("name")) or "",
         "entity_type": safe_str(pick("entity_type")),
         "exchanges": dump(pick("exchanges")),
         "tickers": dump(pick("tickers")),
