@@ -912,15 +912,6 @@ const resolveSiteProfile = (value: string): SiteProfile => {
   };
 };
 
-const defaultIncrementalFields = [
-  'modified',
-  'date',
-  'issue_time',
-  'patent.publication_date',
-  'updated_at',
-  'created_at',
-] as const;
-
 const taskComposerFieldLabels: Record<string, string> = {
   keyword: 'Keyword',
   page_limit: 'Page Limit',
@@ -1995,7 +1986,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           priority: taskPriority,
           concurrency: taskConcurrency,
           incremental: taskComposerDraft.incremental,
-          incremental_field: taskComposerDraft.incrementalField,
           respect_robots: taskRespectRobots,
           drift_guard: taskDriftGuard,
           batch: taskBatchInput ? {
@@ -2462,11 +2452,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
                 <label>
                   <span>时间字段</span>
-                  <Select
-                    value={taskComposerDraft.incrementalField}
-                    options={defaultIncrementalFields.map((item) => ({ value: item, label: item }))}
-                    onChange={(value) => updateTaskComposerDraft({ incrementalField: value })}
-                  />
+                  <Input value={taskComposerDraft.incrementalField} readOnly />
                 </label>
                 <label>
                   <span>固定策略</span>
