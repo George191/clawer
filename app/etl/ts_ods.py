@@ -13,7 +13,6 @@ from app.config.settings import settings
 from app.etl.base import ETLBase
 from app.etl.normalizers import get_normalizer
 from app.logger import get_logger
-from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)
 
@@ -449,16 +448,6 @@ class TsOds(ETLBase):
     _producer_topic = settings.etl_ods_topic
     _producer_client_id = "etl-ts-ods-producer"
 
-    async def _on_init_schema(self) -> None:
-        await super()._on_init_schema()
-        if "filing" in self._handlers and "filing_document" not in self._handlers:
-            await self._ensure_registered_table("filing_document", self._table_role, create_partitions=False)
-        if not self._handlers.keys() & {"account", "tweet"}:
-            return
-        # Migrate fan-out tables before writes omit the old NOT NULL platform column.
-        for table in ("social_account", "social_content", "social_media", "social_hashtag", "social_interaction"):
-            await self._ensure_registered_table(table, self._table_role, create_partitions=False)
-
     async def _handler_news(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="news")
 
@@ -482,18 +471,6 @@ class TsOds(ETLBase):
 
     async def _handler_financial_fact(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="financial_fact")
-
-    async def _dispatch(self, message: dict[str, Any]) -> bool:
-        source = message.get("data_source")
-        if message.get("data_type") in {"twitter", "social_media"} and source in {"twitter", "tw_account", "tw_tweet"}:
-            raw_data = message.get("raw_data", message)
-            collection = (raw_data.get("_meta") or {}).get("template")
-            if not collection and source in {"tw_account", "tw_tweet"}:
-                collection = source
-            data_type = TWITTER_COLLECTION_TYPES.get(collection)
-            if data_type:
-                message = {**message, "data_type": data_type, "data_source": "twitter"}
-        return await super()._dispatch(message)
 
     async def _handler_account(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="social_account")
