@@ -63,8 +63,13 @@ def iter_sec_financial_facts(record: dict[str, Any]) -> Iterator[dict[str, Any]]
                 for observation in observations:
                     if not isinstance(observation, dict) or observation.get("val") is None:
                         raise ValueError(f"Invalid SEC observation: {taxonomy}.{concept}.{unit}")
+                    value = observation["val"]
+                    # BSON integers are signed int64; decimal text preserves larger values.
+                    if isinstance(value, int) and not -(1 << 63) <= value < (1 << 63):
+                        value = str(value)
                     yield {
                         **observation,
+                        "val": value,
                         "data_type": "financial_fact",
                         "cik": cik,
                         "entity_name": record.get("name") or record.get("entity_name"),
@@ -73,7 +78,7 @@ def iter_sec_financial_facts(record: dict[str, Any]) -> Iterator[dict[str, Any]]
                         "concept_label": spec.get("label"),
                         "concept_metadata": {key: value for key, value in spec.items() if key != "units"},
                         "unit": unit,
-                        "value": observation["val"],
+                        "value": value,
                         "start_date": observation.get("start"),
                         "end_date": observation.get("end"),
                         "_meta_search_params": search_params,

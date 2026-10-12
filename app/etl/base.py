@@ -748,7 +748,7 @@ class ETLBase:
         logger.info("%s Manual resume: topic=%s partition=%d → offset=%d", self._log_prefix, topic, partition, offset)
 
     async def _commit_and_save(self, topic: str, partition: int, offset: int) -> None:
-        await self._consumer.commit()
+        await self._consumer.commit({TopicPartition(topic, partition): offset + 1})
         key = self._offset_key(topic, partition)
         self._pending_offsets[key] = offset + 1
         for pending_key, off in self._pending_offsets.items():
@@ -790,10 +790,12 @@ class ETLBase:
         while self._running:
             try:
                 records = await self._consumer.getmany(timeout_ms=5000, max_records=50)
+                retry_needed = False
                 for _tp, msgs in records.items():
                     for msg in msgs:
                         if msg.value is None:
                             continue
+                        success = False
                         try:
                             msg.value["_kafka_meta"] = {
                                 "kafka_offset": msg.offset,
@@ -804,7 +806,18 @@ class ETLBase:
                             if success:
                                 await self._commit_and_save(msg.topic, msg.partition, msg.offset)
                         except Exception:
+                            success = False
                             logger.exception("%s Handler error", self._log_prefix)
+                        if not success:
+                            self._consumer.seek(_tp, msg.offset)
+                            logger.warning(
+                                "%s Retrying topic=%s partition=%d offset=%d",
+                                self._log_prefix, msg.topic, msg.partition, msg.offset,
+                            )
+                            retry_needed = True
+                            break
+                if retry_needed:
+                    await asyncio.sleep(1)
             except KAFKA_RETRYABLE_ERRORS as exc:
                 logger.warning(
                     "%s Consumer connection lost, reconnecting: %s",
