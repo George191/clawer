@@ -68,9 +68,6 @@ class TsRds(ETLBase):
             message = {**message, "_meta": {**meta, "data_type": data_type, "data_source": "twitter"}}
         return await super()._dispatch(message)
 
-    async def _handler_social_media(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="social_media")
-
     async def _handler_account(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="account")
 
@@ -101,7 +98,7 @@ class TsRds(ETLBase):
                 logger.warning("%s Message missing record_id, skipping table=%s", self._log_prefix, table)
                 return False
 
-            raw_data = json.loads(json.dumps(message, default=str))
+            raw_data = dict(message)
             if table in {"account", "tweet"}:
                 data_type = table
                 if data_source in {"twitter", "tw_account", "tw_tweet"}:
@@ -117,7 +114,7 @@ class TsRds(ETLBase):
                 "record_id": record_id,
                 "data_source": data_source,
                 "data_type": data_type,
-                "raw_data": json.dumps(raw_data, ensure_ascii=False),
+                "raw_data": json.dumps(raw_data, ensure_ascii=False, default=str),
                 "kafka_offset": kafka_meta.get("kafka_offset"),
                 "kafka_partition": kafka_meta.get("kafka_partition"),
                 "kafka_topic": kafka_meta.get("kafka_topic"),

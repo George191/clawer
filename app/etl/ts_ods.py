@@ -12,19 +12,14 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from app.config.settings import settings
 from app.etl.base import ETLBase
 from app.etl.normalizers import get_normalizer
-from app.etl.normalizers.twitter import normalize_twitter as _normalize_twitter  # noqa: F401
 from app.logger import get_logger
-from app.quality.validator import create_navwarn_validation_engine
 from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)
 
-_ODS_NEWS_TABLE = "ts_ods.ods_news"
 _ODS_PATENT_TABLE = "ts_ods.ods_patent"
 _ODS_NAVWARN_TABLE = "ts_ods.ods_navwarn"
 _ODS_INTELLIGENCE_TABLE = "ts_ods.ods_intelligence"
-_ODS_COMPANY_TABLE = "ts_ods.ods_company"
-_ODS_FILING_TABLE = "ts_ods.ods_filing"
 _ODS_FILING_DOCUMENT_TABLE = "ts_ods.ods_filing_document"
 
 # ODS 单条入库重试配置：仅针对可重试的连接/瞬时错误
@@ -459,7 +454,7 @@ class TsOds(ETLBase):
         await super()._on_init_schema()
         if "filing" in self._handlers and "filing_document" not in self._handlers:
             await self._ensure_registered_table("filing_document", self._table_role, create_partitions=False)
-        if not self._handlers.keys() & {"account", "tweet", "social_media"}:
+        if not self._handlers.keys() & {"account", "tweet"}:
             return
         # Migrate fan-out tables before writes omit the old NOT NULL platform column.
         for table in ("social_account", "social_content", "social_media", "social_hashtag", "social_interaction"):
@@ -494,13 +489,12 @@ class TsOds(ETLBase):
         if message.get("data_type") in {"twitter", "social_media"} and source in {"twitter", "tw_account", "tw_tweet"}:
             raw_data = message.get("raw_data", message)
             collection = (raw_data.get("_meta") or {}).get("template")
-            data_type = TWITTER_COLLECTION_TYPES.get(collection or source)
+            if not collection and source in {"tw_account", "tw_tweet"}:
+                collection = source
+            data_type = TWITTER_COLLECTION_TYPES.get(collection)
             if data_type:
                 message = {**message, "data_type": data_type, "data_source": "twitter"}
         return await super()._dispatch(message)
-
-    async def _handler_social_media(self, message: dict[str, Any]) -> bool:
-        return await self._process_ods_record(message, table="social_media")
 
     async def _handler_account(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="social_account")
@@ -579,8 +573,7 @@ class TsOds(ETLBase):
                 return False
 
             now = datetime.now(timezone.utc)
-            result = None
-            emitted_payload: dict[str, Any] | None = None
+            emitted_records = []
             for normalized in normalized_records:
                 if not isinstance(normalized, dict):
                     continue
@@ -592,24 +585,25 @@ class TsOds(ETLBase):
                 
                 payload = {**normalized, "record_id": normalized_record_id, "data_source": normalized.get("data_source") or data_source, "data_type": output_table, "created_at": now, "updated_at": now}
                 result = await self._execute_with_table_recovery(output_table, partial(self._write_current, table=output_table, payload=payload), payload=payload)
-                emitted_payload = payload
+                emitted_records.append((result, payload))
 
-            if emitted_payload is None:
+            if not emitted_records:
                 return False
 
-            await self._emit(
-                result,
-                record_id=record_id or emitted_payload["record_id"],
-                data_source=result.get("data_source") if result else emitted_payload["data_source"],
-                data_type=data_type,
-            )
-            logger.debug(
-                "%s Normalized table=ods_%s record_id=%s source=%s",
-                self._log_prefix,
-                table,
-                record_id or emitted_payload["record_id"],
-                emitted_payload["data_source"],
-            )
+            for result, payload in emitted_records:
+                await self._emit(
+                    result,
+                    record_id=payload["record_id"],
+                    data_source=result.get("data_source") if result else payload["data_source"],
+                    data_type=payload["data_type"],
+                )
+                logger.debug(
+                    "%s Normalized table=ods_%s record_id=%s source=%s",
+                    self._log_prefix,
+                    payload["data_type"],
+                    payload["record_id"],
+                    payload["data_source"],
+                )
             return True
         except Exception:
             logger.exception("%s Failed to normalize table=%s", self._log_prefix, table)
