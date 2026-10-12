@@ -113,6 +113,18 @@ npm install
 
 ### 2. 启动应用服务
 
+首次部署或升级 AI Collect 数据库时，先在应用停止接收任务的维护窗口执行：
+
+```bash
+python -m scripts.init_ai_collect --apply
+```
+
+该命令负责建表、历史字段迁移和旧状态修正。需要注册本地 YAML 模板时，显式追加
+`--import-templates`。已有数据库不需要在日常启动或每轮采集时重复执行；Web 和 Worker
+只建立数据库连接，不自动建表、迁移或导入模板。容器部署可在项目根目录通过
+`docker compose run --rm --no-deps -v "$PWD/scripts:/app/scripts:ro" crawler python -m scripts.init_ai_collect --apply`
+执行相同迁移。
+
 ```bash
 docker compose up -d
 ```

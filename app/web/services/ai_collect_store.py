@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import uuid
@@ -20,96 +19,9 @@ from app.web.services.task_events import publish_task_change, publish_task_log
 
 logger = get_logger(__name__)
 
-_DDL = """
-CREATE TABLE IF NOT EXISTS public.ai_collect_templates (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name text NOT NULL,
-    version text NOT NULL DEFAULT 'v1.0',
-    title text NOT NULL,
-    domain text NOT NULL DEFAULT '',
-    data_type text NOT NULL DEFAULT 'other',
-    template text NOT NULL DEFAULT '',
-    icon text NOT NULL DEFAULT '',
-    status text NOT NULL DEFAULT 'draft' CHECK (status IN ('active', 'draft', 'deprecated')),
-    adapter text NOT NULL DEFAULT '',
-    description text NOT NULL DEFAULT '',
-    owner text NOT NULL DEFAULT 'AI Collect',
-    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (name, version)
-);
-ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS template text NOT NULL DEFAULT '';
-ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS icon text NOT NULL DEFAULT '';
-ALTER TABLE public.ai_collect_templates ADD COLUMN IF NOT EXISTS data_type text NOT NULL DEFAULT 'other';
-CREATE TABLE IF NOT EXISTS public.ai_collect_tasks (
-    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name text NOT NULL,
-    template_name text NOT NULL,
-    template_version text NOT NULL DEFAULT 'v1.0',
-    status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed', 'paused')),
-    progress integer NOT NULL DEFAULT 0,
-    records bigint NOT NULL DEFAULT 0,
-    throughput integer NOT NULL DEFAULT 0,
-    inserted_records bigint NOT NULL DEFAULT 0,
-    updated_records bigint NOT NULL DEFAULT 0,
-    deleted_records bigint NOT NULL DEFAULT 0,
-    downloaded_records bigint NOT NULL DEFAULT 0,
-    synced_records bigint NOT NULL DEFAULT 0,
-    celery_task_id text,
-    control_state text,
-    download_state text NOT NULL DEFAULT 'running',
-    sync_state text NOT NULL DEFAULT 'running',
-    schedule jsonb NOT NULL DEFAULT '{}'::jsonb,
-    parameters jsonb NOT NULL DEFAULT '{}'::jsonb,
-    policies jsonb NOT NULL DEFAULT '{}'::jsonb,
-    owner text NOT NULL DEFAULT 'AI Collect',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    started_at timestamptz,
-    deleted_at timestamptz
-);
-ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS inserted_records bigint NOT NULL DEFAULT 0;
-ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS updated_records bigint NOT NULL DEFAULT 0;
-ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS deleted_records bigint NOT NULL DEFAULT 0;
-ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS downloaded_records bigint NOT NULL DEFAULT 0;
-ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS synced_records bigint NOT NULL DEFAULT 0;
-ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS celery_task_id text;
-ALTER TABLE public.ai_collect_tasks ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
-ALTER TABLE public.ai_collect_tasks ALTER COLUMN download_state SET DEFAULT 'running';
-ALTER TABLE public.ai_collect_tasks ALTER COLUMN sync_state SET DEFAULT 'running';
-UPDATE public.ai_collect_tasks SET download_state = 'running' WHERE download_state = 'idle';
-UPDATE public.ai_collect_tasks SET sync_state = 'running' WHERE sync_state = 'idle';
-CREATE TABLE IF NOT EXISTS public.ai_collect_task_logs (
-    id bigserial PRIMARY KEY,
-    task_id uuid NOT NULL REFERENCES public.ai_collect_tasks(id) ON DELETE CASCADE,
-    run_id uuid,
-    level text NOT NULL DEFAULT 'info',
-    message text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-ALTER TABLE public.ai_collect_task_logs ADD COLUMN IF NOT EXISTS run_id uuid;
-CREATE TABLE IF NOT EXISTS public.ai_collect_analyses (
-    template_id text PRIMARY KEY,
-    source_url text NOT NULL,
-    template_name text NOT NULL,
-    template_yaml text NOT NULL,
-    adapter_code text NOT NULL DEFAULT '',
-    fields jsonb NOT NULL DEFAULT '[]'::jsonb,
-    pagination jsonb NOT NULL DEFAULT '{}'::jsonb,
-    sample_items jsonb NOT NULL DEFAULT '[]'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_ai_collect_templates_status ON public.ai_collect_templates(status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_ai_collect_tasks_status ON public.ai_collect_tasks(status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_task ON public.ai_collect_task_logs(task_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_ai_collect_task_logs_run ON public.ai_collect_task_logs(task_id, run_id, created_at DESC);
-"""
 class AICollectStore:
     def __init__(self) -> None:
         self._pg = get_pg_client()
-        self._initialized = False
-        self._initialize_lock = asyncio.Lock()
 
     @staticmethod
     def _is_image_content(content: bytes) -> bool:
@@ -126,58 +38,8 @@ class AICollectStore:
         )
 
     async def initialize(self) -> None:
-        if self._initialized:
-            return
-        async with self._initialize_lock:
-            if self._initialized:
-                return
-            await self._pg.init_schema([_DDL])
-            await self._migrate_artifact_columns()
-            await self._import_local_templates()
-            self._initialized = True
-
-    async def _migrate_artifact_columns(self) -> None:
-        rows = await self._pg.fetch_all(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema = 'public'
-              AND table_name = 'ai_collect_templates'
-            """
-        )
-        columns = {str(row["column_name"]) for row in rows}
-        if "template_object_key" in columns:
-            await self._pg.execute(
-                """
-                UPDATE public.ai_collect_templates
-                SET template = template_object_key
-                WHERE template = '' AND template_object_key <> ''
-                """
-            )
-        if "favicon_object_key" in columns:
-            await self._pg.execute(
-                """
-                UPDATE public.ai_collect_templates
-                SET icon = favicon_object_key
-                WHERE icon = '' AND favicon_object_key <> ''
-                """
-            )
-        for column in (
-            "favicon_data",
-            "favicon_url",
-            "favicon_mime",
-            "favicon_sha256",
-            "favicon_size",
-            "favicon_object_key",
-            "template_object_key",
-            "template_sha256",
-            "template_size",
-            "yaml_content",
-            "output_tag",
-        ):
-            await self._pg.execute(
-                f"ALTER TABLE public.ai_collect_templates DROP COLUMN IF EXISTS {column}"
-            )
+        """Connect runtime storage; schema changes belong to scripts.init_ai_collect."""
+        await self._pg.connect()
 
     @staticmethod
     def _resolved_template_base_url(raw: dict[str, Any]) -> str:
@@ -295,46 +157,6 @@ class AICollectStore:
                         "icon": favicon_key,
                     },
                 )
-
-    async def _import_local_templates(self) -> None:
-        template_dir = Path(settings.template_dir)
-        if not template_dir.exists():
-            return
-        for path in sorted([*template_dir.glob("*.yaml"), *template_dir.glob("*.yml")]):
-            try:
-                content = path.read_text(encoding="utf-8")
-                raw = yaml.safe_load(content)
-                if not isinstance(raw, dict):
-                    continue
-                name = str(raw.get("name") or path.stem)
-                version = str(raw.get("version") or "v1.0")
-                title = str(raw.get("display_name") or name.replace("_", " ").title())
-                base_url = str(raw.get("base_url") or "")
-                domain = urlparse(base_url).hostname or base_url
-                adapter_path = Path("app/adapters") / f"{name}.py"
-                await self._pg.execute(
-                    """
-                    INSERT INTO public.ai_collect_templates
-                        (name, version, title, domain, data_type, status, adapter, description)
-                    VALUES
-                        (:name, :version, :title, :domain, :data_type, 'active', :adapter, :description)
-                    ON CONFLICT (name, version) DO UPDATE SET
-                        data_type = EXCLUDED.data_type
-                    WHERE public.ai_collect_templates.data_type = 'other'
-                      AND EXCLUDED.data_type <> 'other'
-                    """,
-                    {
-                        "name": name,
-                        "version": version,
-                        "title": title,
-                        "domain": domain,
-                        "data_type": str(raw.get("data_type") or "other"),
-                        "adapter": adapter_path.as_posix() if adapter_path.exists() else "",
-                        "description": str(raw.get("description") or ""),
-                    },
-                )
-            except Exception:
-                continue
 
     async def save_analysis(self, payload: dict[str, Any]) -> None:
         await self.initialize()
@@ -830,7 +652,10 @@ class AICollectStore:
                 **payload,
                 "schedule": json.dumps(payload.get("schedule", {}), ensure_ascii=False),
                 "parameters": json.dumps(payload.get("parameters", {}), ensure_ascii=False),
-                "policies": json.dumps(payload.get("policies", {}), ensure_ascii=False),
+                "policies": json.dumps({
+                    key: value for key, value in payload.get("policies", {}).items()
+                    if key not in {"watermark", "incremental_field"}
+                }, ensure_ascii=False),
             },
         )
         if task is None:
