@@ -158,7 +158,8 @@ class ETLBase:
         )
         await ensure_ddlregistry_table(self._pg)
         for table in self._handlers:
-            await self._ensure_registered_table(table, self._table_role, create_partitions=False)
+            if await get_registered_ddl(self._pg, self._layer, table, self._table_role):
+                await self._ensure_registered_table(table, self._table_role, create_partitions=False)
 
     async def _ddl_for_table(self, table: str) -> str:
         ddl_from_registry = await get_registered_ddl(
