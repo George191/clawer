@@ -6,7 +6,12 @@ import json
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
-from app.etl.normalizers.base import apply_asset_path_overrides, safe_datetime, safe_str
+from app.etl.normalizers.base import (
+    apply_asset_path_overrides,
+    safe_datetime,
+    safe_local_asset_path,
+    safe_str,
+)
 from app.utils.record_id import resolve_record_id
 from app.utils.twitter_record import project_twitter_record
 
@@ -157,10 +162,9 @@ def normalize_twitter(record: dict[str, Any]) -> list[dict[str, Any]]:
             "media_index": index,
             "media_type": safe_str(media["type"]),
             "platform_media_id": media_id,
-            "media_url": safe_str(media.get("url")),
-            "minio_path": safe_str(downloaded_tweet["media"][index].get("url"))
+            "source_url": safe_str(media.get("url")),
+            "url": safe_local_asset_path(downloaded_tweet["media"][index].get("url"))
             if ("media", str(index), "url") in asset_paths else None,
-            "preview_url": safe_str(media.get("thumbnail_url") or media.get("preview")),
             "width": media.get("width"),
             "height": media.get("height"),
             "duration_ms": media.get("duration"),

@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from app.etl.normalizers import register_normalizer
-from app.etl.normalizers.base import apply_asset_path_overrides, safe_str
+from app.etl.normalizers.base import apply_asset_path_overrides, safe_local_asset_path, safe_str
 
 
 def _meta(record: dict[str, Any]) -> dict[str, Any]:
@@ -42,6 +42,10 @@ def normalize_sec_edgar_filing_document(record: dict[str, Any]) -> dict[str, Any
 
     meta = _meta(record)
     record_id = safe_str(meta.get("record_id"))
+    downloaded_record, _ = apply_asset_path_overrides(record)
+    source_url = safe_str(pick("source_url")) or safe_str(pick("url"))
+    if safe_local_asset_path(source_url):
+        source_url = None
     return {
         "record_id": record_id,
         "data_source": safe_str(meta.get("data_source")),
@@ -52,8 +56,8 @@ def normalize_sec_edgar_filing_document(record: dict[str, Any]) -> dict[str, Any
         "description": safe_str(pick("description")),
         "filename": safe_str(pick("filename")),
         "size": safe_str(pick("size")),
-        "url": safe_str(pick("url")),
-        "source_url": safe_str(pick("source_url")) or safe_str(pick("url")),
+        "url": safe_local_asset_path(downloaded_record.get("url")),
+        "source_url": source_url,
         "doc_type": safe_str(pick("doc_type")),
     }
 

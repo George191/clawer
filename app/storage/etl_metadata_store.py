@@ -284,9 +284,8 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_media (
     media_index INTEGER NOT NULL,
     media_type TEXT NOT NULL,
     platform_media_id TEXT,
-    media_url TEXT,
-    minio_path TEXT,
-    preview_url TEXT,
+    source_url TEXT,
+    url TEXT,
     width INTEGER,
     height INTEGER,
     duration_ms BIGINT,
@@ -298,7 +297,14 @@ CREATE TABLE IF NOT EXISTS ts_ods.ods_social_media (
 ) PARTITION BY HASH (record_id, data_source, data_type);
 CREATE INDEX IF NOT EXISTS idx_social_media_content
     ON ts_ods.ods_social_media (content_id, media_index);
-ALTER TABLE ts_ods.ods_social_media ADD COLUMN IF NOT EXISTS minio_path TEXT;
+DO $$ BEGIN ALTER TABLE ts_ods.ods_social_media RENAME COLUMN media_url TO source_url; EXCEPTION WHEN undefined_column THEN NULL; END $$;
+DO $$ BEGIN ALTER TABLE ts_ods.ods_social_media RENAME COLUMN minio_path TO url; EXCEPTION WHEN undefined_column THEN NULL; END $$;
+ALTER TABLE ts_ods.ods_social_media ADD COLUMN IF NOT EXISTS source_url TEXT;
+ALTER TABLE ts_ods.ods_social_media ADD COLUMN IF NOT EXISTS url TEXT;
+ALTER TABLE ts_ods.ods_social_media DROP COLUMN IF EXISTS preview_url;
+UPDATE ts_ods.ods_social_media
+SET source_url = COALESCE(NULLIF(BTRIM(source_url), ''), BTRIM(url)), url = NULL
+WHERE BTRIM(url) ~* '^(https?:)?//';
 """.strip(),
     "social_hashtag": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_social_hashtag (
@@ -586,6 +592,9 @@ CREATE INDEX "idx_ods_filing_document_accession" ON "ts_ods"."ods_filing_documen
 -- ----------------------------
 ALTER TABLE "ts_ods"."ods_filing_document" ADD CONSTRAINT "ods_filing_document_pkey" PRIMARY KEY ("record_id", "data_source", "data_type");
 ALTER TABLE ts_ods.ods_filing_document ADD COLUMN IF NOT EXISTS source_url TEXT;
+UPDATE ts_ods.ods_filing_document
+SET source_url = COALESCE(NULLIF(BTRIM(source_url), ''), BTRIM(url)), url = NULL
+WHERE BTRIM(url) ~* '^(https?:)?//';
 """.strip(),
 }
 

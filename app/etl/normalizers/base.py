@@ -16,6 +16,11 @@ def safe_str(val: Any) -> str | None:
     return str(val).strip() or None
 
 
+def safe_local_asset_path(val: Any) -> str | None:
+    value = safe_str(val) if isinstance(val, str) else None
+    return value if value and not value.lower().startswith(("http://", "https://", "//")) else None
+
+
 def safe_date(val: Any) -> date | None:
     if val is None:
         return None

@@ -357,19 +357,18 @@ RETURNING *
 ODS_SOCIAL_MEDIA_INSERT = """
 INSERT INTO ts_ods.ods_social_media (
     record_id, data_source, data_type, content_id, media_index, media_type,
-    platform_media_id, media_url, minio_path, preview_url, width, height, duration_ms,
+    platform_media_id, source_url, url, width, height, duration_ms,
     alt_text, extra, created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type, :content_id, :media_index, :media_type,
-    :platform_media_id, :media_url, :minio_path, :preview_url, :width, :height, :duration_ms,
+    :platform_media_id, :source_url, :url, :width, :height, :duration_ms,
     :alt_text, CAST(:extra AS jsonb), CAST(:created_at AS timestamptz),
     CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
     content_id = EXCLUDED.content_id, media_index = EXCLUDED.media_index,
     media_type = EXCLUDED.media_type, platform_media_id = EXCLUDED.platform_media_id,
-    media_url = EXCLUDED.media_url, preview_url = EXCLUDED.preview_url,
-    minio_path = EXCLUDED.minio_path,
+    source_url = EXCLUDED.source_url, url = EXCLUDED.url,
     width = EXCLUDED.width, height = EXCLUDED.height, duration_ms = EXCLUDED.duration_ms,
     alt_text = EXCLUDED.alt_text, extra = EXCLUDED.extra, updated_at = EXCLUDED.updated_at
 RETURNING *
