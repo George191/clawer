@@ -123,6 +123,8 @@ class SyncWorker:
             await redis.mset(thresholds)
 
         for task_id, count in synced_by_task.items():
+            if await ai_collect_store.get_task_control(task_id) is None:
+                continue
             await ai_collect_store.increment_task_stats(task_id, synced=count)
             await ai_collect_store.append_task_log(
                 task_id,
