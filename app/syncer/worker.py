@@ -2,7 +2,7 @@
 
 工作流程
 --------
-1. 根据 Redis DB 2 中各集合的时间阈值，按 updated_at 升序读取记录，不等待下载
+1. 根据 Redis DB 3 中各源独立 key 的时间阈值，按 updated_at 升序读取记录，不等待下载
 2. 批量推送记录到 Kafka 指定主题
 3. 整批成功后，将各集合最后一条记录的时间和分页 ID 存入 Redis
 
@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from app.base.kafka import KafkaProducer
 from app.base.mongo import MongoClient
 from app.base.redis_connection import RedisConnection
-from app.config.settings import settings
+from app.config.settings import redis_url_with_database, settings
 from app.logger import get_logger
 from app.web.services.ai_collect_store import ai_collect_store
 
@@ -41,8 +41,7 @@ class SyncWorker:
         self._template_name = template_name
         self._kafka: KafkaProducer | None = None
         self._mongo = MongoClient()
-        self._redis = RedisConnection(settings.etl_redis_url)
-        self._watermark_key = f"kafka:syncer:{settings.kafka_topic}:{settings.db_name}"
+        self._redis = RedisConnection(redis_url_with_database(settings.redis_url, 3))
         self._running = False
 
     async def run(self) -> None:
@@ -68,12 +67,18 @@ class SyncWorker:
     async def _process_batch(self) -> int:
         redis = await self._redis.ensure_connected()
         if redis is None:
-            raise RuntimeError("Syncer requires Redis DB 2 for its time threshold")
-        cached = await redis.hgetall(self._watermark_key)
+            raise RuntimeError("Syncer requires Redis DB 3 for its time threshold")
+        keys = [key async for key in redis.scan_iter()]
+        cached = await redis.mget(keys) if keys else []
         watermarks = {}
-        for collection, value in cached.items():
-            updated_at, record_id = json.loads(value)
-            watermarks[collection] = (datetime.fromisoformat(updated_at).replace(tzinfo=None), record_id)
+        for key, value in zip(keys, cached):
+            if value is None:
+                continue
+            cursor = json.loads(value)
+            watermarks[key] = (
+                datetime.fromisoformat(cursor["updated_at"]).replace(tzinfo=None),
+                cursor.get("record_id", ""),
+            )
         ready = await self._mongo.get_ready_to_sync(
             template_name=self._template_name,
             limit=self._batch_size,
@@ -111,11 +116,11 @@ class SyncWorker:
             thresholds = {}
             for record in ready:
                 meta = record["_meta"]
-                thresholds[meta["template"]] = json.dumps([
-                    meta["updated_at"].replace(tzinfo=timezone.utc).isoformat(),
-                    meta["record_id"],
-                ])
-            await redis.hset(self._watermark_key, mapping=thresholds)
+                thresholds[meta["template"]] = json.dumps({
+                    "updated_at": meta["updated_at"].replace(tzinfo=timezone.utc).isoformat(),
+                    "record_id": meta["record_id"],
+                })
+            await redis.mset(thresholds)
 
         for task_id, count in synced_by_task.items():
             await ai_collect_store.increment_task_stats(task_id, synced=count)
