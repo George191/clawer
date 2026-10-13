@@ -106,7 +106,7 @@ class MinioClient:
     def build_object_url(self, object_key: str) -> str:
         if not object_key or object_key.startswith(("http://", "https://")):
             return object_key
-        endpoint = settings.minio_endpoint.rstrip("/")
+        endpoint = settings.minio_public_endpoint.rstrip("/")
         if not endpoint.startswith(("http://", "https://")):
             scheme = "https" if settings.minio_secure else "http"
             endpoint = f"{scheme}://{endpoint}"
