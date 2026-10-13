@@ -545,13 +545,20 @@ class AICollectStore:
 
     async def append_task_log(self, task_id: str, level: str, message: str) -> None:
         await self.initialize()
-        await self._pg.execute(
+        log = await self._pg.fetch_one(
             """
             INSERT INTO public.ai_collect_task_logs (task_id, level, message)
-            VALUES (CAST(:task_id AS uuid), :level, :message)
+            SELECT task.id, :level, :message
+            FROM public.ai_collect_tasks task
+            WHERE task.id = CAST(:task_id AS uuid)
+            FOR KEY SHARE
+            RETURNING task_id
             """,
             {"task_id": task_id, "level": level, "message": message},
         )
+        if log is None:
+            logger.warning("Skipping log for missing workspace task %s", task_id)
+            return
         await publish_task_change(task_id)
 
     async def append_task_logs(
