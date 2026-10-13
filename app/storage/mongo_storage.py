@@ -83,6 +83,7 @@ class MongoStorage(StorageBackend):
         collection = self._db[collection_name]
         if collection_name not in self._initialized_collections:
             await collection.create_index("_meta.record_id", unique=True)
+            await collection.create_index([("_meta.updated_at", 1), ("_meta.record_id", 1)])
             if collection_name == "tw_tweet":
                 await collection.create_index("author_id")
             if collection_name == FACT_COLLECTION:
