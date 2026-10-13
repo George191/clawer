@@ -1,15 +1,15 @@
-"""同步 Worker — 监听 MongoDB，将已下载完成的记录推送至 Kafka。
+"""同步 Worker — 监听 MongoDB，将新增或修改的记录推送至 Kafka。
 
 工作流程
 --------
-1. 轮询 MongoDB 中 `download_status=downloaded` 且 `sync_status=pending` 的记录
+1. 轮询 MongoDB 中待同步或 `updated_at > synced_at` 的记录，不等待下载
 2. 批量推送记录到 Kafka 指定主题
-3. 推送成功后更新 MongoDB 中记录的 `sync_status` 为 synced
+3. 推送成功后将对应版本的 `sync_status` 标为 synced，并记录 `synced_at`
 
 设计原则
 --------
 - 与采集、下载完全解耦，独立运行
-- 幂等性：通过 sync_status 状态字段保证不重复推送
+- 增量同步：通过 updated_at 与 synced_at 判断记录是否有新版本
 - 批量处理：通过 batch_size 控制每次推送数量
 """
 
@@ -107,6 +107,7 @@ class SyncWorker:
                     sent_count += 1
                     await self._mongo.update_sync_status(
                         template_name, data_type, record_id, "synced",
+                        updated_at=record_meta.get("updated_at"),
                     )
                     workspace_task_id = str(
                         (record_meta.get("search_params") or {}).get(

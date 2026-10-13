@@ -1,4 +1,4 @@
-"""同步服务入口 — 独立进程运行 SyncWorker 将已下载记录推送至 Kafka。
+"""同步服务入口 — 独立进程运行 SyncWorker 将新增或修改记录推送至 Kafka。
 
 启动参数：
     --template <name>    只处理指定模板（默认扫描所有模板）

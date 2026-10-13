@@ -34,16 +34,20 @@ from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)
 
-_SYNC_READY_DOWNLOAD_STATUSES = ("downloaded", "no_assets", "failed")
-
 
 def _ready_to_sync_filter() -> dict[str, Any]:
-    """Select records the syncer can publish without scanning synced records."""
+    """Select new records and versions newer than their last synced version."""
     return {
-        "_meta.download_status": {"$in": _SYNC_READY_DOWNLOAD_STATUSES},
         "$or": [
             {"_meta.sync_status": "pending"},
             {"_meta.sync_status": {"$exists": False}},
+            {
+                "_meta.sync_status": "synced",
+                "$expr": {"$gt": [
+                    "$_meta.updated_at",
+                    {"$ifNull": ["$_meta.synced_at", None]},
+                ]},
+            },
         ],
     }
 
@@ -456,16 +460,20 @@ class MongoStorage(StorageBackend):
         data_type: str,
         record_id: str,
         sync_status: str,
+        *,
+        updated_at: datetime | None = None,
     ) -> None:
         collection = await self._get_collection(template_name)
+        query = {"_meta.record_id": record_id}
+        set_fields: dict[str, Any] = {"_meta.sync_status": sync_status}
+        if sync_status == "synced":
+            # Acknowledge only the version sent to Kafka, never a concurrent update.
+            if updated_at is not None:
+                query["_meta.updated_at"] = updated_at
+            set_fields["_meta.synced_at"] = updated_at or datetime.now(timezone.utc)
         await collection.update_one(
-            {"_meta.record_id": record_id},
-            {
-                "$set": {
-                    "_meta.sync_status": sync_status,
-                    "_meta.updated_at": datetime.now(timezone.utc),
-                }
-            },
+            query,
+            {"$set": set_fields},
         )
         logger.debug("Updated sync_status for %s: %s", record_id, sync_status)
 
