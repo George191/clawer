@@ -101,6 +101,7 @@ class AppSettings(BaseSettings):
         return redis_url_with_database(self.redis_url, REDIS_ETL_DB)
 
     minio_endpoint: str = Field(default="", description="MinIO服务地址, 如 localhost:9000")
+    minio_public_endpoint: str = Field(default="", description="MinIO前端访问地址, 留空则使用内部服务地址")
     minio_access_key: str = Field(default="", description="MinIO Access Key")
     minio_secret_key: str = Field(default="", description="MinIO Secret Key")
     minio_bucket: str = Field(default="", description="MinIO存储桶名称")
