@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
@@ -22,6 +23,7 @@ logger = get_logger(__name__)
 class AICollectStore:
     def __init__(self) -> None:
         self._pg = get_pg_client()
+        self._initialize_lock = asyncio.Lock()
 
     @staticmethod
     def _is_image_content(content: bytes) -> bool:
@@ -39,7 +41,8 @@ class AICollectStore:
 
     async def initialize(self) -> None:
         """Connect runtime storage; schema changes belong to scripts.init_ai_collect."""
-        await self._pg.connect()
+        async with self._initialize_lock:
+            await self._pg.connect()
 
     @staticmethod
     def _resolved_template_base_url(raw: dict[str, Any]) -> str:
