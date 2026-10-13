@@ -35,19 +35,18 @@ from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 logger = get_logger(__name__)
 
 
-def _ready_to_sync_filter() -> dict[str, Any]:
-    """Select new records and versions newer than their last synced version."""
+def _ready_to_sync_filter(
+    watermark: tuple[datetime, str] | None = None,
+) -> dict[str, Any]:
+    """Filter by the Redis time cursor, independently of download/sync status."""
+    if watermark is None:
+        return {"_meta.updated_at": {"$exists": True}}
+    updated_at, record_id = watermark
     return {
+        "_meta.updated_at": {"$gte": updated_at},
         "$or": [
-            {"_meta.sync_status": "pending"},
-            {"_meta.sync_status": {"$exists": False}},
-            {
-                "_meta.sync_status": "synced",
-                "$expr": {"$gt": [
-                    "$_meta.updated_at",
-                    {"$ifNull": ["$_meta.synced_at", None]},
-                ]},
-            },
+            {"_meta.updated_at": {"$gt": updated_at}},
+            {"_meta.record_id": {"$gt": record_id}},
         ],
     }
 
@@ -501,15 +500,20 @@ class MongoStorage(StorageBackend):
         template_name: str | None = None,
         data_type: str | None = None,
         limit: int = 100,
+        *,
+        watermarks: dict[str, tuple[datetime, str]] | None = None,
     ) -> list[dict[str, Any]]:
         await self._ensure_connection()
 
-        filter_query = _ready_to_sync_filter()
+        watermarks = watermarks or {}
 
         if template_name:
             # The syncer must not block its hot path on create_index calls.
-            collection = self._db[self._get_collection_name(template_name)]
-            cursor = collection.find(filter_query).limit(limit)
+            coll_name = self._get_collection_name(template_name)
+            collection = self._db[coll_name]
+            cursor = collection.find(_ready_to_sync_filter(watermarks.get(coll_name))).sort([
+                ("_meta.updated_at", 1), ("_meta.record_id", 1),
+            ]).limit(limit)
             results: list[dict[str, Any]] = []
             async for doc in cursor:
                 doc.pop("_id", None)
@@ -520,7 +524,9 @@ class MongoStorage(StorageBackend):
         results = []
         for coll_name in await self._db.list_collection_names():
             collection = self._db[coll_name]
-            cursor = collection.find(filter_query).limit(limit)
+            cursor = collection.find(_ready_to_sync_filter(watermarks.get(coll_name))).sort([
+                ("_meta.updated_at", 1), ("_meta.record_id", 1),
+            ]).limit(limit - len(results))
             async for doc in cursor:
                 doc.pop("_id", None)
                 results.append(doc)

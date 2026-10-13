@@ -2,24 +2,26 @@
 
 工作流程
 --------
-1. 轮询 MongoDB 中待同步或 `updated_at > synced_at` 的记录，不等待下载
+1. 根据 Redis DB 2 中各集合的时间阈值，按 updated_at 升序读取记录，不等待下载
 2. 批量推送记录到 Kafka 指定主题
-3. 推送成功后将对应版本的 `sync_status` 标为 synced，并记录 `synced_at`
+3. 整批成功后，将各集合最后一条记录的时间和分页 ID 存入 Redis
 
 设计原则
 --------
 - 与采集、下载完全解耦，独立运行
-- 增量同步：通过 updated_at 与 synced_at 判断记录是否有新版本
+- 增量同步：只根据 updated_at 与 Redis 阈值筛选，不判断同步状态
 - 批量处理：通过 batch_size 控制每次推送数量
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import json
+from datetime import datetime, timezone
 
 from app.base.kafka import KafkaProducer
 from app.base.mongo import MongoClient
+from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
 from app.logger import get_logger
 from app.web.services.ai_collect_store import ai_collect_store
@@ -39,6 +41,8 @@ class SyncWorker:
         self._template_name = template_name
         self._kafka: KafkaProducer | None = None
         self._mongo = MongoClient()
+        self._redis = RedisConnection(settings.etl_redis_url)
+        self._watermark_key = f"kafka:syncer:{settings.kafka_topic}:{settings.db_name}"
         self._running = False
 
     async def run(self) -> None:
@@ -62,53 +66,34 @@ class SyncWorker:
                 await asyncio.sleep(self._poll_interval)
 
     async def _process_batch(self) -> int:
+        redis = await self._redis.ensure_connected()
+        if redis is None:
+            raise RuntimeError("Syncer requires Redis DB 2 for its time threshold")
+        cached = await redis.hgetall(self._watermark_key)
+        watermarks = {}
+        for collection, value in cached.items():
+            updated_at, record_id = json.loads(value)
+            watermarks[collection] = (datetime.fromisoformat(updated_at).replace(tzinfo=None), record_id)
         ready = await self._mongo.get_ready_to_sync(
             template_name=self._template_name,
             limit=self._batch_size,
+            watermarks=watermarks,
         )
         if not ready:
             return 0
 
-        eligible: list[dict[str, Any]] = []
-        for record in ready:
-            task_id = str(
-                (record.get("_meta", {}).get("search_params") or {}).get(
-                    "__workspace_task_id"
-                )
-                or ""
-            )
-            if not task_id:
-                eligible.append(record)
-                continue
-            task_control = await ai_collect_store.get_task_control(task_id)
-            if task_control is None:
-                record.get("_meta", {}).get("search_params", {}).pop(
-                    "__workspace_task_id",
-                    None,
-                )
-                eligible.append(record)
-            elif task_control.get("sync_state") == "running":
-                eligible.append(record)
-        if not eligible:
-            return 0
-
-        logger.info("SyncWorker: pushing %d records to Kafka", len(eligible))
+        logger.info("SyncWorker: pushing %d records to Kafka", len(ready))
 
         sent_count = 0
         synced_by_task: dict[str, int] = {}
-        for record in eligible:
+        for record in ready:
             record_meta = record.get("_meta", {})
             record_id = record_meta.get("record_id", "")
             template_name = record_meta.get("template", "")
-            data_type = record_meta.get("data_type", "")
             if record_id and template_name:
                 try:
                     await self._kafka.send_record(record)
                     sent_count += 1
-                    await self._mongo.update_sync_status(
-                        template_name, data_type, record_id, "synced",
-                        updated_at=record_meta.get("updated_at"),
-                    )
                     workspace_task_id = str(
                         (record_meta.get("search_params") or {}).get(
                             "__workspace_task_id"
@@ -121,6 +106,16 @@ class SyncWorker:
                         )
                 except Exception:
                     logger.exception("SyncWorker: sync failed for %s", record_id)
+
+        if sent_count == len(ready):
+            thresholds = {}
+            for record in ready:
+                meta = record["_meta"]
+                thresholds[meta["template"]] = json.dumps([
+                    meta["updated_at"].replace(tzinfo=timezone.utc).isoformat(),
+                    meta["record_id"],
+                ])
+            await redis.hset(self._watermark_key, mapping=thresholds)
 
         for task_id, count in synced_by_task.items():
             await ai_collect_store.increment_task_stats(task_id, synced=count)
@@ -138,4 +133,5 @@ class SyncWorker:
         if self._kafka:
             await self._kafka.close()
         await self._mongo.close()
+        await self._redis.close()
         logger.info("SyncWorker stopped")
