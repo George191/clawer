@@ -2,7 +2,7 @@
 
 启动参数：
     --template <name>    只处理指定模板（默认扫描所有模板）
-    --datatype <type>    只下载指定 data_type 的记录（默认所有类型）
+    --datatype <type>    按 PostgreSQL 模板的 data_type 筛选（默认所有类型）
     --poll <seconds>      轮询间隔（默认 10）
     --batch <n>           每次处理记录数（默认 50）
     --cik-file <path>     只下载文件中 CIK 对应的 SEC 记录

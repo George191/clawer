@@ -37,6 +37,23 @@ class TemplateLoader:
     def __init__(self, template_dir: str | None = None) -> None:
         self._template_dir = Path(template_dir or settings.template_dir)
 
+    async def list_names_by_data_type(self, data_type: str) -> list[str]:
+        """Read matching released template names using the same version precedence as loading."""
+        rows = await get_pg_client().fetch_all(
+            """
+            SELECT name
+            FROM (
+                SELECT DISTINCT ON (name) name, data_type
+                FROM public.ai_collect_templates
+                ORDER BY name, (status = 'active') DESC, updated_at DESC
+            ) AS templates
+            WHERE data_type = :data_type
+            ORDER BY name
+            """,
+            {"data_type": data_type},
+        )
+        return [row["name"] for row in rows]
+
     def load(
         self,
         name: str,

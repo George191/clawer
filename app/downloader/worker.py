@@ -78,7 +78,9 @@ class DownloadWorker:
 
     async def _read_pending_records(self) -> list[dict[str, Any]]:
         """Read and claim the next pending Mongo records."""
-        collections = collections_for_template(self._template_name)
+        collections = await self._target_collections()
+        if not collections:
+            return []
         start = self._collection_cursor % len(collections)
         collections = collections[start:] + collections[:start]
         self._collection_cursor += 1
@@ -90,16 +92,23 @@ class DownloadWorker:
             count = len(collections) - index
             limit = (remaining + count - 1) // count
             records.extend(await self._mongo.get_pending_downloads(
-                template_name=collection, limit=limit, data_type=self._data_type,
+                template_name=collection, limit=limit,
             ))
         return records
+
+    async def _target_collections(self) -> tuple[str | None, ...]:
+        """Refresh datatype-scoped collections from PostgreSQL on every batch."""
+        if self._data_type is None:
+            return collections_for_template(self._template_name)
+        names = await TemplateLoader().list_names_by_data_type(self._data_type)
+        return tuple(name for name in names if not self._template_name or name == self._template_name)
 
     async def _log_pending_summary(self) -> None:
         """Log pending counts for the selected template and data type."""
         try:
             stats = []
-            for collection in collections_for_template(self._template_name):
-                stats += await self._mongo.get_collection_stats(collection, data_type=self._data_type)
+            for collection in await self._target_collections():
+                stats += await self._mongo.get_collection_stats(collection)
         except Exception as exc:
             logger.error(
                 "DownloadWorker: failed to read pending summary | error=%s: %s",
