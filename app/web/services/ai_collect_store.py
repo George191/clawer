@@ -1043,6 +1043,19 @@ class AICollectStore:
             {"task_id": task_id, "offset": offset, "limit": limit},
         )
 
+    async def get_task_for_execution(self, task_id: str) -> dict[str, Any] | None:
+        """Load crawl configuration without aggregating UI task logs."""
+        await self.initialize()
+        return await self._pg.fetch_one(
+            """
+            SELECT *
+            FROM public.ai_collect_tasks
+            WHERE id = CAST(:id AS uuid)
+              AND deleted_at IS NULL
+            """,
+            {"id": task_id},
+        )
+
     async def get_task_control(self, task_id: str) -> dict[str, Any] | None:
         await self.initialize()
         return await self._pg.fetch_one(
