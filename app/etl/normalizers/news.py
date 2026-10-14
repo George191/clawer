@@ -254,19 +254,6 @@ def normalize_planet_pulse_news(record: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-register_normalizer("news", "ssc_news", normalize_ssc_news)
-register_normalizer("news", "blacksky_press", normalize_blacksky_press)
-register_normalizer("news", "blacksky_news", normalize_blacksky_news)
-register_normalizer("news", "blacksky_posts", normalize_blacksky_posts)
-register_normalizer("news", "satellite_today", normalize_satellite_today)
-register_normalizer("news", "arstechnica", normalize_arstechnica)
-register_normalizer("news", "breakingdefense", normalize_breakingdefense)
-register_normalizer("news", "ssc_press", normalize_ssc_press)
-register_normalizer("news", "unseenlabs_news", normalize_unseenlabs_news)
-register_normalizer("news", "planet_investors_news", normalize_planet_investors_news)
-register_normalizer("news", "planet_pulse_news", normalize_planet_pulse_news)
-
-
 def normalize_n2yo_news(record: dict[str, Any]) -> dict[str, Any]:
     publisher = safe_str(record.get("publisher"))
     record["organization"] = [publisher] if publisher else None
@@ -408,6 +395,18 @@ def normalize_satblog_news(record: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+
+register_normalizer("news", "ssc_news", normalize_ssc_news)
+register_normalizer("news", "blacksky_press", normalize_blacksky_press)
+register_normalizer("news", "blacksky_news", normalize_blacksky_news)
+register_normalizer("news", "blacksky_posts", normalize_blacksky_posts)
+register_normalizer("news", "satellite_today", normalize_satellite_today)
+register_normalizer("news", "arstechnica", normalize_arstechnica)
+register_normalizer("news", "breakingdefense", normalize_breakingdefense)
+register_normalizer("news", "ssc_press", normalize_ssc_press)
+register_normalizer("news", "unseenlabs_news", normalize_unseenlabs_news)
+register_normalizer("news", "planet_investors_news", normalize_planet_investors_news)
+register_normalizer("news", "planet_pulse_news", normalize_planet_pulse_news)
 register_normalizer("news", "n2yo_news", normalize_n2yo_news)
 register_normalizer("news", "russianspaceweb_news", normalize_russianspaceweb_news)
 register_normalizer("news", "thespacedevs_news", normalize_thespacedevs_news)

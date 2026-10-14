@@ -210,7 +210,7 @@ async def _crawl_template(
         lambda: _wait_until_runnable(task_id, celery_task_id)
     )
     try:
-        task = await ai_collect_store.get_task(task_id)
+        task = await ai_collect_store.get_task_for_execution(task_id)
         if task is None:
             logger.warning("Skipping stale workspace crawl task: %s", task_id)
             return {"task_id": task_id, "status": "canceled"}
