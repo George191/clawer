@@ -55,9 +55,10 @@ def iter_sec_financial_facts(record: dict[str, Any]) -> Iterator[dict[str, Any]]
         if not isinstance(concepts, dict):
             raise ValueError(f"Invalid SEC taxonomy: {taxonomy}")
         for concept, spec in concepts.items():
-            if not isinstance(spec, dict) or not isinstance(spec.get("units"), dict):
+            # Legacy company cleanup removed empty units but retained concept metadata.
+            if not isinstance(spec, dict) or not isinstance(spec.get("units", {}), dict):
                 raise ValueError(f"Invalid SEC concept: {taxonomy}.{concept}")
-            for unit, observations in spec["units"].items():
+            for unit, observations in spec.get("units", {}).items():
                 if not isinstance(observations, list):
                     raise ValueError(f"Invalid SEC observations: {taxonomy}.{concept}.{unit}")
                 for observation in observations:
