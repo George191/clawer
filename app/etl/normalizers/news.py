@@ -265,3 +265,158 @@ register_normalizer("news", "ssc_press", normalize_ssc_press)
 register_normalizer("news", "unseenlabs_news", normalize_unseenlabs_news)
 register_normalizer("news", "planet_investors_news", normalize_planet_investors_news)
 register_normalizer("news", "planet_pulse_news", normalize_planet_pulse_news)
+
+
+def normalize_n2yo_news(record: dict[str, Any]) -> dict[str, Any]:
+    publisher = safe_str(record.get("publisher"))
+    record["organization"] = [publisher] if publisher else None
+    normalized = _news_common(record, "n2yo_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_russianspaceweb_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "russianspaceweb_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_thespacedevs_news(record: dict[str, Any]) -> dict[str, Any]:
+    publisher = safe_str(record.get("publisher"))
+    record["organization"] = [publisher] if publisher else None
+    normalized = _news_common(record, "thespacedevs_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_spacedaily_news(record: dict[str, Any]) -> dict[str, Any]:
+    featured_media = record.get("featured_media")
+    record["thumbnail"] = (
+        featured_media.get("source_url") if isinstance(featured_media, dict) else None
+    )
+    if record.get("assets"):
+        record["assets"]["thumbnail"] = (
+            record["assets"].get("featured_media") or {}
+        ).get("source_url")
+    author = record.get("author")
+    record["author"] = author.get("name") if isinstance(author, dict) else None
+    record["summary_html"] = record.get("excerpt_html")
+    record["tags"] = record.get("tag_names")
+    normalized = _news_common(record, "spacedaily_news")
+    normalized["news_type"] = json_dumps(record.get("category_names"))
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_space_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "space_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_spaceflightnow_news(record: dict[str, Any]) -> dict[str, Any]:
+    featured_media = record.get("featured_media")
+    record["thumbnail"] = (
+        featured_media.get("source_url") if isinstance(featured_media, dict) else None
+    )
+    if record.get("assets"):
+        record["assets"]["thumbnail"] = (
+            record["assets"].get("featured_media") or {}
+        ).get("source_url")
+    author = record.get("author")
+    record["author"] = author.get("name") if isinstance(author, dict) else None
+    record["summary_html"] = record.get("excerpt_html")
+    record["tags"] = record.get("tag_names")
+    normalized = _news_common(record, "spaceflightnow_news")
+    normalized["news_type"] = json_dumps(record.get("category_names"))
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_clearspace_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "clearspace_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_defensenews_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "defensenews_news")
+    normalized["news_type"] = json_dumps(record.get("category_names"))
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_defenseone_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "defenseone_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_spaceintel101_news(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = _news_common(record, "spaceintel101_news")
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_spacenews_news(record: dict[str, Any]) -> dict[str, Any]:
+    featured_media = record.get("featured_media")
+    record["thumbnail"] = (
+        featured_media.get("source_url") if isinstance(featured_media, dict) else None
+    )
+    if record.get("assets"):
+        record["assets"]["thumbnail"] = (
+            record["assets"].get("featured_media") or {}
+        ).get("source_url")
+    author = record.get("author")
+    record["author"] = author.get("name") if isinstance(author, dict) else None
+    record["summary_html"] = record.get("excerpt_html")
+    record["tags"] = record.get("tag_names")
+    normalized = _news_common(record, "spacenews_news")
+    normalized["news_type"] = json_dumps(record.get("category_names"))
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+def normalize_satblog_news(record: dict[str, Any]) -> dict[str, Any]:
+    featured_media = record.get("featured_media")
+    record["thumbnail"] = (
+        featured_media.get("source_url") if isinstance(featured_media, dict) else None
+    )
+    if record.get("assets"):
+        record["assets"]["thumbnail"] = (
+            record["assets"].get("featured_media") or {}
+        ).get("source_url")
+    author = record.get("author")
+    record["author"] = author.get("name") if isinstance(author, dict) else None
+    record["summary_html"] = record.get("excerpt_html")
+    record["tags"] = record.get("tag_names")
+    normalized = _news_common(record, "satblog_news")
+    normalized["news_type"] = json_dumps(record.get("category_names"))
+    normalized["source_published_at"] = safe_datetime(record.get("date"))
+    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
+    return normalized
+
+
+register_normalizer("news", "n2yo_news", normalize_n2yo_news)
+register_normalizer("news", "russianspaceweb_news", normalize_russianspaceweb_news)
+register_normalizer("news", "thespacedevs_news", normalize_thespacedevs_news)
+register_normalizer("news", "spacedaily_news", normalize_spacedaily_news)
+register_normalizer("news", "space_news", normalize_space_news)
+register_normalizer("news", "spaceflightnow_news", normalize_spaceflightnow_news)
+register_normalizer("news", "clearspace_news", normalize_clearspace_news)
+register_normalizer("news", "defensenews_news", normalize_defensenews_news)
+register_normalizer("news", "defenseone_news", normalize_defenseone_news)
+register_normalizer("news", "spaceintel101_news", normalize_spaceintel101_news)
+register_normalizer("news", "spacenews_news", normalize_spacenews_news)
+register_normalizer("news", "satblog_news", normalize_satblog_news)
