@@ -348,13 +348,6 @@ def normalize_defenseone_news(record: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def normalize_spaceintel101_news(record: dict[str, Any]) -> dict[str, Any]:
-    normalized = _news_common(record, "spaceintel101_news")
-    normalized["source_published_at"] = safe_datetime(record.get("date"))
-    normalized["source_updated_at"] = safe_datetime(record.get("modified"))
-    return normalized
-
-
 def normalize_spacenews_news(record: dict[str, Any]) -> dict[str, Any]:
     featured_media = record.get("featured_media")
     record["thumbnail"] = (
@@ -416,6 +409,5 @@ register_normalizer("news", "spaceflightnow_news", normalize_spaceflightnow_news
 register_normalizer("news", "clearspace_news", normalize_clearspace_news)
 register_normalizer("news", "defensenews_news", normalize_defensenews_news)
 register_normalizer("news", "defenseone_news", normalize_defenseone_news)
-register_normalizer("news", "spaceintel101_news", normalize_spaceintel101_news)
 register_normalizer("news", "spacenews_news", normalize_spacenews_news)
 register_normalizer("news", "satblog_news", normalize_satblog_news)
