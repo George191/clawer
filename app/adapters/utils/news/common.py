@@ -202,7 +202,9 @@ class HtmlNewsAdapter(NewsBaseAdapter):
             eligible = [r for r in records if r in filtered.records or not r.get(watermark.field)]
         else:
             eligible = records
-        semaphore = asyncio.Semaphore(3)
+        pagination = self._template.list_pagination
+        concurrency = pagination.page_concurrency if pagination else None
+        semaphore = asyncio.Semaphore(concurrency or 3)
 
         async def enrich(record):
             if record.get("requires_subscription"):
