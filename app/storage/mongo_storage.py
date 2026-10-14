@@ -347,17 +347,13 @@ class MongoStorage(StorageBackend):
         fact_storage._db = self._db
         fact_storage._initialized_collections = self._initialized_collections
         batch: list[dict[str, Any]] = []
-        count = 0
         for fact in iter_sec_financial_facts(record):
-            count += 1
             batch.append(fact)
             if len(batch) == 500:
                 await fact_storage.save_records(FACT_COLLECTION, "financial_fact", list(FACT_DEDUP_FIELDS), batch)
                 batch = []
         if batch:
             await fact_storage.save_records(FACT_COLLECTION, "financial_fact", list(FACT_DEDUP_FIELDS), batch)
-        if record["facts"] and count == 0:
-            raise ValueError("Nonempty SEC facts contain no financial observations")
         record.pop("facts")
 
     async def update_file_status(
