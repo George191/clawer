@@ -35,20 +35,9 @@ from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 logger = get_logger(__name__)
 
 
-def _ready_to_sync_filter(
-    watermark: tuple[datetime, str] | None = None,
-) -> dict[str, Any]:
-    """Filter by the Redis time cursor, independently of download/sync status."""
-    if watermark is None:
-        return {"_meta.updated_at": {"$exists": True}}
-    updated_at, record_id = watermark
-    return {
-        "_meta.updated_at": {"$gte": updated_at},
-        "$or": [
-            {"_meta.updated_at": {"$gt": updated_at}},
-            {"_meta.record_id": {"$gt": record_id}},
-        ],
-    }
+def _ready_to_sync_filter() -> dict[str, Any]:
+    """Select unsynced records independently of download status."""
+    return {"_meta.sync_status": {"$ne": "synced"}}
 
 
 class MongoStorage(StorageBackend):
@@ -83,7 +72,6 @@ class MongoStorage(StorageBackend):
         collection = self._db[collection_name]
         if collection_name not in self._initialized_collections:
             await collection.create_index("_meta.record_id", unique=True)
-            await collection.create_index([("_meta.updated_at", 1), ("_meta.record_id", 1)])
             if collection_name == "tw_tweet":
                 await collection.create_index("author_id")
             if collection_name == FACT_COLLECTION:
@@ -388,6 +376,7 @@ class MongoStorage(StorageBackend):
             {
                 "$set": {
                     "_meta.download_status": download_status,
+                    "_meta.sync_status": "pending",
                     "_meta.updated_at": datetime.now(timezone.utc),
                 },
                 "$unset": {
@@ -463,7 +452,9 @@ class MongoStorage(StorageBackend):
         *,
         updated_at: datetime | None = None,
     ) -> None:
-        collection = await self._get_collection(template_name)
+        # Acknowledging a sync must not wait for index creation either.
+        await self._ensure_connection()
+        collection = self._db[self._get_collection_name(template_name)]
         query = {"_meta.record_id": record_id}
         set_fields: dict[str, Any] = {"_meta.sync_status": sync_status}
         if sync_status == "synced":
@@ -501,20 +492,16 @@ class MongoStorage(StorageBackend):
         template_name: str | None = None,
         data_type: str | None = None,
         limit: int = 100,
-        *,
-        watermarks: dict[str, tuple[datetime, str]] | None = None,
     ) -> list[dict[str, Any]]:
         await self._ensure_connection()
 
-        watermarks = watermarks or {}
+        filter_query = _ready_to_sync_filter()
 
         if template_name:
             # The syncer must not block its hot path on create_index calls.
             coll_name = self._get_collection_name(template_name)
             collection = self._db[coll_name]
-            cursor = collection.find(_ready_to_sync_filter(watermarks.get(coll_name))).sort([
-                ("_meta.updated_at", 1), ("_meta.record_id", 1),
-            ]).limit(limit)
+            cursor = collection.find(filter_query).limit(limit)
             results: list[dict[str, Any]] = []
             async for doc in cursor:
                 doc.pop("_id", None)
@@ -525,9 +512,7 @@ class MongoStorage(StorageBackend):
         results = []
         for coll_name in await self._db.list_collection_names():
             collection = self._db[coll_name]
-            cursor = collection.find(_ready_to_sync_filter(watermarks.get(coll_name))).sort([
-                ("_meta.updated_at", 1), ("_meta.record_id", 1),
-            ]).limit(limit - len(results))
+            cursor = collection.find(filter_query).limit(limit - len(results))
             async for doc in cursor:
                 doc.pop("_id", None)
                 results.append(doc)
