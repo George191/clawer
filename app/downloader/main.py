@@ -2,6 +2,7 @@
 
 启动参数：
     --template <name>    只处理指定模板（默认扫描所有模板）
+    --datatype <type>    只下载指定 data_type 的记录（默认所有类型）
     --poll <seconds>      轮询间隔（默认 10）
     --batch <n>           每次处理记录数（默认 50）
     --cik-file <path>     只下载文件中 CIK 对应的 SEC 记录
@@ -25,6 +26,7 @@ def setup_logging(service: str = "downloader") -> None:
 
 async def run() -> None:
     template_name: str | None = None
+    data_type: str | None = None
     poll_interval = 10
     batch_size = 50
     cik_file: str | None = None
@@ -32,6 +34,10 @@ async def run() -> None:
     for i, arg in enumerate(sys.argv):
         if arg == "--template" and i + 1 < len(sys.argv):
             template_name = sys.argv[i + 1]
+        elif arg == "--datatype" and i + 1 < len(sys.argv):
+            data_type = sys.argv[i + 1]
+        elif arg.startswith("--datatype="):
+            data_type = arg.split("=", 1)[1]
         elif arg == "--poll" and i + 1 < len(sys.argv):
             poll_interval = int(sys.argv[i + 1])
         elif arg == "--batch" and i + 1 < len(sys.argv):
@@ -41,6 +47,7 @@ async def run() -> None:
         poll_interval=poll_interval,
         batch_size=batch_size,
         template_name=template_name,
+        data_type=data_type,
     )
     try:
         await worker.run()

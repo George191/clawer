@@ -42,10 +42,12 @@ class DownloadWorker:
         poll_interval: int = 10,
         batch_size: int = 50,
         template_name: str | None = None,
+        data_type: str | None = None,
     ) -> None:
         self._poll_interval = poll_interval
         self._batch_size = batch_size
         self._template_name = template_name
+        self._data_type = data_type
         self._http = HttpClient()
         self._minio = MinioClient()
         self._mongo = MongoClient()
@@ -56,16 +58,18 @@ class DownloadWorker:
     async def run(self) -> None:
         self._running = True
         logger.info(
-            "DownloadWorker started: poll=%ss batch=%s template=%s",
+            "DownloadWorker started: poll=%ss batch=%s template=%s datatype=%s",
             self._poll_interval, self._batch_size, self._template_name or "ALL",
+            self._data_type or "ALL",
         )
         await self._log_pending_summary()
         while self._running:
             records = await self._read_pending_records()
             if records:
                 logger.info(
-                    "DownloadWorker: claimed %d records for template=%s",
+                    "DownloadWorker: claimed %d records for template=%s datatype=%s",
                     len(records), self._template_name or "ALL",
+                    self._data_type or "ALL",
                 )
                 await self._download_list(records)
             else:
@@ -85,15 +89,17 @@ class DownloadWorker:
                 break
             count = len(collections) - index
             limit = (remaining + count - 1) // count
-            records.extend(await self._mongo.get_pending_downloads(template_name=collection, limit=limit))
+            records.extend(await self._mongo.get_pending_downloads(
+                template_name=collection, limit=limit, data_type=self._data_type,
+            ))
         return records
 
     async def _log_pending_summary(self) -> None:
-        """Log pending counts for the selected template or all collections."""
+        """Log pending counts for the selected template and data type."""
         try:
             stats = []
             for collection in collections_for_template(self._template_name):
-                stats += await self._mongo.get_collection_stats(collection)
+                stats += await self._mongo.get_collection_stats(collection, data_type=self._data_type)
         except Exception as exc:
             logger.error(
                 "DownloadWorker: failed to read pending summary | error=%s: %s",
@@ -105,8 +111,8 @@ class DownloadWorker:
         pending = sum(int(item.get("pending_download") or 0) for item in stats)
         scope = self._template_name or "ALL"
         logger.info(
-            "DownloadWorker: pending downloads=%d template=%s collections=%d",
-            pending, scope, len(stats),
+            "DownloadWorker: pending downloads=%d template=%s datatype=%s collections=%d",
+            pending, scope, self._data_type or "ALL", len(stats),
         )
         for item in stats:
             logger.info(

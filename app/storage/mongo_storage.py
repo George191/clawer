@@ -521,6 +521,7 @@ class MongoStorage(StorageBackend):
         template_name: str | None = None,
         limit: int = 50,
         balanced: bool = True,
+        data_type: str | None = None,
     ) -> list[dict[str, Any]]:
         """获取待下载记录。
 
@@ -528,6 +529,7 @@ class MongoStorage(StorageBackend):
             template_name: 指定模板名，None 表示扫描所有模板
             limit: 最大返回记录数
             balanced: 是否均衡分配（轮询各集合，避免单集合独占批次）
+            data_type: 指定记录类型，None 表示所有类型
 
         Returns:
             待下载记录列表，每条记录包含 _meta 字段（含 template）
@@ -535,6 +537,8 @@ class MongoStorage(StorageBackend):
         await self._ensure_connection()
 
         filter_query = self._download_claim_filter()
+        if data_type is not None:
+            filter_query["_meta.data_type"] = data_type
 
         if template_name:
             collection = await self._get_collection(template_name)
@@ -650,7 +654,11 @@ class MongoStorage(StorageBackend):
 
         return results
 
-    async def get_collection_stats(self, template_name: str | None = None) -> list[dict[str, Any]]:
+    async def get_collection_stats(
+        self,
+        template_name: str | None = None,
+        data_type: str | None = None,
+    ) -> list[dict[str, Any]]:
         """获取所有集合的概览统计。
 
         Returns:
@@ -658,6 +666,7 @@ class MongoStorage(StorageBackend):
         """
         await self._ensure_connection()
         stats = []
+        filter_query = {"_meta.data_type": data_type} if data_type is not None else {}
         if template_name:
             template_name = self._get_collection_name(template_name)
             all_colls = await self._db.list_collection_names()
@@ -671,17 +680,21 @@ class MongoStorage(StorageBackend):
             coll_names = await self._db.list_collection_names()
         for coll_name in coll_names:
             collection = self._db[coll_name]
-            total = await collection.count_documents({})
+            total = await collection.count_documents(filter_query)
             pending = await collection.count_documents({
+                **filter_query,
                 "_meta.download_status": {"$in": ["pending", "downloading"]},
             })
             downloaded = await collection.count_documents({
+                **filter_query,
                 "_meta.download_status": "downloaded",
             })
             no_assets = await collection.count_documents({
+                **filter_query,
                 "_meta.download_status": "no_assets",
             })
             failed = await collection.count_documents({
+                **filter_query,
                 "_meta.download_status": "failed",
             })
             stats.append({

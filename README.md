@@ -81,6 +81,13 @@ data/             批量采集参数与本地数据文件
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
 
+下载器可按记录的 `_meta.data_type` 精确筛选；不传 `--datatype` 时处理所有类型，也可与 `--template` 同用：
+
+```bash
+python -m app.downloader.main --datatype news
+python -m app.downloader.main --template sec_edgar --datatype=filing
+```
+
 ## 外部基础设施
 
 MongoDB、Redis、MinIO、Kafka 和 PostgreSQL/TimescaleDB 由外部环境提供，
