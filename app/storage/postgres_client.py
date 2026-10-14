@@ -36,6 +36,13 @@ PG_READ_MAX_ATTEMPTS = 3
 PG_READ_RETRY_WAIT = 0.2
 
 _DDL_STMT_SEP = re.compile(r";\s*\n\s*")
+_DDL_INDEX_IF_NOT_EXISTS = re.compile(
+    r'^CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+'
+    r'(?P<index>"(?:[^"]|"")*"|[\w$]+)\s+ON\s+(?:ONLY\s+)?'
+    r'(?P<table>(?:"(?:[^"]|"")*"|[\w$]+)'
+    r'(?:\s*\.\s*(?:"(?:[^"]|"")*"|[\w$]+))?)',
+    re.IGNORECASE,
+)
 
 # SQLAlchemy 2.0+ TimeoutError 兼容
 try:
@@ -223,6 +230,25 @@ class PostgresClient:
             for block in ddl_blocks:
                 stmts = [s.strip() for s in _DDL_STMT_SEP.split(block) if s.strip()]
                 for stmt in stmts:
+                    index_match = _DDL_INDEX_IF_NOT_EXISTS.match(stmt)
+                    if index_match:
+                        index_name = index_match["index"]
+                        index_name = (
+                            index_name[1:-1].replace('""', '"')
+                            if index_name.startswith('"') else index_name.lower()
+                        )
+                        # PostgreSQL locks the table before checking IF NOT EXISTS.
+                        # A catalog lookup avoids waiting on writers for an existing index.
+                        existing_index = await session.execute(text("""
+                            SELECT 1
+                            FROM pg_class index_rel
+                            JOIN pg_class table_rel
+                              ON table_rel.relnamespace = index_rel.relnamespace
+                            WHERE table_rel.oid = to_regclass(:table_name)
+                              AND index_rel.relname = :index_name
+                        """), {"table_name": index_match["table"], "index_name": index_name})
+                        if existing_index.scalar_one_or_none() is not None:
+                            continue
                     await session.execute(text(stmt))
         logger.info("Postgres schema initialization completed")
 
