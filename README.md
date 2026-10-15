@@ -203,6 +203,26 @@ npm run dev
 - 健康检查: `http://localhost:8000/api/health`
 - 前端开发服务: `http://localhost:5173`
 
+## Syncer
+
+Compose 为 news、patent、navwarn、intelligence、company、financial_fact、filing、account、tweet
+分别启动独立 Syncer 容器。原 `syncer` 服务负责 news，其余服务为 `syncer-<类型>`（服务名中的下划线改为连字符）。
+每批从 MongoDB 读取 50 条，进程内最多 10 个协程同时发送及回写状态；Kafka 中每条记录仍是独立消息。
+仅发送成功后标记对应版本为 synced，失败记录保留待重试。
+指定类型时，每批通过 PostgreSQL 模板表按 data_type 查询模板名称，只读取同名 MongoDB 集合；MongoDB 查询仅过滤同步状态。
+
+```bash
+python -m app.syncer.main --data-type financial_fact --batch 50 --concurrency 10
+```
+
+指定类型后发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 `spider-crawler-financial_fact`。
+不传 `--data-type` 时保留旧行为：扫描全部类型并发送到 `SPIDER_KAFKA_TOPIC`。
+同一范围只运行一个 Syncer 实例，勿同时运行全类型旧实例和新的分类型实例，以免重复发送。
+
+切换前创建上述类型 topic（分区及副本数按集群配置），停止旧 Syncer，先更新 RDS Worker，再启动分类型 Syncer。
+RDS 同时订阅旧 `SPIDER_ETL_RAW_TOPIC` 和新类型 topic，沿用原消费组排空旧积压；本版本未改变 RDS/ODS 的串行处理逻辑。
+Syncer 需要重建 `docker/syncer.Dockerfile` 镜像，RDS 需要重建 `docker/etl.Dockerfile` 镜像。
+
 ## ETL
 
 ETL Worker 依赖 Kafka 与 PostgreSQL/TimescaleDB。常用启动方式：
