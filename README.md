@@ -81,11 +81,11 @@ data/             批量采集参数与本地数据文件
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
 
-下载器可按记录的 `_meta.data_type` 精确筛选；不传 `--datatype` 时处理所有类型，也可与 `--template` 同用：
+下载器可按 PostgreSQL 模板的 `data_type` 筛选，以模板 `name` 作为 MongoDB 集合名。匹配集合的待下载记录合并成一批（总数不超过 `--batch`）统一下载，每批完成后及空闲轮询时重新读取模板名单，自动识别新增模板。不传 `--datatype` 时处理所有类型，也可与 `--template` 同用：
 
 ```bash
 python -m app.downloader.main --datatype news
-python -m app.downloader.main --template sec_edgar --datatype=filing
+python -m app.downloader.main --template ssc_news --datatype=news
 ```
 
 ## 外部基础设施

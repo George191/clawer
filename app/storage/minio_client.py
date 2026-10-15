@@ -15,6 +15,7 @@ from functools import partial
 from io import BytesIO
 from pathlib import Path
 from typing import BinaryIO
+from urllib.parse import urlsplit, urlunsplit
 
 import urllib3
 
@@ -104,12 +105,18 @@ class MinioClient:
         return f"{data_type}/{template_name}/{filename}"
 
     def build_object_url(self, object_key: str) -> str:
-        if not object_key or object_key.startswith(("http://", "https://")):
+        if not object_key:
             return object_key
-        endpoint = settings.minio_public_endpoint.rstrip("/")
+        endpoint = (settings.minio_public_endpoint or settings.minio_endpoint).rstrip("/")
         if not endpoint.startswith(("http://", "https://")):
             scheme = "https" if settings.minio_secure else "http"
             endpoint = f"{scheme}://{endpoint}"
+        if object_key.startswith(("http://", "https://")):
+            parsed = urlsplit(object_key)
+            internal = urlsplit(f"//{settings.minio_endpoint}")
+            if parsed.netloc != internal.netloc or not parsed.path.startswith(f"/{self._bucket}/"):
+                return object_key
+            return f"{endpoint}{urlunsplit(('', '', parsed.path, parsed.query, parsed.fragment))}"
         return f"{endpoint}/{self._bucket}/{object_key.lstrip('/')}"
 
     def _build_file_url(self, object_key: str) -> str:
