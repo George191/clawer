@@ -20,8 +20,8 @@ import asyncio
 from app.base.kafka import KafkaProducer
 from app.base.mongo import MongoClient
 from app.config.settings import settings
-from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
+from app.storage.syncer_collections import syncer_collection_store
 from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 from app.web.services.ai_collect_store import ai_collect_store
 
@@ -105,11 +105,11 @@ class SyncWorker:
             return await self._mongo.get_ready_to_sync(
                 template_name=self._template_name, limit=self._batch_size,
             )
-        names = await TemplateLoader().list_names_by_data_type(self._data_type)
+        routes = await syncer_collection_store.list_by_data_type(
+            self._data_type, self._template_name,
+        )
         records = []
-        for name in names:
-            if self._template_name and name != self._template_name:
-                continue
+        for name in dict.fromkeys(route["collection_name"] for route in routes):
             records.extend(await self._mongo.get_ready_to_sync(
                 template_name=name, limit=self._batch_size - len(records),
             ))
@@ -122,11 +122,15 @@ class SyncWorker:
             meta = record.get("_meta", {})
             record_id = meta.get("record_id", "")
             template = meta.get("template", "")
-            data_type = self._data_type or TWITTER_COLLECTION_TYPES.get(template) or meta.get("data_type", "")
+            data_type = meta.get("data_type") or TWITTER_COLLECTION_TYPES.get(template, "")
             if not record_id or not template:
                 return False, ""
-            if self._data_type and meta.get("data_type") != data_type:
-                record = {**record, "_meta": {**meta, "data_type": data_type}}
+            if self._data_type and data_type != self._data_type:
+                logger.warning(
+                    "SyncWorker: skipped %s with type=%s (expected %s)",
+                    record_id, data_type, self._data_type,
+                )
+                return False, ""
             try:
                 await self._kafka.send_record(record)
                 await self._mongo.update_sync_status(

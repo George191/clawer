@@ -40,8 +40,16 @@ def resolve_download_record(record: dict[str, Any]) -> tuple[str, str]:
     return template_name, str(meta.get("data_type") or fallback_type).lower()
 
 
-def get_download_adapter(record: dict[str, Any]) -> DownloadHandler | None:
-    template_name, data_type = resolve_download_record(record)
+def get_download_adapter(
+    record: dict[str, Any],
+    *,
+    template_name: str | None = None,
+    data_type: str | None = None,
+) -> DownloadHandler | None:
+    if template_name is None or data_type is None:
+        resolved_template, resolved_type = resolve_download_record(record)
+        template_name = resolved_template if template_name is None else template_name
+        data_type = resolved_type if data_type is None else data_type
     return _HANDLERS.get((template_name, data_type)) or _HANDLERS.get((None, data_type))
 
 

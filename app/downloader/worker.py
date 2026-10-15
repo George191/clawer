@@ -22,6 +22,7 @@ from app.downloader.adapters import (
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate
+from app.storage.syncer_collections import syncer_collection_store
 from app.utils.download_paths import iter_download_nodes, iter_download_values
 from app.utils.path import get_nested_value
 
@@ -52,6 +53,7 @@ class DownloadWorker:
         self._minio = MinioClient()
         self._mongo = MongoClient()
         self._templates: dict[str, SiteTemplate] = {}
+        self._collection_routes: dict[str, dict[str, str]] = {}
         self._running = False
         self._collection_cursor = 0
 
@@ -100,8 +102,11 @@ class DownloadWorker:
         """Refresh datatype-scoped collections from PostgreSQL on every batch."""
         if self._data_type is None:
             return collections_for_template(self._template_name)
-        names = await TemplateLoader().list_names_by_data_type(self._data_type)
-        return tuple(name for name in names if not self._template_name or name == self._template_name)
+        routes = await syncer_collection_store.list_by_data_type(
+            self._data_type, self._template_name,
+        )
+        self._collection_routes = {route["collection_name"]: route for route in routes}
+        return tuple(self._collection_routes)
 
     async def _log_pending_summary(self) -> None:
         """Log pending counts for the selected template and data type."""
@@ -144,7 +149,11 @@ class DownloadWorker:
     async def _download_record(self, record: dict[str, Any]) -> None:
         meta = record.get("_meta") or {}
         collection = meta.get("template")
-        template_name, data_type = resolve_download_record(record)
+        route = self._collection_routes.get(collection)
+        if route is not None:
+            template_name, data_type = route["template_name"], route["data_type"]
+        else:
+            template_name, data_type = resolve_download_record(record)
         record_id = meta.get("record_id")
         claim_token = meta.get("download_claim_token")
         if not collection or not record_id:
@@ -157,7 +166,9 @@ class DownloadWorker:
                 return
 
             items = self._download_template_fields(record, template.download)
-            adapter = get_download_adapter(record)
+            adapter = get_download_adapter(
+                record, template_name=template_name, data_type=data_type,
+            )
             if adapter is not None:
                 items.extend(adapter(record, template, self._filename))
 
