@@ -348,8 +348,6 @@ class DownloadWorker:
         status: str,
         claim_token: str,
     ) -> None:
-        updates = dict(updates)
-        updates["_meta.sync_status"] = "pending"
         await self._mongo.update_download_result(
             collection, record_id, updates, status, claim_token=claim_token,
         )
