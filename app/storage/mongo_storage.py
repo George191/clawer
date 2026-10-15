@@ -375,6 +375,7 @@ class MongoStorage(StorageBackend):
                     "_meta.sync_status": "pending",
                     "_meta.updated_at": datetime.now(timezone.utc),
                 },
+                "$inc": {"_meta.download_version": 1},
                 "$unset": {
                     "_meta.download_claim_token": "",
                 },
@@ -429,6 +430,7 @@ class MongoStorage(StorageBackend):
                     "_meta.sync_status": "pending",
                     "_meta.updated_at": datetime.now(timezone.utc),
                 },
+                "$inc": {"_meta.download_version": 1},
                 "$unset": fields_to_unset,
             },
         )
@@ -448,6 +450,7 @@ class MongoStorage(StorageBackend):
         sync_status: str,
         *,
         updated_at: datetime | None = None,
+        download_version: int | None = None,
     ) -> None:
         # Acknowledging a sync must not wait for index creation either.
         await self._ensure_connection()
@@ -458,6 +461,10 @@ class MongoStorage(StorageBackend):
             # Acknowledge only the version sent to Kafka, never a concurrent update.
             if updated_at is not None:
                 query["_meta.updated_at"] = updated_at
+            if download_version is not None:
+                query["_meta.download_version"] = (
+                    {"$in": [None, 0]} if download_version == 0 else download_version
+                )
             set_fields["_meta.synced_at"] = updated_at or datetime.now(timezone.utc)
         await collection.update_one(
             query,

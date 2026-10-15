@@ -136,6 +136,7 @@ class SyncWorker:
                 await self._mongo.update_sync_status(
                     template, data_type, record_id, "synced",
                     updated_at=meta.get("updated_at"),
+                    download_version=meta.get("download_version", 0),
                 )
                 task_id = str((meta.get("search_params") or {}).get("__workspace_task_id") or "")
                 return True, task_id
