@@ -20,6 +20,10 @@ from typing import Any
 from app.config.settings import settings
 
 KAFKA_MAX_MESSAGE_BYTES = 4 * 1024 * 1024
+SYNC_DATA_TYPES = (
+    "news", "patent", "navwarn", "intelligence", "company",
+    "financial_fact", "filing", "account", "tweet",
+)
 
 
 def get_brokers(bootstrap_servers: str | None = None) -> list[str]:

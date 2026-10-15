@@ -4,15 +4,16 @@
     --template <name>    只处理指定模板（默认扫描所有模板）
     --poll <seconds>      轮询间隔（默认 10）
     --batch <n>           每次处理记录数（默认 50）
+    --data-type <type>    仅同步指定类型，发送到 <SPIDER_KAFKA_TOPIC>-<type>
+    --concurrency <n>     进程内并发 I/O 数（默认 10）
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
-import sys
 
-from app.base.kafka import KafkaProducer
-from app.base.mongo import MongoClient
+from app.base.kafka_config import SYNC_DATA_TYPES
 from app.config.settings import settings
 from app.logger import get_logger, setup_service_logging
 from app.syncer.worker import SyncWorker
@@ -24,30 +25,32 @@ def setup_logging(service: str = "syncer") -> None:
     setup_service_logging(service, settings.log_level)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--template")
+    parser.add_argument("--data-type", choices=SYNC_DATA_TYPES)
+    parser.add_argument("--poll", type=int, default=10)
+    parser.add_argument("--batch", type=int, default=50)
+    parser.add_argument("--concurrency", type=int, default=10)
+    parser.add_argument("--startup-delay", type=int, default=0)
+    args = parser.parse_args()
+    if args.batch < 1 or args.concurrency < 1 or args.poll < 0 or args.startup_delay < 0:
+        parser.error("batch/concurrency must be positive; poll/startup-delay must be non-negative")
+    return args
+
+
 async def run() -> None:
-    template_name: str | None = None
-    startup_delay: int | None = None
-    poll_interval = 10
-    batch_size = 50
-
-    for i, arg in enumerate(sys.argv):
-        if arg == "--template" and i + 1 < len(sys.argv):
-            template_name = sys.argv[i + 1]
-        elif arg == "--poll" and i + 1 < len(sys.argv):
-            poll_interval = int(sys.argv[i + 1])
-        elif arg == "--batch" and i + 1 < len(sys.argv):
-            batch_size = int(sys.argv[i + 1])
-        elif arg == "--startup-delay" and i + 1 < len(sys.argv):
-            startup_delay = int(sys.argv[i + 1])
-
-    if startup_delay:
-        logger.info("Waiting %ds for Kafka to stabilize...", startup_delay)
-        await asyncio.sleep(startup_delay)
+    args = parse_args()
+    if args.startup_delay:
+        logger.info("Waiting %ds for Kafka to stabilize...", args.startup_delay)
+        await asyncio.sleep(args.startup_delay)
 
     worker = SyncWorker(
-        poll_interval=poll_interval,
-        batch_size=batch_size,
-        template_name=template_name,
+        poll_interval=args.poll,
+        batch_size=args.batch,
+        template_name=args.template,
+        data_type=args.data_type,
+        concurrency=args.concurrency,
     )
     try:
         await worker.run()

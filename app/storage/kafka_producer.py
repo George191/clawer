@@ -26,12 +26,17 @@ KAFKA_CONNECT_MAX_RETRY_DELAY = 600
 
 
 class KafkaProducer:
-    def __init__(self) -> None:
+    def __init__(self, topic: str | None = None) -> None:
         self._producer = None
-        self._topic = settings.kafka_topic
+        self._topic = topic or settings.kafka_topic
         self._connected = False
+        self._connect_lock = asyncio.Lock()
 
     async def _ensure_connection(self) -> None:
+        async with self._connect_lock:
+            await self._connect()
+
+    async def _connect(self) -> None:
         if self._producer is not None and self._connected:
             return
 

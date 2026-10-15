@@ -101,7 +101,7 @@ services:
       - asiral-helio
 
   # ── 3. Syncer — Kafka 同步服务 ────────────────────────────
-  syncer:
+  syncer: &syncer
     build:
       context: .
       dockerfile: docker/syncer.Dockerfile
@@ -110,9 +110,49 @@ services:
     env_file:
       - .env
     working_dir: /app
-    command: ["python", "-m", "app.syncer.main", "--poll", "10", "--startup-delay", "15"]
+    command: ["python", "-m", "app.syncer.main", "--data-type", "news", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
     networks:
       - asiral-helio
+
+  syncer-patent:
+    <<: *syncer
+    container_name: syncer-patent
+    command: ["python", "-m", "app.syncer.main", "--data-type", "patent", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-navwarn:
+    <<: *syncer
+    container_name: syncer-navwarn
+    command: ["python", "-m", "app.syncer.main", "--data-type", "navwarn", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-intelligence:
+    <<: *syncer
+    container_name: syncer-intelligence
+    command: ["python", "-m", "app.syncer.main", "--data-type", "intelligence", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-company:
+    <<: *syncer
+    container_name: syncer-company
+    command: ["python", "-m", "app.syncer.main", "--data-type", "company", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-financial-fact:
+    <<: *syncer
+    container_name: syncer-financial-fact
+    command: ["python", "-m", "app.syncer.main", "--data-type", "financial_fact", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-filing:
+    <<: *syncer
+    container_name: syncer-filing
+    command: ["python", "-m", "app.syncer.main", "--data-type", "filing", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-account:
+    <<: *syncer
+    container_name: syncer-account
+    command: ["python", "-m", "app.syncer.main", "--data-type", "account", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-tweet:
+    <<: *syncer
+    container_name: syncer-tweet
+    command: ["python", "-m", "app.syncer.main", "--data-type", "tweet", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
 
   # ── 4. Web — FastAPI 管理面板 ─────────────────────────────
   web:

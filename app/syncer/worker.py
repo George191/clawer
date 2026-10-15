@@ -19,7 +19,10 @@ import asyncio
 
 from app.base.kafka import KafkaProducer
 from app.base.mongo import MongoClient
+from app.config.settings import settings
+from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
+from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
@@ -31,23 +34,32 @@ class SyncWorker:
         poll_interval: int = 10,
         batch_size: int = 50,
         template_name: str | None = None,
+        data_type: str | None = None,
+        concurrency: int = 10,
     ) -> None:
+        if batch_size < 1 or concurrency < 1:
+            raise ValueError("batch_size and concurrency must be positive")
         self._poll_interval = poll_interval
         self._batch_size = batch_size
         self._template_name = template_name
+        self._data_type = data_type
+        self._topic = f"{settings.kafka_topic}-{data_type}" if data_type else settings.kafka_topic
+        self._semaphore = asyncio.Semaphore(concurrency)
         self._kafka: KafkaProducer | None = None
         self._mongo = MongoClient()
         self._running = False
 
     async def run(self) -> None:
         self._running = True
-        self._kafka = KafkaProducer()
+        self._kafka = KafkaProducer(topic=self._topic)
 
         logger.info(
-            "SyncWorker started (poll=%ds, batch=%d, template=%s)",
+            "SyncWorker started (poll=%ds, batch=%d, template=%s, type=%s, topic=%s)",
             self._poll_interval,
             self._batch_size,
             self._template_name,
+            self._data_type,
+            self._topic,
         )
 
         while self._running:
@@ -60,10 +72,7 @@ class SyncWorker:
                 await asyncio.sleep(self._poll_interval)
 
     async def _process_batch(self) -> int:
-        ready = await self._mongo.get_ready_to_sync(
-            template_name=self._template_name,
-            limit=self._batch_size,
-        )
+        ready = await self._read_ready_records()
         if not ready:
             return 0
 
@@ -71,32 +80,12 @@ class SyncWorker:
 
         sent_count = 0
         synced_by_task: dict[str, int] = {}
-        for record in ready:
-            record_meta = record.get("_meta", {})
-            record_id = record_meta.get("record_id", "")
-            template_name = record_meta.get("template", "")
-            data_type = record_meta.get("data_type", "")
-            updated_at = record_meta.get("updated_at")
-            if record_id and template_name:
-                try:
-                    await self._kafka.send_record(record)
-                    await self._mongo.update_sync_status(
-                        template_name, data_type, record_id, "synced",
-                        updated_at=updated_at,
-                    )
-                    sent_count += 1
-                    workspace_task_id = str(
-                        (record_meta.get("search_params") or {}).get(
-                            "__workspace_task_id"
-                        )
-                        or ""
-                    )
-                    if workspace_task_id:
-                        synced_by_task[workspace_task_id] = (
-                            synced_by_task.get(workspace_task_id, 0) + 1
-                        )
-                except Exception:
-                    logger.exception("SyncWorker: sync failed for %s", record_id)
+        results = await asyncio.gather(*(self._sync_record(record) for record in ready))
+        for success, task_id in results:
+            if success:
+                sent_count += 1
+                if task_id:
+                    synced_by_task[task_id] = synced_by_task.get(task_id, 0) + 1
 
         for task_id, count in synced_by_task.items():
             if await ai_collect_store.get_task_control(task_id) is None:
@@ -110,6 +99,45 @@ class SyncWorker:
 
         logger.info("SyncWorker: synced %d records to Kafka", sent_count)
         return sent_count
+
+    async def _read_ready_records(self) -> list[dict]:
+        if self._data_type is None:
+            return await self._mongo.get_ready_to_sync(
+                template_name=self._template_name, limit=self._batch_size,
+            )
+        names = await TemplateLoader().list_names_by_data_type(self._data_type)
+        records = []
+        for name in names:
+            if self._template_name and name != self._template_name:
+                continue
+            records.extend(await self._mongo.get_ready_to_sync(
+                template_name=name, limit=self._batch_size - len(records),
+            ))
+            if len(records) >= self._batch_size:
+                break
+        return records
+
+    async def _sync_record(self, record: dict) -> tuple[bool, str]:
+        async with self._semaphore:
+            meta = record.get("_meta", {})
+            record_id = meta.get("record_id", "")
+            template = meta.get("template", "")
+            data_type = self._data_type or TWITTER_COLLECTION_TYPES.get(template) or meta.get("data_type", "")
+            if not record_id or not template:
+                return False, ""
+            if self._data_type and meta.get("data_type") != data_type:
+                record = {**record, "_meta": {**meta, "data_type": data_type}}
+            try:
+                await self._kafka.send_record(record)
+                await self._mongo.update_sync_status(
+                    template, data_type, record_id, "synced",
+                    updated_at=meta.get("updated_at"),
+                )
+                task_id = str((meta.get("search_params") or {}).get("__workspace_task_id") or "")
+                return True, task_id
+            except Exception:
+                logger.exception("SyncWorker: sync failed for %s", record_id)
+                return False, ""
 
     async def stop(self) -> None:
         self._running = False

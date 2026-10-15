@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.base.kafka_config import SYNC_DATA_TYPES
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
 from app.logger import get_logger
@@ -34,7 +35,9 @@ RETURNING *
 
 class TsRds(ETLBase):
     _layer = "rds"
-    _consumer_topics = [settings.etl_raw_topic]
+    _consumer_topics = [settings.etl_raw_topic] + [
+        f"{settings.kafka_topic}-{data_type}" for data_type in SYNC_DATA_TYPES
+    ]
     _consumer_group = settings.etl_rds_consumer_group
     _producer_topic = settings.etl_rds_topic
     _producer_client_id = "etl-ts-rds-producer"
