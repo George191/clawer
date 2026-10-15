@@ -411,7 +411,7 @@ class MongoStorage(StorageBackend):
         unset_fields: set[str] | None = None,
         claim_token: str | None = None,
     ) -> bool:
-        """Persist downloaded asset paths and final claim status atomically."""
+        """Persist download results and mark the new version pending sync atomically."""
         collection = await self._get_collection(template_name)
         fields_to_unset = {
             "_meta.download_claim_token": "",
@@ -426,6 +426,7 @@ class MongoStorage(StorageBackend):
                 "$set": {
                     **updates,
                     "_meta.download_status": download_status,
+                    "_meta.sync_status": "pending",
                     "_meta.updated_at": datetime.now(timezone.utc),
                 },
                 "$unset": fields_to_unset,
