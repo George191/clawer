@@ -97,7 +97,7 @@ class CeleryAppFactory:
             "enable_utc": True,
 
             # ── 任务执行 ──
-            "task_acks_late": True,                    # 任务完成后才确认（故障恢复）
+            "task_acks_late": False,                   # 开始执行即确认，避免长任务因可见超时重复投递
             "task_reject_on_worker_lost": True,        # Worker 异常退出时拒绝任务（重新入队）
             "worker_prefetch_multiplier": 1,           # 每次只预取 1 个任务（长任务场景）
             "broker_transport_options": {
