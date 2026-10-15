@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.exc import InterfaceError, OperationalError
 
+from app.base.kafka_config import SYNC_DATA_TYPES
 from app.config.settings import settings
 from app.etl.base import ETLBase
 from app.etl.normalizers import get_normalizer
@@ -416,7 +417,9 @@ _ODS_INSERT_SQL = {
 
 class TsOds(ETLBase):
     _layer = "ods"
-    _consumer_topics = [settings.etl_rds_topic]
+    _consumer_topics = [
+        f"{settings.etl_rds_topic}-{table}" for table in SYNC_DATA_TYPES
+    ]
     _consumer_group = settings.etl_ods_consumer_group
     _producer_topic = settings.etl_ods_topic
     _producer_client_id = "etl-ts-ods-producer"

@@ -130,8 +130,8 @@ async def run_all() -> None:
 
     logger.info("=== ETL All Layers Starting ===")
     logger.info("  Postgres: %s", _mask_url(settings.pg_url))
-    logger.info("  RDS: %s → %s", settings.etl_raw_topic, settings.etl_rds_topic)
-    logger.info("  ODS: %s → %s", settings.etl_rds_topic, settings.etl_ods_topic)
+    logger.info("  RDS: %s → %s-<table>", TsRds._consumer_topics, settings.etl_rds_topic)
+    logger.info("  ODS: %s → %s", TsOds._consumer_topics, settings.etl_ods_topic)
     logger.info("  TASK: %s → %s", settings.etl_task_topic, settings.etl_ads_topic)
     logger.info("  DWD: %s → %s", settings.etl_ods_topic, settings.etl_dwd_topic)
     logger.info("  DWS: %s → %s", settings.etl_dwd_topic, settings.etl_dws_topic)

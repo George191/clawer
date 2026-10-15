@@ -663,9 +663,10 @@ class ETLBase:
         if not self._producer:
             await self._connect_producer()
 
+        target_topic = topic or self._producer_topic
         try:
             await self._producer.send_and_wait(
-                topic=self._producer_topic,
+                topic=target_topic,
                 value=value,
                 key=record_id,
             )
@@ -673,19 +674,19 @@ class ETLBase:
             logger.warning(
                 "%s Producer send failed, reconnecting topic=%s record_id=%s error=%s",
                 self._log_prefix,
-                self._producer_topic,
+                target_topic,
                 record_id,
                 exc,
             )
             await self._reconnect_producer()
             await self._producer.send_and_wait(
-                topic=self._producer_topic,
+                topic=target_topic,
                 value=value,
                 key=record_id,
             )
         logger.info(
             "%s Emitted → %s record_id=%s source=%s type=%s",
-            self._log_prefix, self._producer_topic, record_id, data_source, data_type,
+            self._log_prefix, target_topic, record_id, data_source, data_type,
         )
 
     # =================================================================

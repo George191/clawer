@@ -24,6 +24,7 @@ Redis Key 设计：
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from app.base.redis_connection import RedisConnection
@@ -39,13 +40,15 @@ REDIS_RETRY_INTERVAL = 30
 
 class OffsetManager:
     def __init__(self) -> None:
+        self._connection_lock = asyncio.Lock()
         self._connection = RedisConnection(
             settings.etl_redis_url,
             retry_interval=REDIS_RETRY_INTERVAL,
         )
 
     async def _get_redis(self) -> Any | None:
-        return await self._connection.ensure_connected()
+        async with self._connection_lock:
+            return await self._connection.ensure_connected()
 
     def _make_key(self, consumer_group: str, topic: str, partition: int) -> str:
         return f"{REDIS_KEY_PREFIX}:{consumer_group}:{topic}:{partition}"

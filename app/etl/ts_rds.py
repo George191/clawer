@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from functools import partial
@@ -41,6 +42,54 @@ class TsRds(ETLBase):
     _consumer_group = settings.etl_rds_consumer_group
     _producer_topic = settings.etl_rds_topic
     _producer_client_id = "etl-ts-rds-producer"
+
+    def __init__(self, table_name: str = "") -> None:
+        super().__init__(table_name)
+        self._topic_workers: list[TsRds] = []
+        self._topic_tasks: list[asyncio.Task] = []
+        self._topic_cleanup_lock = asyncio.Lock()
+
+    async def run(self) -> None:
+        self._running = True
+        await self._pg.connect()
+        await self._on_init_schema()
+
+        for topic in dict.fromkeys(self._consumer_topics):
+            worker = TsRds(self._table_name)
+            worker._consumer_topics = [topic]
+            worker._log_prefix = f"[RDS:{topic}]"
+            self._topic_workers.append(worker)
+        self._topic_tasks = [
+            asyncio.create_task(self._run_topic(worker)) for worker in self._topic_workers
+        ]
+        try:
+            await asyncio.gather(*self._topic_tasks)
+        finally:
+            await self._stop_topic_workers()
+
+    async def _run_topic(self, worker: TsRds) -> None:
+        worker._running = True
+        await worker._connect_consumer()
+        await worker._connect_producer()
+        logger.info("%s STARTED group=%s", worker._log_prefix, worker._consumer_group)
+        await ETLBase._consume_loop(worker)
+
+    async def _stop_topic_workers(self) -> None:
+        async with self._topic_cleanup_lock:
+            for worker in self._topic_workers:
+                worker._running = False
+            for task in self._topic_tasks:
+                task.cancel()
+            await asyncio.gather(*self._topic_tasks, return_exceptions=True)
+            await asyncio.gather(
+                *(worker._close_consumer() for worker in self._topic_workers),
+                *(worker._close_producer() for worker in self._topic_workers),
+                return_exceptions=True,
+            )
+
+    async def stop(self) -> None:
+        await self._stop_topic_workers()
+        await super().stop()
 
     async def _handler_news(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="news")
@@ -131,7 +180,10 @@ class TsRds(ETLBase):
                 payload=payload,
             )
 
-            await self._emit(result, record_id=record_id, data_source=data_source, data_type=data_type)
+            await self._emit(
+                result, record_id=record_id, data_source=data_source, data_type=data_type,
+                topic=f"{settings.etl_rds_topic}-{table}",
+            )
             logger.debug(
                 "%s Upserted table=rds_%s record_id=%s source=%s -> ODS",
                 self._log_prefix,

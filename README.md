@@ -220,7 +220,11 @@ python -m app.syncer.main --data-type financial_fact --batch 50 --concurrency 10
 同一范围只运行一个 Syncer 实例，勿同时运行全类型旧实例和新的分类型实例，以免重复发送。
 
 切换前创建上述类型 topic（分区及副本数按集群配置），停止旧 Syncer，先更新 RDS Worker，再启动分类型 Syncer。
-RDS 同时订阅旧 `SPIDER_ETL_RAW_TOPIC` 和新类型 topic，沿用原消费组排空旧积压；本版本未改变 RDS/ODS 的串行处理逻辑。
+RDS 为旧 `SPIDER_ETL_RAW_TOPIC` 和各新类型 topic 分别启动独立 Consumer 消费循环，通过协程并发处理，沿用原消费组与 offset。
+各 topic 内仍按顺序逐条处理、成功后提交，数据库连接池由 RDS 统一管理。
+RDS 按实际目标表输出到 `${SPIDER_ETL_RDS_TOPIC}-<表名后缀>`，例如 `rds_news` 对应 `etl-rds-news`、`rds_financial_fact` 对应 `etl-rds-financial_fact`（以配置的 topic 前缀为准）。
+上线前创建这些 RDS 输出 topic，并先更新 ODS 再更新 RDS；ODS 兼容订阅旧公共 topic 与新拆分 topic，本次未改变 ODS 的串行处理及公共输出。
+切换时先排空旧输入 topic，再开放新 Syncer，避免新旧 topic 的同一记录并发写入导致旧版本覆盖。
 Syncer 需要重建 `docker/syncer.Dockerfile` 镜像，RDS 需要重建 `docker/etl.Dockerfile` 镜像。
 
 ## ETL
@@ -237,16 +241,12 @@ python -m app.etl.main --layer dim
 python -m app.etl.main --layer all
 ```
 
-数据主题默认链路：
+数据主题链路（以实际 topic 配置为准）：
 
 ```text
-spider-crawler
-  -> spider-rds-processed
-  -> spider-ods-processed
-  -> spider-task-processed
-  -> spider-dwd-processed
-  -> spider-dws-processed
-  -> spider-dim-processed
+spider-crawler-news           -> RDS -> etl-rds-news           ┐
+spider-crawler-financial_fact -> RDS -> etl-rds-financial_fact ├-> ODS -> etl-ods
+spider-crawler（旧 topic）     -> RDS -> 按实际写入表拆分输出    ┘
 ```
 
 ## Web API
