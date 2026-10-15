@@ -1,5 +1,7 @@
 """同步服务入口 — 独立进程运行 SyncWorker 将新增或修改记录推送至 Kafka。
 
+默认按每条记录的 data_type 发送到 <SPIDER_KAFKA_TOPIC>-<type>。
+
 启动参数：
     --template <name>    只处理指定模板（默认扫描所有模板）
     --poll <seconds>      轮询间隔（默认 10）
@@ -62,7 +64,7 @@ def main() -> None:
     setup_logging("syncer")
     logger.info("=== Syncer Service Starting ===")
     logger.info("  MongoDB: %s", settings.db_url)
-    logger.info("  Kafka:   %s -> %s", settings.kafka_brokers, settings.kafka_topic)
+    logger.info("  Kafka:   %s -> %s-<data_type>", settings.kafka_brokers, settings.kafka_topic)
     logger.info("=" * 40)
     asyncio.run(run())
 

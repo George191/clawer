@@ -3,7 +3,7 @@
 工作流程
 --------
 1. 轮询 MongoDB 中 sync_status 未标为 synced 的记录，不等待下载
-2. 批量推送记录到 Kafka 指定主题
+2. 按记录 data_type 将记录推送至对应 Kafka 主题
 3. 推送成功后，将对应版本的 sync_status 标为 synced
 
 设计原则
@@ -59,7 +59,7 @@ class SyncWorker:
             self._batch_size,
             self._template_name,
             self._data_type,
-            self._topic,
+            self._topic if self._data_type else f"{settings.kafka_topic}-*",
         )
 
         while self._running:
@@ -125,6 +125,9 @@ class SyncWorker:
             data_type = meta.get("data_type") or TWITTER_COLLECTION_TYPES.get(template, "")
             if not record_id or not template:
                 return False, ""
+            if not data_type:
+                logger.warning("SyncWorker: skipped %s without data_type", record_id)
+                return False, ""
             if self._data_type and data_type != self._data_type:
                 logger.warning(
                     "SyncWorker: skipped %s with type=%s (expected %s)",
@@ -132,7 +135,9 @@ class SyncWorker:
                 )
                 return False, ""
             try:
-                await self._kafka.send_record(record)
+                await self._kafka.send_record(
+                    record, topic=f"{settings.kafka_topic}-{data_type}",
+                )
                 await self._mongo.update_sync_status(
                     template, data_type, record_id, "synced",
                     updated_at=meta.get("updated_at"),
