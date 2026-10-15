@@ -47,6 +47,7 @@
 }
 
 .automation-domain-select { min-width: 170px; }
+.automation-data-type-select { min-width: 150px; }
 .automation-search { width: 250px; }
 
 .automation-filters .ant-select,

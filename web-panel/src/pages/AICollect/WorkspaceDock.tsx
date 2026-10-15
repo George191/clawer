@@ -65,6 +65,8 @@ interface WorkspaceDockProps {
   activePanel: WorkspacePanel | null;
   embedded?: boolean;
   taskDomain?: string;
+  taskDataType?: string;
+  onTaskDataTypesChange?: (dataTypes: string[]) => void;
   taskKeyword?: string;
   taskId?: string | null;
   onTaskSelect?: (taskId: string | null) => void;
@@ -146,6 +148,7 @@ interface DockTask extends CollectTask {
 }
 
 interface TaskRow extends DockTask {
+  dataType: string;
   runtime: TaskRuntimeItem;
   site: SiteProfile;
   display: {
@@ -1122,6 +1125,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   activePanel,
   embedded = false,
   taskDomain = 'all',
+  taskDataType,
+  onTaskDataTypesChange,
   taskKeyword,
   taskId,
   onTaskSelect,
@@ -1486,9 +1491,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const allTaskRows = useMemo<TaskRow[]>(() => taskItems.map((item) => {
     const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item);
     const site = resolveSiteProfile(item.template);
-    const template = templates.find((candidate) => normalizeTemplateKey(candidate.name) === normalizeTemplateKey(item.template));
+    const template = templates.find((candidate) => `${candidate.name}@${candidate.version}` === item.template);
     return {
       ...item,
+      dataType: template?.dataType ?? '',
       runtime,
       site: template
         ? { ...site, kind: inferSiteKind(template.dataType || template.name), faviconUrl: item.faviconUrl || template.faviconUrl }
@@ -1497,22 +1503,31 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     };
   }), [taskItems, taskRuntime, templates]);
 
+  const taskDataTypes = useMemo(() => [...new Set(allTaskRows
+    .filter((item) => taskDomain === 'all' || item.productDomain === taskDomain)
+    .map((item) => item.dataType).filter(Boolean))].sort(), [allTaskRows, taskDomain]);
+
+  useEffect(() => {
+    onTaskDataTypesChange?.(taskDataTypes);
+  }, [onTaskDataTypesChange, taskDataTypes]);
+
   const taskRows = useMemo(() => allTaskRows
     .filter((item) => {
       const query = (taskKeyword ?? keyword).trim().toLowerCase();
       const matchDomain = taskDomain === 'all' || item.productDomain === taskDomain;
+      const matchDataType = !taskDataType || item.dataType === taskDataType;
       const matchFilter = taskFilter === 'all' || item.runtime.status === taskFilter;
       const matchTemplate = !taskTemplateFilter || normalizeTemplateKey(item.template) === taskTemplateFilter;
       const matchKeyword = !query
         || `${item.name} ${item.template} ${item.area} ${item.owner}`.toLowerCase().includes(query);
-      return matchDomain && matchFilter && matchTemplate && matchKeyword;
+      return matchDomain && matchDataType && matchFilter && matchTemplate && matchKeyword;
     })
     .sort((left, right) => {
       const leftPinned = Boolean(pinnedTaskKeys[left.key]);
       const rightPinned = Boolean(pinnedTaskKeys[right.key]);
       if (leftPinned === rightPinned) return 0;
       return leftPinned ? -1 : 1;
-    }), [allTaskRows, keyword, pinnedTaskKeys, taskDomain, taskFilter, taskKeyword, taskTemplateFilter]);
+    }), [allTaskRows, keyword, pinnedTaskKeys, taskDomain, taskDataType, taskFilter, taskKeyword, taskTemplateFilter]);
 
   useEffect(() => {
     setTemplateVisibleCount(defaultPageSize);
@@ -1524,7 +1539,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   useEffect(() => {
     setTaskPage(1);
-  }, [taskDomain, taskFilter, taskKeyword, taskTemplateFilter]);
+  }, [taskDomain, taskDataType, taskFilter, taskKeyword, taskTemplateFilter]);
 
   const selectedTemplate = useMemo(
     () => templates.find((item) => item.key === selectedTemplateKey) ?? null,

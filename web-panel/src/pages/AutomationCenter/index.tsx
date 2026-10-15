@@ -85,6 +85,8 @@ const AutomationCenter: React.FC = () => {
   const domain: DomainFilter = requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta)
     ? requestedDomain
     : 'all';
+  const dataType = searchParams.get('data_type') || undefined;
+  const [dataTypes, setDataTypes] = useState<string[]>([]);
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(true);
   const [streamAvailable, setStreamAvailable] = useState(false);
@@ -163,6 +165,13 @@ const AutomationCenter: React.FC = () => {
   const changeDomain = (value: DomainFilter) => {
     const next = new URLSearchParams(searchParams);
     next.set('domain', value);
+    next.delete('data_type');
+    setSearchParams(next);
+  };
+  const changeDataType = (value?: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set('data_type', value);
+    else next.delete('data_type');
     setSearchParams(next);
   };
 
@@ -314,7 +323,7 @@ const AutomationCenter: React.FC = () => {
         { label: 'Workflows', value: 'workflows', icon: <ApartmentOutlined /> },
         { label: 'Schedules', value: 'schedules', icon: <FieldTimeOutlined /> }, { label: 'Runs', value: 'runs', icon: <ClockCircleOutlined /> },
       ]} />
-      <Space wrap className="automation-filters"><Select<DomainFilter> value={requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? domain : undefined} placeholder="Select domain" onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} /><Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
+      <Space wrap className="automation-filters"><Select<DomainFilter> value={requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? domain : undefined} placeholder="Select domain" onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} />{section === 'runs' && <Select<string> allowClear value={dataType} placeholder="Select data type" onChange={changeDataType} className="automation-data-type-select" options={dataTypes.map((value) => ({ value, label: value }))} />}<Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
     </div>
 
     {section !== 'runs' && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
@@ -324,6 +333,8 @@ const AutomationCenter: React.FC = () => {
         activePanel="tasks"
         embedded
         taskDomain={domain}
+        taskDataType={dataType}
+        onTaskDataTypesChange={setDataTypes}
         taskKeyword={keyword}
         taskId={searchParams.get('task')}
         onTaskSelect={selectRun}
