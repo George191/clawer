@@ -139,13 +139,42 @@ class DownloadWorker:
 
     async def _download_list(self, records: list[dict[str, Any]]) -> None:
         """Download a claimed record list with bounded concurrency."""
-        semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
+        semaphore = asyncio.Semaphore(settings.download_asset_concurrency)
 
         async def download(record: dict[str, Any]) -> None:
             async with semaphore:
-                await self._download_record(record)
+                try:
+                    await self._download_record(record)
+                finally:
+                    await self._http.release_current_task_proxy()
 
-        await asyncio.gather(*(download(record) for record in records))
+        heartbeat = asyncio.create_task(self._keep_download_claims_alive(records))
+        downloads = [asyncio.create_task(download(record)) for record in records]
+        try:
+            await asyncio.gather(*downloads)
+        finally:
+            for task in downloads:
+                if not task.done():
+                    task.cancel()
+            heartbeat.cancel()
+            await asyncio.gather(*downloads, heartbeat, return_exceptions=True)
+
+    async def _keep_download_claims_alive(self, records: list[dict[str, Any]]) -> None:
+        claims: dict[str, set[str]] = {}
+        for record in records:
+            meta = record.get("_meta") or {}
+            collection = meta.get("template")
+            token = meta.get("download_claim_token")
+            if collection and token:
+                claims.setdefault(collection, set()).add(token)
+
+        while claims:
+            await asyncio.sleep(60)
+            for collection, tokens in claims.items():
+                try:
+                    await self._mongo.refresh_download_claims(collection, list(tokens))
+                except Exception:
+                    logger.exception("DownloadWorker: failed to refresh claims for %s", collection)
 
     async def _download_record(self, record: dict[str, Any]) -> None:
         meta = record.get("_meta") or {}
@@ -305,33 +334,20 @@ class DownloadWorker:
             try:
                 response = await self._http.download_response(item.url, use_proxy=use_proxy)
                 break
-            except DownloadError as exc:
-                if exc.status_code == 404:
+            except Exception as exc:
+                status_code = HttpClient._error_status_code(exc)
+                if status_code == 404:
                     return None
+                if status_code and status_code >= 400 and status_code not in settings.http_retry_on_statuses:
+                    raise
                 logger.warning(
                     "DownloadWorker: retry %d/5 for %s | error=%s: %s | status=%s",
                     attempt + 1,
                     item.url,
                     type(exc).__name__,
                     exc,
-                    exc.status_code or 0,
-                )
-                if use_proxy:
-                    await self._http.mark_last_proxy_failed()
-                if attempt == 4:
-                    raise
-                await asyncio.sleep(min(2 ** attempt, 8))
-            except Exception as exc:
-                status_code = getattr(exc, "status_code", None)
-                logger.warning(
-                    "DownloadWorker: retry %d/5 for %s | error=%s | status=%s",
-                    attempt + 1,
-                    item.url,
-                    type(exc).__name__,
                     status_code or 0,
                 )
-                if use_proxy:
-                    await self._http.mark_last_proxy_failed()
                 if attempt == 4:
                     raise
                 await asyncio.sleep(min(2 ** attempt, 8))

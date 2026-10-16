@@ -22,7 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from curl_cffi import CurlOpt
 from curl_cffi import requests as curl_requests
-from curl_cffi.requests.exceptions import ProxyError
+from curl_cffi.requests.exceptions import HTTPError, ProxyError
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -131,6 +131,14 @@ class HttpClient:
         return not (pre_proxy_url and cls._error_status_code(error) is None)
 
     @classmethod
+    def _is_download_transport_error(cls, error: Exception) -> bool:
+        # curl can report body/HTTP2 failures after receiving successful headers.
+        return isinstance(error, OSError) and not (
+            isinstance(error, HTTPError)
+            and (cls._error_status_code(error) or 0) >= 400
+        )
+
+    @classmethod
     def _should_mark_download_proxy_failure(
         cls,
         error: Exception,
@@ -138,16 +146,13 @@ class HttpClient:
     ) -> bool:
         """Only remove a proxy for errors that indicate the route failed.
 
-        Resource-level failures (404/403) and local size validation do not say
-        anything about the proxy, so retaining the lease avoids draining the
-        shared pool on bad or expired asset URLs.
+        Origin HTTP responses and local validation failures do not prove that
+        the proxy failed. With a jump host, only an explicit proxy error can
+        be attributed to the exit proxy.
         """
         if isinstance(error, ProxyError):
             return True
-        if not cls._should_mark_proxy_failure(error, pre_proxy_url):
-            return False
-        status_code = cls._error_status_code(error)
-        return status_code not in {403, 404}
+        return not pre_proxy_url and cls._is_download_transport_error(error)
 
     async def _get_lease_lock(self) -> asyncio.Lock:
         if self._lease_lock is None:
@@ -674,13 +679,18 @@ class HttpClient:
                 data=data,
             )
 
+        except asyncio.CancelledError:
+            await self._discard_download_client(task_id)
+            raise
         except Exception as e:
             proxy_failed = (
                 _proxy_pool is not None
                 and proxy_url
                 and self._should_mark_download_proxy_failure(e, pre_proxy_url)
             )
-            transport_failed = self._error_status_code(e) is None
+            transport_failed = (
+                not self._error_status_code(e) or self._is_download_transport_error(e)
+            )
             if proxy_failed or transport_failed:
                 await self._discard_download_client(task_id)
             if proxy_failed:
