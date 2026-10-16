@@ -10,16 +10,46 @@ from app.storage.postgres_client import get_pg_client
 
 
 class SyncerCollectionStore:
+    async def resolve_for_write(
+        self, template_name: str, data_type: str,
+    ) -> dict[str, str]:
+        """Resolve a write target; enabled only controls downstream consumption."""
+        routes = await get_pg_client().fetch_all(
+            """
+            SELECT template_name, collection_name, data_type
+            FROM public.syncer_collections
+            WHERE template_name = :template_name OR collection_name = :template_name
+            """,
+            {"template_name": template_name},
+        )
+        if not routes:
+            return {
+                "template_name": template_name,
+                "collection_name": template_name,
+                "data_type": data_type,
+            }
+        matches = [route for route in routes if route["collection_name"] == template_name]
+        if not matches:
+            matches = [route for route in routes if route["data_type"] == data_type]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Expected one collection route for {template_name!r} with type {data_type!r}; "
+                f"found {len(matches)}"
+            )
+        return matches[0]
+
     async def list_by_data_type(
-        self, data_type: str, template_name: str | None = None,
+        self, data_type: str | None, template_name: str | None = None,
     ) -> list[dict[str, str]]:
-        params = {"data_type": data_type}
-        template_filter = ""
+        params = {}
+        filters = []
+        if data_type is not None:
+            params["data_type"] = data_type
+            filters.append("data_type = :data_type")
         if template_name is not None:
             params["template_name"] = template_name
-            template_filter = """
-                AND (template_name = :template_name OR collection_name = :template_name)
-            """
+            filters.append("(template_name = :template_name OR collection_name = :template_name)")
+        where_clause = "WHERE " + " AND ".join(filters) if filters else ""
         return await get_pg_client().fetch_all(
             f"""
             WITH released_templates AS (
@@ -53,8 +83,7 @@ class SyncerCollectionStore:
             )
             SELECT DISTINCT ON (collection_name) template_name, collection_name, data_type
             FROM resolved_collections
-            WHERE data_type = :data_type
-            {template_filter}
+            {where_clause}
             ORDER BY collection_name, explicit_route DESC, template_name
             """,
             params,

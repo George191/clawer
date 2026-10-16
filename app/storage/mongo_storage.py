@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -21,17 +20,10 @@ from pymongo import ReplaceOne
 from app.config.settings import settings
 from app.logger import get_logger
 from app.storage.file_storage import StorageBackend
-from app.utils.path import get_nested_value
+from app.storage.record_adapters import get_record_adapter
+from app.storage.syncer_collections import syncer_collection_store
 from app.utils.record_id import resolve_record_id
 from app.utils.runtime_control import workspace_search_params
-from app.utils.sec_financial_facts import (
-    FACT_COLLECTION,
-    FACT_DEDUP_FIELDS,
-    financial_fact_identity,
-    iter_sec_financial_facts,
-)
-from app.utils.twitter_accounts import split_twitter_accounts, upsert_twitter_accounts
-from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)
 
@@ -46,12 +38,13 @@ class MongoStorage(StorageBackend):
         self._client = None
         self._db = None
         self._initialized_collections: set[str] = set()
+        self._initialized_indexes: set[tuple[str, str, bool]] = set()
         self.last_save_stats = {
             "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
         }
 
     def _get_collection_name(self, template_name: str) -> str:
-        return "tw_tweet" if template_name == "twitter" else template_name
+        return template_name
 
     async def _ensure_connection(self) -> None:
         if self._db is not None:
@@ -68,18 +61,19 @@ class MongoStorage(StorageBackend):
             raise
 
     async def _get_collection(self, template_name: str):
+        return await self._get_collection_by_name(self._get_collection_name(template_name))
+
+    async def _get_collection_by_name(
+        self, collection_name: str, *, indexes: list[tuple[str, bool]] | None = None,
+    ):
         await self._ensure_connection()
-        collection_name = self._get_collection_name(template_name)
         collection = self._db[collection_name]
+        if indexes is not None:
+            await self._ensure_indexes(collection, indexes)
+            self._initialized_collections.add(collection_name)
+            return collection
         if collection_name not in self._initialized_collections:
             await collection.create_index("_meta.record_id", unique=True)
-            if collection_name == "tw_tweet":
-                await collection.create_index("author_id")
-            if collection_name == FACT_COLLECTION:
-                await collection.create_index("cik")
-                await collection.create_index("_meta.sync_status")
-                self._initialized_collections.add(collection_name)
-                return collection
             await collection.create_index("_meta.download_status")
             await collection.create_index("_meta.download_claimed_at")
             await collection.create_index("_meta.sync_status")
@@ -92,6 +86,13 @@ class MongoStorage(StorageBackend):
             )
             self._initialized_collections.add(collection_name)
         return collection
+
+    async def _ensure_indexes(self, collection: Any, indexes: list[tuple[str, bool]]) -> None:
+        for field, unique in indexes:
+            key = (collection.name, field, unique)
+            if key not in self._initialized_indexes:
+                await collection.create_index(field, unique=unique)
+                self._initialized_indexes.add(key)
 
     def _resolve_record_id(self, record: dict[str, Any]) -> str:
         return resolve_record_id(record)
@@ -114,17 +115,13 @@ class MongoStorage(StorageBackend):
         search_params: dict[str, Any],
         now: datetime,
     ) -> dict[str, Any]:
-        twitter_type = TWITTER_COLLECTION_TYPES.get(template_name)
-        financial_fact = template_name == FACT_COLLECTION
         return {
             **record,
             "_meta": {
                 "template": template_name,
-                "data_type": twitter_type or data_type,
-                **({"data_source": "twitter"} if twitter_type else {}),
-                **({"data_source": "sec_edgar_company"} if financial_fact else {}),
+                "data_type": data_type,
                 "record_id": record_id,
-                "download_status": "no_assets" if financial_fact else "pending",
+                "download_status": "pending",
                 "sync_status": "pending",
                 "search_params": search_params,
                 "created_at": now,
@@ -190,52 +187,28 @@ class MongoStorage(StorageBackend):
         if not records:
             return []
 
-        collection = await self._get_collection(template_name)
+        route = await syncer_collection_store.resolve_for_write(
+            self._get_collection_name(template_name), data_type,
+        )
+        adapter = get_record_adapter(self, route, dedup_fields)
+        collection = await self._get_collection_by_name(
+            route["collection_name"], indexes=adapter.collection_indexes,
+        )
+        await self._ensure_indexes(collection, [(field, False) for field in adapter.extra_indexes])
         now = datetime.now(timezone.utc)
-        sam_snapshot = template_name in {"sam_gov_opportunities", "sam_gov_awards"}
-        if self._get_collection_name(template_name) == "tw_tweet":
-            account_collection = self._db["tw_account"]
-            if "tw_account" not in self._initialized_collections:
-                await account_collection.create_index("id", unique=True)
-                self._initialized_collections.add("tw_account")
-            stripped_records = []
-            profiles = {}
-            for record in records:
-                stripped, accounts = split_twitter_accounts(record)
-                stripped_records.append(stripped)
-                for account in accounts:
-                    profile = profiles.setdefault(account["id"], {})
-                    profile.update(account)
-            await upsert_twitter_accounts(account_collection, list(profiles.values()), now)
-            records = stripped_records
+        records = await adapter.prepare_batch(records, now)
         prepared_records: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         pending_docs: dict[str, dict[str, Any]] = {}
         pending_search_params: dict[str, dict[str, Any]] = {}
-        sam_snapshots: dict[str, dict[str, Any]] = {}
         ids: list[str] = []
 
         for record in records:
             search_params = workspace_search_params(record.pop("_meta_search_params", None) or {})
-            cleaned_record = dict(record) if sam_snapshot else self._drop_none_values(record)
-            if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in record:
-                cleaned_record["facts"] = record["facts"]
-            record_id = self._resolve_record_id(
-                financial_fact_identity(cleaned_record)
-                if template_name == FACT_COLLECTION
-                else {f: get_nested_value(cleaned_record, f) for f in dedup_fields}
-            )
+            cleaned_record = adapter.clean(record)
+            record_id = self._resolve_record_id(adapter.identity(cleaned_record))
             pending = pending_docs.get(record_id)
-            if sam_snapshot and cleaned_record.get("deleted") is not True:
-                sam_snapshots[record_id] = cleaned_record
-            if pending is not None and not sam_snapshot:
-                merged_pending = self._merge_non_empty_fields(pending, cleaned_record)
-                cleaned_record = (
-                    self._drop_none_values(merged_pending)
-                    if isinstance(merged_pending, dict)
-                    else cleaned_record
-                )
-                if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in merged_pending:
-                    cleaned_record["facts"] = merged_pending["facts"]
+            if pending is not None:
+                cleaned_record = adapter.clean(adapter.merge(pending, cleaned_record))
             pending_docs[record_id] = cleaned_record
             pending_params = pending_search_params.get(record_id)
             if pending_params is not None:
@@ -272,47 +245,19 @@ class MongoStorage(StorageBackend):
             cleaned_record = pending_docs[record_id]
             search_params = pending_search_params[record_id]
             record_with_meta = self._build_record_with_meta(
-                template_name=self._get_collection_name(template_name),
-                data_type=data_type,
+                template_name=route["collection_name"],
+                data_type=route["data_type"],
                 record_id=record_id,
                 record=cleaned_record,
                 search_params=search_params,
                 now=now,
             )
+            record_with_meta["_meta"].update(adapter.metadata)
             existing = existing_docs.get(record_id)
-            deletion = (
-                sam_snapshot
-                and cleaned_record.get("deleted") is True
-                and (not existing or existing.get("deleted") is not True)
-            )
-            if sam_snapshot and cleaned_record.get("deleted") is True:
-                # A tombstone retains the latest known business snapshot, including
-                # a normal record earlier in this batch, until a later restoration.
-                snapshot = sam_snapshots.get(record_id)
-                if snapshot is None and existing:
-                    snapshot = self._business_content(existing)
-                if snapshot is not None:
-                    record_with_meta = {
-                        **snapshot, "deleted": True, "_meta": record_with_meta["_meta"],
-                    }
+            deletion = adapter.is_deletion(existing, cleaned_record)
+            final_record = adapter.merge(existing or {}, record_with_meta)
+            final_record = await adapter.finalize(final_record, search_params)
             if existing:
-                if sam_snapshot:
-                    final_record = {
-                        **record_with_meta,
-                        "_meta": self._merge_non_empty_fields(
-                            existing.get("_meta", {}), record_with_meta["_meta"],
-                        ),
-                    }
-                else:
-                    merged_record = self._merge_non_empty_fields(existing, record_with_meta)
-                    final_record = merged_record if isinstance(merged_record, dict) else record_with_meta
-                if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in final_record:
-                    await self._save_sec_company_facts(final_record, search_params)
-                if not sam_snapshot:
-                    final_record = self._drop_none_values(final_record)
-                if self._get_collection_name(template_name) == "tw_tweet":
-                    # Do not reintroduce legacy embedded authors during the merge.
-                    final_record, _ = split_twitter_accounts(final_record)
                 existing_meta = existing.get("_meta", {})
                 final_record["_meta"]["created_at"] = existing_meta.get("created_at", now)
                 final_record["_meta"]["download_status"] = existing_meta.get(
@@ -361,11 +306,6 @@ class MongoStorage(StorageBackend):
                     ):
                         continue
             else:
-                final_record = record_with_meta
-                if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in final_record:
-                    await self._save_sec_company_facts(final_record, search_params)
-                if not sam_snapshot:
-                    final_record = self._drop_none_values(final_record)
                 inserted_count += 1
 
             if not existing or business_changed or metadata_changed:
@@ -391,11 +331,7 @@ class MongoStorage(StorageBackend):
 
         if operations:
             await collection.bulk_write(operations, ordered=False)
-        if run_stats:
-            from app.web.services.ai_collect_store import ai_collect_store
-
-            for (task_id, run_id), counts in run_stats.items():
-                await ai_collect_store.increment_run_stats(task_id, run_id, **counts)
+        await adapter.after_save(run_stats)
         self.last_save_stats = {
             "inserted": inserted_count,
             "updated": updated_count,
@@ -403,23 +339,6 @@ class MongoStorage(StorageBackend):
             "deleted": deleted_count,
         }
         return ids
-
-    async def _save_sec_company_facts(self, record: dict[str, Any], search_params: dict[str, Any]) -> None:
-        # Released SEC storage subclasses force company collection routing.
-        fact_storage = MongoStorage()
-        fact_storage._client = self._client
-        fact_storage._db = self._db
-        fact_storage._initialized_collections = self._initialized_collections
-        batch: list[dict[str, Any]] = []
-        fact_source = {**record, "_meta": {"search_params": search_params}}
-        for fact in iter_sec_financial_facts(fact_source):
-            batch.append(fact)
-            if len(batch) == 500:
-                await fact_storage.save_records(FACT_COLLECTION, "financial_fact", list(FACT_DEDUP_FIELDS), batch)
-                batch = []
-        if batch:
-            await fact_storage.save_records(FACT_COLLECTION, "financial_fact", list(FACT_DEDUP_FIELDS), batch)
-        record.pop("facts")
 
     async def update_file_status(
         self,

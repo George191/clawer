@@ -37,14 +37,14 @@ def split_twitter_accounts(record):
     return tweet, list(accounts.values())
 
 
-def twitter_account_operations(accounts, now, existing=None):
+def twitter_account_operations(accounts, now, existing=None, *, collection_name="tw_account"):
     operations = []
     for account in accounts:
         account_id = str(account["id"])
         old = (existing or {}).get(account_id, {})
         changed_urls = [key for key in ("avatar_url", "banner_url")
                         if key in account and account[key] != old.get(key)]
-        fields = {**account, "_meta.updated_at": now, "_meta.template": "tw_account",
+        fields = {**account, "_meta.updated_at": now, "_meta.template": collection_name,
                   "_meta.data_type": "account", "_meta.data_source": "twitter",
                   "_meta.record_id": resolve_record_id({"id": account_id}),
                   "_meta.sync_status": "pending"}
@@ -63,4 +63,7 @@ async def upsert_twitter_accounts(collection, accounts, now):
         cursor = collection.find({"id": {"$in": [str(account["id"]) for account in accounts]}},
                                  {"id": 1, "avatar_url": 1, "banner_url": 1, "_meta.download_status": 1})
         existing = {account["id"]: account for account in await cursor.to_list(length=None)}
-        await collection.bulk_write(twitter_account_operations(accounts, now, existing), ordered=False)
+        await collection.bulk_write(
+            twitter_account_operations(accounts, now, existing, collection_name=collection.name),
+            ordered=False,
+        )

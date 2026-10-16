@@ -102,7 +102,7 @@ class SyncWorker:
         return sent_count
 
     async def _read_ready_records(self) -> list[dict]:
-        if self._data_type is None:
+        if self._data_type is None and self._template_name is None:
             return await self._mongo.get_ready_to_sync(
                 template_name=self._template_name, limit=self._batch_size,
             )
