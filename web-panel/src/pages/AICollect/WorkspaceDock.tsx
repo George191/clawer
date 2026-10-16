@@ -139,6 +139,7 @@ interface TaskRuntimeItem {
 
 interface DockTask extends CollectTask {
   productDomain: string;
+  taskType: 'template' | 'celery';
   faviconUrl?: string;
 }
 
@@ -774,11 +775,14 @@ const fetchArtifactText = async (url: string, label: string) => {
 
 const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   key: item.id,
-  productDomain: String(item.parameters?.product_domain ?? 'ai-collect'),
+  productDomain: item.product_domain ?? String(item.parameters?.product_domain ?? 'ai-collect'),
+  taskType: item.task_type ?? 'template',
   name: item.name.replace(/\s+task$/i, ''),
-  template: `${item.template_name}@${item.template_version}`,
+  template: item.task_type === 'celery'
+    ? item.task_path || item.name
+    : `${item.template_name ?? ''}@${item.template_version ?? ''}`,
   group: 'prototype',
-  area: `${item.template_name.replace(/_/g, ' ')} workspace`,
+  area: item.template_name ? `${item.template_name.replace(/_/g, ' ')} workspace` : item.product_domain ?? 'platform',
   faviconUrl: item.favicon_url,
   status: item.status,
   progress: item.progress,
@@ -2935,6 +2939,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       label: formatDateTime(run.started_at),
     }));
     const taskCanceled = runtime.controlState === 'canceled';
+    const templateTask = selectedTask.taskType === 'template';
     const pipelineControlsDisabled = taskCanceled || runtime.status === 'queued';
     const taskDeletable = runtime.status === 'queued' || runtime.status === 'completed' || runtime.status === 'failed';
     const taskPinned = Boolean(pinnedTaskKeys[selectedTask.key]);
@@ -2986,7 +2991,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Tooltip>
             ) : null}
-            {runtime.status === 'running' && runtime.controlState !== 'canceled' ? (
+            {templateTask && runtime.status === 'running' && runtime.controlState !== 'canceled' ? (
               <Tooltip title="暂停任务" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
@@ -2998,7 +3003,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Tooltip>
             ) : null}
-            {runtime.status === 'paused' ? (
+            {templateTask && runtime.status === 'paused' ? (
               <Tooltip title="继续任务" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
@@ -3043,7 +3048,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </Tooltip>
               </Popconfirm>
             ) : null}
-            {runtime.downloadState === 'running' ? (
+            {templateTask && <>{runtime.downloadState === 'running' ? (
               <Tooltip title="暂停下载" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
                   type="button"
@@ -3092,7 +3097,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   <SyncOutlined />
                 </button>
               </Tooltip>
-            )}
+            )}</>}
             <button
               type="button"
               className="workspace-dock-detail-close"

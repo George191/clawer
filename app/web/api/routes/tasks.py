@@ -5,7 +5,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
 from app.web.services.ai_collect_store import ai_collect_store
-from app.web.api.models.tasks import TaskAction, WorkspaceTaskRequest
+from app.web.api.models.tasks import AutomationTaskRequest, TaskAction
+from app.web.services.automation_task_store import automation_task_store
 from app.web.services.task_runs import delete_run, run_action
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -18,23 +19,42 @@ class RunTaskRequest(BaseModel):
 
 @router.get("/runs")
 async def list_runs() -> dict[str, Any]:
-    return {"items": await ai_collect_store.list_tasks()}
+    return {"items": await automation_task_store.list_tasks()}
 
 
 @router.get("/runs/{task_id}")
 async def get_run(task_id: UUID) -> dict[str, Any]:
-    task = await ai_collect_store.get_task(str(task_id))
+    task = await automation_task_store.get_task(str(task_id))
     if task is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return task
 
 
 @router.post("/runs", status_code=201)
-async def create_run(payload: WorkspaceTaskRequest) -> dict[str, Any]:
-    template = await ai_collect_store.get_template_definition(payload.template_name, payload.template_version)
-    if template is None:
-        raise HTTPException(status_code=404, detail="模板不存在")
-    return await ai_collect_store.create_task(payload.model_dump())
+async def create_run(payload: AutomationTaskRequest) -> dict[str, Any]:
+    if payload.task_type == "template":
+        template = await ai_collect_store.get_template_definition(payload.template_name, payload.template_version)
+        if template is None:
+            raise HTTPException(status_code=404, detail="模板不存在")
+    return await automation_task_store.create_task(payload.model_dump())
+
+
+@router.get("/runs/{task_id}/logs/{run_id}")
+async def task_logs(task_id: UUID, run_id: UUID) -> dict[str, Any]:
+    return {"items": await automation_task_store.get_task_logs(str(task_id), str(run_id))}
+
+
+@router.get("/runs/{task_id}/log-runs")
+async def task_log_runs(task_id: UUID, offset: int = 0, limit: int = 20) -> dict[str, Any]:
+    return {"items": await automation_task_store.get_task_log_runs(str(task_id), offset, min(limit, 100))}
+
+
+@router.get("/runs/{task_id}/log-runs/{run_id}")
+async def task_log_run(task_id: UUID, run_id: UUID) -> dict[str, Any]:
+    run = await automation_task_store.get_task_run(str(task_id), str(run_id))
+    if run is None:
+        raise HTTPException(status_code=404, detail="执行批次不存在")
+    return run
 
 
 @router.post("/runs/{task_id}/action")
@@ -49,7 +69,7 @@ async def remove_run(task_id: UUID) -> dict[str, bool]:
 
 @router.get("")
 async def list_tasks() -> list[dict[str, Any]]:
-    return await ai_collect_store.list_tasks()
+    return await automation_task_store.list_tasks()
 
 
 @router.post("/run")

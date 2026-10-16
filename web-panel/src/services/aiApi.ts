@@ -1,5 +1,6 @@
 /** AI 采集相关 API */
 import client from './api';
+import type { ProductDomain } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -240,8 +241,11 @@ export interface WorkspaceTaskLogRun {
 export interface WorkspaceTask {
   id: string;
   name: string;
-  template_name: string;
-  template_version: string;
+  product_domain?: ProductDomain;
+  task_type?: 'template' | 'celery';
+  task_path?: string | null;
+  template_name: string | null;
+  template_version: string | null;
   favicon_url?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'paused';
   progress: number;
@@ -344,23 +348,23 @@ export const releaseWorkspaceTemplate = (
   client.post('/ai/workspace/templates/release', data).then((r) => r.data);
 
 export const fetchWorkspaceTasks = (): Promise<WorkspaceTask[]> =>
-  client.get('/ai/workspace/tasks').then((r) => r.data.items);
+  client.get('/tasks/runs').then((r) => r.data.items);
 
 export const fetchWorkspaceTask = (taskId: string): Promise<WorkspaceTask> =>
-  client.get(`/ai/workspace/tasks/${taskId}`).then((r) => r.data);
+  client.get(`/tasks/runs/${taskId}`).then((r) => r.data);
 
 export const fetchWorkspaceTaskLogs = (taskId: string, runId: string): Promise<WorkspaceTaskLog[]> =>
-  client.get(`/ai/workspace/tasks/${taskId}/logs/${runId}`).then((r) => r.data.items);
+  client.get(`/tasks/runs/${taskId}/logs/${runId}`).then((r) => r.data.items);
 
 export const fetchWorkspaceTaskRun = (taskId: string, runId: string): Promise<WorkspaceTaskLogRun> =>
-  client.get(`/ai/workspace/tasks/${taskId}/log-runs/${runId}`).then((r) => r.data);
+  client.get(`/tasks/runs/${taskId}/log-runs/${runId}`).then((r) => r.data);
 
 export const fetchWorkspaceTaskLogRuns = (
   taskId: string,
   offset: number,
   limit = 20,
 ): Promise<WorkspaceTaskLogRun[]> =>
-  client.get(`/ai/workspace/tasks/${taskId}/log-runs`, { params: { offset, limit } }).then((r) => r.data.items);
+  client.get(`/tasks/runs/${taskId}/log-runs`, { params: { offset, limit } }).then((r) => r.data.items);
 
 export const createWorkspaceTask = (data: WorkspaceTaskPayload): Promise<WorkspaceTask> =>
   client.post('/ai/workspace/tasks', data).then((r) => r.data);
@@ -383,7 +387,7 @@ export const runWorkspaceTaskAction = (
   taskId: string,
   action: 'start' | 'restart' | 'pause' | 'resume' | 'cancel' | 'start_download' | 'pause_download' | 'start_sync' | 'pause_sync' | 'cancel_sync',
 ): Promise<WorkspaceTask> =>
-  client.post(`/ai/workspace/tasks/${taskId}/action`, { action }).then((r) => r.data);
+  client.post(`/tasks/runs/${taskId}/action`, { action }).then((r) => r.data);
 
 export const deleteWorkspaceTask = (taskId: string): Promise<void> =>
-  client.delete(`/ai/workspace/tasks/${taskId}`).then(() => undefined);
+  client.delete(`/tasks/runs/${taskId}`).then(() => undefined);

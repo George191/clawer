@@ -290,8 +290,11 @@ export interface WorkspaceTemplate {
 export interface WorkspaceTask {
   id: string;
   name: string;
-  template_name: string;
-  template_version: string;
+  product_domain?: ProductDomain;
+  task_type?: 'template' | 'celery';
+  task_path?: string | null;
+  template_name: string | null;
+  template_version: string | null;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'paused';
   progress: number;
   records: number;

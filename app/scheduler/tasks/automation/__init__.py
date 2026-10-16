@@ -1,0 +1,1 @@
+"""Shared automation execution tasks."""

@@ -15,7 +15,7 @@ from app.config.settings import settings
 from app.logger import get_logger
 from app.scheduler.task_repository import get_task_repository
 from app.storage.redis_client import RedisClient
-from app.web.services.ai_collect_store import ai_collect_store
+from app.web.services.automation_task_store import automation_task_store
 from app.web.services.automation_store import automation_store
 from app.web.services.task_events import TASK_EVENT_CHANNEL
 
@@ -69,7 +69,7 @@ async def _set_stream_available(available: bool) -> None:
 
 
 async def _task_snapshot(task_id: str) -> dict:
-    task = await ai_collect_store.get_task(task_id)
+    task = await automation_task_store.get_task(task_id)
     if task is None:
         return {"type": "task_deleted", "task_id": task_id}
     return {"type": "task_detail", "task_id": task_id, "data": task}
@@ -82,7 +82,7 @@ async def _channel_snapshot(channel: str) -> dict:
         schedules = [asdict(config) for config in await get_task_repository().list_all()]
         return {"type": "schedules_snapshot", "data": schedules}
     if channel == "tasks":
-        return {"type": "tasks_snapshot", "data": await ai_collect_store.list_tasks()}
+        return {"type": "tasks_snapshot", "data": await automation_task_store.list_tasks()}
     return await _task_snapshot(channel.removeprefix("task:"))
 
 

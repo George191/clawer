@@ -1,4 +1,4 @@
-"""Persist console logging records emitted while a workspace task runs."""
+"""Persist console logging records emitted while an automation task runs."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
-from app.web.services.ai_collect_store import ai_collect_store
+from app.web.services.automation_task_store import automation_task_store
 
 _writing_task_logs: ContextVar[bool] = ContextVar("writing_task_logs", default=False)
 _STOP = object()
@@ -19,10 +19,10 @@ _CELERY_CONSOLE_FORMATTER = logging.Formatter(
 )
 
 
-class WorkspaceTaskLogCapture(logging.Handler):
-    """Copy task-scoped console records to ``ai_collect_task_logs``."""
+class TaskLogCapture(logging.Handler):
+    """Copy task-scoped console records to ``automation_task_logs``."""
 
-    def __init__(self, task_id: str, run_id: str, store: Any = ai_collect_store) -> None:
+    def __init__(self, task_id: str, run_id: str, store: Any = automation_task_store) -> None:
         super().__init__(logging.NOTSET)
         self.task_id = task_id
         self.run_id = run_id
@@ -91,9 +91,12 @@ class WorkspaceTaskLogCapture(logging.Handler):
             try:
                 await self._store.append_task_logs(self.task_id, [item])
             except Exception as exc:
-                sys.stderr.write(f"Workspace task log write failed: {exc}\n")
+                sys.stderr.write(f"Automation task log write failed: {exc}\n")
             finally:
                 _writing_task_logs.reset(token)
+
+
+WorkspaceTaskLogCapture = TaskLogCapture
 
 
 def _all_loggers() -> list[logging.Logger]:

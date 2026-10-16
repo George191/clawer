@@ -1,4 +1,4 @@
-"""Cross-process notifications for AI Collect task changes."""
+"""Cross-process notifications for shared automation task changes."""
 
 from __future__ import annotations
 

@@ -210,7 +210,8 @@ class SamAwardAdapter(SamSnapshotAdapter):
     def clean(self, record: dict[str, Any]) -> dict[str, Any]:
         identifiers = self._identifiers(record)
         if identifiers is not None:
-            record = {**record, "id": self._format_id([identifiers[i] for i in (0, 1, 4, 5)])}
+            record = dict(record)
+            record.pop("id", None)
         return super().clean(record)
 
     def identity(self, record: dict[str, Any]) -> dict[str, Any]:

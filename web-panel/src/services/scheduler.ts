@@ -31,9 +31,11 @@ export const mapWorkspaceSchedules = (tasks: WorkspaceTask[]): AutomationSchedul
         workspace_task_id: task.id,
         display_name: task.name,
         task_name: task.id,
-        task_path: task.template_name,
-        product_domain: String(task.parameters?.product_domain ?? 'ai-collect') as ProductDomain,
-        description: `${task.template_name}@${task.template_version}`,
+        task_path: task.task_path || task.template_name || '',
+        product_domain: task.product_domain ?? String(task.parameters?.product_domain ?? 'ai-collect') as ProductDomain,
+        description: task.task_type === 'celery'
+          ? task.task_path ?? task.name
+          : `${task.template_name ?? ''}@${task.template_version ?? ''}`,
         schedule_type: mode === 'interval' ? 'interval' : 'crontab',
         cron_minute: minute,
         cron_hour: hour,

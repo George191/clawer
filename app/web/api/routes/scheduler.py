@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from app.scheduler.beat_schedule import BeatScheduleRegistry
 from app.scheduler.task_repository import TaskConfig, get_task_repository
-from app.web.services.ai_collect_store import ai_collect_store
+from app.web.services.automation_task_store import automation_task_store
 from app.web.services.task_events import publish_automation_change
 
 router = APIRouter(prefix="/scheduler", tags=["scheduler"])
@@ -52,7 +52,7 @@ async def list_schedules() -> list[dict[str, Any]]:
 
 @router.get("/workspace-tasks")
 async def list_workspace_schedules() -> dict[str, Any]:
-    tasks = await ai_collect_store.list_tasks()
+    tasks = await automation_task_store.list_tasks()
     items = []
     for task in tasks:
         schedule = task.get("schedule") or {}

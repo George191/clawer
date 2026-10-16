@@ -481,47 +481,12 @@ def crawl_template(
 
 
 async def _dispatch_due_workspace_tasks() -> dict[str, Any]:
-    tasks = await ai_collect_store.claim_due_recurring_tasks()
-    dispatched = 0
-    for task in tasks:
-        task_id = str(task["id"])
-        try:
-            app.send_task(
-                TASK_NAME,
-                args=[
-                    task_id,
-                    str(task["template_name"]),
-                    dict(task.get("parameters") or {}),
-                ],
-                task_id=str(task["celery_task_id"]),
-            )
-            await ai_collect_store.append_task_log(
-                task_id,
-                "info",
-                "周期调度已提交到 Celery Worker",
-                run_id=str(task["current_run_id"]),
-            )
-            dispatched += 1
-        except Exception:
-            await ai_collect_store.update_task(
-                task_id,
-                {"status": "failed", "throughput": 0},
-                expected_run_id=str(task["current_run_id"]),
-                expected_celery_task_id=str(task["celery_task_id"]),
-            )
-            logger.exception("Failed to dispatch recurring workspace task %s", task_id)
-    return {"claimed": len(tasks), "dispatched": dispatched}
+    from app.scheduler.tasks.automation.tasks import _dispatch_due_tasks
+
+    return await _dispatch_due_tasks()
 
 
 @app.task(name=DISPATCH_TASK_NAME)
 def dispatch_due() -> dict[str, Any]:
-    """Claim and enqueue due recurring workspace tasks."""
+    """Compatibility handler for already queued workspace dispatcher messages."""
     return run_async(_dispatch_due_workspace_tasks())
-
-
-@app.task(name="app.scheduler.tasks.workspace.cleanup_task_logs")
-def cleanup_task_logs() -> dict[str, int]:
-    """Delete terminal workspace runs and their logs older than one month."""
-    result = run_async(ai_collect_store.cleanup_task_logs())
-    logger.info("Task log cleanup completed: deleted_runs=%d", result["deleted_runs"])
-    return result

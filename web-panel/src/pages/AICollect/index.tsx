@@ -9700,6 +9700,7 @@ const AICollect: React.FC = () => {
         </div>
         <WorkspaceDock
           activePanel={activeWorkspacePanel}
+          taskDomain="ai-collect"
           sessionActive={hasSession}
           onToggle={handleWorkspacePanelToggle}
           onClose={handleWorkspacePanelClose}
