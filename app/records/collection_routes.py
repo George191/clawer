@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
-import asyncio
-from pathlib import Path
-
 from app.storage.postgres_client import get_pg_client
 
 
@@ -91,4 +87,3 @@ class CollectionRouteStore:
 
 
 collection_route_store = CollectionRouteStore()
-

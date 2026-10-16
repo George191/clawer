@@ -75,4 +75,3 @@ class RecordStore(abc.ABC):
         limit: int = 100,
     ) -> list[dict[str, Any]]:
         ...
-

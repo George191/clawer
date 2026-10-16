@@ -44,4 +44,3 @@ class RecordPublisher(KafkaClient):
                 logger.error("Failed to send record: %s", e)
         logger.info("Sent %d/%d records to Kafka", sent_count, len(records))
         return sent_count
-

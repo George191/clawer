@@ -18,10 +18,10 @@ from typing import Any
 from pymongo import ReplaceOne
 
 from app.logger import get_logger
-from app.records.base import RecordStore
-from app.storage.mongo_client import MongoClient
 from app.records.adapters import get_record_adapter
+from app.records.base import RecordStore
 from app.records.collection_routes import collection_route_store
+from app.storage.mongo_client import MongoClient
 from app.utils.record_id import resolve_record_id
 from app.utils.runtime_control import workspace_search_params
 
