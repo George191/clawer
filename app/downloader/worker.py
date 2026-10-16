@@ -114,7 +114,7 @@ class DownloadWorker:
         try:
             stats = []
             for collection in await self._target_collections():
-                stats += await self._mongo.get_collection_stats(collection)
+                stats += await self._mongo.get_collection_stats(collection, missing_ok=True)
         except Exception as exc:
             logger.error(
                 "DownloadWorker: failed to read pending summary | error=%s: %s",

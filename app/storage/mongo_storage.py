@@ -192,6 +192,7 @@ class MongoStorage(StorageBackend):
 
         collection = await self._get_collection(template_name)
         now = datetime.now(timezone.utc)
+        sam_snapshot = template_name in {"sam_gov_opportunities", "sam_gov_awards"}
         if self._get_collection_name(template_name) == "tw_tweet":
             account_collection = self._db["tw_account"]
             if "tw_account" not in self._initialized_collections:
@@ -210,11 +211,12 @@ class MongoStorage(StorageBackend):
         prepared_records: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         pending_docs: dict[str, dict[str, Any]] = {}
         pending_search_params: dict[str, dict[str, Any]] = {}
+        sam_snapshots: dict[str, dict[str, Any]] = {}
         ids: list[str] = []
 
         for record in records:
             search_params = workspace_search_params(record.pop("_meta_search_params", None) or {})
-            cleaned_record = self._drop_none_values(record)
+            cleaned_record = dict(record) if sam_snapshot else self._drop_none_values(record)
             if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in record:
                 cleaned_record["facts"] = record["facts"]
             record_id = self._resolve_record_id(
@@ -223,7 +225,9 @@ class MongoStorage(StorageBackend):
                 else {f: get_nested_value(cleaned_record, f) for f in dedup_fields}
             )
             pending = pending_docs.get(record_id)
-            if pending is not None:
+            if sam_snapshot and cleaned_record.get("deleted") is not True:
+                sam_snapshots[record_id] = cleaned_record
+            if pending is not None and not sam_snapshot:
                 merged_pending = self._merge_non_empty_fields(pending, cleaned_record)
                 cleaned_record = (
                     self._drop_none_values(merged_pending)
@@ -256,6 +260,7 @@ class MongoStorage(StorageBackend):
         inserted_count = 0
         updated_count = 0
         unchanged_count = 0
+        deleted_count = 0
         run_stats: dict[tuple[str, str], dict[str, int]] = {}
 
         operations: list[ReplaceOne] = []
@@ -275,12 +280,36 @@ class MongoStorage(StorageBackend):
                 now=now,
             )
             existing = existing_docs.get(record_id)
+            deletion = (
+                sam_snapshot
+                and cleaned_record.get("deleted") is True
+                and (not existing or existing.get("deleted") is not True)
+            )
+            if sam_snapshot and cleaned_record.get("deleted") is True:
+                # A tombstone retains the latest known business snapshot, including
+                # a normal record earlier in this batch, until a later restoration.
+                snapshot = sam_snapshots.get(record_id)
+                if snapshot is None and existing:
+                    snapshot = self._business_content(existing)
+                if snapshot is not None:
+                    record_with_meta = {
+                        **snapshot, "deleted": True, "_meta": record_with_meta["_meta"],
+                    }
             if existing:
-                merged_record = self._merge_non_empty_fields(existing, record_with_meta)
-                final_record = merged_record if isinstance(merged_record, dict) else record_with_meta
+                if sam_snapshot:
+                    final_record = {
+                        **record_with_meta,
+                        "_meta": self._merge_non_empty_fields(
+                            existing.get("_meta", {}), record_with_meta["_meta"],
+                        ),
+                    }
+                else:
+                    merged_record = self._merge_non_empty_fields(existing, record_with_meta)
+                    final_record = merged_record if isinstance(merged_record, dict) else record_with_meta
                 if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in final_record:
                     await self._save_sec_company_facts(final_record, search_params)
-                final_record = self._drop_none_values(final_record)
+                if not sam_snapshot:
+                    final_record = self._drop_none_values(final_record)
                 if self._get_collection_name(template_name) == "tw_tweet":
                     # Do not reintroduce legacy embedded authors during the merge.
                     final_record, _ = split_twitter_accounts(final_record)
@@ -335,7 +364,8 @@ class MongoStorage(StorageBackend):
                 final_record = record_with_meta
                 if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in final_record:
                     await self._save_sec_company_facts(final_record, search_params)
-                final_record = self._drop_none_values(final_record)
+                if not sam_snapshot:
+                    final_record = self._drop_none_values(final_record)
                 inserted_count += 1
 
             if not existing or business_changed or metadata_changed:
@@ -345,7 +375,10 @@ class MongoStorage(StorageBackend):
                 if task_id and run_id:
                     counts = run_stats.setdefault((task_id, run_id), {"inserted": 0, "updated": 0})
                     counts["updated" if existing else "inserted"] += 1
+                    if deletion:
+                        counts["deleted"] = counts.get("deleted", 0) + 1
 
+            deleted_count += int(deletion)
             if sync_status is not None:
                 final_record["_meta"]["sync_status"] = sync_status
             operations.append(
@@ -367,7 +400,7 @@ class MongoStorage(StorageBackend):
             "inserted": inserted_count,
             "updated": updated_count,
             "unchanged": unchanged_count,
-            "deleted": 0,
+            "deleted": deleted_count,
         }
         return ids
 
@@ -692,8 +725,12 @@ class MongoStorage(StorageBackend):
 
         return results
 
-    async def get_collection_stats(self, template_name: str | None = None) -> list[dict[str, Any]]:
+    async def get_collection_stats(
+        self, template_name: str | None = None, *, missing_ok: bool = False,
+    ) -> list[dict[str, Any]]:
         """获取所有集合的概览统计。
+
+        missing_ok 为 True 时，指定集合不存在则返回空列表。
 
         Returns:
             [{"name": "planet", "total": 100, "pending_download": 5, "downloaded": 80, ...}, ...]
@@ -704,6 +741,8 @@ class MongoStorage(StorageBackend):
             template_name = self._get_collection_name(template_name)
             all_colls = await self._db.list_collection_names()
             if template_name not in all_colls:
+                if missing_ok:
+                    return []
                 raise ValueError(
                     f"Collection '{template_name}' not found in MongoDB. "
                     f"Available: {', '.join(sorted(all_colls))}"
