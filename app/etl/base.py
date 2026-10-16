@@ -30,7 +30,7 @@ from typing import Any, Awaitable, Callable, ClassVar, TypeVar
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
 from aiokafka.errors import KafkaConnectionError, NodeNotReadyError, RequestTimedOutError
 
-from app.base.kafka_config import build_consumer_kwargs, build_producer_kwargs, get_brokers
+from app.base.kafka import build_consumer_kwargs, build_producer_kwargs, get_brokers
 from app.config.settings import settings
 from app.etl.metadata_store import (
     ensure_ddlregistry_table,

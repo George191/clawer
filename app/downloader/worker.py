@@ -9,7 +9,7 @@ from time import perf_counter
 from typing import Any
 from urllib.parse import unquote
 
-from app.base.http import DownloadError, DownloadResponse, HttpClient
+from app.base.http import DownloadError, DownloadResponse
 from app.config.settings import settings
 from app.downloader.adapters import (
     DownloadItem,
@@ -18,6 +18,7 @@ from app.downloader.adapters import (
     get_download_response_validator,
     resolve_download_record,
 )
+from app.downloader.http_client import HttpClient
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate

@@ -8,10 +8,10 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.base.kafka_config import SYNC_DATA_TYPES
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
 from app.logger import get_logger
+from app.records.types import SYNC_DATA_TYPES
 from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)

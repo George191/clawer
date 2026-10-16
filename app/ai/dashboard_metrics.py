@@ -276,7 +276,7 @@ class DashboardMetricsEngine:
         try:
             from aiokafka.admin import AIOKafkaAdminClient
 
-            from app.base.kafka_config import build_admin_client_kwargs
+            from app.base.kafka import build_admin_client_kwargs
             from app.config.settings import settings as app_settings
         except ImportError:
             logger.debug("aiokafka admin not available, skipping lag query")
@@ -345,7 +345,7 @@ class DashboardMetricsEngine:
         try:
             from aiokafka.admin import NewKafkaAdminClient
 
-            from app.base.kafka_config import build_admin_client_kwargs
+            from app.base.kafka import build_admin_client_kwargs
             from app.config.settings import settings as app_settings
         except ImportError:
             return lag

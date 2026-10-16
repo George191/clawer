@@ -48,13 +48,13 @@ class RedisClient:
         self._last_retry_ts = now
 
         try:
-            import redis.asyncio as aioredis
+            import redis.asyncio as redis
 
             if self._client is not None and self._owns_client:
                 with suppress(Exception):
                     await self._client.aclose()
 
-            self._client = aioredis.from_url(
+            self._client = redis.from_url(
                 self._redis_url,
                 encoding="utf-8",
                 decode_responses=True,

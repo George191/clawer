@@ -9,11 +9,11 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.exc import InterfaceError, OperationalError
 
-from app.base.kafka_config import SYNC_DATA_TYPES
 from app.config.settings import settings
 from app.etl.base import ETLBase
 from app.etl.normalizers import get_normalizer
 from app.logger import get_logger
+from app.records.types import SYNC_DATA_TYPES
 
 logger = get_logger(__name__)
 

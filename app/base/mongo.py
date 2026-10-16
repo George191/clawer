@@ -1,5 +1,5 @@
-"""Compatibility import for callers of the former record-oriented MongoClient."""
+"""MongoDB connection and generic database operations."""
 
-from app.records.mongo_store import MongoRecordStore as MongoClient
+from app.storage.mongo_client import MongoClient
 
 __all__ = ["MongoClient"]

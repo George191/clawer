@@ -48,7 +48,7 @@ app/
   adapters/       站点适配器。通过 @register_adapter 注册，由模板 adapter 字段引用
   ai/             AI 辅助能力，如 SQL 提示、Dashboard 指标
   anti_crawl/     反爬能力，包括代理池、请求延迟、身份轮换与反爬数据源
-  base/           HTTP 等基础能力及旧导入路径的兼容入口
+  base/           Kafka 连接配置、HTTP 响应契约及数据库客户端入口
   config/         Pydantic 配置，统一读取 SPIDER_ 前缀环境变量
   crawler/        采集服务入口
   dedup/          Redis 去重
@@ -76,9 +76,15 @@ data/             批量采集参数与本地数据文件
 与 `downloader/adapters` 的资源提取、响应校验职责分开。ETL 的 DDL 注册和元数据维护位于
 `etl/metadata_store.py`。依赖方向为业务模块 → 客户端 → 驱动，客户端不导入业务模块。
 
+`base` 按组件命名（如 `kafka.py`、`redis.py`），只提供基础能力，不导出业务仓储。
+Kafka 连接配置统一位于 `base/kafka.py`，业务数据类型列表位于 `records/types.py`。
+HTTP 响应和异常契约位于 `base/http.py`，含反爬策略的请求实现位于 `downloader/http_client.py`。
+
 目录迁移也需要同步更新 MinIO 中已发布适配器的 Python 导入。例如，原
 `app.storage.mongo_storage.MongoStorage` 对应 `app.records.mongo_store.MongoRecordStore`；
-单独部署应用不会修改已发布适配器源码。`app.base` 的具名兼容模块保留原入口，应用代码使用新路径。
+Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.RedisClient`。
+单独部署应用不会修改已发布适配器源码；旧的 `app.base` 业务仓储别名和
+`app.base.redis_connection.RedisConnection` 导入也需随适配器一起迁移发布。
 
 ## 主要服务
 

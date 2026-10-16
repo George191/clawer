@@ -6,7 +6,7 @@ import asyncio
 from contextlib import suppress
 from typing import Any
 
-from app.base.kafka_config import build_producer_kwargs
+from app.base.kafka import build_producer_kwargs
 from app.config.settings import settings
 from app.logger import get_logger
 

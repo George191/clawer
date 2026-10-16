@@ -15,9 +15,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from app.base.kafka_config import SYNC_DATA_TYPES
 from app.config.settings import settings
 from app.logger import get_logger, setup_service_logging
+from app.records.types import SYNC_DATA_TYPES
 from app.syncer.worker import SyncWorker
 
 logger = get_logger(__name__)

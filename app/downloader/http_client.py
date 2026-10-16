@@ -16,7 +16,6 @@ import logging
 import re
 import socket
 import sys
-from dataclasses import dataclass
 from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
 
@@ -24,6 +23,7 @@ from curl_cffi import CurlOpt
 from curl_cffi import requests as curl_requests
 from curl_cffi.requests.exceptions import HTTPError, ProxyError
 
+from app.base.http import DownloadError, DownloadResponse
 from app.config.settings import settings
 from app.logger import get_logger
 from app.models.template import RequestConfig
@@ -78,26 +78,6 @@ class _ResponseHeaderSession(curl_requests.AsyncSession):
         if normalized != raw_headers:
             header_buffer = BytesIO(normalized)
         return super()._parse_response(curl, buffer, header_buffer, *args, **kwargs)
-
-
-class DownloadError(Exception):
-    def __init__(self, url: str, status_code: int | None = None, message: str = ""):
-        self.url = url
-        self.status_code = status_code
-        super().__init__(f"Download failed: {url} (status={status_code}): {message}")
-
-
-@dataclass(frozen=True, slots=True)
-class DownloadResponse:
-    source_url: str
-    final_url: str
-    status_code: int
-    headers: dict[str, str]
-    data: bytes
-
-    @property
-    def content_type(self) -> str:
-        return self.headers.get("content-type", "").split(";", 1)[0].strip().lower()
 
 
 class HttpClient:
