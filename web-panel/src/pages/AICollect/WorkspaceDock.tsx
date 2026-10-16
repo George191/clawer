@@ -2930,10 +2930,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       : runtime.logs.filter((log) => log.runId === latestTaskLogRunId);
     const selectedLogRun = runtime.logRuns.find((run) => run.id === (selectedTaskLogRunId ?? latestTaskLogRunId))
       ?? null;
-    const runStatusLabels: Record<WorkspaceTaskLogRun['status'], string> = {
-      running: '执行中', paused: '已暂停', completed: '已完成', failed: '失败', canceled: '已取消', legacy: '历史批次',
-    };
-    const formatRunCount = (value: number | null | undefined) => value == null ? '—' : formatCompactNumber(value);
     const logRunOptions = runtime.logRuns.map((run) => ({
       value: run.id,
       label: formatDateTime(run.started_at),
@@ -3124,13 +3120,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className={`workspace-dock-marquee ${display.isRunning ? 'is-running' : ''}`}>
               <i style={{ width: `${Math.max(runtime.progress, 8)}%`, background: display.color }} />
             </div>
-          </div>
-
-          <div className="workspace-dock-progress-panel workspace-dock-run-panel">
-            <div className="workspace-dock-progress-meta">
-              <span>执行批次</span>
-              <span>{selectedLogRun ? runStatusLabels[selectedLogRun.status] : '暂无执行批次'}</span>
-            </div>
             <div className="workspace-dock-progress-meta is-subtle">
               {logRunOptions.length ? (
                 <span
@@ -3174,22 +3163,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   />
                 </span>
               ) : (
-                <span>—</span>
+                <span>{selectedTask.lag}</span>
               )}
-              <span>结束 {selectedLogRun?.ended_at ? formatDateTime(selectedLogRun.ended_at) : '—'}</span>
-            </div>
-            <div className="workspace-dock-diff-stats" aria-label="执行批次变化统计" title="— 表示该批次未记录此项统计">
-              <span className="is-added">新增 {formatRunCount(selectedLogRun?.inserted_records)}</span>
-              <span className="is-updated">修改 {formatRunCount(selectedLogRun?.updated_records)}</span>
-              <span className="is-deleted">删除 {formatRunCount(selectedLogRun?.deleted_records)}</span>
-              <span className="is-download"><DownloadOutlined />下载 {formatRunCount(selectedLogRun?.downloaded_records)}</span>
-              <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />同步 {formatRunCount(selectedLogRun?.synced_records)}</span>
             </div>
           </div>
 
           <div className="workspace-dock-log-panel">
             <div className="workspace-dock-history-head">
               <div className="workspace-dock-log-caption">日志</div>
+              <div className="workspace-dock-diff-stats" aria-label="执行批次变化统计">
+                <span className="is-added">+{selectedLogRun?.inserted_records ?? 0} 新增</span>
+                <span className="is-updated">~{selectedLogRun?.updated_records ?? 0} 修改</span>
+                <span className="is-deleted">-{selectedLogRun?.deleted_records ?? 0} 删除</span>
+                <span className="is-download"><DownloadOutlined />{formatCompactNumber(selectedLogRun?.downloaded_records ?? 0)} 下载</span>
+                <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{formatCompactNumber(selectedLogRun?.synced_records ?? 0)} 同步</span>
+              </div>
             </div>
             <div className="workspace-dock-log-list is-detail">
               {taskLogsLoading ? <div className="workspace-dock-log-row">正在加载执行日志…</div> : null}
@@ -4568,12 +4556,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           line-height: 1;
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           white-space: nowrap;
-        }
-        .workspace-dock-run-panel .workspace-dock-diff-stats {
-          display: flex;
-          flex-wrap: wrap;
-          margin-top: 14px;
-          row-gap: 8px;
         }
         .workspace-dock-diff-stats span {
           display: inline-flex;
