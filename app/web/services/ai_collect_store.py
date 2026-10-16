@@ -607,11 +607,11 @@ class AICollectStore:
         run = await self._pg.fetch_one(
             """
             UPDATE public.ai_collect_task_runs SET
-                inserted_records = inserted_records + :inserted,
-                updated_records = updated_records + :updated,
-                deleted_records = deleted_records + :deleted,
-                downloaded_records = downloaded_records + :downloaded,
-                synced_records = synced_records + :synced
+                inserted_records = COALESCE(inserted_records, 0) + :inserted,
+                updated_records = COALESCE(updated_records, 0) + :updated,
+                deleted_records = COALESCE(deleted_records, 0) + :deleted,
+                downloaded_records = COALESCE(downloaded_records, 0) + :downloaded,
+                synced_records = COALESCE(synced_records, 0) + :synced
             WHERE task_id = CAST(:task_id AS uuid) AND id = CAST(:run_id AS uuid)
               AND EXISTS (
                   SELECT 1 FROM public.ai_collect_tasks task
