@@ -66,7 +66,6 @@ class DownloadWorker:
             self._poll_interval, self._batch_size, self._template_name or "ALL",
             self._data_type or "ALL",
         )
-        await self._log_pending_summary()
         while self._running:
             records = await self._read_pending_records()
             if records:
@@ -77,7 +76,10 @@ class DownloadWorker:
                 )
                 await self._download_list(records)
             else:
-                await self._log_pending_summary()
+                logger.info(
+                    "DownloadWorker: no records claimed for template=%s datatype=%s",
+                    self._template_name or "ALL", self._data_type or "ALL",
+                )
                 await asyncio.sleep(self._poll_interval)
 
     async def _read_pending_records(self) -> list[dict[str, Any]]:
@@ -109,34 +111,6 @@ class DownloadWorker:
         )
         self._collection_routes = {route["collection_name"]: route for route in routes}
         return tuple(self._collection_routes)
-
-    async def _log_pending_summary(self) -> None:
-        """Log pending counts for the selected template and data type."""
-        try:
-            stats = []
-            for collection in await self._target_collections():
-                stats += await self._mongo.get_collection_stats(collection, missing_ok=True)
-        except Exception as exc:
-            logger.error(
-                "DownloadWorker: failed to read pending summary | error=%s: %s",
-                type(exc).__name__,
-                exc,
-            )
-            return
-
-        pending = sum(int(item.get("pending_download") or 0) for item in stats)
-        scope = self._template_name or "ALL"
-        logger.info(
-            "DownloadWorker: pending downloads=%d template=%s datatype=%s collections=%d",
-            pending, scope, self._data_type or "ALL", len(stats),
-        )
-        for item in stats:
-            logger.info(
-                "DownloadWorker: collection=%s pending=%d total=%d",
-                item.get("name", ""),
-                int(item.get("pending_download") or 0),
-                int(item.get("total") or 0),
-            )
 
     async def _download_list(self, records: list[dict[str, Any]]) -> None:
         """Download a claimed record list with bounded concurrency."""
