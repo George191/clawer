@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import mimetypes
+from time import perf_counter
 from typing import Any
 from urllib.parse import unquote
 
@@ -170,6 +171,7 @@ class DownloadWorker:
         if not collection or not record_id:
             return
 
+        started_at = perf_counter()
         try:
             template = await self._load_template(template_name)
             if template is None:
@@ -188,7 +190,10 @@ class DownloadWorker:
                 return
 
             updates: dict[str, Any] = {}
-            failed = False
+            downloaded_count = 0
+            reused_count = 0
+            not_found_count = 0
+            failed = 0
             downloaded_urls = {
                 item.url: path for item in items
                 if (path := self._existing_path(record, item.asset_key))
@@ -197,6 +202,7 @@ class DownloadWorker:
                 existing = downloaded_urls.get(item.url)
                 if existing:
                     updates[item.asset_key] = existing
+                    reused_count += 1
                     continue
                 try:
                     path = await self._download_item(
@@ -210,17 +216,34 @@ class DownloadWorker:
                         type(exc).__name__,
                         exc,
                     )
-                    failed = True
+                    failed += 1
                     continue
                 updates[item.asset_key] = path if path else dict(NOT_FOUND_ASSET)
                 if path:
                     downloaded_urls[item.url] = path
+                    downloaded_count += 1
+                else:
+                    not_found_count += 1
 
             completed = await self._update_mongo(
                 collection, record_id, updates,
                 "failed" if failed else "downloaded",
                 claim_token,
             )
+            if completed:
+                logger.info(
+                    "DownloadWorker: record completed | collection=%s template=%s datatype=%s record=%s status=%s "
+                    "| downloaded=%d reused=%d not_found=%d failed=%d elapsed=%.2fs",
+                    collection, template_name, data_type, record_id,
+                    "failed" if failed else "downloaded",
+                    downloaded_count, reused_count, not_found_count, failed,
+                    perf_counter() - started_at,
+                )
+            else:
+                logger.warning(
+                    "DownloadWorker: result not saved; claim no longer matches | collection=%s record=%s",
+                    collection, record_id,
+                )
             owner = meta.get("search_params") or {}
             task_id = str(owner.get("__workspace_task_id") or "")
             run_id = str(owner.get("__workspace_run_id") or "")
@@ -310,6 +333,7 @@ class DownloadWorker:
         record_id: str,
         use_proxy: bool,
     ) -> str | None:
+        started_at = perf_counter()
         response: DownloadResponse | None = None
         for attempt in range(5):
             try:
@@ -341,13 +365,20 @@ class DownloadWorker:
             validator(item, response)
         if item.attachment and content_type.startswith("text/html"):
             raise DownloadError(item.url, response.status_code, "attachment is HTML")
-        return await self._minio.upload_bytes(
+        path = await self._minio.upload_bytes(
             response_data,
             template_name,
             data_type,
             f"{record_id}/{item.filename}",
             content_type,
         )
+        logger.info(
+            "Download uploaded: %s | template=%s datatype=%s record=%s "
+            "| bytes=%d elapsed=%.2fs | stored=%s",
+            item.url, template_name, data_type, record_id,
+            len(response_data), perf_counter() - started_at, path,
+        )
+        return path
 
     async def _update_mongo(
         self,
