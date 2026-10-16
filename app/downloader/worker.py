@@ -148,7 +148,6 @@ class DownloadWorker:
                 finally:
                     await self._http.release_current_task_proxy()
 
-        heartbeat = asyncio.create_task(self._keep_download_claims_alive(records))
         downloads = [asyncio.create_task(download(record)) for record in records]
         try:
             await asyncio.gather(*downloads)
@@ -156,25 +155,7 @@ class DownloadWorker:
             for task in downloads:
                 if not task.done():
                     task.cancel()
-            heartbeat.cancel()
-            await asyncio.gather(*downloads, heartbeat, return_exceptions=True)
-
-    async def _keep_download_claims_alive(self, records: list[dict[str, Any]]) -> None:
-        claims: dict[str, set[str]] = {}
-        for record in records:
-            meta = record.get("_meta") or {}
-            collection = meta.get("template")
-            token = meta.get("download_claim_token")
-            if collection and token:
-                claims.setdefault(collection, set()).add(token)
-
-        while claims:
-            await asyncio.sleep(60)
-            for collection, tokens in claims.items():
-                try:
-                    await self._mongo.refresh_download_claims(collection, list(tokens))
-                except Exception:
-                    logger.exception("DownloadWorker: failed to refresh claims for %s", collection)
+            await asyncio.gather(*downloads, return_exceptions=True)
 
     async def _download_record(self, record: dict[str, Any]) -> None:
         meta = record.get("_meta") or {}

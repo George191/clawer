@@ -641,10 +641,7 @@ class MongoStorage(StorageBackend):
 
     @staticmethod
     def _download_claim_filter() -> dict[str, Any]:
-        query: dict[str, Any] = {
-            "_meta.download_status": {"$in": ["pending", "downloading"]},
-        }
-        return query
+        return {"_meta.download_status": "pending"}
 
     async def _claim_pending_downloads_from_collection(
         self,
