@@ -32,6 +32,7 @@ import {
   fetchWorkspaceTask,
   fetchWorkspaceTaskLogRuns,
   fetchWorkspaceTaskLogs,
+  fetchWorkspaceTaskRun,
   fetchWorkspaceTasks,
   fetchWorkspaceTemplates,
   AI_ANALYZE_WS_URL,
@@ -126,20 +127,14 @@ interface TaskRuntimeItem {
   progress: number;
   recordsValue: number;
   throughput: number;
-  lastDelta: number;
   history: number[];
   logs: TaskLog[];
   logRuns: WorkspaceTaskLogRun[];
   logRunCount: number;
-  isRecurring: boolean;
+  currentRunId: string | null;
   controlState: 'canceled' | null;
   downloadState: 'idle' | 'running' | 'paused';
   syncState: 'idle' | 'running' | 'paused' | 'canceled';
-  insertedRecords: number;
-  updatedRecords: number;
-  deletedRecords: number;
-  downloadedRecords: number;
-  syncedRecords: number;
 }
 
 interface DockTask extends CollectTask {
@@ -562,35 +557,6 @@ const mergeTaskLogRuns = (
   ]);
 };
 
-const mergeTaskLogRun = (
-  runs: WorkspaceTaskLogRun[],
-  log: WorkspaceTaskLog,
-): { runs: WorkspaceTaskLogRun[]; isNewRun: boolean } => {
-  if (!log.run_id) return { runs, isNewRun: false };
-
-  const existingRun = runs.find((run) => run.id === log.run_id);
-  if (!existingRun) {
-    return {
-      runs: sortTaskLogRuns([{
-        id: log.run_id,
-        started_at: log.created_at,
-        ended_at: log.created_at,
-        log_count: 1,
-      }, ...runs]),
-      isNewRun: true,
-    };
-  }
-
-  return {
-    runs: sortTaskLogRuns(runs.map((run) => run.id === log.run_id ? {
-      ...run,
-      ended_at: log.created_at > run.ended_at ? log.created_at : run.ended_at,
-      log_count: run.log_count + 1,
-    } : run)),
-    isNewRun: false,
-  };
-};
-
 const consoleLogPrefixPattern = /^(\[)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})(:\s*)([A-Z]+)(\/)([^\]]+)(\])(\s*)/;
 
 const renderConsoleLogMessage = (message: string): React.ReactNode => {
@@ -726,20 +692,14 @@ const buildTaskRuntimeItem = (item: CollectTask): TaskRuntimeItem => {
     progress: item.progress,
     recordsValue,
     throughput: 0,
-    lastDelta: 0,
     history: createHistory(recordsValue),
     logs: [],
     logRuns: [],
     logRunCount: 0,
-    isRecurring: false,
+    currentRunId: null,
     controlState: null,
     downloadState: item.status === 'running' ? 'running' : item.status === 'completed' ? 'paused' : 'idle',
     syncState: item.status === 'running' || item.status === 'completed' ? 'running' : 'idle',
-    insertedRecords: 0,
-    updatedRecords: 0,
-    deletedRecords: 0,
-    downloadedRecords: 0,
-    syncedRecords: 0,
   };
 };
 
@@ -842,7 +802,6 @@ const mapWorkspaceTaskRuntime = (item: WorkspaceTask): TaskRuntimeItem => ({
   progress: item.progress,
   recordsValue: item.records,
   throughput: item.throughput,
-  lastDelta: 0,
   history: createHistory(item.records),
   logs: item.logs.map((log) => ({
     createdAt: log.created_at,
@@ -851,19 +810,12 @@ const mapWorkspaceTaskRuntime = (item: WorkspaceTask): TaskRuntimeItem => ({
     message: log.message,
     runId: log.run_id,
   })),
-  logRuns: item.log_runs ?? [],
-  logRunCount: item.log_run_count ?? item.log_runs?.length ?? 0,
-  isRecurring: item.schedule?.mode === 'recurring'
-    ? ['daily', 'interval'].includes(String(item.schedule?.recurring_mode ?? ''))
-    : ['daily', 'interval'].includes(String(item.schedule?.mode ?? '')),
+  logRuns: item.log_runs ?? (item.current_run ? [item.current_run] : []),
+  logRunCount: item.log_run_count ?? item.log_runs?.length ?? (item.current_run ? 1 : 0),
+  currentRunId: item.current_run_id,
   controlState: item.control_state,
   downloadState: item.download_state,
   syncState: item.sync_state,
-  insertedRecords: item.inserted_records ?? 0,
-  updatedRecords: item.updated_records ?? 0,
-  deletedRecords: item.deleted_records ?? 0,
-  downloadedRecords: item.downloaded_records ?? 0,
-  syncedRecords: item.synced_records ?? 0,
 });
 
 const toAvatarLabel = (value: string) => {
@@ -1145,6 +1097,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const templateDetailRequestRef = useRef(0);
   const taskListRequestRef = useRef<Promise<WorkspaceTask[]> | null>(null);
   const taskListRevisionRef = useRef(0);
+  const taskLogsRequestRef = useRef(0);
+  const taskLogRunsRequestRef = useRef(0);
   const [templates, setTemplates] = useState<TemplateAsset[]>([]);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
@@ -1156,6 +1110,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [selectedTemplateKey, setSelectedTemplateKey] = useState<string | null>(null);
   const [localSelectedTaskKey, setLocalSelectedTaskKey] = useState<string | null>(null);
   const selectedTaskKey = embedded ? taskId ?? null : localSelectedTaskKey;
+  const selectedTaskKeyRef = useRef(selectedTaskKey);
+  selectedTaskKeyRef.current = selectedTaskKey;
   const taskSelectionRef = useRef({ embedded, taskId, onTaskSelect });
   taskSelectionRef.current = { embedded, taskId, onTaskSelect };
   const setSelectedTaskKey = useCallback((value: React.SetStateAction<string | null>) => {
@@ -1244,7 +1200,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskRuntime((current) => {
       const runtime = mapWorkspaceTaskRuntime(item);
       const existing = current[item.id];
-      if (!runtime.logs.length && existing?.logs.length) {
+      if (!item.log_runs && !runtime.logs.length && existing?.logs.length
+        && runtime.currentRunId === existing.currentRunId) {
         runtime.logs = existing.logs;
       }
       if (existing) {
@@ -1260,7 +1217,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskRuntime((current) => Object.fromEntries(items.map((item) => {
       const runtime = mapWorkspaceTaskRuntime(item);
       const existing = current[item.id];
-      if (!runtime.logs.length && existing?.logs.length) {
+      if (!item.log_runs && !runtime.logs.length && existing?.logs.length
+        && runtime.currentRunId === existing.currentRunId) {
         runtime.logs = existing.logs;
       }
       if (existing) {
@@ -1333,28 +1291,19 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   useEffect(() => {
     if (activePanel !== 'tasks' || !focusTask) return;
-    const mappedTask = mapWorkspaceTask(focusTask);
     setKeyword('');
     setTaskFilter('all');
     setTaskTemplateFilter(null);
-    setTaskItems((current) => (
-      current.some((task) => task.key === focusTask.id)
-        ? current.map((task) => (task.key === focusTask.id ? mappedTask : task))
-        : [mappedTask, ...current]
-    ));
-    setTaskRuntime((current) => ({
-      ...current,
-      [focusTask.id]: mapWorkspaceTaskRuntime(focusTask),
-    }));
+    applyWorkspaceTask(focusTask);
     setSelectedTaskKey(focusTask.id);
-  }, [activePanel, focusTask]);
+  }, [activePanel, applyWorkspaceTask, focusTask]);
 
   const handleTaskSocketMessage = useCallback((rawMessage: string) => {
     try {
       const message = JSON.parse(rawMessage) as {
         type?: string;
         task_id?: string;
-        data?: WorkspaceTask | WorkspaceTask[] | WorkspaceTaskLog | { available: boolean };
+        data?: WorkspaceTask | WorkspaceTask[] | WorkspaceTaskLog | WorkspaceTaskLogRun | { available: boolean };
       };
       if (message.type === 'tasks_snapshot' && Array.isArray(message.data)) {
         taskListRevisionRef.current += 1;
@@ -1366,6 +1315,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       } else if (message.type === 'task_detail' && message.data) {
         taskListRevisionRef.current += 1;
         applyWorkspaceTask(message.data as WorkspaceTask);
+      } else if (message.type === 'task_run' && message.task_id && message.data) {
+        const run = message.data as WorkspaceTaskLogRun;
+        setTaskRuntime((current) => {
+          const runtime = current[message.task_id!];
+          if (!runtime || !runtime.logRuns.some((item) => item.id === run.id)) return current;
+          return {
+            ...current,
+            [message.task_id!]: { ...runtime, logRuns: mergeTaskLogRuns([run], runtime.logRuns) },
+          };
+        });
       } else if (message.type === 'task_log' && message.task_id && message.data) {
         const log = message.data as WorkspaceTaskLog;
         const mappedLog: TaskLog = {
@@ -1384,8 +1343,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             && item.message === mappedLog.message
           ));
           if (duplicate) return current;
-          const { runs: nextRuns, isNewRun } = mergeTaskLogRun(runtime.logRuns, log);
-          const latestRunId = nextRuns[0]?.id ?? null;
+          const latestRunId = runtime.currentRunId ?? runtime.logRuns[0]?.id ?? null;
           const currentLogRunId = runtime.logs[runtime.logs.length - 1]?.runId ?? null;
           const nextLogs = log.run_id === latestRunId
             ? currentLogRunId === latestRunId
@@ -1397,8 +1355,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             [message.task_id!]: {
               ...runtime,
               logs: nextLogs,
-              logRuns: nextRuns,
-              logRunCount: runtime.logRunCount + (isNewRun ? 1 : 0),
             },
           };
         });
@@ -1582,11 +1538,17 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     () => allTaskRows.find((item) => item.key === selectedTaskKey) ?? null,
     [allTaskRows, selectedTaskKey],
   );
-  const latestTaskLogRunId = selectedTask?.runtime.logRuns[0]?.id ?? null;
+  const latestTaskLogRunId = selectedTask?.runtime.currentRunId
+    ?? selectedTask?.runtime.logRuns[0]?.id
+    ?? null;
 
   useEffect(() => {
+    taskLogsRequestRef.current += 1;
+    taskLogRunsRequestRef.current += 1;
     setSelectedTaskLogRunId(null);
     setHistoricalTaskLogs(null);
+    setTaskLogsLoading(false);
+    setTaskLogRunsLoading(false);
     setTaskLogRunOpen(false);
   }, [selectedTaskKey]);
 
@@ -1600,14 +1562,28 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const handleTaskLogRunChange = useCallback(async (runId: string) => {
     if (!selectedTaskKey) return;
+    const requestId = ++taskLogsRequestRef.current;
     setSelectedTaskLogRunId(runId === latestTaskLogRunId ? null : runId);
     if (runId === latestTaskLogRunId) {
       setHistoricalTaskLogs(null);
+      setTaskLogsLoading(false);
       return;
     }
     setTaskLogsLoading(true);
     try {
-      const logs = await fetchWorkspaceTaskLogs(selectedTaskKey, runId);
+      const [logs, run] = await Promise.all([
+        fetchWorkspaceTaskLogs(selectedTaskKey, runId),
+        fetchWorkspaceTaskRun(selectedTaskKey, runId),
+      ]);
+      if (requestId !== taskLogsRequestRef.current || selectedTaskKey !== selectedTaskKeyRef.current) return;
+      setTaskRuntime((current) => {
+        const runtime = current[selectedTaskKey];
+        if (!runtime) return current;
+        return {
+          ...current,
+          [selectedTaskKey]: { ...runtime, logRuns: mergeTaskLogRuns([run], runtime.logRuns) },
+        };
+      });
       setHistoricalTaskLogs({
         taskId: selectedTaskKey,
         runId,
@@ -1621,32 +1597,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       });
     } catch (error) {
       console.error('Failed to load task run logs', error);
-      setHistoricalTaskLogs({ taskId: selectedTaskKey, runId, logs: [] });
+      if (requestId === taskLogsRequestRef.current && selectedTaskKey === selectedTaskKeyRef.current) {
+        setHistoricalTaskLogs({ taskId: selectedTaskKey, runId, logs: [] });
+      }
     } finally {
-      setTaskLogsLoading(false);
+      if (requestId === taskLogsRequestRef.current && selectedTaskKey === selectedTaskKeyRef.current) {
+        setTaskLogsLoading(false);
+      }
     }
   }, [latestTaskLogRunId, selectedTaskKey]);
-
-  useEffect(() => {
-    if (
-      !selectedTaskLogRunId
-      || selectedTaskLogRunId === latestTaskLogRunId
-      || taskLogsLoading
-      || (
-        historicalTaskLogs?.taskId === selectedTaskKey
-        && historicalTaskLogs.runId === selectedTaskLogRunId
-      )
-    ) return;
-    void handleTaskLogRunChange(selectedTaskLogRunId);
-  }, [
-    handleTaskLogRunChange,
-    historicalTaskLogs?.runId,
-    historicalTaskLogs?.taskId,
-    latestTaskLogRunId,
-    selectedTaskKey,
-    selectedTaskLogRunId,
-    taskLogsLoading,
-  ]);
 
   const handleTaskLogRunPopupScroll = useCallback(async (
     event: React.UIEvent<HTMLDivElement>,
@@ -1662,12 +1621,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       || runtime.logRuns.length >= runtime.logRunCount
     ) return;
 
+    const requestId = ++taskLogRunsRequestRef.current;
     setTaskLogRunsLoading(true);
     try {
       const nextRuns = await fetchWorkspaceTaskLogRuns(
         selectedTaskKey,
         runtime.logRuns.length,
       );
+      if (requestId !== taskLogRunsRequestRef.current || selectedTaskKey !== selectedTaskKeyRef.current) return;
       setTaskRuntime((current) => {
         const currentRuntime = current[selectedTaskKey];
         if (!currentRuntime) return current;
@@ -1686,7 +1647,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     } catch (error) {
       console.error('Failed to load more task log runs', error);
     } finally {
-      setTaskLogRunsLoading(false);
+      if (requestId === taskLogRunsRequestRef.current && selectedTaskKey === selectedTaskKeyRef.current) {
+        setTaskLogRunsLoading(false);
+      }
     }
   }, [selectedTaskKey, taskLogRunsLoading, taskRuntime]);
   const selectedTemplateDraft = selectedTemplate ? templateDrafts[selectedTemplate.key] : null;
@@ -1782,11 +1745,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     if (pagination) observer.observe(pagination);
     return () => observer.disconnect();
   }, [embedded, hasDetail, taskRows.length]);
-  const taskInsertedLines = selectedTask?.runtime.insertedRecords ?? 0;
-  const taskUpdatedLines = selectedTask?.runtime.updatedRecords ?? 0;
-  const taskDeletedLines = selectedTask?.runtime.deletedRecords ?? 0;
-  const taskDownloadedResources = selectedTask?.runtime.downloadedRecords ?? 0;
-  const taskSyncedRecords = selectedTask?.runtime.syncedRecords ?? 0;
 
   const updateTemplateDraft = (templateKey: string, patch: Partial<TemplateDraft>) => {
     setTemplateDrafts((prev) => ({
@@ -2965,13 +2923,17 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const { runtime, display } = selectedTask;
     const selectedRunLogs = selectedTaskLogRunId
       && selectedTaskLogRunId !== latestTaskLogRunId
-      && historicalTaskLogs?.taskId === selectedTask.key
-      && historicalTaskLogs.runId === selectedTaskLogRunId
-      ? historicalTaskLogs.logs
-      : runtime.logs;
-    const selectedLogRun = runtime.logRuns.find((run) => run.id === selectedTaskLogRunId)
-      ?? runtime.logRuns[0]
+      ? historicalTaskLogs?.taskId === selectedTask.key
+        && historicalTaskLogs.runId === selectedTaskLogRunId
+        ? historicalTaskLogs.logs
+        : []
+      : runtime.logs.filter((log) => log.runId === latestTaskLogRunId);
+    const selectedLogRun = runtime.logRuns.find((run) => run.id === (selectedTaskLogRunId ?? latestTaskLogRunId))
       ?? null;
+    const runStatusLabels: Record<WorkspaceTaskLogRun['status'], string> = {
+      running: '执行中', paused: '已暂停', completed: '已完成', failed: '失败', canceled: '已取消', legacy: '历史批次',
+    };
+    const formatRunCount = (value: number | null | undefined) => value == null ? '—' : formatCompactNumber(value);
     const logRunOptions = runtime.logRuns.map((run) => ({
       value: run.id,
       label: formatDateTime(run.started_at),
@@ -3162,8 +3124,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className={`workspace-dock-marquee ${display.isRunning ? 'is-running' : ''}`}>
               <i style={{ width: `${Math.max(runtime.progress, 8)}%`, background: display.color }} />
             </div>
+          </div>
+
+          <div className="workspace-dock-progress-panel workspace-dock-run-panel">
+            <div className="workspace-dock-progress-meta">
+              <span>执行批次</span>
+              <span>{selectedLogRun ? runStatusLabels[selectedLogRun.status] : '暂无执行批次'}</span>
+            </div>
             <div className="workspace-dock-progress-meta is-subtle">
-              {runtime.isRecurring && logRunOptions.length ? (
+              {logRunOptions.length ? (
                 <span
                   className="workspace-dock-log-run-trigger"
                   role="button"
@@ -3193,7 +3162,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                     suffixIcon={<DownOutlined className="workspace-dock-log-run-arrow" />}
                     open={taskLogRunOpen}
                     onOpenChange={setTaskLogRunOpen}
-                    value={selectedTaskLogRunId ?? logRunOptions[0].value}
+                    value={selectedTaskLogRunId ?? latestTaskLogRunId ?? logRunOptions[0].value}
                     options={logRunOptions}
                     loading={taskLogsLoading || taskLogRunsLoading}
                     onChange={(runId) => {
@@ -3201,28 +3170,29 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                       void handleTaskLogRunChange(runId);
                     }}
                     onPopupScroll={(event) => void handleTaskLogRunPopupScroll(event)}
-                    aria-label="选择采集执行日志"
+                    aria-label="选择执行批次"
                   />
                 </span>
               ) : (
-                <span>{selectedLogRun ? formatDateTime(selectedLogRun.started_at) : selectedTask.lag}</span>
+                <span>—</span>
               )}
-              <span>{display.isRunning ? `+${formatCompactNumber(runtime.lastDelta)}/轮` : display.label}</span>
+              <span>结束 {selectedLogRun?.ended_at ? formatDateTime(selectedLogRun.ended_at) : '—'}</span>
+            </div>
+            <div className="workspace-dock-diff-stats" aria-label="执行批次变化统计" title="— 表示该批次未记录此项统计">
+              <span className="is-added">新增 {formatRunCount(selectedLogRun?.inserted_records)}</span>
+              <span className="is-updated">修改 {formatRunCount(selectedLogRun?.updated_records)}</span>
+              <span className="is-deleted">删除 {formatRunCount(selectedLogRun?.deleted_records)}</span>
+              <span className="is-download"><DownloadOutlined />下载 {formatRunCount(selectedLogRun?.downloaded_records)}</span>
+              <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />同步 {formatRunCount(selectedLogRun?.synced_records)}</span>
             </div>
           </div>
 
           <div className="workspace-dock-log-panel">
             <div className="workspace-dock-history-head">
               <div className="workspace-dock-log-caption">日志</div>
-              <div className="workspace-dock-diff-stats" aria-label="任务变化统计">
-                <span className="is-added">+{taskInsertedLines} 新增</span>
-                <span className="is-updated">~{taskUpdatedLines} 修改</span>
-                <span className="is-deleted">-{taskDeletedLines} 删除</span>
-                <span className="is-download"><DownloadOutlined />{formatCompactNumber(taskDownloadedResources)} 下载</span>
-                <span className="is-sync"><SyncOutlined spin={runtime.syncState === 'running'} />{formatCompactNumber(taskSyncedRecords)} 同步</span>
-              </div>
             </div>
             <div className="workspace-dock-log-list is-detail">
+              {taskLogsLoading ? <div className="workspace-dock-log-row">正在加载执行日志…</div> : null}
               {selectedRunLogs.slice().reverse().map((log) => (
                 <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.runId}-${log.createdAt}-${log.message}`}>
                   <code>{renderConsoleLogMessage(log.message)}</code>
@@ -4598,6 +4568,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           line-height: 1;
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           white-space: nowrap;
+        }
+        .workspace-dock-run-panel .workspace-dock-diff-stats {
+          display: flex;
+          flex-wrap: wrap;
+          margin-top: 14px;
+          row-gap: 8px;
         }
         .workspace-dock-diff-stats span {
           display: inline-flex;

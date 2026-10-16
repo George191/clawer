@@ -23,6 +23,7 @@ from app.logger import get_logger
 from app.storage.file_storage import StorageBackend
 from app.utils.path import get_nested_value
 from app.utils.record_id import resolve_record_id
+from app.utils.runtime_control import workspace_search_params
 from app.utils.sec_financial_facts import (
     FACT_COLLECTION,
     FACT_DEDUP_FIELDS,
@@ -212,7 +213,7 @@ class MongoStorage(StorageBackend):
         ids: list[str] = []
 
         for record in records:
-            search_params = record.pop("_meta_search_params", None) or {}
+            search_params = workspace_search_params(record.pop("_meta_search_params", None) or {})
             cleaned_record = self._drop_none_values(record)
             if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in record:
                 cleaned_record["facts"] = record["facts"]
@@ -255,6 +256,7 @@ class MongoStorage(StorageBackend):
         inserted_count = 0
         updated_count = 0
         unchanged_count = 0
+        run_stats: dict[tuple[str, str], dict[str, int]] = {}
 
         operations: list[ReplaceOne] = []
         processed_ids: set[str] = set()
@@ -277,7 +279,7 @@ class MongoStorage(StorageBackend):
                 merged_record = self._merge_non_empty_fields(existing, record_with_meta)
                 final_record = merged_record if isinstance(merged_record, dict) else record_with_meta
                 if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in final_record:
-                    await self._save_sec_company_facts(final_record)
+                    await self._save_sec_company_facts(final_record, search_params)
                 final_record = self._drop_none_values(final_record)
                 if self._get_collection_name(template_name) == "tw_tweet":
                     # Do not reintroduce legacy embedded authors during the merge.
@@ -298,10 +300,26 @@ class MongoStorage(StorageBackend):
                     for key in ("data_type", "data_source")
                 )
                 if business_changed or metadata_changed:
+                    # A write without a batch identity cannot inherit the old
+                    # batch's attribution merely by merging existing metadata.
+                    final_params = final_record["_meta"].get("search_params", {})
+                    for key in ("__workspace_task_id", "__workspace_run_id"):
+                        if key not in search_params:
+                            final_params.pop(key, None)
                     final_record["_meta"]["sync_status"] = "pending"
                     final_record["_meta"]["updated_at"] = now
                     updated_count += 1
                 else:
+                    # Re-observing an unchanged record must not move unfinished
+                    # downloads/syncs from their original execution batch.
+                    final_params = final_record["_meta"].get("search_params", {})
+                    existing_params = existing_meta.get("search_params", {})
+                    for key in ("__workspace_task_id", "__workspace_run_id"):
+                        if key in existing_params:
+                            final_params[key] = existing_params[key]
+                        else:
+                            final_params.pop(key, None)
+                    search_params_changed = existing_params != final_params
                     final_record["_meta"]["sync_status"] = existing_meta.get(
                         "sync_status", "pending"
                     )
@@ -316,9 +334,17 @@ class MongoStorage(StorageBackend):
             else:
                 final_record = record_with_meta
                 if self._get_collection_name(template_name) == "sec_edgar_company" and "facts" in final_record:
-                    await self._save_sec_company_facts(final_record)
+                    await self._save_sec_company_facts(final_record, search_params)
                 final_record = self._drop_none_values(final_record)
                 inserted_count += 1
+
+            if not existing or business_changed or metadata_changed:
+                owner = final_record["_meta"].get("search_params", {})
+                task_id = str(owner.get("__workspace_task_id") or "")
+                run_id = str(owner.get("__workspace_run_id") or "")
+                if task_id and run_id:
+                    counts = run_stats.setdefault((task_id, run_id), {"inserted": 0, "updated": 0})
+                    counts["updated" if existing else "inserted"] += 1
 
             if sync_status is not None:
                 final_record["_meta"]["sync_status"] = sync_status
@@ -332,6 +358,11 @@ class MongoStorage(StorageBackend):
 
         if operations:
             await collection.bulk_write(operations, ordered=False)
+        if run_stats:
+            from app.web.services.ai_collect_store import ai_collect_store
+
+            for (task_id, run_id), counts in run_stats.items():
+                await ai_collect_store.increment_run_stats(task_id, run_id, **counts)
         self.last_save_stats = {
             "inserted": inserted_count,
             "updated": updated_count,
@@ -340,14 +371,15 @@ class MongoStorage(StorageBackend):
         }
         return ids
 
-    async def _save_sec_company_facts(self, record: dict[str, Any]) -> None:
+    async def _save_sec_company_facts(self, record: dict[str, Any], search_params: dict[str, Any]) -> None:
         # Released SEC storage subclasses force company collection routing.
         fact_storage = MongoStorage()
         fact_storage._client = self._client
         fact_storage._db = self._db
         fact_storage._initialized_collections = self._initialized_collections
         batch: list[dict[str, Any]] = []
-        for fact in iter_sec_financial_facts(record):
+        fact_source = {**record, "_meta": {"search_params": search_params}}
+        for fact in iter_sec_financial_facts(fact_source):
             batch.append(fact)
             if len(batch) == 500:
                 await fact_storage.save_records(FACT_COLLECTION, "financial_fact", list(FACT_DEDUP_FIELDS), batch)
@@ -451,13 +483,14 @@ class MongoStorage(StorageBackend):
         *,
         updated_at: datetime | None = None,
         download_version: int | None = None,
-    ) -> None:
+    ) -> bool:
         # Acknowledging a sync must not wait for index creation either.
         await self._ensure_connection()
         collection = self._db[self._get_collection_name(template_name)]
         query = {"_meta.record_id": record_id}
         set_fields: dict[str, Any] = {"_meta.sync_status": sync_status}
         if sync_status == "synced":
+            query["_meta.sync_status"] = {"$ne": "synced"}
             # Acknowledge only the version sent to Kafka, never a concurrent update.
             if updated_at is not None:
                 query["_meta.updated_at"] = updated_at
@@ -466,11 +499,12 @@ class MongoStorage(StorageBackend):
                     {"$in": [None, 0]} if download_version == 0 else download_version
                 )
             set_fields["_meta.synced_at"] = updated_at or datetime.now(timezone.utc)
-        await collection.update_one(
+        result = await collection.update_one(
             query,
             {"$set": set_fields},
         )
         logger.debug("Updated sync_status for %s: %s", record_id, sync_status)
+        return bool(result.matched_count)
 
     async def get_unsynced_records(
         self,

@@ -81,11 +81,12 @@ data/             批量采集参数与本地数据文件
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
 
-下载器可按 PostgreSQL 模板的 `data_type` 筛选，以模板 `name` 作为 MongoDB 集合名。匹配集合的待下载记录合并成一批（总数不超过 `--batch`）统一下载，每批完成后及空闲轮询时重新读取模板名单，自动识别新增模板。不传 `--datatype` 时处理所有类型，也可与 `--template` 同用：
+下载器按 PostgreSQL 模板分组并关联 `public.syncer_collections`，以路由的业务 `data_type` 筛选实际集合；未配置路由的模板使用原 `data_type` 和同名集合。匹配集合的待下载记录合并成一批（总数不超过 `--batch`）统一下载，每批及空闲轮询时重读数据库。不传 `--datatype` 时保留原行为，也可与 `--template` 同用；指定类型时，`--template` 支持父模板名和实际集合名：
 
 ```bash
 python -m app.downloader.main --datatype news
 python -m app.downloader.main --template ssc_news --datatype=news
+python -m app.downloader.main --template sec_edgar --datatype filing
 ```
 
 ## 外部基础设施
@@ -209,14 +210,36 @@ Compose 为 news、patent、navwarn、intelligence、company、financial_fact、
 分别启动独立 Syncer 容器。原 `syncer` 服务负责 news，其余服务为 `syncer-<类型>`（服务名中的下划线改为连字符）。
 每批从 MongoDB 读取 50 条，进程内最多 10 个协程同时发送及回写状态；Kafka 中每条记录仍是独立消息。
 仅发送成功后标记对应版本为 synced，失败记录保留待重试。
-指定类型时，每批通过 PostgreSQL 模板表按 data_type 查询模板名称，只读取同名 MongoDB 集合；MongoDB 查询仅过滤同步状态。
+采集记录落库即标记为 pending，Syncer 查询不依赖下载状态；每条记录下载处理完成后立即原子回写资源、下载状态、更新时间并重置为 pending，不等待同批其他记录。下载回写同时递增 download_version；同步确认匹配发送时的 updated_at 和下载版本，避免同一毫秒内的下载更新被旧同步确认覆盖。
+同步由轮询触发：新采集记录和下载更新均在下一次轮询发送，空闲轮询默认间隔 10 秒，可通过 `--poll` 调整。
+指定类型时，与下载器共用模板分组及 `syncer_collections` 路由查询，只读取匹配业务类型的实际集合；MongoDB 仅按原同步状态条件查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
+
+首次使用路由查询前，执行一次初始化，再重建并启动下载器和 Syncer：
+
+```bash
+python -m app.storage.syncer_collections --init
+```
+
+该命令创建 `public.syncer_collections` 并插入 SEC 的 company/filing/financial_fact、Twitter 的 account/tweet 初始映射，已有映射保持不变。路由以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行时的启停。模板存在路由时不再回退到同名集合，禁用路由也不会触发回退。
+模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 company 或 filing。修改路由在下一批生效，已读入的当前批次继续完成。
+模板的 `download[].collection` 使用实际集合名，变更实际集合时应一并更新对应下载配置。
+
+例如禁止按类型运行的下载器与 Syncer 处理 SEC 财报集合：
+
+```sql
+UPDATE public.syncer_collections
+SET enabled = false, updated_at = now()
+WHERE template_name = 'sec_edgar' AND data_type = 'filing';
+```
+
+重新启用时将 `enabled` 设为 `true`。新增业务类型仍需补充 Syncer 参数白名单及下游处理器。
 
 ```bash
 python -m app.syncer.main --data-type financial_fact --batch 50 --concurrency 10
 ```
 
 指定类型后发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 `spider-crawler-financial_fact`。
-不传 `--data-type` 时保留旧行为：扫描全部类型并发送到 `SPIDER_KAFKA_TOPIC`。
+不传 `--data-type` 时扫描全部类型，按每条记录的 `_meta.data_type` 自动发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 company 和 filing 分别发送到 `-company` 和 `-filing`；缺少类型且无法从已有 Twitter 集合映射确定类型的记录保留待处理，不发送到公共 topic。
 同一范围只运行一个 Syncer 实例，勿同时运行全类型旧实例和新的分类型实例，以免重复发送。
 
 切换前创建上述类型 topic（分区及副本数按集群配置），停止旧 Syncer，先更新 RDS Worker，再启动分类型 Syncer。

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from typing import Any
 
 from pymongo.errors import ConnectionFailure
@@ -22,7 +21,12 @@ from app.logger import get_logger
 from app.scheduler.celery_app import app, run_async
 from app.scheduler.task_log_capture import WorkspaceTaskLogCapture
 from app.storage.minio_client import get_business_metadata_minio_client
-from app.utils.runtime_control import reset_control_checkpoint, set_control_checkpoint
+from app.utils.runtime_control import (
+    reset_control_checkpoint,
+    reset_workspace_run,
+    set_control_checkpoint,
+    set_workspace_run,
+)
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
@@ -205,7 +209,8 @@ async def _crawl_template(
     checkpoint_store: PageCheckpointStore | None = None
     log_capture: WorkspaceTaskLogCapture | None = None
     checkpoint_connected = False
-    run_id = str(uuid.uuid4())
+    run_id = ""
+    run_token = None
     control_token = set_control_checkpoint(
         lambda: _wait_until_runnable(task_id, celery_task_id)
     )
@@ -226,6 +231,10 @@ async def _crawl_template(
                 task.get("status"),
             )
             return {"task_id": task_id, "status": "stale"}
+        run_id = str(task.get("current_run_id") or "")
+        if not run_id:
+            raise RuntimeError(f"Workspace execution batch is missing for task {task_id}")
+        run_token = set_workspace_run(task_id, run_id, celery_task_id)
         log_capture = WorkspaceTaskLogCapture(task_id, run_id, ai_collect_store)
         log_capture.start()
         logger.info("Workspace crawl task started: %s", task_id)
@@ -305,6 +314,7 @@ async def _crawl_template(
             current_template._crawl_context = {
                 "task_id": task_id,
                 "workspace_task_id": task_id,
+                "workspace_run_id": run_id,
                 "batch_index": batch_index + 1,
                 "batch_count": batch_count,
                 "incremental_watermark": incremental_watermark,
@@ -328,10 +338,9 @@ async def _crawl_template(
                     {
                         "progress": min(99, int(_batch_index * 100 / batch_count + page_progress)),
                         "records": result.saved_records + current.saved_records,
-                        "inserted_records": result.inserted_records + current.inserted_records,
-                        "updated_records": result.updated_records + current.updated_records,
-                        "deleted_records": result.deleted_records + current.deleted_records,
                     },
+                    expected_run_id=run_id,
+                    expected_celery_task_id=celery_task_id,
                 )
 
             current_result = await engine.crawl_from_page(
@@ -349,10 +358,9 @@ async def _crawl_template(
                 {
                     "progress": min(99, int((batch_index + 1) * 100 / batch_count)),
                     "records": result.saved_records,
-                    "inserted_records": result.inserted_records,
-                    "updated_records": result.updated_records,
-                    "deleted_records": result.deleted_records,
                 },
+                expected_run_id=run_id,
+                expected_celery_task_id=celery_task_id,
             )
             if batch_index + 1 < batch_count:
                 next_start_page = (
@@ -393,10 +401,9 @@ async def _crawl_template(
                 "progress": 100,
                 "records": result.saved_records,
                 "throughput": 0,
-                "inserted_records": result.inserted_records,
-                "updated_records": result.updated_records,
-                "deleted_records": result.deleted_records,
             },
+            expected_run_id=run_id,
+            expected_celery_task_id=celery_task_id,
         )
         logger.info(
             "Workspace crawl task completed: task=%s saved=%d",
@@ -430,11 +437,15 @@ async def _crawl_template(
         await ai_collect_store.update_task(
             task_id,
             {"status": "failed", "throughput": 0},
+            expected_run_id=run_id or None,
+            expected_celery_task_id=celery_task_id,
         )
         logger.error("%s: %s", type(exc).__name__, exc)
         raise
     finally:
         reset_control_checkpoint(control_token)
+        if run_token is not None:
+            reset_workspace_run(run_token)
         if engine is not None:
             await engine.close()
         if checkpoint_store is not None:
@@ -488,12 +499,15 @@ async def _dispatch_due_workspace_tasks() -> dict[str, Any]:
                 task_id,
                 "info",
                 "周期调度已提交到 Celery Worker",
+                run_id=str(task["current_run_id"]),
             )
             dispatched += 1
         except Exception:
             await ai_collect_store.update_task(
                 task_id,
                 {"status": "failed", "throughput": 0},
+                expected_run_id=str(task["current_run_id"]),
+                expected_celery_task_id=str(task["celery_task_id"]),
             )
             logger.exception("Failed to dispatch recurring workspace task %s", task_id)
     return {"claimed": len(tasks), "dispatched": dispatched}

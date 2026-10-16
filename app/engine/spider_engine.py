@@ -179,6 +179,9 @@ class SpiderEngine:
         workspace_task_id = template._crawl_context.get("workspace_task_id")
         if workspace_task_id:
             search_params = {**search_params, "__workspace_task_id": workspace_task_id}
+        workspace_run_id = template._crawl_context.get("workspace_run_id")
+        if workspace_run_id:
+            search_params = {**search_params, "__workspace_run_id": workspace_run_id}
         if search_params:
             for record in records:
                 record["_meta_search_params"] = search_params
@@ -193,6 +196,16 @@ class SpiderEngine:
         result.updated_records += int(save_stats.get("updated", 0))
         result.unchanged_records += int(save_stats.get("unchanged", 0))
         result.deleted_records += int(save_stats.get("deleted", 0))
+        if isinstance(self._storage, FileStorage) and workspace_task_id and workspace_run_id:
+            from app.web.services.ai_collect_store import ai_collect_store
+
+            await ai_collect_store.increment_run_stats(
+                workspace_task_id,
+                workspace_run_id,
+                inserted=int(save_stats.get("inserted", saved_count)),
+                updated=int(save_stats.get("updated", 0)),
+                deleted=int(save_stats.get("deleted", 0)),
+            )
         return saved_count
 
     async def _filter_and_save_page_records(

@@ -225,9 +225,16 @@ export interface WorkspaceTaskLog {
 
 export interface WorkspaceTaskLogRun {
   id: string;
+  task_id: string;
+  status: 'running' | 'paused' | 'completed' | 'failed' | 'canceled' | 'legacy';
   started_at: string;
-  ended_at: string;
+  ended_at: string | null;
   log_count: number;
+  inserted_records: number | null;
+  updated_records: number | null;
+  deleted_records: number | null;
+  downloaded_records: number | null;
+  synced_records: number | null;
 }
 
 export interface WorkspaceTask {
@@ -240,11 +247,8 @@ export interface WorkspaceTask {
   progress: number;
   records: number;
   throughput: number;
-  inserted_records: number;
-  updated_records: number;
-  deleted_records: number;
-  downloaded_records: number;
-  synced_records: number;
+  current_run_id: string | null;
+  current_run?: WorkspaceTaskLogRun | null;
   control_state: 'canceled' | null;
   download_state: 'idle' | 'running' | 'paused';
   sync_state: 'idle' | 'running' | 'paused' | 'canceled';
@@ -256,8 +260,8 @@ export interface WorkspaceTask {
   updated_at: string;
   started_at?: string;
   logs: WorkspaceTaskLog[];
-  log_runs: WorkspaceTaskLogRun[];
-  log_run_count: number;
+  log_runs?: WorkspaceTaskLogRun[];
+  log_run_count?: number;
 }
 
 export interface WorkspaceTaskPayload {
@@ -347,6 +351,9 @@ export const fetchWorkspaceTask = (taskId: string): Promise<WorkspaceTask> =>
 
 export const fetchWorkspaceTaskLogs = (taskId: string, runId: string): Promise<WorkspaceTaskLog[]> =>
   client.get(`/ai/workspace/tasks/${taskId}/logs/${runId}`).then((r) => r.data.items);
+
+export const fetchWorkspaceTaskRun = (taskId: string, runId: string): Promise<WorkspaceTaskLogRun> =>
+  client.get(`/ai/workspace/tasks/${taskId}/log-runs/${runId}`).then((r) => r.data);
 
 export const fetchWorkspaceTaskLogRuns = (
   taskId: string,

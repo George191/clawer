@@ -16,7 +16,8 @@ from app.config.settings import settings
 from app.logger import get_logger
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
-from app.web.services.task_events import publish_task_change, publish_task_log
+from app.utils.runtime_control import get_workspace_run
+from app.web.services.task_events import publish_task_change, publish_task_log, publish_task_run
 
 logger = get_logger(__name__)
 
@@ -529,8 +530,11 @@ class AICollectStore:
         await self.initialize()
         rows = await self._pg.fetch_all(
             """
-            SELECT task.*, template.icon AS template_icon, '[]'::jsonb AS logs
+            SELECT task.*, template.icon AS template_icon, '[]'::jsonb AS logs,
+                   to_jsonb(run) AS current_run
             FROM public.ai_collect_tasks task
+            LEFT JOIN public.ai_collect_task_runs run
+              ON run.task_id = task.id AND run.id = task.current_run_id
             LEFT JOIN public.ai_collect_templates template
               ON template.name = task.template_name
              AND template.version = task.template_version
@@ -543,23 +547,12 @@ class AICollectStore:
             row["favicon_url"] = minio.build_object_url(str(row.pop("template_icon") or ""))
         return rows
 
-    async def append_task_log(self, task_id: str, level: str, message: str) -> None:
-        await self.initialize()
-        log = await self._pg.fetch_one(
-            """
-            INSERT INTO public.ai_collect_task_logs (task_id, level, message)
-            SELECT task.id, :level, :message
-            FROM public.ai_collect_tasks task
-            WHERE task.id = CAST(:task_id AS uuid)
-            FOR KEY SHARE
-            RETURNING task_id
-            """,
-            {"task_id": task_id, "level": level, "message": message},
-        )
-        if log is None:
-            logger.warning("Skipping log for missing workspace task %s", task_id)
-            return
-        await publish_task_change(task_id)
+    async def append_task_log(
+        self, task_id: str, level: str, message: str, run_id: str | None = None,
+    ) -> None:
+        await self.append_task_logs(task_id, [{
+            "level": level, "message": message, "run_id": run_id,
+        }])
 
     async def append_task_logs(
         self,
@@ -569,19 +562,40 @@ class AICollectStore:
         if not logs:
             return
         await self.initialize()
-        await self._pg.execute_many(
+        inserted = await self._pg.fetch_all(
             """
-            INSERT INTO public.ai_collect_task_logs (task_id, run_id, level, message, created_at)
-            VALUES (CAST(:task_id AS uuid), CAST(:run_id AS uuid), :level, :message, :created_at)
+            WITH inserted AS (
+                INSERT INTO public.ai_collect_task_logs
+                    (task_id, run_id, level, message, created_at)
+                SELECT task.id, run.id, entry.level, entry.message,
+                       COALESCE(entry.created_at, now())
+                FROM public.ai_collect_tasks task
+                CROSS JOIN jsonb_to_recordset(CAST(:logs AS jsonb))
+                    AS entry(run_id uuid, level text, message text, created_at timestamptz)
+                JOIN public.ai_collect_task_runs run
+                  ON run.id = COALESCE(entry.run_id, task.current_run_id)
+                 AND run.task_id = task.id
+                WHERE task.id = CAST(:task_id AS uuid)
+                  AND task.deleted_at IS NULL
+                RETURNING run_id, level, message, created_at
+            ), counted AS (
+                UPDATE public.ai_collect_task_runs run
+                SET log_count = run.log_count + totals.log_count
+                FROM (SELECT run_id, count(*) AS log_count FROM inserted GROUP BY run_id) totals
+                WHERE run.id = totals.run_id
+                RETURNING run.id
+            )
+            SELECT run_id::text AS run_id, level, message, created_at FROM inserted
             """,
-            [{"task_id": task_id, "run_id": log.get("run_id"), **log} for log in logs],
+            {"task_id": task_id, "logs": json.dumps(logs, default=str, ensure_ascii=False)},
         )
-        for log in logs:
+        for log in inserted:
             await publish_task_log(task_id, log)
 
-    async def increment_task_stats(
+    async def increment_run_stats(
         self,
         task_id: str,
+        run_id: str,
         *,
         inserted: int = 0,
         updated: int = 0,
@@ -590,20 +604,24 @@ class AICollectStore:
         synced: int = 0,
     ) -> None:
         await self.initialize()
-        await self._pg.execute(
+        run = await self._pg.fetch_one(
             """
-            UPDATE public.ai_collect_tasks SET
+            UPDATE public.ai_collect_task_runs SET
                 inserted_records = inserted_records + :inserted,
                 updated_records = updated_records + :updated,
                 deleted_records = deleted_records + :deleted,
                 downloaded_records = downloaded_records + :downloaded,
-                synced_records = synced_records + :synced,
-                updated_at = now()
-            WHERE id = CAST(:task_id AS uuid)
-              AND deleted_at IS NULL
+                synced_records = synced_records + :synced
+            WHERE task_id = CAST(:task_id AS uuid) AND id = CAST(:run_id AS uuid)
+              AND EXISTS (
+                  SELECT 1 FROM public.ai_collect_tasks task
+                  WHERE task.id = CAST(:task_id AS uuid) AND task.deleted_at IS NULL
+              )
+            RETURNING *
             """,
             {
                 "task_id": task_id,
+                "run_id": run_id,
                 "inserted": inserted,
                 "updated": updated,
                 "deleted": deleted,
@@ -611,7 +629,8 @@ class AICollectStore:
                 "synced": synced,
             },
         )
-        await publish_task_change(task_id)
+        if run is not None:
+            await publish_task_run(task_id, run)
 
     async def transition_task_stage_state(
         self,
@@ -674,20 +693,26 @@ class AICollectStore:
         await publish_task_change(str(task["id"]))
         return task
 
-    async def update_task(self, task_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
+    async def update_task(
+        self, task_id: str, changes: dict[str, Any], *,
+        expected_run_id: str | None = None,
+        expected_celery_task_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        current_run = get_workspace_run()
+        if current_run is not None and current_run[0] == task_id:
+            if expected_run_id is None:
+                expected_run_id = current_run[1]
+            if expected_celery_task_id is None:
+                expected_celery_task_id = current_run[2]
         await self.initialize()
         task = await self._pg.fetch_one(
             """
-            UPDATE public.ai_collect_tasks SET
+            WITH changed AS (
+              UPDATE public.ai_collect_tasks SET
                 status = COALESCE(:status, status),
                 progress = COALESCE(:progress, progress),
                 records = COALESCE(:records, records),
                 throughput = COALESCE(:throughput, throughput),
-                inserted_records = COALESCE(:inserted_records, inserted_records),
-                updated_records = COALESCE(:updated_records, updated_records),
-                deleted_records = COALESCE(:deleted_records, deleted_records),
-                downloaded_records = COALESCE(:downloaded_records, downloaded_records),
-                synced_records = COALESCE(:synced_records, synced_records),
                 control_state = COALESCE(:control_state, control_state),
                 download_state = COALESCE(:download_state, download_state),
                 sync_state = COALESCE(:sync_state, sync_state),
@@ -695,7 +720,24 @@ class AICollectStore:
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
-            RETURNING *
+              AND control_state IS DISTINCT FROM 'canceled'
+              AND (CAST(:expected_run_id AS uuid) IS NULL
+                   OR current_run_id = CAST(:expected_run_id AS uuid))
+              AND (CAST(:expected_celery_task_id AS text) IS NULL
+                   OR celery_task_id = :expected_celery_task_id)
+              RETURNING *
+            ), changed_run AS (
+                UPDATE public.ai_collect_task_runs run SET
+                    status = CASE WHEN :status = 'queued' THEN 'completed' ELSE :status END,
+                    ended_at = CASE WHEN :status IN ('queued', 'completed', 'failed')
+                                    THEN now() ELSE NULL END
+                FROM changed
+                WHERE run.id = changed.current_run_id AND run.task_id = changed.id
+                  AND :status IN ('running', 'paused', 'queued', 'completed', 'failed')
+                  AND run.status IN ('running', 'paused')
+                RETURNING run.id
+            )
+            SELECT * FROM changed
             """,
             {
                 "id": task_id,
@@ -703,16 +745,16 @@ class AICollectStore:
                 "progress": None,
                 "records": None,
                 "throughput": None,
-                "inserted_records": None,
-                "updated_records": None,
-                "deleted_records": None,
-                "downloaded_records": None,
-                "synced_records": None,
                 "control_state": None,
                 "download_state": None,
                 "sync_state": None,
                 "start_now": False,
-                **changes,
+                **{key: value for key, value in changes.items() if key not in {
+                    "inserted_records", "updated_records", "deleted_records",
+                    "downloaded_records", "synced_records",
+                }},
+                "expected_run_id": expected_run_id,
+                "expected_celery_task_id": expected_celery_task_id,
             },
         )
         if task:
@@ -729,19 +771,37 @@ class AICollectStore:
         await self.initialize()
         task = await self._pg.fetch_one(
             """
-            UPDATE public.ai_collect_tasks SET
+            WITH current AS (
+                SELECT id, current_run_id
+                FROM public.ai_collect_tasks
+                WHERE id = CAST(:id AS uuid)
+                  AND deleted_at IS NULL
+                  AND status IN ('queued', 'failed')
+                  AND control_state IS DISTINCT FROM 'canceled'
+                FOR UPDATE
+            ), closed AS (
+                UPDATE public.ai_collect_task_runs run
+                SET status = 'canceled', ended_at = now()
+                FROM current
+                WHERE run.id = current.current_run_id AND run.status IN ('running', 'paused')
+                RETURNING run.id
+            ), new_run AS (
+                INSERT INTO public.ai_collect_task_runs (id, task_id)
+                SELECT CAST(:celery_task_id AS uuid), id FROM current
+                RETURNING id, task_id
+            )
+            UPDATE public.ai_collect_tasks task SET
                 status = 'running',
                 celery_task_id = :celery_task_id,
+                current_run_id = new_run.id,
                 download_state = 'running',
                 sync_state = 'running',
                 progress = 0,
                 started_at = now(),
                 updated_at = now()
-            WHERE id = CAST(:id AS uuid)
-              AND deleted_at IS NULL
-              AND status IN ('queued', 'failed')
-              AND control_state IS DISTINCT FROM 'canceled'
-            RETURNING *
+            FROM new_run
+            WHERE task.id = new_run.task_id
+            RETURNING task.*
             """,
             {"id": task_id, "celery_task_id": celery_task_id},
         )
@@ -760,31 +820,37 @@ class AICollectStore:
         task = await self._pg.fetch_one(
             """
             WITH current AS (
-                SELECT id, celery_task_id
+                SELECT id, celery_task_id, current_run_id
                 FROM public.ai_collect_tasks
                 WHERE id = CAST(:id AS uuid)
                   AND deleted_at IS NULL
                   AND status IN ('running', 'paused', 'failed')
                   AND control_state IS DISTINCT FROM 'canceled'
                 FOR UPDATE
+            ), closed AS (
+                UPDATE public.ai_collect_task_runs run
+                SET status = 'canceled', ended_at = now()
+                FROM current
+                WHERE run.id = current.current_run_id AND run.status IN ('running', 'paused')
+                RETURNING run.id
+            ), new_run AS (
+                INSERT INTO public.ai_collect_task_runs (id, task_id)
+                SELECT CAST(:celery_task_id AS uuid), id FROM current
+                RETURNING id, task_id
             )
             UPDATE public.ai_collect_tasks task SET
                 status = 'running',
                 celery_task_id = :celery_task_id,
+                current_run_id = new_run.id,
                 progress = 0,
                 records = 0,
                 throughput = 0,
-                inserted_records = 0,
-                updated_records = 0,
-                deleted_records = 0,
-                downloaded_records = 0,
-                synced_records = 0,
                 control_state = NULL,
                 download_state = 'running',
                 sync_state = 'running',
                 started_at = now(),
                 updated_at = now()
-            FROM current
+            FROM current JOIN new_run ON new_run.task_id = current.id
             WHERE task.id = current.id
             RETURNING task.*, current.celery_task_id AS previous_celery_task_id
             """,
@@ -801,7 +867,7 @@ class AICollectStore:
         tasks = await self._pg.fetch_all(
             """
             WITH due AS (
-                SELECT id
+                SELECT id, gen_random_uuid() AS run_id
                 FROM public.ai_collect_tasks
                 WHERE status IN ('queued', 'failed')
                   AND deleted_at IS NULL
@@ -842,10 +908,15 @@ class AICollectStore:
                 ORDER BY COALESCE(started_at, created_at), created_at
                 FOR UPDATE SKIP LOCKED
                 LIMIT :limit
+            ), new_runs AS (
+                INSERT INTO public.ai_collect_task_runs (id, task_id)
+                SELECT run_id, id FROM due
+                RETURNING id, task_id
             )
             UPDATE public.ai_collect_tasks task SET
                 status = 'running',
-                celery_task_id = gen_random_uuid()::text,
+                celery_task_id = new_runs.id::text,
+                current_run_id = new_runs.id,
                 progress = 0,
                 download_state = CASE
                     WHEN task.download_state = 'paused' THEN 'paused' ELSE 'running' END,
@@ -853,8 +924,8 @@ class AICollectStore:
                     WHEN task.sync_state IN ('paused', 'canceled') THEN task.sync_state ELSE 'running' END,
                 started_at = now(),
                 updated_at = now()
-            FROM due
-            WHERE task.id = due.id
+            FROM new_runs
+            WHERE task.id = new_runs.task_id
             RETURNING task.*
             """,
             {"limit": limit},
@@ -879,7 +950,8 @@ class AICollectStore:
         await self.initialize()
         task = await self._pg.fetch_one(
             """
-            UPDATE public.ai_collect_tasks SET
+            WITH changed AS (
+              UPDATE public.ai_collect_tasks SET
                 status = :next_status,
                 celery_task_id = COALESCE(:celery_task_id, celery_task_id),
                 updated_at = now()
@@ -889,7 +961,18 @@ class AICollectStore:
               AND control_state IS DISTINCT FROM 'canceled'
               AND (CAST(:expected_celery_task_id AS text) IS NULL
                    OR celery_task_id = :expected_celery_task_id)
-            RETURNING *
+              RETURNING *
+            ), changed_run AS (
+                UPDATE public.ai_collect_task_runs run SET
+                    status = :next_status,
+                    ended_at = CASE WHEN :next_status IN ('completed', 'failed')
+                                    THEN now() ELSE NULL END
+                FROM changed
+                WHERE run.id = changed.current_run_id AND run.task_id = changed.id
+                  AND run.status IN ('running', 'paused')
+                RETURNING run.id
+            )
+            SELECT * FROM changed
             """,
             {
                 "id": task_id,
@@ -908,13 +991,22 @@ class AICollectStore:
         await self.initialize()
         task = await self._pg.fetch_one(
             """
-            UPDATE public.ai_collect_tasks SET
+            WITH changed AS (
+              UPDATE public.ai_collect_tasks SET
                 status = 'failed', control_state = 'canceled', throughput = 0,
                 download_state = 'paused', sync_state = 'canceled', updated_at = now()
             WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL
               AND status IN ('queued', 'running', 'paused', 'failed')
               AND control_state IS DISTINCT FROM 'canceled'
-            RETURNING *
+              RETURNING *
+            ), changed_run AS (
+                UPDATE public.ai_collect_task_runs run SET status = 'canceled', ended_at = now()
+                FROM changed
+                WHERE run.id = changed.current_run_id AND run.task_id = changed.id
+                  AND run.status IN ('running', 'paused')
+                RETURNING run.id
+            )
+            SELECT * FROM changed
             """,
             {"id": task_id},
         )
@@ -927,7 +1019,7 @@ class AICollectStore:
         await self.initialize()
         task = await self._pg.fetch_one(
             """
-            SELECT task.*, template.icon AS template_icon,
+            SELECT task.*, template.icon AS template_icon, to_jsonb(current_run) AS current_run,
                    COALESCE((
                        SELECT jsonb_agg(log_row.payload ORDER BY log_row.created_at)
                        FROM (
@@ -939,51 +1031,32 @@ class AICollectStore:
                                       'run_id', run_id::text
                                   ) AS payload
                            FROM public.ai_collect_task_logs
-                           WHERE task_id = task.id
-                             AND (
-                               run_id = (
-                                 SELECT latest.run_id
-                                 FROM public.ai_collect_task_logs latest
-                                 WHERE latest.task_id = task.id AND latest.run_id IS NOT NULL
-                                 GROUP BY latest.run_id
-                                 ORDER BY min(latest.created_at) DESC
-                                 LIMIT 1
-                               )
-                               OR (
-                                 run_id IS NULL
-                                 AND NOT EXISTS (
-                                   SELECT 1 FROM public.ai_collect_task_logs grouped
-                                   WHERE grouped.task_id = task.id AND grouped.run_id IS NOT NULL
-                                 )
-                               )
-                             )
+                           WHERE task_id = task.id AND run_id = current_run.id
                            ORDER BY created_at DESC
                            LIMIT 200
                        ) log_row
                    ), '[]'::jsonb) AS logs,
                    COALESCE((
                        SELECT jsonb_agg(
-                           jsonb_build_object(
-                               'id', run_row.run_id::text,
-                               'started_at', run_row.started_at,
-                               'ended_at', run_row.ended_at,
-                               'log_count', run_row.log_count
-                           ) ORDER BY run_row.started_at DESC
+                           to_jsonb(run_row) ORDER BY run_row.started_at DESC, run_row.id DESC
                        )
                        FROM (
-                           SELECT run_id, min(created_at) AS started_at,
-                                  max(created_at) AS ended_at, count(*) AS log_count
-                           FROM public.ai_collect_task_logs
-                           WHERE task_id = task.id AND run_id IS NOT NULL
-                           GROUP BY run_id
-                           ORDER BY min(created_at) DESC
+                           SELECT * FROM public.ai_collect_task_runs
+                           WHERE task_id = task.id
+                           ORDER BY started_at DESC, id DESC
                            LIMIT 20
                        ) run_row
                    ), '[]'::jsonb) AS log_runs,
-                   (SELECT count(DISTINCT run_id)
-                    FROM public.ai_collect_task_logs
-                    WHERE task_id = task.id AND run_id IS NOT NULL)::integer AS log_run_count
+                   (SELECT count(*) FROM public.ai_collect_task_runs
+                    WHERE task_id = task.id)::integer AS log_run_count
             FROM public.ai_collect_tasks task
+            LEFT JOIN public.ai_collect_task_runs current_run
+              ON current_run.task_id = task.id
+             AND current_run.id = COALESCE(task.current_run_id, (
+                 SELECT latest.id FROM public.ai_collect_task_runs latest
+                 WHERE latest.task_id = task.id
+                 ORDER BY latest.started_at DESC, latest.id DESC LIMIT 1
+             ))
             LEFT JOIN public.ai_collect_templates template
               ON template.name = task.template_name
              AND template.version = task.template_version
@@ -1026,21 +1099,28 @@ class AICollectStore:
         await self.initialize()
         return await self._pg.fetch_all(
             """
-            SELECT log.run_id::text AS id,
-                   min(log.created_at) AS started_at,
-                   max(log.created_at) AS ended_at,
-                   count(*) AS log_count
-            FROM public.ai_collect_task_logs log
-            JOIN public.ai_collect_tasks task ON task.id = log.task_id
-            WHERE log.task_id = CAST(:task_id AS uuid)
-              AND log.run_id IS NOT NULL
+            SELECT run.*
+            FROM public.ai_collect_task_runs run
+            JOIN public.ai_collect_tasks task ON task.id = run.task_id
+            WHERE run.task_id = CAST(:task_id AS uuid)
               AND task.deleted_at IS NULL
-            GROUP BY log.run_id
-            ORDER BY min(log.created_at) DESC
+            ORDER BY run.started_at DESC, run.id DESC
             OFFSET :offset
             LIMIT :limit
             """,
             {"task_id": task_id, "offset": offset, "limit": limit},
+        )
+
+    async def get_task_run(self, task_id: str, run_id: str) -> dict[str, Any] | None:
+        await self.initialize()
+        return await self._pg.fetch_one(
+            """
+            SELECT run.* FROM public.ai_collect_task_runs run
+            JOIN public.ai_collect_tasks task ON task.id = run.task_id
+            WHERE run.task_id = CAST(:task_id AS uuid) AND run.id = CAST(:run_id AS uuid)
+              AND task.deleted_at IS NULL
+            """,
+            {"task_id": task_id, "run_id": run_id},
         )
 
     async def get_task_for_execution(self, task_id: str) -> dict[str, Any] | None:
@@ -1060,7 +1140,7 @@ class AICollectStore:
         await self.initialize()
         return await self._pg.fetch_one(
             """
-            SELECT status, control_state, download_state, sync_state, celery_task_id
+            SELECT status, control_state, download_state, sync_state, celery_task_id, current_run_id
             FROM public.ai_collect_tasks
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL

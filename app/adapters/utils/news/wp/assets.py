@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
@@ -82,8 +81,6 @@ async def wp_request_json(
     """Request JSON from a WordPress REST endpoint.
 
     无限重试（每次 rotate_proxy 换 IP），不 sleep 立刻下次。
-    依赖上层 enrich_cover_images_batch 的 gather 超时兜底，
-    防止代理彻底坏掉时 Celery 任务永久挂死。
     """
     attempt = 0
     while True:
@@ -104,31 +101,6 @@ async def wp_request_json(
                 attempt,
                 exc,
             )
-
-
-async def fetch_wp_media_url(
-    client: HttpClient,
-    base_url: str,
-    media_id: int,
-    cache: dict[int, str],
-    adapter_name: str | None = None,
-) -> Any:
-    """Fetch a WordPress media URL by ID."""
-    if not media_id:
-        return ""
-    if media_id in cache:
-        return cache[media_id]
-
-    url = (
-        f"{base_url}/wp-json/wp/v2/media/{media_id}"
-        f"?_fields=source_url,media_details.sizes.full.source_url"
-    )
-    return await wp_request_json(
-        client,
-        url,
-        anti_crawl_enabled=True,
-        adapter_name=adapter_name,
-    )
 
 
 def _extract_embedded_media(record: dict[str, Any]) -> dict[str, Any] | None:
@@ -220,14 +192,13 @@ async def enrich_cover_images_batch(
     cache: dict[int, str],
     adapter_name: str | None = None,
 ) -> None:
-    """Fetch cover image URLs and write the configured cover aliases.
+    """Extract cover images from fields already included in the post response.
 
     优先级：
     1. _embedded.wp:featuredmedia（WP 默认，_embed=1 时内联，无需额外请求）
     2. yoast_head_json.og_image（Yoast SEO 插件字段，URL 字符串）
-    3. media API 兜底（wp-json/wp/v2/media/{id}，依赖代理轮换）
+    不单独请求 media API；内嵌媒体缺失时直接跳过。
     """
-    pending = []
     for record in records:
         # 1. WP 默认：_embedded
         embedded_media = _extract_embedded_media(record)
@@ -238,35 +209,7 @@ async def enrich_cover_images_batch(
         og_media = _extract_og_image_media(record)
         if og_media:
             record["featured_media"] = og_media
-            continue
-        # 3. 兜底：media API
-        media_id = int(record.get("featured_media") or 0)
-        if media_id:
-            pending.append((record, media_id))
-    if not pending:
-        return
 
-    async def _fetch_one(record: dict[str, Any], media_id: int) -> None:
-        cover_obj = await fetch_wp_media_url(
-            client,
-            base_url,
-            media_id,
-            cache,
-            adapter_name,
-        )
-        if cover_obj:
-            record["featured_media"] = (
-                _normalize_featured_media(cover_obj) or cover_obj
-            )
-
-    # 兜底超时：wp_request_json 无限重试换 IP 时，整个 gather 可能长时间不返回。
-    # 给 10 分钟（约 120 次换 IP 重试）让代理轮换最终命中好 IP，
-    # 超时后取消所有子任务并抛出 TimeoutError，防止 Celery 任务永久挂死。
-    gather_timeout = 600
-    await asyncio.wait_for(
-        asyncio.gather(*(_fetch_one(record, mid) for record, mid in pending)),
-        timeout=gather_timeout,
-    )
 
 def cleanup_wp_fields(record: dict[str, Any]) -> None:
     """Remove WordPress API intermediate fields."""

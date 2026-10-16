@@ -79,22 +79,23 @@ class SyncWorker:
         logger.info("SyncWorker: pushing %d records to Kafka", len(ready))
 
         sent_count = 0
-        synced_by_task: dict[str, int] = {}
+        synced_by_run: dict[tuple[str, str], int] = {}
         results = await asyncio.gather(*(self._sync_record(record) for record in ready))
-        for success, task_id in results:
+        for record, (success, task_id) in zip(ready, results):
             if success:
                 sent_count += 1
-                if task_id:
-                    synced_by_task[task_id] = synced_by_task.get(task_id, 0) + 1
+                run_id = str(((record.get("_meta") or {}).get("search_params") or {}).get("__workspace_run_id") or "")
+                if task_id and run_id:
+                    owner = (task_id, run_id)
+                    synced_by_run[owner] = synced_by_run.get(owner, 0) + 1
 
-        for task_id, count in synced_by_task.items():
-            if await ai_collect_store.get_task_control(task_id) is None:
-                continue
-            await ai_collect_store.increment_task_stats(task_id, synced=count)
+        for (task_id, run_id), count in synced_by_run.items():
+            await ai_collect_store.increment_run_stats(task_id, run_id, synced=count)
             await ai_collect_store.append_task_log(
                 task_id,
                 "ok",
                 f"同步完成：records={count}",
+                run_id=run_id,
             )
 
         logger.info("SyncWorker: synced %d records to Kafka", sent_count)
@@ -138,13 +139,13 @@ class SyncWorker:
                 await self._kafka.send_record(
                     record, topic=f"{settings.kafka_topic}-{data_type}",
                 )
-                await self._mongo.update_sync_status(
+                acknowledged = await self._mongo.update_sync_status(
                     template, data_type, record_id, "synced",
                     updated_at=meta.get("updated_at"),
                     download_version=meta.get("download_version", 0),
                 )
                 task_id = str((meta.get("search_params") or {}).get("__workspace_task_id") or "")
-                return True, task_id
+                return True, task_id if acknowledged else ""
             except Exception:
                 logger.exception("SyncWorker: sync failed for %s", record_id)
                 return False, ""

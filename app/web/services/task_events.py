@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from uuid import UUID
 
 from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
@@ -19,6 +20,16 @@ _publisher_connection = RedisConnection(settings.task_redis_url)
 async def publish_task_change(task_id: str) -> None:
     """Best-effort notification; PostgreSQL remains the source of truth."""
     await _publish_change({"task_id": task_id})
+
+
+async def publish_task_run(task_id: str, run: dict) -> None:
+    """Refresh one execution, including batches outside the latest detail page."""
+    payload = {
+        key: value.isoformat() if hasattr(value, "isoformat")
+        else str(value) if isinstance(value, UUID) else value
+        for key, value in run.items()
+    }
+    await _publish_change({"type": "task_run", "task_id": task_id, "data": payload})
 
 
 async def publish_automation_change(channel: str) -> None:

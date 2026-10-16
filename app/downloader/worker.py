@@ -25,6 +25,7 @@ from app.models.template import SiteTemplate
 from app.storage.syncer_collections import syncer_collection_store
 from app.utils.download_paths import iter_download_nodes, iter_download_values
 from app.utils.path import get_nested_value
+from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
 
@@ -205,11 +206,22 @@ class DownloadWorker:
                 if path:
                     downloaded_urls[item.url] = path
 
-            await self._update_mongo(
+            completed = await self._update_mongo(
                 collection, record_id, updates,
                 "failed" if failed else "downloaded",
                 claim_token,
             )
+            owner = meta.get("search_params") or {}
+            task_id = str(owner.get("__workspace_task_id") or "")
+            run_id = str(owner.get("__workspace_run_id") or "")
+            if completed and not failed and task_id and run_id:
+                try:
+                    await ai_collect_store.increment_run_stats(task_id, run_id, downloaded=1)
+                except Exception:
+                    logger.exception(
+                        "Download completed but batch counter update failed: task=%s run=%s record=%s",
+                        task_id, run_id, record_id,
+                    )
         except Exception as exc:
             logger.error(
                 "DownloadWorker failed for %s | error=%s: %s",
@@ -347,8 +359,8 @@ class DownloadWorker:
         updates: dict[str, Any],
         status: str,
         claim_token: str,
-    ) -> None:
-        await self._mongo.update_download_result(
+    ) -> bool:
+        return await self._mongo.update_download_result(
             collection, record_id, updates, status, claim_token=claim_token,
         )
 

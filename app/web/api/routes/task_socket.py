@@ -95,8 +95,8 @@ async def _forward_task_event(payload: dict) -> None:
         return
     task_id = str(UUID(str(payload["task_id"])))
     channel = f"task:{task_id}"
-    if payload.get("type") == "task_log":
-        await _broadcast({"type": "task_log", "task_id": task_id, "data": payload["data"]}, {channel})
+    if payload.get("type") in {"task_log", "task_run"}:
+        await _broadcast({"type": payload["type"], "task_id": task_id, "data": payload["data"]}, {channel})
     elif any(connection.subscriptions.intersection({"tasks", channel}) for connection in _connections):
         await _broadcast(await _task_snapshot(task_id), {"tasks", channel})
 

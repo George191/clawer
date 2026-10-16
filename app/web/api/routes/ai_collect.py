@@ -220,6 +220,14 @@ async def workspace_task_log_runs(task_id: str, offset: int = 0, limit: int = 20
     return {"items": await ai_collect_store.get_task_log_runs(task_id, offset, min(limit, 100))}
 
 
+@router.get("/workspace/tasks/{task_id}/log-runs/{run_id}")
+async def workspace_task_log_run(task_id: UUID, run_id: UUID) -> dict[str, Any]:
+    run = await ai_collect_store.get_task_run(str(task_id), str(run_id))
+    if run is None:
+        raise HTTPException(status_code=404, detail="执行批次不存在")
+    return run
+
+
 @router.post("/workspace/tasks")
 async def create_workspace_task(payload: WorkspaceTaskRequest) -> dict[str, Any]:
     return await ai_collect_store.create_task(payload.model_dump())
