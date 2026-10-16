@@ -89,7 +89,7 @@ python -m app.downloader.main --template ssc_news --datatype=news
 python -m app.downloader.main --template sec_edgar --datatype filing
 ```
 
-下载并发使用 `SPIDER_DOWNLOAD_ASSET_CONCURRENCY`（默认 64），实际同时处理记录数不超过 `--batch`；每条记录内的资源依次下载。任务领取后每 60 秒续期，包含等待并发槽位的记录；超过 30 分钟未续期的下载任务可被其他 worker 回收。记录结束时释放对应的 HTTP 会话和代理租约。
+下载并发使用 `SPIDER_DOWNLOAD_ASSET_CONCURRENCY`（默认 64），实际同时处理记录数不超过 `--batch`；每条记录内的资源依次下载。仅领取 `pending` 记录，`downloading` 不按时间自动重新领取；遗留下载状态须在确认原下载进程停止后修复。记录结束时释放对应的 HTTP 会话和代理租约。
 
 ## 外部基础设施
 
