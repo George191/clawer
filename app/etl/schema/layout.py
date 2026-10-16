@@ -8,7 +8,6 @@ TableRole = Literal["current", "history"]
 PartitionType = Literal["none", "range", "hash"]
 PartitionGranularity = Literal["month", "year"]
 
-META_SCHEMA_NAME = "ts_meta"
 DEFAULT_HASH_PARTITION_COUNT = 32
 RDS_CURRENT_HASH_PARTITION_COLUMN = "record_id, data_source, data_type"
 
