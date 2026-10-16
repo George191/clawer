@@ -3120,57 +3120,55 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className={`workspace-dock-marquee ${display.isRunning ? 'is-running' : ''}`}>
               <i style={{ width: `${Math.max(runtime.progress, 8)}%`, background: display.color }} />
             </div>
-            <div className="workspace-dock-progress-meta is-subtle">
-              {logRunOptions.length ? (
-                <span
-                  className="workspace-dock-log-run-trigger"
-                  role="button"
-                  tabIndex={0}
-                  aria-expanded={taskLogRunOpen}
-                  onMouseDownCapture={(event) => {
-                    if ((event.target as HTMLElement).closest('.workspace-dock-log-run-popup')) {
-                      return;
-                    }
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setTaskLogRunOpen((current) => !current);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setTaskLogRunOpen((current) => !current);
-                    }
-                  }}
-                >
-                  <Select
-                    className="workspace-dock-log-run-select"
-                    popupClassName="workspace-dock-log-run-popup"
-                    popupMatchSelectWidth={168}
-                    size="small"
-                    listHeight={160}
-                    suffixIcon={<DownOutlined className="workspace-dock-log-run-arrow" />}
-                    open={taskLogRunOpen}
-                    onOpenChange={setTaskLogRunOpen}
-                    value={selectedTaskLogRunId ?? latestTaskLogRunId ?? logRunOptions[0].value}
-                    options={logRunOptions}
-                    loading={taskLogsLoading || taskLogRunsLoading}
-                    onChange={(runId) => {
-                      setTaskLogRunOpen(false);
-                      void handleTaskLogRunChange(runId);
-                    }}
-                    onPopupScroll={(event) => void handleTaskLogRunPopupScroll(event)}
-                    aria-label="选择执行批次"
-                  />
-                </span>
-              ) : (
-                <span>{selectedTask.lag}</span>
-              )}
-            </div>
           </div>
 
           <div className="workspace-dock-log-panel">
             <div className="workspace-dock-history-head">
-              <div className="workspace-dock-log-caption">日志</div>
+              <div className="workspace-dock-log-caption">
+                日志
+                {logRunOptions.length ? (
+                  <span
+                    className="workspace-dock-log-run-trigger"
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={taskLogRunOpen}
+                    onMouseDownCapture={(event) => {
+                      if ((event.target as HTMLElement).closest('.workspace-dock-log-run-popup')) {
+                        return;
+                      }
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setTaskLogRunOpen((current) => !current);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setTaskLogRunOpen((current) => !current);
+                      }
+                    }}
+                  >
+                    <Select
+                      className="workspace-dock-log-run-select"
+                      popupClassName="workspace-dock-log-run-popup"
+                      popupMatchSelectWidth={168}
+                      size="small"
+                      listHeight={160}
+                      suffixIcon={<DownOutlined className="workspace-dock-log-run-arrow" />}
+                      open={taskLogRunOpen}
+                      onOpenChange={setTaskLogRunOpen}
+                      value={selectedTaskLogRunId ?? latestTaskLogRunId ?? logRunOptions[0].value}
+                      options={logRunOptions}
+                      loading={taskLogsLoading || taskLogRunsLoading}
+                      onChange={(runId) => {
+                        setTaskLogRunOpen(false);
+                        void handleTaskLogRunChange(runId);
+                      }}
+                      onPopupScroll={(event) => void handleTaskLogRunPopupScroll(event)}
+                      aria-label="选择执行批次"
+                    />
+                  </span>
+                ) : null}
+              </div>
               <div className="workspace-dock-diff-stats" aria-label="执行批次变化统计">
                 <span className="is-added">+{selectedLogRun?.inserted_records ?? 0} 新增</span>
                 <span className="is-updated">~{selectedLogRun?.updated_records ?? 0} 修改</span>
@@ -4438,12 +4436,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           gap: 10px;
         }
         .workspace-dock-log-caption {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
           flex-shrink: 0;
           color: ${aura.subtle};
           font-size: 11px;
           line-height: 1;
         }
-        .workspace-dock-progress-meta.is-subtle > .workspace-dock-log-run-trigger {
+        .workspace-dock-log-caption > .workspace-dock-log-run-trigger {
           display: inline-flex;
           align-items: center;
           width: 168px;
