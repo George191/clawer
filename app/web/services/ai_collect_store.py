@@ -1070,6 +1070,22 @@ class AICollectStore:
             task["favicon_url"] = minio.build_object_url(str(task.pop("template_icon") or ""))
         return task
 
+    async def cleanup_task_logs(self) -> dict[str, int]:
+        """Delete expired terminal runs; foreign keys remove logs and clear run references."""
+        await self.initialize()
+        result = await self._pg.fetch_one(
+            """
+            WITH deleted AS (
+                DELETE FROM public.ai_collect_task_runs
+                WHERE status IN ('completed', 'failed', 'canceled', 'legacy')
+                  AND COALESCE(ended_at, started_at) < now() - interval '1 month'
+                RETURNING id
+            )
+            SELECT count(*) AS deleted_runs FROM deleted
+            """
+        )
+        return {"deleted_runs": result["deleted_runs"]}
+
     async def get_task_logs(self, task_id: str, run_id: str) -> list[dict[str, Any]]:
         await self.initialize()
         return await self._pg.fetch_all(

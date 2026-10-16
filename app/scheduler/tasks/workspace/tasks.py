@@ -517,3 +517,11 @@ async def _dispatch_due_workspace_tasks() -> dict[str, Any]:
 def dispatch_due() -> dict[str, Any]:
     """Claim and enqueue due recurring workspace tasks."""
     return run_async(_dispatch_due_workspace_tasks())
+
+
+@app.task(name="app.scheduler.tasks.workspace.cleanup_task_logs")
+def cleanup_task_logs() -> dict[str, int]:
+    """Delete terminal workspace runs and their logs older than one month."""
+    result = run_async(ai_collect_store.cleanup_task_logs())
+    logger.info("Task log cleanup completed: deleted_runs=%d", result["deleted_runs"])
+    return result

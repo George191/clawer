@@ -54,7 +54,7 @@ app/
   dedup/          Redis 去重
   downloader/     资源下载服务，将 MongoDB 中的资源落到 MinIO 或本地文件
   engine/         采集引擎、模板加载、工作流引擎、Jinja2 渲染
-  etl/            ETL Worker、元数据注册和数据分层规则
+  etl/            ETL Worker、Schema 管理、消费状态及数据转换规则
   models/         模板与工作流模型
   parser/         模板化字段解析器
   quality/        数据校验、Schema、健康检查
@@ -73,8 +73,13 @@ data/             批量采集参数与本地数据文件
 
 `storage` 模块统一使用 `*_client.py` 和 `*Client` 命名，只负责连接、通用 I/O、重试与关闭。
 记录去重、合并、下载和同步状态属于 `records`；`records/adapters.py` 在保存记录时使用，
-与 `downloader/adapters` 的资源提取、响应校验职责分开。ETL 的 DDL 注册和元数据维护位于
-`etl/metadata_store.py`。依赖方向为业务模块 → 客户端 → 驱动，客户端不导入业务模块。
+与 `downloader/adapters` 的资源提取、响应校验职责分开。依赖方向为业务模块 → 客户端 → 驱动，
+客户端不导入业务模块。
+
+ETL 按职责组织：`etl/schema/layout.py` 定义表布局与分区规则，`baselines.py` 保存基线 DDL，
+`ddl.py` 负责纯 DDL 生成和校验和计算，`registry.py` 通过 PostgreSQL 客户端维护注册表。
+`etl/state/offsets.py` 通过 Redis 客户端管理消费位点与恢复状态；`normalizers/` 和 `tasks/`
+分别承担标准化和业务处理。Schema 的纯规则模块不依赖数据库客户端，Worker 组合这些能力。
 
 `base` 按组件命名（如 `kafka.py`、`redis.py`），只提供基础能力，不导出业务仓储。
 Kafka 连接配置统一位于 `base/kafka.py`，业务数据类型列表位于 `records/types.py`。

@@ -125,6 +125,12 @@ class BeatScheduleRegistry:
             schedule=crontab(minute="*"),
             options={"queue": "scheduler", "expires": 55},
         )
+        self.register(
+            name="workspace_task_log_cleanup",
+            task="app.scheduler.tasks.workspace.cleanup_task_logs",
+            schedule=crontab(hour=19, minute=0),  # 每天北京时间 03:00（UTC 19:00）
+            options={"queue": "scheduler", "expires": 3600},
+        )
 
     # ── 数据库加载（数据驱动） ────────────────────────────────────────
 
