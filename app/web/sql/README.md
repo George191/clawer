@@ -1,7 +1,9 @@
 # 执行批次迁移
 
 共享执行关系为 `automation_tasks` → `automation_task_runs` → `automation_task_logs`，与 `automation_workflows` 共用业务 PostgreSQL。采集任务通过可选的模板名和版本关联 `ai_collect_templates`；系统任务直接保存 Celery 任务路径。
-每次开始、重新执行或周期调度创建批次，暂停续跑保留批次。`product_domain` 区分产品域，`task_type` 区分 `template` 和 `celery`；现有采集任务迁移后仍为 `ai-collect` / `template`。
+每次开始、重新执行或周期调度创建批次，暂停续跑保留批次。`product_domain` 区分产品域，`task_type` 区分 `template` 和 `celery`；迁移优先保留原 `parameters.product_domain`，没有产品域的采集任务默认为 `ai-collect` / `template`。
+
+`celery` 处理器接收 `(task_id, parameters)`，按当前 `celery_task_id` 校验派发，并将状态和日志写入共享存储；系统清理处理器是该约定的实现。模板执行仍由现有采集 Worker 处理。
 
 五项计数只保存在执行批次中。新增、修改、删除按成功保存的记录计数，下载按成功完成下载的记录计数，同步按成功确认的记录版本计数；下载产生新版本后再次同步会再次计数。
 

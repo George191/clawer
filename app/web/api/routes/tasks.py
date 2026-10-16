@@ -4,8 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict
 
-from app.web.services.ai_collect_store import ai_collect_store
 from app.web.api.models.tasks import AutomationTaskRequest, TaskAction
+from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.automation_task_store import automation_task_store
 from app.web.services.task_runs import delete_run, run_action
 

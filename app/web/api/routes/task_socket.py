@@ -15,8 +15,8 @@ from app.config.settings import settings
 from app.logger import get_logger
 from app.scheduler.task_repository import get_task_repository
 from app.storage.redis_client import RedisClient
-from app.web.services.automation_task_store import automation_task_store
 from app.web.services.automation_store import automation_store
+from app.web.services.automation_task_store import automation_task_store
 from app.web.services.task_events import TASK_EVENT_CHANNEL
 
 logger = get_logger(__name__)

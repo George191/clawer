@@ -74,8 +74,22 @@ CREATE TABLE IF NOT EXISTS public.automation_tasks (
     deleted_at timestamptz
 );
 
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'automation_tasks'
+          AND column_name = 'product_domain'
+    ) THEN
+        ALTER TABLE public.automation_tasks
+            ADD COLUMN product_domain text NOT NULL DEFAULT 'ai-collect';
+        UPDATE public.automation_tasks
+        SET product_domain = COALESCE(NULLIF(parameters->>'product_domain', ''), 'ai-collect');
+    END IF;
+END
+$$;
+
 ALTER TABLE public.automation_tasks
-    ADD COLUMN IF NOT EXISTS product_domain text NOT NULL DEFAULT 'ai-collect',
     ADD COLUMN IF NOT EXISTS task_type text NOT NULL DEFAULT 'template',
     ADD COLUMN IF NOT EXISTS task_path text;
 ALTER TABLE public.automation_tasks

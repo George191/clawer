@@ -19,9 +19,6 @@ from app.web.services.automation_task_store import AutomationTaskStore
 logger = get_logger(__name__)
 
 class AICollectStore(AutomationTaskStore):
-    def __init__(self) -> None:
-        super().__init__()
-
     @staticmethod
     def _is_image_content(content: bytes) -> bool:
         stripped = content.lstrip()
@@ -37,7 +34,7 @@ class AICollectStore(AutomationTaskStore):
         )
 
     async def initialize(self) -> None:
-        """Connect runtime storage; schema changes belong to scripts.init_ai_collect."""
+        """Connect runtime storage; schema changes use explicit migrations."""
         async with self._initialize_lock:
             await self._pg.connect()
 

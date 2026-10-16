@@ -156,6 +156,10 @@ class AutomationTaskStore:
 
     async def create_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()
+        policies = payload.get("policies", {})
+        if payload.get("task_type", "template") == "template":
+            policies = {key: value for key, value in policies.items()
+                        if key not in {"watermark", "incremental_field"}}
         task = await self._pg.fetch_one(
             """
             INSERT INTO public.automation_tasks
@@ -180,10 +184,7 @@ class AutomationTaskStore:
                 "stage_state": "paused" if payload.get("task_type") == "celery" else "running",
                 "schedule": json.dumps(payload.get("schedule", {}), ensure_ascii=False),
                 "parameters": json.dumps(payload.get("parameters", {}), ensure_ascii=False),
-                "policies": json.dumps({
-                    key: value for key, value in payload.get("policies", {}).items()
-                    if key not in {"watermark", "incremental_field"}
-                }, ensure_ascii=False),
+                "policies": json.dumps(policies, ensure_ascii=False),
             },
         )
         if task is None:
