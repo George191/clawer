@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -183,6 +184,43 @@ class SamOpportunityAdapter(SamSnapshotAdapter):
         return merged
 
 
+class SamAwardAdapter(SamSnapshotAdapter):
+    @staticmethod
+    def _identifiers(record: dict[str, Any]) -> list[str] | None:
+        contract = (record.get("source_data") or {}).get("contractId")
+        if not contract:
+            return None
+        values = [
+            (contract.get("subtier") or {}).get("code"),
+            contract.get("piid"),
+            contract.get("modificationNumber"),
+            str(contract.get("transactionNumber") or "0").strip() or "0",
+            (contract.get("referencedIDVSubtier") or {}).get("code"),
+            contract.get("referencedIDVPiid"),
+            contract.get("referencedIDVModificationNumber"),
+        ]
+        return [str(value if value is not None else "").strip() for value in values]
+
+    @staticmethod
+    def _format_id(identifiers: list[str]) -> str:
+        return "sam_gov_awards:" + json.dumps(
+            identifiers, ensure_ascii=False, separators=(",", ":"),
+        )
+
+    def clean(self, record: dict[str, Any]) -> dict[str, Any]:
+        identifiers = self._identifiers(record)
+        if identifiers is not None:
+            record = {**record, "id": self._format_id([identifiers[i] for i in (0, 1, 4, 5)])}
+        return super().clean(record)
+
+    def identity(self, record: dict[str, Any]) -> dict[str, Any]:
+        identifiers = self._identifiers(record)
+        if identifiers is None:
+            return super().identity(record)
+        # Keep the existing transaction key so revisions remain separate records.
+        return {"id": self._format_id(identifiers)}
+
+
 class SecCompanyAdapter(RecordAdapter):
     def clean(self, record: dict[str, Any]) -> dict[str, Any]:
         cleaned = super().clean(record)
@@ -234,7 +272,7 @@ _ADAPTERS: dict[tuple[str, str | None], type[RecordAdapter]] = {
     ("sec_edgar", "company"): SecCompanyAdapter,
     ("sec_edgar", "financial_fact"): SecFinancialFactAdapter,
     ("sam_gov_opportunities", None): SamOpportunityAdapter,
-    ("sam_gov_awards", None): SamSnapshotAdapter,
+    ("sam_gov_awards", None): SamAwardAdapter,
 }
 
 
