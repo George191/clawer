@@ -32,14 +32,14 @@ from aiokafka.errors import KafkaConnectionError, NodeNotReadyError, RequestTime
 
 from app.base.kafka_config import build_consumer_kwargs, build_producer_kwargs, get_brokers
 from app.config.settings import settings
-from app.etl.offset_manager import get_offset_manager
-from app.etl.table_layout import partition_bounds, schema_name_for
-from app.logger import get_logger
-from app.storage.etl_metadata_store import (
+from app.etl.metadata_store import (
     ensure_ddlregistry_table,
     get_registered_ddl,
     get_registered_ddl_record,
 )
+from app.etl.offset_manager import get_offset_manager
+from app.etl.table_layout import partition_bounds, schema_name_for
+from app.logger import get_logger
 from app.storage.postgres_client import get_pg_client
 
 logger = get_logger(__name__)

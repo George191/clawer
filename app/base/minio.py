@@ -1,5 +1,5 @@
-"""MinIO 基础组件 — 重新导出 MinioClient。"""
+"""兼容已发布适配器的采集资源存储入口。"""
 
-from app.storage.minio_client import MinioClient
+from app.records.asset_store import AssetStore as MinioClient
 
 __all__ = ["MinioClient"]

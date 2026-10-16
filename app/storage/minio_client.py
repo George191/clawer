@@ -2,7 +2,7 @@
 
 支持：
 - 延迟连接：首次操作时自动建立连接
-- 流式上传：upload_bytes 接收内存数据直接上传，无需落盘
+- 对象上传：按对象键上传文件、字节和数据流
 - 自动 Content-Type 推断：根据文件扩展名设置 MIME 类型
 """
 
@@ -96,14 +96,6 @@ class MinioClient:
             logger.error("Failed to connect to MinIO: %s", e)
             raise
 
-    def _build_object_key(
-        self,
-        template_name: str,
-        data_type: str,
-        filename: str,
-    ) -> str:
-        return f"{data_type}/{template_name}/{filename}"
-
     def build_object_url(self, object_key: str) -> str:
         if not object_key:
             return object_key
@@ -122,23 +114,16 @@ class MinioClient:
     def _build_file_url(self, object_key: str) -> str:
         return self.build_object_url(object_key)
 
-    async def upload_file(
+    async def upload_file_to_key(
         self,
         file_path: Path,
-        template_name: str,
-        data_type: str,
-        filename: str | None = None,
+        object_key: str,
         content_type: str | None = None,
     ) -> str:
         await self._ensure_connection()
 
-        if filename is None:
-            filename = file_path.name
-
-        object_key = self._build_object_key(template_name, data_type, filename)
-
         if not content_type:
-            content_type = self._guess_content_type(filename)
+            content_type = self._guess_content_type(file_path.name)
 
         file_size = file_path.stat().st_size
 
@@ -156,34 +141,6 @@ class MinioClient:
             file_size,
             content_type,
         )
-        return object_key
-
-    async def upload_bytes(
-        self,
-        data: bytes,
-        template_name: str,
-        data_type: str,
-        filename: str,
-        content_type: str | None = None,
-    ) -> str:
-        await self._ensure_connection()
-
-        object_key = self._build_object_key(template_name, data_type, filename)
-
-        if not content_type:
-            content_type = self._guess_content_type(filename)
-
-        data_stream = BytesIO(data)
-        await self._run_sync(
-            self._client.put_object,
-            bucket_name=self._bucket,
-            object_name=object_key,
-            data=data_stream,
-            length=len(data),
-            content_type=content_type,
-        )
-
-        logger.debug("Uploaded bytes to MinIO: %s (%d bytes)", object_key, len(data))
         return object_key
 
     async def upload_bytes_to_key(
@@ -258,14 +215,8 @@ class MinioClient:
                 await asyncio.sleep(0.2 * (attempt + 1))
         return None
 
-    async def file_exists(
-        self,
-        template_name: str,
-        data_type: str,
-        filename: str,
-    ) -> bool:
+    async def object_exists(self, object_key: str) -> bool:
         await self._ensure_connection()
-        object_key = self._build_object_key(template_name, data_type, filename)
         try:
             await self._run_sync(self._client.stat_object, self._bucket, object_key)
             return True

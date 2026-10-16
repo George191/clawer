@@ -5,7 +5,7 @@
 1. 加载 SiteTemplate 配置
 2. 遍历列表页（支持 JSON API 和 HTML 两种响应类型）
 3. 解析每条记录（支持详情页补充字段）
-4. 通过 StorageBackend 保存采集结果
+4. 通过 RecordStore 保存采集结果
 5. 支持断点续采（Redis checkpoint）和站点适配器扩展
 
 设计原则
@@ -42,7 +42,8 @@ from app.models.template import (
     SiteTemplate,
 )
 from app.parser.template_parser import TemplateParser
-from app.storage.file_storage import FileStorage, StorageBackend
+from app.records.base import RecordStore
+from app.records.file_store import FileRecordStore
 from app.utils.path import get_nested_value
 from app.utils.runtime_control import check_control_state
 
@@ -64,13 +65,13 @@ def _init_enhancements():
         _hook_mgr = get_prehook_manager()
 
 
-def _create_storage() -> StorageBackend:
+def _create_storage() -> RecordStore:
     if settings.db_url:
-        from app.storage.mongo_storage import MongoStorage
+        from app.records.mongo_store import MongoRecordStore
         logger.info("Using MongoDB storage backend")
-        return MongoStorage()
+        return MongoRecordStore()
     logger.info("Using File storage backend (no MongoDB configured)")
-    return FileStorage()
+    return FileRecordStore()
 
 
 class CrawlResult:
@@ -126,7 +127,7 @@ class SpiderEngine:
         self,
         http_client: HttpClient | None = None,
         parser: TemplateParser | None = None,
-        storage: StorageBackend | None = None,
+        storage: RecordStore | None = None,
         adapter_class: type[BaseSiteAdapter] | None = None,
         adapter_classes: dict[str, type[BaseSiteAdapter]] | None = None,
     ) -> None:
@@ -196,7 +197,7 @@ class SpiderEngine:
         result.updated_records += int(save_stats.get("updated", 0))
         result.unchanged_records += int(save_stats.get("unchanged", 0))
         result.deleted_records += int(save_stats.get("deleted", 0))
-        if isinstance(self._storage, FileStorage) and workspace_task_id and workspace_run_id:
+        if isinstance(self._storage, FileRecordStore) and workspace_task_id and workspace_run_id:
             from app.web.services.ai_collect_store import ai_collect_store
 
             await ai_collect_store.increment_run_stats(

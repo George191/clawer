@@ -1,4 +1,4 @@
-"""MongoDB 存储后端 — 基于 motor 异步驱动的数据持久化层。
+"""MongoDB record repository — merge, routing, and download/sync lifecycle.
 
 功能
 ----
@@ -17,11 +17,11 @@ from typing import Any
 
 from pymongo import ReplaceOne
 
-from app.config.settings import settings
 from app.logger import get_logger
-from app.storage.file_storage import StorageBackend
-from app.storage.record_adapters import get_record_adapter
-from app.storage.syncer_collections import syncer_collection_store
+from app.records.base import RecordStore
+from app.storage.mongo_client import MongoClient
+from app.records.adapters import get_record_adapter
+from app.records.collection_routes import collection_route_store
 from app.utils.record_id import resolve_record_id
 from app.utils.runtime_control import workspace_search_params
 
@@ -33,12 +33,10 @@ def _ready_to_sync_filter() -> dict[str, Any]:
     return {"_meta.sync_status": {"$ne": "synced"}}
 
 
-class MongoStorage(StorageBackend):
+class MongoRecordStore(MongoClient, RecordStore):
     def __init__(self) -> None:
-        self._client = None
-        self._db = None
+        super().__init__()
         self._initialized_collections: set[str] = set()
-        self._initialized_indexes: set[tuple[str, str, bool]] = set()
         self.last_save_stats = {
             "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
         }
@@ -46,19 +44,6 @@ class MongoStorage(StorageBackend):
     def _get_collection_name(self, template_name: str) -> str:
         return template_name
 
-    async def _ensure_connection(self) -> None:
-        if self._db is not None:
-            return
-        try:
-            from motor.motor_asyncio import AsyncIOMotorClient
-
-            self._client = AsyncIOMotorClient(settings.db_url)
-            self._db = self._client[settings.db_name]
-            await self._client.admin.command("ping")
-            logger.info("Connected to MongoDB: %s/%s", settings.db_url, settings.db_name)
-        except Exception as e:
-            logger.error("Failed to connect to MongoDB: %s", e)
-            raise
 
     async def _get_collection(self, template_name: str):
         return await self._get_collection_by_name(self._get_collection_name(template_name))
@@ -66,8 +51,7 @@ class MongoStorage(StorageBackend):
     async def _get_collection_by_name(
         self, collection_name: str, *, indexes: list[tuple[str, bool]] | None = None,
     ):
-        await self._ensure_connection()
-        collection = self._db[collection_name]
+        collection = await super()._get_collection(collection_name)
         if indexes is not None:
             await self._ensure_indexes(collection, indexes)
             self._initialized_collections.add(collection_name)
@@ -87,12 +71,6 @@ class MongoStorage(StorageBackend):
             self._initialized_collections.add(collection_name)
         return collection
 
-    async def _ensure_indexes(self, collection: Any, indexes: list[tuple[str, bool]]) -> None:
-        for field, unique in indexes:
-            key = (collection.name, field, unique)
-            if key not in self._initialized_indexes:
-                await collection.create_index(field, unique=unique)
-                self._initialized_indexes.add(key)
 
     def _resolve_record_id(self, record: dict[str, Any]) -> str:
         return resolve_record_id(record)
@@ -187,7 +165,7 @@ class MongoStorage(StorageBackend):
         if not records:
             return []
 
-        route = await syncer_collection_store.resolve_for_write(
+        route = await collection_route_store.resolve_for_write(
             self._get_collection_name(template_name), data_type,
         )
         adapter = get_record_adapter(self, route, dedup_fields)
@@ -690,7 +668,3 @@ class MongoStorage(StorageBackend):
                 "failed": failed,
             })
         return stats
-
-    async def close(self) -> None:
-        if self._client:
-            self._client.close()

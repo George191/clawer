@@ -6,15 +6,15 @@ import asyncio
 import json
 from uuid import UUID
 
-from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
 from app.logger import get_logger
+from app.storage.redis_client import RedisClient
 
 logger = get_logger(__name__)
 
 TASK_EVENT_CHANNEL = "task_events"
 _PUBLISH_TIMEOUT_SECONDS = 3.0
-_publisher_connection = RedisConnection(settings.task_redis_url)
+_publisher_connection = RedisClient(settings.task_redis_url)
 
 
 async def publish_task_change(task_id: str) -> None:

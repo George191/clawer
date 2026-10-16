@@ -1,5 +1,5 @@
-"""MongoDB 基础组件 — 重新导出 MongoStorage 为 MongoClient。"""
+"""Compatibility import for callers of the former record-oriented MongoClient."""
 
-from app.storage.mongo_storage import MongoStorage as MongoClient
+from app.records.mongo_store import MongoRecordStore as MongoClient
 
 __all__ = ["MongoClient"]

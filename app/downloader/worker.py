@@ -10,8 +10,6 @@ from typing import Any
 from urllib.parse import unquote
 
 from app.base.http import DownloadError, DownloadResponse, HttpClient
-from app.base.minio import MinioClient
-from app.base.mongo import MongoClient
 from app.config.settings import settings
 from app.downloader.adapters import (
     DownloadItem,
@@ -23,7 +21,9 @@ from app.downloader.adapters import (
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate
-from app.storage.syncer_collections import syncer_collection_store
+from app.records.asset_store import AssetStore
+from app.records.collection_routes import collection_route_store
+from app.records.mongo_store import MongoRecordStore
 from app.utils.download_paths import iter_download_nodes, iter_download_values
 from app.utils.path import get_nested_value
 from app.web.services.ai_collect_store import ai_collect_store
@@ -52,8 +52,8 @@ class DownloadWorker:
         self._template_name = template_name
         self._data_type = data_type
         self._http = HttpClient()
-        self._minio = MinioClient()
-        self._mongo = MongoClient()
+        self._minio = AssetStore()
+        self._mongo = MongoRecordStore()
         self._templates: dict[str, SiteTemplate] = {}
         self._collection_routes: dict[str, dict[str, str]] = {}
         self._running = False
@@ -106,7 +106,7 @@ class DownloadWorker:
         """Refresh configured collection routes from PostgreSQL on every batch."""
         if self._data_type is None and self._template_name is None:
             return collections_for_template(self._template_name)
-        routes = await syncer_collection_store.list_by_data_type(
+        routes = await collection_route_store.list_by_data_type(
             self._data_type, self._template_name,
         )
         self._collection_routes = {route["collection_name"]: route for route in routes}

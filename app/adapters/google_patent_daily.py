@@ -11,11 +11,11 @@ from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 from lxml import html
 
 from app.adapters import BaseSiteAdapter, register_adapter
-from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
 from app.downloader.http_client import DownloadError
 from app.engine.template_loader import TemplateLoader
 from app.parser.template_parser import TemplateParser
+from app.storage.redis_client import RedisClient
 from app.utils.runtime_control import check_control_state, controlled_sleep
 
 SHANGHAI = timezone(timedelta(hours=8))
@@ -75,7 +75,7 @@ class GooglePatentDailyAdapter(BaseSiteAdapter):
         self._redis = None
         task_id = self._crawl_context.get("workspace_task_id")
         if task_id:
-            self._connection = RedisConnection(settings.checkpoint_redis_url)
+            self._connection = RedisClient(settings.checkpoint_redis_url)
             self._redis = await self._connection.ensure_connected()
             if self._redis is None:
                 raise RuntimeError("Redis is required for the patent sitemap cursor")

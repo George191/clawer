@@ -1,1 +1,1 @@
-"""存储层 — MongoDB/MinIO/Kafka/File 存储后端。"""
+"""Infrastructure clients: filesystem, Kafka, MinIO, MongoDB, PostgreSQL, and Redis."""

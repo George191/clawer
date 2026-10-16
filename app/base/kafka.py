@@ -1,5 +1,5 @@
-"""Kafka 基础组件 — 重新导出 KafkaProducer。"""
+"""兼容已发布适配器的 Kafka 记录发布入口。"""
 
-from app.storage.kafka_producer import KafkaProducer
+from app.syncer.publisher import RecordPublisher as KafkaProducer
 
 __all__ = ["KafkaProducer"]

@@ -27,9 +27,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
 from app.logger import get_logger
+from app.storage.redis_client import RedisClient
 
 logger = get_logger(__name__)
 
@@ -41,7 +41,7 @@ REDIS_RETRY_INTERVAL = 30
 class OffsetManager:
     def __init__(self) -> None:
         self._connection_lock = asyncio.Lock()
-        self._connection = RedisConnection(
+        self._connection = RedisClient(
             settings.etl_redis_url,
             retry_interval=REDIS_RETRY_INTERVAL,
         )

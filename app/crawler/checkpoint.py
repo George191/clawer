@@ -8,10 +8,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
 from app.crawler.batch_params import BatchParamNames, batch_param_identity
 from app.logger import get_logger
+from app.storage.redis_client import RedisClient
 
 logger = get_logger(__name__)
 
@@ -55,7 +55,7 @@ class PageCheckpointStore:
             if task_id
             else f"checkpoint:{namespace}:{digest}"
         )
-        self._connection = RedisConnection(
+        self._connection = RedisClient(
             settings.checkpoint_redis_url,
             client=redis_client,
         )
@@ -185,7 +185,7 @@ class BatchCheckpointStore:
         self.key = self._checkpoint_key(
             template_name, file_path, param_name, start_line, limit
         )
-        self._connection = RedisConnection(
+        self._connection = RedisClient(
             settings.checkpoint_redis_url,
             client=redis_client,
         )

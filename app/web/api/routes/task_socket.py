@@ -11,10 +11,10 @@ from uuid import UUID
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 
-from app.base.redis_connection import RedisConnection
 from app.config.settings import settings
 from app.logger import get_logger
 from app.scheduler.task_repository import get_task_repository
+from app.storage.redis_client import RedisClient
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.automation_store import automation_store
 from app.web.services.task_events import TASK_EVENT_CHANNEL
@@ -36,7 +36,7 @@ class ClientConnection:
 
 
 _connections: set[ClientConnection] = set()
-_task_event_connection = RedisConnection(settings.task_redis_url, retry_interval=3)
+_task_event_connection = RedisClient(settings.task_redis_url, retry_interval=3)
 _stream_available = False
 
 

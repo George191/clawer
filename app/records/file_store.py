@@ -1,98 +1,23 @@
-"""文件存储后端 — 将采集结果以 JSON 文件形式持久化到本地磁盘。
-
-提供 StorageBackend 抽象基类和 FileStorage 本地文件实现，
-支持状态管理（download_status / sync_status）和变更历史追踪。
-"""
+"""JSON-backed record persistence and download/sync lifecycle state."""
 
 from __future__ import annotations
 
-import abc
 import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
-from app.config.settings import settings
 from app.logger import get_logger
+from app.records.base import RecordStore
+from app.storage.file_client import FileClient
 from app.utils.path import get_nested_value
 
 logger = get_logger(__name__)
 
 
-class StorageBackend(abc.ABC):
-    @abc.abstractmethod
-    async def save_record(
-        self,
-        template_name: str,
-        data_type: str,
-        dedup_fields: list[str],
-        record: dict[str, Any],
-    ) -> str:
-        ...
-
-    @abc.abstractmethod
-    async def save_records(
-        self,
-        template_name: str,
-        data_type: str,
-        dedup_fields: list[str],
-        records: list[dict[str, Any]],
-    ) -> list[str]:
-        ...
-
-    @abc.abstractmethod
-    async def update_file_status(
-        self,
-        template_name: str,
-        data_type: str,
-        record_id: str,
-        file_url: str,
-        download_status: str,
-    ) -> None:
-        ...
-
-    @abc.abstractmethod
-    async def update_sync_status(
-        self,
-        template_name: str,
-        data_type: str,
-        record_id: str,
-        sync_status: str,
-    ) -> None:
-        ...
-
-    @abc.abstractmethod
-    async def update_record_fields(
-        self,
-        template_name: str,
-        data_type: str,
-        record_id: str,
-        updates: dict[str, Any],
-    ) -> None:
-        ...
-
-    @abc.abstractmethod
-    async def get_unsynced_records(
-        self,
-        template_name: str,
-        data_type: str,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        ...
-
-    @abc.abstractmethod
-    async def get_ready_to_sync(
-        self,
-        template_name: str,
-        data_type: str,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        ...
-
-
-class FileStorage(StorageBackend):
+class FileRecordStore(FileClient, RecordStore):
     def __init__(self, base_dir: str | None = None) -> None:
-        self._base_dir = Path(base_dir or settings.output_dir)
+        super().__init__(base_dir)
         self.last_save_stats = {
             "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
         }
@@ -159,7 +84,7 @@ class FileStorage(StorageBackend):
 
         existing: dict[str, Any] = {}
         if file_path.exists():
-            existing = json.loads(file_path.read_text(encoding="utf-8"))
+            existing = self.read_json(file_path)
         existing_meta = dict(existing.get("_meta") or {})
         existing_params = dict(existing_meta.get("search_params") or {})
         existing_params.update(search_params)
@@ -182,10 +107,7 @@ class FileStorage(StorageBackend):
         }
 
         if record_with_meta != existing:
-            file_path.write_text(
-                json.dumps(record_with_meta, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            self.write_json(file_path, record_with_meta)
         logger.debug("Saved record: %s", file_path)
         return str(file_path)
 
@@ -205,7 +127,7 @@ class FileStorage(StorageBackend):
             if not path.exists():
                 inserted += 1
                 continue
-            existing = json.loads(path.read_text(encoding="utf-8"))
+            existing = self.read_json(path)
             if self._business_content(existing) == self._business_content(record):
                 unchanged += 1
             else:
@@ -239,12 +161,12 @@ class FileStorage(StorageBackend):
         meta_path = record_dir / f"{record_id}.json"
         if not meta_path.exists():
             return
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        data = self.read_json(meta_path)
         if "_meta" not in data:
             data["_meta"] = {}
         data["_meta"]["file_url"] = file_url
         data["_meta"]["download_status"] = download_status
-        meta_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.write_json(meta_path, data)
 
     async def update_sync_status(
         self,
@@ -257,11 +179,11 @@ class FileStorage(StorageBackend):
         meta_path = record_dir / f"{record_id}.json"
         if not meta_path.exists():
             return
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        data = self.read_json(meta_path)
         if "_meta" not in data:
             data["_meta"] = {}
         data["_meta"]["sync_status"] = sync_status
-        meta_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.write_json(meta_path, data)
 
     async def update_record_fields(
         self,
@@ -274,10 +196,10 @@ class FileStorage(StorageBackend):
         meta_path = record_dir / f"{record_id}.json"
         if not meta_path.exists():
             return
-        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        data = self.read_json(meta_path)
         for key, value in updates.items():
             data[key] = value
-        meta_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.write_json(meta_path, data)
 
     async def get_unsynced_records(
         self,

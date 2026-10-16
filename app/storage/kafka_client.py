@@ -1,18 +1,9 @@
-"""Kafka 生产者 — 封装消息发送、连接管理和序列化。
-
-支持：
-- 延迟连接：首次 send 时自动建立连接
-- 重试机制：NodeNotReadyError / 连接超时自动指数退避重试
-- 批量发送：send_records 一次性推送多条记录
-- JSON 序列化：自动处理 datetime 等类型
-- SASL 认证：通过 settings 配置（见 app/base/kafka_config.py）
-"""
+"""Kafka 客户端 — 管理连接、重试和消息传输。"""
 
 from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from datetime import datetime, timezone
 from typing import Any
 
 from app.base.kafka_config import build_producer_kwargs
@@ -25,7 +16,7 @@ KAFKA_CONNECT_RETRY_WAIT = 3
 KAFKA_CONNECT_MAX_RETRY_DELAY = 600
 
 
-class KafkaProducer:
+class KafkaClient:
     def __init__(self, topic: str | None = None) -> None:
         self._producer = None
         self._topic = topic or settings.kafka_topic
@@ -100,53 +91,19 @@ class KafkaProducer:
                 logger.error("Failed to connect to Kafka: %s", e)
                 raise
 
-    async def send_record(
+    async def send(
         self,
-        record: dict[str, Any],
+        value: Any,
         key: str | None = None,
         topic: str | None = None,
     ) -> None:
         await self._ensure_connection()
-
         target_topic = topic or self._topic
-        message_key = key or record.get("_meta", {}).get("record_id", "")
-
-        message = {
-            **record,
-            "_kafka_meta": {
-                "topic": target_topic,
-                "produced_at": datetime.now(timezone.utc).isoformat(),
-            },
-        }
-
         try:
-            await self._producer.send_and_wait(
-                topic=target_topic,
-                value=message,
-                key=message_key,
-            )
-            logger.info(
-                "KafkaProducer: sent → %s record_id=%s",
-                target_topic, message_key,
-            )
+            await self._producer.send_and_wait(topic=target_topic, value=value, key=key)
         except Exception as e:
-            logger.error("Failed to send record to Kafka: key=%s topic=%s error=%s", message_key, target_topic, e)
+            logger.error("Failed to send Kafka message: key=%s topic=%s error=%s", key, target_topic, e)
             raise
-
-    async def send_records(
-        self,
-        records: list[dict[str, Any]],
-        topic: str | None = None,
-    ) -> int:
-        sent_count = 0
-        for record in records:
-            try:
-                await self.send_record(record, topic=topic)
-                sent_count += 1
-            except Exception as e:
-                logger.error("Failed to send record: %s", e)
-        logger.info("Sent %d/%d records to Kafka", sent_count, len(records))
-        return sent_count
 
     async def flush(self) -> None:
         if self._producer:

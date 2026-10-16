@@ -9,7 +9,7 @@ from pathlib import Path
 from app.storage.postgres_client import get_pg_client
 
 
-class SyncerCollectionStore:
+class CollectionRouteStore:
     async def resolve_for_write(
         self, template_name: str, data_type: str,
     ) -> dict[str, str]:
@@ -90,22 +90,5 @@ class SyncerCollectionStore:
         )
 
 
-syncer_collection_store = SyncerCollectionStore()
+collection_route_store = CollectionRouteStore()
 
-
-async def _init_schema() -> None:
-    sql = (Path(__file__).parent / "sql" / "init_syncer_collections.sql").read_text(
-        encoding="utf-8",
-    )
-    pg = get_pg_client()
-    try:
-        await pg.init_schema([sql])
-    finally:
-        await pg.close()
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--init", action="store_true", required=True, help="Initialize collection routes")
-    parser.parse_args()
-    asyncio.run(_init_schema())

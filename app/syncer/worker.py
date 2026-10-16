@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import asyncio
 
-from app.base.kafka import KafkaProducer
-from app.base.mongo import MongoClient
 from app.config.settings import settings
 from app.logger import get_logger
-from app.storage.syncer_collections import syncer_collection_store
+from app.records.collection_routes import collection_route_store
+from app.records.mongo_store import MongoRecordStore
+from app.syncer.publisher import RecordPublisher
 from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 from app.web.services.ai_collect_store import ai_collect_store
 
@@ -45,13 +45,13 @@ class SyncWorker:
         self._data_type = data_type
         self._topic = f"{settings.kafka_topic}-{data_type}" if data_type else settings.kafka_topic
         self._semaphore = asyncio.Semaphore(concurrency)
-        self._kafka: KafkaProducer | None = None
-        self._mongo = MongoClient()
+        self._kafka: RecordPublisher | None = None
+        self._mongo = MongoRecordStore()
         self._running = False
 
     async def run(self) -> None:
         self._running = True
-        self._kafka = KafkaProducer(topic=self._topic)
+        self._kafka = RecordPublisher(topic=self._topic)
 
         logger.info(
             "SyncWorker started (poll=%ds, batch=%d, template=%s, type=%s, topic=%s)",
@@ -106,7 +106,7 @@ class SyncWorker:
             return await self._mongo.get_ready_to_sync(
                 template_name=self._template_name, limit=self._batch_size,
             )
-        routes = await syncer_collection_store.list_by_data_type(
+        routes = await collection_route_store.list_by_data_type(
             self._data_type, self._template_name,
         )
         records = []

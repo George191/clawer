@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from app.storage.syncer_collections import syncer_collection_store
+from app.records.collection_routes import collection_route_store
 from app.utils.path import get_nested_value
 from app.utils.sec_financial_facts import (
     FACT_DEDUP_FIELDS,
@@ -15,7 +15,7 @@ from app.utils.sec_financial_facts import (
 from app.utils.twitter_accounts import split_twitter_accounts, upsert_twitter_accounts
 
 if TYPE_CHECKING:
-    from app.storage.mongo_storage import MongoStorage
+    from app.records.mongo_store import MongoRecordStore
 
 
 class RecordAdapter:
@@ -24,7 +24,7 @@ class RecordAdapter:
     collection_indexes: list[tuple[str, bool]] | None = None
 
     def __init__(
-        self, storage: MongoStorage, route: dict[str, str], dedup_fields: list[str],
+        self, storage: MongoRecordStore, route: dict[str, str], dedup_fields: list[str],
     ) -> None:
         self.storage = storage
         self.route = route
@@ -75,7 +75,7 @@ class TwitterTweetAdapter(TwitterRecordAdapter):
     async def prepare_batch(
         self, records: list[dict[str, Any]], now: datetime,
     ) -> list[dict[str, Any]]:
-        route = await syncer_collection_store.resolve_for_write(
+        route = await collection_route_store.resolve_for_write(
             self.route["template_name"], "account",
         )
         collection = await self.storage._get_collection_by_name(route["collection_name"])
@@ -99,7 +99,7 @@ class TwitterTweetAdapter(TwitterRecordAdapter):
 
 class SamSnapshotAdapter(RecordAdapter):
     def __init__(
-        self, storage: MongoStorage, route: dict[str, str], dedup_fields: list[str],
+        self, storage: MongoRecordStore, route: dict[str, str], dedup_fields: list[str],
     ) -> None:
         super().__init__(storage, route, dedup_fields)
         self._snapshots: dict[str, dict[str, Any]] = {}
@@ -137,6 +137,52 @@ class SamSnapshotAdapter(RecordAdapter):
         )
 
 
+class SamOpportunityAdapter(SamSnapshotAdapter):
+    @classmethod
+    def _merge_source_object(cls, existing: Any, incoming: Any) -> Any:
+        if not isinstance(existing, dict) or not isinstance(incoming, dict):
+            return incoming
+        return {
+            **existing,
+            **{key: cls._merge_source_object(existing.get(key), value) for key, value in incoming.items()},
+        }
+
+    def merge(
+        self, existing: dict[str, Any], incoming: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = super().merge(existing, incoming)
+        source = incoming.get("source_data") or {}
+        if incoming.get("deleted") is True or not isinstance(source, dict):
+            return merged
+        from_csv = "NoticeId" in source
+        if not from_csv and "noticeId" not in source:
+            return merged
+        previous_source = existing.get("source_data") or {}
+        merged["source_data"] = {**previous_source, **source}
+        for field in ("award", "place_of_performance"):
+            if field in incoming:
+                merged[field] = self._merge_source_object(existing.get(field), incoming[field])
+        if from_csv:
+            # The public CSV has no attachment or description-endpoint fields.
+            for field in ("attachments", "description_url"):
+                if field in existing:
+                    merged[field] = existing[field]
+            if "noticeId" in previous_source and not incoming.get("content"):
+                merged["content"] = existing.get("content", "")
+        else:
+            for field in (
+                "base_type", "archive_type", "archive_date", "set_aside_code", "set_aside",
+                "organization_type", "office_address", "additional_info_url",
+            ):
+                if field in existing and field not in incoming:
+                    merged[field] = existing[field]
+            # API list requests may intentionally skip the separate body request.
+            if not incoming.get("content"):
+                merged["content"] = existing.get("content", "")
+        merged["attachments_available"] = bool(merged.get("attachments"))
+        return merged
+
+
 class SecCompanyAdapter(RecordAdapter):
     def clean(self, record: dict[str, Any]) -> dict[str, Any]:
         cleaned = super().clean(record)
@@ -148,9 +194,9 @@ class SecCompanyAdapter(RecordAdapter):
         self, record: dict[str, Any], search_params: dict[str, Any],
     ) -> dict[str, Any]:
         if "facts" in record:
-            from app.storage.mongo_storage import MongoStorage
+            from app.records.mongo_store import MongoRecordStore
 
-            fact_storage = MongoStorage()
+            fact_storage = MongoRecordStore()
             fact_storage._client = self.storage._client
             fact_storage._db = self.storage._db
             fact_storage._initialized_collections = self.storage._initialized_collections
@@ -187,14 +233,13 @@ _ADAPTERS: dict[tuple[str, str | None], type[RecordAdapter]] = {
     ("twitter", "account"): TwitterRecordAdapter,
     ("sec_edgar", "company"): SecCompanyAdapter,
     ("sec_edgar", "financial_fact"): SecFinancialFactAdapter,
-    ("sam_gov_opportunities", None): SamSnapshotAdapter,
-    ("sam_gov_opportunities_bulk", None): SamSnapshotAdapter,
+    ("sam_gov_opportunities", None): SamOpportunityAdapter,
     ("sam_gov_awards", None): SamSnapshotAdapter,
 }
 
 
 def get_record_adapter(
-    storage: MongoStorage, route: dict[str, str], dedup_fields: list[str],
+    storage: MongoRecordStore, route: dict[str, str], dedup_fields: list[str],
 ) -> RecordAdapter:
     adapter = _ADAPTERS.get((route["template_name"], route["data_type"]))
     if adapter is None:

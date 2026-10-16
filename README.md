@@ -48,18 +48,19 @@ app/
   adapters/       站点适配器。通过 @register_adapter 注册，由模板 adapter 字段引用
   ai/             AI 辅助能力，如 SQL 提示、Dashboard 指标
   anti_crawl/     反爬能力，包括代理池、请求延迟、身份轮换与反爬数据源
-  base/           Mongo、Kafka、MinIO、HTTP、Elasticsearch 等基础客户端封装
+  base/           HTTP 等基础能力及旧导入路径的兼容入口
   config/         Pydantic 配置，统一读取 SPIDER_ 前缀环境变量
   crawler/        采集服务入口
   dedup/          Redis 去重
   downloader/     资源下载服务，将 MongoDB 中的资源落到 MinIO 或本地文件
   engine/         采集引擎、模板加载、工作流引擎、Jinja2 渲染
-  etl/            Kafka + Postgres/TimescaleDB ETL Worker
+  etl/            ETL Worker、元数据注册和数据分层规则
   models/         模板与工作流模型
   parser/         模板化字段解析器
   quality/        数据校验、Schema、健康检查
+  records/        记录仓储、来源适配、集合路由与资源对象路径；供采集、下载、同步共用
   scheduler/      任务队列与请求兜底
-  storage/        MongoDB、PostgreSQL、Kafka、MinIO、Elasticsearch、文件存储
+  storage/        File、Kafka、MinIO、MongoDB、PostgreSQL、Redis 的连接客户端
   syncer/         MongoDB 到 Kafka 的同步服务
   tools/          批量采集、本地数据导入、参数生成等脚本
   web/            FastAPI 管理后端
@@ -69,6 +70,15 @@ web-panel/        React + Vite 管理前端
 docker/           各服务 Dockerfile
 data/             批量采集参数与本地数据文件
 ```
+
+`storage` 模块统一使用 `*_client.py` 和 `*Client` 命名，只负责连接、通用 I/O、重试与关闭。
+记录去重、合并、下载和同步状态属于 `records`；`records/adapters.py` 在保存记录时使用，
+与 `downloader/adapters` 的资源提取、响应校验职责分开。ETL 的 DDL 注册和元数据维护位于
+`etl/metadata_store.py`。依赖方向为业务模块 → 客户端 → 驱动，客户端不导入业务模块。
+
+目录迁移也需要同步更新 MinIO 中已发布适配器的 Python 导入。例如，原
+`app.storage.mongo_storage.MongoStorage` 对应 `app.records.mongo_store.MongoRecordStore`；
+单独部署应用不会修改已发布适配器源码。`app.base` 的具名兼容模块保留原入口，应用代码使用新路径。
 
 ## 主要服务
 
@@ -216,13 +226,7 @@ Compose 为 news、patent、navwarn、intelligence、company、financial_fact、
 同步由轮询触发：新采集记录和下载更新均在下一次轮询发送，空闲轮询默认间隔 10 秒，可通过 `--poll` 调整。
 指定类型时，与下载器共用模板分组及 `syncer_collections` 路由查询，只读取匹配业务类型的实际集合；MongoDB 仅按原同步状态条件查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
 
-首次使用路由查询前，执行一次初始化，再重建并启动下载器和 Syncer：
-
-```bash
-python -m app.storage.syncer_collections --init
-```
-
-该命令创建 `public.syncer_collections` 并插入 SEC 的 company/filing/financial_fact、Twitter 的 account/tweet 初始映射，已有映射保持不变。路由以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行时的启停。模板存在路由时不再回退到同名集合，禁用路由也不会触发回退。
+集合路由由 `app/records/collection_routes.py` 查询 `public.syncer_collections`，表结构和初始映射由部署迁移维护。路由以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行时的启停。模板存在路由时不再回退到同名集合，禁用路由也不会触发回退。
 模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 company 或 filing。修改路由在下一批生效，已读入的当前批次继续完成。
 模板的 `download[].collection` 使用实际集合名，变更实际集合时应一并更新对应下载配置。
 
