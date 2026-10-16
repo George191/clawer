@@ -13,9 +13,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import socket
 import sys
 from dataclasses import dataclass
+from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
 
 from curl_cffi import CurlOpt
@@ -66,6 +68,16 @@ def _init_anti_crawl(*, use_proxy: bool = True):
     if use_proxy and settings.anti_crawl_enabled and _proxy_pool is None:
         from app.anti_crawl.proxy_pool import get_proxy_pool
         _proxy_pool = get_proxy_pool()
+
+
+class _ResponseHeaderSession(curl_requests.AsyncSession):
+    def _parse_response(self, curl, buffer, header_buffer, *args, **kwargs):
+        # curl accepts lone CR in header values; splitlines() treats it as a new header.
+        raw_headers = header_buffer.getvalue()
+        normalized = re.sub(rb"\r(?!\n)", b" ", raw_headers)
+        if normalized != raw_headers:
+            header_buffer = BytesIO(normalized)
+        return super()._parse_response(curl, buffer, header_buffer, *args, **kwargs)
 
 
 class DownloadError(Exception):
@@ -203,7 +215,7 @@ class HttpClient:
                 self._safe_proxy_url(pre_proxy_url),
                 settings.http_interface or "default",
             )
-        return curl_requests.AsyncSession(**session_kwargs)
+        return _ResponseHeaderSession(**session_kwargs)
 
     @staticmethod
     def _safe_proxy_url(proxy_url: str | None) -> str:
