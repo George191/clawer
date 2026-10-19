@@ -4463,15 +4463,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-history-head {
           display: flex;
-          flex-wrap: wrap;
-          align-items: baseline;
+          flex-wrap: nowrap;
+          align-items: center;
           justify-content: space-between;
-          gap: 10px;
+          gap: 6px;
         }
         .workspace-dock-log-caption {
           display: inline-flex;
           align-items: center;
-          gap: 8px;
+          gap: 4px;
           flex-shrink: 0;
           color: ${aura.subtle};
           font-size: 11px;
@@ -4480,7 +4480,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-log-caption > .workspace-dock-log-run-trigger {
           display: inline-flex;
           align-items: center;
-          width: 168px;
+          width: 112px;
           cursor: pointer;
           outline: 0;
         }
@@ -4497,7 +4497,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           align-items: center !important;
           justify-content: center !important;
           height: 22px !important;
-          padding: 0 24px 0 8px !important;
+          padding: 0 14px 0 2px !important;
           border: 0 !important;
           background: transparent !important;
           box-shadow: none !important;
@@ -4518,12 +4518,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           align-items: center;
           justify-content: center;
+          padding-inline-end: 0 !important;
           line-height: normal !important;
           text-align: center;
         }
         .workspace-dock-log-run-select .ant-select-arrow {
           top: 50%;
-          inset-inline-end: 8px;
+          inset-inline-end: 2px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -4584,9 +4585,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-diff-stats {
           display: inline-flex;
+          flex: 0 1 auto;
           flex-wrap: nowrap;
           align-items: center;
-          gap: 10px;
+          gap: 6px;
+          min-width: 0;
           max-width: 100%;
           overflow-x: auto;
           font-size: 10px;
