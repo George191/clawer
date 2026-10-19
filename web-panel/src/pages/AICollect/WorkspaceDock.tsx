@@ -559,6 +559,14 @@ const mergeTaskLogRuns = (
   ]);
 };
 
+const taskWriteCountHelp = '当前执行批次成功新增与修改的记录次数，包含各业务类型，不含未变化记录；删除已计入，不重复相加。';
+
+const getTaskWriteCount = (runtime: TaskRuntimeItem): number | null => {
+  const run = runtime.logRuns.find((item) => item.id === runtime.currentRunId);
+  if (run?.inserted_records == null || run.updated_records == null) return null;
+  return run.inserted_records + run.updated_records;
+};
+
 const consoleLogPrefixPattern = /^(\[)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})(:\s*)([A-Z]+)(\/)([^\]]+)(\])(\s*)/;
 
 const renderConsoleLogMessage = (message: string): React.ReactNode => {
@@ -2173,6 +2181,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const renderTaskCard = (item: TaskRow) => {
     const isSelected = selectedTaskKey === item.key;
     const isPinned = Boolean(pinnedTaskKeys[item.key]);
+    const writeCount = getTaskWriteCount(item.runtime);
 
     return (
       <button
@@ -2218,7 +2227,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
         <div className="workspace-dock-card-meta">
           <span><SiteLogoMark site={item.site} />{stripDecorativeSuffix(item.area)}</span>
-          <span>{formatCompactNumber(item.runtime.recordsValue)}</span>
+          <Tooltip title={`本批写入：${writeCount?.toLocaleString() ?? '暂无统计'}。${taskWriteCountHelp}`}>
+            <span>{writeCount === null ? '--' : formatCompactNumber(writeCount)}</span>
+          </Tooltip>
           <span>{item.owner}</span>
         </div>
 
@@ -2931,6 +2942,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     if (!selectedTask) return null;
 
     const { runtime, display } = selectedTask;
+    const writeCount = getTaskWriteCount(runtime);
     const selectedRunLogs = selectedTaskLogRunId
       && selectedTaskLogRunId !== latestTaskLogRunId
       ? historicalTaskLogs?.taskId === selectedTask.key
@@ -3118,8 +3130,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         <div className="workspace-dock-detail-body">
           <div className={`workspace-dock-inline-meta ${display.isRunning ? 'is-live' : ''}`}>
             <span className="is-quality">进度 {runtime.progress}%</span>
-            <span className="is-asset">吞吐 {runtime.throughput}/min</span>
-            <span className="is-domain">总量 {formatCompactNumber(runtime.recordsValue)}</span>
+            <Tooltip title="暂无速率统计">
+              <span className="is-asset">吞吐 --</span>
+            </Tooltip>
+            <Tooltip title={taskWriteCountHelp}>
+              <span className="is-domain">本批写入 {writeCount?.toLocaleString() ?? '--'}</span>
+            </Tooltip>
             <span className="is-version">{display.label}</span>
           </div>
 
@@ -3180,12 +3196,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   </span>
                 ) : null}
               </div>
-              <div className="workspace-dock-diff-stats" aria-label="执行批次变化统计">
-                <span className="is-added">+{selectedLogRun?.inserted_records ?? 0} 新增</span>
-                <span className="is-updated">~{selectedLogRun?.updated_records ?? 0} 修改</span>
-                <span className="is-deleted">-{selectedLogRun?.deleted_records ?? 0} 删除</span>
-                <span className="is-download"><DownloadOutlined />{formatCompactNumber(selectedLogRun?.downloaded_records ?? 0)} 下载</span>
-                <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{formatCompactNumber(selectedLogRun?.synced_records ?? 0)} 同步</span>
+              <div className="workspace-dock-diff-stats" aria-label="所选执行批次变化统计">
+                <span>{selectedLogRun?.id === runtime.currentRunId ? '当前批次' : '所选批次'}</span>
+                <span className="is-added">+{selectedLogRun?.inserted_records ?? '--'} 新增</span>
+                <span className="is-updated">~{selectedLogRun?.updated_records ?? '--'} 修改</span>
+                <span className="is-deleted">-{selectedLogRun?.deleted_records ?? '--'} 删除</span>
+                <span className="is-download"><DownloadOutlined />{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)} 下载</span>
+                <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records)} 同步</span>
               </div>
             </div>
             <div className="workspace-dock-log-list is-detail">
@@ -4442,6 +4459,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-history-head {
           display: flex;
+          flex-wrap: wrap;
           align-items: baseline;
           justify-content: space-between;
           gap: 10px;
@@ -4562,6 +4580,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-diff-stats {
           display: inline-flex;
+          flex-wrap: wrap;
           align-items: center;
           gap: 10px;
           font-size: 10px;
