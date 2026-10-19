@@ -559,7 +559,7 @@ const mergeTaskLogRuns = (
   ]);
 };
 
-const taskWriteCountHelp = '当前执行批次成功新增与修改的记录次数，包含各业务类型，不含未变化记录；删除已计入，不重复相加。';
+const taskWriteCountHelp = 'Successful inserts and updates in the current run across all record types, excluding unchanged records. Deletions are already included and are not added again.';
 
 const getTaskWriteCount = (runtime: TaskRuntimeItem): number | null => {
   const run = runtime.logRuns.find((item) => item.id === runtime.currentRunId);
@@ -2227,7 +2227,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
         <div className="workspace-dock-card-meta">
           <span><SiteLogoMark site={item.site} />{stripDecorativeSuffix(item.area)}</span>
-          <Tooltip title={`本批写入：${writeCount?.toLocaleString() ?? '暂无统计'}。${taskWriteCountHelp}`}>
+          <Tooltip title={`Batch writes: ${writeCount?.toLocaleString() ?? 'No statistics available'}. ${taskWriteCountHelp}`}>
             <span>{writeCount === null ? '--' : formatCompactNumber(writeCount)}</span>
           </Tooltip>
           <span>{item.owner}</span>
@@ -3129,12 +3129,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
         <div className="workspace-dock-detail-body">
           <div className={`workspace-dock-inline-meta ${display.isRunning ? 'is-live' : ''}`}>
-            <span className="is-quality">进度 {runtime.progress}%</span>
-            <Tooltip title="暂无速率统计">
-              <span className="is-asset">吞吐 --</span>
+            <span className="is-quality">Progress {runtime.progress}%</span>
+            <Tooltip title="No throughput statistics available">
+              <span className="is-asset">Throughput --</span>
             </Tooltip>
             <Tooltip title={taskWriteCountHelp}>
-              <span className="is-domain">本批写入 {writeCount?.toLocaleString() ?? '--'}</span>
+              <span className="is-domain">Batch writes {writeCount?.toLocaleString() ?? '--'}</span>
             </Tooltip>
             <span className="is-version">{display.label}</span>
           </div>
@@ -3196,13 +3196,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   </span>
                 ) : null}
               </div>
-              <div className="workspace-dock-diff-stats" aria-label="所选执行批次变化统计">
-                <span>{selectedLogRun?.id === runtime.currentRunId ? '当前批次' : '所选批次'}</span>
-                <span className="is-added">+{selectedLogRun?.inserted_records ?? '--'} 新增</span>
-                <span className="is-updated">~{selectedLogRun?.updated_records ?? '--'} 修改</span>
-                <span className="is-deleted">-{selectedLogRun?.deleted_records ?? '--'} 删除</span>
-                <span className="is-download"><DownloadOutlined />{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)} 下载</span>
-                <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records)} 同步</span>
+              <div className="workspace-dock-diff-stats" aria-label="Selected run statistics">
+                <span className="is-added">+{selectedLogRun?.inserted_records ?? '--'} Added</span>
+                <span className="is-updated">~{selectedLogRun?.updated_records ?? '--'} Updated</span>
+                <span className="is-deleted">-{selectedLogRun?.deleted_records ?? '--'} Deleted</span>
+                <span className="is-download"><DownloadOutlined />{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)} Downloaded</span>
+                <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records)} Synced</span>
               </div>
             </div>
             <div className="workspace-dock-log-list is-detail">
@@ -3953,6 +3952,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           align-items: center;
           gap: 4px;
         }
+        .workspace-dock-detail.is-task-log-only .workspace-dock-inline-meta {
+          flex-wrap: nowrap;
+          white-space: nowrap;
+          overflow-x: auto;
+        }
         .workspace-dock-inline-meta .is-domain {
           color: #97B8FF;
         }
@@ -4580,9 +4584,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-diff-stats {
           display: inline-flex;
-          flex-wrap: wrap;
+          flex-wrap: nowrap;
           align-items: center;
           gap: 10px;
+          max-width: 100%;
+          overflow-x: auto;
           font-size: 10px;
           line-height: 1;
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
