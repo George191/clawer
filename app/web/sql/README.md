@@ -52,3 +52,14 @@
 清理结束时间早于一个自然月前的 `completed`、`failed`、`canceled`、`legacy` 批次；没有结束时间的历史批次按开始时间判断。运行中和暂停中的批次保留。删除批次时，外键级联删除其全部日志，并将指向该批次的 `current_run_id` 置空；任务和模板保留。
 
 部署必须先执行上述共享表迁移，再重建并重启所有消费者。
+
+## 模板集合别名映射
+
+`ai_collect_template_alias` 保存模板、业务类型与实际 MongoDB 集合的别名映射，供采集、下载和同步共用。升级时先构建新版镜像，再停止这些消费者，执行迁移，最后启动新版：
+
+```sh
+python -m app.web.migrate_ai_collect_template_alias --host 192.168.20.62
+python -m app.web.migrate_ai_collect_template_alias --host 192.168.20.62 --apply
+```
+
+默认只读检查，`--apply` 在单个事务内将原映射表改名，保留 OID、已有映射、主键和唯一约束；获取不到写锁会在 5 秒后退出。新旧表同时存在时拒绝执行，避免覆盖数据。迁移可重复执行，空库创建同结构空表，不预置业务映射。成功回执写入 `outputs/ai_collect_template_alias_migration/`。不提供旧表名兼容视图，因此所有消费者必须同步升级。

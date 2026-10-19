@@ -1,4 +1,4 @@
-"""Resolve collection routes, preserving explicit ownership even while disabled."""
+"""Resolve template collection aliases, preserving ownership even while disabled."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ class CollectionRouteStore:
         routes = await get_pg_client().fetch_all(
             """
             SELECT template_name, collection_name, data_type
-            FROM public.syncer_collections
+            FROM public.ai_collect_template_alias
             WHERE template_name = :template_name OR collection_name = :template_name
             """,
             {"template_name": template_name},
@@ -65,13 +65,13 @@ class CollectionRouteStore:
                        COALESCE(routes.data_type, templates.data_type) AS data_type,
                        (routes.template_name IS NOT NULL) AS explicit_route
                 FROM templates
-                LEFT JOIN public.syncer_collections AS routes
+                LEFT JOIN public.ai_collect_template_alias AS routes
                   ON routes.template_name = templates.name
                 WHERE routes.enabled OR (
                     routes.template_name IS NULL
                     AND NOT EXISTS (
                         SELECT 1
-                        FROM public.syncer_collections AS collection_owner
+                        FROM public.ai_collect_template_alias AS collection_owner
                         WHERE collection_owner.collection_name = templates.name
                           AND collection_owner.data_type = templates.data_type
                     )

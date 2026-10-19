@@ -21,6 +21,7 @@ import {
   ReadOutlined,
   ReloadOutlined,
   SearchOutlined,
+  SettingOutlined,
   StopOutlined,
   SyncOutlined,
   UploadOutlined,
@@ -104,7 +105,7 @@ type TaskComposerMode = 'once' | 'recurring';
 type TaskRecurringMode = 'daily' | 'interval';
 type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
-type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'warning' | 'signal' | 'game' | 'generic';
+type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'warning' | 'signal' | 'game' | 'system' | 'generic';
 
 interface TemplateDraft {
   adapter: string;
@@ -158,7 +159,7 @@ interface TaskRow extends DockTask {
 interface SiteProfile {
   kind: SiteKind;
   brand: string;
-  logo: string;
+  logo: React.ReactNode;
   hue: string;
   faviconUrl?: string;
 }
@@ -640,6 +641,7 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
   warning: { icon: <BellOutlined />, label: '告警', tint: '#F6C35B' },
   signal: { icon: <DeploymentUnitOutlined />, label: '信号', tint: '#65D5A3' },
   game: { icon: <GamepadGlyph />, label: '游戏', tint: '#FFFFFF' },
+  system: { icon: <SettingOutlined />, label: '系统', tint: '#A0AEC0' },
   generic: { icon: <CodeOutlined />, label: '通用', tint: '#A0AEC0' },
 };
 
@@ -1450,13 +1452,17 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const allTaskRows = useMemo<TaskRow[]>(() => taskItems.map((item) => {
     const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item);
-    const site = resolveSiteProfile(item.template);
+    const site: SiteProfile = item.taskType === 'celery'
+      ? { kind: 'system', brand: 'System', logo: <SettingOutlined />, hue: siteKindMeta.system.tint }
+      : resolveSiteProfile(item.template);
     const template = templates.find((candidate) => `${candidate.name}@${candidate.version}` === item.template);
     return {
       ...item,
       dataType: template?.dataType ?? '',
       runtime,
-      site: template
+      site: item.taskType === 'celery'
+        ? site
+        : template
         ? { ...site, kind: inferSiteKind(template.dataType || template.name), faviconUrl: item.faviconUrl || template.faviconUrl }
         : { ...site, faviconUrl: item.faviconUrl },
       display: getTaskDisplay(runtime),

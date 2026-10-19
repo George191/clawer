@@ -102,7 +102,7 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
 
-下载器按 PostgreSQL 模板分组并关联 `public.syncer_collections`，以路由的业务 `data_type` 筛选实际集合；未配置路由的模板使用原 `data_type` 和同名集合。匹配集合的待下载记录合并成一批（总数不超过 `--batch`）统一下载，每批及空闲轮询时重读数据库。不传 `--datatype` 时保留原行为，也可与 `--template` 同用；指定类型时，`--template` 支持父模板名和实际集合名：
+下载器按 PostgreSQL 模板分组并关联 `public.ai_collect_template_alias`，以别名映射的业务 `data_type` 筛选实际集合；未配置别名映射的模板使用原 `data_type` 和同名集合。匹配集合的待下载记录合并成一批（总数不超过 `--batch`）统一下载，每批及空闲轮询时重读数据库。不传 `--datatype` 时保留原行为，也可与 `--template` 同用；指定类型时，`--template` 支持父模板名和实际集合名：
 
 ```bash
 python -m app.downloader.main --datatype news
@@ -235,16 +235,16 @@ Compose 为 news、patent、navwarn、intelligence、company、financial_fact、
 仅发送成功后标记对应版本为 synced，失败记录保留待重试。
 采集记录落库即标记为 pending，Syncer 查询不依赖下载状态；每条记录下载处理完成后立即原子回写资源、下载状态、更新时间并重置为 pending，不等待同批其他记录。下载回写同时递增 download_version；同步确认匹配发送时的 updated_at 和下载版本，避免同一毫秒内的下载更新被旧同步确认覆盖。
 同步由轮询触发：新采集记录和下载更新均在下一次轮询发送，空闲轮询默认间隔 10 秒，可通过 `--poll` 调整。
-指定类型时，与下载器共用模板分组及 `syncer_collections` 路由查询，只读取匹配业务类型的实际集合；MongoDB 仅按原同步状态条件查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
+指定类型时，与下载器共用模板分组及 `ai_collect_template_alias` 别名映射查询，只读取匹配业务类型的实际集合；MongoDB 仅按原同步状态条件查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
 
-集合路由由 `app/records/collection_routes.py` 查询 `public.syncer_collections`，表结构和初始映射由部署迁移维护。路由以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行时的启停。模板存在路由时不再回退到同名集合，禁用路由也不会触发回退。
+模板与集合的别名映射由 `app/records/collection_routes.py` 查询 `public.ai_collect_template_alias`，供采集、下载和同步共用。表结构由部署迁移维护，业务映射单独配置。映射以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行的下载和同步启停，不影响采集写入。模板存在映射时不再回退到同名集合，禁用映射也不会触发回退。
 模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 company 或 filing。修改路由在下一批生效，已读入的当前批次继续完成。
 模板的 `download[].collection` 使用实际集合名，变更实际集合时应一并更新对应下载配置。
 
 例如禁止按类型运行的下载器与 Syncer 处理 SEC 财报集合：
 
 ```sql
-UPDATE public.syncer_collections
+UPDATE public.ai_collect_template_alias
 SET enabled = false, updated_at = now()
 WHERE template_name = 'sec_edgar' AND data_type = 'filing';
 ```
