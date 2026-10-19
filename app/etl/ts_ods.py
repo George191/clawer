@@ -400,7 +400,7 @@ RETURNING *
 ODS_CONTRACT_INSERT = """
 INSERT INTO ts_ods.ods_contract (
     record_id, data_source, data_type,
-    source_record_id, title, content,
+    title, content,
     url, source_created_at_raw, source_updated_at_raw,
     contract_number, modification_number, transaction_number,
     referenced_idv_agency_code, referenced_idv_piid, referenced_idv_modification_number,
@@ -422,7 +422,7 @@ INSERT INTO ts_ods.ods_contract (
     updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
-    :source_record_id, :title, :content,
+    :title, :content,
     :url, :source_created_at_raw, :source_updated_at_raw,
     :contract_number, :modification_number, :transaction_number,
     :referenced_idv_agency_code, :referenced_idv_piid, :referenced_idv_modification_number,
@@ -444,7 +444,6 @@ INSERT INTO ts_ods.ods_contract (
     CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    source_record_id = EXCLUDED.source_record_id,
     title = EXCLUDED.title,
     content = EXCLUDED.content,
     url = EXCLUDED.url,
@@ -507,7 +506,7 @@ RETURNING *
 ODS_TENDER_INSERT = """
 INSERT INTO ts_ods.ods_tender (
     record_id, data_source, data_type,
-    source_record_id, title, content,
+    title, content,
     url, source_published_at_raw, source_updated_at_raw,
     notice_id, solicitation_number, notice_type,
     base_type, agency_code, agency_name,
@@ -523,7 +522,7 @@ INSERT INTO ts_ods.ods_tender (
     created_at, updated_at
 ) VALUES (
     :record_id, :data_source, :data_type,
-    :source_record_id, :title, :content,
+    :title, :content,
     :url, :source_published_at_raw, :source_updated_at_raw,
     :notice_id, :solicitation_number, :notice_type,
     :base_type, :agency_code, :agency_name,
@@ -539,7 +538,6 @@ INSERT INTO ts_ods.ods_tender (
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    source_record_id = EXCLUDED.source_record_id,
     title = EXCLUDED.title,
     content = EXCLUDED.content,
     url = EXCLUDED.url,

@@ -82,7 +82,6 @@ def _common(record: dict[str, Any], source: str, data_type: str, source_id: str 
         "record_id": record_id,
         "data_source": safe_str(meta.get("data_source")) or source,
         "data_type": data_type,
-        "source_record_id": source_id,
         "title": safe_str(record.get("title")),
         "content": safe_str(record.get("content")),
         "url": safe_str(record.get("url")),
