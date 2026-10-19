@@ -1,4 +1,4 @@
-"""Contract-award and tender ODS rows for the published SAM.gov collectors."""
+"""Contract-award and tender ODS rows for procurement collectors."""
 
 from __future__ import annotations
 
@@ -92,8 +92,10 @@ def _common(record: dict[str, Any], source: str, data_type: str, source_id: str 
     }
 
 
-def normalize_sam_gov_award(record: dict[str, Any]) -> dict[str, Any]:
-    row = _common(record, "sam_gov_awards", "contract", _award_source_id(record))
+def _normalize_contract(
+    record: dict[str, Any], source: str, source_id: str | None,
+) -> dict[str, Any]:
+    row = _common(record, source, "contract", source_id)
     for field in (
         "contract_number", "modification_number", "transaction_number",
         "referenced_idv_agency_code", "referenced_idv_piid", "referenced_idv_modification_number",
@@ -124,6 +126,14 @@ def normalize_sam_gov_award(record: dict[str, Any]) -> dict[str, Any]:
         "currency": safe_str(record.get("currency")) or "USD",
     })
     return row
+
+
+def normalize_sam_gov_award(record: dict[str, Any]) -> dict[str, Any]:
+    return _normalize_contract(record, "sam_gov_awards", _award_source_id(record))
+
+
+def normalize_usaspending_contract(record: dict[str, Any]) -> dict[str, Any]:
+    return _normalize_contract(record, "usaspending", safe_str(record.get("id")))
 
 
 def normalize_sam_gov_opportunity(record: dict[str, Any]) -> dict[str, Any]:
@@ -163,3 +173,4 @@ def normalize_sam_gov_opportunity(record: dict[str, Any]) -> dict[str, Any]:
 
 register_normalizer("contract", "sam_gov_awards", normalize_sam_gov_award)
 register_normalizer("contract", "sam_gov_opportunities", normalize_sam_gov_opportunity)
+register_normalizer("contract", "usaspending", normalize_usaspending_contract)

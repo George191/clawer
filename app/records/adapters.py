@@ -274,6 +274,7 @@ _ADAPTERS: dict[tuple[str, str | None], type[RecordAdapter]] = {
     ("sec_edgar", "financial_fact"): SecFinancialFactAdapter,
     ("sam_gov_opportunities", None): SamOpportunityAdapter,
     ("sam_gov_awards", None): SamAwardAdapter,
+    ("usaspending", None): SamSnapshotAdapter,
 }
 
 
