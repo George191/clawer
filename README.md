@@ -261,6 +261,18 @@ python -m app.syncer.main --data-type financial_fact --batch 50 --concurrency 10
 
 切换前创建上述类型 topic（分区及副本数按集群配置），停止旧 Syncer，先更新 RDS Worker，再启动分类型 Syncer。
 RDS 为旧 `SPIDER_ETL_RAW_TOPIC` 和各新类型 topic 分别启动独立 Consumer 消费循环，通过协程并发处理，沿用原消费组与 offset。
+
+SAM 两个 MongoDB 集合分别写入 `ts_rds.rds_contract`（`sam_gov_awards`）和
+`ts_rds.rds_tender`（`sam_gov_opportunities`），标准化后对应 `ts_ods.ods_contract` 和
+`ts_ods.ods_tender`。采集与同步沿用已有 `contract` 类型，由来源选择 RDS 表，保留 Mongo
+记录身份及合同修订/交易号；ODS 金额使用 `NUMERIC`，复杂字段使用 `JSONB`，删除使用标志保留。
+来源时间同时保留原文；未声明时区的时间不推定为 UTC。`created_at`/`updated_at` 为入库时间。
+使用 `python -m app.etl.schema.register_procurement` 查看四张表的 DDL，追加 `--apply` 注册并建表。
+部署时先创建 `${SPIDER_KAFKA_TOPIC}-contract`、`${SPIDER_ETL_RDS_TOPIC}-contract` 和
+`${SPIDER_ETL_RDS_TOPIC}-tender` topic，再更新 ODS、RDS 和 `syncer-contract` 服务。
+SAM 日增需在完整采集、写入及水位验证通过后注册到 `public.automation_tasks`；合同还需
+Worker 可用的 `SAM_GOV_API_KEY` 以及完整变更/删除流验证，公告快照中缺失的记录不推断为删除。
+
 各 topic 内仍按顺序逐条处理、成功后提交，数据库连接池由 RDS 统一管理。
 RDS 按实际目标表输出到 `${SPIDER_ETL_RDS_TOPIC}-<表名后缀>`，例如 `rds_news` 对应 `etl-rds-news`、`rds_financial_fact` 对应 `etl-rds-financial_fact`（以配置的 topic 前缀为准）。
 上线前创建这些 RDS 输出 topic，并先更新 ODS 再更新 RDS；ODS 兼容订阅旧公共 topic 与新拆分 topic，本次未改变 ODS 的串行处理及公共输出。

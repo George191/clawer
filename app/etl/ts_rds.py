@@ -112,6 +112,14 @@ class TsRds(ETLBase):
     async def _handler_filing(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="filing")
 
+    async def _handler_contract(self, message: dict[str, Any]) -> bool:
+        source = extract_meta(message).get("data_source")
+        table = "tender" if source == "sam_gov_opportunities" else "contract"
+        return await self._process_rds_record(message, table=table)
+
+    async def _handler_tender(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="tender")
+
     async def _dispatch(self, message: dict[str, Any]) -> bool:
         meta = message.get("_meta") or {}
         data_type = TWITTER_COLLECTION_TYPES.get(meta.get("template"))

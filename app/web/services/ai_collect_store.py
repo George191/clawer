@@ -520,29 +520,13 @@ class AICollectStore(AutomationTaskStore):
         return row
 
     async def list_tasks(self) -> list[dict[str, Any]]:
-        return await self._with_task_icons(await super().list_tasks(product_domain="ai-collect"))
+        return await super().list_tasks(product_domain="ai-collect")
 
     async def get_task(self, task_id: str) -> dict[str, Any] | None:
         task = await super().get_task(task_id)
         if task is None or task.get("product_domain") != "ai-collect":
             return None
-        return (await self._with_task_icons([task]))[0]
-
-    async def _with_task_icons(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not tasks:
-            return tasks
-        templates = await self._pg.fetch_all(
-            "SELECT name, version, icon FROM public.ai_collect_templates "
-            "WHERE name = ANY(CAST(:names AS text[]))",
-            {"names": list({task["template_name"] for task in tasks if task.get("template_name")})},
-        )
-        icons = {(row["name"], row["version"]): row["icon"] for row in templates}
-        minio = get_business_metadata_minio_client()
-        for task in tasks:
-            task["favicon_url"] = minio.build_object_url(str(icons.get(
-                (task.get("template_name"), task.get("template_version")), "",
-            ) or ""))
-        return tasks
+        return task
 
 
 ai_collect_store = AICollectStore()

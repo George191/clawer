@@ -144,6 +144,11 @@ services:
     container_name: syncer-filing
     command: ["python", "-m", "app.syncer.main", "--data-type", "filing", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
 
+  syncer-contract:
+    <<: *syncer
+    container_name: syncer-contract
+    command: ["python", "-m", "app.syncer.main", "--data-type", "contract", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
   syncer-account:
     <<: *syncer
     container_name: syncer-account

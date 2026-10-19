@@ -6,6 +6,7 @@ import asyncio
 import json
 from typing import Any
 
+from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
 from app.utils.runtime_control import get_workspace_run
 from app.web.services.task_events import publish_task_change, publish_task_log, publish_task_run
@@ -35,7 +36,24 @@ class AutomationTaskStore:
             """,
             {"product_domain": product_domain},
         )
-        return rows
+        return await self._with_task_icons(rows)
+
+    async def _with_task_icons(self, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        names = list({task["template_name"] for task in tasks if task.get("template_name")})
+        if not names:
+            return tasks
+        templates = await self._pg.fetch_all(
+            "SELECT name, version, icon FROM public.ai_collect_templates "
+            "WHERE name = ANY(CAST(:names AS text[]))",
+            {"names": names},
+        )
+        icons = {(row["name"], row["version"]): row["icon"] for row in templates}
+        minio = get_business_metadata_minio_client()
+        for task in tasks:
+            task["favicon_url"] = minio.build_object_url(str(icons.get(
+                (task.get("template_name"), task.get("template_version")), "",
+            ) or ""))
+        return tasks
 
     async def append_task_log(
         self, task_id: str, level: str, message: str, run_id: str | None = None,
@@ -562,7 +580,7 @@ class AutomationTaskStore:
             """,
             {"id": task_id},
         )
-        return task
+        return (await self._with_task_icons([task]))[0] if task is not None else None
 
     async def cleanup_task_logs(self) -> dict[str, int]:
         """Delete expired terminal runs; foreign keys remove logs and clear run references."""

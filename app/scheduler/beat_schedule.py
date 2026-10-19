@@ -89,32 +89,7 @@ class BeatScheduleRegistry:
         }
 
     def _register_default_tasks(self) -> None:
-        """注册内置默认任务（兜底配置，与 init_scheduler_tasks.sql 种子数据一致）。"""
-        # ── Google Patent 每日采集 ──
-        # 每天 UTC 06:00 执行（采集前一天发布的专利）
-        self.register(
-            name="google_patent_daily",
-            task="app.scheduler.tasks.google_patent.crawl_daily",
-            schedule=crontab(hour=6, minute=0),
-            options={
-                "queue": "patent",
-                "expires": 6 * 3600,  # 6小时后过期（避免堆积）
-            },
-        )
-
-        # ── Google Patent 每周全量补采 ──
-        # 每周一 UTC 03:00 执行（采集过去 7 天的专利，补漏）
-        self.register(
-            name="google_patent_range",
-            task="app.scheduler.tasks.google_patent.crawl_date_range",
-            schedule=crontab(hour=3, minute=0, day_of_week=1),
-            kwargs={"days_back": 7},
-            options={
-                "queue": "patent",
-                "expires": 12 * 3600,
-            },
-        )
-
+        """注册数据库不可用时的调度基础任务。"""
         self._register_system_tasks()
 
     def _register_system_tasks(self) -> None:

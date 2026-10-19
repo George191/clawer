@@ -44,6 +44,7 @@ from app.etl.normalizers import (
     filing,  # noqa: E402, F401
     filing_document,  # noqa: E402, F401
     financial_fact,  # noqa: E402, F401
+    procurement,  # noqa: E402, F401
     social_account,  # noqa: E402, F401
     social_content,  # noqa: E402, F401
 )

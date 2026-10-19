@@ -1208,7 +1208,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const mappedTask = mapWorkspaceTask(item);
     setTaskItems((current) => (
       current.some((task) => task.key === item.id)
-        ? current.map((task) => (task.key === item.id ? mappedTask : task))
+        ? current.map((task) => (task.key === item.id
+          ? { ...mappedTask, faviconUrl: mappedTask.faviconUrl ?? task.faviconUrl }
+          : task))
         : [mappedTask, ...current]
     ));
     setTaskRuntime((current) => {

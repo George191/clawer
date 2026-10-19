@@ -4,10 +4,43 @@ from __future__ import annotations
 
 CANONICAL_ODS_TABLES = frozenset({
     "company", "filing", "filing_document", "financial_fact",
+    "contract", "tender",
     "social_account", "social_content", "social_media", "social_hashtag", "social_interaction",
 })
 
 RDS_CURRENT_BASELINE_DDLS: dict[str, str] = {
+    "contract": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_contract (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_rds_contract_data_source ON ts_rds.rds_contract (data_source);
+CREATE INDEX IF NOT EXISTS idx_rds_contract_updated_at ON ts_rds.rds_contract (updated_at DESC);
+""".strip(),
+    "tender": """
+CREATE TABLE IF NOT EXISTS ts_rds.rds_tender (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL,
+    raw_data JSONB NOT NULL,
+    kafka_offset BIGINT,
+    kafka_partition INTEGER,
+    kafka_topic TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_rds_tender_data_source ON ts_rds.rds_tender (data_source);
+CREATE INDEX IF NOT EXISTS idx_rds_tender_updated_at ON ts_rds.rds_tender (updated_at DESC);
+""".strip(),
     "news": """
 CREATE TABLE IF NOT EXISTS ts_rds.rds_news (
     record_id TEXT PRIMARY KEY,
@@ -151,6 +184,128 @@ CREATE INDEX IF NOT EXISTS idx_rds_tweet_updated_at ON ts_rds.rds_tweet (updated
 }
 
 ODS_CURRENT_BASELINE_DDLS: dict[str, str] = {
+    "contract": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_contract (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'contract',
+    source_record_id TEXT,
+    title TEXT,
+    content TEXT,
+    url TEXT,
+    source_created_at TIMESTAMPTZ,
+    source_created_at_raw TEXT,
+    source_updated_at TIMESTAMPTZ,
+    source_updated_at_raw TEXT,
+    captured_at TIMESTAMPTZ,
+    contract_number TEXT,
+    modification_number TEXT,
+    transaction_number TEXT,
+    referenced_idv_agency_code TEXT,
+    referenced_idv_piid TEXT,
+    referenced_idv_modification_number TEXT,
+    award_or_idv TEXT,
+    contract_type TEXT,
+    contract_type_code TEXT,
+    solicitation_number TEXT,
+    solicitation_date DATE,
+    award_date DATE,
+    period_of_performance_start_date DATE,
+    current_completion_date DATE,
+    ultimate_completion_date DATE,
+    last_date_to_order DATE,
+    fiscal_year TEXT,
+    agency_code TEXT,
+    agency_name TEXT,
+    contracting_department_code TEXT,
+    contracting_department_name TEXT,
+    contracting_office_code TEXT,
+    contracting_office_name TEXT,
+    funding_agency_code TEXT,
+    funding_agency_name TEXT,
+    funding_department_code TEXT,
+    funding_department_name TEXT,
+    funding_office_code TEXT,
+    funding_office_name TEXT,
+    awardee_name TEXT,
+    awardee_uei TEXT,
+    awardee_cage_code TEXT,
+    awardee_address JSONB,
+    place_of_performance JSONB,
+    naics_code TEXT,
+    psc_code TEXT,
+    amount NUMERIC,
+    amount_type TEXT,
+    action_obligation NUMERIC,
+    base_dollars_obligated NUMERIC,
+    base_and_exercised_options_value NUMERIC,
+    base_and_all_options_value NUMERIC,
+    total_action_obligation NUMERIC,
+    total_base_and_exercised_options_value NUMERIC,
+    total_base_and_all_options_value NUMERIC,
+    currency TEXT,
+    deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_ods_contract_business_id
+    ON ts_ods.ods_contract (agency_code, contract_number, modification_number, transaction_number);
+CREATE INDEX IF NOT EXISTS idx_ods_contract_award_date ON ts_ods.ods_contract (award_date DESC);
+CREATE INDEX IF NOT EXISTS idx_ods_contract_awardee_uei ON ts_ods.ods_contract (awardee_uei);
+""".strip(),
+    "tender": """
+CREATE TABLE IF NOT EXISTS ts_ods.ods_tender (
+    record_id TEXT NOT NULL,
+    data_source TEXT NOT NULL,
+    data_type TEXT NOT NULL DEFAULT 'tender',
+    source_record_id TEXT,
+    title TEXT,
+    content TEXT,
+    url TEXT,
+    source_published_at TIMESTAMPTZ,
+    source_published_at_raw TEXT,
+    source_updated_at TIMESTAMPTZ,
+    source_updated_at_raw TEXT,
+    captured_at TIMESTAMPTZ,
+    notice_id TEXT,
+    solicitation_number TEXT,
+    notice_type TEXT,
+    base_type TEXT,
+    agency_code TEXT,
+    agency_name TEXT,
+    naics_code TEXT,
+    psc_code TEXT,
+    response_deadline TIMESTAMPTZ,
+    response_deadline_raw TEXT,
+    active BOOLEAN,
+    archive_type TEXT,
+    archive_date DATE,
+    set_aside_code TEXT,
+    set_aside TEXT,
+    organization_type TEXT,
+    description_url TEXT,
+    additional_info_url TEXT,
+    contacts JSONB,
+    place_of_performance JSONB,
+    office_address JSONB,
+    attachments JSONB,
+    attachments_available BOOLEAN,
+    award JSONB,
+    award_number TEXT,
+    award_date DATE,
+    award_amount NUMERIC,
+    awardee_name TEXT,
+    currency TEXT,
+    deleted BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (record_id, data_source, data_type)
+) PARTITION BY HASH (record_id, data_source, data_type);
+CREATE INDEX IF NOT EXISTS idx_ods_tender_notice_id ON ts_ods.ods_tender (data_source, notice_id);
+CREATE INDEX IF NOT EXISTS idx_ods_tender_solicitation ON ts_ods.ods_tender (solicitation_number);
+CREATE INDEX IF NOT EXISTS idx_ods_tender_deadline ON ts_ods.ods_tender (response_deadline);
+""".strip(),
     "financial_fact": """
 CREATE TABLE IF NOT EXISTS ts_ods.ods_financial_fact (
     record_id TEXT NOT NULL,

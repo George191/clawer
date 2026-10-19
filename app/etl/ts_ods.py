@@ -397,9 +397,196 @@ ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
 RETURNING *
 """
 
+ODS_CONTRACT_INSERT = """
+INSERT INTO ts_ods.ods_contract (
+    record_id, data_source, data_type,
+    source_record_id, title, content,
+    url, source_created_at_raw, source_updated_at_raw,
+    contract_number, modification_number, transaction_number,
+    referenced_idv_agency_code, referenced_idv_piid, referenced_idv_modification_number,
+    award_or_idv, contract_type, contract_type_code,
+    solicitation_number, fiscal_year, agency_code,
+    agency_name, contracting_department_code, contracting_department_name,
+    contracting_office_code, contracting_office_name, funding_agency_code,
+    funding_agency_name, funding_department_code, funding_department_name,
+    funding_office_code, funding_office_name, awardee_name,
+    awardee_uei, awardee_cage_code, naics_code,
+    psc_code, amount_type, currency,
+    solicitation_date, award_date, period_of_performance_start_date,
+    current_completion_date, ultimate_completion_date, last_date_to_order,
+    source_created_at, source_updated_at, captured_at,
+    amount, action_obligation, base_dollars_obligated,
+    base_and_exercised_options_value, base_and_all_options_value, total_action_obligation,
+    total_base_and_exercised_options_value, total_base_and_all_options_value, awardee_address,
+    place_of_performance, deleted, created_at,
+    updated_at
+) VALUES (
+    :record_id, :data_source, :data_type,
+    :source_record_id, :title, :content,
+    :url, :source_created_at_raw, :source_updated_at_raw,
+    :contract_number, :modification_number, :transaction_number,
+    :referenced_idv_agency_code, :referenced_idv_piid, :referenced_idv_modification_number,
+    :award_or_idv, :contract_type, :contract_type_code,
+    :solicitation_number, :fiscal_year, :agency_code,
+    :agency_name, :contracting_department_code, :contracting_department_name,
+    :contracting_office_code, :contracting_office_name, :funding_agency_code,
+    :funding_agency_name, :funding_department_code, :funding_department_name,
+    :funding_office_code, :funding_office_name, :awardee_name,
+    :awardee_uei, :awardee_cage_code, :naics_code,
+    :psc_code, :amount_type, :currency,
+    CAST(:solicitation_date AS date), CAST(:award_date AS date), CAST(:period_of_performance_start_date AS date),
+    CAST(:current_completion_date AS date), CAST(:ultimate_completion_date AS date), CAST(:last_date_to_order AS date),
+    CAST(:source_created_at AS timestamptz), CAST(:source_updated_at AS timestamptz), CAST(:captured_at AS timestamptz),
+    :amount, :action_obligation, :base_dollars_obligated,
+    :base_and_exercised_options_value, :base_and_all_options_value, :total_action_obligation,
+    :total_base_and_exercised_options_value, :total_base_and_all_options_value, CAST(:awardee_address AS jsonb),
+    CAST(:place_of_performance AS jsonb), :deleted, CAST(:created_at AS timestamptz),
+    CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    source_record_id = EXCLUDED.source_record_id,
+    title = EXCLUDED.title,
+    content = EXCLUDED.content,
+    url = EXCLUDED.url,
+    source_created_at_raw = EXCLUDED.source_created_at_raw,
+    source_updated_at_raw = EXCLUDED.source_updated_at_raw,
+    contract_number = EXCLUDED.contract_number,
+    modification_number = EXCLUDED.modification_number,
+    transaction_number = EXCLUDED.transaction_number,
+    referenced_idv_agency_code = EXCLUDED.referenced_idv_agency_code,
+    referenced_idv_piid = EXCLUDED.referenced_idv_piid,
+    referenced_idv_modification_number = EXCLUDED.referenced_idv_modification_number,
+    award_or_idv = EXCLUDED.award_or_idv,
+    contract_type = EXCLUDED.contract_type,
+    contract_type_code = EXCLUDED.contract_type_code,
+    solicitation_number = EXCLUDED.solicitation_number,
+    fiscal_year = EXCLUDED.fiscal_year,
+    agency_code = EXCLUDED.agency_code,
+    agency_name = EXCLUDED.agency_name,
+    contracting_department_code = EXCLUDED.contracting_department_code,
+    contracting_department_name = EXCLUDED.contracting_department_name,
+    contracting_office_code = EXCLUDED.contracting_office_code,
+    contracting_office_name = EXCLUDED.contracting_office_name,
+    funding_agency_code = EXCLUDED.funding_agency_code,
+    funding_agency_name = EXCLUDED.funding_agency_name,
+    funding_department_code = EXCLUDED.funding_department_code,
+    funding_department_name = EXCLUDED.funding_department_name,
+    funding_office_code = EXCLUDED.funding_office_code,
+    funding_office_name = EXCLUDED.funding_office_name,
+    awardee_name = EXCLUDED.awardee_name,
+    awardee_uei = EXCLUDED.awardee_uei,
+    awardee_cage_code = EXCLUDED.awardee_cage_code,
+    naics_code = EXCLUDED.naics_code,
+    psc_code = EXCLUDED.psc_code,
+    amount_type = EXCLUDED.amount_type,
+    currency = EXCLUDED.currency,
+    solicitation_date = EXCLUDED.solicitation_date,
+    award_date = EXCLUDED.award_date,
+    period_of_performance_start_date = EXCLUDED.period_of_performance_start_date,
+    current_completion_date = EXCLUDED.current_completion_date,
+    ultimate_completion_date = EXCLUDED.ultimate_completion_date,
+    last_date_to_order = EXCLUDED.last_date_to_order,
+    source_created_at = EXCLUDED.source_created_at,
+    source_updated_at = EXCLUDED.source_updated_at,
+    captured_at = EXCLUDED.captured_at,
+    amount = EXCLUDED.amount,
+    action_obligation = EXCLUDED.action_obligation,
+    base_dollars_obligated = EXCLUDED.base_dollars_obligated,
+    base_and_exercised_options_value = EXCLUDED.base_and_exercised_options_value,
+    base_and_all_options_value = EXCLUDED.base_and_all_options_value,
+    total_action_obligation = EXCLUDED.total_action_obligation,
+    total_base_and_exercised_options_value = EXCLUDED.total_base_and_exercised_options_value,
+    total_base_and_all_options_value = EXCLUDED.total_base_and_all_options_value,
+    awardee_address = EXCLUDED.awardee_address,
+    place_of_performance = EXCLUDED.place_of_performance,
+    deleted = EXCLUDED.deleted,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
+ODS_TENDER_INSERT = """
+INSERT INTO ts_ods.ods_tender (
+    record_id, data_source, data_type,
+    source_record_id, title, content,
+    url, source_published_at_raw, source_updated_at_raw,
+    notice_id, solicitation_number, notice_type,
+    base_type, agency_code, agency_name,
+    naics_code, psc_code, response_deadline_raw,
+    archive_type, set_aside_code, set_aside,
+    organization_type, description_url, additional_info_url,
+    award_number, awardee_name, currency,
+    source_published_at, source_updated_at, response_deadline,
+    captured_at, archive_date, award_date,
+    award_amount, active, attachments_available,
+    deleted, contacts, place_of_performance,
+    office_address, attachments, award,
+    created_at, updated_at
+) VALUES (
+    :record_id, :data_source, :data_type,
+    :source_record_id, :title, :content,
+    :url, :source_published_at_raw, :source_updated_at_raw,
+    :notice_id, :solicitation_number, :notice_type,
+    :base_type, :agency_code, :agency_name,
+    :naics_code, :psc_code, :response_deadline_raw,
+    :archive_type, :set_aside_code, :set_aside,
+    :organization_type, :description_url, :additional_info_url,
+    :award_number, :awardee_name, :currency,
+    CAST(:source_published_at AS timestamptz), CAST(:source_updated_at AS timestamptz), CAST(:response_deadline AS timestamptz),
+    CAST(:captured_at AS timestamptz), CAST(:archive_date AS date), CAST(:award_date AS date),
+    :award_amount, :active, :attachments_available,
+    :deleted, CAST(:contacts AS jsonb), CAST(:place_of_performance AS jsonb),
+    CAST(:office_address AS jsonb), CAST(:attachments AS jsonb), CAST(:award AS jsonb),
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+)
+ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
+    source_record_id = EXCLUDED.source_record_id,
+    title = EXCLUDED.title,
+    content = EXCLUDED.content,
+    url = EXCLUDED.url,
+    source_published_at_raw = EXCLUDED.source_published_at_raw,
+    source_updated_at_raw = EXCLUDED.source_updated_at_raw,
+    notice_id = EXCLUDED.notice_id,
+    solicitation_number = EXCLUDED.solicitation_number,
+    notice_type = EXCLUDED.notice_type,
+    base_type = EXCLUDED.base_type,
+    agency_code = EXCLUDED.agency_code,
+    agency_name = EXCLUDED.agency_name,
+    naics_code = EXCLUDED.naics_code,
+    psc_code = EXCLUDED.psc_code,
+    response_deadline_raw = EXCLUDED.response_deadline_raw,
+    archive_type = EXCLUDED.archive_type,
+    set_aside_code = EXCLUDED.set_aside_code,
+    set_aside = EXCLUDED.set_aside,
+    organization_type = EXCLUDED.organization_type,
+    description_url = EXCLUDED.description_url,
+    additional_info_url = EXCLUDED.additional_info_url,
+    award_number = EXCLUDED.award_number,
+    awardee_name = EXCLUDED.awardee_name,
+    currency = EXCLUDED.currency,
+    source_published_at = EXCLUDED.source_published_at,
+    source_updated_at = EXCLUDED.source_updated_at,
+    response_deadline = EXCLUDED.response_deadline,
+    captured_at = EXCLUDED.captured_at,
+    archive_date = EXCLUDED.archive_date,
+    award_date = EXCLUDED.award_date,
+    award_amount = EXCLUDED.award_amount,
+    active = EXCLUDED.active,
+    attachments_available = EXCLUDED.attachments_available,
+    deleted = EXCLUDED.deleted,
+    contacts = EXCLUDED.contacts,
+    place_of_performance = EXCLUDED.place_of_performance,
+    office_address = EXCLUDED.office_address,
+    attachments = EXCLUDED.attachments,
+    award = EXCLUDED.award,
+    updated_at = EXCLUDED.updated_at
+RETURNING *
+"""
+
 _ODS_INSERT_SQL = {
     "news": ODS_NEWS_INSERT,
     "patent": ODS_PATENT_INSERT,
+    "contract": ODS_CONTRACT_INSERT,
+    "tender": ODS_TENDER_INSERT,
     "navwarn": ODS_NAVWARN_INSERT,
     "intelligence": ODS_INTELLIGENCE_INSERT,
     "company": ODS_COMPANY_STANDARD_INSERT,
@@ -419,7 +606,7 @@ class TsOds(ETLBase):
     _layer = "ods"
     _consumer_topics = [
         f"{settings.etl_rds_topic}-{table}" for table in SYNC_DATA_TYPES
-    ]
+    ] + [f"{settings.etl_rds_topic}-tender"]
     _consumer_group = settings.etl_ods_consumer_group
     _producer_topic = settings.etl_ods_topic
     _producer_client_id = "etl-ts-ods-producer"
@@ -441,6 +628,12 @@ class TsOds(ETLBase):
 
     async def _handler_filing(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="filing")
+
+    async def _handler_contract(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="contract")
+
+    async def _handler_tender(self, message: dict[str, Any]) -> bool:
+        return await self._process_ods_record(message, table="tender")
 
     async def _handler_filing_document(self, message: dict[str, Any]) -> bool:
         return await self._process_ods_record(message, table="filing_document")
