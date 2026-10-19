@@ -55,6 +55,9 @@ async def _cleanup_task_logs(task_id: str, delivery_id: str) -> dict[str, Any]:
     try:
         logger.info("Task log cleanup started")
         result = await automation_task_store.cleanup_task_logs()
+        await automation_task_store.increment_run_stats(
+            task_id, run_id, deleted=result["deleted_runs"],
+        )
         logger.info("Task log cleanup completed: deleted_runs=%d", result["deleted_runs"])
         await automation_task_store.update_task(
             task_id,
