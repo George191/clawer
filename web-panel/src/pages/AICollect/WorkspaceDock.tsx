@@ -105,7 +105,7 @@ type TaskComposerMode = 'once' | 'recurring';
 type TaskRecurringMode = 'daily' | 'interval';
 type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
-type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'warning' | 'signal' | 'game' | 'system' | 'generic';
+type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic';
 
 interface TemplateDraft {
   adapter: string;
@@ -641,9 +641,26 @@ const SocialMediaGlyph = () => (
   </svg>
 );
 
+const ContractGlyph = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M11.5 20.5H5.5v-17h8l4 4v4M13.5 3.5v4h4M8.5 10.5h5M8.5 14h3" />
+    <circle cx="17" cy="17" r="4" />
+    <path d="m15 17 1.4 1.4 2.6-2.8" />
+  </svg>
+);
+
+const TenderGlyph = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M10.5 20.5h-6v-16h9v5M7.5 8.5h3M7.5 12h2M13 20.5h8" />
+    <path d="m14 10 4 4M17 7l4 4M15.5 8.5l4 4M17.5 10.5l-6 6" />
+  </svg>
+);
+
 const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tint: string }> = {
   financial_report: { icon: <FinancialReportGlyph />, label: 'Financial report', tint: '#69D3B0' },
   social_media: { icon: <SocialMediaGlyph />, label: 'Social media', tint: '#75CBFF' },
+  contract: { icon: <ContractGlyph />, label: '合同', tint: '#74C7A5' },
+  tender: { icon: <TenderGlyph />, label: '招标', tint: '#E8BB73' },
   news: { icon: <ReadOutlined />, label: '新闻', tint: '#BFA8FF' },
   patent: { icon: <ExperimentOutlined />, label: '专利', tint: '#8AB4FF' },
   intelligence: { icon: <RadarChartOutlined />, label: '情报', tint: '#7DD3FC' },
@@ -845,7 +862,9 @@ const toAvatarLabel = (value: string) => {
 };
 
 const inferSiteKind = (value: string): SiteKind => {
-  const text = value.toLowerCase();
+  const text = value.trim().toLowerCase();
+  if (text === 'contract') return 'contract';
+  if (text === 'tender') return 'tender';
   if (/financial[_\s-]*report/.test(text)) return 'financial_report';
   if (/social[_\s-]*media|twitter|tweet|社交媒体/.test(text)) return 'social_media';
   if (text.includes('game') || text.includes('游戏')) return 'game';
