@@ -4480,7 +4480,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-log-caption > .workspace-dock-log-run-trigger {
           display: inline-flex;
           align-items: center;
-          width: 112px;
+          width: 168px;
           cursor: pointer;
           outline: 0;
         }
@@ -4497,7 +4497,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           align-items: center !important;
           justify-content: center !important;
           height: 22px !important;
-          padding: 0 14px 0 2px !important;
+          padding: 0 24px 0 8px !important;
           border: 0 !important;
           background: transparent !important;
           box-shadow: none !important;
@@ -4518,13 +4518,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           display: flex;
           align-items: center;
           justify-content: center;
-          padding-inline-end: 0 !important;
           line-height: normal !important;
           text-align: center;
         }
         .workspace-dock-log-run-select .ant-select-arrow {
           top: 50%;
-          inset-inline-end: 2px;
+          inset-inline-end: 8px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -4592,10 +4591,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           min-width: 0;
           max-width: 100%;
           overflow-x: auto;
+          overflow-y: hidden;
+          scrollbar-width: none;
           font-size: 10px;
           line-height: 1;
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           white-space: nowrap;
+        }
+        .workspace-dock-diff-stats::-webkit-scrollbar {
+          display: none;
         }
         .workspace-dock-diff-stats span {
           display: inline-flex;
