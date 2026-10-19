@@ -246,6 +246,7 @@ export interface WorkspaceTask {
   task_path?: string | null;
   template_name: string | null;
   template_version: string | null;
+  data_type?: string;
   favicon_url?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'paused';
   progress: number;

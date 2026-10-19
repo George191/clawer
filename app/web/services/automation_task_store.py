@@ -43,16 +43,18 @@ class AutomationTaskStore:
         if not names:
             return tasks
         templates = await self._pg.fetch_all(
-            "SELECT name, version, icon FROM public.ai_collect_templates "
+            "SELECT name, version, data_type, icon FROM public.ai_collect_templates "
             "WHERE name = ANY(CAST(:names AS text[]))",
             {"names": names},
         )
-        icons = {(row["name"], row["version"]): row["icon"] for row in templates}
+        templates_by_version = {(row["name"], row["version"]): row for row in templates}
         minio = get_business_metadata_minio_client()
         for task in tasks:
-            task["favicon_url"] = minio.build_object_url(str(icons.get(
-                (task.get("template_name"), task.get("template_version")), "",
-            ) or ""))
+            template = templates_by_version.get(
+                (task.get("template_name"), task.get("template_version")), {},
+            )
+            task["data_type"] = template.get("data_type") or ""
+            task["favicon_url"] = minio.build_object_url(str(template.get("icon") or ""))
         return tasks
 
     async def append_task_log(

@@ -95,7 +95,7 @@ async def register(*, apply: bool = False) -> dict[str, Any]:
             await worker._ensure_registered_table(item["logical_table"], "current")
             physical_table = f"{item['schema_name']}.{item['table_name']}"
             physical = await pg.fetch_one("""
-                SELECT c.relkind, count(i.inhrelid) AS partition_count
+                SELECT c.relkind::text AS relkind, count(i.inhrelid) AS partition_count
                 FROM pg_class c
                 LEFT JOIN pg_inherits i ON i.inhparent = c.oid
                 WHERE c.oid = to_regclass(:table_name)

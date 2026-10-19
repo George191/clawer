@@ -141,6 +141,9 @@ def normalize_sam_gov_opportunity(record: dict[str, Any]) -> dict[str, Any]:
         row[field] = json_dumps(record.get(field))
     award = record.get("award") or {}
     awardee = award.get("awardee") or {}
+    award_amount = _decimal(award.get("amount"))
+    if award_amount is None:
+        award_amount = _decimal(award.get("amount_raw"))
     row.update({
         "notice_id": notice_id,
         "source_published_at": _source_datetime(record.get("publish_time")),
@@ -152,7 +155,7 @@ def normalize_sam_gov_opportunity(record: dict[str, Any]) -> dict[str, Any]:
         "attachments_available": _boolean(record.get("attachments_available")),
         "award_number": safe_str(award.get("number")),
         "award_date": _business_date(award.get("date")),
-        "award_amount": _decimal(award.get("amount")),
+        "award_amount": award_amount,
         "awardee_name": safe_str(awardee.get("name")),
         "currency": safe_str(record.get("currency")) or "USD",
     })

@@ -141,6 +141,7 @@ interface TaskRuntimeItem {
 interface DockTask extends CollectTask {
   productDomain: string;
   taskType: 'template' | 'celery';
+  dataType?: string;
   faviconUrl?: string;
 }
 
@@ -793,6 +794,7 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
     : `${item.template_name ?? ''}@${item.template_version ?? ''}`,
   group: 'prototype',
   area: item.template_name ? `${item.template_name.replace(/_/g, ' ')} workspace` : item.product_domain ?? 'platform',
+  dataType: item.data_type,
   faviconUrl: item.favicon_url,
   status: item.status,
   progress: item.progress,
@@ -1209,7 +1211,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskItems((current) => (
       current.some((task) => task.key === item.id)
         ? current.map((task) => (task.key === item.id
-          ? { ...mappedTask, faviconUrl: mappedTask.faviconUrl ?? task.faviconUrl }
+          ? {
+            ...mappedTask,
+            dataType: mappedTask.dataType ?? task.dataType,
+            faviconUrl: mappedTask.faviconUrl ?? task.faviconUrl,
+          }
           : task))
         : [mappedTask, ...current]
     ));
@@ -1466,15 +1472,18 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       ? { kind: 'system', brand: 'System', logo: <SettingOutlined />, hue: siteKindMeta.system.tint }
       : resolveSiteProfile(item.template);
     const template = templates.find((candidate) => `${candidate.name}@${candidate.version}` === item.template);
+    const dataType = item.dataType || template?.dataType || '';
     return {
       ...item,
-      dataType: template?.dataType ?? '',
+      dataType,
       runtime,
       site: item.taskType === 'celery'
         ? site
-        : template
-        ? { ...site, kind: inferSiteKind(template.dataType || template.name), faviconUrl: item.faviconUrl || template.faviconUrl }
-        : { ...site, faviconUrl: item.faviconUrl },
+        : {
+          ...site,
+          kind: dataType ? inferSiteKind(dataType) : template ? inferSiteKind(template.name) : site.kind,
+          faviconUrl: item.faviconUrl || template?.faviconUrl,
+        },
       display: getTaskDisplay(runtime),
     };
   }), [taskItems, taskRuntime, templates]);
