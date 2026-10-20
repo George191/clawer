@@ -6,10 +6,9 @@ import {
 } from 'antd';
 import enUS from 'antd/locale/en_US';
 import {
-  ApartmentOutlined, BarChartOutlined, ClockCircleOutlined, DatabaseOutlined, DeleteOutlined,
-  DeploymentUnitOutlined,
+  ApartmentOutlined, ClockCircleOutlined, DeleteOutlined,
   EditOutlined, FieldTimeOutlined,
-  PlusOutlined, RobotOutlined, SearchOutlined, SettingOutlined,
+  PlusOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -23,7 +22,7 @@ import {
   mapWorkspaceSchedules, type AutomationSchedule,
 } from '@/services/scheduler';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import WorkspaceDock from '@/pages/AICollect/WorkspaceDock';
+import WorkspaceDock, { inferSiteKind, TemplateGlyph } from '@/pages/AICollect/WorkspaceDock';
 import type {
   AutomationWorkflow, ProductDomain, SchedulerTaskConfig, WorkspaceTask,
 } from '@/services/types';
@@ -33,14 +32,14 @@ type Section = 'workflows' | 'schedules' | 'runs';
 type DomainFilter = ProductDomain | 'all';
 type SelectedRecord = AutomationWorkflow | AutomationSchedule;
 
-const domainMeta: Record<ProductDomain, { label: string; color: string; className: string; icon: React.ReactNode }> = {
-  'ai-collect': { label: 'Scout', color: 'purple', className: 'is-ai', icon: <RobotOutlined /> },
-  'data-lake': { label: 'Vault', color: 'green', className: 'is-lake', icon: <DatabaseOutlined /> },
-  'etl-pipeline': { label: 'Flow', color: 'blue', className: 'is-etl', icon: <ApartmentOutlined /> },
-  'data-cockpit': { label: 'Atlas', color: 'gold', className: 'is-cockpit', icon: <BarChartOutlined /> },
-  'knowledge-graph': { label: 'Graph', color: 'purple', className: 'is-graph', icon: <DeploymentUnitOutlined /> },
-  'knowledge-rag': { label: 'RAG', color: 'cyan', className: 'is-rag', icon: <DatabaseOutlined /> },
-  platform: { label: 'Platform', color: 'default', className: 'is-platform', icon: <SettingOutlined /> },
+const domainMeta: Record<ProductDomain, { label: string; color: string; className: string; accent: string }> = {
+  'ai-collect': { label: 'Scout', color: 'purple', className: 'is-ai', accent: '#7C3AED' },
+  'data-lake': { label: 'Vault', color: 'green', className: 'is-lake', accent: '#059669' },
+  'etl-pipeline': { label: 'Flow', color: 'blue', className: 'is-etl', accent: '#0EA5E9' },
+  'data-cockpit': { label: 'Atlas', color: 'gold', className: 'is-cockpit', accent: '#F59E0B' },
+  'knowledge-graph': { label: 'Graph', color: 'purple', className: 'is-graph', accent: '#8B5CF6' },
+  'knowledge-rag': { label: 'RAG', color: 'cyan', className: 'is-rag', accent: '#0D9488' },
+  platform: { label: 'Platform', color: 'default', className: 'is-platform', accent: '#64748B' },
 };
 
 const sectionMeta: Record<Section, { label: string; description: string }> = {
@@ -323,7 +322,30 @@ const AutomationCenter: React.FC = () => {
         { label: 'Workflows', value: 'workflows', icon: <ApartmentOutlined /> },
         { label: 'Schedules', value: 'schedules', icon: <FieldTimeOutlined /> }, { label: 'Runs', value: 'runs', icon: <ClockCircleOutlined /> },
       ]} />
-      <Space wrap className="automation-filters"><Select<DomainFilter> value={requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? domain : undefined} placeholder="Select domain" onChange={changeDomain} className="automation-domain-select" options={[{ value: 'all', label: <Space size={7}><DeploymentUnitOutlined />All</Space> }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, label: <Space size={7}>{meta.icon}{meta.label}</Space> }))]} />{section === 'runs' && <Select<string> allowClear value={dataType} placeholder="Select data type" onChange={changeDataType} className="automation-data-type-select" options={dataTypes.map((value) => ({ value, label: value }))} />}<Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />{section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}</Space>
+      <Space wrap className="automation-filters">
+        <Select<DomainFilter>
+          value={requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? domain : undefined}
+          placeholder="Select domain"
+          onChange={changeDomain}
+          className="automation-domain-select"
+          popupClassName="automation-filter-dropdown"
+          options={[{ value: 'all' as const, label: 'All', accent: '#64748B' }, ...Object.entries(domainMeta).map(([value, meta]) => ({ value: value as ProductDomain, ...meta }))].map(({ value, label, accent }) => ({
+            value,
+            label: <span className="automation-filter-option"><span className="automation-domain-initial" style={{ background: `linear-gradient(135deg, ${accent}, #1D4ED8)` }} aria-hidden="true">{label.slice(0, 1)}</span><span>{label}</span></span>,
+          }))}
+        />
+        {section === 'runs' && <Select<string>
+          allowClear
+          value={dataType}
+          placeholder="Select data type"
+          onChange={changeDataType}
+          className="automation-data-type-select"
+          popupClassName="automation-filter-dropdown"
+          options={dataTypes.map((value) => ({ value, label: <span className="automation-filter-option"><TemplateGlyph kind={inferSiteKind(value)} /><span>{value}</span></span> }))}
+        />}
+        <Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder="Search name, type, or owner" className="automation-search" />
+        {section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>New Record</Button>}
+      </Space>
     </div>
 
     {section !== 'runs' && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}

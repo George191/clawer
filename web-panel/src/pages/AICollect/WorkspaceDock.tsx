@@ -861,7 +861,7 @@ const toAvatarLabel = (value: string) => {
   return initials || 'AI';
 };
 
-const inferSiteKind = (value: string): SiteKind => {
+export const inferSiteKind = (value: string): SiteKind => {
   const text = value.trim().toLowerCase();
   if (text === 'contract') return 'contract';
   if (text === 'tender') return 'tender';
@@ -1050,7 +1050,7 @@ const formatIncrementalSummary = (draft: TaskComposerDraft) => {
 
 const stripDecorativeSuffix = (value: string) => value.replace(/\s+[^\u4E00-\u9FFFa-zA-Z0-9]+$/g, '');
 
-const TemplateGlyph: React.FC<{ kind: SiteKind; className?: string }> = ({ kind, className }) => (
+export const TemplateGlyph: React.FC<{ kind: SiteKind; className?: string }> = ({ kind, className }) => (
   <span
     className={`workspace-glyph ${className ?? ''}`}
     aria-hidden="true"

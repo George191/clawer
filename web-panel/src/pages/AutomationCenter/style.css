@@ -50,6 +50,64 @@
 .automation-data-type-select { min-width: 150px; }
 .automation-search { width: 250px; }
 
+.automation-filters .ant-select-selection-item,
+.automation-filters .ant-select-selection-placeholder,
+.automation-filter-dropdown.ant-select-dropdown .ant-select-item {
+  font-size: 13px;
+  text-align: left;
+}
+
+.automation-filter-dropdown.ant-select-dropdown .ant-select-item {
+  justify-content: flex-start;
+}
+
+.automation-filter-option {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  min-width: 0;
+  text-align: left;
+}
+
+.automation-filter-option > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-domain-initial {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.automation-filter-option .workspace-glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.automation-filter-option .workspace-glyph svg {
+  width: 16px;
+  height: 16px;
+}
+
+.automation-filter-option .workspace-glyph .anticon {
+  font-size: 16px;
+}
+
 .automation-filters .ant-select,
 .automation-filters .ant-input,
 .automation-filters .ant-btn {
