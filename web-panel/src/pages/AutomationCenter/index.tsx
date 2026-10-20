@@ -342,7 +342,7 @@ const AutomationCenter: React.FC = () => {
         onClose={() => selectRun(null)}
       />
     </Card> : <Card ref={tableCardRef} className="automation-table-card" styles={{ body: { padding: 0 } }}>
-      <Spin spinning={loading}><Table scroll={{ y: tableBodyHeight }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: 10, hideOnSinglePage: true }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
+      <Spin spinning={loading}><Table scroll={{ y: tableBodyHeight }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: true }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
     </Card>}
 
     <Modal title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={640} forceRender>
