@@ -61,6 +61,7 @@ RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
         -o Dir::State::lists=/data/apt-lists \
         install -y --no-install-recommends \
     ca-certificates \
+    mdbtools \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
 RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \

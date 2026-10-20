@@ -176,7 +176,11 @@ class SpiderEngine:
         records: list[dict[str, Any]],
         result: CrawlResult,
     ) -> int:
-        search_params = getattr(template, "_param_values", None) or {}
+        sensitive_params = {param.name for param in template.params if param.sensitive}
+        search_params = {
+            key: value for key, value in (getattr(template, "_param_values", None) or {}).items()
+            if key not in sensitive_params
+        }
         workspace_task_id = template._crawl_context.get("workspace_task_id")
         if workspace_task_id:
             search_params = {**search_params, "__workspace_task_id": workspace_task_id}
@@ -348,8 +352,15 @@ class SpiderEngine:
                     await adapter.on_before_page(current_page, is_first)
 
                     url = template.get_full_list_url(current_page, results_per_page)
-                    html = await self._client.request_page(
-                        url, template.list_request,
+                    extra_headers = adapter.on_request_headers(current_page)
+                    list_request = template.list_request.model_copy(update={
+                        "headers": {**template.list_request.headers, **extra_headers}
+                    }) if extra_headers else template.list_request
+                    request_list_page = getattr(
+                        adapter, "request_list_page", self._client.request_page,
+                    )
+                    html = await request_list_page(
+                        url, list_request,
                         anti_crawl_enabled=template.effective_anti_crawl_enabled,
                         adapter_name=template.adapter,
                         page=current_page, attempt=attempt

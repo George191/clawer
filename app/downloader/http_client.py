@@ -464,7 +464,10 @@ class HttpClient:
                         cookies=cookies,
                     )
                     if config.method.upper() == "POST":
-                        request_kwargs["data"] = config.form_data
+                        if config.json_data is not None:
+                            request_kwargs["json"] = config.json_data
+                        else:
+                            request_kwargs["data"] = config.form_data
 
                     tunnel_info = await self._before_request(
                         client=client,

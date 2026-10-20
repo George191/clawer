@@ -101,6 +101,7 @@ class RequestConfig(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict, description="额外请求头")
     params: dict[str, str] = Field(default_factory=dict, description="URL查询参数")
     form_data: dict[str, str] = Field(default_factory=dict, description="POST表单数据")
+    json_data: dict[str, Any] | None = Field(default=None, description="POST JSON请求体")
     cookies: dict[str, str] = Field(default_factory=dict, description="请求Cookies")
     encoding: str | None = Field(default=None, description="页面编码, 留空则自动检测")
     force_direct: bool = Field(
@@ -114,6 +115,7 @@ class TemplateParam(BaseModel):
     description: str = Field(default="", description="参数描述")
     default: str | None = Field(default=None, description="默认值, 无默认值则必须传入")
     required: bool = Field(default=True, description="是否必须传入")
+    sensitive: bool = Field(default=False, description="凭据参数，不写入业务记录的查询元数据")
 
 
 class BatchParamConfig(BaseModel):

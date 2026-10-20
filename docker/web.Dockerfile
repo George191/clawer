@@ -48,9 +48,15 @@ RUN mkdir -p /data/tmp /data/pip-cache /data/wheels \
     libssl-dev \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
-COPY requirements ./requirements
-RUN --mount=type=cache,target=/data/pip-cache \
-    pip wheel --retries 10 --cache-dir=/data/pip-cache --wheel-dir=/data/wheels -r requirements/web.txt
+COPY requirements/base.txt requirements/web.txt ./requirements/
+# Reuse completed wheels first, then export only the currently resolved versions.
+RUN --mount=type=cache,target=/data/pip-cache,sharing=locked \
+    --mount=type=cache,id=spider-web-wheelhouse,target=/data/wheel-cache,sharing=locked \
+    if ! pip wheel --no-index --find-links=/data/wheel-cache --wheel-dir=/data/wheels -r requirements/web.txt; then \
+        pip wheel --retries 10 --cache-dir=/data/pip-cache --find-links=/data/wheel-cache --wheel-dir=/data/wheel-cache -r requirements/web.txt \
+        && rm -f /data/wheels/*.whl \
+        && pip wheel --no-index --find-links=/data/wheel-cache --wheel-dir=/data/wheels -r requirements/web.txt; \
+    fi
 
 # ============================================================
 # Stage 3: Runtime - Web service
@@ -89,7 +95,7 @@ RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
 RUN --mount=type=bind,from=builder,source=/data/wheels,target=/wheels,readonly \
-    pip install --no-cache-dir /wheels/*.whl
+    pip install --no-cache-dir --no-index --find-links=/wheels /wheels/*.whl
 
 COPY app/ ./app/
 COPY --from=frontend /static/ ./static/
