@@ -133,7 +133,18 @@ def normalize_sam_gov_award(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_usaspending_contract(record: dict[str, Any]) -> dict[str, Any]:
-    return _normalize_contract(record, "usaspending", safe_str(record.get("id")))
+    row = _normalize_contract(record, "usaspending", safe_str(record.get("id")))
+    for source, target in (("created_at", "source_created_at"), ("updated_at", "source_updated_at")):
+        native_field = "initial_report_date" if source == "created_at" else "last_modified_date"
+        value = (record.get("source_data") or {}).get(native_field) or record.get(source)
+        row[target + "_raw"] = safe_str(value)
+        try:
+            parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is not None and parsed.utcoffset() is not None:
+            row[target] = parsed
+    return row
 
 
 def normalize_sam_gov_opportunity(record: dict[str, Any]) -> dict[str, Any]:
