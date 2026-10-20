@@ -1,13 +1,27 @@
 import client from './api';
 import type { ProductDomain, SchedulerTaskConfig, WorkspaceTask } from './types';
 
+export const intervalUnitSeconds = { minute: 60, hour: 3600, day: 86400, week: 604800, month: 2592000, second: 1 };
+export type IntervalUnit = keyof typeof intervalUnitSeconds;
+
 export interface AutomationSchedule extends Omit<SchedulerTaskConfig, 'id'> {
   id?: number | string;
   workspace_task_id?: string;
   workspace_task_canceled?: boolean;
   display_name?: string;
   schedule_label?: string;
+  interval_value?: number;
+  interval_unit?: IntervalUnit;
 }
+
+export const getScheduleInterval = (schedule: AutomationSchedule) => {
+  if (schedule.interval_value != null && schedule.interval_unit) {
+    return { interval_value: schedule.interval_value, interval_unit: schedule.interval_unit };
+  }
+  const seconds = schedule.interval_seconds ?? 60;
+  const unit = (['month', 'week', 'day', 'hour', 'minute', 'second'] as const).find((value) => seconds % intervalUnitSeconds[value] === 0) ?? 'second';
+  return { interval_value: seconds / intervalUnitSeconds[unit], interval_unit: unit };
+};
 
 export const automationFetchSchedules = (): Promise<SchedulerTaskConfig[]> =>
   client.get('/scheduler/tasks').then((r) => r.data);
@@ -26,7 +40,8 @@ export const mapWorkspaceSchedules = (tasks: WorkspaceTask[]): AutomationSchedul
       const mode = schedule.mode === 'recurring' ? schedule.recurring_mode : schedule.mode;
       const [hour, minute] = String(schedule.daily_time ?? '09:00').split(':');
       const interval = Number(schedule.interval_value ?? 30);
-      const hours = schedule.interval_unit === 'hour';
+      const requestedUnit = String(schedule.interval_unit ?? 'minute');
+      const unit = (requestedUnit !== 'second' && requestedUnit in intervalUnitSeconds ? requestedUnit : 'minute') as Exclude<IntervalUnit, 'second'>;
       return {
         id: task.id,
         workspace_task_id: task.id,
@@ -42,9 +57,11 @@ export const mapWorkspaceSchedules = (tasks: WorkspaceTask[]): AutomationSchedul
         cron_minute: minute,
         cron_hour: hour,
         cron_day_of_week: '*', cron_day_of_month: '*', cron_month_of_year: '*',
-        interval_seconds: interval * (hours ? 3600 : 60),
+        interval_value: interval,
+        interval_unit: unit,
+        interval_seconds: interval * intervalUnitSeconds[unit],
         schedule_label: mode === 'interval'
-          ? `Every ${interval} ${hours ? 'hours' : 'minutes'}`
+          ? `Every ${interval} ${unit}${interval === 1 ? '' : 's'}`
           : `Daily at ${hour}:${minute} (Asia/Shanghai)`,
         args: [], kwargs: {}, options: {},
         enabled: task.control_state !== 'canceled' && (typeof schedule.enabled === 'boolean'
@@ -58,7 +75,7 @@ export const automationUpdateWorkspaceSchedule = (taskId: string, body: {
   mode?: 'daily' | 'interval';
   daily_time?: string;
   interval_value?: number;
-  interval_unit?: 'minute' | 'hour';
+  interval_unit?: Exclude<IntervalUnit, 'second'>;
 }): Promise<AutomationSchedule> =>
   client.patch<WorkspaceTask>(`/scheduler/workspace-tasks/${encodeURIComponent(taskId)}`, body)
     .then(({ data }) => mapWorkspaceSchedules([data])[0]);

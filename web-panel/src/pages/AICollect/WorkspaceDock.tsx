@@ -141,6 +141,7 @@ interface TaskRuntimeItem {
 interface DockTask extends CollectTask {
   productDomain: string;
   taskType: 'template' | 'celery';
+  scheduleEnabled?: boolean;
   dataType?: string;
   faviconUrl?: string;
 }
@@ -805,6 +806,7 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   key: item.id,
   productDomain: item.product_domain ?? String(item.parameters?.product_domain ?? 'ai-collect'),
   taskType: item.task_type ?? 'template',
+  scheduleEnabled: item.schedule?.enabled !== false,
   name: item.name.replace(/\s+task$/i, ''),
   template: item.task_type === 'celery'
     ? item.task_path || item.name
@@ -1485,7 +1487,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       return leftPinned ? -1 : 1;
     }), [keyword, pinnedTemplateKeys, templateFilter, templates]);
 
-  const allTaskRows = useMemo<TaskRow[]>(() => taskItems.map((item) => {
+  const allTaskRows = useMemo<TaskRow[]>(() => taskItems.filter((item) => !embedded || item.scheduleEnabled !== false).map((item) => {
     const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item);
     const site: SiteProfile = item.taskType === 'celery'
       ? { kind: 'system', brand: 'System', logo: <SettingOutlined />, hue: siteKindMeta.system.tint }
@@ -1505,7 +1507,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         },
       display: getTaskDisplay(runtime),
     };
-  }), [taskItems, taskRuntime, templates]);
+  }), [embedded, taskItems, taskRuntime, templates]);
+
+  useEffect(() => {
+    if (embedded && selectedTaskKey && taskItems.some((item) => item.key === selectedTaskKey && item.scheduleEnabled === false)) {
+      setSelectedTaskKey(null);
+    }
+  }, [embedded, selectedTaskKey, setSelectedTaskKey, taskItems]);
 
   const taskDataTypes = useMemo(() => [...new Set(allTaskRows
     .filter((item) => taskDomain === 'all' || item.productDomain === taskDomain)

@@ -19,7 +19,7 @@ import { AI_ANALYZE_WS_URL } from '@/services/aiApi';
 import {
   automationCreateSchedule, automationDeleteSchedule,
   automationReloadSchedules, automationToggleSchedule, automationUpdateSchedule, automationUpdateWorkspaceSchedule,
-  mapWorkspaceSchedules, type AutomationSchedule,
+  getScheduleInterval, intervalUnitSeconds, mapWorkspaceSchedules, type AutomationSchedule, type IntervalUnit,
 } from '@/services/scheduler';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useThemeStore } from '@/stores/settings';
@@ -71,9 +71,14 @@ const relativeTime = (value?: string) => {
   return `${Math.floor(minutes / 1440)}d ago`;
 };
 
-const formatSchedule = (item: AutomationSchedule) => item.schedule_label ?? (item.schedule_type === 'interval'
-  ? `Every ${item.interval_seconds ?? 60}s`
-  : `${item.cron_minute} ${item.cron_hour} ${item.cron_day_of_month} ${item.cron_month_of_year} ${item.cron_day_of_week}`);
+const formatSchedule = (item: AutomationSchedule) => {
+  if (item.schedule_label) return item.schedule_label;
+  if (item.schedule_type === 'interval') {
+    const { interval_value: value, interval_unit: unit } = getScheduleInterval(item);
+    return `Every ${value} ${unit}${value === 1 ? '' : 's'}`;
+  }
+  return `${item.cron_minute} ${item.cron_hour} ${item.cron_day_of_month} ${item.cron_month_of_year} ${item.cron_day_of_week}`;
+};
 
 const AutomationCenter: React.FC = () => {
   const { message } = App.useApp();
@@ -197,7 +202,7 @@ const AutomationCenter: React.FC = () => {
     setEditorOpen(false);
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ ...record, task_name: record.display_name ?? record.task_name });
+    form.setFieldsValue({ ...record, ...getScheduleInterval(record), task_name: record.display_name ?? record.task_name });
     setDetail(record);
   };
 
@@ -213,7 +218,7 @@ const AutomationCenter: React.FC = () => {
     if (section === 'schedules') setDetail(null);
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ product_domain: domain === 'all' ? 'ai-collect' : domain, enabled: true, schedule_type: 'crontab', cron_minute: '0', cron_hour: '2', nodes: '' });
+    form.setFieldsValue({ product_domain: domain === 'all' ? 'ai-collect' : domain, enabled: true, schedule_type: 'crontab', cron_minute: '0', cron_hour: '2', interval_value: 1, interval_unit: 'minute', nodes: '' });
     setEditorOpen(true);
   };
 
@@ -223,7 +228,8 @@ const AutomationCenter: React.FC = () => {
       const item = record as AutomationWorkflow;
       form.setFieldsValue({ ...item, nodes: item.nodes.map((node) => node.name).join('\n') });
     } else if (section === 'schedules') {
-      form.setFieldsValue({ ...record, task_name: (record as AutomationSchedule).display_name ?? (record as AutomationSchedule).task_name });
+      const schedule = record as AutomationSchedule;
+      form.setFieldsValue({ ...schedule, ...getScheduleInterval(schedule), task_name: schedule.display_name ?? schedule.task_name });
     }
     setEditorOpen(true);
   };
@@ -248,7 +254,7 @@ const AutomationCenter: React.FC = () => {
           const saved = await automationUpdateWorkspaceSchedule(existing.workspace_task_id, {
             enabled: values.enabled,
             ...(values.schedule_type === 'interval'
-              ? { mode: 'interval', interval_value: values.interval_seconds / 60, interval_unit: 'minute' }
+              ? { mode: 'interval', interval_value: values.interval_value, interval_unit: values.interval_unit }
               : { mode: 'daily', daily_time: `${String(values.cron_hour).padStart(2, '0')}:${String(values.cron_minute).padStart(2, '0')}` }),
           });
           setWorkspaceSchedules((current) => current.map((item) => item.workspace_task_id === saved.workspace_task_id ? saved : item));
@@ -258,9 +264,9 @@ const AutomationCenter: React.FC = () => {
           const payload: Omit<SchedulerTaskConfig, 'id' | 'created_at' | 'updated_at'> = {
             task_name: values.task_name, task_path: values.task_path,
             product_domain: values.product_domain, description: values.description ?? '',
-            schedule_type: values.schedule_type, cron_minute: values.cron_minute ?? '*',
-            cron_hour: values.cron_hour ?? '*', cron_day_of_week: existing?.cron_day_of_week ?? '*', cron_day_of_month: existing?.cron_day_of_month ?? '*',
-            cron_month_of_year: existing?.cron_month_of_year ?? '*', interval_seconds: values.interval_seconds,
+            schedule_type: values.schedule_type, cron_minute: values.cron_minute ?? existing?.cron_minute ?? '*',
+            cron_hour: values.cron_hour ?? existing?.cron_hour ?? '*', cron_day_of_week: existing?.cron_day_of_week ?? '*', cron_day_of_month: existing?.cron_day_of_month ?? '*',
+            cron_month_of_year: existing?.cron_month_of_year ?? '*', interval_seconds: values.schedule_type === 'interval' ? values.interval_value * intervalUnitSeconds[values.interval_unit as IntervalUnit] : existing?.interval_seconds,
             args: existing?.args ?? [], kwargs: existing?.kwargs ?? {}, options: existing?.options ?? {}, enabled: values.enabled,
           };
           const saved = editing
@@ -318,7 +324,7 @@ const AutomationCenter: React.FC = () => {
         if (!reload.loaded || reload.restart_required) message.warning(reload.message);
       }
       setDetail((current) => current && 'task_name' in current && current.task_name === record.task_name ? saved : current);
-      message.success(enabled ? 'Schedule enabled' : 'Schedule paused');
+      message.success(enabled ? 'Schedule enabled' : 'Schedule disabled');
     } catch {
       message.error('Unable to update this schedule. Please try again.');
     } finally {
@@ -353,7 +359,7 @@ const AutomationCenter: React.FC = () => {
           <button type="button" className="automation-schedule-title" title={item.display_name ?? item.task_name} onClick={(event) => { event.stopPropagation(); openScheduleDetail(item); }}>{item.display_name ?? item.task_name}</button>
           <span title={item.description || item.task_path}>{item.description || item.task_path}</span>
         </div>
-        <span className={`automation-schedule-status ${item.enabled ? 'is-enabled' : ''}`}><i />{item.enabled ? 'Enabled' : 'Paused'}</span>
+        <span className={`automation-schedule-status ${item.enabled ? 'is-enabled' : ''}`}><i />{item.enabled ? 'Enabled' : 'Disabled'}</span>
       </div>
       <div className="automation-schedule-meta">
         {scheduleDomain(item.product_domain)}
@@ -452,7 +458,7 @@ const AutomationCenter: React.FC = () => {
         <Segmented block value={scheduleFilter} onChange={(value) => setScheduleFilter(value as ScheduleFilter)} options={[
           { value: 'all', label: <span>All <small>{filteredSchedules.length}</small></span> },
           { value: 'enabled', label: <span>Enabled <small>{enabledScheduleCount}</small></span> },
-          { value: 'paused', label: <span>Paused <small>{filteredSchedules.length - enabledScheduleCount}</small></span> },
+          { value: 'paused', label: <span>Disabled <small>{filteredSchedules.length - enabledScheduleCount}</small></span> },
         ]} />
       </div>}
       <Spin spinning={loading}><Table showHeader={section !== 'schedules'} scroll={{ y: tableBodyHeight }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: true, ...(section === 'schedules' ? { showSizeChanger: false } : {}) }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => section === 'schedules' ? openScheduleDetail(record as AutomationSchedule) : setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
@@ -510,14 +516,42 @@ const AutomationCenter: React.FC = () => {
           {editorOpen && !editingLinkedSchedule ? <Input.TextArea rows={2} /> : <span className="automation-schedule-value">{scheduleDetail?.description || '—'}</span>}
         </Form.Item>
         <Form.Item noStyle shouldUpdate={(previous, current) => previous.schedule_type !== current.schedule_type}>{({ getFieldValue }) => (editorOpen ? getFieldValue('schedule_type') : scheduleDetail?.schedule_type) === 'interval'
-          ? <Form.Item name={editorOpen ? 'interval_seconds' : undefined} label="Interval Seconds" rules={editorOpen ? [{ required: true }, ...(editingLinkedSchedule ? [{ validator: (_: unknown, value: number) => value == null || (value >= 60 && value % 60 === 0) ? Promise.resolve() : Promise.reject(new Error('Use whole minutes (multiples of 60 seconds).')) }] : [])] : undefined}>{editorOpen ? <InputNumber min={editingLinkedSchedule ? 60 : 10} step={editingLinkedSchedule ? 60 : 1} style={{ width: '100%' }} /> : <span className="automation-schedule-value">{scheduleDetail?.interval_seconds ?? 60} seconds</span>}</Form.Item>
+          ? <Form.Item className="is-wide" label="Interval" htmlFor="" required={editorOpen}>
+            {editorOpen ? <>
+              <div className="automation-schedule-interval-inputs">
+                <Form.Item name="interval_value" noStyle rules={[{ required: true, type: 'integer', min: 1, message: 'Enter a positive whole number.' }]}>
+                  <InputNumber min={1} precision={0} inputMode="numeric" aria-label="Interval value" />
+                </Form.Item>
+                <Form.Item name="interval_unit" noStyle rules={[{ required: true }]}>
+                  <Select aria-label="Interval unit" popupClassName="automation-filter-dropdown" options={[
+                    { value: 'minute', label: 'Minute' }, { value: 'hour', label: 'Hour' },
+                    { value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' },
+                    ...(!editingLinkedSchedule ? [{ value: 'second', label: 'Second' }] : []),
+                  ]} />
+                </Form.Item>
+              </div>
+              <Form.Item noStyle shouldUpdate={(previous, current) => previous.interval_unit !== current.interval_unit}>{({ getFieldValue: getValue }) => getValue('interval_unit') === 'month' ? <span className="automation-schedule-field-hint">1 month = 30 days.</span> : null}</Form.Item>
+            </> : <span className="automation-schedule-value">{scheduleDetail && formatSchedule(scheduleDetail)}{scheduleDetail && getScheduleInterval(scheduleDetail).interval_unit === 'month' && <small className="automation-schedule-field-hint">1 month = 30 days.</small>}</span>}
+          </Form.Item>
           : <>
-            <Form.Item name={editorOpen ? 'cron_minute' : undefined} label="Minute" rules={editorOpen && editingLinkedSchedule ? [{ required: true, pattern: /^([0-5]?\d)$/, message: 'Enter a minute from 0 to 59.' }] : undefined}>{editorOpen ? <Input /> : <code className="automation-schedule-value is-code">{scheduleDetail?.cron_minute || '*'}</code>}</Form.Item>
-            <Form.Item name={editorOpen ? 'cron_hour' : undefined} label="Hour" rules={editorOpen && editingLinkedSchedule ? [{ required: true, pattern: /^([01]?\d|2[0-3])$/, message: 'Enter an hour from 0 to 23 (Asia/Shanghai).' }] : undefined}>{editorOpen ? <Input /> : <code className="automation-schedule-value is-code">{scheduleDetail?.cron_hour || '*'}</code>}</Form.Item>
+            <Form.Item name={editorOpen ? 'cron_minute' : undefined} label="Minute" rules={editorOpen && editingLinkedSchedule ? [{ required: true, pattern: /^([0-5]?\d)$/, message: 'Enter a minute from 0 to 59.' }] : undefined}>
+              {editorOpen ? editingLinkedSchedule ? <InputNumber<string> stringMode min="0" max="59" precision={0} inputMode="numeric" parser={(value) => value?.replace(/\D/g, '') ?? ''} style={{ width: '100%' }} /> : <Input /> : <code className="automation-schedule-value is-code">{scheduleDetail?.cron_minute || '*'}</code>}
+            </Form.Item>
+            <Form.Item name={editorOpen ? 'cron_hour' : undefined} label="Hour" rules={editorOpen && editingLinkedSchedule ? [{ required: true, pattern: /^([01]?\d|2[0-3])$/, message: 'Enter an hour from 0 to 23 (Asia/Shanghai).' }] : undefined}>
+              {editorOpen ? editingLinkedSchedule ? <InputNumber<string> stringMode min="0" max="23" precision={0} inputMode="numeric" parser={(value) => value?.replace(/\D/g, '') ?? ''} style={{ width: '100%' }} /> : <Input /> : <code className="automation-schedule-value is-code">{scheduleDetail?.cron_hour || '*'}</code>}
+            </Form.Item>
           </>}
         </Form.Item>
-        <Form.Item name={editorOpen ? 'enabled' : undefined} label="Status" valuePropName={editorOpen ? 'checked' : undefined}>
-          {editorOpen ? <Switch checkedChildren="Enabled" unCheckedChildren="Paused" /> : <span className={`automation-schedule-status${scheduleDetail?.enabled ? ' is-enabled' : ''}`}><i />{scheduleDetail?.enabled ? 'Enabled' : 'Paused'}</span>}
+        <Form.Item className="is-wide" label="Status" htmlFor="">
+          {editorOpen ? <div className="automation-schedule-status-control">
+            <Form.Item name="enabled" noStyle valuePropName="checked"><Switch className="automation-schedule-status-switch" aria-label="Schedule status" /></Form.Item>
+            <Form.Item noStyle shouldUpdate={(previous, current) => previous.enabled !== current.enabled}>{({ getFieldValue }) => <div className="automation-schedule-status-copy">
+              <span>{getFieldValue('enabled') ? 'Enabled' : 'Disabled'}</span>
+              <small>{editingLinkedSchedule
+                ? getFieldValue('enabled') ? 'Visible in Runs. Future runs follow this schedule.' : 'Hidden from Runs. No new scheduled runs; the current run can finish.'
+                : getFieldValue('enabled') ? 'Future executions follow this schedule.' : 'No new scheduled executions; the current run can finish.'}</small>
+            </div>}</Form.Item>
+          </div> : <span className={`automation-schedule-status${scheduleDetail?.enabled ? ' is-enabled' : ''}`}><i />{scheduleDetail?.enabled ? 'Enabled' : 'Disabled'}</span>}
         </Form.Item>
       </Form>
     </Modal>

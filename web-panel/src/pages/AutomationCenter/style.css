@@ -482,17 +482,17 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
 .automation-schedule-heading { flex: 1; min-width: 0; }
 .automation-schedule-title,
 .automation-schedule-heading > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.automation-schedule-title { max-width: 100%; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--schedule-text); font: inherit; font-size: 13px; font-weight: 600; line-height: 20px; text-align: left; cursor: pointer; }
+.automation-schedule-title { max-width: 100%; padding: 0; border: 0; border-radius: 2px; background: transparent; color: var(--schedule-text); font: inherit; font-size: 12px; font-weight: 600; line-height: 1.35; text-align: left; cursor: pointer; }
 .automation-schedule-title:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 3px; }
-.automation-schedule-heading > span { margin-top: 2px; color: var(--schedule-muted); font-size: 11px; line-height: 16px; }
-.automation-schedule-status { min-width: 66px; color: var(--schedule-subtle); font-size: 11px; }
+.automation-schedule-heading > span { margin-top: 2px; color: var(--schedule-muted); font-size: 10px; line-height: 1.4; }
+.automation-schedule-status { min-width: 66px; color: var(--schedule-subtle); font-size: 10px; }
 .automation-schedule-meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px 16px; color: var(--schedule-muted); font-size: 10px; line-height: 20px; }
-.automation-schedule-domain { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--schedule-muted); font-size: 11px; }
+.automation-schedule-domain { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--schedule-muted); font-size: 10px; }
 .automation-schedule-domain .automation-domain-initial { width: 16px; height: 16px; border-radius: 4px; font-size: 8px; }
 .automation-schedule-trigger { display: inline-flex; min-width: 0; align-items: center; gap: 7px; padding: 1px 7px; border-radius: 4px; color: var(--schedule-cron); background: var(--schedule-cron-soft); }
 .automation-schedule-trigger.is-interval { color: var(--schedule-interval); background: var(--schedule-interval-soft); }
 .automation-schedule-trigger > span { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-.automation-schedule-trigger code { max-width: 320px; overflow: hidden; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.automation-schedule-trigger code { max-width: 320px; overflow: hidden; color: inherit; font-family: inherit; font-size: 10px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .automation-schedule-updated { margin-left: auto; color: var(--schedule-subtle); }
 .automation-schedule-source { color: var(--schedule-subtle); }
 .automation-schedule-source.is-linked { color: var(--schedule-link); text-decoration: none; text-underline-offset: 3px; }
@@ -531,7 +531,7 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
 .automation-schedule-modal-mark { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 9px; background: rgba(138, 180, 255, .12); color: #8ab4ff; font-size: 19px; }
 .automation-schedule-modal-heading-copy { flex: 1; min-width: 0; }
 .automation-schedule-modal-eyebrow { display: block; margin-bottom: 4px; color: var(--schedule-subtle); font-size: 9px; font-weight: 600; letter-spacing: .1em; }
-.automation-schedule-modal-heading h3 { margin: 0; color: var(--schedule-text); font-size: 18px; font-weight: 600; line-height: 25px; overflow-wrap: anywhere; }
+.automation-schedule-modal-heading h3 { margin: 0; color: var(--schedule-text); font-size: 15px; font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
 .automation-schedule-modal-actions { display: flex; flex: none; align-items: center; gap: 3px; }
 .automation-schedule-modal-actions .ant-btn { width: 30px; height: 30px; padding: 0; border-radius: 6px; }
 .automation-schedule-modal-actions .ant-btn-text:not(.ant-btn-dangerous),
@@ -547,6 +547,21 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
 .automation-schedule-modal .ant-select,
 .automation-schedule-modal .ant-input-number { height: 36px; }
 .automation-schedule-modal .ant-input-number-input { height: 34px; }
+.automation-schedule-interval-inputs { display: grid; grid-template-columns: minmax(0, 1fr) 132px; gap: 10px; }
+.automation-schedule-interval-inputs > .ant-input-number { width: 100%; }
+.automation-schedule-field-hint { display: block; margin-top: 6px; color: var(--schedule-subtle); font-size: 11px; font-weight: 400; line-height: 18px; }
+.automation-schedule-status-control { display: flex; align-items: center; gap: 12px; min-height: 40px; }
+.automation-schedule-status-copy { min-width: 0; }
+.automation-schedule-status-copy > span { display: block; color: var(--schedule-text); font-size: 12px; font-weight: 500; line-height: 20px; }
+.automation-schedule-status-copy > small { display: block; margin-top: 2px; color: var(--schedule-subtle); font-size: 11px; line-height: 17px; }
+.automation-schedule-status-control .ant-switch { flex: none; min-width: 36px; height: 20px; background: #555e6f; box-shadow: none; }
+.automation-schedule-status-control .ant-switch-checked { background: #3d9c77; }
+.automation-schedule-status-control .ant-switch-handle { top: 2px; width: 16px; height: 16px; }
+.automation-schedule-status-control .ant-switch-checked .ant-switch-handle { inset-inline-start: calc(100% - 18px); }
+.automation-schedule-status-control .ant-switch-inner { display: none; }
+.automation-schedule-status-control .ant-switch:focus { box-shadow: none; }
+.automation-schedule-status-control .ant-switch:focus-visible { outline: 2px solid var(--schedule-link); outline-offset: 3px; }
+.automation-schedule-modal .ant-form-item-label > label[for=''] { cursor: default; }
 .automation-schedule-modal .ant-select-selection-item { font-size: 13px; }
 .automation-schedule-modal .ant-input[disabled] { color: var(--schedule-muted); -webkit-text-fill-color: var(--schedule-muted); }
 .automation-schedule-modal .ant-segmented { padding: 3px; background: var(--schedule-row); font-size: 12px; }
@@ -555,9 +570,9 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
 .automation-schedule-modal .ant-segmented-item-selected,
 .automation-schedule-modal .ant-segmented-thumb { background: var(--schedule-hover); color: var(--schedule-text); box-shadow: none; }
 .automation-schedule-modal.is-readonly .ant-form-item-label { padding-bottom: 5px; }
-.automation-schedule-modal.is-readonly .ant-form-item-label > label { color: var(--schedule-subtle); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
-.automation-schedule-value { display: block; min-height: 24px; color: var(--schedule-text); font-size: 13px; line-height: 22px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.automation-schedule-value.is-name { font-size: 15px; font-weight: 600; }
+.automation-schedule-modal.is-readonly .ant-form-item-label > label { color: var(--schedule-subtle); font-size: 11px; font-weight: 400; }
+.automation-schedule-value { display: block; min-height: 24px; color: var(--schedule-text); font-size: 12px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.automation-schedule-value.is-name { font-size: 13px; font-weight: 600; }
 .automation-schedule-value.is-code { color: var(--schedule-muted); font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
 .automation-schedule-modal .ant-modal-footer { flex: none; margin: 0; padding: 16px 24px; border-top: 1px solid var(--schedule-border); }
 .automation-schedule-footer { display: flex; justify-content: flex-end; }

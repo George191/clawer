@@ -455,7 +455,13 @@ class AutomationTaskStore:
                         started_at IS NULL
                         OR started_at + (
                           COALESCE(NULLIF(schedule->>'interval_value', '')::integer, 30)
-                          * CASE WHEN schedule->>'interval_unit' = 'hour' THEN 3600 ELSE 60 END
+                          * CASE schedule->>'interval_unit'
+                              WHEN 'hour' THEN 3600
+                              WHEN 'day' THEN 86400
+                              WHEN 'week' THEN 604800
+                              WHEN 'month' THEN 2592000
+                              ELSE 60
+                            END
                           * interval '1 second'
                         ) <= now()
                       )

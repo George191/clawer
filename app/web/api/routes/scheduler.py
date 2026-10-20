@@ -52,7 +52,7 @@ class WorkspaceScheduleRequest(BaseModel):
     mode: Literal["daily", "interval"] | None = None
     daily_time: str | None = Field(default=None, pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
     interval_value: int | None = Field(default=None, gt=0)
-    interval_unit: Literal["minute", "hour"] | None = None
+    interval_unit: Literal["minute", "hour", "day", "week", "month"] | None = None
 
     @model_validator(mode="after")
     def validate_schedule(self):
