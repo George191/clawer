@@ -264,12 +264,20 @@ RDS 为旧 `SPIDER_ETL_RAW_TOPIC` 和各新类型 topic 分别启动独立 Consu
 
 SAM 两个 MongoDB 集合分别写入 `ts_rds.rds_contract`（`sam_gov_awards`）和
 `ts_rds.rds_tender`（`sam_gov_opportunities`），标准化后对应 `ts_ods.ods_contract` 和
-`ts_ods.ods_tender`。采集与同步沿用已有 `contract` 类型，由来源选择 RDS 表，保留 Mongo
+`ts_ods.ods_tender`。合同采集与同步使用 `contract`，采购公告使用独立的 `tender` 类型，按类型选择 RDS 表，保留 Mongo
 记录身份及合同修订/交易号；ODS 金额使用 `NUMERIC`，复杂字段使用 `JSONB`，删除使用标志保留。
 来源时间同时保留原文；未声明时区的时间不推定为 UTC。`created_at`/`updated_at` 为入库时间。
 使用 `python -m app.etl.schema.register_procurement` 查看四张表的 DDL，追加 `--apply` 注册并建表。
-部署时先创建 `${SPIDER_KAFKA_TOPIC}-contract`、`${SPIDER_ETL_RDS_TOPIC}-contract` 和
-`${SPIDER_ETL_RDS_TOPIC}-tender` topic，再更新 ODS、RDS 和 `syncer-contract` 服务。
+部署时先创建 `${SPIDER_KAFKA_TOPIC}-contract`、`${SPIDER_KAFKA_TOPIC}-tender`、
+`${SPIDER_ETL_RDS_TOPIC}-contract` 和 `${SPIDER_ETL_RDS_TOPIC}-tender` topic，
+再更新 ODS、RDS、`syncer-contract` 和 `syncer-tender` 服务。
+从旧版本切换前，停止 SAM 采购公告采集与同步，用旧版 RDS/ODS 排空其在途 `contract` 消息。
+将已发布 `sam_gov_opportunities` 的 MinIO YAML、`public.ai_collect_templates.data_type`，
+以及该集合的 `public.ai_collect_template_alias.data_type`（如有）统一改为 `tender`；
+MongoDB 已有记录的 `_meta.data_type` 也需改为 `tender`，保留记录身份和同步状态。
+已有 `rds_tender` 行需同步修改 `data_type` 和 `raw_data._meta.data_type`；
+若同一记录同时存在 `contract`、`tender` 两种主键，先核对并合并，避免类型切换后重复。
+完成类型迁移后再启动新版服务；`ods_tender` 原有记录已经使用 `tender` 类型。
 SAM 日增需在完整采集、写入及水位验证通过后注册到 `public.automation_tasks`；合同还需
 Worker 可用的 `SAM_GOV_API_KEY` 以及完整变更/删除流验证，公告快照中缺失的记录不推断为删除。
 
