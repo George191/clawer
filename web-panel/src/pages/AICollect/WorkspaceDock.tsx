@@ -1,12 +1,17 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Table, Tooltip, Typography, Upload } from 'antd';
 import {
+  ApartmentOutlined,
+  BankOutlined,
   BellOutlined,
+  BugOutlined,
+  CalendarOutlined,
   CaretRightOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
   CloseOutlined,
+  ClusterOutlined,
   CodeOutlined,
   DeploymentUnitOutlined,
   DeleteOutlined,
@@ -14,18 +19,24 @@ import {
   DownloadOutlined,
   EditOutlined,
   ExperimentOutlined,
+  EnvironmentOutlined,
+  FileTextOutlined,
+  LineChartOutlined,
   PauseCircleOutlined,
   PlusOutlined,
   PushpinOutlined,
   RadarChartOutlined,
   ReadOutlined,
   ReloadOutlined,
+  RocketOutlined,
   SearchOutlined,
   SettingOutlined,
   StopOutlined,
   SyncOutlined,
   UploadOutlined,
+  UserOutlined,
   WarningOutlined,
+  WifiOutlined,
 } from '@ant-design/icons';
 import {
   createWorkspaceTask,
@@ -105,7 +116,10 @@ type TaskComposerMode = 'once' | 'recurring';
 type TaskRecurringMode = 'daily' | 'interval';
 type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
-type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic';
+type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic'
+  | 'satellite' | 'constellation' | 'orbital' | 'debris' | 'debrisevents' | 'frequency'
+  | 'launchinfo' | 'launchsites' | 'launchvehicles' | 'groundstations' | 'organizations' | 'vulnerability'
+  | 'account' | 'company' | 'filing' | 'financial_fact';
 
 interface TemplateDraft {
   adapter: string;
@@ -657,6 +671,38 @@ const TenderGlyph = () => (
   </svg>
 );
 
+const SatelliteGlyph = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m9 8 7 7-3 3-7-7zM6 4l4 4-4 4-4-4zM18 12l4 4-4 4-4-4zM14.5 9.5l3-3M16 4a4 4 0 0 1 4 4M16 1a7 7 0 0 1 7 7" />
+  </svg>
+);
+
+const OrbitalGlyph = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="3" />
+    <ellipse cx="12" cy="12" rx="11" ry="5" transform="rotate(-35 12 12)" />
+    <circle cx="19.5" cy="6.7" r="2" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+const DebrisGlyph = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m3 5 5-2 2 5-4 3zM15 4l5 2-1 4-5-1zM4 16l5-3 2 6-5 2zM16 15l4-2 2 5-4 3zM11 11l2 1M12 4l1-1M13 21l1-1" />
+  </svg>
+);
+
+const DebrisEventGlyph = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m12 6 2 4 5-1-3 4 2 5-5-2-4 3 1-5-4-2 5-1zM4 4l2 2M17 3l-1 3M21 10l-2 1M21 21l-3-3M3 20l3-3M3 10l2 1" />
+  </svg>
+);
+
+const GroundStationGlyph = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M5 6a9 9 0 0 0 13 13zM11.5 12.5l5-5M16 3a5 5 0 0 1 5 5M16 6a2 2 0 0 1 2 2M9 17l-2 5M12 19l2 3M4 22h13" />
+  </svg>
+);
+
 const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tint: string }> = {
   financial_report: { icon: <FinancialReportGlyph />, label: 'Financial report', tint: '#69D3B0' },
   social_media: { icon: <SocialMediaGlyph />, label: 'Social media', tint: '#75CBFF' },
@@ -668,6 +714,22 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
   warning: { icon: <BellOutlined />, label: '告警', tint: '#F6C35B' },
   signal: { icon: <DeploymentUnitOutlined />, label: '信号', tint: '#65D5A3' },
   game: { icon: <GamepadGlyph />, label: '游戏', tint: '#FFFFFF' },
+  satellite: { icon: <SatelliteGlyph />, label: '卫星基础信息', tint: '#80BDFF' },
+  constellation: { icon: <ClusterOutlined />, label: '星座', tint: '#B79CFF' },
+  orbital: { icon: <OrbitalGlyph />, label: '轨道 / TLE', tint: '#70D8E8' },
+  debris: { icon: <DebrisGlyph />, label: '空间碎片', tint: '#E5B28E' },
+  debrisevents: { icon: <DebrisEventGlyph />, label: '碎片事件', tint: '#FF9F89' },
+  frequency: { icon: <WifiOutlined />, label: '卫星频率', tint: '#D3A2FF' },
+  launchinfo: { icon: <CalendarOutlined />, label: '发射信息', tint: '#F2CD73' },
+  launchsites: { icon: <EnvironmentOutlined />, label: '发射场 / 发射点', tint: '#8AD2A3' },
+  launchvehicles: { icon: <RocketOutlined />, label: '运载火箭', tint: '#F2A66F' },
+  groundstations: { icon: <GroundStationGlyph />, label: '地面站', tint: '#7BCDD0' },
+  organizations: { icon: <ApartmentOutlined />, label: '组织机构', tint: '#9DB5EE' },
+  vulnerability: { icon: <BugOutlined />, label: '漏洞', tint: '#EF8FB1' },
+  account: { icon: <UserOutlined />, label: '账号', tint: '#8DCFE8' },
+  company: { icon: <BankOutlined />, label: '公司', tint: '#AFB9ED' },
+  filing: { icon: <FileTextOutlined />, label: '申报文件', tint: '#9AD8B2' },
+  financial_fact: { icon: <LineChartOutlined />, label: '财务指标', tint: '#E4CB86' },
   system: { icon: <SettingOutlined />, label: '系统', tint: '#A0AEC0' },
   generic: { icon: <CodeOutlined />, label: '通用', tint: '#A0AEC0' },
 };
@@ -865,8 +927,7 @@ const toAvatarLabel = (value: string) => {
 
 export const inferSiteKind = (value: string): SiteKind => {
   const text = value.trim().toLowerCase();
-  if (text === 'contract') return 'contract';
-  if (text === 'tender') return 'tender';
+  if (Object.prototype.hasOwnProperty.call(siteKindMeta, text)) return text as SiteKind;
   if (/financial[_\s-]*report/.test(text)) return 'financial_report';
   if (/social[_\s-]*media|twitter|tweet|社交媒体/.test(text)) return 'social_media';
   if (text.includes('game') || text.includes('游戏')) return 'game';
