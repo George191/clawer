@@ -4,6 +4,7 @@ import type { ProductDomain, SchedulerTaskConfig, WorkspaceTask } from './types'
 export interface AutomationSchedule extends Omit<SchedulerTaskConfig, 'id'> {
   id?: number | string;
   workspace_task_id?: string;
+  workspace_task_canceled?: boolean;
   display_name?: string;
   schedule_label?: string;
 }
@@ -29,6 +30,7 @@ export const mapWorkspaceSchedules = (tasks: WorkspaceTask[]): AutomationSchedul
       return {
         id: task.id,
         workspace_task_id: task.id,
+        workspace_task_canceled: task.control_state === 'canceled',
         display_name: task.name,
         task_name: task.id,
         task_path: task.task_path || task.template_name || '',
@@ -45,10 +47,21 @@ export const mapWorkspaceSchedules = (tasks: WorkspaceTask[]): AutomationSchedul
           ? `Every ${interval} ${hours ? 'hours' : 'minutes'}`
           : `Daily at ${hour}:${minute} (Asia/Shanghai)`,
         args: [], kwargs: {}, options: {},
-        enabled: !['paused', 'completed'].includes(task.status) && task.control_state !== 'canceled',
+        enabled: task.control_state !== 'canceled' && (typeof schedule.enabled === 'boolean'
+          ? schedule.enabled : !['paused', 'completed'].includes(task.status)),
         created_at: task.created_at, updated_at: task.updated_at,
       };
   });
+
+export const automationUpdateWorkspaceSchedule = (taskId: string, body: {
+  enabled?: boolean;
+  mode?: 'daily' | 'interval';
+  daily_time?: string;
+  interval_value?: number;
+  interval_unit?: 'minute' | 'hour';
+}): Promise<AutomationSchedule> =>
+  client.patch<WorkspaceTask>(`/scheduler/workspace-tasks/${encodeURIComponent(taskId)}`, body)
+    .then(({ data }) => mapWorkspaceSchedules([data])[0]);
 
 export const automationCreateSchedule = (body: Omit<SchedulerTaskConfig, 'id' | 'created_at' | 'updated_at'>): Promise<SchedulerTaskConfig> =>
   client.post('/scheduler/tasks', body).then((r) => r.data);

@@ -413,6 +413,11 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
   --schedule-active: #65d5a3;
   --schedule-danger: #ff7a7a;
   --schedule-danger-soft: rgba(255, 122, 122, .1);
+  --schedule-link: #8ab4ff;
+  --schedule-cron: #c4b5fd;
+  --schedule-cron-soft: rgba(167, 139, 250, .12);
+  --schedule-interval: #67d8cf;
+  --schedule-interval-soft: rgba(45, 212, 191, .1);
 }
 
 .automation-page.is-schedules { color: var(--schedule-text); }
@@ -484,13 +489,17 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
 .automation-schedule-meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px 16px; color: var(--schedule-muted); font-size: 10px; line-height: 20px; }
 .automation-schedule-domain { display: inline-flex; flex: none; align-items: center; gap: 6px; color: var(--schedule-muted); font-size: 11px; }
 .automation-schedule-domain .automation-domain-initial { width: 16px; height: 16px; border-radius: 4px; font-size: 8px; }
-.automation-schedule-trigger { display: inline-flex; min-width: 0; align-items: center; gap: 7px; }
-.automation-schedule-trigger > span { color: var(--schedule-subtle); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
-.automation-schedule-trigger code { max-width: 320px; overflow: hidden; color: var(--schedule-text); text-overflow: ellipsis; white-space: nowrap; }
+.automation-schedule-trigger { display: inline-flex; min-width: 0; align-items: center; gap: 7px; padding: 1px 7px; border-radius: 4px; color: var(--schedule-cron); background: var(--schedule-cron-soft); }
+.automation-schedule-trigger.is-interval { color: var(--schedule-interval); background: var(--schedule-interval-soft); }
+.automation-schedule-trigger > span { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.automation-schedule-trigger code { max-width: 320px; overflow: hidden; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .automation-schedule-updated { margin-left: auto; color: var(--schedule-subtle); }
 .automation-schedule-source { color: var(--schedule-subtle); }
-.automation-schedule-actions { display: flex; grid-column: 2; grid-row: 1 / 3; min-width: 72px; align-items: center; justify-content: flex-end; gap: 10px; }
-.automation-schedule-actions .ant-btn-link { color: #8ab4ff; font-size: 11px; }
+.automation-schedule-source.is-linked { color: var(--schedule-link); text-decoration: none; text-underline-offset: 3px; }
+.automation-schedule-source.is-linked:hover,
+.automation-schedule-source.is-linked:focus-visible { color: var(--schedule-link); text-decoration: underline; }
+.automation-schedule-source.is-linked:focus-visible { outline: 2px solid var(--schedule-link); outline-offset: 3px; border-radius: 2px; }
+.automation-schedule-actions { display: flex; grid-column: 2; grid-row: 1 / 3; min-width: 30px; align-items: center; justify-content: flex-end; }
 .automation-schedule-actions .ant-switch { background: #555e6f; }
 .automation-schedule-actions .ant-switch-checked { background: #3d9c77; }
 .automation-schedule-actions .ant-switch:focus-visible { outline: 2px solid #8ab4ff; outline-offset: 3px; }
@@ -525,7 +534,6 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
 .automation-schedule-modal-heading h3 { margin: 0; color: var(--schedule-text); font-size: 18px; font-weight: 600; line-height: 25px; overflow-wrap: anywhere; }
 .automation-schedule-modal-actions { display: flex; flex: none; align-items: center; gap: 3px; }
 .automation-schedule-modal-actions .ant-btn { width: 30px; height: 30px; padding: 0; border-radius: 6px; }
-.automation-schedule-modal-actions .ant-btn-link { width: auto; padding-inline: 7px; font-size: 12px; }
 .automation-schedule-modal-actions .ant-btn-text:not(.ant-btn-dangerous),
 .automation-schedule-delete-heading > .ant-btn { color: var(--schedule-muted); }
 .automation-schedule-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px; }
@@ -595,6 +603,11 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
   --schedule-active: #23845c;
   --schedule-danger: #c53948;
   --schedule-danger-soft: rgba(197, 57, 72, .08);
+  --schedule-link: #2563eb;
+  --schedule-cron: #7c3aed;
+  --schedule-cron-soft: rgba(124, 58, 237, .08);
+  --schedule-interval: #0f766e;
+  --schedule-interval-soft: rgba(15, 118, 110, .08);
 }
 
 .automation-schedule-modal.is-light .automation-schedule-footer .ant-btn-primary { background: #2563eb !important; color: #fff; }
@@ -623,7 +636,7 @@ html[data-theme='light'] .automation-page .ant-pagination .ant-select:hover .ant
   .automation-schedule-status { min-width: 0; }
   .automation-schedule-trigger code { max-width: 210px; }
   .automation-schedule-updated { margin-left: 0; }
-  .automation-schedule-source { display: none; }
+  .automation-schedule-source:not(.is-linked) { display: none; }
 }
 
 @media (max-width: 520px) {

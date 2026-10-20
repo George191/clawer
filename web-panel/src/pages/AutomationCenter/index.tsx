@@ -7,10 +7,10 @@ import {
 import enUS from 'antd/locale/en_US';
 import {
   ApartmentOutlined, ClockCircleOutlined, CloseOutlined, DeleteOutlined,
-  EditOutlined, FieldTimeOutlined,
+  EditOutlined, ExportOutlined, FieldTimeOutlined,
   PlusOutlined, SearchOutlined,
 } from '@ant-design/icons';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   automationCreateWorkflow, automationDeleteWorkflow,
   automationUpdateWorkflow,
@@ -18,7 +18,7 @@ import {
 import { AI_ANALYZE_WS_URL } from '@/services/aiApi';
 import {
   automationCreateSchedule, automationDeleteSchedule,
-  automationReloadSchedules, automationToggleSchedule, automationUpdateSchedule,
+  automationReloadSchedules, automationToggleSchedule, automationUpdateSchedule, automationUpdateWorkspaceSchedule,
   mapWorkspaceSchedules, type AutomationSchedule,
 } from '@/services/scheduler';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -94,6 +94,7 @@ const AutomationCenter: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [streamAvailable, setStreamAvailable] = useState(false);
   const [mutating, setMutating] = useState(false);
+  const [togglingSchedule, setTogglingSchedule] = useState<string | null>(null);
   const [workflows, setWorkflows] = useState<AutomationWorkflow[]>([]);
   const [schedules, setSchedules] = useState<AutomationSchedule[]>([]);
   const [workspaceSchedules, setWorkspaceSchedules] = useState<AutomationSchedule[]>([]);
@@ -217,16 +218,12 @@ const AutomationCenter: React.FC = () => {
   };
 
   const openEdit = (record: SelectedRecord) => {
-    if ('workspace_task_id' in record && record.workspace_task_id) {
-      viewRun(record.workspace_task_id);
-      return;
-    }
     setEditing(record);
     if (section === 'workflows') {
       const item = record as AutomationWorkflow;
       form.setFieldsValue({ ...item, nodes: item.nodes.map((node) => node.name).join('\n') });
     } else if (section === 'schedules') {
-      form.setFieldsValue(record);
+      form.setFieldsValue({ ...record, task_name: (record as AutomationSchedule).display_name ?? (record as AutomationSchedule).task_name });
     }
     setEditorOpen(true);
   };
@@ -247,21 +244,33 @@ const AutomationCenter: React.FC = () => {
         else await automationCreateWorkflow(payload);
       } else if (section === 'schedules') {
         const existing = editing as AutomationSchedule | null;
-        const payload: Omit<SchedulerTaskConfig, 'id' | 'created_at' | 'updated_at'> = {
-          task_name: values.task_name, task_path: values.task_path,
-          product_domain: values.product_domain, description: values.description ?? '',
-          schedule_type: values.schedule_type, cron_minute: values.cron_minute ?? '*',
-          cron_hour: values.cron_hour ?? '*', cron_day_of_week: existing?.cron_day_of_week ?? '*', cron_day_of_month: existing?.cron_day_of_month ?? '*',
-          cron_month_of_year: existing?.cron_month_of_year ?? '*', interval_seconds: values.interval_seconds,
-          args: existing?.args ?? [], kwargs: existing?.kwargs ?? {}, options: existing?.options ?? {}, enabled: values.enabled,
-        };
-        const saved = editing
-          ? await automationUpdateSchedule((editing as SchedulerTaskConfig).task_name, payload)
-          : await automationCreateSchedule(payload);
-        const reload = await automationReloadSchedules();
-        if (!reload.loaded || reload.restart_required) message.warning(reload.message);
-        setDetail(saved);
-        form.setFieldsValue(saved);
+        if (existing?.workspace_task_id) {
+          const saved = await automationUpdateWorkspaceSchedule(existing.workspace_task_id, {
+            enabled: values.enabled,
+            ...(values.schedule_type === 'interval'
+              ? { mode: 'interval', interval_value: values.interval_seconds / 60, interval_unit: 'minute' }
+              : { mode: 'daily', daily_time: `${String(values.cron_hour).padStart(2, '0')}:${String(values.cron_minute).padStart(2, '0')}` }),
+          });
+          setWorkspaceSchedules((current) => current.map((item) => item.workspace_task_id === saved.workspace_task_id ? saved : item));
+          setDetail(saved);
+          form.setFieldsValue(saved);
+        } else {
+          const payload: Omit<SchedulerTaskConfig, 'id' | 'created_at' | 'updated_at'> = {
+            task_name: values.task_name, task_path: values.task_path,
+            product_domain: values.product_domain, description: values.description ?? '',
+            schedule_type: values.schedule_type, cron_minute: values.cron_minute ?? '*',
+            cron_hour: values.cron_hour ?? '*', cron_day_of_week: existing?.cron_day_of_week ?? '*', cron_day_of_month: existing?.cron_day_of_month ?? '*',
+            cron_month_of_year: existing?.cron_month_of_year ?? '*', interval_seconds: values.interval_seconds,
+            args: existing?.args ?? [], kwargs: existing?.kwargs ?? {}, options: existing?.options ?? {}, enabled: values.enabled,
+          };
+          const saved = editing
+            ? await automationUpdateSchedule((editing as SchedulerTaskConfig).task_name, payload)
+            : await automationCreateSchedule(payload);
+          const reload = await automationReloadSchedules();
+          if (!reload.loaded || reload.restart_required) message.warning(reload.message);
+          setDetail(saved);
+          form.setFieldsValue(saved);
+        }
       }
       message.success(editing ? 'Changes saved' : 'Created successfully');
       setEditorOpen(false);
@@ -295,10 +304,26 @@ const AutomationCenter: React.FC = () => {
   };
 
   const toggleSchedule = async (record: AutomationSchedule, enabled: boolean) => {
-    await automationToggleSchedule(record.task_name, enabled);
-    const reload = await automationReloadSchedules();
-    if (!reload.loaded || reload.restart_required) message.warning(reload.message);
-    message.success(enabled ? 'Schedule enabled' : 'Schedule paused');
+    if (togglingSchedule) return;
+    setTogglingSchedule(record.task_name);
+    try {
+      let saved: AutomationSchedule;
+      if (record.workspace_task_id) {
+        saved = await automationUpdateWorkspaceSchedule(record.workspace_task_id, { enabled });
+        setWorkspaceSchedules((current) => current.map((item) => item.workspace_task_id === saved.workspace_task_id ? saved : item));
+      } else {
+        saved = await automationToggleSchedule(record.task_name, enabled);
+        setSchedules((current) => current.map((item) => item.task_name === saved.task_name ? saved : item));
+        const reload = await automationReloadSchedules();
+        if (!reload.loaded || reload.restart_required) message.warning(reload.message);
+      }
+      setDetail((current) => current && 'task_name' in current && current.task_name === record.task_name ? saved : current);
+      message.success(enabled ? 'Schedule enabled' : 'Schedule paused');
+    } catch {
+      message.error('Unable to update this schedule. Please try again.');
+    } finally {
+      setTogglingSchedule(null);
+    }
   };
 
   const rowActions = (record: SelectedRecord) => {
@@ -332,14 +357,14 @@ const AutomationCenter: React.FC = () => {
       </div>
       <div className="automation-schedule-meta">
         {scheduleDomain(item.product_domain)}
-        <span className="automation-schedule-trigger"><span>{item.schedule_type === 'interval' ? 'Interval' : 'Cron'}</span><code title={formatSchedule(item)}>{formatSchedule(item)}</code></span>
-        <span className="automation-schedule-source">{item.workspace_task_id ? 'Linked run' : 'Scheduled task'}</span>
+        <span className={`automation-schedule-trigger ${item.schedule_type === 'interval' ? 'is-interval' : 'is-cron'}`}><span>{item.schedule_type === 'interval' ? 'Interval' : 'Cron'}</span><code title={formatSchedule(item)}>{formatSchedule(item)}</code></span>
+        {item.workspace_task_id
+          ? <Link className="automation-schedule-source is-linked" to={`/automation/runs?task=${encodeURIComponent(item.workspace_task_id)}`} onClick={(event) => event.stopPropagation()}>Linked run</Link>
+          : <span className="automation-schedule-source">Scheduled task</span>}
         <span className="automation-schedule-updated">Updated {relativeTime(item.updated_at)}</span>
       </div>
       <div className="automation-schedule-actions" onClick={(event) => event.stopPropagation()}>
-        {item.workspace_task_id
-          ? <Button type="link" onClick={() => viewRun(item.workspace_task_id!)}>View Run</Button>
-          : <Switch size="small" checked={item.enabled} aria-label={`Enable ${item.display_name ?? item.task_name}`} onChange={(checked) => void toggleSchedule(item, checked)} />}
+        <Switch size="small" checked={item.enabled} loading={togglingSchedule === item.task_name} disabled={mutating || Boolean(togglingSchedule) || item.workspace_task_canceled} title={item.workspace_task_canceled ? 'Canceled runs cannot be scheduled' : undefined} aria-label={`Enable ${item.display_name ?? item.task_name}`} onChange={(checked) => void toggleSchedule(item, checked)} />
       </div>
     </article>
   ) }];
@@ -368,6 +393,7 @@ const AutomationCenter: React.FC = () => {
   const detailName = detail && ('task_name' in detail ? detail.display_name ?? detail.task_name : detail.name);
   const editorTitle = `${editing ? 'Edit' : 'Create'} ${objectLabel[section]}`;
   const scheduleDetail = detail as AutomationSchedule | null;
+  const editingLinkedSchedule = Boolean((editing as AutomationSchedule | null)?.workspace_task_id);
 
   return <ConfigProvider locale={enUS}><div className={`automation-page${section === 'schedules' ? ` is-schedules${isLight ? ' is-light' : ''}` : ''}`}>
     <header className="automation-header">
@@ -446,12 +472,11 @@ const AutomationCenter: React.FC = () => {
         <span className="automation-schedule-modal-mark" aria-hidden="true"><FieldTimeOutlined /></span>
         <div className="automation-schedule-modal-heading-copy"><span className="automation-schedule-modal-eyebrow">AUTOMATION / SCHEDULES</span><h3>{editorOpen ? editorTitle : detailName}</h3></div>
         <div className="automation-schedule-modal-actions">
-          {detail && !editorOpen && ('workspace_task_id' in detail && detail.workspace_task_id
-            ? <Button type="link" onClick={() => viewRun(detail.workspace_task_id!)}>View Run</Button>
-            : <>
-              <Button type="text" icon={<EditOutlined />} aria-label="Edit schedule" title="Edit schedule" disabled={mutating || Boolean(deleteTarget)} onClick={() => openEdit(detail)} />
-              <Button type="text" danger icon={<DeleteOutlined />} aria-label="Delete schedule" title="Delete schedule" disabled={mutating || Boolean(deleteTarget)} onClick={() => setDeleteTarget(detail as AutomationSchedule)} />
-            </>)}
+          {detail && !editorOpen && <>
+              {'workspace_task_id' in detail && detail.workspace_task_id && <Button type="text" icon={<ExportOutlined />} aria-label="View Run" title="View Run" onClick={() => viewRun(detail.workspace_task_id!)} />}
+              <Button type="text" icon={<EditOutlined />} aria-label="Edit schedule" title="Edit schedule" disabled={mutating || Boolean(deleteTarget) || Boolean(togglingSchedule) || scheduleDetail?.workspace_task_canceled} onClick={() => openEdit(detail)} />
+              {!('workspace_task_id' in detail && detail.workspace_task_id) && <Button type="text" danger icon={<DeleteOutlined />} aria-label="Delete schedule" title="Delete schedule" disabled={mutating || Boolean(deleteTarget)} onClick={() => setDeleteTarget(detail as AutomationSchedule)} />}
+            </>}
           <Button type="text" icon={<CloseOutlined />} aria-label="Close schedule" title="Close" disabled={mutating || Boolean(deleteTarget)} onClick={closeScheduleModal} />
         </div>
       </div>}
@@ -469,26 +494,26 @@ const AutomationCenter: React.FC = () => {
       forceRender
     >
       <Form form={form} layout="vertical" className="automation-form automation-schedule-fields" disabled={mutating}>
-        <Form.Item className="is-wide" name={editorOpen ? 'task_name' : undefined} label="Schedule Name" rules={editorOpen ? [{ required: true }] : undefined}>
-          {editorOpen ? <Input disabled={Boolean(editing) || mutating} /> : <span className="automation-schedule-value is-name">{scheduleDetail?.display_name ?? scheduleDetail?.task_name}</span>}
+        <Form.Item className="is-wide" name={editorOpen && !editingLinkedSchedule ? 'task_name' : undefined} label="Schedule Name" rules={editorOpen && !editingLinkedSchedule ? [{ required: true }] : undefined}>
+          {editorOpen && !editingLinkedSchedule ? <Input disabled={Boolean(editing) || mutating} /> : <span className="automation-schedule-value is-name">{scheduleDetail?.display_name ?? scheduleDetail?.task_name}</span>}
         </Form.Item>
-        <Form.Item className="is-wide" name={editorOpen ? 'task_path' : undefined} label="Task Path" rules={editorOpen ? [{ required: true }] : undefined}>
-          {editorOpen ? <Input placeholder="app.scheduler.tasks.workspace.dispatch_due" /> : <code className="automation-schedule-value is-code">{scheduleDetail?.task_path || '—'}</code>}
+        <Form.Item className="is-wide" name={editorOpen && !editingLinkedSchedule ? 'task_path' : undefined} label="Task Path" rules={editorOpen && !editingLinkedSchedule ? [{ required: true }] : undefined}>
+          {editorOpen && !editingLinkedSchedule ? <Input placeholder="app.scheduler.tasks.workspace.dispatch_due" /> : <code className="automation-schedule-value is-code">{scheduleDetail?.task_path || '—'}</code>}
         </Form.Item>
-        <Form.Item name={editorOpen ? 'product_domain' : undefined} label="Domain" rules={editorOpen ? [{ required: true }] : undefined}>
-          {editorOpen ? <Select popupClassName="automation-filter-dropdown" options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /> : scheduleDetail && scheduleDomain(scheduleDetail.product_domain)}
+        <Form.Item name={editorOpen && !editingLinkedSchedule ? 'product_domain' : undefined} label="Domain" rules={editorOpen && !editingLinkedSchedule ? [{ required: true }] : undefined}>
+          {editorOpen && !editingLinkedSchedule ? <Select popupClassName="automation-filter-dropdown" options={Object.entries(domainMeta).map(([value, meta]) => ({ value, label: meta.label }))} /> : scheduleDetail && scheduleDomain(scheduleDetail.product_domain)}
         </Form.Item>
         <Form.Item name={editorOpen ? 'schedule_type' : undefined} label="Trigger Type">
-          {editorOpen ? <Segmented disabled={mutating} options={[{ value: 'crontab', label: 'Cron' }, { value: 'interval', label: 'Interval' }]} /> : <span className="automation-schedule-value">{scheduleDetail?.schedule_type === 'interval' ? 'Interval' : 'Cron'}</span>}
+          {editorOpen ? <Segmented disabled={mutating} options={[{ value: 'crontab', label: editingLinkedSchedule ? 'Daily' : 'Cron' }, { value: 'interval', label: 'Interval' }]} /> : <span className="automation-schedule-value">{scheduleDetail?.schedule_type === 'interval' ? 'Interval' : scheduleDetail?.workspace_task_id ? 'Daily' : 'Cron'}</span>}
         </Form.Item>
-        <Form.Item className="is-wide" name={editorOpen ? 'description' : undefined} label="Description">
-          {editorOpen ? <Input.TextArea rows={2} /> : <span className="automation-schedule-value">{scheduleDetail?.description || '—'}</span>}
+        <Form.Item className="is-wide" name={editorOpen && !editingLinkedSchedule ? 'description' : undefined} label="Description">
+          {editorOpen && !editingLinkedSchedule ? <Input.TextArea rows={2} /> : <span className="automation-schedule-value">{scheduleDetail?.description || '—'}</span>}
         </Form.Item>
         <Form.Item noStyle shouldUpdate={(previous, current) => previous.schedule_type !== current.schedule_type}>{({ getFieldValue }) => (editorOpen ? getFieldValue('schedule_type') : scheduleDetail?.schedule_type) === 'interval'
-          ? <Form.Item name={editorOpen ? 'interval_seconds' : undefined} label="Interval Seconds" rules={editorOpen ? [{ required: true }] : undefined}>{editorOpen ? <InputNumber min={10} style={{ width: '100%' }} /> : <span className="automation-schedule-value">{scheduleDetail?.interval_seconds ?? 60} seconds</span>}</Form.Item>
+          ? <Form.Item name={editorOpen ? 'interval_seconds' : undefined} label="Interval Seconds" rules={editorOpen ? [{ required: true }, ...(editingLinkedSchedule ? [{ validator: (_: unknown, value: number) => value == null || (value >= 60 && value % 60 === 0) ? Promise.resolve() : Promise.reject(new Error('Use whole minutes (multiples of 60 seconds).')) }] : [])] : undefined}>{editorOpen ? <InputNumber min={editingLinkedSchedule ? 60 : 10} step={editingLinkedSchedule ? 60 : 1} style={{ width: '100%' }} /> : <span className="automation-schedule-value">{scheduleDetail?.interval_seconds ?? 60} seconds</span>}</Form.Item>
           : <>
-            <Form.Item name={editorOpen ? 'cron_minute' : undefined} label="Minute">{editorOpen ? <Input /> : <code className="automation-schedule-value is-code">{scheduleDetail?.cron_minute || '*'}</code>}</Form.Item>
-            <Form.Item name={editorOpen ? 'cron_hour' : undefined} label="Hour">{editorOpen ? <Input /> : <code className="automation-schedule-value is-code">{scheduleDetail?.cron_hour || '*'}</code>}</Form.Item>
+            <Form.Item name={editorOpen ? 'cron_minute' : undefined} label="Minute" rules={editorOpen && editingLinkedSchedule ? [{ required: true, pattern: /^([0-5]?\d)$/, message: 'Enter a minute from 0 to 59.' }] : undefined}>{editorOpen ? <Input /> : <code className="automation-schedule-value is-code">{scheduleDetail?.cron_minute || '*'}</code>}</Form.Item>
+            <Form.Item name={editorOpen ? 'cron_hour' : undefined} label="Hour" rules={editorOpen && editingLinkedSchedule ? [{ required: true, pattern: /^([01]?\d|2[0-3])$/, message: 'Enter an hour from 0 to 23 (Asia/Shanghai).' }] : undefined}>{editorOpen ? <Input /> : <code className="automation-schedule-value is-code">{scheduleDetail?.cron_hour || '*'}</code>}</Form.Item>
           </>}
         </Form.Item>
         <Form.Item name={editorOpen ? 'enabled' : undefined} label="Status" valuePropName={editorOpen ? 'checked' : undefined}>

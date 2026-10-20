@@ -1,5 +1,6 @@
 from dataclasses import asdict
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -45,6 +46,29 @@ class ToggleRequest(BaseModel):
     enabled: bool
 
 
+class WorkspaceScheduleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool | None = None
+    mode: Literal["daily", "interval"] | None = None
+    daily_time: str | None = Field(default=None, pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
+    interval_value: int | None = Field(default=None, gt=0)
+    interval_unit: Literal["minute", "hour"] | None = None
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one schedule field is required")
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("Schedule fields cannot be null")
+        if self.mode == "daily" and self.daily_time is None:
+            raise ValueError("daily_time is required when setting daily mode")
+        if self.mode == "interval" and (
+            self.interval_value is None or self.interval_unit is None
+        ):
+            raise ValueError("interval_value and interval_unit are required when setting interval mode")
+        return self
+
+
 @router.get("/tasks")
 async def list_schedules() -> list[dict[str, Any]]:
     return [asdict(config) for config in await get_task_repository().list_all()]
@@ -60,6 +84,31 @@ async def list_workspace_schedules() -> dict[str, Any]:
         if mode in {"daily", "interval"}:
             items.append(task)
     return {"items": items}
+
+
+@router.patch("/workspace-tasks/{task_id}")
+async def update_workspace_schedule(
+    task_id: UUID, payload: WorkspaceScheduleRequest,
+) -> dict[str, Any]:
+    task_id_text = str(task_id)
+    current = await automation_task_store.get_task(task_id_text)
+    if current is None:
+        raise HTTPException(status_code=404, detail="调度任务不存在")
+    schedule = current.get("schedule") or {}
+    current_mode = schedule.get("recurring_mode") if schedule.get("mode") == "recurring" else schedule.get("mode")
+    if current_mode not in {"daily", "interval"} or current.get("control_state") == "canceled":
+        raise HTTPException(status_code=409, detail="该任务不支持修改周期调度")
+    changes = payload.model_dump(exclude_unset=True)
+    mode = changes.get("mode", current_mode)
+    incompatible_fields = {"interval_value", "interval_unit"} if mode == "daily" else {"daily_time"}
+    if incompatible_fields.intersection(changes):
+        raise HTTPException(status_code=422, detail="调度参数与周期类型不匹配")
+    result = await automation_task_store.update_task_schedule(
+        task_id_text, changes, expected_mode=current_mode,
+    )
+    if result is None:
+        raise HTTPException(status_code=409, detail="调度任务已变化，请刷新后重试")
+    return await automation_task_store.get_task(task_id_text) or result
 
 
 @router.post("/tasks", status_code=201)

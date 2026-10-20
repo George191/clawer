@@ -282,6 +282,41 @@ class AutomationTaskStore:
             await publish_task_change(task_id)
         return task
 
+    async def update_task_schedule(
+        self, task_id: str, changes: dict[str, Any], *, expected_mode: str,
+    ) -> dict[str, Any] | None:
+        """Merge recurring settings without changing execution or run state."""
+        await self.initialize()
+        task = await self._pg.fetch_one(
+            """
+            UPDATE public.automation_tasks SET
+                schedule = COALESCE(schedule, '{}'::jsonb) || CASE
+                    WHEN schedule->>'mode' = 'recurring'
+                         AND CAST(:changes AS jsonb) ? 'mode'
+                    THEN (CAST(:changes AS jsonb) - 'mode')
+                         || jsonb_build_object('recurring_mode', CAST(:changes AS jsonb)->'mode')
+                    ELSE CAST(:changes AS jsonb)
+                END,
+                updated_at = now()
+            WHERE id = CAST(:id AS uuid)
+              AND deleted_at IS NULL
+              AND control_state IS DISTINCT FROM 'canceled'
+              AND (CASE WHEN schedule->>'mode' = 'recurring'
+                    THEN schedule->>'recurring_mode' ELSE schedule->>'mode' END) = :expected_mode
+              AND :expected_mode IN ('daily', 'interval')
+            RETURNING *
+            """,
+            {
+                "id": task_id,
+                "changes": json.dumps(changes, ensure_ascii=False),
+                "expected_mode": expected_mode,
+            },
+        )
+        if task:
+            task["logs"] = []
+            await publish_task_change(task_id)
+        return task
+
     async def start_task(
         self,
         task_id: str,
@@ -392,6 +427,7 @@ class AutomationTaskStore:
                 WHERE status IN ('queued', 'failed')
                   AND deleted_at IS NULL
                   AND control_state IS DISTINCT FROM 'canceled'
+                  AND COALESCE(schedule->>'enabled', 'true') <> 'false'
                   AND (
                     CASE
                       WHEN schedule->>'mode' = 'recurring'
