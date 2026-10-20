@@ -138,10 +138,7 @@ def normalize_usaspending_contract(record: dict[str, Any]) -> dict[str, Any]:
         native_field = "initial_report_date" if source == "created_at" else "last_modified_date"
         value = (record.get("source_data") or {}).get(native_field) or record.get(source)
         row[target + "_raw"] = safe_str(value)
-        try:
-            parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-        except ValueError:
-            continue
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
         if parsed.tzinfo is not None and parsed.utcoffset() is not None:
             row[target] = parsed
     return row
