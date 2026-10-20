@@ -273,6 +273,13 @@ SAM 两个 MongoDB 集合分别写入 `ts_rds.rds_contract`（`sam_gov_awards`�
 SAM 日增需在完整采集、写入及水位验证通过后注册到 `public.automation_tasks`；合同还需
 Worker 可用的 `SAM_GOV_API_KEY` 以及完整变更/删除流验证，公告快照中缺失的记录不推断为删除。
 
+USAspending 合同模板为 `usaspending`，使用免 Key 的官方批量 CSV 导出，按 FPDS
+`last_modified_date` 获取 A/B/C/D 主合同及修订交易，默认重叠回扫 7 天、截至 UTC 昨日。
+下载的 ZIP/CSV 在内存中校验及分批保存，完整保留原字段；交易唯一键决定身份，
+独立来源写入现有 `rds_contract` / `ods_contract`，不覆盖 SAM 记录。
+此模板不包含 IDV、分包、补助或合同附件；源修改时间不同于 USAspending 入库时间，
+超过回扫窗口的迟到数据需按历史修改日期补抓。启用同步前须部署新的记录规则和 ODS normalizer。
+
 各 topic 内仍按顺序逐条处理、成功后提交，数据库连接池由 RDS 统一管理。
 RDS 按实际目标表输出到 `${SPIDER_ETL_RDS_TOPIC}-<表名后缀>`，例如 `rds_news` 对应 `etl-rds-news`、`rds_financial_fact` 对应 `etl-rds-financial_fact`（以配置的 topic 前缀为准）。
 上线前创建这些 RDS 输出 topic，并先更新 ODS 再更新 RDS；ODS 兼容订阅旧公共 topic 与新拆分 topic，本次未改变 ODS 的串行处理及公共输出。
