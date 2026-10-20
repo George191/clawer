@@ -604,7 +604,7 @@ class TsOds(ETLBase):
     _layer = "ods"
     _consumer_topics = [
         f"{settings.etl_rds_topic}-{table}" for table in SYNC_DATA_TYPES
-    ] + [f"{settings.etl_rds_topic}-tender"]
+    ]
     _consumer_group = settings.etl_ods_consumer_group
     _producer_topic = settings.etl_ods_topic
     _producer_client_id = "etl-ts-ods-producer"

@@ -2,5 +2,5 @@
 
 SYNC_DATA_TYPES = (
     "news", "patent", "navwarn", "intelligence", "company",
-    "financial_fact", "filing", "account", "tweet", "contract",
+    "financial_fact", "filing", "account", "tweet", "contract", "tender",
 )

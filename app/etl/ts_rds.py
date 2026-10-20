@@ -113,9 +113,7 @@ class TsRds(ETLBase):
         return await self._process_rds_record(message, table="filing")
 
     async def _handler_contract(self, message: dict[str, Any]) -> bool:
-        source = extract_meta(message).get("data_source")
-        table = "tender" if source == "sam_gov_opportunities" else "contract"
-        return await self._process_rds_record(message, table=table)
+        return await self._process_rds_record(message, table="contract")
 
     async def _handler_tender(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="tender")

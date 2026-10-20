@@ -180,5 +180,5 @@ def normalize_sam_gov_opportunity(record: dict[str, Any]) -> dict[str, Any]:
 
 
 register_normalizer("contract", "sam_gov_awards", normalize_sam_gov_award)
-register_normalizer("contract", "sam_gov_opportunities", normalize_sam_gov_opportunity)
+register_normalizer("tender", "sam_gov_opportunities", normalize_sam_gov_opportunity)
 register_normalizer("contract", "usaspending", normalize_usaspending_contract)
