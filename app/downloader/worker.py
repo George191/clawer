@@ -105,12 +105,12 @@ class DownloadWorker:
 
     async def _target_collections(self) -> tuple[str | None, ...]:
         """Refresh configured collection routes from PostgreSQL on every batch."""
-        if self._data_type is None and self._template_name is None:
-            return collections_for_template(self._template_name)
         routes = await collection_route_store.list_by_data_type(
             self._data_type, self._template_name,
         )
         self._collection_routes = {route["collection_name"]: route for route in routes}
+        if self._data_type is None and self._template_name is None:
+            return collections_for_template(self._template_name)
         return tuple(self._collection_routes)
 
     async def _download_list(self, records: list[dict[str, Any]]) -> None:
