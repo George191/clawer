@@ -241,7 +241,9 @@ Compose 为 news、patent、navwarn、intelligence、company、financial_fact、
 模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 company 或 filing。修改路由在下一批生效，已读入的当前批次继续完成。
 模板的 `download[].collection` 使用实际集合名，变更实际集合时应一并更新对应下载配置。
 
-NVD 保留采集模板名 `nvd_api` / `nvd_feed`，通过别名分别写入 `nvd_vulnerability` / `nvd_feed_vulnerability`；两者的业务类型均为 `vulnerability`。实际集合改名时需同时迁移记录的 `_meta.template`（以及显式使用旧集合名的 `_meta.data_source`），保留记录 ID、业务内容、下载/同步状态及索引；已有下游数据还需核对 `data_source` 和原始记录元数据，不能仅重放造成来源重复。模板名、调度任务和增量检查点继续使用原标识。
+模板标题和任务名称只使用来源或产品名，调度周期、执行方式和数据类型使用各自字段。同源多模板的内部 `name` 保留必要的栏目或端点区别；标识改名时须同步已发布 YAML、任务引用、集合路由和断点中的模板字段，保留任务及运行批次 UUID。执行入口使用任务当前的模板标识，避免旧队列参数覆盖改名后的引用。
+
+NVD 采集模板 `nvd` / `nvd_feed` 通过别名分别写入 `nvd_vulnerability` / `nvd_feed_vulnerability`；两者的业务类型均为 `vulnerability`。模板标识与物理集合独立，模板改名通过显式路由保留既有集合、记录身份和下游来源。实际集合改名时需同时迁移记录的 `_meta.template`（以及显式使用旧集合名的 `_meta.data_source`），保留记录 ID、业务内容、下载/同步状态及索引；已有下游数据还需核对 `data_source` 和原始记录元数据，不能仅重放造成来源重复。
 
 例如禁止按类型运行的下载器与 Syncer 处理 SEC 财报集合：
 
