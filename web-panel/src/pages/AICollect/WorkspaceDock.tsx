@@ -929,6 +929,7 @@ const templateKindHints: Record<string, SiteKind> = {
   arstechnica: 'news',
   blacksky_posts: 'news',
   blacksky_press: 'news',
+  breakingdefense: 'news',
   cve_project: 'vulnerability',
   esa_discos_fragmentations: 'debrisevents',
   esa_discos_launch_vehicles: 'launchvehicles',
