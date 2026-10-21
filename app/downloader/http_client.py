@@ -19,9 +19,9 @@ import sys
 from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
 
-from curl_cffi import CurlOpt
+from curl_cffi import CurlECode, CurlOpt
 from curl_cffi import requests as curl_requests
-from curl_cffi.requests.exceptions import HTTPError, ProxyError
+from curl_cffi.requests.exceptions import HTTPError, ProxyError, RequestException
 
 from app.base.http import DownloadError, DownloadResponse
 from app.config.settings import settings
@@ -77,6 +77,24 @@ class _ResponseHeaderSession(curl_requests.AsyncSession):
         normalized = re.sub(rb"\r(?!\n)", b" ", raw_headers)
         if normalized != raw_headers:
             header_buffer = BytesIO(normalized)
+        # curl may leave partial headers after a transport failure. Keep those
+        # failures retryable instead of leaking Headers' ValueError/IndexError.
+        has_header = False
+        malformed = False
+        for line in normalized.splitlines():
+            if not line.strip():
+                continue
+            if line.startswith(b"HTTP/"):
+                has_header = False
+                malformed = False
+            elif line.startswith((b" ", b"\t")):
+                if not has_header:
+                    raise RequestException("Invalid HTTP response header", CurlECode.WEIRD_SERVER_REPLY)
+            else:
+                has_header = True
+                malformed = malformed or b":" not in line
+        if malformed:
+            raise RequestException("Invalid HTTP response header", CurlECode.WEIRD_SERVER_REPLY)
         return super()._parse_response(curl, buffer, header_buffer, *args, **kwargs)
 
 

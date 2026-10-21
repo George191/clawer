@@ -236,7 +236,7 @@ const extractListFields = (yaml: string) => {
 };
 
 const extractTemplateDataType = (yaml: string) => (
-  yaml.match(/^\s*data_type\s*:\s*['"]?([^'"\r\n#]+)['"]?/m)?.[1]?.trim() || 'other'
+  yaml.match(/^\s*data_type\s*:\s*['"]?([^'"\r\n#]+)['"]?/m)?.[1]?.trim() || ''
 );
 
 const normalizePanelTemplateYaml = (yaml: string) => {
@@ -851,7 +851,7 @@ const mapWorkspaceTemplate = (item: WorkspaceTemplate): TemplateAsset => ({
   icon: 'code',
   taskCount: item.task_count,
   faviconUrl: item.favicon_url,
-  dataType: item.data_type ?? extractTemplateDataType(item.yaml_content ?? ''),
+  dataType: item.data_type?.trim() || extractTemplateDataType(item.yaml_content ?? ''),
   templateUrl: versionTemplateUrl(item.template, item.updated_at),
   templatePath: item.template_path,
 });
@@ -875,7 +875,7 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
     : `${item.template_name ?? ''}@${item.template_version ?? ''}`,
   group: 'prototype',
   area: item.template_name ? `${item.template_name.replace(/_/g, ' ')} workspace` : item.product_domain ?? 'platform',
-  dataType: item.data_type,
+  dataType: item.data_type?.trim() || undefined,
   faviconUrl: item.favicon_url,
   status: item.status,
   progress: item.progress,
@@ -925,9 +925,41 @@ const toAvatarLabel = (value: string) => {
   return initials || 'AI';
 };
 
-export const inferSiteKind = (value: string): SiteKind => {
-  const text = value.trim().toLowerCase();
+const templateKindHints: Record<string, SiteKind> = {
+  arstechnica: 'news',
+  blacksky_posts: 'news',
+  blacksky_press: 'news',
+  cve_project: 'vulnerability',
+  esa_discos_fragmentations: 'debrisevents',
+  esa_discos_launch_vehicles: 'launchvehicles',
+  gunter_launch: 'launchinfo',
+  launch_nro: 'launchinfo',
+  launch_nssl: 'launchinfo',
+  launch_ussf: 'launchinfo',
+  nvd_api: 'vulnerability',
+  nvd_feed: 'vulnerability',
+  planet: 'intelligence',
+  sam_gov_awards: 'contract',
+  sam_gov_opportunities: 'contract',
+  satellite_today: 'news',
+  satnogs_satellites: 'satellite',
+  satnogs_transmitters: 'frequency',
+  sec_edgar: 'financial_report',
+  space_launch_now_launches: 'launchinfo',
+  ssc_press: 'news',
+  usaspending: 'contract',
+};
+
+export const inferSiteKind = (value: string, fallback?: string): SiteKind => {
+  const text = value.replace(/@.*$/, '').trim().toLowerCase();
   if (Object.prototype.hasOwnProperty.call(siteKindMeta, text)) return text as SiteKind;
+  if (text === 'other') return 'generic';
+  if (Object.prototype.hasOwnProperty.call(templateKindHints, text)) return templateKindHints[text];
+  if (Object.prototype.hasOwnProperty.call(siteProfileRegistry, text)) return siteProfileRegistry[text].kind;
+  const namedKind = (Object.keys(siteKindMeta) as SiteKind[]).find((kind) => (
+    text.startsWith(`${kind}_`) || text.endsWith(`_${kind}`)
+  ));
+  if (namedKind) return namedKind;
   if (/financial[_\s-]*report/.test(text)) return 'financial_report';
   if (/social[_\s-]*media|twitter|tweet|社交媒体/.test(text)) return 'social_media';
   if (text.includes('game') || text.includes('游戏')) return 'game';
@@ -936,7 +968,7 @@ export const inferSiteKind = (value: string): SiteKind => {
   if (text.includes('notice') || text.includes('news') || text.includes('公告') || text.includes('新闻')) return 'news';
   if (text.includes('signal') || text.includes('quality') || text.includes('质量')) return 'signal';
   if (text.includes('market') || text.includes('intel') || text.includes('情报') || text.includes('pdf') || text.includes('document')) return 'intelligence';
-  return 'generic';
+  return fallback ? inferSiteKind(fallback) : 'generic';
 };
 
 const deriveBrandFromKey = (value: string) => {
@@ -950,12 +982,12 @@ const deriveBrandFromKey = (value: string) => {
   return { brand, logo };
 };
 
-const resolveSiteProfile = (value: string): SiteProfile => {
-  const normalized = value.replace(/@.*$/, '');
+const resolveSiteProfile = (value: string, dataType?: string): SiteProfile => {
+  const normalized = value.replace(/@.*$/, '').trim().toLowerCase();
   const exact = siteProfileRegistry[normalized];
-  if (exact) return exact;
+  const kind = inferSiteKind(dataType || '', normalized);
+  if (Object.prototype.hasOwnProperty.call(siteProfileRegistry, normalized)) return { ...exact, kind };
 
-  const kind = inferSiteKind(value);
   const derived = deriveBrandFromKey(normalized);
   return {
     kind,
@@ -1317,7 +1349,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, []);
 
   const applyWorkspaceTasks = useCallback((items: WorkspaceTask[]) => {
-    setTaskItems(items.map(mapWorkspaceTask));
+    setTaskItems((current) => items.map((item) => {
+      const mappedTask = mapWorkspaceTask(item);
+      return {
+        ...mappedTask,
+        dataType: mappedTask.dataType ?? current.find((task) => task.key === item.id)?.dataType,
+      };
+    }));
     setTaskRuntime((current) => Object.fromEntries(items.map((item) => {
       const runtime = mapWorkspaceTaskRuntime(item);
       const existing = current[item.id];
@@ -1334,7 +1372,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   }, []);
 
   const applyWorkspaceTemplates = useCallback((items: WorkspaceTemplate[]) => {
-    setTemplates(items.map(mapWorkspaceTemplate));
+    setTemplates((current) => items.map((item) => {
+      const mappedTemplate = mapWorkspaceTemplate(item);
+      return {
+        ...mappedTemplate,
+        dataType: mappedTemplate.dataType || current.find((template) => template.key === item.id)?.dataType || '',
+      };
+    }));
     setTemplateDrafts((current) => Object.fromEntries(items.map((item) => [item.id, {
       adapter: item.adapter,
       adapterCode: item.adapter_code ?? current[item.id]?.adapterCode ?? '',
@@ -1550,11 +1594,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const allTaskRows = useMemo<TaskRow[]>(() => taskItems.filter((item) => !embedded || item.scheduleEnabled !== false).map((item) => {
     const runtime = taskRuntime[item.key] ?? buildTaskRuntimeItem(item);
+    const template = templates.find((candidate) => `${candidate.name}@${candidate.version}` === item.template);
+    const dataType = item.dataType?.trim() || template?.dataType?.trim() || '';
     const site: SiteProfile = item.taskType === 'celery'
       ? { kind: 'system', brand: 'System', logo: <SettingOutlined />, hue: siteKindMeta.system.tint }
-      : resolveSiteProfile(item.template);
-    const template = templates.find((candidate) => `${candidate.name}@${candidate.version}` === item.template);
-    const dataType = item.dataType || template?.dataType || '';
+      : resolveSiteProfile(item.template, dataType);
     return {
       ...item,
       dataType,
@@ -1563,7 +1607,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         ? site
         : {
           ...site,
-          kind: dataType ? inferSiteKind(dataType) : template ? inferSiteKind(template.name) : site.kind,
           faviconUrl: item.faviconUrl || template?.faviconUrl,
         },
       display: getTaskDisplay(runtime),
@@ -1626,7 +1669,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         label: `${item.name}@${item.version}`,
         title: item.title,
         version: item.version,
-        site: resolveSiteProfile(item.name),
+        site: resolveSiteProfile(item.name, item.dataType),
       })),
     [templates],
   );
@@ -2167,6 +2210,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         savedAt: item.lastRun,
       };
       setTemplateDrafts((current) => ({ ...current, [item.key]: detailDraft }));
+      const dataType = extractTemplateDataType(templateYaml);
+      if (dataType) {
+        setTemplates((current) => current.map((template) => (
+          template.key === item.key && !template.dataType?.trim() ? { ...template, dataType } : template
+        )));
+      }
       if (taskComposerOpen) {
         const templateValue = `${item.name}@${item.version}`;
         setTaskComposerDraft((current) => ({
@@ -2195,7 +2244,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         const draft = templateDrafts[item.key];
         const isSelected = selectedTemplateKey === item.key;
         const isPinned = Boolean(pinnedTemplateKeys[item.key]);
-        const site = resolveSiteProfile(item.name);
+        const site = resolveSiteProfile(item.name, item.dataType);
         const linkedTaskCount = templateTaskCounts[item.key] ?? item.taskCount;
         const statusIcon = item.status === 'draft'
           ? <ReleaseDraftIcon />
@@ -2216,7 +2265,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   <div className="workspace-dock-card-titleline">
                     <span className="workspace-dock-card-title-leading">
                       <span className="workspace-dock-card-icon">
-                        <TemplateGlyph kind={inferSiteKind(item.dataType || item.name)} />
+                        <TemplateGlyph kind={inferSiteKind(item.dataType || '', item.name)} />
                       </span>
                       <Text strong>{item.title}</Text>
                     </span>
@@ -2355,7 +2404,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const renderTaskComposer = () => {
     const matchedTemplate = templates.find((item) => `${item.name}@${item.version}` === taskComposerDraft.template) ?? null;
-    const composerKind = matchedTemplate ? resolveSiteProfile(matchedTemplate.name).kind : 'generic';
+    const composerKind = matchedTemplate ? inferSiteKind(matchedTemplate.dataType || '', matchedTemplate.name) : 'generic';
     const composerSummary = taskComposerDraft.scheduleMode === 'once'
       ? '一次性任务适合补采、验证模板参数，默认按全量采集执行。'
       : taskComposerDraft.recurringMode === 'daily'
@@ -2579,7 +2628,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
   const renderTaskComposerClean = () => {
     const matchedTemplate = templates.find((item) => `${item.name}@${item.version}` === taskComposerDraft.template) ?? null;
-    const composerKind = matchedTemplate ? resolveSiteProfile(matchedTemplate.name).kind : 'generic';
+    const composerKind = matchedTemplate ? inferSiteKind(matchedTemplate.dataType || '', matchedTemplate.name) : 'generic';
     const scheduleModeLabel = taskComposerDraft.scheduleMode === 'once' ? 'One-time Task' : 'Recurring Task';
     const nextRunSummary = taskComposerDraft.scheduleMode === 'once'
       ? 'Manual start'
@@ -2901,7 +2950,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       <section className="workspace-dock-detail">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
-            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={inferSiteKind(selectedTemplate.dataType || selectedTemplate.name)} /></span>
+            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={inferSiteKind(selectedTemplate.dataType || '', selectedTemplate.name)} /></span>
             <div>
               <Text strong className="workspace-dock-detail-title">{selectedTemplate.title}</Text>
               <Text type="secondary">{selectedTemplate.name}</Text>
