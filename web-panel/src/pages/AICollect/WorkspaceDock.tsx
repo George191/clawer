@@ -869,7 +869,7 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   productDomain: item.product_domain ?? String(item.parameters?.product_domain ?? 'ai-collect'),
   taskType: item.task_type ?? 'template',
   scheduleEnabled: item.schedule?.enabled !== false,
-  name: item.name.replace(/\s+task$/i, ''),
+  name: item.name,
   template: item.task_type === 'celery'
     ? item.task_path || item.name
     : `${item.template_name ?? ''}@${item.template_version ?? ''}`,
@@ -2078,9 +2078,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       || taskTemplateOptions[0]?.value
       || '';
     const matchedTemplate = templates.find((item) => `${item.name}@${item.version}` === normalizedTemplate) ?? null;
-    const fallbackName = normalizedTemplate
+    const fallbackName = matchedTemplate?.title || (normalizedTemplate
       ? normalizeTemplateKey(normalizedTemplate).replace(/_/g, ' ')
-      : 'New collect';
+      : 'New collect');
     const nextTask: CollectTask = {
       key: `task-${Date.now()}`,
       name: taskComposerDraft.name.trim() || fallbackName,
