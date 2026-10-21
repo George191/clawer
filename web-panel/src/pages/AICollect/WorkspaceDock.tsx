@@ -3387,8 +3387,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </div>
             <div className="workspace-dock-log-list is-detail">
               {taskLogsLoading ? <div className="workspace-dock-log-row">正在加载执行日志…</div> : null}
-              {selectedRunLogs.slice().reverse().map((log) => (
-                <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.runId}-${log.createdAt}-${log.message}`}>
+              {selectedRunLogs.slice().reverse().map((log, index) => (
+                <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.runId}-${log.createdAt}-${log.message}-${index}`}>
                   <code>{renderConsoleLogMessage(log.message)}</code>
                 </div>
               ))}
