@@ -11,6 +11,7 @@ from sqlalchemy import text
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
 from app.logger import get_logger
+from app.records.values import require_canonical_record
 from app.records.types import SYNC_DATA_TYPES
 from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
@@ -147,6 +148,7 @@ class TsRds(ETLBase):
 
     async def _process_rds_record(self, message: dict[str, Any], table: str) -> bool:
         try:
+            require_canonical_record(message)
             meta = extract_meta(message)
             data_source = meta.get("data_source") or ""
             data_type = meta.get("data_type") or table
@@ -185,7 +187,6 @@ class TsRds(ETLBase):
                 partial(self._write_current, table=table, payload=payload),
                 payload=payload,
             )
-
             await self._emit(
                 result, record_id=record_id, data_source=data_source, data_type=data_type,
                 topic=f"{settings.etl_rds_topic}-{table}",
