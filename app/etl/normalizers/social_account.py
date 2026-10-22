@@ -7,6 +7,7 @@ from typing import Any
 
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_datetime, safe_str
+from app.records.field_names import normalize_record_fields
 from app.utils.twitter_record import twitter_entity_id, twitter_record_id, twitter_record_identity
 
 
@@ -31,7 +32,7 @@ def normalize_twitter_author(user: dict[str, Any], captured_at: Any) -> dict[str
         "content_count": user.get("statuses_count"),
         "location": safe_str(user.get("location")),
         "language": safe_str(user.get("lang")),
-        "extra": json.dumps({"source_user": user}, ensure_ascii=False),
+        "extra": json.dumps(normalize_record_fields({"source_user": user}), ensure_ascii=False),
         "captured_at": captured_at,
     }
 

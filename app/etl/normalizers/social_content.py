@@ -7,6 +7,7 @@ from typing import Any
 
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_datetime, safe_str
+from app.records.field_names import normalize_record_fields
 from app.utils.twitter_record import (
     project_twitter_record,
     twitter_entity_id,
@@ -53,8 +54,9 @@ def _normalize_twitter_content(tweet: dict[str, Any]) -> dict[str, Any]:
         "quote_count": metrics.get("quote_count"),
         "view_count": metrics.get("impression_count"),
         "is_sensitive": tweet.get("possibly_sensitive"),
-        "extra": json.dumps({key: value for key, value in tweet.items()
-                             if key not in {"_id", "_meta"}}, ensure_ascii=False),
+        "extra": json.dumps(normalize_record_fields({"extra": {
+            key: value for key, value in tweet.items() if key not in {"_id", "_meta"}
+        }})["extra"], ensure_ascii=False),
         "captured_at": created_at,
     }
 

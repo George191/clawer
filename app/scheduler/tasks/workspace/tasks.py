@@ -242,6 +242,7 @@ async def _crawl_template(
         policies = dict(task.get("policies") or {})
         params = {str(key): str(value) for key, value in parameters.items() if value is not None}
         template_version = str(task.get("template_version") or "v1.0")
+        template_name = str(task.get("template_name") or template_name)
         released = await TemplateLoader().load_released(
             template_name,
             template_version,

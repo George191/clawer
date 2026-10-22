@@ -73,6 +73,7 @@ download:
     description: "Download URL."
 
 Allowed values:
+- Business field names use lowercase snake_case; upstream selectors retain their original spelling. Describe each business attribute once instead of adding raw snapshots alongside mapped fields.
 - response_type: html | json
 - selector_type: css | xpath | regex | json
 - field_type/link_type: text | attr | html | href | src | json | number | boolean

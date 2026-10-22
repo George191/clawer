@@ -18,6 +18,7 @@ from typing import Any
 
 from app.config.settings import settings
 from app.logger import get_logger
+from app.records.values import require_canonical_record
 
 logger = get_logger(__name__)
 
@@ -181,6 +182,7 @@ def build_doc_from_row(
             except json.JSONDecodeError:
                 raw = {}
         if isinstance(raw, dict):
+            require_canonical_record(raw)
             for key, value in raw.items():
                 # 应用字段重命名
                 mapped_key = table_config.field_mapping.get(key, key)

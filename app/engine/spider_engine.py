@@ -44,6 +44,7 @@ from app.models.template import (
 from app.parser.template_parser import TemplateParser
 from app.records.base import RecordStore
 from app.records.file_store import FileRecordStore
+from app.records.field_names import normalize_record_fields
 from app.utils.path import get_nested_value
 from app.utils.runtime_control import check_control_state
 
@@ -176,6 +177,7 @@ class SpiderEngine:
         records: list[dict[str, Any]],
         result: CrawlResult,
     ) -> int:
+        records = [normalize_record_fields(record, data_source=template.name) for record in records]
         sensitive_params = {param.name for param in template.params if param.sensitive}
         search_params = {
             key: value for key, value in (getattr(template, "_param_values", None) or {}).items()
@@ -219,6 +221,7 @@ class SpiderEngine:
         records: list[dict[str, Any]],
         result: CrawlResult,
     ) -> tuple[FilteredRecords, int]:
+        records = [normalize_record_fields(record, data_source=template.name) for record in records]
         watermark = template._crawl_context.get("incremental_watermark")
         if not isinstance(watermark, TimeWatermark):
             watermark = TimeWatermark(False, "", None, "")

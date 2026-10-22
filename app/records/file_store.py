@@ -9,6 +9,8 @@ from typing import Any
 
 from app.logger import get_logger
 from app.records.base import RecordStore
+from app.records.field_names import normalize_record_fields
+from app.records.values import record_values_equal, require_canonical_record
 from app.storage.file_client import FileClient
 from app.utils.path import get_nested_value
 
@@ -66,7 +68,7 @@ class FileRecordStore(FileClient, RecordStore):
         return {
             key: value
             for key, value in record.items()
-            if key not in {"_meta", "_meta_search_params"}
+            if key not in {"_meta", "_meta_search_params", "data_type"}
         }
 
     async def save_record(
@@ -76,10 +78,13 @@ class FileRecordStore(FileClient, RecordStore):
         dedup_fields: list[str],
         record: dict[str, Any],
     ) -> str:
+        record = normalize_record_fields(record, data_source=template_name)
+        require_canonical_record(record)
         record_dir = self._get_record_dir(template_name, data_type)
         file_path = self._record_path(record_dir, record, dedup_fields)
         record_id = file_path.stem
 
+        record = dict(record)
         search_params = record.pop("_meta_search_params", None) or {}
 
         existing: dict[str, Any] = {}
@@ -99,14 +104,14 @@ class FileRecordStore(FileClient, RecordStore):
                 "download_status": existing_meta.get("download_status", "pending"),
                 "sync_status": (
                     "pending"
-                    if existing and self._business_content(existing) != record
+                    if existing and not record_values_equal(self._business_content(existing), self._business_content(record))
                     else existing_meta.get("sync_status", "pending")
                 ),
                 "search_params": existing_params,
             },
         }
-
-        if record_with_meta != existing:
+        require_canonical_record(record_with_meta)
+        if not record_values_equal(record_with_meta, existing):
             self.write_json(file_path, record_with_meta)
         logger.debug("Saved record: %s", file_path)
         return str(file_path)
@@ -118,6 +123,9 @@ class FileRecordStore(FileClient, RecordStore):
         dedup_fields: list[str],
         records: list[dict[str, Any]],
     ) -> list[str]:
+        records = [normalize_record_fields(record, data_source=template_name) for record in records]
+        for record in records:
+            require_canonical_record(record)
         record_dir = self._get_record_dir(template_name, data_type)
         inserted = 0
         updated = 0
@@ -128,7 +136,7 @@ class FileRecordStore(FileClient, RecordStore):
                 inserted += 1
                 continue
             existing = self.read_json(path)
-            if self._business_content(existing) == self._business_content(record):
+            if record_values_equal(self._business_content(existing), self._business_content(record)):
                 unchanged += 1
             else:
                 updated += 1

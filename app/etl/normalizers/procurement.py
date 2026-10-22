@@ -54,16 +54,14 @@ def _business_date(value: Any) -> date | None:
 
 
 def _award_source_id(record: dict[str, Any]) -> str | None:
-    source = record.get("source_data") or {}
-    contract = source.get("contractId") or {}
     values = [
-        (contract.get("subtier") or {}).get("code", record.get("agency_code")),
-        contract.get("piid", record.get("contract_number")),
-        contract.get("modificationNumber", record.get("modification_number")),
-        contract.get("transactionNumber", record.get("transaction_number")) or "0",
-        (contract.get("referencedIDVSubtier") or {}).get("code", record.get("referenced_idv_agency_code")),
-        contract.get("referencedIDVPiid", record.get("referenced_idv_piid")),
-        contract.get("referencedIDVModificationNumber", record.get("referenced_idv_modification_number")),
+        record.get("contract_agency_code"),
+        record.get("contract_number"),
+        record.get("modification_number"),
+        record.get("transaction_number") or "0",
+        record.get("referenced_idv_agency_code"),
+        record.get("referenced_idv_piid"),
+        record.get("referenced_idv_modification_number"),
     ]
     identifiers = [str(value if value is not None else "").strip() for value in values]
     if all(identifiers[:3]):
@@ -85,8 +83,8 @@ def _common(record: dict[str, Any], source: str, data_type: str, source_id: str 
         "title": safe_str(record.get("title")),
         "content": safe_str(record.get("content")),
         "url": safe_str(record.get("url")),
-        "source_updated_at": _source_datetime(record.get("updated_at")),
-        "source_updated_at_raw": safe_str(record.get("updated_at")),
+        "source_updated_at": _source_datetime(record.get("source_updated_at")),
+        "source_updated_at_raw": safe_str(record.get("source_updated_at")),
         "captured_at": safe_datetime(meta.get("updated_at")),
         "deleted": _boolean(record.get("deleted")) is True,
     }
@@ -103,7 +101,7 @@ def _normalize_contract(
         "agency_code", "agency_name", "contracting_department_code", "contracting_department_name",
         "contracting_office_code", "contracting_office_name", "funding_agency_code", "funding_agency_name",
         "funding_department_code", "funding_department_name", "funding_office_code", "funding_office_name",
-        "awardee_name", "awardee_uei", "awardee_cage_code", "naics_code", "psc_code", "amount_type",
+        "awardee_name", "awardee_uei", "awardee_cage_code", "naics_code", "psc_code",
     ):
         row[field] = safe_str(record.get(field))
     for field in (
@@ -112,15 +110,17 @@ def _normalize_contract(
     ):
         row[field] = _business_date(record.get(field))
     for field in (
-        "amount", "action_obligation", "base_dollars_obligated", "base_and_exercised_options_value",
+        "action_obligation", "base_dollars_obligated", "base_and_exercised_options_value",
         "base_and_all_options_value", "total_action_obligation", "total_base_and_exercised_options_value",
         "total_base_and_all_options_value",
     ):
         row[field] = _decimal(record.get(field))
     row.update({
         "solicitation_number": safe_str(record.get("solicitation_id")),
-        "source_created_at": _source_datetime(record.get("created_at")),
-        "source_created_at_raw": safe_str(record.get("created_at")),
+        "source_created_at": _source_datetime(record.get("source_created_at")),
+        "source_created_at_raw": safe_str(record.get("source_created_at")),
+        "amount": row["action_obligation"],
+        "amount_type": "federal_action_obligation" if source == "usaspending" else "action_obligation",
         "awardee_address": json_dumps(record.get("awardee_address")),
         "place_of_performance": json_dumps(record.get("place_of_performance")),
         "currency": safe_str(record.get("currency")) or "USD",
@@ -129,24 +129,28 @@ def _normalize_contract(
 
 
 def normalize_sam_gov_award(record: dict[str, Any]) -> dict[str, Any]:
-    return _normalize_contract(record, "sam_gov_awards", _award_source_id(record))
+    row = _normalize_contract(record, "sam_gov_awards", _award_source_id(record))
+    naics = record.get("principal_naics") or {}
+    if isinstance(naics, list):
+        naics = next((entry for entry in naics if isinstance(entry, dict)), {})
+    value = naics.get("code") if isinstance(naics, dict) else None
+    text = " ".join(str(value).split()) if value is not None else ""
+    row["naics_code"] = None if text.lower() in {"", "null", "n/a"} else text
+    return row
 
 
 def normalize_usaspending_contract(record: dict[str, Any]) -> dict[str, Any]:
     row = _normalize_contract(record, "usaspending", safe_str(record.get("id")))
-    for source, target in (("created_at", "source_created_at"), ("updated_at", "source_updated_at")):
-        native_field = "initial_report_date" if source == "created_at" else "last_modified_date"
-        value = (record.get("source_data") or {}).get(native_field) or record.get(source)
-        row[target + "_raw"] = safe_str(value)
-        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-        if parsed.tzinfo is not None and parsed.utcoffset() is not None:
-            row[target] = parsed
+    for field in ("source_created_at", "source_updated_at"):
+        value = record.get(field)
+        row[field + "_raw"] = safe_str(value)
+        # USAspending's normalized source dates have always used midnight UTC.
+        row[field] = safe_datetime(value)
     return row
 
 
 def normalize_sam_gov_opportunity(record: dict[str, Any]) -> dict[str, Any]:
-    source = record.get("source_data") or {}
-    notice_id = safe_str(record.get("id")) or safe_str(source.get("NoticeId")) or safe_str(source.get("noticeId"))
+    notice_id = safe_str(record.get("id"))
     row = _common(record, "sam_gov_opportunities", "tender", notice_id)
     for field in (
         "solicitation_number", "notice_type", "base_type", "agency_code", "agency_name", "naics_code",

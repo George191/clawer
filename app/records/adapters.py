@@ -37,7 +37,7 @@ class RecordAdapter:
         return records
 
     def clean(self, record: dict[str, Any]) -> dict[str, Any]:
-        return self.storage._drop_none_values(record)
+        return dict(record)
 
     def identity(self, record: dict[str, Any]) -> dict[str, Any]:
         return {field: get_nested_value(record, field) for field in self.dedup_fields}
@@ -45,6 +45,8 @@ class RecordAdapter:
     def merge(
         self, existing: dict[str, Any], incoming: dict[str, Any],
     ) -> dict[str, Any]:
+        if not existing:
+            return dict(incoming)
         return self.storage._merge_non_empty_fields(existing, incoming)
 
     async def finalize(
@@ -115,7 +117,7 @@ class SamSnapshotAdapter(RecordAdapter):
     def merge(
         self, existing: dict[str, Any], incoming: dict[str, Any],
     ) -> dict[str, Any]:
-        if "_meta" not in incoming:
+        if not (incoming.get("_meta") or {}).get("record_id"):
             return incoming
         merged = dict(incoming)
         if incoming.get("deleted") is True:
@@ -152,34 +154,15 @@ class SamOpportunityAdapter(SamSnapshotAdapter):
         self, existing: dict[str, Any], incoming: dict[str, Any],
     ) -> dict[str, Any]:
         merged = super().merge(existing, incoming)
-        source = incoming.get("source_data") or {}
-        if incoming.get("deleted") is True or not isinstance(source, dict):
+        if incoming.get("deleted") is True:
             return merged
-        from_csv = "NoticeId" in source
-        if not from_csv and "noticeId" not in source:
-            return merged
-        previous_source = existing.get("source_data") or {}
-        merged["source_data"] = {**previous_source, **source}
+        merged = {**existing, **merged}
         for field in ("award", "place_of_performance"):
             if field in incoming:
                 merged[field] = self._merge_source_object(existing.get(field), incoming[field])
-        if from_csv:
-            # The public CSV has no attachment or description-endpoint fields.
-            for field in ("attachments", "description_url"):
-                if field in existing:
-                    merged[field] = existing[field]
-            if "noticeId" in previous_source and not incoming.get("content"):
-                merged["content"] = existing.get("content", "")
-        else:
-            for field in (
-                "base_type", "archive_type", "archive_date", "set_aside_code", "set_aside",
-                "organization_type", "office_address", "additional_info_url",
-            ):
-                if field in existing and field not in incoming:
-                    merged[field] = existing[field]
-            # API list requests may intentionally skip the separate body request.
-            if not incoming.get("content"):
-                merged["content"] = existing.get("content", "")
+        # A list response can omit the separately fetched description body.
+        if not incoming.get("content") and "content" in existing:
+            merged["content"] = existing["content"]
         merged["attachments_available"] = bool(merged.get("attachments"))
         return merged
 
@@ -187,19 +170,17 @@ class SamOpportunityAdapter(SamSnapshotAdapter):
 class SamAwardAdapter(SamSnapshotAdapter):
     @staticmethod
     def _identifiers(record: dict[str, Any]) -> list[str] | None:
-        contract = (record.get("source_data") or {}).get("contractId")
-        if not contract:
-            return None
         values = [
-            (contract.get("subtier") or {}).get("code"),
-            contract.get("piid"),
-            contract.get("modificationNumber"),
-            str(contract.get("transactionNumber") or "0").strip() or "0",
-            (contract.get("referencedIDVSubtier") or {}).get("code"),
-            contract.get("referencedIDVPiid"),
-            contract.get("referencedIDVModificationNumber"),
+            record.get("contract_agency_code"),
+            record.get("contract_number"),
+            record.get("modification_number"),
+            str(record.get("transaction_number") or "0").strip() or "0",
+            record.get("referenced_idv_agency_code"),
+            record.get("referenced_idv_piid"),
+            record.get("referenced_idv_modification_number"),
         ]
-        return [str(value if value is not None else "").strip() for value in values]
+        identifiers = [str(value if value is not None else "").strip() for value in values]
+        return identifiers if all(identifiers[:3]) else None
 
     @staticmethod
     def _format_id(identifiers: list[str]) -> str:
@@ -208,6 +189,7 @@ class SamAwardAdapter(SamSnapshotAdapter):
         )
 
     def clean(self, record: dict[str, Any]) -> dict[str, Any]:
+        record = dict(record)
         identifiers = self._identifiers(record)
         if identifiers is not None:
             record = dict(record)

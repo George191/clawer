@@ -21,6 +21,8 @@ from app.logger import get_logger
 from app.records.adapters import get_record_adapter
 from app.records.base import RecordStore
 from app.records.collection_routes import collection_route_store
+from app.records.field_names import normalize_record_fields
+from app.records.values import record_values_equal, require_canonical_record
 from app.storage.mongo_client import MongoClient
 from app.utils.record_id import resolve_record_id
 from app.utils.runtime_control import workspace_search_params
@@ -80,7 +82,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         return {
             key: value
             for key, value in record.items()
-            if key not in {"_id", "_meta"}
+            if key not in {"_id", "_meta", "data_type"}
         }
 
     @staticmethod
@@ -93,7 +95,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         search_params: dict[str, Any],
         now: datetime,
     ) -> dict[str, Any]:
-        return {
+        result = {
             **record,
             "_meta": {
                 "template": template_name,
@@ -106,6 +108,7 @@ class MongoRecordStore(MongoClient, RecordStore):
                 "updated_at": now,
             },
         }
+        return result
 
     @staticmethod
     def _has_meaningful_value(value: Any) -> bool:
@@ -164,6 +167,9 @@ class MongoRecordStore(MongoClient, RecordStore):
     ) -> list[str]:
         if not records:
             return []
+        records = [normalize_record_fields(record, data_source=template_name) for record in records]
+        for record in records:
+            require_canonical_record(record)
 
         route = await collection_route_store.resolve_for_write(
             self._get_collection_name(template_name), data_type,
@@ -235,15 +241,16 @@ class MongoRecordStore(MongoClient, RecordStore):
             deletion = adapter.is_deletion(existing, cleaned_record)
             final_record = adapter.merge(existing or {}, record_with_meta)
             final_record = await adapter.finalize(final_record, search_params)
+            require_canonical_record(final_record)
             if existing:
                 existing_meta = existing.get("_meta", {})
                 final_record["_meta"]["created_at"] = existing_meta.get("created_at", now)
                 final_record["_meta"]["download_status"] = existing_meta.get(
                     "download_status", "pending"
                 )
-                business_changed = self._business_content(
-                    existing
-                ) != self._business_content(final_record)
+                business_changed = not record_values_equal(
+                    self._business_content(existing), self._business_content(final_record),
+                )
                 search_params_changed = existing_meta.get(
                     "search_params", {}
                 ) != final_record["_meta"].get("search_params", {})
@@ -251,7 +258,8 @@ class MongoRecordStore(MongoClient, RecordStore):
                     existing_meta.get(key) != final_record["_meta"].get(key)
                     for key in ("data_type", "data_source")
                 )
-                if business_changed or metadata_changed:
+                data_source_changed = existing_meta.get("data_source") != final_record["_meta"].get("data_source")
+                if business_changed or data_source_changed:
                     # A write without a batch identity cannot inherit the old
                     # batch's attribution merely by merging existing metadata.
                     final_params = final_record["_meta"].get("search_params", {})
@@ -279,14 +287,14 @@ class MongoRecordStore(MongoClient, RecordStore):
                         "updated_at", now
                     )
                     unchanged_count += 1
-                    if not search_params_changed and (
+                    if not metadata_changed and not search_params_changed and (
                         sync_status is None or final_record["_meta"]["sync_status"] == sync_status
                     ):
                         continue
             else:
                 inserted_count += 1
 
-            if not existing or business_changed or metadata_changed:
+            if not existing or business_changed or data_source_changed:
                 owner = final_record["_meta"].get("search_params", {})
                 task_id = str(owner.get("__workspace_task_id") or "")
                 run_id = str(owner.get("__workspace_run_id") or "")

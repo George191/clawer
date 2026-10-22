@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.utils.record_id import resolve_record_id
+from app.records.field_names import SYSTEM_ROOT_FIELDS
 
 TWITTER_COLLECTION_TYPES = {"tw_account": "account", "tw_tweet": "tweet", "twitter": "tweet"}
 
@@ -20,6 +21,30 @@ TWITTER_METRICS = {
     "replyCount": "reply_count", "retweetCount": "retweet_count", "likeCount": "like_count",
     "quoteCount": "quote_count", "bookmarkedCount": "bookmark_count", "viewCount": "impression_count",
 }
+
+
+def consume_twitter_media_aliases(record):
+    """Consume the explicit native content-type alias inside Twitter media.
+
+    The existing canonical field is authoritative. Every other value, including
+    all media variants and system metadata, remains unchanged.
+    """
+    def visit(value, *, media=False):
+        if isinstance(value, list):
+            return [visit(item, media=media) for item in value]
+        if not isinstance(value, dict):
+            return value
+        result = {
+            key: child if key in SYSTEM_ROOT_FIELDS else visit(
+                child, media=media or key in {"media", "media_extra", "source_media"},
+            )
+            for key, child in value.items()
+        }
+        if media and "content_type" in result:
+            result.pop("contentType", None)
+        return result
+
+    return visit(record)
 
 
 def twitter_entity_id(kind: str, value: str | None) -> int | None:
@@ -187,4 +212,4 @@ def project_twitter_record(record, source=None, *, drop_source=False, ancestors=
     if drop_source:
         result.pop("source_tweet", None)
     result.pop("download_urls", None)
-    return result
+    return consume_twitter_media_aliases(result)
