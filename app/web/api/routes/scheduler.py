@@ -96,7 +96,7 @@ async def update_workspace_schedule(
         raise HTTPException(status_code=404, detail="调度任务不存在")
     schedule = current.get("schedule") or {}
     current_mode = schedule.get("recurring_mode") if schedule.get("mode") == "recurring" else schedule.get("mode")
-    if current_mode not in {"daily", "interval"} or current.get("control_state") == "canceled":
+    if current_mode not in {"daily", "interval"}:
         raise HTTPException(status_code=409, detail="该任务不支持修改周期调度")
     changes = payload.model_dump(exclude_unset=True)
     mode = changes.get("mode", current_mode)

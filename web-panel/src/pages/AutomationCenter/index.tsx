@@ -90,12 +90,6 @@ const formatDateTime = (value?: string) => {
 const isLinkedSchedule = (record: SelectedRecord): record is AutomationSchedule =>
   'workspace_task_id' in record && Boolean(record.workspace_task_id);
 
-/** 与后端 delete_run 规则一致：仅执行中的任务需先取消；暂停任务删除时会自动取消挂起运行 */
-const scheduleDeletable = (record: SelectedRecord) => {
-  if (!isLinkedSchedule(record)) return true;
-  return record.workspace_task_status !== 'running';
-};
-
 const extractErrorMessage = (error: unknown, fallback: string) => {
   const data = (error as { response?: { data?: { detail?: unknown } } })?.response?.data;
   return typeof data?.detail === 'string' && data.detail ? data.detail : fallback;
@@ -403,7 +397,7 @@ const AutomationCenter: React.FC = () => {
         <span className="automation-schedule-updated">Updated {relativeTime(item.updated_at)}</span>
       </div>
       <div className="automation-schedule-actions" onClick={(event) => event.stopPropagation()}>
-        <Switch size="small" checked={item.enabled} loading={togglingSchedule === item.task_name} disabled={mutating || Boolean(togglingSchedule) || item.workspace_task_canceled} title={item.workspace_task_canceled ? 'Canceled runs cannot be scheduled' : undefined} aria-label={`Enable ${item.display_name ?? item.task_name}`} onChange={(checked) => void toggleSchedule(item, checked)} />
+        <Switch size="small" checked={item.enabled} loading={togglingSchedule === item.task_name} disabled={mutating || Boolean(togglingSchedule)} aria-label={`Enable ${item.display_name ?? item.task_name}`} onChange={(checked) => void toggleSchedule(item, checked)} />
       </div>
     </article>
   ) }];
@@ -544,13 +538,7 @@ const AutomationCenter: React.FC = () => {
               <Tooltip title={scheduleDetail?.workspace_task_canceled ? 'Canceled runs cannot be rescheduled' : 'Edit schedule'}>
                 <Button type="text" icon={<EditOutlined />} aria-label="Edit schedule" disabled={mutating || Boolean(deleteTarget) || Boolean(togglingSchedule) || scheduleDetail?.workspace_task_canceled} onClick={() => openEdit(detail)} />
               </Tooltip>
-              <Tooltip title={scheduleDeletable(detail)
-                ? undefined
-                : 'Cancel the running task before deleting'}>
-                <span>
-                  <Button type="text" danger icon={<DeleteOutlined />} aria-label="Delete schedule" title={scheduleDeletable(detail) ? (isLinkedSchedule(detail) ? 'Delete collection task' : 'Delete schedule') : undefined} disabled={mutating || Boolean(deleteTarget) || !scheduleDeletable(detail)} onClick={() => setDeleteTarget(detail as AutomationSchedule)} />
-                </span>
-              </Tooltip>
+              <Button type="text" danger icon={<DeleteOutlined />} aria-label="Delete schedule" title={isLinkedSchedule(detail) ? 'Delete collection task' : 'Delete schedule'} disabled={mutating || Boolean(deleteTarget)} onClick={() => setDeleteTarget(detail as AutomationSchedule)} />
             </>}
           <Button type="text" icon={<CloseOutlined />} aria-label="Close schedule" title="Close" disabled={mutating || Boolean(deleteTarget)} onClick={closeScheduleModal} />
         </div>
@@ -628,7 +616,7 @@ const AutomationCenter: React.FC = () => {
             <Form.Item noStyle shouldUpdate={(previous, current) => previous.enabled !== current.enabled}>{({ getFieldValue }) => <div className="automation-schedule-status-copy">
               <span>{getFieldValue('enabled') ? 'Enabled' : 'Disabled'}</span>
               <small>{editingLinkedSchedule
-                ? getFieldValue('enabled') ? 'Visible in Runs. Future runs follow this schedule.' : 'Hidden from Runs. No new scheduled runs; the current run can finish.'
+                ? getFieldValue('enabled') ? 'Visible in Runs. Future runs follow this schedule.' : 'Hidden from Runs. No new scheduled runs; a running execution will be stopped.'
                 : getFieldValue('enabled') ? 'Future executions follow this schedule.' : 'No new scheduled executions; the current run can finish.'}</small>
             </div>}</Form.Item>
           </div> : <span className={`automation-schedule-status${scheduleDetail?.enabled ? ' is-enabled' : ''}`}><i />{scheduleDetail?.enabled ? 'Enabled' : 'Disabled'}</span>}
@@ -659,7 +647,7 @@ const AutomationCenter: React.FC = () => {
       footer={null}
     >
       <p>{deleteTarget && isLinkedSchedule(deleteTarget)
-        ? `This removes the collection task, its schedule and all run records.${deleteTarget.workspace_task_status === 'paused' ? ' Its paused run will be canceled.' : ''} This action cannot be undone.`
+        ? `This removes the collection task, its schedule and all run records.${deleteTarget.workspace_task_status === 'running' ? ' The running execution will be canceled.' : deleteTarget.workspace_task_status === 'paused' ? ' Its paused run will be canceled.' : ''} This action cannot be undone.`
         : 'This removes the schedule configuration. This action cannot be undone.'}</p>
       {deleteTarget && <div className="automation-schedule-delete-target"><FieldTimeOutlined /><div><strong>{deleteTarget.display_name ?? deleteTarget.task_name}</strong><span>{(domainMeta[deleteTarget.product_domain] ?? domainMeta.platform).label} · {formatSchedule(deleteTarget)}</span></div></div>}
       <div className="automation-schedule-delete-footer"><Button autoFocus disabled={mutating} onClick={() => setDeleteTarget(null)}>{deleteTarget && isLinkedSchedule(deleteTarget) ? 'Keep task' : 'Keep schedule'}</Button><Button type="primary" danger loading={mutating} onClick={() => void confirmScheduleDelete()}>{deleteTarget && isLinkedSchedule(deleteTarget) ? 'Delete task' : 'Delete schedule'}</Button></div>

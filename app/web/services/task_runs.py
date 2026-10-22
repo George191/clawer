@@ -59,10 +59,9 @@ async def delete_run(task_id: str) -> dict[str, bool]:
     current = await automation_task_store.get_task_control(task_id)
     if current is None:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if current.get("status") == "paused":
-        # 暂停的任务没有活跃执行，删除前自动取消其挂起的运行
-        if await automation_task_store.cancel_task(task_id) is None:
-            raise HTTPException(status_code=409, detail="任务状态不允许此操作，请刷新后重试")
+    if current.get("status") in {"running", "paused"}:
+        # 删除前取消活跃运行；若已被并发取消，由 delete_task 判断最终状态
+        await automation_task_store.cancel_task(task_id)
     if not await automation_task_store.delete_task(task_id):
-        raise HTTPException(status_code=409, detail="请先取消运行中的任务")
+        raise HTTPException(status_code=409, detail="任务状态已变化，请刷新后重试")
     return {"deleted": True}

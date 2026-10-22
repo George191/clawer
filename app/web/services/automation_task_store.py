@@ -285,11 +285,12 @@ class AutomationTaskStore:
     async def update_task_schedule(
         self, task_id: str, changes: dict[str, Any], *, expected_mode: str,
     ) -> dict[str, Any] | None:
-        """Merge recurring settings without changing execution or run state."""
+        """Merge recurring settings and stop an active run when disabling."""
         await self.initialize()
         task = await self._pg.fetch_one(
             """
-            UPDATE public.automation_tasks SET
+            WITH changed AS (
+              UPDATE public.automation_tasks SET
                 schedule = COALESCE(schedule, '{}'::jsonb) || CASE
                     WHEN schedule->>'mode' = 'recurring'
                          AND CAST(:changes AS jsonb) ? 'mode'
@@ -297,19 +298,49 @@ class AutomationTaskStore:
                          || jsonb_build_object('recurring_mode', CAST(:changes AS jsonb)->'mode')
                     ELSE CAST(:changes AS jsonb)
                 END,
+                status = CASE WHEN :disable_schedule AND status IN ('running', 'paused')
+                              THEN 'failed' ELSE status END,
+                control_state = CASE
+                    WHEN :disable_schedule AND status IN ('running', 'paused') THEN 'canceled'
+                    WHEN :enable_schedule AND control_state = 'canceled' THEN NULL
+                    ELSE control_state END,
+                throughput = CASE WHEN :disable_schedule AND status IN ('running', 'paused')
+                                  THEN 0 ELSE throughput END,
+                download_state = CASE
+                    WHEN :disable_schedule AND status IN ('running', 'paused') THEN 'paused'
+                    WHEN :enable_schedule AND control_state = 'canceled' AND task_type = 'template'
+                    THEN 'running' ELSE download_state END,
+                sync_state = CASE
+                    WHEN :disable_schedule AND status IN ('running', 'paused') THEN 'canceled'
+                    WHEN :enable_schedule AND control_state = 'canceled' AND task_type = 'template'
+                    THEN 'running' ELSE sync_state END,
+                celery_task_id = CASE WHEN (:disable_schedule AND status IN ('running', 'paused'))
+                                         OR (:enable_schedule AND control_state = 'canceled')
+                                      THEN NULL ELSE celery_task_id END,
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
-              AND control_state IS DISTINCT FROM 'canceled'
+              AND (control_state IS DISTINCT FROM 'canceled' OR :enable_schedule)
               AND (CASE WHEN schedule->>'mode' = 'recurring'
                     THEN schedule->>'recurring_mode' ELSE schedule->>'mode' END) = :expected_mode
               AND :expected_mode IN ('daily', 'interval')
             RETURNING *
+            ), changed_run AS (
+                UPDATE public.automation_task_runs run SET status = 'canceled', ended_at = now()
+                FROM changed
+                WHERE :disable_schedule AND changed.control_state = 'canceled'
+                  AND run.id = changed.current_run_id AND run.task_id = changed.id
+                  AND run.status IN ('running', 'paused')
+                RETURNING run.id
+            )
+            SELECT * FROM changed
             """,
             {
                 "id": task_id,
                 "changes": json.dumps(changes, ensure_ascii=False),
                 "expected_mode": expected_mode,
+                "disable_schedule": changes.get("enabled") is False,
+                "enable_schedule": changes.get("enabled") is True,
             },
         )
         if task:

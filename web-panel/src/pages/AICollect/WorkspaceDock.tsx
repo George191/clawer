@@ -3140,7 +3140,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const taskCanceled = runtime.controlState === 'canceled';
     const templateTask = selectedTask.taskType === 'template';
     const pipelineControlsDisabled = taskCanceled || runtime.status === 'queued';
-    const taskDeletable = runtime.status !== 'running';
     const taskPinned = Boolean(pinnedTaskKeys[selectedTask.key]);
 
     return (
@@ -3226,27 +3225,25 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Tooltip>
             ) : null}
-            {taskDeletable ? (
-              <Popconfirm
-                title="删除任务？"
-                description="任务及其运行记录将被删除，无法恢复。"
-                okText="删除"
-                cancelText="保留"
-                okButtonProps={{ danger: true }}
-                rootClassName="workspace-dock-control-popconfirm"
-                onConfirm={() => handleDeleteTask(selectedTask.key)}
-              >
-                <Tooltip title="删除任务" placement="top" rootClassName="workspace-dock-control-tooltip">
-                  <button
-                    type="button"
-                    className="workspace-dock-detail-icon-btn is-danger"
-                    aria-label="删除任务"
-                  >
-                    <DeleteOutlined />
-                  </button>
-                </Tooltip>
-              </Popconfirm>
-            ) : null}
+            <Popconfirm
+              title="删除任务？"
+              description="任务及其运行记录将被删除，无法恢复。"
+              okText="删除"
+              cancelText="保留"
+              okButtonProps={{ danger: true }}
+              rootClassName="workspace-dock-control-popconfirm"
+              onConfirm={() => handleDeleteTask(selectedTask.key)}
+            >
+              <Tooltip title="删除任务" placement="top" rootClassName="workspace-dock-control-tooltip">
+                <button
+                  type="button"
+                  className="workspace-dock-detail-icon-btn is-danger"
+                  aria-label="删除任务"
+                >
+                  <DeleteOutlined />
+                </button>
+              </Tooltip>
+            </Popconfirm>
             {templateTask && <>{runtime.downloadState === 'running' ? (
               <Tooltip title="暂停下载" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button
