@@ -21,6 +21,7 @@ import urllib3
 
 from app.config.settings import settings
 from app.logger import get_logger
+from app.utils.connection_errors import is_retryable_connection_error
 
 logger = get_logger(__name__)
 
@@ -211,6 +212,8 @@ class MinioClient:
                 error_code = str(getattr(e, "code", "") or "")
                 if error_code in non_retryable_codes or attempt == attempts - 1:
                     logger.warning("MinIO get_object failed for %s: %s", object_key, e)
+                    if error_code not in non_retryable_codes and is_retryable_connection_error(e):
+                        raise
                     return None
                 await asyncio.sleep(0.2 * (attempt + 1))
         return None

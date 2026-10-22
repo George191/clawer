@@ -19,12 +19,14 @@ def dispatch_run(task: dict) -> None:
             args=[str(task["id"]), task.get("parameters") or {}],
             task_id=str(task["celery_task_id"]),
             queue="scheduler",
-            retry=False,
+            retry=True,
+            retry_policy={"interval_start": 0, "interval_step": 0, "interval_max": 0},
         )
     else:
         app.send_task(
             "app.scheduler.tasks.workspace.crawl_template",
             args=[str(task["id"]), task["template_name"], task.get("parameters") or {}],
             task_id=str(task["celery_task_id"]),
-            retry=False,
+            retry=True,
+            retry_policy={"interval_start": 0, "interval_step": 0, "interval_max": 0},
         )

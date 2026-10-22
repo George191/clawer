@@ -440,6 +440,7 @@ class SpiderEngine:
                     adapter_action = await adapter.on_error(e, current_page, attempt)
 
                     if adapter_action == "abort":
+                        result.error = e
                         result.errors.append(f"List page {current_page}: {e}")
                         await adapter.close()
                         return all_records
@@ -756,6 +757,7 @@ class SpiderEngine:
                 await self._client.mark_last_proxy_failed(template.adapter)
                 adapter_action = await adapter.on_error(e, page, attempt)
                 if adapter_action == "abort":
+                    result.error = e
                     result.errors.append(f"List page {page}: {e}")
                     return page, [], None, None, True
                 if adapter_action == "stop":
@@ -785,6 +787,7 @@ class SpiderEngine:
 
                 adapter_action = await adapter.on_error(e, page, attempt)
                 if adapter_action == "abort":
+                    result.error = e
                     result.errors.append(f"List page {page}: {e}")
                     return page, [], None, None, True
                 elif adapter_action == "stop":

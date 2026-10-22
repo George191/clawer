@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from pymongo.errors import ConnectionFailure
-
 from app.adapters import BaseSiteAdapter, GenericAdapter
 from app.crawler.batch_params import (
     BatchParamNames,
@@ -21,6 +19,7 @@ from app.logger import get_logger
 from app.scheduler.celery_app import app, run_async
 from app.scheduler.task_log_capture import WorkspaceTaskLogCapture
 from app.storage.minio_client import get_business_metadata_minio_client
+from app.utils.connection_errors import is_retryable_connection_error
 from app.utils.runtime_control import (
     reset_control_checkpoint,
     reset_workspace_run,
@@ -351,7 +350,7 @@ async def _crawl_template(
             )
             _merge_crawl_result(result, current_result)
             if not current_result.success:
-                if isinstance(current_result.error, ConnectionFailure):
+                if current_result.error and is_retryable_connection_error(current_result.error):
                     raise current_result.error
                 raise RuntimeError("; ".join(current_result.errors) or "Crawl failed")
             await ai_collect_store.update_task(
@@ -415,18 +414,6 @@ async def _crawl_template(
     except asyncio.CancelledError:
         logger.info("Workspace crawl task canceled: %s", task_id)
         return {"task_id": task_id, "status": "canceled"}
-    except ConnectionFailure:
-        if await _is_superseded(task_id, celery_task_id):
-            logger.warning(
-                "Ignoring Mongo failure from superseded workspace task: %s",
-                task_id,
-            )
-            return {"task_id": task_id, "status": "stale"}
-        logger.warning(
-            "Workspace crawl task will retry after MongoDB connection failure: %s",
-            task_id,
-        )
-        raise
     except Exception as exc:
         if await _is_superseded(task_id, celery_task_id):
             logger.warning(
@@ -435,6 +422,12 @@ async def _crawl_template(
                 exc,
             )
             return {"task_id": task_id, "status": "stale"}
+        if is_retryable_connection_error(exc):
+            logger.warning(
+                "Workspace crawl task will retry after connection failure: %s: %s",
+                task_id, exc,
+            )
+            raise
         await ai_collect_store.update_task(
             task_id,
             {"status": "failed", "throughput": 0},
@@ -477,7 +470,9 @@ def crawl_template(
                 celery_task_id=str(self.request.id),
             )
         )
-    except ConnectionFailure as exc:
+    except Exception as exc:
+        if not is_retryable_connection_error(exc):
+            raise
         raise self.retry(exc=exc, countdown=0) from exc
 
 

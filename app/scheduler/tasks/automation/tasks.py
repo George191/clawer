@@ -6,6 +6,7 @@ from app.logger import get_logger
 from app.scheduler.celery_app import app, run_async
 from app.scheduler.dispatch import dispatch_run, is_recurring
 from app.scheduler.task_log_capture import TaskLogCapture
+from app.utils.connection_errors import is_retryable_connection_error
 from app.web.services.automation_task_store import automation_task_store
 
 logger = get_logger(__name__)
@@ -34,9 +35,14 @@ async def _dispatch_due_tasks() -> dict[str, int]:
     return {"claimed": len(tasks), "dispatched": dispatched}
 
 
-@app.task(name="app.scheduler.tasks.automation.dispatch_due")
-def dispatch_due() -> dict[str, int]:
-    return run_async(_dispatch_due_tasks())
+@app.task(bind=True, name="app.scheduler.tasks.automation.dispatch_due", max_retries=None)
+def dispatch_due(self: Any) -> dict[str, int]:
+    try:
+        return run_async(_dispatch_due_tasks())
+    except Exception as exc:
+        if not is_retryable_connection_error(exc):
+            raise
+        raise self.retry(exc=exc, countdown=0) from exc
 
 
 async def _cleanup_task_logs(task_id: str, delivery_id: str) -> dict[str, Any]:
@@ -65,7 +71,10 @@ async def _cleanup_task_logs(task_id: str, delivery_id: str) -> dict[str, Any]:
             expected_run_id=run_id, expected_celery_task_id=delivery_id,
         )
         return result
-    except Exception:
+    except Exception as exc:
+        if is_retryable_connection_error(exc):
+            logger.warning("Task log cleanup will retry after connection failure: %s", exc)
+            raise
         logger.exception("Task log cleanup failed")
         await automation_task_store.update_task(
             task_id, {"status": "failed"},
@@ -76,7 +85,12 @@ async def _cleanup_task_logs(task_id: str, delivery_id: str) -> dict[str, Any]:
         await capture.stop()
 
 
-@app.task(bind=True, name=CLEANUP_TASK_NAME)
+@app.task(bind=True, name=CLEANUP_TASK_NAME, max_retries=None)
 def cleanup_task_logs(self: Any, task_id: str, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
     """Execute a claimed cleanup task and persist its own batch and console logs."""
-    return run_async(_cleanup_task_logs(task_id, str(self.request.id)))
+    try:
+        return run_async(_cleanup_task_logs(task_id, str(self.request.id)))
+    except Exception as exc:
+        if not is_retryable_connection_error(exc):
+            raise
+        raise self.retry(exc=exc, countdown=0) from exc
