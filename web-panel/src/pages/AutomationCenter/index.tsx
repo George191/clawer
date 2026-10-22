@@ -90,10 +90,10 @@ const formatDateTime = (value?: string) => {
 const isLinkedSchedule = (record: SelectedRecord): record is AutomationSchedule =>
   'workspace_task_id' in record && Boolean(record.workspace_task_id);
 
-/** 与后端 delete_run 规则一致：运行中/已暂停的任务需先取消才能删除 */
+/** 与后端 delete_run 规则一致：仅执行中的任务需先取消；暂停任务删除时会自动取消挂起运行 */
 const scheduleDeletable = (record: SelectedRecord) => {
   if (!isLinkedSchedule(record)) return true;
-  return !['running', 'paused'].includes(record.workspace_task_status ?? '');
+  return record.workspace_task_status !== 'running';
 };
 
 const extractErrorMessage = (error: unknown, fallback: string) => {
@@ -546,7 +546,7 @@ const AutomationCenter: React.FC = () => {
               </Tooltip>
               <Tooltip title={scheduleDeletable(detail)
                 ? undefined
-                : 'Cancel the running or paused task before deleting'}>
+                : 'Cancel the running task before deleting'}>
                 <span>
                   <Button type="text" danger icon={<DeleteOutlined />} aria-label="Delete schedule" title={scheduleDeletable(detail) ? (isLinkedSchedule(detail) ? 'Delete collection task' : 'Delete schedule') : undefined} disabled={mutating || Boolean(deleteTarget) || !scheduleDeletable(detail)} onClick={() => setDeleteTarget(detail as AutomationSchedule)} />
                 </span>
@@ -659,7 +659,7 @@ const AutomationCenter: React.FC = () => {
       footer={null}
     >
       <p>{deleteTarget && isLinkedSchedule(deleteTarget)
-        ? 'This removes the collection task, its schedule and all run records. This action cannot be undone.'
+        ? `This removes the collection task, its schedule and all run records.${deleteTarget.workspace_task_status === 'paused' ? ' Its paused run will be canceled.' : ''} This action cannot be undone.`
         : 'This removes the schedule configuration. This action cannot be undone.'}</p>
       {deleteTarget && <div className="automation-schedule-delete-target"><FieldTimeOutlined /><div><strong>{deleteTarget.display_name ?? deleteTarget.task_name}</strong><span>{(domainMeta[deleteTarget.product_domain] ?? domainMeta.platform).label} · {formatSchedule(deleteTarget)}</span></div></div>}
       <div className="automation-schedule-delete-footer"><Button autoFocus disabled={mutating} onClick={() => setDeleteTarget(null)}>{deleteTarget && isLinkedSchedule(deleteTarget) ? 'Keep task' : 'Keep schedule'}</Button><Button type="primary" danger loading={mutating} onClick={() => void confirmScheduleDelete()}>{deleteTarget && isLinkedSchedule(deleteTarget) ? 'Delete task' : 'Delete schedule'}</Button></div>

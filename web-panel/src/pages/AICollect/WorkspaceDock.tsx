@@ -3140,7 +3140,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const taskCanceled = runtime.controlState === 'canceled';
     const templateTask = selectedTask.taskType === 'template';
     const pipelineControlsDisabled = taskCanceled || runtime.status === 'queued';
-    const taskDeletable = runtime.status === 'queued' || runtime.status === 'completed' || runtime.status === 'failed';
+    const taskDeletable = runtime.status !== 'running';
     const taskPinned = Boolean(pinnedTaskKeys[selectedTask.key]);
 
     return (
