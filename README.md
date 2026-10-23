@@ -91,6 +91,29 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 单独部署应用不会修改已发布适配器源码；旧的 `app.base` 业务仓储别名和
 `app.base.redis_connection.RedisConnection` 导入也需随适配器一起迁移发布。
 
+### 浏览器采集适配器
+
+需要 JavaScript 渲染或页面交互的采集适配器统一继承
+`app.adapters.browser.BrowserSiteAdapter`。它复用现有 `SPIDER_AI_BROWSER_*`
+浏览器配置和 Chromium 启动逻辑，一次采集保持一个隔离会话，单次请求结束关闭页面，
+采集成功、异常或取消时统一释放浏览器。返回完整 HTML，不使用 AI 分析用的截断页面。
+
+子类可设置 `browser_wait_selector`、`browser_wait_timeout_seconds`，并覆盖
+`prepare_list_page(page)` / `prepare_detail_page(page)` 执行站点操作；钩子返回字符串时
+将它作为解析输入，否则使用完整页面 HTML。`collect_table_rows(table)` 支持滚动表格，
+保留虚拟列表移出 DOM 的行，未完成滚动时明确失败。详情请求使用
+`request_detail_page()`，与列表共用会话。
+
+基础版支持 GET、headers、cookies、params、直连和已配置的隧道代理；
+`force_direct` 强制直连，不支持 HTTP 代理池的前置代理链。默认最多尝试三次，
+配置及解析错误直接失败。Crawler 镜像包含 Playwright 和系统 Chromium，
+部署这一基类需要重建 Crawler 镜像；仅更新 MinIO 站点源码不会安装运行依赖。
+
+`templates/findgs.yaml` 使用该基类恢复官方目录的浏览器渲染和滚动提取，
+仍保留兼容 JSON 导出入口；源站 500/503 不会被记为成功空采集。
+`templates/satsearch.yaml` 是独立的 HTTP 地面站来源，保留 Find-GS 数据署名、
+空站名和完整多频段规格，不替代原 Find-GS 全量目录。
+
 ## 主要服务
 
 | 服务 | 入口 | 说明 |

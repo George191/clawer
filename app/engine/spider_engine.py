@@ -309,19 +309,29 @@ class SpiderEngine:
         resume_page: int | None = None,
         progress_callback: Callable[[int, CrawlResult], Awaitable[None]] | None = None,
     ) -> list[dict[str, Any]]:
-        if template.response_type == ResponseType.JSON:
-            return await self._crawl_list_pages_json(
-                template, result, resume_page, progress_callback
-            )
-        return await self._crawl_list_pages_html(
-            template, result, resume_page, progress_callback
+        adapter = self._create_adapter(
+            template,
+            crawl_context=template._crawl_context,
         )
+        try:
+            await adapter.on_before_crawl(template)
+            if template.response_type == ResponseType.JSON:
+                return await self._crawl_list_pages_json(
+                    template, result, resume_page, progress_callback, adapter=adapter
+                )
+            return await self._crawl_list_pages_html(
+                template, result, resume_page, progress_callback, adapter=adapter
+            )
+        finally:
+            await adapter.close()
 
 
     async def _crawl_list_pages_html(
         self, template: SiteTemplate, result: CrawlResult,
         resume_page: int | None = None,
         progress_callback: Callable[[int, CrawlResult], Awaitable[None]] | None = None,
+        *,
+        adapter: BaseSiteAdapter,
     ) -> list[dict[str, Any]]:
         all_records: list[dict[str, Any]] = []
         page = resume_page if resume_page is not None else (
@@ -330,10 +340,6 @@ class SpiderEngine:
         max_pages = template.list_pagination.max_pages if template.list_pagination else 1
         results_per_page = template.list_pagination.results_per_page if template.list_pagination else 100
         result.total_pages = max_pages if max_pages > 0 else None
-
-        # 初始化适配器（与 JSON 路径一致，支持站点特定行为和重试逻辑）
-        adapter = self._create_adapter(template)
-        await adapter.on_before_crawl(template)
 
         # max_pages=0 表示不限制页数，使用大数代替无限循环
         has_page_cap = max_pages > 0
@@ -442,10 +448,8 @@ class SpiderEngine:
                     if adapter_action == "abort":
                         result.error = e
                         result.errors.append(f"List page {current_page}: {e}")
-                        await adapter.close()
                         return all_records
                     elif adapter_action == "stop":
-                        await adapter.close()
                         return all_records
                     elif adapter_action == "reset_session":
                         await adapter.on_before_crawl(template)
@@ -512,13 +516,14 @@ class SpiderEngine:
             pages_crawled += 1
             current_page += 1
 
-        await adapter.close()
         return all_records
 
     async def _crawl_list_pages_json(
         self, template: SiteTemplate, result: CrawlResult,
         resume_page: int | None = None,
         progress_callback: Callable[[int, CrawlResult], Awaitable[None]] | None = None,
+        *,
+        adapter: BaseSiteAdapter,
     ) -> list[dict[str, Any]]:
         all_records: list[dict[str, Any]] = []
         start_page = resume_page if resume_page is not None else (
@@ -537,12 +542,6 @@ class SpiderEngine:
         has_page_cap = config_max_pages > 0
         dynamic_pages: int | float = config_max_pages if has_page_cap else float("inf")
 
-        adapter = self._create_adapter(
-            template,
-            crawl_context=template._crawl_context,
-        )
-        await adapter.on_before_crawl(template)
-
         # ── Phase 1: 获取第一页，确定总页数 ─────────────────────────
         if progress_callback is not None:
             await progress_callback(start_page, result)
@@ -551,7 +550,6 @@ class SpiderEngine:
             is_first=True, result=result,
         )
         if abort:
-            await adapter.close()
             return all_records
 
         # 从第一页响应计算总页数
@@ -612,7 +610,6 @@ class SpiderEngine:
 
         # 第一页终止条件
         if not records1:
-            await adapter.close()
             return all_records
         if filtered1.all_before_window:
             watermark = template._crawl_context["incremental_watermark"]
@@ -624,13 +621,10 @@ class SpiderEngine:
                 watermark.value.isoformat(),
                 watermark.window_start.isoformat(),
             )
-            await adapter.close()
             return all_records
         if template.list_pagination is None:
-            await adapter.close()
             return all_records
         if len(records1) < results_per_page:
-            await adapter.close()
             return all_records
 
         # ── Phase 2: 并行获取剩余页面 ───────────────────────────────
@@ -666,7 +660,6 @@ class SpiderEngine:
                     break
                 current += page_concurrency
 
-        await adapter.close()
         return all_records
 
     async def _fetch_page_json(
@@ -848,20 +841,24 @@ class SpiderEngine:
             for p in batch
         }
         batch_results = []
-        while tasks:
-            done, tasks = await asyncio.wait(
-                tasks,
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in done:
-                page_result = task.result()
-                if page_result[4]:
-                    for pending in tasks:
-                        pending.cancel()
-                    if tasks:
-                        await asyncio.gather(*tasks, return_exceptions=True)
-                    return False, True
-                batch_results.append(page_result)
+        pending = tasks
+        try:
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    page_result = task.result()
+                    if page_result[4]:
+                        return False, True
+                    batch_results.append(page_result)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
         batch_results.sort(key=lambda item: item[0])
 
         should_stop = False

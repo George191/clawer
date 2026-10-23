@@ -61,6 +61,7 @@ RUN mkdir -p /data/apt-cache/archives/partial /data/apt-lists/partial \
         -o Dir::State::lists=/data/apt-lists \
         install -y --no-install-recommends \
     ca-certificates \
+    chromium \
     mdbtools \
     && rm -rf /data/apt-lists/* /data/apt-cache/archives/*.deb
 
