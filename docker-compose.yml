@@ -164,6 +164,78 @@ services:
     container_name: syncer-tweet
     command: ["python", "-m", "app.syncer.main", "--data-type", "tweet", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
 
+  syncer-constellation:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-constellation
+    command: ["python", "-m", "app.syncer.main", "--data-type", "constellation", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-vulnerability:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-vulnerability
+    command: ["python", "-m", "app.syncer.main", "--data-type", "vulnerability", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-debrisevents:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-debrisevents
+    command: ["python", "-m", "app.syncer.main", "--data-type", "debrisevents", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-debris:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-debris
+    command: ["python", "-m", "app.syncer.main", "--data-type", "debris", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-launchvehicles:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-launchvehicles
+    command: ["python", "-m", "app.syncer.main", "--data-type", "launchvehicles", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-frequency:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-frequency
+    command: ["python", "-m", "app.syncer.main", "--data-type", "frequency", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-groundstations:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-groundstations
+    command: ["python", "-m", "app.syncer.main", "--data-type", "groundstations", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-launchinfo:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-launchinfo
+    command: ["python", "-m", "app.syncer.main", "--data-type", "launchinfo", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-satellite:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-satellite
+    command: ["python", "-m", "app.syncer.main", "--data-type", "satellite", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-launchsites:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-launchsites
+    command: ["python", "-m", "app.syncer.main", "--data-type", "launchsites", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-orbital:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-orbital
+    command: ["python", "-m", "app.syncer.main", "--data-type", "orbital", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
+  syncer-organizations:
+    <<: *syncer
+    profiles: ["catalog-sync"]
+    container_name: syncer-organizations
+    command: ["python", "-m", "app.syncer.main", "--data-type", "organizations", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+
   # ── 4. Web — FastAPI 管理面板 ─────────────────────────────
   web:
     build:
