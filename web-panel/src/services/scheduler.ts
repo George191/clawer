@@ -1,5 +1,6 @@
 import client from './api';
 import type { ProductDomain, SchedulerTaskConfig, WorkspaceTask } from './types';
+import { formatWorkspaceScheduleLabel } from './taskSchedule';
 
 export const intervalUnitSeconds = { minute: 60, hour: 3600, day: 86400, week: 604800, month: 2592000, second: 1 };
 export type IntervalUnit = keyof typeof intervalUnitSeconds;
@@ -64,9 +65,7 @@ export const mapWorkspaceSchedules = (tasks: WorkspaceTask[]): AutomationSchedul
         interval_value: interval,
         interval_unit: unit,
         interval_seconds: interval * intervalUnitSeconds[unit],
-        schedule_label: mode === 'interval'
-          ? `Every ${interval} ${unit}${interval === 1 ? '' : 's'}`
-          : `Daily at ${hour}:${minute} (Asia/Shanghai)`,
+        schedule_label: formatWorkspaceScheduleLabel(schedule),
         args: [], kwargs: {}, options: {},
         enabled: task.control_state !== 'canceled' && (typeof schedule.enabled === 'boolean'
           ? schedule.enabled : !['paused', 'completed'].includes(task.status)),

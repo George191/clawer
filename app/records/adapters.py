@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from app.records.collection_routes import collection_route_store
+from app.records.field_names import normalize_record_fields
 from app.utils.path import get_nested_value
 from app.utils.sec_financial_facts import (
     FACT_DEDUP_FIELDS,
@@ -205,6 +206,12 @@ class SamAwardAdapter(SamSnapshotAdapter):
 
 
 class SecCompanyAdapter(RecordAdapter):
+    def merge(
+        self, existing: dict[str, Any], incoming: dict[str, Any],
+    ) -> dict[str, Any]:
+        # Historical submissions contain nested SEC camelCase field names.
+        return super().merge(normalize_record_fields(existing), incoming)
+
     def clean(self, record: dict[str, Any]) -> dict[str, Any]:
         cleaned = super().clean(record)
         if "facts" in record:

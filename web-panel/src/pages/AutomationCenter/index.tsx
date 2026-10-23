@@ -442,7 +442,7 @@ const AutomationCenter: React.FC = () => {
       ]} />
       <Space wrap className="automation-filters">
         <Select<DomainFilter>
-          value={requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? domain : undefined}
+          value={domain}
           placeholder="Select domain"
           onChange={changeDomain}
           className="automation-domain-select"

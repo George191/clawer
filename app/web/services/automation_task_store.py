@@ -9,6 +9,7 @@ from typing import Any
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
 from app.utils.runtime_control import get_workspace_run
+from app.utils.task_schedule import with_task_schedule_label
 from app.web.services.task_events import publish_task_change, publish_task_log, publish_task_run
 
 
@@ -202,7 +203,7 @@ class AutomationTaskStore:
                 "owner": "System" if payload.get("task_type") == "celery" else "AI Collect",
                 **payload,
                 "stage_state": "paused" if payload.get("task_type") == "celery" else "running",
-                "schedule": json.dumps(payload.get("schedule", {}), ensure_ascii=False),
+                "schedule": json.dumps(with_task_schedule_label(payload.get("schedule", {})), ensure_ascii=False),
                 "parameters": json.dumps(payload.get("parameters", {}), ensure_ascii=False),
                 "policies": json.dumps(policies, ensure_ascii=False),
             },
@@ -287,6 +288,19 @@ class AutomationTaskStore:
     ) -> dict[str, Any] | None:
         """Merge recurring settings and stop an active run when disabling."""
         await self.initialize()
+        current = await self._pg.fetch_one(
+            "SELECT schedule FROM public.automation_tasks "
+            "WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL",
+            {"id": task_id},
+        )
+        if current is None:
+            return None
+        schedule = current["schedule"] or {}
+        merged = dict(changes)
+        if schedule.get("mode") == "recurring" and "mode" in merged:
+            merged["recurring_mode"] = merged.pop("mode")
+        label = with_task_schedule_label({**schedule, **merged}).get("label")
+        changes = {**changes, "label": label}
         task = await self._pg.fetch_one(
             """
             WITH changed AS (
@@ -320,6 +334,7 @@ class AutomationTaskStore:
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
+              AND schedule IS NOT DISTINCT FROM CAST(:expected_schedule AS jsonb)
               AND (control_state IS DISTINCT FROM 'canceled' OR :enable_schedule)
               AND (CASE WHEN schedule->>'mode' = 'recurring'
                     THEN schedule->>'recurring_mode' ELSE schedule->>'mode' END) = :expected_mode
@@ -338,6 +353,7 @@ class AutomationTaskStore:
             {
                 "id": task_id,
                 "changes": json.dumps(changes, ensure_ascii=False),
+                "expected_schedule": json.dumps(current["schedule"], ensure_ascii=False),
                 "expected_mode": expected_mode,
                 "disable_schedule": changes.get("enabled") is False,
                 "enable_schedule": changes.get("enabled") is True,

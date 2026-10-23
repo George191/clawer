@@ -57,6 +57,8 @@ import {
   type WorkspaceTemplate,
 } from '@/services/aiApi';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
+import { intervalUnitSeconds } from '@/services/scheduler';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import type {
@@ -808,12 +810,14 @@ const formatNextExecution = (item: WorkspaceTask): string | null => {
   if (recurringMode !== 'interval') return null;
 
   const value = Number(schedule.interval_value);
-  const unit = schedule.interval_unit === 'hour' ? 'hour' : 'minute';
+  const unit = String(schedule.interval_unit ?? 'minute');
+  const seconds = unit !== 'second' && unit in intervalUnitSeconds
+    ? intervalUnitSeconds[unit as keyof typeof intervalUnitSeconds] : 60;
   const anchor = item.started_at ?? item.created_at;
   if (!Number.isFinite(value) || value <= 0 || !anchor) return null;
 
   const next = new Date(anchor);
-  next.setTime(next.getTime() + value * (unit === 'hour' ? 60 * 60 * 1000 : 60 * 1000));
+  next.setTime(next.getTime() + value * seconds * 1000);
   if (Number.isNaN(next.getTime())) return null;
   const now = new Date();
   const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
@@ -882,10 +886,10 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   records: String(item.records),
   lag: item.status === 'running' ? 'live' : '-',
   nextRun: item.schedule?.mode === 'once'
-    ? '一次性任务'
+    ? formatWorkspaceScheduleLabel(item.schedule)
     : (() => {
       const nextExecution = formatNextExecution(item);
-      const scheduleLabel = String(item.schedule?.label ?? (item.status === 'running' ? 'Continuous' : 'Waiting'));
+      const scheduleLabel = formatWorkspaceScheduleLabel(item.schedule, item.status === 'running' ? 'Continuous' : 'Waiting');
       return nextExecution ? `${scheduleLabel} (${nextExecution})` : scheduleLabel;
     })(),
   owner: item.owner,
@@ -1164,12 +1168,13 @@ const inferIncrementalField = (templateValue: string) => {
   return 'date';
 };
 
-const formatTaskNextRun = (draft: TaskComposerDraft) => {
-  if (draft.scheduleMode === 'once') return 'One-time task';
-  if (draft.recurringMode === 'daily') return `Daily at ${draft.dailyTime}`;
-  const unit = draft.intervalUnit === 'minute' ? 'minute' : 'hour';
-  return `Every ${draft.intervalValue} ${unit}${draft.intervalValue === 1 ? '' : 's'}`;
-};
+const formatTaskNextRun = (draft: TaskComposerDraft) => formatWorkspaceScheduleLabel({
+  mode: draft.scheduleMode,
+  recurring_mode: draft.recurringMode,
+  daily_time: draft.dailyTime,
+  interval_value: draft.intervalValue,
+  interval_unit: draft.intervalUnit,
+});
 
 const formatIncrementalSummary = (draft: TaskComposerDraft) => {
   if (!draft.incremental) return '全量采集';

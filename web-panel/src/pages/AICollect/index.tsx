@@ -47,6 +47,7 @@ import {
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
 import {
   AI_ANALYZE_WS_URL,
   type BrowserAnalysisEvent,
@@ -2991,6 +2992,12 @@ const AICollect: React.FC = () => {
             daily_time: releaseDailyTime,
             interval_value: releaseIntervalMinutes,
             interval_unit: releaseIntervalUnit,
+            label: formatWorkspaceScheduleLabel({
+              mode: releaseScheduleKind,
+              daily_time: releaseDailyTime,
+              interval_value: releaseIntervalMinutes,
+              interval_unit: releaseIntervalUnit,
+            }),
           },
           parameters,
           policies: {
