@@ -73,6 +73,7 @@ const { TextArea } = Input;
 const aura = workspacePalette;
 const defaultPageSize = 10;
 const listLoadThreshold = 56;
+const taskFilterStorageKey = 'automation-runs-task-filter';
 
 export type WorkspacePanel = 'templates' | 'tasks';
 
@@ -1270,7 +1271,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [templates, setTemplates] = useState<TemplateAsset[]>([]);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
-  const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>(() => {
+    if (!embedded) return 'all';
+    try {
+      const saved = sessionStorage.getItem(taskFilterStorageKey);
+      return saved === 'running' || saved === 'queued' || saved === 'paused'
+        || saved === 'completed' || saved === 'failed' ? saved : 'all';
+    } catch {
+      return 'all';
+    }
+  });
   const [taskTemplateFilter, setTaskTemplateFilter] = useState<string | null>(null);
   const [templateDetailMode, setTemplateDetailMode] = useState<TemplateDetailMode>('overview');
   const [templateDetailLoading, setTemplateDetailLoading] = useState(false);
@@ -1331,6 +1341,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   });
   const [taskBatchDelay, setTaskBatchDelay] = useState(Number(releaseTaskDefaults?.batch?.delay) || 0);
   const [bodyScrollState, setBodyScrollState] = useState({ canScroll: false, isAtBottom: true });
+
+  useEffect(() => {
+    if (!embedded) return;
+    try {
+      sessionStorage.setItem(taskFilterStorageKey, taskFilter);
+    } catch {
+      // Keep filtering available when browser storage is disabled.
+    }
+  }, [embedded, taskFilter]);
 
   useEffect(() => {
     if (!releaseTaskDefaults) return;
