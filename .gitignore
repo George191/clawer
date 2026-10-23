@@ -1,6 +1,7 @@
 *.pyc
 *.DS_Store
 *.log
+*.docx
 
 .venv/
 .vscode/

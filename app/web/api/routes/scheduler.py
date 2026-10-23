@@ -96,6 +96,14 @@ async def update_workspace_schedule(
         raise HTTPException(status_code=404, detail="调度任务不存在")
     schedule = current.get("schedule") or {}
     current_mode = schedule.get("recurring_mode") if schedule.get("mode") == "recurring" else schedule.get("mode")
+    if payload.enabled and current.get("control_state") == "canceled":
+        # 禁用即停止会产生 canceled 状态；重新启用时复位控制状态，使开关可往返
+        revived = await automation_task_store.revive_task_schedule(task_id_text)
+        if revived is None:
+            raise HTTPException(status_code=409, detail="该任务不支持修改周期调度")
+        current = revived
+        schedule = current.get("schedule") or {}
+        current_mode = schedule.get("recurring_mode") if schedule.get("mode") == "recurring" else schedule.get("mode")
     if current_mode not in {"daily", "interval"}:
         raise HTTPException(status_code=409, detail="该任务不支持修改周期调度")
     changes = payload.model_dump(exclude_unset=True)
@@ -108,6 +116,9 @@ async def update_workspace_schedule(
     )
     if result is None:
         raise HTTPException(status_code=409, detail="调度任务已变化，请刷新后重试")
+    if changes.get("enabled") is False and current.get("status") == "running":
+        # 禁用即停止：关闭调度的同时软取消正在执行的运行
+        await automation_task_store.cancel_task(task_id_text)
     return await automation_task_store.get_task(task_id_text) or result
 
 

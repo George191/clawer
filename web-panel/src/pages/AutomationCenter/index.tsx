@@ -397,7 +397,7 @@ const AutomationCenter: React.FC = () => {
         <span className="automation-schedule-updated">Updated {relativeTime(item.updated_at)}</span>
       </div>
       <div className="automation-schedule-actions" onClick={(event) => event.stopPropagation()}>
-        <Switch size="small" checked={item.enabled} loading={togglingSchedule === item.task_name} disabled={mutating || Boolean(togglingSchedule)} aria-label={`Enable ${item.display_name ?? item.task_name}`} onChange={(checked) => void toggleSchedule(item, checked)} />
+        <Switch size="small" checked={item.enabled} loading={togglingSchedule === item.task_name} disabled={mutating || Boolean(togglingSchedule) || item.workspace_task_canceled} title={item.workspace_task_canceled ? 'Canceled runs cannot be scheduled' : undefined} aria-label={`Enable ${item.display_name ?? item.task_name}`} onChange={(checked) => void toggleSchedule(item, checked)} />
       </div>
     </article>
   ) }];
@@ -617,7 +617,7 @@ const AutomationCenter: React.FC = () => {
               <span>{getFieldValue('enabled') ? 'Enabled' : 'Disabled'}</span>
               <small>{editingLinkedSchedule
                 ? getFieldValue('enabled') ? 'Visible in Runs. Future runs follow this schedule.' : 'Hidden from Runs. No new scheduled runs; a running execution will be stopped.'
-                : getFieldValue('enabled') ? 'Future executions follow this schedule.' : 'No new scheduled executions; the current run can finish.'}</small>
+                : getFieldValue('enabled') ? 'Future executions follow this schedule.' : 'No new scheduled executions; a running execution will be stopped.'}</small>
             </div>}</Form.Item>
           </div> : <span className={`automation-schedule-status${scheduleDetail?.enabled ? ' is-enabled' : ''}`}><i />{scheduleDetail?.enabled ? 'Enabled' : 'Disabled'}</span>}
         </Form.Item>

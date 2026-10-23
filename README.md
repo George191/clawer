@@ -109,10 +109,8 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 配置及解析错误直接失败。Crawler 镜像包含 Playwright 和系统 Chromium，
 部署这一基类需要重建 Crawler 镜像；仅更新 MinIO 站点源码不会安装运行依赖。
 
-`templates/findgs.yaml` 使用该基类恢复官方目录的浏览器渲染和滚动提取，
-仍保留兼容 JSON 导出入口；源站 500/503 不会被记为成功空采集。
 `templates/satsearch.yaml` 是独立的 HTTP 地面站来源，保留 Find-GS 数据署名、
-空站名和完整多频段规格，不替代原 Find-GS 全量目录。
+空站名和完整多频段规格。
 
 ## 主要服务
 

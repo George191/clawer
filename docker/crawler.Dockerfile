@@ -73,7 +73,7 @@ RUN python /tmp/patch_twscrape.py
 
 COPY app/ ./app/
 
-RUN groupadd -r appuser && useradd -r -g appuser appuser \
+RUN groupadd -r appuser && useradd -r -m -g appuser appuser \
     && mkdir -p /app/data /app/output /data \
     && chown -R appuser:appuser /app /data
 COPY --chown=appuser:appuser --chmod=660 data/twitter_accounts.db ./data/twitter_accounts.db
