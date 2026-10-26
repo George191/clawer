@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,8 @@ from app.config.settings import settings
 from app.crawler.batch_params import BatchParamNames, batch_param_identity
 from app.logger import get_logger
 from app.storage.redis_client import RedisClient
+from app.utils.connection_errors import is_retryable_connection_error
+from app.utils.runtime_control import controlled_sleep
 
 logger = get_logger(__name__)
 
@@ -61,14 +64,29 @@ class PageCheckpointStore:
         )
 
     async def connect(self) -> bool:
-        return await self._connection.ensure_connected() is not None
+        return await self._run_redis_operation() is not None
+
+    async def _run_redis_operation(
+        self, operation: Callable[[Any], Awaitable[Any]] | None = None,
+    ) -> Any:
+        delay = 1
+        while True:
+            try:
+                redis = await self._connection.ensure_connected(raise_errors=bool(self.task_id))
+                if redis is None or operation is None:
+                    return redis
+                return await operation(redis)
+            except Exception as exc:
+                if not self.task_id or not is_retryable_connection_error(exc):
+                    raise
+                self._connection.mark_unavailable()
+                logger.warning("Redis 任务断点连接失败，%s 秒后重试: %s", delay, exc)
+                await controlled_sleep(delay)
+                delay = min(delay * 2, 30)
 
     async def load(self) -> int | None:
-        redis = await self._connection.ensure_connected()
-        if redis is None:
-            return None
         try:
-            raw = await redis.hget(self.key, "page")
+            raw = await self._run_redis_operation(lambda redis: redis.hget(self.key, "page"))
             if raw is None:
                 return None
             page = int(raw)
@@ -77,15 +95,14 @@ class PageCheckpointStore:
             logger.warning("忽略无效 Redis 页断点: key=%s", self.key)
             return None
         except Exception as exc:
+            if self.task_id:
+                raise
             logger.warning("读取 Redis 页断点失败: %s", exc)
             self._connection.mark_unavailable()
             return None
 
     async def save(self, page: int, *, batch_index: int | None = None) -> None:
-        redis = await self._connection.ensure_connected()
-        if redis is None:
-            return
-        try:
+        async def save_checkpoint(redis: Any) -> None:
             pipeline = redis.pipeline(transaction=True)
             pipeline.hset(self.key, "page", str(page))
             if batch_index is not None:
@@ -96,16 +113,18 @@ class PageCheckpointStore:
             else:
                 pipeline.expire(self.key, CHECKPOINT_TTL_SECONDS)
             await pipeline.execute()
+
+        try:
+            await self._run_redis_operation(save_checkpoint)
         except Exception as exc:
+            if self.task_id:
+                raise
             logger.warning("写入 Redis 页断点失败: %s", exc)
             self._connection.mark_unavailable()
 
     async def load_batch_index(self) -> int | None:
-        redis = await self._connection.ensure_connected()
-        if redis is None:
-            return None
         try:
-            raw = await redis.hget(self.key, "batch_index")
+            raw = await self._run_redis_operation(lambda redis: redis.hget(self.key, "batch_index"))
             if raw is None:
                 return None
             batch_index = int(raw)
@@ -114,28 +133,26 @@ class PageCheckpointStore:
             logger.warning("忽略无效 Redis 批次断点: key=%s", self.key)
             return None
         except Exception as exc:
+            if self.task_id:
+                raise
             logger.warning("读取 Redis 批次断点失败: %s", exc)
             self._connection.mark_unavailable()
             return None
 
     async def load_watermark(self) -> str | None:
-        redis = await self._connection.ensure_connected()
-        if redis is None:
-            return None
         try:
-            raw = await redis.hget(self.key, "watermark")
+            raw = await self._run_redis_operation(lambda redis: redis.hget(self.key, "watermark"))
             return str(raw) if raw else None
         except Exception as exc:
+            if self.task_id:
+                raise
             logger.warning("读取 Redis 水位失败: %s", exc)
             self._connection.mark_unavailable()
             return None
 
     async def complete(self, watermark: str | None) -> bool:
         """Remove active recovery fields and retain only a successful watermark."""
-        redis = await self._connection.ensure_connected()
-        if redis is None:
-            return False
-        try:
+        async def complete_checkpoint(redis: Any) -> bool:
             if not watermark:
                 await redis.delete(self.key)
                 return True
@@ -149,19 +166,26 @@ class PageCheckpointStore:
                 pipeline.expire(self.key, CHECKPOINT_TTL_SECONDS)
             await pipeline.execute()
             return True
+
+        try:
+            return bool(await self._run_redis_operation(complete_checkpoint))
         except Exception as exc:
+            if self.task_id:
+                raise
             logger.warning("提交 Redis 水位失败: %s", exc)
             self._connection.mark_unavailable()
             return False
 
     async def clear(self) -> bool:
-        redis = await self._connection.ensure_connected()
-        if redis is None:
-            return False
-        try:
+        async def clear_checkpoint(redis: Any) -> bool:
             await redis.delete(self.key)
             return True
+
+        try:
+            return bool(await self._run_redis_operation(clear_checkpoint))
         except Exception as exc:
+            if self.task_id:
+                raise
             logger.warning("删除 Redis 页断点失败: %s", exc)
             self._connection.mark_unavailable()
             return False

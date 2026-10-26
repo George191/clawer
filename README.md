@@ -250,7 +250,7 @@ npm run dev
 
 ## Syncer
 
-Compose 为 news、patent、navwarn、intelligence、company、financial_fact、filing、account、tweet
+Compose 为 news、patent、navwarn、intelligence、organization、financial_fact、filing、account、tweet
 分别启动独立 Syncer 容器。原 `syncer` 服务负责 news，其余服务为 `syncer-<类型>`（服务名中的下划线改为连字符）。
 每批从 MongoDB 读取 50 条，进程内最多 10 个协程同时发送及回写状态；Kafka 中每条记录仍是独立消息。
 仅发送成功后标记对应版本为 synced，失败记录保留待重试。
@@ -259,7 +259,7 @@ Compose 为 news、patent、navwarn、intelligence、company、financial_fact、
 指定类型时，与下载器共用模板分组及 `ai_collect_template_alias` 别名映射查询，只读取匹配业务类型的实际集合；MongoDB 仅按原同步状态条件查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
 
 模板与集合的别名映射由 `app/records/collection_routes.py` 查询 `public.ai_collect_template_alias`，供采集、下载和同步共用。表结构由部署迁移维护，业务映射单独配置。映射以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行的下载和同步启停，不影响采集写入。模板存在映射时不再回退到同名集合，禁用映射也不会触发回退。
-模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 company 或 filing。修改路由在下一批生效，已读入的当前批次继续完成。
+模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 organization 或 filing。修改路由在下一批生效，已读入的当前批次继续完成。
 模板的 `download[].collection` 使用实际集合名，变更实际集合时应一并更新对应下载配置。
 
 模板标题和任务名称只使用来源或产品名，调度周期、执行方式和数据类型使用各自字段。同源多模板的内部 `name` 保留必要的栏目或端点区别；标识改名时须同步已发布 YAML、任务引用、集合路由和断点中的模板字段，保留任务及运行批次 UUID。执行入口使用任务当前的模板标识，避免旧队列参数覆盖改名后的引用。
@@ -281,7 +281,7 @@ python -m app.syncer.main --data-type financial_fact --batch 50 --concurrency 10
 ```
 
 指定类型后发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 `spider-crawler-financial_fact`。
-不传 `--data-type` 时扫描全部类型，按每条记录的 `_meta.data_type` 自动发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 company 和 filing 分别发送到 `-company` 和 `-filing`；缺少类型且无法从已有 Twitter 集合映射确定类型的记录保留待处理，不发送到公共 topic。
+不传 `--data-type` 时扫描全部类型，按每条记录的 `_meta.data_type` 自动发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 organization 和 filing 分别发送到 `-organization` 和 `-filing`；缺少类型且无法从已有 Twitter 集合映射确定类型的记录保留待处理，不发送到公共 topic。
 同一范围只运行一个 Syncer 实例，勿同时运行全类型旧实例和新的分类型实例，以免重复发送。
 
 切换前创建上述类型 topic（分区及副本数按集群配置），停止旧 Syncer，先更新 RDS Worker，再启动分类型 Syncer。
@@ -312,6 +312,87 @@ USAspending 合同模板为 `usaspending`，使用免 Key 的官方批量 CSV �
 独立来源写入现有 `rds_contract` / `ods_contract`，不覆盖 SAM 记录。
 此模板不包含 IDV、分包、补助或合同附件；源修改时间不同于 USAspending 入库时间，
 超过回扫窗口的迟到数据需按历史修改日期补抓。启用同步前须部署新的记录规则和 ODS normalizer。
+
+合同之后新增的 `constellation`、`vulnerability`、`debrisevents`、`debris`、`launchvehicles`、
+`frequency`、`groundstations`、`launchinfo`、`satellite`、`launchsites`、`orbital`、`organization`
+均按同名类型进入 RDS 和 ODS。各表沿用 `(record_id, data_source, data_type)` 主键及 32 个哈希分区。
+标准字段提取后，其余业务字段保存在 ODS 的 `attributes`；不确定日期保留原文，未声明单位的数值不换算。
+
+公司与组织统一写入 `ts_rds.rds_organization` 和 `ts_ods.ods_organization`，ODS 保留 CIK、证券代码、交易所及原公司字段。
+采集、Mongo、Syncer 和 RDS/ODS 的业务类型统一为 `organization`，使用 `syncer-organization`、`spider-crawler-organization`、`etl-rds-organization`。
+SEC 的集合名和 `data_source` 仍为 `sec_edgar_company`；GCAT 组织集合和来源为 `organization_jonathan`。
+公司内嵌财务事实仍写入 `ods_financial_fact`。注册命令迁移两层历史公司，保留记录 ID、来源、Kafka 位点及时间，
+目标已有更新数据时不覆盖。在同一维护事务中锁定旧表，完成全量核验后删除两层旧公司表及旧注册记录；
+删除不使用 `CASCADE`，核验或删除失败则回滚。发现未迁移的公司历史表时终止清理，后续查询统一使用组织表。
+
+```bash
+python -m app.etl.schema.register_catalogs          # 查看 26 张表、退役对象及历史迁移计划
+python -m app.etl.schema.register_catalogs --apply  # 注册本批表，执行退役及历史公司迁移
+```
+
+该命令要求已有 `ts_meta.ddlregistry`，不执行全库初始化。部署时先暂停相关 Syncer、旧 RDS 和旧 ODS，
+部署新代码并执行本批注册后，再启动新的 ODS、RDS；为每个新增类型创建 `${SPIDER_KAFKA_TOPIC}-<类型>` 与
+`${SPIDER_ETL_RDS_TOPIC}-<类型>` topic 后启动对应 Syncer，例如 `python -m app.syncer.main --data-type satellite`。
+已有 Mongo 记录的同步状态不会被注册脚本重置；需要补历史目录数据时，按原身份重放对应 RDS 消息或执行现有补齐流程。
+
+`ods_entity_relation` 保存真实 ODS 记录之间的三元组，两端都使用完整记录身份：
+
+| 内容 | 字段 |
+| --- | --- |
+| 由谁 | `source_data_source`、`source_data_type`、`source_record_id` |
+| 到谁 | `target_data_source`、`target_data_type`、`target_record_id` |
+| 关系 | `relation_name`（展示名称）、`relation_type`（稳定关系代码） |
+| 有效期 | `start_time`、`end_time`，无来源依据时为空 |
+| 描述和属性 | `description`、`attributes`；`attributes.references` 保存匹配依据 |
+| 审计 | `created_at`、`updated_at`、`created_by`、`updated_by` |
+
+主键按来源身份、关系类型和目标身份去重；同一条边的 NORAD/COSPAR 等多条依据合并到属性中。
+不同来源即使 `record_id` 相同，也分别保留。审计时间记录关系实际创建和修改时间，
+迁移创建人为 `catalog_relation_migration`，ETL 创建人为 `etl`，不冒充历史人工操作人。
+重放不重置创建时间，也不覆盖已有的关系有效期、描述或其他业务属性。
+
+`ods_entity_relation_reference` 保留原始业务标识引用，`resolved_count = 0` 表示尚待解析。
+正式关系只写入两端实际存在的记录；目标后来入库时自动补齐，同标识的新来源到达时增加对应边。
+已解析引用也保留为证据，目标标识变化时据此刷新关系。关系维护在调用方事务内完成，
+使用事务锁串行化源、目标到达的关系更新，避免并发提交时漏边。
+不再维护 `ods_entity_identifier` 表和 `ods_resolved_relation` 视图。
+
+升级已有关系表时先停止旧 ODS 和目录补数脚本，部署新代码，执行独立关系迁移，再恢复处理：
+
+```bash
+python -m app.etl.schema.migrate_entity_relations                    # 查看关系表迁移计划
+python -m app.etl.schema.migrate_entity_relations --pg-host HOST --apply  # 转换旧引用并解析真实记录边
+```
+
+该命令只迁移两张关系表及其注册、创建必要的业务标识匹配索引；跳过公司迁移及财务清理。
+旧关系表完整保留为 reference 表，通过集合查询批量生成正式边并验证双端存在；失败时整个事务回滚。
+NORAD/COSPAR 连接卫星、轨道、频率及碎片；GCAT 代码连接卫星、组织、发射事件、场地和火箭；
+ESA ID、SatNOGS ID、星座成员及 CVE 的明确组织标识也用于关联。
+WIC 明确标为 `S` 类型的频率通过地面站通知 ID 关联地面站；普通卫星通知与地面站通知使用不同标识空间。
+财报及财务事实通过业务表的 CIK 直接关联组织，不纳入通用关系表；注册时清理历史财务引用，保留业务数据。
+不使用显示名称模糊合并。目录实体、引用及其影响的正式边在同一事务中更新。
+
+例如轨道记录通过正式边关联卫星，不再需要业务标识解析：
+
+```sql
+SELECT r.source_record_id, r.source_data_source, r.source_data_type,
+       r.relation_name, r.relation_type, r.target_record_id,
+       r.target_data_source, r.target_data_type, s.name, r.attributes
+FROM ts_ods.ods_entity_relation r
+JOIN ts_ods.ods_satellite s
+  ON (r.target_record_id, r.target_data_source, r.target_data_type) =
+     (s.record_id, s.data_source, s.data_type)
+WHERE r.source_data_type = 'orbital' AND r.target_data_type = 'satellite';
+```
+
+```sql
+SELECT f.record_id, f.concept, f.value, o.name
+FROM ts_ods.ods_financial_fact f
+JOIN ts_ods.ods_organization o
+  ON lpad(ltrim(btrim(f.cik), '0'), 10, '0') = lpad(ltrim(btrim(o.cik), '0'), 10, '0')
+WHERE btrim(f.cik) ~ '^[0-9]+$' AND length(ltrim(btrim(f.cik), '0')) BETWEEN 1 AND 10
+  AND btrim(o.cik) ~ '^[0-9]+$' AND length(ltrim(btrim(o.cik), '0')) BETWEEN 1 AND 10;
+```
 
 各 topic 内仍按顺序逐条处理、成功后提交，数据库连接池由 RDS 统一管理。
 RDS 按实际目标表输出到 `${SPIDER_ETL_RDS_TOPIC}-<表名后缀>`，例如 `rds_news` 对应 `etl-rds-news`、`rds_financial_fact` 对应 `etl-rds-financial_fact`（以配置的 topic 前缀为准）。

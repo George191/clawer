@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Alert, Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Table, Tooltip, Typography, Upload } from 'antd';
 import {
   ApartmentOutlined,
-  BankOutlined,
   BellOutlined,
   BugOutlined,
   CalendarOutlined,
@@ -82,7 +81,6 @@ interface WorkspaceDockProps {
   embedded?: boolean;
   taskDomain?: string;
   taskDataType?: string;
-  onTaskDataTypesChange?: (dataTypes: string[]) => void;
   taskKeyword?: string;
   taskId?: string | null;
   onTaskSelect?: (taskId: string | null) => void;
@@ -121,8 +119,8 @@ type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
 type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic'
   | 'satellite' | 'constellation' | 'orbital' | 'debris' | 'debrisevents' | 'frequency'
-  | 'launchinfo' | 'launchsites' | 'launchvehicles' | 'groundstations' | 'organizations' | 'vulnerability'
-  | 'account' | 'company' | 'filing' | 'financial_fact';
+  | 'launchinfo' | 'launchsites' | 'launchvehicles' | 'groundstations' | 'organization' | 'vulnerability'
+  | 'account' | 'filing' | 'financial_fact';
 
 interface TemplateDraft {
   adapter: string;
@@ -160,6 +158,7 @@ interface DockTask extends CollectTask {
   taskType: 'template' | 'celery';
   scheduleEnabled?: boolean;
   dataType?: string;
+  dataTypes?: string[];
   faviconUrl?: string;
 }
 
@@ -727,10 +726,9 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
   launchsites: { icon: <EnvironmentOutlined />, label: '发射场 / 发射点', tint: '#8AD2A3' },
   launchvehicles: { icon: <RocketOutlined />, label: '运载火箭', tint: '#F2A66F' },
   groundstations: { icon: <GroundStationGlyph />, label: '地面站', tint: '#7BCDD0' },
-  organizations: { icon: <ApartmentOutlined />, label: '组织机构', tint: '#9DB5EE' },
+  organization: { icon: <ApartmentOutlined />, label: '组织机构', tint: '#9DB5EE' },
   vulnerability: { icon: <BugOutlined />, label: '漏洞', tint: '#EF8FB1' },
   account: { icon: <UserOutlined />, label: '账号', tint: '#8DCFE8' },
-  company: { icon: <BankOutlined />, label: '公司', tint: '#AFB9ED' },
   filing: { icon: <FileTextOutlined />, label: '申报文件', tint: '#9AD8B2' },
   financial_fact: { icon: <LineChartOutlined />, label: '财务指标', tint: '#E4CB86' },
   system: { icon: <SettingOutlined />, label: '系统', tint: '#A0AEC0' },
@@ -881,6 +879,7 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   group: 'prototype',
   area: item.template_name ? `${item.template_name.replace(/_/g, ' ')} workspace` : item.product_domain ?? 'platform',
   dataType: item.data_type?.trim() || undefined,
+  dataTypes: item.data_types,
   faviconUrl: item.favicon_url,
   status: item.status,
   progress: item.progress,
@@ -1247,7 +1246,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   embedded = false,
   taskDomain = 'all',
   taskDataType,
-  onTaskDataTypesChange,
   taskKeyword,
   taskId,
   onTaskSelect,
@@ -1385,6 +1383,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           ? {
             ...mappedTask,
             dataType: mappedTask.dataType ?? task.dataType,
+            dataTypes: mappedTask.dataTypes ?? task.dataTypes,
             faviconUrl: mappedTask.faviconUrl ?? task.faviconUrl,
           }
           : task))
@@ -1411,6 +1410,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       return {
         ...mappedTask,
         dataType: mappedTask.dataType ?? current.find((task) => task.key === item.id)?.dataType,
+        dataTypes: mappedTask.dataTypes ?? current.find((task) => task.key === item.id)?.dataTypes,
       };
     }));
     setTaskRuntime((current) => Object.fromEntries(items.map((item) => {
@@ -1676,19 +1676,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     }
   }, [embedded, selectedTaskKey, setSelectedTaskKey, taskItems]);
 
-  const taskDataTypes = useMemo(() => [...new Set(allTaskRows
-    .filter((item) => taskDomain === 'all' || item.productDomain === taskDomain)
-    .map((item) => item.dataType).filter(Boolean))].sort(), [allTaskRows, taskDomain]);
-
-  useEffect(() => {
-    onTaskDataTypesChange?.(taskDataTypes);
-  }, [onTaskDataTypesChange, taskDataTypes]);
-
   const taskRows = useMemo(() => allTaskRows
     .filter((item) => {
       const query = (taskKeyword ?? keyword).trim().toLowerCase();
       const matchDomain = taskDomain === 'all' || item.productDomain === taskDomain;
-      const matchDataType = !taskDataType || item.dataType === taskDataType;
+      const matchDataType = !taskDataType || item.dataType === taskDataType || item.dataTypes?.includes(taskDataType);
       const matchFilter = taskFilter === 'all' || item.runtime.status === taskFilter;
       const matchTemplate = !taskTemplateFilter || normalizeTemplateKey(item.template) === taskTemplateFilter;
       const matchKeyword = !query

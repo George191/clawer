@@ -56,7 +56,7 @@ function setLoading(v: boolean) {
 }
 
 // ── 友好错误消息映射 ──
-function getFriendlyErrorMessage(error: AxiosError): string {
+export function getFriendlyErrorMessage(error: AxiosError): string {
   if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
     return '后端服务未响应，请检查服务是否已启动';
   }
@@ -65,6 +65,7 @@ function getFriendlyErrorMessage(error: AxiosError): string {
   }
   const { status, data } = error.response;
   const serverMsg =
+    (data as Record<string, unknown>)?.errors ||
     (data as Record<string, unknown>)?.detail ||
     (data as Record<string, unknown>)?.message;
   const msg =
@@ -189,14 +190,53 @@ export const fetchTableData = (
 export const fetchTablePartitions = (layer: string, table: string): Promise<EtlPartition[]> =>
   client.get(`/etl/${layer}/${table}/partitions`).then((r) => unwrap<EtlPartition[]>(r.data));
 
-export const fetchTableStream = (layer: string, table: string): Promise<EtlStreamState> =>
-  client.get(`/etl/${layer}/${table}/stream`).then((r) => unwrap<EtlStreamState>(r.data));
+export const fetchTableStream = (layer: string, table: string, topic?: string): Promise<EtlStreamState> =>
+  client.get(`/etl/${layer}/${table}/stream`, { params: { topic } }).then((r) => unwrap<EtlStreamState>(r.data));
 
-export const setTableOffset = (layer: string, table: string, partition: number, offset: number): Promise<{ restartRequired: boolean }> =>
-  client.put(`/etl/${layer}/${table}/offset`, { partition, offset, confirmation: 'SET OFFSET' }).then((r) => unwrap<{ restartRequired: boolean }>(r.data));
+export const setTableOffset = (layer: string, table: string, partition: number, offset: number, topic?: string): Promise<{ restartRequired: boolean }> =>
+  client.put(`/etl/${layer}/${table}/offset`, { partition, offset, topic, confirmation: 'SET OFFSET' }).then((r) => unwrap<{ restartRequired: boolean }>(r.data));
 
 export const fetchLayerScript = (layer: string, table: string): Promise<EtlScript> =>
   client.get(`/etl/${layer}/${table}/script`).then((r) => unwrap<EtlScript>(r.data));
+
+export interface EtlConnection { id: string; name: string; database: string; schemas: string[]; }
+export interface EtlDataQuery {
+  limit: number; offset: number; partition?: string; search?: string;
+  filters: Array<{ id: string; field: string; operator: string; value: string; active: boolean; join: string }>;
+  sorts: Array<{ field: string; direction: 'asc' | 'desc' }>;
+}
+export interface EtlPublishedApi {
+  id: string; token: string; validFrom: string; validUntil: string; filterType: string[]; filterSource: string[]; url: string;
+  filters?: EtlDataQuery['filters']; sorts?: EtlDataQuery['sorts']; search?: string; partition?: string;
+}
+export const queryEtlTable = (layer: string, table: string, query: EtlDataQuery): Promise<QueryResult> =>
+  client.post(`/etl/${layer}/${table}/data`, query).then((r) => unwrap<QueryResult>(r.data));
+export const fetchEtlConnections = (): Promise<EtlConnection[]> =>
+  client.get('/etl/connections').then((r) => unwrap<EtlConnection[]>(r.data));
+export const createEtlConnection = (payload: Omit<EtlConnection, 'id'>): Promise<EtlConnection> =>
+  client.post('/etl/connections', payload).then((r) => unwrap<EtlConnection>(r.data));
+export const updateEtlConnection = (id: string, payload: Omit<EtlConnection, 'id'>): Promise<EtlConnection> =>
+  client.put(`/etl/connections/${id}`, payload).then((r) => unwrap<EtlConnection>(r.data));
+export const deleteEtlConnection = (id: string): Promise<void> =>
+  client.delete(`/etl/connections/${id}`).then(() => undefined);
+export const updateEtlSchema = (schema: string, payload: { name: string; alias: string }): Promise<void> =>
+  client.put(`/etl/schemas/${schema}`, payload).then(() => undefined);
+export const deleteEtlSchema = (schema: string): Promise<void> =>
+  client.delete(`/etl/schemas/${schema}`).then(() => undefined);
+export const createEtlTable = (layer: string, payload: Record<string, unknown>): Promise<LayerTable> =>
+  client.post(`/etl/${layer}/tables`, payload).then((r) => unwrap<LayerTable>(r.data));
+export const updateEtlRow = (layer: string, table: string, key: Record<string, unknown>, values: Record<string, unknown>): Promise<void> =>
+  client.patch(`/etl/${layer}/${table}/rows`, { key, values }).then(() => undefined);
+export const deleteEtlRow = (layer: string, table: string, key: Record<string, unknown>): Promise<void> =>
+  client.delete(`/etl/${layer}/${table}/rows`, { data: { key } }).then(() => undefined);
+export const fetchEtlApis = (layer: string, table: string): Promise<EtlPublishedApi[]> =>
+  client.get(`/etl/${layer}/${table}/apis`).then((r) => unwrap<EtlPublishedApi[]>(r.data));
+export const createEtlApi = (layer: string, table: string, payload: Partial<EtlPublishedApi>): Promise<EtlPublishedApi> =>
+  client.post(`/etl/${layer}/${table}/apis`, payload).then((r) => unwrap<EtlPublishedApi>(r.data));
+export const updateEtlApi = (layer: string, table: string, id: string, payload: Partial<EtlPublishedApi>): Promise<EtlPublishedApi> =>
+  client.put(`/etl/${layer}/${table}/apis/${id}`, payload).then((r) => unwrap<EtlPublishedApi>(r.data));
+export const deleteEtlApi = (layer: string, table: string, id: string): Promise<void> =>
+  client.delete(`/etl/${layer}/${table}/apis/${id}`).then(() => undefined);
 
 export const executeQuery = (sql: string): Promise<QueryResult> =>
   client.post('/etl/query', { sql }).then((r) => unwrap<QueryResult>(r.data));

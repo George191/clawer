@@ -205,7 +205,7 @@ class SamAwardAdapter(SamSnapshotAdapter):
         return {"id": self._format_id(identifiers)}
 
 
-class SecCompanyAdapter(RecordAdapter):
+class SecOrganizationAdapter(RecordAdapter):
     def merge(
         self, existing: dict[str, Any], incoming: dict[str, Any],
     ) -> dict[str, Any]:
@@ -259,7 +259,7 @@ class SecFinancialFactAdapter(RecordAdapter):
 _ADAPTERS: dict[tuple[str, str | None], type[RecordAdapter]] = {
     ("twitter", "tweet"): TwitterTweetAdapter,
     ("twitter", "account"): TwitterRecordAdapter,
-    ("sec_edgar", "company"): SecCompanyAdapter,
+    ("sec_edgar", "organization"): SecOrganizationAdapter,
     ("sec_edgar", "financial_fact"): SecFinancialFactAdapter,
     ("sam_gov_opportunities", None): SamOpportunityAdapter,
     ("sam_gov_awards", None): SamAwardAdapter,

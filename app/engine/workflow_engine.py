@@ -526,7 +526,6 @@ async def _render_step_params(
     for key, value in step.params.items():
         str_value = str(value)
 
-        # 替换全局变量: {{ inputs.company }}
         if ("{{" in str_value) or ("{%" in str_value):
             try:
                 from app.engine.jinja2_renderer import Jinja2Renderer

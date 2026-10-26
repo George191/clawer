@@ -4,6 +4,8 @@ import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber, 
 import  enUS  from  'antd/locale/en_US';
 import  {  AlertOutlined,  ApartmentOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  BranchesOutlined,  CaretRightOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  ExperimentOutlined,  PlusOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  UploadOutlined  }  from  '@ant-design/icons';
 import  '../ProductWorkspace/workspace.css';
+import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, fetchTablePartitions, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, fetchEtlConnections, createEtlConnection, updateEtlConnection, deleteEtlConnection, updateEtlSchema, deleteEtlSchema, createEtlTable, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi } from '../../services/api';
+import type { EtlConnection, EtlDataQuery, EtlPublishedApi } from '../../services/api';
 import  type  {  LayerNode,  LayerTable,  QueryResult,  EtlPartition,  EtlStreamState  }  from  '../../services/types';
 
 const  pageMeta:  Record<string,  {  title:  string;  description:  string  }>  =  {
@@ -20,18 +22,21 @@ const  SortDirectionIcon:  React.FC<{  direction:  'asc'  |  'desc'  }>  =  ({  
 const  SortMenuChevronIcon:  React.FC  =  ()  =>  <svg  viewBox="0 0 12 12"  width="12"  height="12"  aria-hidden="true"><path  d="m3 4.5 3 3 3-3"  fill="none"  stroke="currentColor"  strokeWidth="1.2"  strokeLinecap="round"  strokeLinejoin="round"  /></svg>;
 const  flowDropdownEvent =  'flow-dropdown-open';
 const  useFlowDropdown =  ()  =>  {  const  id = useRef(crypto.randomUUID());  const  [open, setOpen] = useState(false);  useEffect(() => { const close = (event: Event) => { if ((event as CustomEvent<string>).detail !== id.current) setOpen(false); }; window.addEventListener(flowDropdownEvent, close); return () => window.removeEventListener(flowDropdownEvent, close); }, []); const setDropdownOpen = (next: boolean) => { setOpen(next); if (next) window.dispatchEvent(new CustomEvent(flowDropdownEvent, { detail: id.current })); }; return [open, setDropdownOpen] as const; };
-const  SortActionMenu:  React.FC =  ()  =>  {  const  [open, setOpen] = useFlowDropdown(); const close = () => setOpen(false); return <Dropdown open={open} onOpenChange={setOpen} trigger={['click']} overlayClassName="flow-sort-action-dropdown" dropdownRender={() => <div className="flow-sort-action-menu"><button type="button" onClick={close}>Move left</button><button type="button" onClick={close}>Move right</button><span className="flow-sort-action-separator" /><button type="button" onClick={close}>Copy</button><button type="button" onClick={close}>Copy all sorts</button><button type="button" onClick={close}>Paste</button><span className="flow-sort-action-separator" /><button type="button" onClick={close}>Delete</button><button type="button" onClick={close}>Clear all sorts</button><button type="button" onClick={close}>Clear all filters &amp; sorts</button></div>}><button type="button" className="flow-filter-sort-menu-toggle" aria-label="Sort options"><SortMenuChevronIcon /></button></Dropdown>;  };
+const SortActionMenu: React.FC<{ onDelete: () => void; onClear: () => void }> = ({ onDelete, onClear }) => {
+    const [open, setOpen] = useFlowDropdown();
+    return <Dropdown open={open} onOpenChange={setOpen} trigger={['click']} menu={{ items: [{ key: 'delete', label: 'Delete sort' }, { key: 'clear', label: 'Clear all sorts' }], onClick: ({ key }) => { (key === 'delete' ? onDelete : onClear)(); setOpen(false); } }}><button type="button" className="flow-filter-sort-menu-toggle" aria-label="Sort options" onClick={(event) => event.stopPropagation()}><SortMenuChevronIcon /></button></Dropdown>;
+};
 const  FilterFieldLink:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  <Dropdown  trigger={['click']}  menu={{  items:  ['record_id','data_source','data_type','status','updated_at'].map((field)  =>  ({  key:  field,  label:  field  })),  onClick:  ({  key  })  =>  onChange(key)  }}><span  className="flow-filter-field-link">{value}</span></Dropdown>;
 const  FilterFieldSpan:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  <span  className="flow-filter-field-link"  role="button"  tabIndex={0}  onClick={()  =>  {  const  next  =  window.prompt('Filter  field',  value);  if  (next)  onChange(next);  }}  onKeyDown={(event)  =>  {  if  (event.key  ===  'Enter')  {  const  next  =  window.prompt('Filter  field',  value);  if  (next)  onChange(next);  }  }}>{value}</span>;
 const  filterFields  =  ['record_id',  'data_source',  'data_type',  'raw_data',  'kafka_offset',  'kafka_partition',  'kafka_topic',  'created_at',  'updated_at'];
-const  FilterFieldPicker:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void;  className?:  string;  labelClassName?:  string;  showArrow?:  boolean;  trailing?:  React.ReactNode  }>  =  ({  value,  onChange,  className,  labelClassName,  showArrow,  trailing  })  =>  {  const  [open, setOpen] = useFlowDropdown(); const  [search,  setSearch]  =  useState('');  const  visibleFields  =  filterFields.filter((field)  =>  field.toLowerCase().includes(search.toLowerCase()));  return  <Dropdown open={open} onOpenChange={setOpen} overlayClassName="flow-filter-field-dropdown"  trigger={['click']}  dropdownRender={()  =>  <div  className="flow-filter-field-popup"><div  className="flow-filter-field-options">{visibleFields.map((field)  =>  <button  type="button"  className={field  ===  value  ?  'is-selected'  :  ''}  key={field}  onClick={()  =>  {  onChange(field);  setOpen(false);  }}>{field}</button>)}</div><div  className="flow-filter-field-search"><Input  size="small"  prefix={<SearchOutlined  />}  value={search}  onChange={(event)  =>  setSearch(event.target.value)}  placeholder="搜索"  /></div></div>}><span  className={['flow-filter-field-link', className].filter(Boolean).join(' ')}  role="button"  tabIndex={0}><span  className={labelClassName}>{value}</span>{showArrow  &&  <DownOutlined  />}{trailing}</span></Dropdown>;  };
+const  FilterFieldPicker:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void;  className?:  string;  labelClassName?:  string;  showArrow?:  boolean;  trailing?:  React.ReactNode; fields?: string[]  }>  =  ({  value,  onChange,  className,  labelClassName,  showArrow,  trailing, fields = filterFields  })  =>  {  const  [open, setOpen] = useFlowDropdown(); const  [search,  setSearch]  =  useState('');  const  visibleFields  =  fields.filter((field)  =>  field.toLowerCase().includes(search.toLowerCase()));  return  <Dropdown open={open} onOpenChange={setOpen} overlayClassName="flow-filter-field-dropdown"  trigger={['click']}  dropdownRender={()  =>  <div  className="flow-filter-field-popup"><div  className="flow-filter-field-options">{visibleFields.map((field)  =>  <button  type="button"  className={field  ===  value  ?  'is-selected'  :  ''}  key={field}  onClick={()  =>  {  onChange(field);  setOpen(false);  }}>{field}</button>)}</div><div  className="flow-filter-field-search"><Input  size="small"  prefix={<SearchOutlined  />}  value={search}  onChange={(event)  =>  setSearch(event.target.value)}  placeholder="搜索"  /></div></div>}><span  className={['flow-filter-field-link', className].filter(Boolean).join(' ')}  role="button"  tabIndex={0}><span  className={labelClassName}>{value || 'Select field'}</span>{showArrow  &&  <DownOutlined  />}{trailing}</span></Dropdown>;  };
 const  filterSuggestedValues  =  ['3486',  '3495',  '3526',  '3554',  '3573',  '3593',  '3611',  '3653',  '3714'];
-const  FilterValuePicker:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  {  const  [open, setOpen] = useFlowDropdown();  const  [draft,  setDraft]  =  useState(value);  const  [search,  setSearch]  =  useState('');  const  [selected,  setSelected]  =  useState(value  ?  [value]  :  []);  const  visibleValues  =  filterSuggestedValues.filter((item)  =>  item.includes(search));  const  close  =  ()  =>  {  setOpen(false);  setDraft(value);  setSelected(value  ?  [value]  :  []);  setSearch('');  };  return  <Dropdown  open={open}  onOpenChange={(next)  =>  {  if  (next)  {  setDraft(value);  setSelected(value  ?  [value]  :  []);  }  setOpen(next);  }}  overlayClassName="flow-filter-value-dropdown"  trigger={['click']}  dropdownRender={()  =>  <div  className="flow-filter-value-popup"><Input  size="small"  value={draft}  onChange={(event)  =>  setDraft(event.target.value)}  autoFocus  /><strong>建议值:</strong><div  className="flow-filter-value-options">{visibleValues.map((item)  =>  <label  key={item}><FilterCheckbox  mode="multiple"  checked={selected.includes(item)}  onChange={(event)  =>  setSelected((items)  =>  event.target.checked  ?  [...new  Set([...items,  item])]  :  items.filter((entry)  =>  entry  !==  item))}  /><span  className="flow-filter-value-label">{item}</span></label>)}</div><div  className="flow-filter-field-search"><Input  size="small"  prefix={<SearchOutlined  />}  value={search}  onChange={(event)  =>  setSearch(event.target.value)}  placeholder="搜索"  /></div><div  className="flow-filter-value-actions"><Button  size="small"  onClick={()  =>  {  onChange(selected.join(',  ')  ||  draft);  setOpen(false);  }}>确定</Button><Button  size="small"  onClick={close}>取消</Button></div></div>}><span  className="flow-filter-value"  role="button"  tabIndex={0}>{value  ||  '<?>'}</span></Dropdown>;  };
+const  FilterValuePicker:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void; suggestions?: string[]  }>  =  ({  value,  onChange, suggestions = filterSuggestedValues  })  =>  {  const  [open, setOpen] = useFlowDropdown();  const  [draft,  setDraft]  =  useState(value);  const  [search,  setSearch]  =  useState('');  const  [selected,  setSelected]  =  useState(value  ?  [value]  :  []);  const  visibleValues  =  suggestions.filter((item)  =>  item.includes(search));  const  close  =  ()  =>  {  setOpen(false);  setDraft(value);  setSelected(value  ?  [value]  :  []);  setSearch('');  };  return  <Dropdown  open={open}  onOpenChange={(next)  =>  {  if  (next)  {  setDraft(value);  setSelected(value  ?  [value]  :  []);  }  setOpen(next);  }}  overlayClassName="flow-filter-value-dropdown"  trigger={['click']}  dropdownRender={()  =>  <div  className="flow-filter-value-popup"><Input  size="small"  value={draft}  onChange={(event) => { setDraft(event.target.value); setSelected([]); }} autoFocus  /><strong>建议值:</strong><div  className="flow-filter-value-options">{visibleValues.map((item)  =>  <label  key={item}><FilterCheckbox  mode="multiple"  checked={selected.includes(item)}  onChange={(event)  =>  setSelected((items)  =>  event.target.checked  ?  [...new  Set([...items,  item])]  :  items.filter((entry)  =>  entry  !==  item))}  /><span  className="flow-filter-value-label">{item}</span></label>)}</div><div  className="flow-filter-field-search"><Input  size="small"  prefix={<SearchOutlined  />}  value={search}  onChange={(event)  =>  setSearch(event.target.value)}  placeholder="搜索"  /></div><div  className="flow-filter-value-actions"><Button  size="small"  onClick={()  =>  {  onChange(selected.join(',  ')  ||  draft);  setOpen(false);  }}>确定</Button><Button  size="small"  onClick={close}>取消</Button></div></div>}><span  className="flow-filter-value"  role="button"  tabIndex={0}>{value  ||  '<?>'}</span></Dropdown>;  };
 const  filterOperators  =  ['=',  '!=',  '<',  '<=',  '>',  '>=',  '包含',  '包含（不区分大小写）',  '不包含',  '不包含（不区分大小写）',  '开始以',  '不是开始于',  'ends  with',  '不是结束于',  '是  null',  '不是  null',  '是空的',  '不是空的',  '介于',  '不介于',  '在列表',  '不在列表'];
 const  FilterOperatorSpan:  React.FC<{  value:  string;  onChange:  (value:  string)  =>  void  }>  =  ({  value,  onChange  })  =>  { const [open, setOpen] = useFlowDropdown(); return <Dropdown open={open} onOpenChange={setOpen} overlayClassName="flow-filter-operator-dropdown" trigger={['click']} menu={{ items: filterOperators.map((operator) => ({ key: operator, label: operator })), onClick: ({ key }) => { onChange(key); setOpen(false); } }}><span className="flow-filter-op" role="button" tabIndex={0}>{value}</span></Dropdown>; };
 const  filterNestingDepth  =  (id:  string)  =>  (id.match(/nested-/g)  ||  []).length;
 type SortCondition = { field: string; direction: 'asc' | 'desc' };
-type OpenApiAccess = { id: string; token: string; validFrom: string; validUntil: string; filterType: string[]; filterSource: string[] };
+type OpenApiAccess = EtlPublishedApi;
 const  filterGroupBounds  =  (rows:  Array<{  id:  string  }>,  index:  number)  =>  {  const  stack:  number[]  =  [];  const  pairs:  Array<{  start:  number;  end:  number  }>  =  [];  rows.forEach((item,  rowIndex)  =>  {  if  (item.id.startsWith('group-open-'))  stack.push(rowIndex);  else  if  (item.id.startsWith('group-close-')  &&  stack.length)  pairs.push({  start:  stack.pop()  as  number,  end:  rowIndex  });  });  return  pairs.filter((pair)  =>  pair.start  <=  index  &&  index  <=  pair.end).sort((x,  y)  =>  (x.end  -  x.start)  -  (y.end  -  y.start))[0]  ||  null;  };
 const  findContainingClose  =  (rows:  Array<{  id:  string  }>,  index:  number)  =>  {  let  depth  =  0;  for  (let  i  =  index  +  1;  i  <  rows.length;  i  +=  1)  {  if  (rows[i].id.startsWith('group-open-'))  depth  +=  1;  else  if  (rows[i].id.startsWith('group-close-'))  {  if  (depth  ===  0)  return  i;  depth  -=  1;  }  }  return  -1;  };
 const  normalizeFilterDepth  =  <T extends { id: string }>(rows: T[])  =>  {  let  depth  =  0;  return  rows.map((item)  =>  {  const  raw  =  item.id.replace(/^group-(?:open|close|filter)-/,  '').replace(/^(nested-)+/,  '');  if  (item.id.startsWith('group-open-'))  {  const  next  =  {  ...item,  id:  `group-open-${'nested-'.repeat(depth)}${raw}`  };  depth  +=  1;  return  next;  }  if  (item.id.startsWith('group-close-'))  {  depth  =  Math.max(0,  depth  -  1);  return  {  ...item,  id:  `group-close-${'nested-'.repeat(depth)}${raw}`  };  }  return  depth  >  0  ?  {  ...item,  id:  `group-filter-${'nested-'.repeat(depth)}${raw}`  }  :  {  ...item,  id:  raw  };  });  };
@@ -308,7 +313,49 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const  [flipStyles,  setFlipStyles]  =  useState<Record<string,  React.CSSProperties>>({});
     const  [flipActive,  setFlipActive]  =  useState(false);
 
+    const [canManage, setCanManage] = useState(false);
+    const [schemas, setSchemas] = useState<LayerNode[]>([]);
+    const [connections, setConnections] = useState<EtlConnection[]>([]);
+    const [serverTables, setServerTables] = useState<LayerTable[]>([]);
+    const [partitions, setPartitions] = useState<EtlPartition[]>([]);
+    const [data, setData] = useState<QueryResult>();
+    const [stream, setStream] = useState<EtlStreamState>();
+    const [loading, setLoading] = useState(false);
+    const [tablesLoading, setTablesLoading] = useState(false);
+    const [requestError, setRequestError] = useState('');
+    const [streamError, setStreamError] = useState('');
+    const [scriptNote, setScriptNote] = useState('');
+    const [mutationLoading, setMutationLoading] = useState(false);
+    const [refreshVersion, setRefreshVersion] = useState(0);
+    const [pageNumber, setPageNumber] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
+    const [offsetPartition, setOffsetPartition] = useState<number>();
+    const [topicDraft, setTopicDraft] = useState('');
+    const [referenceColumns, setReferenceColumns] = useState<Record<string, string[]>>({});
+    const [appliedQuery, setAppliedQuery] = useState<Pick<EtlDataQuery, 'filters' | 'sorts' | 'search'>>({ filters: [], sorts: [], search: '' });
+    const tableRequest = useRef(0);
+    const loadedSchema = useRef('');
+    const dataRequest = useRef(0);
+    const metadataRequest = useRef(0);
+    const apiRequest = useRef(0);
+    const streamRequest = useRef(0);
+    const selection = useRef('');
+    const errorText = (error: unknown) => {
+        const response = (error as { response?: { data?: { errors?: unknown; detail?: unknown; message?: unknown } }; message?: string })?.response?.data;
+        const detail = response?.errors ?? response?.detail ?? response?.message;
+        return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (error as Error)?.message || 'Request failed';
+    };
+    const refreshCatalog = async () => {
+        const [layers, resources, context] = await Promise.all([fetchLayers(), fetchEtlConnections(), fetchCurrentUserContext()]);
+        setCanManage(context.user.is_superuser === true);
+        setSchemas(layers.map((item) => ({ ...item, key: item.schemaName || (item.key.startsWith('ts_') ? item.key : `ts_${item.key}`) })));
+        setConnections(resources);
+        setDatabaseAliases(Object.fromEntries(resources.map((item) => [item.id, item.name])));
+        setSchemaAliases(Object.fromEntries(layers.map((item) => [item.schemaName || (item.key.startsWith('ts_') ? item.key : `ts_${item.key}`), item.alias || item.label])));
+    };
+
     useLayoutEffect(()  =>  {
+        if (!schemas.length) return;
         const  raw  =  sessionStorage.getItem('flow-transition');
         if  (!raw)  return;
         let  data:  {  clicked:  string;  positions:  Record<string,  {  x:  number;  y:  number;  w:  number;  h:  number  }>;  timestamp:  number  };
@@ -322,7 +369,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         //  so  getBoundingClientRect()  would  return  wrong  (already-displaced)  positions.
         if  (cachedRects.current  ===  null)  {
             const  cached:  Record<string,  {  x:  number;  y:  number;  w:  number;  h:  number  }>  =  {};
-            mockSchemas.forEach((item)  =>  {
+            schemas.forEach((item)  =>  {
                 const  el  =  treeItemRefs.current[item.key];
                 if  (el)  {
                     const  r  =  el.getBoundingClientRect();
@@ -333,7 +380,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         }
 
         const  deltas:  Record<string,  {  dx:  number;  dy:  number;  sx:  number;  sy:  number  }>  =  {};
-        mockSchemas.forEach((item)  =>  {
+        schemas.forEach((item)  =>  {
             const  from  =  data.positions[item.key];
             const  to  =  cachedRects.current?.[item.key];
             if  (!from  ||  !to)  {
@@ -350,7 +397,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
 
         //  Apply  INVERT:  position  elements  as  if  they  were  still  on  the  home  page
         const  init:  Record<string,  React.CSSProperties>  =  {};
-        mockSchemas.forEach((item)  =>  {
+        schemas.forEach((item)  =>  {
             const  d  =  deltas[item.key];
             const  isClicked  =  data.clicked  ===  item.key;
             init[item.key]  =  {
@@ -369,7 +416,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             //  Now  safe  to  remove  —  PLAY  is  starting
             sessionStorage.removeItem('flow-transition');
             const  play:  Record<string,  React.CSSProperties>  =  {};
-            mockSchemas.forEach((item,  idx)  =>  {
+            schemas.forEach((item,  idx)  =>  {
                 const  isClicked  =  data.clicked  ===  item.key;
                 play[item.key]  =  {
                     transform:  'translate(0,  0)  scale(1,  1)',
@@ -390,7 +437,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         },  30);
 
         return  ()  =>  window.clearTimeout(playTimer);
-    },  []);
+    }, [schemas]);
     const  [collectionOpen,  setCollectionOpen]  =  useState(false);
     const  [connectorStep,  setConnectorStep]  =  useState<'type'  |  'config'>('type');
     const  [connectorDatabase,  setConnectorDatabase]  =  useState<'postgres'  |  'mongodb'  |  'elasticsearch'  |  's3'>('postgres');
@@ -401,49 +448,30 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const  [selectedSchema,  setSelectedSchema]  =  useState('ts_rds');
     const  [connectorSelectedSchema,  setConnectorSelectedSchema]  =  useState('');
     const  [schemaNameDraft,  setSchemaNameDraft]  =  useState('ts_rds');
+    const [schemaAliasDraft, setSchemaAliasDraft] = useState('');
     const  [schemaEditing,  setSchemaEditing]  =  useState(true);
     const  [resourcePanel,  setResourcePanel]  =  useState<'none'  |  'create'  |  'edit'>('none');
     const  [resourceConnectionName,  setResourceConnectionName]  =  useState('');
     const  [resourceDatabase,  setResourceDatabase]  =  useState('');
     const  [resourceSchema,  setResourceSchema]  =  useState('');
     const  [resourceSchemas,  setResourceSchemas]  =  useState<string[]>([]);
-    const  [databaseAliases,  setDatabaseAliases]  =  useState<Record<string,  string>>({  dw_etl:  'ETL  warehouse',  spider_prod:  'Production',  analytics:  'Analytics'  });
-    const  [schemaAliases,  setSchemaAliases]  =  useState<Record<string,  string>>({  ts_rds:  'Raw  data',  ts_ods:  'Operational  data',  ts_task:  'Task  staging',  ts_dwd:  'Detail  warehouse',  ts_dws:  'Summary  warehouse'  });
-    useEffect(()  =>  {
-        const  params  =  new  URLSearchParams(search);
-        const  resource  =  params.get('resource');
-        const  schema  =  params.get('schema');
-        const  tableName  =  params.get('table');
-        if  (resource)  {
-            setDatabaseName(resource);
-            setExpandedDatabases((current)  =>  ({  ...current,  [resource]:  true  }));
-        }
-        if  (schema  &&  mockSchemas.some((item)  =>  item.key  ===  schema))  {
-            setSelectedSchema(schema);
-            setSchemaNameDraft(schema);
-            const  schemaTables  =  [...(mockTables[schema]  ??  []),  ...(addedTables[schema]  ??  [])];
-            const  target  =  schemaTables.find((t)  =>  t.name  ===  tableName)  ??  schemaTables[0];
-            if  (target)  applyTableState(target,  schema);
-        }
-    },  [search]);
-    const  [table,  setTable]  =  useState<LayerTable>(mockTables['ts_rds'][0]);
+    const  [databaseAliases,  setDatabaseAliases]  =  useState<Record<string,  string>>({});
+    const  [schemaAliases,  setSchemaAliases]  =  useState<Record<string,  string>>({});
+    const [table, setTable] = useState<LayerTable>({ name: '', rowCount: 0, size: '', updatedAt: '' });
     const  [partition,  setPartition]  =  useState<string>();
     const  [offsetOpen,  setOffsetOpen]  =  useState(false);
     const  [offset,  setOffset]  =  useState<number>();
-    const  [offsets,  setOffsets]  =  useState([{  partition:  0,  offset:  184220  },  {  partition:  1,  offset:  182904  }]);
+    const  [offsets,  setOffsets]  =  useState<Array<{ partition: number; offset: number }>>([]);
     const  [script,  setScript]  =  useState('');
-    const  [dryRunRows,  setDryRunRows]  =  useState<Record<string,  unknown>[]>([]);
     const  [createOpen,  setCreateOpen]  =  useState(false);
     const  [draftExists,  setDraftExists]  =  useState(false);
-    const  [inputTopics,  setInputTopics]  =  useState<string[]>(['etl.ts_rds.rds_news.input']);
+    const  [inputTopics,  setInputTopics]  =  useState<string[]>([]);
     const  [activeTopicIndex,  setActiveTopicIndex]  =  useState(0);
     const  [scriptOpen,  setScriptOpen]  =  useState(false);
     const  [tableSearch,  setTableSearch]  =  useState('');
     const  [closedTables,  setClosedTables]  =  useState<Set<string>>(new  Set());
     const  [editingRowKey,  setEditingRowKey]  =  useState<string>();
     const  [editingDraft,  setEditingDraft]  =  useState<Record<string,  unknown>  |  null>(null);
-    const  [rowEdits,  setRowEdits]  =  useState<Record<string,  Record<string,  unknown>>>({});
-    const  [deletedRowKeys,  setDeletedRowKeys]  =  useState<Set<string>>(new  Set());
     const  [filterOpen,  setFilterOpen]  =  useState(false);
     const  [filterText,  setFilterText]  =  useState('');
     const  [filterRules,  setFilterRules]  =  useState([{  id:  'rule-1',  field:  'record_id',  operator:  '=',  value:  '',  active:  true,  join:  'and'  }]);  const  [filterMoving,  setFilterMoving]  =  useState<{  id:  string;  peerId:  string;  direction:  'up'  |  'down'  }  |  null>(null);  const  [filterGroupOpen,  setFilterGroupOpen]  =  useState(false);
@@ -465,89 +493,176 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const  [openApis,  setOpenApis]  =  useState<OpenApiAccess[]>([]);
     const  apiCount  =  openApis.length;
     const  [apiListOpen,  setApiListOpen]  =  useState(false);
-    const  addApi  =  ()  =>  {
-        setOpenApis((current)  =>  [...current,  {  id:  crypto.randomUUID(),  token:  `pk_live_${crypto.randomUUID().replace(/-/g,  '').slice(0,  24)}`,  validFrom:  '2026-08-25T00:00',  validUntil:  '2026-12-31T23:59',  filterType:  [],  filterSource:  []  }]);
+    const addApi = async () => {
+        if (!table.name) return;
+        const target = selection.current;
+        setMutationLoading(true);
+        try {
+            const now = new Date();
+            const api = await createEtlApi(selectedSchema, table.name, {
+                validFrom: now.toISOString(), validUntil: new Date(now.getTime() + 30 * 86400000).toISOString(),
+                filterType: [], filterSource: [], ...appliedQuery, partition,
+            });
+            if (selection.current === target) setOpenApis((current) => [...current, api]);
+            message.success('Read API published');
+        } catch (error) { message.error(errorText(error)); } finally { setMutationLoading(false); }
     };
-    const  updateApi  =  (id:  string,  changes:  Partial<Omit<OpenApiAccess,  'id'>>)  =>  setOpenApis((current)  =>  current.map((api)  =>  api.id  ===  id  ?  {  ...api,  ...changes  }  :  api));
+    const updateApi = (id: string, changes: Partial<Omit<OpenApiAccess, 'id'>>) => setOpenApis((current) => current.map((api) => api.id === id ? { ...api, ...changes } : api));
+    const saveApis = async () => {
+        const target = selection.current;
+        setMutationLoading(true);
+        try {
+            const saved = await Promise.all(openApis.map(({ id, validFrom, validUntil, filterType, filterSource }) => updateEtlApi(selectedSchema, table.name, id, { validFrom, validUntil, filterType, filterSource, ...appliedQuery, partition })));
+            if (selection.current === target) setOpenApis(saved); message.success('API access settings saved');
+        } catch (error) { message.error(errorText(error)); } finally { setMutationLoading(false); }
+    };
+    const removeApi = (api: OpenApiAccess) => Modal.confirm({ title: 'Revoke this read API?', content: api.url, onOk: async () => {
+        try { await deleteEtlApi(selectedSchema, table.name, api.id); setOpenApis((current) => current.filter((item) => item.id !== api.id)); } catch (error) { message.error(errorText(error)); throw error; }
+    } });
     const  [newTableName,  setNewTableName]  =  useState('');
     const  [newTableDescription,  setNewTableDescription]  =  useState('');
-    const  [addedTables,  setAddedTables]  =  useState<Record<string,  LayerTable[]>>({});
     const  [fields,  setFields]  =  useState([{  id:  'field-1',  name:  'record_id',  type:  'TEXT',  length:  '',  nullable:  false,  primary:  true,  comment:  'Business  record  identifier'  },  {  id:  'field-empty',  name:  '',  type:  'TEXT',  length:  '',  nullable:  true,  primary:  false,  comment:  ''  }]);
-    const  [indexes,  setIndexes]  =  useState([{  id:  'idx-1',  name:  'idx_record_id',  type:  'BTREE',  unique:  true,  fields:  'record_id',  comment:  ''  },  {  id:  'idx-empty',  name:  '',  type:  'BTREE',  unique:  false,  fields:  '',  comment:  ''  }]);
-    const  [foreignKeys,  setForeignKeys]  =  useState([{  id:  'fk-1',  name:  'fk_source',  fields:  'source',  refTable:  'source_dim',  refFields:  'source_code',  onDelete:  'RESTRICT',  onUpdate:  'CASCADE'  },  {  id:  'fk-empty',  name:  '',  fields:  '',  refTable:  '',  refFields:  '',  onDelete:  'RESTRICT',  onUpdate:  'RESTRICT'  }]);
-    const  [checks,  setChecks]  =  useState([{  id:  'chk-1',  name:  'chk_status',  expression:  "status  IN  ('ready','processing','error')",  comment:  ''  },  {  id:  'chk-empty',  name:  '',  expression:  '',  comment:  ''  }]);
-    const  [tableOptions,  setTableOptions]  =  useState({  engine:  'InnoDB',  charset:  'utf8mb4',  collation:  'utf8mb4_general_ci',  rowFormat:  'Dynamic',  comment:  ''  });
+    const  [indexes,  setIndexes]  =  useState([{  id:  'idx-empty',  name:  '',  type:  'BTREE',  unique:  false,  fields:  '',  comment:  ''  }]);
+    const  [foreignKeys,  setForeignKeys]  =  useState([{  id:  'fk-empty',  name:  '',  fields:  '',  refTable:  '',  refFields:  '',  onDelete:  'RESTRICT',  onUpdate:  'RESTRICT'  }]);
+    const  [checks,  setChecks]  =  useState([{  id:  'chk-empty',  name:  '',  expression:  '',  comment:  ''  }]);
+    const  [tableOptions,  setTableOptions]  =  useState({ comment: '' });
     const  [ddlText,  setDdlText]  =  useState('');
-    const  tables  =  [...(mockTables[selectedSchema]  ??  []),  ...(addedTables[selectedSchema]  ??  [])].filter((t)  =>  !closedTables.has(t.name));
-    const  schemaNode  =  mockSchemas.find((item)  =>  item.key  ===  selectedSchema);
-    const  fieldCount  =  selectedSchema  ===  'ts_rds'  ?  9  :  selectedSchema  ===  'ts_ods'  ?  22  :  selectedSchema  ===  'ts_task'  ?  14  :  18;
-    const  tableDescription  =  selectedSchema  ===  'ts_rds'  ?  'Raw  ingestion  records  from  Kafka'  :  selectedSchema  ===  'ts_ods'  ?  'Standardized  operational  records'  :  'Managed  ETL  output  asset';
-    const  baseDataRows  =  [
-        {  record_id:  'rec_001928',  source:  'news',  data_type:  'article',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:42:00'  },
-        {  record_id:  'rec_001929',  source:  'patent',  data_type:  'document',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:41:55'  },
-        {  record_id:  'rec_001930',  source:  'navwarn',  data_type:  'event',  partition:  0,  status:  'processing',  updated_at:  '2026-08-25  10:41:48'  },
-        {  record_id:  'rec_001931',  source:  'news',  data_type:  'article',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:41:42'  },
-        {  record_id:  'rec_001932',  source:  'patent',  data_type:  'document',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:41:35'  },
-        {  record_id:  'rec_001933',  source:  'navwarn',  data_type:  'event',  partition:  1,  status:  'processing',  updated_at:  '2026-08-25  10:41:28'  },
-        {  record_id:  'rec_001934',  source:  'news',  data_type:  'article',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:41:21'  },
-        {  record_id:  'rec_001935',  source:  'patent',  data_type:  'document',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:41:14'  },
-        {  record_id:  'rec_001936',  source:  'navwarn',  data_type:  'event',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:41:07'  },
-        {  record_id:  'rec_001937',  source:  'news',  data_type:  'article',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:41:00'  },
-        {  record_id:  'rec_001938',  source:  'patent',  data_type:  'document',  partition:  0,  status:  'processing',  updated_at:  '2026-08-25  10:40:53'  },
-        {  record_id:  'rec_001939',  source:  'navwarn',  data_type:  'event',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:40:46'  },
-        {  record_id:  'rec_001940',  source:  'news',  data_type:  'article',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:40:39'  },
-        {  record_id:  'rec_001941',  source:  'patent',  data_type:  'document',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:40:32'  },
-        {  record_id:  'rec_001942',  source:  'navwarn',  data_type:  'event',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:40:25'  },
-        {  record_id:  'rec_001943',  source:  'news',  data_type:  'article',  partition:  1,  status:  'processing',  updated_at:  '2026-08-25  10:40:18'  },
-        {  record_id:  'rec_001944',  source:  'patent',  data_type:  'document',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:40:11'  },
-        {  record_id:  'rec_001945',  source:  'navwarn',  data_type:  'event',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:40:04'  },
-        {  record_id:  'rec_001946',  source:  'news',  data_type:  'article',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:39:57'  },
-        {  record_id:  'rec_001947',  source:  'patent',  data_type:  'document',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:39:50'  },
-        {  record_id:  'rec_001948',  source:  'navwarn',  data_type:  'event',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:39:43'  },
-        {  record_id:  'rec_001949',  source:  'news',  data_type:  'article',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:39:36'  },
-        {  record_id:  'rec_001950',  source:  'patent',  data_type:  'document',  partition:  0,  status:  'processing',  updated_at:  '2026-08-25  10:39:29'  },
-        {  record_id:  'rec_001951',  source:  'navwarn',  data_type:  'event',  partition:  1,  status:  'ready',  updated_at:  '2026-08-25  10:39:22'  },
-        {  record_id:  'rec_001952',  source:  'news',  data_type:  'article',  partition:  0,  status:  'ready',  updated_at:  '2026-08-25  10:39:15'  },
-    ];
-    const  dataRows  =  baseDataRows.map((row)  =>  ({  ...row,  ...(rowEdits[row.record_id]  ??  {})  })).filter((row)  =>  !deletedRowKeys.has(row.record_id)  &&  (partition  ===  undefined  ||  row.partition  ===  mockPartitions.findIndex((item)  =>  item.name  ===  partition)  %  2)  &&  (!filterText  ||  Object.values(row).join('  ').toLowerCase().includes(filterText.toLowerCase()))  &&  filterRules.every((rule)  =>  rule.active  !==  false  &&  (!rule.value  ||  String(row[rule.field  as  keyof  typeof  row]  ??  '').toLowerCase().includes(rule.value.toLowerCase())))).sort((a,  b)  =>  {  const  conditions = [{ field: sortField, direction: sortDirection }, ...sortConditions]; for (const condition of conditions) { const  result = String(a[condition.field as keyof typeof a] ?? '').localeCompare(String(b[condition.field as keyof typeof b] ?? ''), undefined, { numeric: true }); if (result) return result * (condition.direction === 'asc' ? 1 : -1); } return 0; });
-    const  startRowEdit  =  (recordId:  string)  =>  {  const  row  =  dataRows.find((item)  =>  item.record_id  ===  recordId);  if  (row)  {  setEditingRowKey(recordId);  setEditingDraft({  ...row  });  }  };
-    const  cancelRowEdit  =  ()  =>  {  setEditingRowKey(undefined);  setEditingDraft(null);  };
-    const  saveRowEdit  =  ()  =>  {  if  (editingRowKey  &&  editingDraft)  setRowEdits((current)  =>  ({  ...current,  [editingRowKey]:  editingDraft  }));  cancelRowEdit();  };
-    const  dataColumns:  any[]  =  Object.keys(dataRows[0]  ??  {}).map((key)  =>  ({  title:  key.toUpperCase(),  dataIndex:  key,  key,  render:  (value:  unknown,  row:  {  record_id:  string  })  =>  editingRowKey  ===  row.record_id  &&  editingDraft  ?  <Input  size="small"  value={String(editingDraft[key]  ??  '')}  onChange={(event)  =>  setEditingDraft((current)  =>  current  ?  ({  ...current,  [key]:  event.target.value  })  :  current)}  />  :  key  ===  'status'  ?  <span  className={`flow-status  flow-status--${String(value)}`}>{String(value)}</span>  :  String(value)  }))
-        .concat([{  title:  'ACTION',  key:  'action',  fixed:  'right'  as  const,  width:  74,  render:  (_:  unknown,  row:  {  record_id:  string  })  =>  editingRowKey  ===  row.record_id  ?  <span  className="flow-row-actions  is-editing"><button  type="button"  aria-label="Save  row"  title="Save"  onClick={saveRowEdit}><CheckOutlined  /></button><button  type="button"  aria-label="Cancel  row  edit"  title="Cancel"  onClick={cancelRowEdit}><CloseOutlined  /></button></span>  :  <span  className="flow-row-actions  flow-row-hover-actions"><button  type="button"  aria-label="Edit  row"  title="Edit"  onClick={()  =>  startRowEdit(row.record_id)}><EditOutlined  /></button><button  type="button"  aria-label="Delete  row"  title="Delete"  onClick={()  =>  setDeletedRowKeys((current)  =>  new  Set(current).add(row.record_id))}><DeleteOutlined  /></button></span>  }]  as  any);
-
-    useEffect(()  =>  {
-        const  timer  =  window.setInterval(()  =>  {
-            setOffsets((current)  =>  current.map((item)  =>  ({  ...item,  offset:  item.offset  +  Math.floor(Math.random()  *  4)  })));
-        },  1800);
-        return  ()  =>  window.clearInterval(timer);
-    },  []);
-
-    const  applyTableState  =  (selected:  LayerTable,  schema:  string)  =>  {
-        setCreateOpen(false);
-        setTable(selected);
-        setPartition(undefined);
-        setScript(`#  ${schema}/${selected.name}\n\ndef  handler(message,  context):\n        normalized  =  normalize(message)\n        validate_contract(normalized)\n        return  normalized\n`);
-        setDryRunRows([]);
-        setInputTopics([`etl.${schema}.${selected.name}.input`]);
-        setActiveTopicIndex(0);
+    const tables = serverTables.filter((item) => !closedTables.has(item.name));
+    const schemaNode = schemas.find((item) => item.key === selectedSchema);
+    const fieldCount = data?.columns.length ?? 0;
+    const tableDescription = `${selectedSchema}.${table.name || 'No table selected'}`;
+    const dataRows = data?.rows ?? [];
+    const rowKey = (row: Record<string, unknown>, index?: number) => data?.primaryKey?.length ? JSON.stringify(data.primaryKey.map((key) => row[key])) : `${index ?? ''}:${JSON.stringify((data?.columns || []).map((key) => row[key]))}`;
+    const primaryKey = (row: Record<string, unknown>) => Object.fromEntries((data?.primaryKey || []).map((key) => [key, row[key]]));
+    const formatCell = (value: unknown) => value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+    const startRowEdit = (key: string) => {
+        if (!canManage) return;
+        if (!data?.primaryKey?.length) { message.warning('This table has no primary key and cannot be edited safely'); return; }
+        const row = dataRows.find((item) => rowKey(item) === key);
+        if (row) { setEditingRowKey(key); setEditingDraft({ ...row }); }
     };
-
-    const  selectTable  =  (selected:  LayerTable)  =>  {
-        setCreateOpen(false);
-        setDraftExists(false);
-        const  params  =  new  URLSearchParams(search);
-        if  (params.get('table')  ===  selected.name)  return;
-        params.set('table',  selected.name);
-        navigate(`/flow/layers?${params.toString()}`,  {  replace:  true  });
+    const cancelRowEdit = () => { setEditingRowKey(undefined); setEditingDraft(null); };
+    const saveRowEdit = async () => {
+        const target = selection.current;
+        const original = dataRows.find((item) => rowKey(item) === editingRowKey);
+        if (!original || !editingDraft) return;
+        setMutationLoading(true);
+        try {
+            const values = Object.fromEntries(Object.entries(editingDraft).filter(([key, value]) => value !== original[key]).map(([key, value]) => {
+                const type = data?.columnTypes?.[key]?.toLowerCase() || '';
+                if (value === null || value === original[key]) return [key, value];
+                if (typeof original[key] === 'object' && original[key] !== null || /json/.test(type)) return [key, typeof value === 'string' ? JSON.parse(value) : value];
+                if (typeof original[key] === 'boolean' || type === 'boolean') {
+                    if (value !== 'true' && value !== 'false' && typeof value !== 'boolean') throw new Error(`${key} must be true or false`);
+                    return [key, value === true || value === 'true'];
+                }
+                if (typeof original[key] === 'number') {
+                    const parsed = Number(value); if (String(value).trim() === '' || !Number.isFinite(parsed)) throw new Error(`${key} must be a number`); return [key, parsed];
+                }
+                return [key, value];
+            }));
+            if (!Object.keys(values).length) { cancelRowEdit(); return; }
+            await updateEtlRow(selectedSchema, table.name, primaryKey(original), values);
+            if (selection.current === target) { cancelRowEdit(); setRefreshVersion((value) => value + 1); } message.success('Row saved');
+        } catch (error) { message.error(errorText(error)); } finally { setMutationLoading(false); }
     };
+    const removeRow = (row: Record<string, unknown>) => Modal.confirm({ title: 'Delete this row?', content: JSON.stringify(primaryKey(row)), onOk: async () => {
+        try { await deleteEtlRow(selectedSchema, table.name, primaryKey(row)); setRefreshVersion((value) => value + 1); } catch (error) { message.error(errorText(error)); throw error; }
+    } });
+    const dataColumns: any[] = (data?.columns || []).map((key) => ({ title: key.toUpperCase(), dataIndex: key, key, render: (value: unknown, row: Record<string, unknown>) => editingRowKey === rowKey(row) && editingDraft ? <Input size="small" value={formatCell(editingDraft[key])} addonAfter={<button type="button" aria-label={`Set ${key} to null`} title="Set SQL NULL" onClick={() => setEditingDraft((current) => current ? { ...current, [key]: null } : current)}>NULL</button>} onChange={(event) => setEditingDraft((current) => current ? { ...current, [key]: event.target.value } : current)} /> : formatCell(value) }));
+    if (canManage && data?.primaryKey?.length) dataColumns.push({ title: 'ACTION', key: 'action', fixed: 'right', width: 74, render: (_: unknown, row: Record<string, unknown>) => editingRowKey === rowKey(row) ? <span className="flow-row-actions is-editing"><button type="button" aria-label="Save row" disabled={mutationLoading} onClick={saveRowEdit}><CheckOutlined /></button><button type="button" aria-label="Cancel row edit" onClick={cancelRowEdit}><CloseOutlined /></button></span> : <span className="flow-row-actions flow-row-hover-actions"><button type="button" aria-label="Edit row" onClick={() => startRowEdit(rowKey(row))}><EditOutlined /></button><button type="button" aria-label="Delete row" onClick={() => removeRow(row)}><DeleteOutlined /></button></span> });
 
-    const  runDryRun  =  ()  =>  {
-        setDryRunRows([
-            {  record_id:  'rec_001928',  normalized_title:  'Example  title',  quality_score:  0.98,  validation:  'PASS'  },
-            {  record_id:  'rec_001929',  normalized_title:  'Second  title',  quality_score:  0.86,  validation:  'WARN:  source  missing'  },
-        ]);
-        message.success('Dry  run  complete  —  no  data  was  persisted');
+    useEffect(() => { let active = true; refreshCatalog().catch((error) => { if (active) setRequestError(errorText(error)); }); return () => { active = false; }; }, []);
+    useEffect(() => {
+        const params = new URLSearchParams(search);
+        const requestedSchema = params.get('schema');
+        const schema = requestedSchema || schemas[0]?.key;
+        if (!schema) return;
+        setSelectedSchema(schema); setSchemaNameDraft(schema);
+    }, [search, schemas]);
+    useEffect(() => {
+        const requested = new URLSearchParams(search).get('resource');
+        const resource = connections.find((item) => item.id === requested || item.database === requested)?.id || connections[0]?.id || '';
+        setDatabaseName(resource); setExpandedDatabases((current) => ({ ...current, [resource]: true }));
+    }, [search]);
+    useEffect(() => {
+        const requested = new URLSearchParams(search).get('resource');
+        setDatabaseName((current) => connections.some((item) => item.id === current) ? current : connections.find((item) => item.id === requested || item.database === requested)?.id || connections[0]?.id || '');
+    }, [connections]);
+    useEffect(() => {
+        const version = ++tableRequest.current;
+        setTablesLoading(true); setRequestError('');
+        if (loadedSchema.current !== selectedSchema) {
+            loadedSchema.current = selectedSchema;
+            setServerTables([]); setTable({ name: '', rowCount: 0, size: '', updatedAt: '' });
+            setClosedTables(new Set()); setPartition(undefined); setPageNumber(1); cancelRowEdit(); setData(undefined); setStream(undefined); setOffsets([]); setInputTopics([]); setScript(''); setOpenApis([]);
+        }
+        fetchLayerTables(selectedSchema, 'current').then((items) => { if (version === tableRequest.current) setServerTables(items); }).catch((error) => { if (version === tableRequest.current) setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
+        return () => { tableRequest.current++; };
+    }, [selectedSchema, refreshVersion]);
+    useEffect(() => {
+        const name = new URLSearchParams(search).get('table');
+        const selected = serverTables.find((item) => item.name === name) || (!name ? serverTables[0] : undefined);
+        if (selected) { setTable(selected); setCreateOpen(false); }
+        else if (name && !tablesLoading) setRequestError(`Table ${name} was not found in ${selectedSchema}`);
+    }, [search, serverTables, tablesLoading]);
+    selection.current = `${selectedSchema}/${table.name}`;
+    useEffect(() => {
+        cancelRowEdit(); setPartition(undefined); setPageNumber(1); setData(undefined); setPartitions([]); setScript(''); setScriptNote(''); setOpenApis([]); setInputTopics([]); setActiveTopicIndex(0); setStream(undefined); setOffsets([]); setStreamError(''); setOffsetPartition(undefined); setOffset(undefined); setOffsetOpen(false);
+        setFilterText(''); setReferenceColumns({}); setFilterRules([{ id: 'rule-1', field: '', operator: '=', value: '', active: true, join: 'and' }]); setSortField(''); setSortConditions([]); setAppliedQuery({ filters: [], sorts: [], search: '' });
+        if (!table.name) return;
+        const version = ++metadataRequest.current;
+        const valid = () => version === metadataRequest.current;
+        fetchTablePartitions(selectedSchema, table.name).then((items) => { if (valid()) setPartitions(items); }).catch((error) => { if (valid()) message.error(errorText(error)); });
+        Promise.all([fetchLayerScript(selectedSchema, table.name), fetchHandlerCode(selectedSchema, table.name)]).then(([result, draft]) => { if (valid()) { setScript(draft.code || result.code || ''); setScriptNote(draft.code && draft.code !== result.code ? 'Saved draft' : result.available ? result.path || 'Deployed handler' : result.reason || 'No deployed handler'); } }).catch((error) => { if (valid()) setScriptNote(errorText(error)); });
+        return () => { metadataRequest.current++; };
+    }, [selectedSchema, table.name]);
+    useEffect(() => {
+        const version = ++apiRequest.current;
+        if (!canManage || !table.name) { setOpenApis([]); return; }
+        fetchEtlApis(selectedSchema, table.name).then((items) => { if (version === apiRequest.current) setOpenApis(items); }).catch((error) => { if (version === apiRequest.current) message.error(errorText(error)); });
+        return () => { apiRequest.current++; };
+    }, [selectedSchema, table.name, canManage]);
+    useEffect(() => {
+        const version = ++dataRequest.current;
+        if (!table.name) { setLoading(false); return; }
+        setLoading(true); setRequestError('');
+        const timer = window.setTimeout(() => queryEtlTable(selectedSchema, table.name, { ...appliedQuery, limit: pageSize, offset: (pageNumber - 1) * pageSize, partition }).then((result) => { if (version === dataRequest.current) setData(result); }).catch((error) => { if (version === dataRequest.current) { setData(undefined); setRequestError(errorText(error)); } }).finally(() => { if (version === dataRequest.current) setLoading(false); }), 100);
+        return () => { window.clearTimeout(timer); dataRequest.current++; };
+    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion]);
+    useEffect(() => {
+        if (!table.name) return;
+        let active = true;
+        const refresh = () => {
+            const version = ++streamRequest.current;
+            fetchTableStream(selectedSchema, table.name, inputTopics[activeTopicIndex]).then((result) => {
+                if (!active || version !== streamRequest.current) return;
+                setStream(result); setOffsets(result.offsets || []); setStreamError('');
+                setOffsetPartition((current) => result.offsets?.some((item) => item.partition === current) ? current : result.offsets?.[0]?.partition);
+                if (result.topic) setInputTopics((current) => current.includes(result.topic!) ? current : [result.topic!]);
+            }).catch((error) => { if (active && version === streamRequest.current) { setStream(undefined); setOffsets([]); setStreamError(errorText(error)); } });
+        };
+        refresh(); const timer = window.setInterval(refresh, 5000);
+        return () => { active = false; streamRequest.current++; window.clearInterval(timer); };
+    }, [selectedSchema, table.name, inputTopics[activeTopicIndex]]);
+    const selectTable = (selected: LayerTable) => {
+        setCreateOpen(false); setDraftExists(false);
+        const params = new URLSearchParams(search); params.set('schema', selectedSchema); params.set('table', selected.name);
+        navigate(`/flow/layers?${params.toString()}`, { replace: true });
+    };
+    const runDryRun = async () => {
+        if (!table.name) return;
+        try { const result = await validateHandlerCode(selectedSchema, table.name, script); if (result.valid) message.success('Python syntax is valid'); else message.error(result.errors.join('; ')); } catch (error) { message.error(errorText(error)); }
+    };
+    const saveScript = async () => {
+        try { await saveHandlerCode(selectedSchema, table.name, script); message.success('Draft saved; deployed worker code is unchanged'); } catch (error) { message.error(errorText(error)); }
+    };
+    const applyFilters = () => { setAppliedQuery({ filters: filterRules.filter((rule) => rule.field || rule.id.startsWith('group-')), sorts: [...(sortField ? [{ field: sortField, direction: sortDirection }] : []), ...sortConditions.filter((item) => item.field)], search: filterText }); setPageNumber(1); };
+    const saveOffset = async () => {
+        if (!stream?.available || offsetPartition === undefined || offset === undefined || !Number.isSafeInteger(offset)) return;
+        setMutationLoading(true);
+        try { await setTableOffset(selectedSchema, table.name, offsetPartition, offset, stream.topic); setOffsetOpen(false); message.success('Offset saved; worker restart required'); setRefreshVersion((value) => value + 1); }
+        catch (error) { message.error(errorText(error)); } finally { setMutationLoading(false); }
     };
 
     const  updateField  =  (id:  string,  key:  string,  value:  string  |  boolean)  =>  setFields((current)  =>  current.map((field)  =>  field.id  ===  id  ?  {  ...field,  [key]:  value  }  :  field));
@@ -595,14 +710,19 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         if  (!next.length  ||  next[next.length  -  1]?.name)  next.push({  id:  crypto.randomUUID(),  name:  '',  expression:  '',  comment:  ''  });
         return  next;
     });
-    const  createTable  =  ()  =>  {
-        const  name  =  newTableName.trim();
-        if  (!name  ||  !fields.some((field)  =>  field.name.trim()))  {  message.warning('Table  name  and  field  names  are  required');  return;  }
-        const  created:  LayerTable  =  {  name,  schemaName:  selectedSchema,  partitioned:  false,  rowCount:  0,  size:  '0  bytes',  updatedAt:  'Just  now'  };
-        setAddedTables((current)  =>  ({  ...current,  [selectedSchema]:  [...(current[selectedSchema]  ??  []),  created]  }));
-        setDraftExists(false);  selectTable(created);  setCreateOpen(false);  setNewTableName('');  setNewTableDescription('');  message.success('Mock  table  created');
+    const createTable = async () => {
+        const name = newTableName.trim();
+        if (!name || !fields.some((field) => field.name.trim())) { message.warning('Table name and field names are required'); return; }
+        setMutationLoading(true);
+        try {
+            const created = await createEtlTable(selectedSchema, { name, description: newTableDescription || tableOptions.comment,
+                fields: fields.filter((field) => field.name.trim()), indexes: indexes.filter((item) => item.name.trim()), foreignKeys: foreignKeys.filter((item) => item.name.trim()), checks: checks.filter((item) => item.name.trim()) });
+            setDraftExists(false); setCreateOpen(false); setNewTableName(''); setNewTableDescription(''); setRefreshVersion((value) => value + 1); selectTable(created); message.success('Table created');
+        } catch (error) { message.error(errorText(error)); } finally { setMutationLoading(false); }
     };
-    const  ddlPreview  =  `CREATE  TABLE  ${selectedSchema}.${newTableName  ||  'new_table'}  (\n${fields.filter((field)  =>  field.name.trim()).map((field)  =>  `    ${field.name}  ${field.type}${field.length  ?  `(${field.length})`  :  ''}${field.nullable  ?  ''  :  '  NOT  NULL'}${field.primary  ?  '  PRIMARY  KEY'  :  ''}`).join(',\n')}\n);`;
+    const definedFields = fields.filter((field) => field.name.trim());
+    const primaryFields = definedFields.filter((field) => field.primary);
+    const ddlPreview = `CREATE TABLE "${selectedSchema}"."${newTableName || 'new_table'}" (\n${[...definedFields.map((field) => `    "${field.name}" ${field.type}${field.type === 'VARCHAR' && field.length ? `(${field.length})` : ''}${field.nullable ? '' : ' NOT NULL'}`), ...(primaryFields.length ? [`    PRIMARY KEY (${primaryFields.map((field) => `"${field.name}"`).join(', ')})`] : [])].join(',\n')}\n);`;
     const  databaseOptions  =  [
         {  key:  'postgres'  as  const,  label:  'Postgres',  icon:  <PostgresIcon  className="flow-database-logo  flow-postgres-logo"  />  },
         {  key:  'mongodb'  as  const,  label:  'MongoDB',  icon:  <MongoDbIcon  className="flow-database-logo  flow-mongodb-logo"  />  },
@@ -617,64 +737,70 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         if  (documentWithTransitions.startViewTransition)  documentWithTransitions.startViewTransition(update);
         else  update();
     };
-    const  removeResource  =  ()  =>  {
-        if  (!databaseName)  return;
-        setDatabaseAliases((current)  =>  {  const  next  =  {  ...current  };  delete  next[databaseName];  return  next;  });
-        setExpandedDatabases((current)  =>  {  const  next  =  {  ...current  };  delete  next[databaseName];  return  next;  });
-        setDatabaseName('');
-        setConnectorSelectedSchema('');
+    const removeResource = () => {
+        const connection = connections.find((item) => item.id === databaseName);
+        if (!connection) return;
+        Modal.confirm({ title: 'Delete this connection?', content: connection.name, onOk: async () => {
+            try { await deleteEtlConnection(connection.id); setDatabaseName(''); setConnectorSelectedSchema(''); await refreshCatalog(); } catch (error) { message.error(errorText(error)); throw error; }
+        } });
     };
-    const  renameSchema  =  ()  =>  {
-        if  (!schemaEditing)  return;
-        const  nextName  =  schemaNameDraft.trim();
-        if  (!connectorSelectedSchema  ||  !nextName  ||  nextName  ===  connectorSelectedSchema)  return;
-        setSchemaAliases((current)  =>  {  const  next  =  {  ...current,  [nextName]:  current[connectorSelectedSchema]  ||  'Schema'  };  delete  next[connectorSelectedSchema];  return  next;  });
-        setConnectorSelectedSchema(nextName);
-        setSchemaEditing(false);
+    const renameSchema = async () => {
+        if (!schemaEditing || !connectorSelectedSchema || !schemaNameDraft.trim()) return;
+        const previous = connectorSelectedSchema;
+        try {
+            await updateEtlSchema(previous, { name: schemaNameDraft.trim(), alias: schemaAliasDraft });
+            setConnectorSelectedSchema(schemaNameDraft.trim()); setSchemaEditing(false); await refreshCatalog();
+            if (selectedSchema === previous) { const params = new URLSearchParams(search); params.set('schema', schemaNameDraft.trim()); navigate(`/flow/layers?${params}`, { replace: true }); }
+            message.success('Schema saved');
+        } catch (error) { message.error(errorText(error)); }
     };
-    const  deleteSchema  =  ()  =>  {
-        if  (!connectorSelectedSchema)  return;
-        setSchemaAliases((current)  =>  {  const  next  =  {  ...current  };  delete  next[connectorSelectedSchema];  return  next;  });
-        setConnectorSelectedSchema('');  setSchemaNameDraft('');  setSchemaEditing(false);
+    const deleteSchema = () => {
+        if (!connectorSelectedSchema) return;
+        Modal.confirm({ title: 'Delete this empty schema?', content: connectorSelectedSchema, onOk: async () => {
+            try { await deleteEtlSchema(connectorSelectedSchema); setConnectorSelectedSchema(''); await refreshCatalog(); setRefreshVersion((value) => value + 1); } catch (error) { message.error(errorText(error)); throw error; }
+        } });
     };
-    const  openCreateResource  =  ()  =>  {  setConnectorSelectedSchema('');  setSchemaNameDraft('');  setResourceDatabase('');  setResourceSchema('');  setResourceSchemas([]);  setResourcePanel('create');  };
-    const  openEditResource  =  ()  =>  {  if  (!databaseName)  return;  setConnectorSelectedSchema('');  setSchemaNameDraft('');  setResourceDatabase(databaseName);  setResourceSchema('');  setResourceSchemas(Object.keys(schemaAliases));  setResourcePanel('edit');  };
-    const  saveResource  =  ()  =>  {
-        const  name  =  resourceDatabase.trim();
-        const  pendingSchema  =  resourceSchema.trim();
-        const  schemas  =  [...resourceSchemas,  pendingSchema].filter(Boolean);
-        if  (!name)  {  message.warning('Database  name  is  required');  return;  }
-        const  previousKey  =  resourcePanel  ===  'edit'  ?  databaseName  :  '';
-        const  key  =  name;
-        setDatabaseAliases((current)  =>  {  const  next  =  {  ...current  };  if  (previousKey  &&  previousKey  !==  key)  delete  next[previousKey];  next[key]  =  next[key]  ||  key;  return  next;  });
-        if  (previousKey  &&  previousKey  !==  key)  setExpandedDatabases((current)  =>  {  const  next  =  {  ...current  };  next[key]  =  Boolean(next[previousKey]);  delete  next[previousKey];  return  next;  });
-        setDatabaseName(key);  setExpandedDatabases((current)  =>  ({  ...current,  [key]:  true  }));
-        if  (schemas.length)  setSchemaAliases((current)  =>  ({  ...current,  ...Object.fromEntries(schemas.map((schema)  =>  [schema,  'New  schema']))  }));
-        setResourcePanel('none');  message.success('Resource  saved');
+    const openCreateResource = () => { setConnectorSelectedSchema(''); setSchemaNameDraft(''); setResourceConnectionName(''); setResourceDatabase(connections[0]?.database || schemas.find((item) => item.database)?.database || ''); setResourceSchema(''); setResourceSchemas([]); setResourcePanel('create'); };
+    const openEditResource = () => {
+        const connection = connections.find((item) => item.id === databaseName); if (!connection) return;
+        setConnectorSelectedSchema(''); setSchemaNameDraft(''); setResourceConnectionName(connection.name); setResourceDatabase(connection.database); setResourceSchema(''); setResourceSchemas(connection.schemas); setResourcePanel('edit');
     };
-    useEffect(()  =>  {  if  (connectorSelectedSchema)  setSchemaEditing(true);  },  [connectorSelectedSchema]);
+    const saveResource = async () => {
+        const database = resourceDatabase.trim();
+        if (!database || !resourceConnectionName.trim()) { message.warning('Connection and database names are required'); return; }
+        const payload = { name: resourceConnectionName.trim(), database, schemas: [...new Set([...resourceSchemas, resourceSchema.trim()].filter(Boolean))] };
+        setMutationLoading(true);
+        try {
+            const connection = connections.find((item) => item.id === databaseName);
+            const saved = resourcePanel === 'edit' && connection ? await updateEtlConnection(connection.id, payload) : await createEtlConnection(payload);
+            await refreshCatalog(); setDatabaseName(saved.id); setExpandedDatabases((current) => ({ ...current, [saved.id]: true })); setResourcePanel('none'); message.success('Connection saved');
+        } catch (error) { message.error(errorText(error)); } finally { setMutationLoading(false); }
+    };
+    useEffect(() => { if (connectorSelectedSchema) { setSchemaEditing(false); setSchemaAliasDraft(schemaAliases[connectorSelectedSchema] || ''); } }, [connectorSelectedSchema]);
 
     return  <div  className="flow-layers  flow-layers--tagged">
         <div  className="flow-layer-layout">
             <aside  className="flow-layer-tree">
-                <div  className="flow-tree-label  flow-tree-label--actions"><span>Data  connectors</span><button  type="button"  aria-label="Add  data  connector"  title="Add  data  connector"  onClick={()  =>  {  setConnectorStep('type');  setConnectorSelectionActive(false);  setConnectorSelectedSchema('');  setDatabaseSearch('');  setCollectionOpen(true);  }}><PlusOutlined  /></button></div>
-                {mockSchemas.map((item,  i)  =>  <button  ref={(el)  =>  {  treeItemRefs.current[item.key]  =  el;  }}  className={`flow-connector-tree-item  ${selectedSchema  ===  item.key  ?  'is-active'  :  ''}  ${flipActive  ?  'is-flipping'  :  ''}`}  key={item.key}  style={flipStyles[item.key]  ||  {}}  onClick={()  =>  navigate(`/flow/layers?resource=dw_etl&schema=${item.key}`)}><PostgresIcon  className="flow-connector-tree-icon"  /><span  className="flow-connector-tree-name"><strong>spider-prod  ·  {item.key}</strong><small>{item.tables}  tables</small></span></button>)}
+                <div  className="flow-tree-label  flow-tree-label--actions"><span>Data  connectors</span>{canManage && <button  type="button"  aria-label="Add  data  connector"  title="Add  data  connector"  onClick={()  =>  {  setConnectorStep('type');  setConnectorSelectionActive(false);  setConnectorSelectedSchema('');  setDatabaseSearch('');  setCollectionOpen(true);  }}><PlusOutlined  /></button>}</div>
+                {schemas.map((item,  i)  =>  <button  ref={(el)  =>  {  treeItemRefs.current[item.key]  =  el;  }}  className={`flow-connector-tree-item  ${selectedSchema  ===  item.key  ?  'is-active'  :  ''}  ${flipActive  ?  'is-flipping'  :  ''}`}  key={item.key}  style={flipStyles[item.key]  ||  {}}  onClick={()  =>  navigate(`/flow/layers?resource=dw_etl&schema=${item.key}`)}><PostgresIcon  className="flow-connector-tree-icon"  /><span  className="flow-connector-tree-name"><strong>{connections[0]?.name || 'Postgres'} · {item.key}</strong><small>{item.tables}  tables</small></span></button>)}
             </aside>
             <section  className="flow-layer-main">
+                {(loading || tablesLoading) && <Spin size="small" />}
+                {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
                 <div  className="flow-layer-overview">
                     <div  className="flow-layer-glyph"><PostgresIcon  className="flow-layer-glyph-svg"  /></div>
                     <h3>{selectedSchema}<em>{schemaAliases[selectedSchema]  ??  'Schema'}</em></h3>
                     <div  className="flow-layer-overview-stats">
                         <span><b>{tables.length}</b>  tables</span>
                         <i  />
-                        <span><b>{(schemaNode?.rateIn  ??  0).toLocaleString()}</b>/s  in</span>
+                        <span><b>{schemaNode?.metricsAvailable ? (schemaNode.rateIn ?? 0).toLocaleString() : '—'}</b>/s in</span>
                         <i  />
-                        <span><b>{(schemaNode?.rateOut  ??  0).toLocaleString()}</b>/s  out</span>
+                        <span><b>{schemaNode?.metricsAvailable ? (schemaNode.rateOut ?? 0).toLocaleString() : '—'}</b>/s out</span>
                         <i  />
-                        <span><b>{schemaNode?.lag  ??  0}</b>ms  lag</span>
+                        <span><b>{schemaNode?.metricsAvailable ? schemaNode.lag : '—'}</b>ms lag</span>
                     </div>
                     <div  className="flow-layer-overview-health">
-                        <i  className="flow-dot  flow-dot--green"  /><span>Running</span>
+                        <i className={`flow-dot ${schemaNode?.status === 'running' ? 'flow-dot--green' : ''}`} /><span>{schemaNode?.status === 'running' ? 'Schema accessible' : schemaNode?.status || 'Unavailable'}</span>
                     </div>
                 </div>
                 <div  className="flow-table-switcher">
@@ -702,7 +828,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 <div  className="flow-table-tabs"  role="tablist"  aria-label={`${selectedSchema}  tables`}>
                     {tables.map((item)  =>  {  const  active  =  !createOpen  &&  table.name  ===  item.name;  return  <button  type="button"  role="tab"  aria-selected={active}  className={active  ?  'is-active'  :  ''}  key={item.name}  onClick={()  =>  selectTable(item)}><span  className="flow-tab-favicon"><DatabaseOutlined  /></span><span  className="flow-tab-label">{item.name}</span><span  className="flow-tab-close"  onClick={(e)  =>  {  e.stopPropagation();  const  remaining  =  tables.filter((t)  =>  t.name  !==  item.name);  if  (remaining.length  >  0)  {  selectTable(remaining[0]);  }  else  {  setCreateOpen(false);  setDraftExists(false);  }  setClosedTables((prev)  =>  new  Set(prev).add(item.name));  }}>&times;</span></button>;  })}
                     {draftExists  &&  <button  type="button"  role="tab"  aria-selected={createOpen}  className={createOpen  ?  'is-active  is-draft'  :  'is-draft'}  onClick={()  =>  setCreateOpen(true)}><span  className="flow-tab-favicon"><EditOutlined  /></span><span  className="flow-tab-label">*  Untitled</span><span  className="flow-tab-close"  onClick={(e)  =>  {  e.stopPropagation();  setDraftExists(false);  setCreateOpen(false);  }}>&times;</span></button>}
-                    <button  type="button"  className="flow-table-add-tag"  aria-label="Create  table"  title="Create  table"  onClick={()  =>  {  setDraftExists(true);  setCreateOpen(true);  setNewTableName('');  setNewTableDescription('');  }}><PlusOutlined  /></button>
+                    {canManage && <button  type="button"  className="flow-table-add-tag"  aria-label="Create  table"  title="Create  table"  onClick={()  =>  {  setDraftExists(true);  setCreateOpen(true);  setNewTableName('');  setNewTableDescription('');  }}><PlusOutlined  /></button>}
                 </div>
                 </div>
                 {createOpen  ?  <div  className="flow-inspector  flow-inline-designer-v2">
@@ -712,7 +838,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         </div>
                         <div  className="flow-table-header-right">
                             <Button  size="small"  onClick={()  =>  setCreateOpen(false)}>Cancel</Button>
-                            <Button  size="small"  type="primary"  onClick={createTable}>Save  table</Button>
+                            <Button  size="small"  type="primary"  loading={mutationLoading} onClick={createTable}>Save  table</Button>
                         </div>
                     </div>
                     <div  className="flow-inspector-body">
@@ -724,8 +850,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             {  key:  'fields',  label:  'Fields',  children:  <Table  className="flow-td-fields-table"  size="small"  pagination={false}  rowKey="id"  dataSource={fields}  columns={[
                                 {  title:  '#',  width:  36,  render:  (_,  __,  index)  =>  <span  className="flow-td-row-idx">{index  +  1}</span>  },
                                 {  title:  'Name',  dataIndex:  'name',  render:  (value,  row)  =>  <Input  size="small"  value={value}  onChange={(event)  =>  handleNameChange(row.id,  event.target.value)}  />  },
-                                {  title:  'Type',  dataIndex:  'type',  width:  130,  render:  (value,  row)  =>  <Select  size="small"  value={value}  onChange={(next)  =>  updateField(row.id,  'type',  next)}  popupMatchSelectWidth={false}  options={['TEXT','BIGINT','INTEGER','BOOLEAN','TIMESTAMPTZ','JSONB'].map((item)  =>  ({  value:  item,  label:  item  }))}  />  },
-                                {  title:  'Length',  dataIndex:  'length',  width:  80,  render:  (value,  row)  =>  <InputNumber  size="small"  min={0}  value={value  ?  Number(value)  :  undefined}  onChange={(val)  =>  updateField(row.id,  'length',  val  !=  null  ?  String(val)  :  '')}  controls  />  },
+                                {  title:  'Type',  dataIndex:  'type',  width:  130,  render:  (value,  row)  =>  <Select  size="small"  value={value}  onChange={(next)  =>  updateField(row.id,  'type',  next)}  popupMatchSelectWidth={false}  options={['TEXT','VARCHAR','BIGINT','INTEGER','BOOLEAN','TIMESTAMPTZ','JSONB'].map((item)  =>  ({  value:  item,  label:  item  }))}  />  },
+                                {  title:  'Length',  dataIndex:  'length',  width:  80,  render:  (value,  row)  =>  <InputNumber  size="small"  min={1} disabled={row.type !== 'VARCHAR'} value={value ? Number(value) : undefined}  onChange={(val)  =>  updateField(row.id,  'length',  val  !=  null  ?  String(val)  :  '')}  controls  />  },
                                 {  title:  'Not  null',  dataIndex:  'nullable',  width:  70,  align:  'center',  render:  (value,  row)  =>  <FilterCheckbox  checked={!value}  onChange={(event)  =>  updateField(row.id,  'nullable',  !event.target.checked)}  />  },
                                 {  title:  'PK',  dataIndex:  'primary',  width:  50,  align:  'center',  render:  (value,  row)  =>  <FilterCheckbox  checked={value}  onChange={(event)  =>  updateField(row.id,  'primary',  event.target.checked)}  />  },
                                 {  title:  'Comment',  dataIndex:  'comment',  render:  (value,  row)  =>  <Input  size="small"  value={value}  onChange={(event)  =>  updateField(row.id,  'comment',  event.target.value)}  />  },
@@ -747,8 +873,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                     {  title:  '#',  width:  36,  render:  (_,  __,  i)  =>  <span  className="flow-td-row-idx">{i  +  1}</span>  },
                                     {  title:  'Name',  dataIndex:  'name',  render:  (v,  row)  =>  <Input  size="small"  value={v}  onChange={(e)  =>  updateForeignKey(row.id,  {  name:  e.target.value  })}  />  },
                                     {  title:  'Fields',  dataIndex:  'fields',  width:  180,  render:  (v,  row)  =>  <Select  className="flow-fields-select"  size="small"  mode="multiple"  value={v  ?  v.split(',').filter(Boolean)  :  []}  onChange={(vals)  =>  updateForeignKey(row.id,  {  fields:  vals.join(',')  })}  popupMatchSelectWidth={false}  options={fields.filter((f)  =>  f.name).map((f)  =>  ({  value:  f.name,  label:  f.name  }))}  />  },
-                                    {  title:  'Ref.  table',  dataIndex:  'refTable',  width:  130,  render:  (v,  row)  =>  <Select  size="small"  value={v}  onChange={(n)  =>  updateForeignKey(row.id,  {  refTable:  n,  refFields:  ''  })}  popupMatchSelectWidth={false}  showSearch  options={tables.map((t)  =>  ({  value:  t.name,  label:  t.name  }))}  />  },
-                                    {  title:  'Ref.  fields',  dataIndex:  'refFields',  width:  180,  render:  (v,  row)  =>  <Select  className="flow-fields-select"  size="small"  mode="multiple"  value={v  ?  v.split(',').filter(Boolean)  :  []}  onChange={(vals)  =>  updateForeignKey(row.id,  {  refFields:  vals.join(',')  })}  popupMatchSelectWidth={false}  disabled={!row.refTable}  options={fields.filter((f)  =>  f.name).map((f)  =>  ({  value:  f.name,  label:  f.name  }))}  />  },
+                                    {  title:  'Ref.  table',  dataIndex:  'refTable',  width:  130,  render:  (v,  row)  =>  <Select  size="small"  value={v}  onChange={(n) => { updateForeignKey(row.id, { refTable: n, refFields: '' }); fetchTableData(selectedSchema, n, 1).then((result) => setReferenceColumns((current) => ({ ...current, [n]: result.columns }))).catch((error) => message.error(errorText(error))); }}  popupMatchSelectWidth={false}  showSearch  options={tables.map((t)  =>  ({  value:  t.name,  label:  t.name  }))}  />  },
+                                    {  title:  'Ref.  fields',  dataIndex:  'refFields',  width:  180,  render:  (v,  row)  =>  <Select  className="flow-fields-select"  size="small"  mode="multiple"  value={v  ?  v.split(',').filter(Boolean)  :  []}  onChange={(vals)  =>  updateForeignKey(row.id,  {  refFields:  vals.join(',')  })}  popupMatchSelectWidth={false}  disabled={!row.refTable} options={(referenceColumns[row.refTable] || []).map((name) => ({ value: name, label: name }))}  />  },
                                     {  title:  'On  Delete',  dataIndex:  'onDelete',  width:  100,  render:  (v,  row)  =>  <Select  size="small"  value={v}  onChange={(n)  =>  updateForeignKey(row.id,  {  onDelete:  n  })}  popupMatchSelectWidth={false}  options={['RESTRICT','CASCADE','SET  NULL','NO  ACTION','SET  DEFAULT'].map((o)  =>  ({  value:  o,  label:  o  }))}  />  },
                                     {  title:  'On  Update',  dataIndex:  'onUpdate',  width:  100,  render:  (v,  row)  =>  <Select  size="small"  value={v}  onChange={(n)  =>  updateForeignKey(row.id,  {  onUpdate:  n  })}  popupMatchSelectWidth={false}  options={['RESTRICT','CASCADE','SET  NULL','NO  ACTION','SET  DEFAULT'].map((o)  =>  ({  value:  o,  label:  o  }))}  />  },
                                     {  title:  '',  width:  40,  render:  (_,  row)  =>  <span  className="flow-field-actions"><button  onClick={()  =>  removeForeignKey(row.id)}>×</button></span>  },
@@ -763,17 +889,10 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                     {  title:  '',  width:  40,  render:  (_,  row)  =>  <span  className="flow-field-actions"><button  onClick={()  =>  removeCheck(row.id)}>×</button></span>  },
                                 ]}  />
                             </div>  },
-                            {  key:  'options',  label:  'Options',  children:  <div  className="flow-td-options">
-                                <div  className="flow-td-options-grid">
-                                    <div  className="flow-td-options-row"><label>Engine</label><Select  size="small"  suffixIcon={null}  value={tableOptions.engine}  onChange={(v)  =>  setTableOptions((o)  =>  ({  ...o,  engine:  v  }))}  options={['InnoDB','MyISAM','MEMORY','ARCHIVE'].map((o)  =>  ({  value:  o,  label:  o  }))}  /></div>
-                                    <div  className="flow-td-options-row"><label>Charset</label><Select  size="small"  suffixIcon={null}  value={tableOptions.charset}  onChange={(v)  =>  setTableOptions((o)  =>  ({  ...o,  charset:  v  }))}  options={['utf8mb4','utf8','latin1','ascii'].map((o)  =>  ({  value:  o,  label:  o  }))}  /></div>
-                                    <div  className="flow-td-options-row"><label>Collation</label><Select  size="small"  suffixIcon={null}  value={tableOptions.collation}  onChange={(v)  =>  setTableOptions((o)  =>  ({  ...o,  collation:  v  }))}  options={['utf8mb4_general_ci','utf8mb4_unicode_ci','utf8mb4_bin','utf8_general_ci'].map((o)  =>  ({  value:  o,  label:  o  }))}  /></div>
-                                    <div  className="flow-td-options-row"><label>Row  format</label><Select  size="small"  suffixIcon={null}  value={tableOptions.rowFormat}  onChange={(v)  =>  setTableOptions((o)  =>  ({  ...o,  rowFormat:  v  }))}  options={['Default','Dynamic','Fixed','Compressed','Redundant','Compact'].map((o)  =>  ({  value:  o,  label:  o  }))}  /></div>
-                                </div>
-                            </div>  },
+                            { key: 'options', label: 'Options', children: <div className="flow-td-options"><label>PostgreSQL table comment<Input value={tableOptions.comment} onChange={(event) => setTableOptions({ comment: event.target.value })} /></label></div> },
                             {  key:  'sql',  label:  'SQL',  children:  <div  className="flow-td-sql-wrap">
                                 <div  className="flow-td-sql-header">
-                                    <span>DDL  Script</span>
+                                    <span>Field definition preview · constraints are applied on Save</span>
                                     <div  className="flow-td-sql-actions">
                                         <Button  size="small"  onClick={()  =>  {  setDdlText(ddlPreview);  message.success('Regenerated  from  table  definition');  }}>Generate</Button>
                                         <Button  size="small"  onClick={()  =>  {  navigator.clipboard?.writeText(ddlText  ||  ddlPreview);  message.success('SQL  copied');  }}>Copy</Button>
@@ -793,7 +912,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                 <div  className="flow-pipeline-line-row">
                                     <DownloadOutlined  className="flow-pipeline-icon  flow-pipeline-icon--in"  />
                                     <strong>{inputTopics[activeTopicIndex]  ||  'Not  configured'}</strong>
-                                    <em>·  {schemaNode?.rateIn  ??  0}/s</em>
+                                    <em title={stream?.throughputReason}>· {stream?.throughput == null ? 'Unavailable' : `${stream.throughput}/s`}</em>
                                     <code>[{offsets.map((item)  =>  `p${item.partition}:  ${item.offset.toLocaleString()}`).join('    ·    ')}]</code>
                                 </div>
                             </div>
@@ -801,69 +920,66 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                 <div  className="flow-pipeline-line-row">
                                     <UploadOutlined  className="flow-pipeline-icon  flow-pipeline-icon--out"  />
                                     <strong>{table.name}</strong>
-                                    <em>·  {schemaNode?.rateOut  ??  0}/s</em>
+                                    <em>· {schemaNode?.metricsAvailable ? `${schemaNode.rateOut}/s` : 'Rate unavailable'}</em>
                                 </div>
                             </div>
                         </div>
                         <div  className="flow-table-header-right">
-                            <div  className="flow-health-badge"><i  className="flow-dot  flow-dot--green"  /><span>Healthy</span></div>
-                            <Button  size="small"  onClick={()  =>  {  setOffset(offsets[0]?.offset);  setOffsetOpen(true);  }}>Adjust  offset</Button>
+                            <div className="flow-health-badge" title={stream?.reason || streamError}><i className={`flow-dot ${stream?.available || schemaNode?.status === 'running' ? 'flow-dot--green' : ''}`} /><span>{stream?.available ? 'Stream available' : schemaNode?.status === 'running' ? 'Schema accessible' : 'Unavailable'}</span></div>
+                            {canManage && <Button size="small" disabled={!stream?.available || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
                         </div>
                     </div>
-                    <p  className="flow-table-desc">{tableDescription}</p>
+                    <p className="flow-table-desc">{tableDescription}{streamError ? ` · ${streamError}` : !stream?.available ? ` · ${stream?.reason || 'Stream unavailable'}` : ''}</p>
                     <div  className="flow-inspector-body">
                         <div  className="flow-navicat-toolbar">
-                                    <span  className={`flow-tool  ${filterOpen  ?  'is-active'  :  ''}`}  onClick={()  =>  activateTool('filter')}>Filter &amp; API</span>
+                                    <span  className={`flow-tool  ${filterOpen  ?  'is-active'  :  ''}`}  onClick={()  =>  activateTool('filter')}>{canManage ? 'Filter & API' : 'Filter'}</span>
                                     <span  className={`flow-tool  ${scriptOpen  ?  'is-active'  :  ''}`}  onClick={()  =>  activateTool('script')}>Layer  script</span>
                             </div>
                             {filterOpen  &&  <div  className="flow-filter-card">
-                                <div  className="flow-filter-rules">{filterRules.map((rule,  index)  =>  <div  className={['flow-filter-rule', rule.id.startsWith('group-open-') ? 'is-group-open' : '', rule.id.startsWith('group-close-') ? 'is-group-close' : '', rule.id.startsWith('group-filter-') ? 'is-nested' : '', rule.id.includes('nested-') ? 'is-group-nested' : '', `is-group-depth-${filterNestingDepth(rule.id)}`, filterMoving?.id === rule.id ? `is-moving is-moving-${filterMoving.direction}` : filterMoving?.peerId === rule.id ? `is-moving is-moving-${filterMoving.direction === 'up' ? 'down' : 'up'}` : '', rule.active === false ? 'is-inactive' : ''].filter(Boolean).join(' ')}  style={{  '--filter-depth':  filterNestingDepth(rule.id)  }  as  React.CSSProperties}  key={rule.id}><span  className="flow-filter-row-check">{index  ===  0  ?  <FilterCheckbox  checked={rule.active  !==  false}  onChange={(event)  =>  setFilterRules((rows)  =>  rows.map((item,  itemIndex)  =>  rule.id.startsWith('group-open-')  ?  (()  =>  {  const  ruleIndex  =  rows.findIndex((entry)  =>  entry.id  ===  rule.id);  const  bounds  =  filterGroupBounds(rows,  ruleIndex);  return  bounds  &&  ruleIndex  <=  itemIndex  &&  itemIndex  <=  bounds.end  ?  {  ...item,  active:  event.target.checked  }  :  item;  })()  :  item.id  ===  rule.id  ?  {  ...item,  active:  event.target.checked  }  :  item))}  />  :  <FilterCheckbox  checked={rule.active  !==  false}  onChange={(event)  =>  setFilterRules((rows)  =>  rows.map((item,  itemIndex)  =>  rule.id.startsWith('group-open-')  ?  (()  =>  {  const  ruleIndex  =  rows.findIndex((entry)  =>  entry.id  ===  rule.id);  const  bounds  =  filterGroupBounds(rows,  ruleIndex);  return  bounds  &&  ruleIndex  <=  itemIndex  &&  itemIndex  <=  bounds.end  ?  {  ...item,  active:  event.target.checked  }  :  item;  })()  :  item.id  ===  rule.id  ?  {  ...item,  active:  event.target.checked  }  :  item))}  />}</span><span  className="flow-filter-row-content"><FilterFieldPicker  value={rule.field}  onChange={(field)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  field  }  :  item))}  /><FilterOperatorSpan  value={rule.operator}  onChange={(operator)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  operator  }  :  item))}  /><FilterValuePicker  value={rule.value}  onChange={(value)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  value  }  :  item))}  />{index  <  filterRules.length  -  1  &&  !filterRules[index  +  1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join"  role="button"  tabIndex={0}  onClick={()  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}</span>{(index  ===  filterRules.length  - 1  ||  rule.id.startsWith('group-close-')  ||  filterRules[index  + 1]?.id.startsWith('group-close-'))  &&  <span  className="flow-filter-row-actions">{rule.id.startsWith('group-close-')  &&  index  <  filterRules.length  -  1  &&  !filterRules[index  + 1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join flow-filter-close-join"  role="button"  tabIndex={0}  onClick={()  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}<button  type="button"  className="flow-filter-mini"  onClick={()  =>  setFilterRules((rows)  =>  {  const  next  =  {  id:  ((rule.id.startsWith('group-filter-')  ||  rule.id.startsWith('group-close-'))  &&  filterNestingDepth(rule.id)  >  0)  ?  `group-filter-${'nested-'.repeat(filterNestingDepth(rule.id))}${crypto.randomUUID()}`  :  crypto.randomUUID(),  field:  'data_type',  operator:  '=',  value:  '',  active:  true,  join:  'and'  };  const  cleanRows  =  rows.length  ===  1  &&  rows[0].id === 'placeholder-rule'  ?  []  :  rows;  const  closeIndex  =  rule.id.startsWith('group-close-')  ?  index  :  findContainingClose(cleanRows,  index);  if  (rule.id.startsWith('group-close-'))  return  [...cleanRows.slice(0, index  +  1), next, ...cleanRows.slice(index  +  1)];  if  (closeIndex  >= 0)  return  [...cleanRows.slice(0, closeIndex), next, ...cleanRows.slice(closeIndex)];  return  [...cleanRows, next];  })}><FilterAddIcon /></button><button  type="button"  className="flow-filter-mini"  aria-label="Add filter group"  onClick={()  =>  setFilterRules((rows)  =>  {  const  groupId  =  crypto.randomUUID();  const  cleanRows  =  rows.length  ===  1  &&  rows[0].id  ===  'placeholder-rule'  ?  []  :  rows;  const  nested  =  rule.id.startsWith('group-filter-')  ||  rule.id.startsWith('group-close-');  const  depth  =  rule.id.match(/nested-/g)?.length  ||  0;  const  currentPrefix  =  'nested-'.repeat(depth);  const  childPrefix  =  'nested-'.repeat(depth  +  1);  const  additions  =  [{  id:  `group-open-${currentPrefix}${groupId}`,  field:  '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  },  {  id:  `group-filter-${childPrefix}${groupId}`,  field:  'data_type',  operator:  '=',  value:  '',  active:  true,  join:  'and'  },  {  id:  `group-close-${currentPrefix}${groupId}`,  field:  '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  }];  const  closeIndex  =  nested  ?  findContainingClose(cleanRows,  index)  :  -1;  return  closeIndex  >=  0  ?  [...cleanRows.slice(0, closeIndex), ...additions, ...cleanRows.slice(closeIndex)]  :  [...cleanRows, ...additions];  })}><FilterGroupIcon /></button>{rule.id === 'placeholder-rule' && <span className="flow-filter-placeholder">点击“＋”以添加筛选准则</span>}</span>}<span  className="flow-filter-row-end-actions"><button  type="button"  className="flow-filter-reorder"  aria-label="Move  up"  disabled={index  ===  0}  onClick={()  =>  {  if  (index  === 0)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  filterRules[index  -  1].id,  direction:  'up'  });  window.setTimeout(()  =>  {  setFilterRules((rows)  =>  {  const  currentIndex  =  rows.findIndex((item)  =>  item.id  ===  movingId);  if  (currentIndex  <=  0)  return  rows;  const  next  =  [...rows];  [next[currentIndex  -  1],  next[currentIndex]]  =  [next[currentIndex],  next[currentIndex  - 1]];  return  moveFilterRows(rows, currentIndex, 'up');  });  setFilterMoving(null);  },  180);  }}><ArrowUpOutlined  /></button><button  type="button"  className="flow-filter-reorder"  aria-label="Move  down"  disabled={index  ===  filterRules.length  -  1}  onClick={()  =>  {  if  (index  >=  filterRules.length  -  1)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  filterRules[index  +  1].id,  direction:  'down'  });  window.setTimeout(()  =>  {  setFilterRules((rows)  =>  moveFilterRows(rows, rows.findIndex((item)  =>  item.id  ===  movingId), 'down'));  setFilterMoving(null);  },  180);  }}><ArrowDownOutlined  /></button><button  type="button"  className="flow-filter-remove"  onClick={()  =>  setFilterRules((rows)  =>  {  if  (rows.length  ===  1)  return  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  const  next  =  removeFilterRow(rows, index);  return  next.length  ?  next  :  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  })}><CloseOutlined /></button></span></div>)}</div>
-                                <div  className="flow-filter-sort"><strong>Sort by</strong><div className="flow-sort-conditions-viewport" ref={sortConditionsRef}><div className="flow-sort-conditions-track"><span  className="flow-filter-sort-field-wrap"><FilterFieldPicker  value={sortField}  onChange={setSortField}  className="flow-filter-sort-field"  labelClassName="flow-filter-sort-field-label"  trailing={<><button  type="button"  className="flow-filter-sort-direction-toggle"  aria-label={sortDirection  ===  'asc'  ?  'Switch to descending'  :  'Switch to ascending'}  onClick={(event)  =>  {  event.stopPropagation();  setSortDirection((direction)  =>  direction  ===  'asc'  ?  'desc'  :  'asc');  }}><SortDirectionIcon  direction={sortDirection}  /></button><SortActionMenu /></>}  /></span>{sortConditions.map((condition, index) => <span className="flow-filter-sort-field-wrap" key={`${condition.field}-${index}`}><FilterFieldPicker value={condition.field} onChange={(field) => setSortConditions((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, field } : item))} className="flow-filter-sort-field" labelClassName="flow-filter-sort-field-label" trailing={<><button type="button" className="flow-filter-sort-direction-toggle" aria-label="Toggle sort direction" onClick={(event) => { event.stopPropagation(); setSortConditions((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, direction: item.direction === 'asc' ? 'desc' : 'asc' } : item)); }}><SortDirectionIcon direction={condition.direction} /></button><SortActionMenu /></>} /></span>)}<button type="button" className="flow-filter-mini flow-filter-sort-add" aria-label="Add sort field" onClick={() => setSortConditions((conditions) => [...conditions, { field: 'data_type', direction: 'asc' }])}><FilterAddIcon /></button></div></div>{sortConditionsOverflow && <div className="flow-sort-scroll-buttons"><button type="button" aria-label="Scroll left" onClick={() => sortConditionsRef.current?.scrollBy({ left: -140, behavior: 'smooth' })}>‹</button><button type="button" aria-label="Scroll right" onClick={() => sortConditionsRef.current?.scrollBy({ left: 140, behavior: 'smooth' })}>›</button></div>}</div>
-                                <div  className="flow-filter-apply"><button type="button" className="flow-filter-apply-button" onClick={() => message.success('Filters and API settings applied')}>Apply filters &amp; API settings</button><span className="flow-filter-edited-hint">Edited criteria</span><span className="flow-api-count"><button type="button" className="flow-api-count-number" onClick={() => { setApiListOpen(true); setFilterOpen(true); }}>{apiCount}</button><span className="flow-api-count-label"> / APIs</span></span></div>
-                                {apiListOpen && <section className="flow-filter-api-section">
+                                <Input.Search size="small" placeholder="Search all columns" value={filterText} onChange={(event) => setFilterText(event.target.value)} onSearch={applyFilters} /><div  className="flow-filter-rules">{filterRules.map((rule,  index)  =>  <div  className={['flow-filter-rule', rule.id.startsWith('group-open-') ? 'is-group-open' : '', rule.id.startsWith('group-close-') ? 'is-group-close' : '', rule.id.startsWith('group-filter-') ? 'is-nested' : '', rule.id.includes('nested-') ? 'is-group-nested' : '', `is-group-depth-${filterNestingDepth(rule.id)}`, filterMoving?.id === rule.id ? `is-moving is-moving-${filterMoving.direction}` : filterMoving?.peerId === rule.id ? `is-moving is-moving-${filterMoving.direction === 'up' ? 'down' : 'up'}` : '', rule.active === false ? 'is-inactive' : ''].filter(Boolean).join(' ')}  style={{  '--filter-depth':  filterNestingDepth(rule.id)  }  as  React.CSSProperties}  key={rule.id}><span  className="flow-filter-row-check">{index  ===  0  ?  <FilterCheckbox  checked={rule.active  !==  false}  onChange={(event)  =>  setFilterRules((rows)  =>  rows.map((item,  itemIndex)  =>  rule.id.startsWith('group-open-')  ?  (()  =>  {  const  ruleIndex  =  rows.findIndex((entry)  =>  entry.id  ===  rule.id);  const  bounds  =  filterGroupBounds(rows,  ruleIndex);  return  bounds  &&  ruleIndex  <=  itemIndex  &&  itemIndex  <=  bounds.end  ?  {  ...item,  active:  event.target.checked  }  :  item;  })()  :  item.id  ===  rule.id  ?  {  ...item,  active:  event.target.checked  }  :  item))}  />  :  <FilterCheckbox  checked={rule.active  !==  false}  onChange={(event)  =>  setFilterRules((rows)  =>  rows.map((item,  itemIndex)  =>  rule.id.startsWith('group-open-')  ?  (()  =>  {  const  ruleIndex  =  rows.findIndex((entry)  =>  entry.id  ===  rule.id);  const  bounds  =  filterGroupBounds(rows,  ruleIndex);  return  bounds  &&  ruleIndex  <=  itemIndex  &&  itemIndex  <=  bounds.end  ?  {  ...item,  active:  event.target.checked  }  :  item;  })()  :  item.id  ===  rule.id  ?  {  ...item,  active:  event.target.checked  }  :  item))}  />}</span><span  className="flow-filter-row-content"><FilterFieldPicker fields={data?.columns || []} value={rule.field}  onChange={(field)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  field  }  :  item))}  /><FilterOperatorSpan  value={rule.operator}  onChange={(operator)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  operator  }  :  item))}  /><FilterValuePicker suggestions={[...new Set(dataRows.map((row) => formatCell(row[rule.field])))]} value={rule.value}  onChange={(value)  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  value  }  :  item))}  />{index  <  filterRules.length  -  1  &&  !filterRules[index  +  1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join"  role="button"  tabIndex={0}  onClick={()  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}</span>{(index  ===  filterRules.length  - 1  ||  rule.id.startsWith('group-close-')  ||  filterRules[index  + 1]?.id.startsWith('group-close-'))  &&  <span  className="flow-filter-row-actions">{rule.id.startsWith('group-close-')  &&  index  <  filterRules.length  -  1  &&  !filterRules[index  + 1]?.id.startsWith('group-close-')  &&  <span  className="flow-filter-join flow-filter-close-join"  role="button"  tabIndex={0}  onClick={()  =>  setFilterRules((rows)  =>  rows.map((item)  =>  item.id  ===  rule.id  ?  {  ...item,  join:  item.join  ===  'or'  ?  'and'  :  'or'  }  :  item))}>{rule.join  ||  'and'}</span>}<button  type="button"  className="flow-filter-mini"  onClick={()  =>  setFilterRules((rows)  =>  {  const  next  =  {  id:  ((rule.id.startsWith('group-filter-')  ||  rule.id.startsWith('group-close-'))  &&  filterNestingDepth(rule.id)  >  0)  ?  `group-filter-${'nested-'.repeat(filterNestingDepth(rule.id))}${crypto.randomUUID()}`  :  crypto.randomUUID(),  field: data?.columns[0] || '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  };  const  cleanRows  =  rows.length  ===  1  &&  rows[0].id === 'placeholder-rule'  ?  []  :  rows;  const  closeIndex  =  rule.id.startsWith('group-close-')  ?  index  :  findContainingClose(cleanRows,  index);  if  (rule.id.startsWith('group-close-'))  return  [...cleanRows.slice(0, index  +  1), next, ...cleanRows.slice(index  +  1)];  if  (closeIndex  >= 0)  return  [...cleanRows.slice(0, closeIndex), next, ...cleanRows.slice(closeIndex)];  return  [...cleanRows, next];  })}><FilterAddIcon /></button><button  type="button"  className="flow-filter-mini"  aria-label="Add filter group"  onClick={()  =>  setFilterRules((rows)  =>  {  const  groupId  =  crypto.randomUUID();  const  cleanRows  =  rows.length  ===  1  &&  rows[0].id  ===  'placeholder-rule'  ?  []  :  rows;  const  nested  =  rule.id.startsWith('group-filter-')  ||  rule.id.startsWith('group-close-');  const  depth  =  rule.id.match(/nested-/g)?.length  ||  0;  const  currentPrefix  =  'nested-'.repeat(depth);  const  childPrefix  =  'nested-'.repeat(depth  +  1);  const  additions  =  [{  id:  `group-open-${currentPrefix}${groupId}`,  field:  '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  },  {  id:  `group-filter-${childPrefix}${groupId}`,  field: data?.columns[0] || '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  },  {  id:  `group-close-${currentPrefix}${groupId}`,  field:  '',  operator:  '=',  value:  '',  active:  true,  join:  'and'  }];  const  closeIndex  =  nested  ?  findContainingClose(cleanRows,  index)  :  -1;  return  closeIndex  >=  0  ?  [...cleanRows.slice(0, closeIndex), ...additions, ...cleanRows.slice(closeIndex)]  :  [...cleanRows, ...additions];  })}><FilterGroupIcon /></button>{rule.id === 'placeholder-rule' && <span className="flow-filter-placeholder">点击“＋”以添加筛选准则</span>}</span>}<span  className="flow-filter-row-end-actions"><button  type="button"  className="flow-filter-reorder"  aria-label="Move  up"  disabled={index  ===  0}  onClick={()  =>  {  if  (index  === 0)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  filterRules[index  -  1].id,  direction:  'up'  });  window.setTimeout(()  =>  {  setFilterRules((rows)  =>  {  const  currentIndex  =  rows.findIndex((item)  =>  item.id  ===  movingId);  if  (currentIndex  <=  0)  return  rows;  const  next  =  [...rows];  [next[currentIndex  -  1],  next[currentIndex]]  =  [next[currentIndex],  next[currentIndex  - 1]];  return  moveFilterRows(rows, currentIndex, 'up');  });  setFilterMoving(null);  },  180);  }}><ArrowUpOutlined  /></button><button  type="button"  className="flow-filter-reorder"  aria-label="Move  down"  disabled={index  ===  filterRules.length  -  1}  onClick={()  =>  {  if  (index  >=  filterRules.length  -  1)  return;  const  movingId  =  rule.id;  setFilterMoving({  id:  movingId,  peerId:  filterRules[index  +  1].id,  direction:  'down'  });  window.setTimeout(()  =>  {  setFilterRules((rows)  =>  moveFilterRows(rows, rows.findIndex((item)  =>  item.id  ===  movingId), 'down'));  setFilterMoving(null);  },  180);  }}><ArrowDownOutlined  /></button><button  type="button"  className="flow-filter-remove"  onClick={()  =>  setFilterRules((rows)  =>  {  if  (rows.length  ===  1)  return  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  const  next  =  removeFilterRow(rows, index);  return  next.length  ?  next  :  [{  id:  'placeholder-rule',  field:  '',  operator:  '=',  value:  '',  active:  false,  join:  'and',  placeholder:  true  }];  })}><CloseOutlined /></button></span></div>)}</div>
+                                <div  className="flow-filter-sort"><strong>Sort by</strong><div className="flow-sort-conditions-viewport" ref={sortConditionsRef}><div className="flow-sort-conditions-track"><span  className="flow-filter-sort-field-wrap"><FilterFieldPicker fields={data?.columns || []} value={sortField}  onChange={setSortField}  className="flow-filter-sort-field"  labelClassName="flow-filter-sort-field-label"  trailing={<><button  type="button"  className="flow-filter-sort-direction-toggle"  aria-label={sortDirection  ===  'asc'  ?  'Switch to descending'  :  'Switch to ascending'}  onClick={(event)  =>  {  event.stopPropagation();  setSortDirection((direction)  =>  direction  ===  'asc'  ?  'desc'  :  'asc');  }}><SortDirectionIcon  direction={sortDirection}  /></button><SortActionMenu onDelete={() => setSortField('')} onClear={() => { setSortField(''); setSortConditions([]); }} /></>}  /></span>{sortConditions.map((condition, index) => <span className="flow-filter-sort-field-wrap" key={`${condition.field}-${index}`}><FilterFieldPicker fields={data?.columns || []} value={condition.field} onChange={(field) => setSortConditions((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, field } : item))} className="flow-filter-sort-field" labelClassName="flow-filter-sort-field-label" trailing={<><button type="button" className="flow-filter-sort-direction-toggle" aria-label="Toggle sort direction" onClick={(event) => { event.stopPropagation(); setSortConditions((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, direction: item.direction === 'asc' ? 'desc' : 'asc' } : item)); }}><SortDirectionIcon direction={condition.direction} /></button><SortActionMenu onDelete={() => setSortConditions((items) => items.filter((_, itemIndex) => itemIndex !== index))} onClear={() => { setSortField(''); setSortConditions([]); }} /></>} /></span>)}<button type="button" className="flow-filter-mini flow-filter-sort-add" aria-label="Add sort field" onClick={() => setSortConditions((conditions) => [...conditions, { field: data?.columns[0] || '', direction: 'asc' }])}><FilterAddIcon /></button></div></div>{sortConditionsOverflow && <div className="flow-sort-scroll-buttons"><button type="button" aria-label="Scroll left" onClick={() => sortConditionsRef.current?.scrollBy({ left: -140, behavior: 'smooth' })}>‹</button><button type="button" aria-label="Scroll right" onClick={() => sortConditionsRef.current?.scrollBy({ left: 140, behavior: 'smooth' })}>›</button></div>}</div>
+                                <div  className="flow-filter-apply"><button type="button" className="flow-filter-apply-button" onClick={applyFilters}>Apply filters</button><span className="flow-filter-edited-hint">Edited criteria</span>{canManage && <span className="flow-api-count"><button type="button" className="flow-api-count-number" onClick={() => { setApiListOpen(true); setFilterOpen(true); }}>{apiCount}</button><span className="flow-api-count-label"> / APIs</span></span>}</div>
+                                {canManage && apiListOpen && <section className="flow-filter-api-section">
                                     <div className="flow-filter-api-title"><strong>Open APIs</strong><span className="flow-api-status flow-api-status--enabled">Token required · Enabled</span><button type="button" className="flow-filter-api-close" aria-label="Close APIs" onClick={() => setApiListOpen(false)}><CloseOutlined /></button></div>
                                     {apiCount === 0 ? <div className="flow-filter-api-empty"><span>No open APIs</span><button type="button" className="flow-filter-api-add" onClick={addApi}><PlusOutlined /> Add API</button></div> : <>
                                         <div className="flow-filter-api-list">{openApis.map((api, index) => <div className="flow-filter-api-item" key={api.id}>
-                                            <div className="flow-filter-api-item-head"><strong>API {index + 1}</strong><span>Token required · Enabled</span></div>
+                                            <div className="flow-filter-api-item-head"><strong>API {index + 1}</strong><span>Token required</span><Button size="small" danger onClick={() => removeApi(api)}>Revoke</Button></div>
                                             <div className="flow-filter-api-grid">
                                                 <div className="flow-filter-api-token"><span>Auto-generated token</span><code>{api.token}</code></div>
-                                                <label>Valid from<Input size="small" type="datetime-local" value={api.validFrom} onChange={(event) => updateApi(api.id, { validFrom: event.target.value })} /></label>
-                                                <label>Expires at<Input size="small" type="datetime-local" value={api.validUntil} onChange={(event) => updateApi(api.id, { validUntil: event.target.value })} /></label>
+                                                <label>Valid from<Input size="small" type="datetime-local" value={api.validFrom ? new Date(new Date(api.validFrom).getTime() - new Date(api.validFrom).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''} onChange={(event) => updateApi(api.id, { validFrom: event.target.value ? new Date(event.target.value).toISOString() : '' })} /></label>
+                                                <label>Expires at<Input size="small" type="datetime-local" value={api.validUntil ? new Date(new Date(api.validUntil).getTime() - new Date(api.validUntil).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''} onChange={(event) => updateApi(api.id, { validUntil: event.target.value ? new Date(event.target.value).toISOString() : '' })} /></label>
                                             </div>
-                                            <div className="flow-filter-api-range"><span>Data range</span><Select className="flow-api-filter" mode="multiple" size="small" placeholder="Data type" value={api.filterType} onChange={(value) => updateApi(api.id, { filterType: value })} options={[{ value: 'article', label: 'article' }, { value: 'document', label: 'document' }, { value: 'record', label: 'record' }, { value: 'image', label: 'image' }]} allowClear /><Select className="flow-api-filter" mode="multiple" size="small" placeholder="Source" value={api.filterSource} onChange={(value) => updateApi(api.id, { filterSource: value })} options={[{ value: 'news', label: 'news' }, { value: 'patent', label: 'patent' }, { value: 'social', label: 'social' }, { value: 'satellite', label: 'satellite' }]} allowClear /></div>
-                                            <div className="flow-filter-api-permissions"><span>Permission scope</span><strong>Read data · filtered rows only</strong></div><div className="flow-api-preview">GET <code>{`https://api.asiral.io/v1/data/${selectedSchema}/${table.name}?token=${api.token}${[api.filterType.length > 0 ? `&data_type=${api.filterType.join(',')}` : '', api.filterSource.length > 0 ? `&source=${api.filterSource.join(',')}` : ''].join('')}`}</code></div>
+                                            <div className="flow-filter-api-range"><span>Data range</span><Select className="flow-api-filter" mode="tags" size="small" placeholder="Data type" value={api.filterType} onChange={(value) => updateApi(api.id, { filterType: value })} options={[...new Set(dataRows.map((row) => String(row.data_type || '')).filter(Boolean))].map((value) => ({ value, label: value }))} allowClear /><Select className="flow-api-filter" mode="tags" size="small" placeholder="Source" value={api.filterSource} onChange={(value) => updateApi(api.id, { filterSource: value })} options={[...new Set(dataRows.map((row) => String(row.source || row.data_source || '')).filter(Boolean))].map((value) => ({ value, label: value }))} allowClear /></div>
+                                            <div className="flow-filter-api-permissions"><span>Permission scope</span><strong>Read data · filtered rows only</strong></div><div className="flow-api-preview">GET <a href={api.url} target="_blank" rel="noreferrer">{api.url}</a></div>
                                         </div>)}</div>
-                                        <div className="flow-filter-api-add-row"><button type="button" className="flow-filter-api-add" onClick={addApi}><PlusOutlined /> Add API</button></div>
+                                        <div className="flow-filter-api-add-row"><Button size="small" loading={mutationLoading} onClick={saveApis}>Save API settings</Button><button type="button" className="flow-filter-api-add" onClick={addApi}><PlusOutlined /> Add API</button></div>
                                     </>}
                                 </section>}
                             </div>}
-                            {partitionOpen  &&  <div  className="flow-partition-tags">{mockPartitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={()  =>  setPartition(partition  ===  item.name  ?  undefined  :  item.name)}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
-                            <ConfigProvider  locale={enUS}><Table  className="flow-data-table"  size="small"  pagination={{  pageSize:  20,  size:  'small',  showTotal:  (total:  number,  range:  [number,  number])  =>  `${range[0]}–${range[1]}  /  ${table.rowCount.toLocaleString()}  rows  ·  ${table.size}  ·  ${fieldCount}  fields`,  showSizeChanger:  true,  pageSizeOptions:  [10,  20,  50],  showQuickJumper:  false  }}  rowKey="record_id"  scroll={{  x:  920  }}  dataSource={dataRows}  columns={dataColumns}  onRow={(row)  =>  ({  onDoubleClick:  ()  =>  startRowEdit(row.record_id),  className:  editingRowKey  ===  row.record_id  ?  'flow-row-editing'  :  undefined  })}  /></ConfigProvider>
+                            {partitionOpen  &&  <div  className="flow-partition-tags">{partitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={() => { setPartition(partition === item.name ? undefined : item.name); setPageNumber(1); }}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
+                            <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString()} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 920 }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>
                     </div>
                     <Modal  className="flow-script-modal"  title="Layer  script"  open={scriptOpen}  onCancel={()  =>  setScriptOpen(false)}  footer={null}  width={720}>
                         <div  className="flow-script-editor">
-                            <div  className="flow-script-note">{schemaNode?.label  ??  selectedSchema}  handler  ·  edits  are  local  until  a  release  is  created.</div>
-                            <Input.TextArea  value={script}  onChange={(event)  =>  setScript(event.target.value)}  autoSize={{  minRows:  12,  maxRows:  22  }}  />
-                            <div  className="flow-script-actions"><Button  type="primary"  onClick={runDryRun}>Run  dry  run</Button><Button  onClick={()  =>  message.info('Field  contract  is  valid')}>Validate  fields</Button><span>Runs  2  sample  records  ·  no  writes</span></div>
-                            {dryRunRows.length  >  0  &&  <Table  size="small"  pagination={false}  rowKey="record_id"  dataSource={dryRunRows}  columns={Object.keys(dryRunRows[0]).map((key)  =>  ({  title:  key,  dataIndex:  key,  key  }))}  />}
+                            <div  className="flow-script-note">{scriptNote}. Drafts are stored separately and are not deployed to workers.</div>
+                            <Input.TextArea readOnly={!canManage} value={script}  onChange={(event)  =>  setScript(event.target.value)}  autoSize={{  minRows:  12,  maxRows:  22  }}  />
+                            <div  className="flow-script-actions"><Button type="primary" onClick={runDryRun} disabled={!script}>Validate syntax</Button>{canManage && <Button onClick={saveScript} disabled={!script}>Save draft</Button>}<span>AST validation only; code is not executed</span></div>
+
                         </div>
                     </Modal>
                 </div>}
             </section>
         </div>
-        <Modal  className="flow-offset-modal"  title="Adjust  Kafka  offset"  open={offsetOpen}  onCancel={()  =>  setOffsetOpen(false)}  cancelText="Cancel"  onOk={()  =>  {  message.success('Mock  offset  updated');  setOffsetOpen(false);  }}  okText="Confirm  SET  OFFSET"  width={460}>
+        <Modal  className="flow-offset-modal"  title="Adjust  Kafka  offset"  open={offsetOpen}  onCancel={()  =>  setOffsetOpen(false)}  cancelText="Cancel"  onOk={saveOffset} confirmLoading={mutationLoading} okButtonProps={{ disabled: !stream?.available || offsetPartition === undefined || offset === undefined }}  okText="Confirm  SET  OFFSET"  width={460}>
             <div  className="flow-offset-modal-body">
                 <div  className="flow-offset-modal-info">
-                    <div  className="flow-offset-modal-info-row"><span>Consumer  group</span><strong>etl-{selectedSchema}-group</strong></div>
+                    <div  className="flow-offset-modal-info-row"><span>Consumer  group</span><strong>{stream?.consumerGroup || 'Unavailable'}</strong></div>
                 </div>
-                <div  className="flow-offset-modal-section-label  flow-topic-label">
-                    <span>Input  topic</span>
-                    <div  className="flow-topic-tags">
-                        {inputTopics.map((topic,  idx)  =>  <button  key={idx}  type="button"  className={`flow-topic-tag  ${idx  ===  activeTopicIndex  ?  'is-active'  :  ''}`}  onClick={()  =>  {  setActiveTopicIndex(idx);  setOffsets([{  partition:  0,  offset:  184220  +  idx  *  5000  },  {  partition:  1,  offset:  182904  +  idx  *  5000  }]);  setOffset(undefined);  }}>{topic  ?  topic.split('.').slice(-2).join('.')  :  'New'}</button>)}
-                        <button  type="button"  className="flow-topic-tag  flow-topic-tag-add"  onClick={()  =>  {  setInputTopics([...inputTopics,  '']);  setActiveTopicIndex(inputTopics.length);  setOffsets([{  partition:  0,  offset:  184220  +  inputTopics.length  *  5000  },  {  partition:  1,  offset:  182904  +  inputTopics.length  *  5000  }]);  setOffset(undefined);  }}><PlusOutlined  /></button>
-                    </div>
-                </div>
-                <Select  value={inputTopics[activeTopicIndex]  ||  undefined}  onChange={(value)  =>  {  const  next  =  [...inputTopics];  next[activeTopicIndex]  =  value;  setInputTopics(next);  }}  placeholder="Select  input  topic"  style={{  width:  '100%'  }}  options={tables.map((item)  =>  ({  value:  `etl.${selectedSchema}.${item.name}.input`,  label:  `etl.${selectedSchema}.${item.name}.input`  }))}  popupClassName="flow-offset-dropdown"  />
+                <div className="flow-offset-modal-section-label">Input topic</div>
+                <Input.Search value={topicDraft} onChange={(event) => setTopicDraft(event.target.value)} onSearch={(topic) => { if (topic.trim()) { setInputTopics([topic.trim()]); setActiveTopicIndex(0); setOffset(undefined); setOffsetPartition(undefined); setStream(undefined); setOffsets([]); setStreamError(''); } }} enterButton="Load topic" />
+                <div className="flow-offset-modal-section-label">Partition</div>
+                <Select style={{ width: '100%' }} value={offsetPartition} options={offsets.map((item) => ({ value: item.partition, label: `Partition ${item.partition}` }))} onChange={(value) => { setOffsetPartition(value); setOffset(offsets.find((item) => item.partition === value)?.offset); }} />
+                {!stream?.available && <div role="alert">{streamError || stream?.reason || 'Stream unavailable'}</div>}
                 <div  className="flow-offset-modal-section-label">Current  offsets  <em>live</em></div>
                 <div  className="flow-offset-modal-grid">{offsets.map((item)  =>  <div  key={item.partition}  className="flow-offset-modal-cell"><small>Partition  {item.partition}</small><strong>{item.offset.toLocaleString()}</strong><i  className="flow-dot  flow-dot--green"  /></div>)}</div>
                 <div  className="flow-offset-modal-section-label">New  offset</div>
@@ -873,7 +989,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         </Modal>
         <Modal  title="Data  analysis"  open={analysisOpen}  onCancel={()  =>  setAnalysisOpen(false)}  footer={<Button  onClick={()  =>  setAnalysisOpen(false)}>Close</Button>}><div  className="flow-analysis-grid"><div><span>Visible  rows</span><strong>{dataRows.length}</strong></div><div><span>Partitions</span><strong>{new  Set(dataRows.map((row)  =>  row.partition)).size}</strong></div><div><span>Ready</span><strong>{dataRows.filter((row)  =>  row.status  ===  'ready').length}</strong></div></div></Modal>
         <Modal  className="flow-connector-modal"  closable={false}  title={<div  className="flow-modal-title-row"><span  className={connectorStep  ===  'type'  ?  ''  :  'flow-modal-database-title'}  style={connectorStep  ===  'config'  ?  ({  viewTransitionName:  `flow-database-${connectorDatabase}`  }  as  React.CSSProperties)  :  undefined}>{connectorStep  ===  'type'  ?  'New  data  connector'  :  <>{selectedDatabaseOption.icon}<strong>{selectedDatabaseOption.label}</strong></>}</span><div  className="flow-modal-title-actions">{connectorStep  ===  'config'  &&  <button  type="button"  aria-label="Back  to  database  selection"  onClick={()  =>  changeConnectorStep('type')}><BackIcon  className="flow-modal-action-icon"  /></button>}<button  type="button"  aria-label="Close"  onClick={()  =>  setCollectionOpen(false)}><CloseIcon  className="flow-modal-action-icon"  /></button></div></div>}  open={collectionOpen}  onCancel={()  =>  setCollectionOpen(false)}  footer={null}  width={connectorStep  ===  'config'  ?  760  :  560}>
-            {connectorStep  ===  'type'  ?  <div  className="flow-connector-type-step"><Input  className="flow-database-search"  prefix={<SearchOutlined  />}  allowClear  value={databaseSearch}  onChange={(event)  =>  setDatabaseSearch(event.target.value)}  placeholder="Search  databases"  /><div  className="flow-connector-picker">{visibleDatabaseOptions.map(({  key,  label,  icon  })  =>  <button  key={key}  type="button"  style={{  viewTransitionName:  `flow-database-${key}`  }  as  React.CSSProperties}  className={`flow-database-option  ${connectorSelectionActive  &&  connectorDatabase  ===  key  ?  'is-selected'  :  ''}`}  onClick={()  =>  changeConnectorStep('config',  key)}>{icon}<strong>{label}</strong></button>)}</div></div>  :  <div  className={`flow-connector-config${connectorSelectedSchema  ?  '  has-schema-detail'  :  ''}${resourcePanel  !==  'none'  ?  '  has-resource-panel'  :  ''}`}><div  className="flow-tree-toolbar"><button  type="button"  title="Add  resource"  onClick={openCreateResource}><PlusOutlined  /></button>{databaseName  &&  <><button  type="button"  title="Edit  resource"  onClick={openEditResource}><EditOutlined  /></button><button  type="button"  title="Delete  resource"  className="is-danger"  onClick={removeResource}><DeleteOutlined  /></button></>}</div><div  className="flow-resource-tree  flow-database-list"  onClick={()  =>  {  setDatabaseName('');  setConnectorSelectedSchema('');  setResourcePanel('none');  }}>{Object.keys(databaseAliases).map((value)  =>  <React.Fragment  key={value}><div  className={`flow-tree-resource-row  ${databaseName  ===  value  ?  'is-selected'  :  ''}`}  onClick={(event)  =>  {  event.stopPropagation();  setDatabaseName(value);  setConnectorSelectedSchema('');  setSchemaNameDraft('');  setSchemaEditing(false);  setResourcePanel('none');  setExpandedDatabases((current)  =>  ({  ...current,  [value]:  !current[value]  }));  }}><button  type="button"  className="flow-tree-expand"  aria-label={`${expandedDatabases[value]  ?  'Collapse'  :  'Expand'}  ${value}`}><CaretRightOutlined  rotate={expandedDatabases[value]  ?  90  :  0}  /></button><button  type="button"  className="flow-tree-resource-main"><NavicatConnectionIcon  className="flow-navicat-connection-icon"  /><strong>{value}</strong><small>{databaseAliases[value]}</small><em>{Object.keys(schemaAliases).length}</em></button></div>{expandedDatabases[value]  &&  <div  className="flow-tree-children">{Object.keys(schemaAliases).map((schema)  =>  <div  className={`flow-tree-resource-row  flow-tree-schema-row  ${connectorSelectedSchema  ===  schema  ?  'is-selected'  :  ''}`}  key={`${value}-${schema}`}  onClick={(event)  =>  event.stopPropagation()}><span  className="flow-tree-branch"  /><ApartmentOutlined  /><button  type="button"  onClick={()  =>  {  setConnectorSelectedSchema(schema);  setSchemaNameDraft(schema);  setSchemaEditing(false);  setResourcePanel('none');  }}><strong>{schema}</strong><small>{schemaAliases[schema]}</small></button></div>)}</div>}</React.Fragment>)}</div>{resourcePanel  !==  'none'  &&  <aside  className="flow-resource-panel"><div  className="flow-resource-panel-head"><strong>{resourcePanel  ===  'create'  ?  'New  PostgreSQL  database'  :  'Edit  PostgreSQL  database'}</strong><button  type="button"  onClick={()  =>  setResourcePanel('none')}  aria-label="Close">×</button></div><label>Connection  name<Input  size="small"  value={resourceConnectionName}  onChange={(event)  =>  setResourceConnectionName(event.target.value)}  placeholder="Postgres  connection"  /></label><label>Database<Input  size="small"  value={resourceDatabase}  onChange={(event)  =>  setResourceDatabase(event.target.value)}  placeholder="Database  name"  /></label><div  className="flow-resource-schema-editor"><span>Schema  (optional)</span><div  className="flow-resource-schema-input"><Input  size="small"  value={resourceSchema}  onChange={(event)  =>  setResourceSchema(event.target.value)}  placeholder="Add  schema"  /><Button  size="small"  onClick={()  =>  {  const  schema  =  resourceSchema.trim();  if  (schema  &&  !resourceSchemas.includes(schema))  {  setResourceSchemas((current)  =>  [...current,  schema]);  setResourceSchema('');  }  }}><PlusOutlined  /></Button></div>{resourceSchemas.length  >  0  &&  <div  className="flow-resource-schema-tags">{resourceSchemas.map((schema)  =>  <span  key={schema}>{schema}<button  type="button"  onClick={()  =>  setResourceSchemas((current)  =>  current.filter((item)  =>  item  !==  schema))}>×</button></span>)}</div>}</div><Button  type="primary"  size="small"  onClick={saveResource}>Save</Button></aside>}{connectorSelectedSchema  &&  resourcePanel  ===  'none'  &&  <aside  className="flow-schema-detail"><div  className="flow-resource-panel-head"><strong>Schema  details</strong><div  className="flow-schema-detail-actions"><button  type="button"  className="flow-schema-action-icon"  aria-label="Edit  schema"  title="Edit  schema"  onClick={()  =>  setSchemaEditing(true)}><EditOutlined  /></button><button  type="button"  className="flow-schema-action-icon  is-danger"  aria-label="Delete  schema"  title="Delete  schema"  onClick={deleteSchema}><DeleteOutlined  /></button><button  type="button"  className="flow-schema-action-icon"  onClick={()  =>  setConnectorSelectedSchema('')}  aria-label="Close"><CloseIcon  className="flow-modal-action-icon"  /></button></div></div><label  className="flow-schema-detail-field">Name<Input  size="small"  readOnly={!schemaEditing}  value={schemaNameDraft}  onChange={(event)  =>  setSchemaNameDraft(event.target.value)}  onPressEnter={renameSchema}  /></label><label  className="flow-schema-detail-field">Alias<Input  size="small"  readOnly={!schemaEditing}  value={schemaAliases[connectorSelectedSchema]  ||  ''}  onChange={(event)  =>  setSchemaAliases((current)  =>  ({  ...current,  [connectorSelectedSchema]:  event.target.value  }))}  /></label><Button  type="primary"  size="small"  onClick={renameSchema}>Save</Button></aside>}<Button  className="flow-create-connector"  size="small"  type="primary"  onClick={()  =>  {  setCollectionOpen(false);  message.success('Data  connector  created  (mock)');  }}>Save  connection</Button></div>}
+            {connectorStep  ===  'type'  ?  <div  className="flow-connector-type-step"><Input  className="flow-database-search"  prefix={<SearchOutlined  />}  allowClear  value={databaseSearch}  onChange={(event)  =>  setDatabaseSearch(event.target.value)}  placeholder="Search  databases"  /><div  className="flow-connector-picker">{visibleDatabaseOptions.map(({  key,  label,  icon  })  =>  <button  key={key}  type="button"  style={{  viewTransitionName:  `flow-database-${key}`  }  as  React.CSSProperties}  className={`flow-database-option  ${connectorSelectionActive  &&  connectorDatabase  ===  key  ?  'is-selected'  :  ''}`}  disabled={key !== 'postgres'} title={key !== 'postgres' ? 'Only the configured PostgreSQL database is supported' : undefined} onClick={()  =>  changeConnectorStep('config',  key)}>{icon}<strong>{label}</strong></button>)}</div></div>  :  <div  className={`flow-connector-config${connectorSelectedSchema  ?  '  has-schema-detail'  :  ''}${resourcePanel  !==  'none'  ?  '  has-resource-panel'  :  ''}`}><div  className="flow-tree-toolbar"><button  type="button"  title="Add  resource"  onClick={openCreateResource}><PlusOutlined  /></button>{databaseName  &&  <><button  type="button"  title="Edit  resource"  onClick={openEditResource}><EditOutlined  /></button><button  type="button"  title="Delete  resource"  className="is-danger"  onClick={removeResource}><DeleteOutlined  /></button></>}</div><div  className="flow-resource-tree  flow-database-list"  onClick={()  =>  {  setDatabaseName('');  setConnectorSelectedSchema('');  setResourcePanel('none');  }}>{Object.keys(databaseAliases).map((value)  =>  <React.Fragment  key={value}><div  className={`flow-tree-resource-row  ${databaseName  ===  value  ?  'is-selected'  :  ''}`}  onClick={(event)  =>  {  event.stopPropagation();  setDatabaseName(value);  setConnectorSelectedSchema('');  setSchemaNameDraft('');  setSchemaEditing(false);  setResourcePanel('none');  setExpandedDatabases((current)  =>  ({  ...current,  [value]:  !current[value]  }));  }}><button  type="button"  className="flow-tree-expand"  aria-label={`${expandedDatabases[value]  ?  'Collapse'  :  'Expand'}  ${value}`}><CaretRightOutlined  rotate={expandedDatabases[value]  ?  90  :  0}  /></button><button  type="button"  className="flow-tree-resource-main"><NavicatConnectionIcon  className="flow-navicat-connection-icon"  /><strong>{connections.find((item) => item.id === value)?.database || value}</strong><small>{databaseAliases[value]}</small><em>{connections.find((item) => item.id === value)?.schemas.length || 0}</em></button></div>{expandedDatabases[value]  &&  <div  className="flow-tree-children">{(connections.find((item) => item.id === value)?.schemas || []).map((schema)  =>  <div  className={`flow-tree-resource-row  flow-tree-schema-row  ${connectorSelectedSchema  ===  schema  ?  'is-selected'  :  ''}`}  key={`${value}-${schema}`}  onClick={(event)  =>  event.stopPropagation()}><span  className="flow-tree-branch"  /><ApartmentOutlined  /><button  type="button"  onClick={()  =>  {  setConnectorSelectedSchema(schema);  setSchemaNameDraft(schema);  setSchemaEditing(false);  setResourcePanel('none');  }}><strong>{schema}</strong><small>{schemaAliases[schema]}</small></button></div>)}</div>}</React.Fragment>)}</div>{resourcePanel  !==  'none'  &&  <aside  className="flow-resource-panel"><div  className="flow-resource-panel-head"><strong>{resourcePanel  ===  'create'  ?  'New PostgreSQL connection'  :  'Edit PostgreSQL connection'}</strong><button  type="button"  onClick={()  =>  setResourcePanel('none')}  aria-label="Close">×</button></div><label>Connection  name<Input  size="small"  value={resourceConnectionName}  onChange={(event)  =>  setResourceConnectionName(event.target.value)}  placeholder="Postgres  connection"  /></label><label>Database<Input  size="small"  value={resourceDatabase}  onChange={(event)  =>  setResourceDatabase(event.target.value)}  placeholder="Database  name"  /></label><div  className="flow-resource-schema-editor"><span>Schema  (optional)</span><div  className="flow-resource-schema-input"><Input  size="small"  value={resourceSchema}  onChange={(event)  =>  setResourceSchema(event.target.value)}  placeholder="Add  schema"  /><Button  size="small"  onClick={()  =>  {  const  schema  =  resourceSchema.trim();  if  (schema  &&  !resourceSchemas.includes(schema))  {  setResourceSchemas((current)  =>  [...current,  schema]);  setResourceSchema('');  }  }}><PlusOutlined  /></Button></div>{resourceSchemas.length  >  0  &&  <div  className="flow-resource-schema-tags">{resourceSchemas.map((schema)  =>  <span  key={schema}>{schema}<button  type="button"  onClick={()  =>  setResourceSchemas((current)  =>  current.filter((item)  =>  item  !==  schema))}>×</button></span>)}</div>}</div><Button  type="primary"  size="small"  onClick={saveResource}>Save</Button></aside>}{connectorSelectedSchema  &&  resourcePanel  ===  'none'  &&  <aside  className="flow-schema-detail"><div  className="flow-resource-panel-head"><strong>Schema  details</strong><div  className="flow-schema-detail-actions"><button  type="button"  className="flow-schema-action-icon"  aria-label="Edit  schema"  title="Edit  schema"  onClick={()  =>  setSchemaEditing(true)}><EditOutlined  /></button><button  type="button"  className="flow-schema-action-icon  is-danger"  aria-label="Delete  schema"  title="Delete  schema"  onClick={deleteSchema}><DeleteOutlined  /></button><button  type="button"  className="flow-schema-action-icon"  onClick={()  =>  setConnectorSelectedSchema('')}  aria-label="Close"><CloseIcon  className="flow-modal-action-icon"  /></button></div></div><label  className="flow-schema-detail-field">Name<Input  size="small"  readOnly={!schemaEditing}  value={schemaNameDraft}  onChange={(event)  =>  setSchemaNameDraft(event.target.value)}  onPressEnter={renameSchema}  /></label><label  className="flow-schema-detail-field">Alias<Input  size="small"  readOnly={!schemaEditing}  value={schemaAliasDraft} onChange={(event) => setSchemaAliasDraft(event.target.value)}  /></label><Button  type="primary"  size="small"  onClick={renameSchema}>Save</Button></aside>}<Button  className="flow-create-connector"  size="small"  type="primary"  disabled={mutationLoading} onClick={() => { if (resourcePanel !== 'none') void saveResource(); else setCollectionOpen(false); }}>Save  connection</Button></div>}
         </Modal>
     </div>;
 };

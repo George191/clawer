@@ -247,6 +247,7 @@ export interface WorkspaceTask {
   template_name: string | null;
   template_version: string | null;
   data_type?: string;
+  data_types?: string[];
   favicon_url?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'paused';
   progress: number;
@@ -350,6 +351,9 @@ export const releaseWorkspaceTemplate = (
 
 export const fetchWorkspaceTasks = (): Promise<WorkspaceTask[]> =>
   client.get('/tasks/runs').then((r) => r.data.items);
+
+export const fetchWorkspaceTaskDataTypes = (): Promise<string[]> =>
+  client.get('/tasks/data-types').then((r) => r.data.items);
 
 export const fetchWorkspaceTask = (taskId: string): Promise<WorkspaceTask> =>
   client.get(`/tasks/runs/${taskId}`).then((r) => r.data);

@@ -15,8 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
-from sqlalchemy.exc import TimeoutError as SATimeoutError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -26,13 +24,12 @@ from sqlalchemy.ext.asyncio import (
 
 from app.config.settings import settings
 from app.logger import get_logger
+from app.utils.connection_errors import is_retryable_connection_error
 
 logger = get_logger(__name__)
 
 PG_CONNECT_RETRY_WAIT = 3
-PG_CONNECT_MAX_RETRY = 30
 PG_CONNECT_MAX_RETRY_DELAY = 60
-PG_READ_MAX_ATTEMPTS = 3
 PG_READ_RETRY_WAIT = 0.2
 
 _DDL_STMT_SEP = re.compile(r";\s*\n\s*")
@@ -44,26 +41,6 @@ _DDL_INDEX_IF_NOT_EXISTS = re.compile(
     re.IGNORECASE,
 )
 
-# SQLAlchemy 2.0+ TimeoutError 兼容
-try:
-    from sqlalchemy.exc import TimeoutError as SA2TimeoutError
-except ImportError:
-    SA2TimeoutError = SATimeoutError
-
-
-def _is_retryable_read_error(error: Exception) -> bool:
-    if isinstance(
-        error,
-        ConnectionError
-        | InterfaceError
-        | OSError
-        | OperationalError
-        | SA2TimeoutError
-        | SATimeoutError,
-    ):
-        return True
-    return isinstance(error, DBAPIError) and error.connection_invalidated
-
 
 class PostgresClient:
     def __init__(self) -> None:
@@ -71,21 +48,16 @@ class PostgresClient:
         self._session_factory: async_sessionmaker | None = None
         self._connected = False
 
-    async def connect(self, max_retries: int = PG_CONNECT_MAX_RETRY) -> None:
+    async def connect(self, max_retries: int | None = None) -> None:
         if self._engine is not None and self._connected:
             return
 
         pg_url = _resolved_pg_url()
         masked_url = _mask_url(pg_url)
-        retryable = (
-            OperationalError, DBAPIError, InterfaceError,
-            ConnectionRefusedError, OSError, SATimeoutError, SA2TimeoutError,
-        )
-
         attempt = 0
         last_error: Exception | None = None
 
-        while attempt < max_retries:
+        while max_retries is None or attempt < max_retries:
             try:
                 self._engine = create_async_engine(
                     pg_url,
@@ -95,7 +67,7 @@ class PostgresClient:
                     pool_recycle=3600,
                     connect_args={
                         "timeout": 10,
-                        "command_timeout": 10,
+                        "command_timeout": None,
                         # Multiple long-lived workers share this database while
                         # startup migrations can change result row shapes.
                         "prepared_statement_cache_size": 0,
@@ -112,21 +84,26 @@ class PostgresClient:
                 logger.info("Connected to Postgres: %s (attempt %d)", masked_url, attempt + 1)
                 return
 
-            except retryable as e:
+            except Exception as e:
                 last_error = e
                 self._connected = False
                 if self._engine:
                     await self._engine.dispose()
                     self._engine = None
                     self._session_factory = None
+                if not is_retryable_connection_error(e):
+                    raise
 
-                delay = min(PG_CONNECT_RETRY_WAIT * (2 ** min(attempt, 5)), PG_CONNECT_MAX_RETRY_DELAY)
+                attempt += 1
+                if max_retries is not None and attempt >= max_retries:
+                    break
+                delay = min(PG_CONNECT_RETRY_WAIT * (2 ** min(attempt - 1, 5)), PG_CONNECT_MAX_RETRY_DELAY)
                 logger.warning(
-                    "Postgres not ready (attempt %d/%d): %s. Retrying in %ds... [%s]",
-                    attempt + 1, max_retries, e, delay, masked_url,
+                    "Postgres not ready (attempt %s): %s. Retrying in %ds... [%s]",
+                    f"{attempt}/{max_retries}" if max_retries is not None else attempt,
+                    _mask_password(str(e)), delay, masked_url,
                 )
                 await asyncio.sleep(delay)
-                attempt += 1
 
         masked_error = _mask_password(str(last_error))
         logger.error(
@@ -197,32 +174,48 @@ class PostgresClient:
     async def fetch_all(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        for attempt in range(PG_READ_MAX_ATTEMPTS):
+        attempt = 0
+        while True:
+            executed = False
             try:
                 async with self.session() as session:
                     result = await session.execute(text(sql), params or {})
+                    executed = True
                     rows = result.mappings().all()
                     return [dict(r) for r in rows]
             except Exception as error:
-                if not _is_retryable_read_error(error) or attempt == PG_READ_MAX_ATTEMPTS - 1:
+                if executed or not is_retryable_connection_error(error):
                     raise
-                await asyncio.sleep(PG_READ_RETRY_WAIT * (attempt + 1))
-        return []
+                delay = min(PG_READ_RETRY_WAIT * (2 ** min(attempt, 9)), PG_CONNECT_MAX_RETRY_DELAY)
+                attempt += 1
+                logger.warning(
+                    "Postgres read connection failed (attempt %d): %s. Retrying in %ss...",
+                    attempt, _mask_password(str(error)), delay,
+                )
+                await asyncio.sleep(delay)
 
     async def fetch_one(
         self, sql: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
-        for attempt in range(PG_READ_MAX_ATTEMPTS):
+        attempt = 0
+        while True:
+            executed = False
             try:
                 async with self.session() as session:
                     result = await session.execute(text(sql), params or {})
+                    executed = True
                     row = result.mappings().first()
                     return dict(row) if row else None
             except Exception as error:
-                if not _is_retryable_read_error(error) or attempt == PG_READ_MAX_ATTEMPTS - 1:
+                if executed or not is_retryable_connection_error(error):
                     raise
-                await asyncio.sleep(PG_READ_RETRY_WAIT * (attempt + 1))
-        return None
+                delay = min(PG_READ_RETRY_WAIT * (2 ** min(attempt, 9)), PG_CONNECT_MAX_RETRY_DELAY)
+                attempt += 1
+                logger.warning(
+                    "Postgres read connection failed (attempt %d): %s. Retrying in %ss...",
+                    attempt, _mask_password(str(error)), delay,
+                )
+                await asyncio.sleep(delay)
 
     async def init_schema(self, ddl_blocks: list[str]) -> None:
         await self.connect()

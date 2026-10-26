@@ -16,7 +16,7 @@ import {
   automationCreateWorkflow, automationDeleteWorkflow,
   automationUpdateWorkflow,
 } from '@/services/api';
-import { AI_ANALYZE_WS_URL } from '@/services/aiApi';
+import { AI_ANALYZE_WS_URL, fetchWorkspaceTaskDataTypes } from '@/services/aiApi';
 import {
   automationCreateSchedule, automationDeleteSchedule,
   automationReloadSchedules, automationToggleSchedule, automationUpdateSchedule, automationUpdateWorkspaceSchedule,
@@ -117,6 +117,9 @@ const AutomationCenter: React.FC = () => {
     : 'all';
   const dataType = searchParams.get('data_type') || undefined;
   const [dataTypes, setDataTypes] = useState<string[]>([]);
+  const [dataTypesLoading, setDataTypesLoading] = useState(false);
+  const [dataTypesError, setDataTypesError] = useState<string | null>(null);
+  const [dataTypesRetry, setDataTypesRetry] = useState(0);
   const [keyword, setKeyword] = useState('');
   const [scheduleFilter, setScheduleFilter] = useState<ScheduleFilter>('all');
   const [loading, setLoading] = useState(true);
@@ -176,6 +179,20 @@ const AutomationCenter: React.FC = () => {
       channels.forEach((channel) => send(JSON.stringify({ type: 'unsubscribe', channel })));
     };
   }, [connected, section, send]);
+
+  useEffect(() => {
+    if (section !== 'runs') return;
+    let active = true;
+    setDataTypesLoading(true);
+    setDataTypesError(null);
+    fetchWorkspaceTaskDataTypes()
+      .then((items) => { if (active) setDataTypes(items); })
+      .catch((error) => {
+        if (active) setDataTypesError(extractErrorMessage(error, 'Unable to load data types'));
+      })
+      .finally(() => { if (active) setDataTypesLoading(false); });
+    return () => { active = false; };
+  }, [dataTypesRetry, section]);
 
   const selectRun = useCallback((taskId: string | null) => {
     setSearchParams((current) => {
@@ -454,6 +471,7 @@ const AutomationCenter: React.FC = () => {
         />
         {section === 'runs' && <Select<string>
           allowClear
+          loading={dataTypesLoading}
           value={dataType}
           placeholder="Select data type"
           onChange={changeDataType}
@@ -467,6 +485,7 @@ const AutomationCenter: React.FC = () => {
     </div>
 
     {section === 'workflows' && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
+    {section === 'runs' && dataTypesError && <Alert className="automation-load-alert" type="error" showIcon message={dataTypesError} action={<Button size="small" onClick={() => setDataTypesRetry((current) => current + 1)}>Retry</Button>} />}
 
     {section === 'runs' ? <Card className="automation-task-panel" styles={{ body: { padding: 0 } }}>
       <WorkspaceDock
@@ -474,7 +493,6 @@ const AutomationCenter: React.FC = () => {
         embedded
         taskDomain={domain}
         taskDataType={dataType}
-        onTaskDataTypesChange={setDataTypes}
         taskKeyword={keyword}
         taskId={searchParams.get('task')}
         onTaskSelect={selectRun}

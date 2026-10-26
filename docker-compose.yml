@@ -129,10 +129,10 @@ services:
     container_name: syncer-intelligence
     command: ["python", "-m", "app.syncer.main", "--data-type", "intelligence", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
 
-  syncer-company:
+  syncer-organization:
     <<: *syncer
-    container_name: syncer-company
-    command: ["python", "-m", "app.syncer.main", "--data-type", "company", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
+    container_name: syncer-organization
+    command: ["python", "-m", "app.syncer.main", "--data-type", "organization", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
 
   syncer-financial-fact:
     <<: *syncer
@@ -229,12 +229,6 @@ services:
     profiles: ["catalog-sync"]
     container_name: syncer-orbital
     command: ["python", "-m", "app.syncer.main", "--data-type", "orbital", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
-
-  syncer-organizations:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-organizations
-    command: ["python", "-m", "app.syncer.main", "--data-type", "organizations", "--batch", "50", "--concurrency", "10", "--poll", "10", "--startup-delay", "15"]
 
   # ── 4. Web — FastAPI 管理面板 ─────────────────────────────
   web:

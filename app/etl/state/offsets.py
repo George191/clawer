@@ -2,13 +2,14 @@
 
 Redis Key 设计：
     offset:{consumer_group}:{topic}:{partition}  → <kafka_offset:int>
+    override:{consumer_group}:{topic}:{partition} → <next_start_offset:int>
 
 其中 kafka_offset 是 Kafka 分区内的全局偏移量（非从 0 开始的序号）。
 
 功能：
 - 自动保存：每条消息提交后写入 Redis
 - 自动恢复：Consumer 启动时从 Redis 加载 offset 并 seek
-- 手动重置：直接修改 Redis 中的值，重启 Worker 后生效
+- 手动恢复：写入独立 override 键，重启 Worker 时原子加载一次
 - 容错：Redis 不可用时退化为 Kafka 原生 offset 管理（不阻塞），定期重试
 
 运维示例：
@@ -19,7 +20,7 @@ Redis Key 设计：
     redis-cli -n 2 DEL "offset:etl-rds-group:spider-crawler:0"
 
     # 重新消费 ODS 层数据（从 offset 1000 继续）
-    redis-cli -n 2 SET "offset:etl-ods-group:etl-rds-news:0" 1000
+    redis-cli -n 2 SET "override:etl-ods-group:etl-rds-news:0" 1000
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from app.storage.redis_client import RedisClient
 logger = get_logger(__name__)
 
 REDIS_KEY_PREFIX = "offset"
+OVERRIDE_KEY_PREFIX = "override"
 OFFSET_TTL_SECONDS = 30 * 24 * 3600
 REDIS_RETRY_INTERVAL = 30
 
@@ -85,7 +87,7 @@ class OffsetManager:
             return False
         try:
             await redis.set(
-                self._make_key(consumer_group, topic, partition),
+                f"{OVERRIDE_KEY_PREFIX}:{consumer_group}:{topic}:{partition}",
                 str(offset),
                 ex=OFFSET_TTL_SECONDS,
             )
@@ -120,6 +122,33 @@ class OffsetManager:
                         pass
                 if cursor == 0:
                     break
+
+            # A running worker only writes offset:* and cannot overwrite an
+            # operator's pending override. Atomically consume it at startup so
+            # later restarts use the worker's newly committed position.
+            cursor = 0
+            pattern = f"{OVERRIDE_KEY_PREFIX}:{consumer_group}:{topic}:*"
+            while True:
+                cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=50)
+                for key in keys:
+                    try:
+                        partition = int(key.rsplit(":", 1)[-1])
+                        value = await redis.eval(
+                            """local value = redis.call('GET', KEYS[1])
+                            if value then
+                                redis.call('SET', KEYS[2], value, 'EX', ARGV[1])
+                                redis.call('DEL', KEYS[1])
+                            end
+                            return value""",
+                            2, key, self._make_key(consumer_group, topic, partition),
+                            OFFSET_TTL_SECONDS,
+                        )
+                        if value is not None:
+                            result[partition] = int(value)
+                    except (ValueError, TypeError):
+                        pass
+                if cursor == 0:
+                    break
         except Exception as e:
             logger.warning("OffsetManager: load_offsets failed: %s", e)
             self._connection.mark_unavailable()
@@ -139,15 +168,16 @@ class OffsetManager:
             return 0
 
         try:
-            pattern = f"{REDIS_KEY_PREFIX}:{consumer_group}:{topic}:*"
             deleted = 0
-            cursor = 0
-            while True:
-                cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=50)
-                if keys:
-                    deleted += await redis.delete(*keys)
-                if cursor == 0:
-                    break
+            for prefix in (REDIS_KEY_PREFIX, OVERRIDE_KEY_PREFIX):
+                pattern = f"{prefix}:{consumer_group}:{topic}:*"
+                cursor = 0
+                while True:
+                    cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=50)
+                    if keys:
+                        deleted += await redis.delete(*keys)
+                    if cursor == 0:
+                        break
             logger.info("OffsetManager: reset %d keys for %s/%s", deleted, consumer_group, topic)
             return deleted
         except Exception as e:

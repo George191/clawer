@@ -36,14 +36,14 @@ class RedisClient:
     def mark_unavailable(self) -> None:
         self._connected = False
 
-    async def ensure_connected(self) -> Any | None:
+    async def ensure_connected(self, *, raise_errors: bool = False) -> Any | None:
         if self._connected and self._client is not None:
             return self._client
         if not self._redis_url:
             return None
 
         now = time.monotonic()
-        if self._last_retry_ts and now - self._last_retry_ts < self._retry_interval:
+        if not raise_errors and self._last_retry_ts and now - self._last_retry_ts < self._retry_interval:
             return None
         self._last_retry_ts = now
 
@@ -65,8 +65,13 @@ class RedisClient:
             self._connected = True
             return self._client
         except ImportError:
+            if raise_errors:
+                raise
             logger.warning("Redis client is unavailable: redis-py is not installed")
         except Exception as exc:
+            self._connected = False
+            if raise_errors:
+                raise
             logger.warning("Redis connection failed: %s", exc)
         self._connected = False
         return None

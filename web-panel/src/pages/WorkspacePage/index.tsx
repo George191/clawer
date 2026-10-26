@@ -205,7 +205,7 @@ const catalog: Record<string, WorkspaceConfig> = {
       { label: '冲突字段', value: '11', tone: '#F59E0B' },
       { label: '自动映射', value: '87%', tone: '#059669' },
     ],
-    timeline: ['patent_owner 建议映射到 dim_company', 'navwarn_area 识别为地理维度', 'abstract 字段类型建议为 text'],
+    timeline: ['patent_owner 建议映射到 dim_organization', 'navwarn_area 识别为地理维度', 'abstract 字段类型建议为 text'],
     rows: fallbackRows,
   },
   '/flow/schedule': {

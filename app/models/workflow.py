@@ -74,13 +74,13 @@ class WorkflowConfig(BaseModel):
 
         name: patent_landscape
         inputs:
-          company: Google
+          organization: Google
         steps:
           - id: search
             type: crawl
             template: google_patent
             params:
-              assignee: "{{ inputs.company }}"
+              assignee: "{{ inputs.organization }}"
               num: 100
           - id: filter_grants
             type: filter

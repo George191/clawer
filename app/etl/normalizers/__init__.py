@@ -40,11 +40,13 @@ from app.etl.normalizers import (
     navwarn,  # noqa: E402, F401
     news,  # noqa: E402, F401
     patent,  # noqa: E402, F401
-    company,  # noqa: E402, F401
+    organization,  # noqa: E402, F401
     filing,  # noqa: E402, F401
     filing_document,  # noqa: E402, F401
     financial_fact,  # noqa: E402, F401
     procurement,  # noqa: E402, F401
     social_account,  # noqa: E402, F401
     social_content,  # noqa: E402, F401
+    space,  # noqa: E402, F401
+    vulnerability,  # noqa: E402, F401
 )

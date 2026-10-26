@@ -1,4 +1,4 @@
-"""SEC company/filing collection routing and additional downloads."""
+"""SEC organization/filing collection routing and additional downloads."""
 import re
 
 from app.base.http import DownloadError, DownloadResponse
@@ -13,7 +13,7 @@ ZSCALER_MARKERS = re.compile(
 )
 
 COLLECTION_ROUTES = {
-    "sec_edgar_company": ("sec_edgar", "company"),
+    "sec_edgar_company": ("sec_edgar", "organization"),
     "sec_edgar_filing": ("sec_edgar", "filing"),
 }
 

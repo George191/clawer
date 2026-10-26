@@ -90,7 +90,7 @@ const configs: Record<GovernanceKind, {
       { label: '待处理冲突', value: '11', hint: '命名/类型冲突' },
     ],
     rows: [
-      { key: '1', name: 'patent_owner', target: 'dim_company.owner_name', mode: '实体归一 + 字典校验', status: 'review', score: 84, updatedAt: '12 分钟前' },
+      { key: '1', name: 'patent_owner', target: 'dim_organization.owner_name', mode: '实体归一 + 字典校验', status: 'review', score: 84, updatedAt: '12 分钟前' },
       { key: '2', name: 'navwarn_area', target: 'dim_geo.area_code', mode: '地理编码 + 枚举映射', status: 'active', score: 96, updatedAt: '24 分钟前' },
       { key: '3', name: 'abstract', target: 'ods_patent.abstract_text', mode: '长文本清洗', status: 'active', score: 92, updatedAt: '38 分钟前' },
     ],

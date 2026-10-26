@@ -24,8 +24,6 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
-from pymongo.errors import ConnectionFailure
-
 from app.adapters import BaseSiteAdapter, get_adapter
 from app.config.settings import settings
 from app.crawler.incremental import (
@@ -45,8 +43,9 @@ from app.parser.template_parser import TemplateParser
 from app.records.base import RecordStore
 from app.records.file_store import FileRecordStore
 from app.records.field_names import normalize_record_fields
+from app.utils.connection_errors import is_retryable_connection_error
 from app.utils.path import get_nested_value
-from app.utils.runtime_control import check_control_state
+from app.utils.runtime_control import check_control_state, controlled_sleep
 
 logger = get_logger(__name__)
 
@@ -192,9 +191,21 @@ class SpiderEngine:
         if search_params:
             for record in records:
                 record["_meta_search_params"] = search_params
-        record_ids = await self._storage.save_records(
-            template.name, template.data_type, template.dedup_fields, records
-        )
+        for attempt in self._retry_loop():
+            await check_control_state()
+            try:
+                record_ids = await self._storage.save_records(
+                    template.name, template.data_type, template.dedup_fields, records
+                )
+                break
+            except Exception as error:
+                if not is_retryable_connection_error(error):
+                    raise
+                logger.warning(
+                    "[%s] Saving records connection failed (attempt %d): %s",
+                    template.name, attempt + 1, error,
+                )
+                await controlled_sleep(min(2 ** min(attempt, 5), 30))
         result.records.extend(records)
         saved_count = len(record_ids)
         result.saved_records += saved_count
@@ -314,7 +325,19 @@ class SpiderEngine:
             crawl_context=template._crawl_context,
         )
         try:
-            await adapter.on_before_crawl(template)
+            for attempt in self._retry_loop():
+                await check_control_state()
+                try:
+                    await adapter.on_before_crawl(template)
+                    break
+                except Exception as error:
+                    if not is_retryable_connection_error(error):
+                        raise
+                    logger.warning(
+                        "[%s] Crawl initialization connection failed (attempt %d): %s",
+                        template.name, attempt + 1, error,
+                    )
+                    await controlled_sleep(min(2 ** min(attempt, 5), 30))
             if template.response_type == ResponseType.JSON:
                 return await self._crawl_list_pages_json(
                     template, result, resume_page, progress_callback, adapter=adapter
@@ -441,8 +464,13 @@ class SpiderEngine:
                     break  # 页面成功，跳出重试循环
 
                 except Exception as e:
-                    if isinstance(e, ConnectionFailure):
-                        raise
+                    if is_retryable_connection_error(e):
+                        logger.warning(
+                            "[%s] Page %d connection failed (attempt %d): %s",
+                            template.name, current_page, attempt + 1, e,
+                        )
+                        await controlled_sleep(min(2 ** min(attempt, 5), 30))
+                        continue
                     adapter_action = await adapter.on_error(e, current_page, attempt)
 
                     if adapter_action == "abort":
@@ -775,8 +803,13 @@ class SpiderEngine:
                     continue
 
             except Exception as e:
-                if isinstance(e, ConnectionFailure):
-                    raise
+                if is_retryable_connection_error(e):
+                    logger.warning(
+                        "[%s] Page %d connection failed (attempt %d): %s",
+                        template.name, page, attempt + 1, e,
+                    )
+                    await controlled_sleep(min(2 ** min(attempt, 5), 30))
+                    continue
 
                 adapter_action = await adapter.on_error(e, page, attempt)
                 if adapter_action == "abort":

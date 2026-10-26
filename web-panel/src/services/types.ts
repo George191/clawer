@@ -55,6 +55,10 @@ export interface LayerThroughputPoint {
 
 // ==================== ETL Layers ====================
 export interface LayerNode {
+  schemaName?: string;
+  alias?: string;
+  database?: string;
+  metricsAvailable?: boolean;
   key: string;
   label: string;
   icon: string;
@@ -136,6 +140,10 @@ export interface SchedulerItem {
 
 // ==================== Query ====================
 export interface QueryResult {
+  primaryKey?: string[];
+  total?: number;
+  totalEstimated?: boolean;
+  columnTypes?: Record<string, string>;
   columns: string[];
   rows: Record<string, unknown>[];
   rowCount: number;
@@ -296,6 +304,7 @@ export interface WorkspaceTask {
   template_name: string | null;
   template_version: string | null;
   data_type?: string;
+  data_types?: string[];
   favicon_url?: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'paused';
   progress: number;
@@ -337,7 +346,7 @@ export interface EtlScript {
 export type ProductDomain = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'knowledge-graph' | 'knowledge-rag' | 'platform';
 
 export interface CurrentUserContext {
-  user: { id: string; full_name?: string | null; email: string };
+  user: { id: string; full_name?: string | null; email: string; is_superuser?: boolean };
   tenants: Array<{ id: string; name: string }>;
   teams: Array<{ id: string; name: string; tenant_id: string }>;
 }

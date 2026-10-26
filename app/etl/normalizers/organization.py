@@ -1,4 +1,4 @@
-"""Company ODS normalizer."""
+"""Organization ODS normalizer."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Any
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_str
 from app.etl.normalizers.financial_fact import normalize_sec_edgar_financial_facts
+from app.etl.normalizers.space import normalize_organization
 
 
 def _meta(record: dict[str, Any]) -> dict[str, Any]:
@@ -15,7 +16,7 @@ def _meta(record: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _normalize_sec_edgar_company(record: dict[str, Any]) -> dict[str, Any]:
+def _normalize_sec_edgar_organization(record: dict[str, Any]) -> dict[str, Any]:
     meta = _meta(record)
 
     def pick(name: str) -> Any:
@@ -24,10 +25,11 @@ def _normalize_sec_edgar_company(record: dict[str, Any]) -> dict[str, Any]:
     def dump(value: Any) -> str | None:
         return json.dumps(value, ensure_ascii=False) if value is not None else None
 
-    return {
+    organization = normalize_organization({key: value for key, value in record.items() if key != "facts"})
+    organization.update({
         "record_id": safe_str(meta.get("record_id")),
-        "data_source": safe_str(meta.get("template")),
-        "data_type": safe_str(pick("data_type")),
+        "data_source": safe_str(meta.get("data_source")) or safe_str(meta.get("template")),
+        "data_type": "organization",
         "cik": safe_str(pick("cik")),
         "name": safe_str(pick("name")) or "",
         "entity_type": safe_str(pick("entity_type")),
@@ -43,13 +45,14 @@ def _normalize_sec_edgar_company(record: dict[str, Any]) -> dict[str, Any]:
         "phone": safe_str(pick("phone")),
         "former_names": dump(pick("former_names")),
         "investor_website": safe_str(pick("investor_website")),
-    }
+    })
+    return organization
 
 
-def normalize_sec_edgar_company(record: dict[str, Any]) -> list[dict[str, Any]]:
+def normalize_sec_edgar_organization(record: dict[str, Any]) -> list[dict[str, Any]]:
 
-    company = _normalize_sec_edgar_company(record)
-    return [company, *normalize_sec_edgar_financial_facts(record, company)]
+    organization = _normalize_sec_edgar_organization(record)
+    return [organization, *normalize_sec_edgar_financial_facts(record, organization)]
 
 
-register_normalizer("company", "sec_edgar_company", normalize_sec_edgar_company)
+register_normalizer("organization", "sec_edgar_company", normalize_sec_edgar_organization)
