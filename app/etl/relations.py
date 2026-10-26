@@ -129,7 +129,7 @@ def build_entity_relations(
     record = raw_record
     source = str(record.get("source") or row["data_source"])
     template = str(_mapping(record.get("_meta")).get("template") or row["data_source"])
-    gcat_names = ("satellite", "organization", "organizations", "launchinfo", "launchsites", "launchvehicles", "debrisevents")
+    gcat_names = ("satellite", "organization", "launchinfo", "launchsites", "launchvehicles", "debrisevents")
     is_gcat = any(value.startswith("jonathan") or value.startswith(tuple(f"{name}_jonathan" for name in gcat_names))
                   for value in (source, template))
     provider = "gcat" if is_gcat else "satnogs" if source.lower().startswith("satnogs") else source

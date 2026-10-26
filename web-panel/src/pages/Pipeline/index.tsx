@@ -322,6 +322,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const [stream, setStream] = useState<EtlStreamState>();
     const [loading, setLoading] = useState(false);
     const [tablesLoading, setTablesLoading] = useState(false);
+    const [tablesLoadedSchema, setTablesLoadedSchema] = useState<string>();
     const [requestError, setRequestError] = useState('');
     const [streamError, setStreamError] = useState('');
     const [scriptNote, setScriptNote] = useState('');
@@ -591,21 +592,23 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     }, [connections]);
     useEffect(() => {
         const version = ++tableRequest.current;
-        setTablesLoading(true); setRequestError('');
+        setTablesLoading(true); setTablesLoadedSchema(undefined); setRequestError('');
         if (loadedSchema.current !== selectedSchema) {
             loadedSchema.current = selectedSchema;
             setServerTables([]); setTable({ name: '', rowCount: 0, size: '', updatedAt: '' });
             setClosedTables(new Set()); setPartition(undefined); setPageNumber(1); cancelRowEdit(); setData(undefined); setStream(undefined); setOffsets([]); setInputTopics([]); setScript(''); setOpenApis([]);
         }
-        fetchLayerTables(selectedSchema, 'current').then((items) => { if (version === tableRequest.current) setServerTables(items); }).catch((error) => { if (version === tableRequest.current) setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
+        fetchLayerTables(selectedSchema, 'current').then((items) => { if (version === tableRequest.current) { setServerTables(items); setTablesLoadedSchema(selectedSchema); } }).catch((error) => { if (version === tableRequest.current) setRequestError(errorText(error)); }).finally(() => { if (version === tableRequest.current) setTablesLoading(false); });
         return () => { tableRequest.current++; };
     }, [selectedSchema, refreshVersion]);
     useEffect(() => {
-        const name = new URLSearchParams(search).get('table');
+        const params = new URLSearchParams(search);
+        if (tablesLoadedSchema !== selectedSchema || (params.get('schema') && params.get('schema') !== selectedSchema)) return;
+        const name = params.get('table');
         const selected = serverTables.find((item) => item.name === name) || (!name ? serverTables[0] : undefined);
         if (selected) { setTable(selected); setCreateOpen(false); }
         else if (name && !tablesLoading) setRequestError(`Table ${name} was not found in ${selectedSchema}`);
-    }, [search, serverTables, tablesLoading]);
+    }, [search, serverTables, tablesLoading, tablesLoadedSchema, selectedSchema]);
     selection.current = `${selectedSchema}/${table.name}`;
     useEffect(() => {
         cancelRowEdit(); setPartition(undefined); setPageNumber(1); setData(undefined); setPartitions([]); setScript(''); setScriptNote(''); setOpenApis([]); setInputTopics([]); setActiveTopicIndex(0); setStream(undefined); setOffsets([]); setStreamError(''); setOffsetPartition(undefined); setOffset(undefined); setOffsetOpen(false);
