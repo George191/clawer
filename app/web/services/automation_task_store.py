@@ -22,6 +22,24 @@ class AutomationTaskStore:
         async with self._initialize_lock:
             await self._pg.connect()
 
+    async def list_data_types(self) -> list[str]:
+        await self.initialize()
+        rows = await self._pg.fetch_all(
+            """
+            SELECT data_type
+            FROM (
+                SELECT NULLIF(btrim(data_type), '') AS data_type
+                FROM public.ai_collect_templates
+                UNION
+                SELECT NULLIF(btrim(data_type), '') AS data_type
+                FROM public.ai_collect_template_alias
+            ) AS types
+            WHERE data_type IS NOT NULL
+            ORDER BY data_type
+            """
+        )
+        return [row["data_type"] for row in rows]
+
     async def list_tasks(self, product_domain: str | None = None) -> list[dict[str, Any]]:
         await self.initialize()
         rows = await self._pg.fetch_all(
@@ -44,8 +62,23 @@ class AutomationTaskStore:
         if not names:
             return tasks
         templates = await self._pg.fetch_all(
-            "SELECT name, version, data_type, icon FROM public.ai_collect_templates "
-            "WHERE name = ANY(CAST(:names AS text[]))",
+            """
+            SELECT t.name, t.version, t.data_type, t.icon,
+                   ARRAY(
+                       SELECT data_type
+                       FROM (
+                           SELECT NULLIF(btrim(t.data_type), '') AS data_type
+                           UNION
+                           SELECT NULLIF(btrim(alias.data_type), '') AS data_type
+                           FROM public.ai_collect_template_alias alias
+                           WHERE alias.template_name = t.name
+                       ) AS types
+                       WHERE data_type IS NOT NULL
+                       ORDER BY data_type
+                   ) AS data_types
+            FROM public.ai_collect_templates t
+            WHERE t.name = ANY(CAST(:names AS text[]))
+            """,
             {"names": names},
         )
         templates_by_version = {(row["name"], row["version"]): row for row in templates}
@@ -55,6 +88,7 @@ class AutomationTaskStore:
                 (task.get("template_name"), task.get("template_version")), {},
             )
             task["data_type"] = template.get("data_type") or ""
+            task["data_types"] = template.get("data_types") or []
             task["favicon_url"] = minio.build_object_url(str(template.get("icon") or ""))
         return tasks
 

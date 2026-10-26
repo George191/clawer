@@ -17,6 +17,11 @@ class RunTaskRequest(BaseModel):
     taskId: UUID
 
 
+@router.get("/data-types")
+async def list_data_types() -> dict[str, list[str]]:
+    return {"items": await automation_task_store.list_data_types()}
+
+
 @router.get("/runs")
 async def list_runs() -> dict[str, Any]:
     return {"items": await automation_task_store.list_tasks()}
