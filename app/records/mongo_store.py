@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from bson.codec_options import CodecOptions
 from pymongo import ReplaceOne
 
 from app.logger import get_logger
@@ -476,7 +477,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         if template_name:
             # The syncer must not block its hot path on create_index calls.
             coll_name = self._get_collection_name(template_name)
-            collection = self._db[coll_name]
+            collection = self._db[coll_name].with_options(codec_options=CodecOptions(tz_aware=True))
             cursor = collection.find(filter_query).limit(limit)
             results: list[dict[str, Any]] = []
             async for doc in cursor:
@@ -487,7 +488,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         # 跨所有集合查询
         results = []
         for coll_name in await self._db.list_collection_names():
-            collection = self._db[coll_name]
+            collection = self._db[coll_name].with_options(codec_options=CodecOptions(tz_aware=True))
             cursor = collection.find(filter_query).limit(limit - len(results))
             async for doc in cursor:
                 doc.pop("_id", None)

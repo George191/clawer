@@ -2,20 +2,15 @@ import React from 'react';
 import { Typography } from 'antd';
 import { LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useLocation } from 'react-router-dom';
+import SpaceBackground from './SpaceBackground';
 
 const AuthLayout: React.FC<React.PropsWithChildren> = ({ children }) => {
   const isRecovery = useLocation().pathname === '/reset-password';
 
   return (
     <div className="sp-login">
+      <SpaceBackground />
       <div className="sp-login-graph" aria-hidden="true">
-        <div className="sp-login-grid" />
-        <div className="sp-login-orbit-stage">
-          <div className="sp-login-orbit sp-login-orbit-one"><i /><i /><i /></div>
-          <div className="sp-login-orbit sp-login-orbit-two"><i /><i /><i /></div>
-          <div className="sp-login-orbit sp-login-orbit-three"><i /><i /></div>
-          <div className="sp-login-orbit-core"><span /><span /></div>
-        </div>
         <div className="sp-login-copy" key={isRecovery ? 'recovery-copy' : 'login-copy'}>
           <Typography.Text className="sp-login-brand">ASIRAL HELIO</Typography.Text>
           <Typography.Title level={1}>{isRecovery ? 'Secure Identity Recovery' : 'Unified Data Intelligence Platform'}</Typography.Title>

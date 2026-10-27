@@ -258,6 +258,7 @@ def normalize_nga_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     navarea = safe_str(record.get("navarea"))
     record["region"] = navarea
     record["navarea_id"] = _navarea_id(navarea)
+    record["sub_region"] = record.get("subregion")
     normalized = _navwarn_common(record, "nga_navwarn")
     normalized["issued_at"] = issue_time
 

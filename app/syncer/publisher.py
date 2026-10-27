@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.logger import get_logger
+from app.records.field_names import normalize_record_fields
 from app.records.values import require_canonical_record
 from app.storage.kafka_client import KafkaClient
 
@@ -19,6 +20,7 @@ class RecordPublisher(KafkaClient):
         key: str | None = None,
         topic: str | None = None,
     ) -> None:
+        record = normalize_record_fields(record)
         require_canonical_record(record)
         target_topic = topic or self._topic
         message_key = key or record.get("_meta", {}).get("record_id", "")

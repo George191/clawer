@@ -1,6 +1,7 @@
 from enum import IntEnum
 from typing import Dict
 from datetime import datetime
+from sqlalchemy import DateTime
 from sqlmodel import SQLModel, Field
 from sqlalchemy.sql import func
 
@@ -10,11 +11,13 @@ class BaseModel(SQLModel):
     
     created_at: datetime | None = Field(
         default_factory=datetime.now,  # 添加Python级别默认值
+        sa_type=DateTime(timezone=False),
         sa_column_kwargs={"server_default": func.now()},
         nullable=False,
     )
     updated_at: datetime | None = Field(
         default_factory=datetime.now,  # 添加Python级别默认值
+        sa_type=DateTime(timezone=False),
         sa_column_kwargs={"server_default": func.now(), "onupdate": func.now()},
         nullable=False,
     )

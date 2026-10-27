@@ -84,6 +84,8 @@ class TsRds(ETLBase):
         current_sql = current_insert_sql("rds", table, table_columns("rds", table))
 
         async with self._pg.session() as session:
+            # Legacy BSON timestamps were serialized without an offset but represent UTC.
+            await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
             result = await session.execute(text(current_sql), payload)
             current_row = result.mappings().first()
             return dict(current_row) if current_row else None
@@ -124,6 +126,9 @@ class TsRds(ETLBase):
                 partial(self._write_current, table=table, payload=payload),
                 payload=payload,
             )
+            if result is None:
+                # A newer source version already landed; consume without re-emitting.
+                return True
 
             await self._emit(
                 result, record_id=record_id, data_source=data_source, data_type=data_type,

@@ -100,6 +100,7 @@ class TsOds(ETLBase):
         *,
         table: str,
         payload: dict[str, Any],
+        source: dict[str, Any],
     ) -> dict[str, Any] | None:
         """单条 ODS 入库，带可重试错误重试与显式事务语义。
 
@@ -114,6 +115,26 @@ class TsOds(ETLBase):
         for attempt in range(_ODS_WRITE_MAX_ATTEMPTS):
             try:
                 async with self._pg.session() as session:
+                    source_table = source["data_type"]
+                    validate_table_name(source_table)
+                    source_row = (await session.execute(text(
+                        f"SELECT raw_data->'_meta' AS meta FROM ts_rds.rds_{source_table} "
+                        "WHERE record_id=:record_id AND data_source=:data_source "
+                        "AND data_type=:data_type FOR SHARE"
+                    ), {name: source[name] for name in ("record_id", "data_source", "data_type")})).mappings().first()
+                    if source_row is None:
+                        raise ValueError("ODS source RDS row is missing")
+                    def version(meta: dict[str, Any]) -> tuple[datetime, int]:
+                        return (
+                            safe_datetime(meta.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc),
+                            int(meta.get("download_version") or 0),
+                        )
+                    incoming_version = version(source.get("meta") or {})
+                    current_version = version(source_row["meta"] or {})
+                    if incoming_version < current_version:
+                        return None
+                    if incoming_version > current_version:
+                        raise ValueError("ODS message is ahead of its RDS source version")
                     result = await session.execute(text(current_sql), payload)
                     current_row = result.mappings().first()
                     if attempt > 0:
@@ -159,6 +180,10 @@ class TsOds(ETLBase):
                 raise ValueError(f"Normalizer returned no records: {table}:{data_source}")
             now = datetime.now(timezone.utc)
             emitted_records = []
+            source = {
+                "record_id": record_id, "data_source": data_source, "data_type": table,
+                "meta": raw_data.get("_meta") or {},
+            }
             for normalized in normalized_records:
                 if not isinstance(normalized, dict):
                     raise ValueError("Normalizer must return a dictionary or list of dictionaries")
@@ -183,10 +208,11 @@ class TsOds(ETLBase):
                             raise ValueError(f"Invalid {sql_type} value for {output_table}.{name}")
                         payload[name] = converted
                 result = await self._execute_with_table_recovery(
-                    output_table, partial(self._write_current, table=output_table, payload=payload),
+                    output_table, partial(self._write_current, table=output_table, payload=payload, source=source),
                     payload=payload,
                 )
-                emitted_records.append((result, payload))
+                if result is not None:
+                    emitted_records.append((result, payload))
             for result, payload in emitted_records:
                 await self._emit(
                     result, record_id=payload["record_id"], data_source=data_source,

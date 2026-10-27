@@ -99,9 +99,20 @@ class KafkaClient:
     ) -> None:
         await self._ensure_connection()
         target_topic = topic or self._topic
+        producer = self._producer
         try:
-            await self._producer.send_and_wait(topic=target_topic, value=value, key=key)
+            await producer.send_and_wait(topic=target_topic, value=value, key=key)
         except Exception as e:
+            from aiokafka.errors import OutOfOrderSequenceNumber
+
+            if isinstance(e, OutOfOrderSequenceNumber):
+                async with self._connect_lock:
+                    # A late failure from the old epoch must not close its replacement.
+                    if self._producer is producer:
+                        self._producer = None
+                        self._connected = False
+                        with suppress(Exception):
+                            await producer.stop()
             logger.error("Failed to send Kafka message: key=%s topic=%s error=%s", key, target_topic, e)
             raise
 

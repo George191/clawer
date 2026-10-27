@@ -4,7 +4,7 @@
 --------
 1. 轮询 MongoDB 中 sync_status 未标为 synced 的记录，不等待下载
 2. 按记录 data_type 将记录推送至对应 Kafka 主题
-3. 推送成功后，将对应版本的 sync_status 标为 synced
+3. Kafka ACK 后，将对应版本的 sync_status 标为 synced（RDS/ODS 另行异步消费）
 
 设计原则
 --------
@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from datetime import datetime, timezone
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -25,6 +27,9 @@ from app.syncer.publisher import RecordPublisher
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
+_TASK_LOG_FORMATTER = logging.Formatter(
+    "[%(asctime)s: %(levelname)s/Syncer] %(message)s"
+)
 
 
 class SyncWorker:
@@ -47,6 +52,7 @@ class SyncWorker:
         self._kafka: RecordPublisher | None = None
         self._mongo = MongoRecordStore()
         self._running = False
+        self._collection_cursor = 0
 
     async def run(self) -> None:
         self._running = True
@@ -75,7 +81,7 @@ class SyncWorker:
         if not ready:
             return 0
 
-        logger.info("SyncWorker: pushing %d records to Kafka", len(ready))
+        logger.debug("SyncWorker: pushing %d records to Kafka", len(ready))
 
         sent_count = 0
         synced_by_run: dict[tuple[str, str], int] = {}
@@ -90,14 +96,22 @@ class SyncWorker:
 
         for (task_id, run_id), count in synced_by_run.items():
             await ai_collect_store.increment_run_stats(task_id, run_id, synced=count)
-            await ai_collect_store.append_task_log(
-                task_id,
-                "ok",
-                f"同步完成：records={count}",
-                run_id=run_id,
+            record = logger.makeRecord(
+                logger.name, logging.INFO, __file__, 0,
+                "[task=%s run=%s] Kafka 发布已确认：records=%d batch_records=%d；RDS/ODS 异步消费",
+                (task_id, run_id, count, len(ready)), None,
             )
+            await ai_collect_store.append_task_logs(task_id, [{
+                "run_id": run_id,
+                "level": "info",
+                "message": _TASK_LOG_FORMATTER.format(record),
+                "created_at": datetime.fromtimestamp(record.created, timezone.utc),
+            }])
 
-        logger.info("SyncWorker: synced %d records to Kafka", sent_count)
+        logger.info(
+            "SyncWorker: Kafka acknowledged %d/%d records; RDS/ODS consume asynchronously",
+            sent_count, len(ready),
+        )
         return sent_count
 
     async def _read_ready_records(self) -> list[dict]:
@@ -105,7 +119,12 @@ class SyncWorker:
             self._data_type, self._template_name,
         )
         records = []
-        for name in dict.fromkeys(route["collection_name"] for route in routes):
+        names = list(dict.fromkeys(route["collection_name"] for route in routes))
+        if names:
+            start = self._collection_cursor % len(names)
+            names = names[start:] + names[:start]
+            self._collection_cursor = (start + 1) % len(names)
+        for name in names:
             records.extend(await self._mongo.get_ready_to_sync(
                 template_name=name, limit=self._batch_size - len(records),
             ))

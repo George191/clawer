@@ -746,8 +746,18 @@ def current_insert_sql(layer: str, table: str, columns: dict[str, str]) -> str:
         for column in columns
         if column not in {*RECORD_IDENTITY_COLUMNS, "created_at"}
     )
+    alias = " AS target" if layer == "rds" else ""
+    guard = ""
+    if layer == "rds":
+        def version(alias: str) -> str:
+            return (
+                f"(COALESCE(({alias}.raw_data->'_meta'->>'updated_at')::timestamptz, '-infinity'::timestamptz), "
+                f"COALESCE(({alias}.raw_data->'_meta'->>'download_version')::bigint, 0))"
+            )
+        guard = f"WHERE {version('target')} <= {version('EXCLUDED')}\n"
     return (
-        f"INSERT INTO ts_{layer}.{layer}_{table} ({names}) VALUES ({', '.join(values)})\n"
+        f"INSERT INTO ts_{layer}.{layer}_{table}{alias} ({names}) VALUES ({', '.join(values)})\n"
         f"ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET {updates}\n"
+        f"{guard}"
         "RETURNING *"
     )
