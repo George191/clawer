@@ -520,12 +520,20 @@ class AutomationTaskStore:
                     (
                       (CASE WHEN schedule->>'mode' = 'recurring'
                          THEN schedule->>'recurring_mode' ELSE schedule->>'mode' END) = 'daily'
-                      AND (now() AT TIME ZONE 'Asia/Shanghai')::time
-                          >= COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time
                       AND (
-                        started_at IS NULL
-                        OR (started_at AT TIME ZONE 'Asia/Shanghai')::date
-                           < (now() AT TIME ZONE 'Asia/Shanghai')::date
+                        (started_at IS NULL
+                         AND (now() AT TIME ZONE 'Asia/Shanghai')::time
+                             >= COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time)
+                        OR COALESCE(started_at, created_at) < (
+                          (now() AT TIME ZONE 'Asia/Shanghai')::date
+                          + COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time
+                          - CASE
+                              WHEN (now() AT TIME ZONE 'Asia/Shanghai')::time
+                                   < COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time
+                              THEN interval '1 day'
+                              ELSE interval '0 days'
+                            END
+                        ) AT TIME ZONE 'Asia/Shanghai'
                       )
                     )
                     OR

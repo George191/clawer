@@ -63,6 +63,7 @@ class AdapterAgent(BaseAgent):
                 - Normalizers return business fields only, plus record_id/data_type when needed. JSON values may be objects/lists or valid JSON strings; dates may be Python dates or ISO strings. Omitted fields use database defaults; explicit None means SQL NULL.
                 - Only if collection persistence needs special identity/merge/split behavior, export RECORD_ADAPTERS = {{"<input data_type>": CustomRecordAdapter}} extending app.records.adapters.RecordAdapter. Ordinary field parsing stays in YAML and ordinary persistence uses the generic store.
                 - When YAML has no crawler adapter, the artifact may contain only these module exports; do not invent an empty crawler class or standalone execution entrypoint.
+                - When exporting NORMALIZERS, keep the module importable by the ETL runtime. Put imports used only by capture inside capture hooks; normalizers use the shared normalizer primitives and business record fields.
 
                 Existing ODS business fields (empty means a new type requires ODS_FIELDS):
                 {ods_fields}

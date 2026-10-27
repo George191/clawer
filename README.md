@@ -165,6 +165,19 @@ npm install
 
 ### 2. 启动应用服务
 
+首次启用登录时，在服务器 `.env` 中设置 `FIRST_SUPERUSER`（邮箱）、
+`FIRST_SUPERUSER_PASSWORD` 和 `FIRST_SUPERUSER_PHONE`。这些配置需要初始化后才会成为可登录账号。
+构建 Web 镜像后执行一次：
+
+```bash
+docker compose build web
+docker compose run --rm --no-deps web python -m app.web.initial_data
+```
+
+该命令先应用 Web 的 Alembic 迁移，创建 `public."user"`、`tenant`、`team` 等表，
+再创建配置的管理员账号。已有账号不会被覆盖或重置密码，重复执行不会重复创建。
+登录使用服务器 `.env` 中的邮箱和密码；初始化只写入密码哈希。
+
 部署前应已准备好 AI Collect 数据库表结构。Web 和 Worker 日常启动只建立连接，不执行历史迁移或导入本地模板。来源模板和适配器通过 AI Collect 页面发布到 MinIO；一次性数据修复按实际需求在维护窗口执行，不放入标准运行代码。
 
 ```bash

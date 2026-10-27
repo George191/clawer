@@ -143,7 +143,7 @@ class TsOds(ETLBase):
             data_source = safe_str(message.get("data_source"))
             if not data_source or not record_id:
                 raise ValueError("ODS requires business record_id and data_source from RDS")
-            module = await get_source_module(data_source)
+            module = await get_source_module(data_source, export="NORMALIZERS")
             normalizers = getattr(module, "NORMALIZERS", {})
             normalizer = normalizers.get(table) or get_normalizer(table, data_source)
             if normalizer is None:

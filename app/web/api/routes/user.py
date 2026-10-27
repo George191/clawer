@@ -230,7 +230,7 @@ async def read_user_context(session: SessionDep, current_user: CurrentUser) -> U
                 TeamUserJoin.status == StatusTypes.ENABLE,
             )
 
-    rows = (await session.exec(statement.order_by(Tenant.name, Team.name))).all()
+    rows = (await session.execute(statement.order_by(Tenant.name, Team.name))).all()
     tenants = {
         tenant.id: UserContextTenant(id=tenant.id, name=tenant.name)
         for _, tenant in rows

@@ -1,5 +1,9 @@
 import logging
 import asyncio
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,4 +26,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    command.upgrade(Config(str(Path(__file__).with_name("alembic.ini"))), "head")
     asyncio.run(main())
