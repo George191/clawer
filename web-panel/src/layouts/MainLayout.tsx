@@ -288,12 +288,6 @@ interface MainLayoutProps {
   children: React.ReactNode;
 }
 
-const MOCK_USER_CONTEXT: CurrentUserContext = {
-  user: { id: 'mock-user', full_name: 'Demo User', email: 'demo@asiral-helio.local' },
-  tenants: [{ id: 'mock-tenant', name: 'Astral Operations' }],
-  teams: [{ id: 'mock-team', name: 'Data Operations', tenant_id: 'mock-tenant' }],
-};
-
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [manualCollapsed, setManualCollapsed] = useState(false);
   const [pinned, setPinned] = useState(true);
@@ -302,7 +296,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [projectTextReady, setProjectTextReady] = useState(true);
   const [currentTenant, setCurrentTenant] = useState<string | null>(null);
   const [currentTeam, setCurrentTeam] = useState<string | null>(null);
-  const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(MOCK_USER_CONTEXT);
+  const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   const location = useLocation();
@@ -370,17 +364,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     fetchCurrentUserContext()
       .then((context) => {
         if (cancelled) return;
-        const nextContext = context.tenants.length > 0 && context.teams.length > 0 ? context : MOCK_USER_CONTEXT;
-        setCurrentUserContext(nextContext);
-        const firstTenant = nextContext.tenants[0]?.id ?? null;
+        setCurrentUserContext(context);
+        const firstTenant = context.tenants[0]?.id ?? null;
         setCurrentTenant(firstTenant);
-        setCurrentTeam(nextContext.teams.find((team) => team.tenant_id === firstTenant)?.id ?? null);
+        setCurrentTeam(context.teams.find((team) => team.tenant_id === firstTenant)?.id ?? null);
       })
       .catch(() => {
         if (!cancelled) {
-          setCurrentUserContext(MOCK_USER_CONTEXT);
-          setCurrentTenant(MOCK_USER_CONTEXT.tenants[0].id);
-          setCurrentTeam(MOCK_USER_CONTEXT.teams[0].id);
+          setCurrentUserContext(null);
+          setCurrentTenant(null);
+          setCurrentTeam(null);
         }
       });
     return () => { cancelled = true; };
