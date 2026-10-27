@@ -1,6 +1,6 @@
 # Spider
 
-Spider 是一个面向站点模板化采集的 Python + FastAPI + React 项目。当前架构围绕 `templates/` 中的 YAML 采集模板、`app/adapters/` 中的站点适配器，以及 MongoDB、MinIO、Kafka、PostgreSQL/TimescaleDB 组成的采集与处理链路展开。
+Spider 是一个面向站点模板化采集的 Python + FastAPI + React 项目。当前架构以 MinIO 发布的 YAML 模板及适配器为执行契约，通过 MongoDB、Kafka 和 PostgreSQL/TimescaleDB 完成采集与处理；仓库保留公共框架及已有来源的兼容插件。
 
 ## 当前架构
 
@@ -165,17 +165,7 @@ npm install
 
 ### 2. 启动应用服务
 
-首次部署或升级 AI Collect 数据库时，先在应用停止接收任务的维护窗口执行：
-
-```bash
-python -m scripts.init_ai_collect --apply
-```
-
-该命令负责建表、历史字段迁移和旧状态修正。需要注册本地 YAML 模板时，显式追加
-`--import-templates`。已有数据库不需要在日常启动或每轮采集时重复执行；Web 和 Worker
-只建立数据库连接，不自动建表、迁移或导入模板。容器部署可在项目根目录通过
-`docker compose run --rm --no-deps -v "$PWD/scripts:/app/scripts:ro" crawler python -m scripts.init_ai_collect --apply`
-执行相同迁移。
+部署前应已准备好 AI Collect 数据库表结构。Web 和 Worker 日常启动只建立连接，不执行历史迁移或导入本地模板。来源模板和适配器通过 AI Collect 页面发布到 MinIO；一次性数据修复按实际需求在维护窗口执行，不放入标准运行代码。
 
 ```bash
 docker compose up -d
@@ -264,7 +254,7 @@ Compose 为 news、patent、navwarn、intelligence、organization、financial_fa
 
 模板标题和任务名称只使用来源或产品名，调度周期、执行方式和数据类型使用各自字段。同源多模板的内部 `name` 保留必要的栏目或端点区别；标识改名时须同步已发布 YAML、任务引用、集合路由和断点中的模板字段，保留任务及运行批次 UUID。执行入口使用任务当前的模板标识，避免旧队列参数覆盖改名后的引用。
 
-NVD 采集模板 `nvd` / `nvd_feed` 通过别名分别写入 `nvd_vulnerability` / `nvd_feed_vulnerability`；两者的业务类型均为 `vulnerability`。模板标识与物理集合独立，模板改名通过显式路由保留既有集合、记录身份和下游来源。实际集合改名时需同时迁移记录的 `_meta.template`（以及显式使用旧集合名的 `_meta.data_source`），保留记录 ID、业务内容、下载/同步状态及索引；已有下游数据还需核对 `data_source` 和原始记录元数据，不能仅重放造成来源重复。
+NVD 采集模板 `nvd` / `nvd_feed` 通过别名分别写入 `nvd_vulnerability` / `nvd_feed_vulnerability`；两者的业务类型均为 `vulnerability`。模板标识与物理集合独立，模板改名通过显式路由保留既有集合、记录身份和下游来源。实际集合改名时需同时迁移记录的 `_meta.template`，保留记录 ID、业务内容、下载/同步状态及索引；已有下游数据还需核对 `data_source` 和原始记录元数据，不能仅重放造成来源重复。
 
 例如禁止按类型运行的下载器与 Syncer 处理 SEC 财报集合：
 
@@ -274,25 +264,33 @@ SET enabled = false, updated_at = now()
 WHERE template_name = 'sec_edgar' AND data_type = 'filing';
 ```
 
-重新启用时将 `enabled` 设为 `true`。新增业务类型仍需补充 Syncer 参数白名单及下游处理器。
+重新启用时将 `enabled` 设为 `true`。Syncer 接受任意合法类型名，RDS/ODS 不再为每个类型新增 handler。
 
 ```bash
 python -m app.syncer.main --data-type financial_fact --batch 50 --concurrency 10
 ```
 
 指定类型后发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 `spider-crawler-financial_fact`。
-不传 `--data-type` 时扫描全部类型，按每条记录的 `_meta.data_type` 自动发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 organization 和 filing 分别发送到 `-organization` 和 `-filing`；缺少类型且无法从已有 Twitter 集合映射确定类型的记录保留待处理，不发送到公共 topic。
+不传 `--data-type` 时扫描全部类型，按每条记录的 `_meta.data_type` 自动发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 organization 和 filing 分别发送到 `-organization` 和 `-filing`；缺少 `_meta.data_type` 的记录保留待处理，不发送到公共 topic。
 同一范围只运行一个 Syncer 实例，勿同时运行全类型旧实例和新的分类型实例，以免重复发送。
 
+新增来源可复用通用模式，不需要增加 Compose 的类型服务：
+
+```bash
+python -m app.syncer.main
+```
+
+该模式轮询已发布模板与集合路由；使用它时先停同范围的分类型 Syncer。现有 Compose 保留按已知类型分工的部署方式，不会自动为新类型增加进程。大批历史积压可能延后其他集合；需要单独处理新来源时可使用 `--template <模板或集合名>`。
+
 切换前创建上述类型 topic（分区及副本数按集群配置），停止旧 Syncer，先更新 RDS Worker，再启动分类型 Syncer。
-RDS 为旧 `SPIDER_ETL_RAW_TOPIC` 和各新类型 topic 分别启动独立 Consumer 消费循环，通过协程并发处理，沿用原消费组与 offset。
+RDS 使用一个正则订阅 Consumer 接收旧 `SPIDER_ETL_RAW_TOPIC` 和 `${SPIDER_KAFKA_TOPIC}-<类型>`；ODS 正则订阅 `${SPIDER_ETL_RDS_TOPIC}-<类型>`。新 topic 无需修改类型列表，分区分配时恢复该分区的 offset，写入成功后再提交。消费组保持原配置；需要并行消费时按 Kafka 分区扩容同组实例。
 
 SAM 两个 MongoDB 集合分别写入 `ts_rds.rds_contract`（`sam_gov_awards`）和
 `ts_rds.rds_tender`（`sam_gov_opportunities`），标准化后对应 `ts_ods.ods_contract` 和
 `ts_ods.ods_tender`。合同采集与同步使用 `contract`，采购公告使用独立的 `tender` 类型，按类型选择 RDS 表，保留 Mongo
 记录身份及合同修订/交易号；ODS 金额使用 `NUMERIC`，复杂字段使用 `JSONB`，删除使用标志保留。
 来源时间同时保留原文；未声明时区的时间不推定为 UTC。`created_at`/`updated_at` 为入库时间。
-使用 `python -m app.etl.schema.register_procurement` 查看四张表的 DDL，追加 `--apply` 注册并建表。
+RDS/ODS 在首次处理数据时按统一字段定义自动注册、建表和创建分区，无需单独运行来源注册脚本。
 部署时先创建 `${SPIDER_KAFKA_TOPIC}-contract`、`${SPIDER_KAFKA_TOPIC}-tender`、
 `${SPIDER_ETL_RDS_TOPIC}-contract` 和 `${SPIDER_ETL_RDS_TOPIC}-tender` topic，
 再更新 ODS、RDS、`syncer-contract` 和 `syncer-tender` 服务。
@@ -320,62 +318,82 @@ USAspending 合同模板为 `usaspending`，使用免 Key 的官方批量 CSV �
 
 公司与组织统一写入 `ts_rds.rds_organization` 和 `ts_ods.ods_organization`，ODS 保留 CIK、证券代码、交易所及原公司字段。
 采集、Mongo、Syncer 和 RDS/ODS 的业务类型统一为 `organization`，使用 `syncer-organization`、`spider-crawler-organization`、`etl-rds-organization`。
-SEC 的集合名和 `data_source` 仍为 `sec_edgar_company`；GCAT 组织集合和来源为 `organization_jonathan`。
-公司内嵌财务事实仍写入 `ods_financial_fact`。GCAT 模板技术标识 `jonathan_organizations` 保持不变。
+SEC 组织的集合名和 `data_source` 为 `sec_edgar_company`；GCAT 组织集合和来源为 `organization_jonathan`。
+SEC 聚合响应中的 facts 在写入 Mongo 前拆成独立 `financial_fact` 记录，单独经过 Syncer、RDS、ODS；organization ETL 只处理组织记录，不再拆出财务事实。
+GCAT 模板技术标识 `jonathan_organizations` 保持不变。
 表字段、主键、分区和索引集中声明在 `app/etl/schema/catalogs.py`，由 `baselines.py` 生成基线，
 `registry.py` 管理 DDL 注册，ETL 启动和表恢复流程依据注册信息创建表与分区。
-历史公司合并、组织改名和旧关系结构转换属于一次性升级，不进入运行时流程。
+历史公司合并、组织改名和旧关系表清理属于一次性升级，不进入运行时流程。
+
+新增来源的业务扩展与 YAML 一起通过现有 `adapter.py` 产物发布至 MinIO，不写入基础仓储或 `app.utils`：
+
+- `NORMALIZERS = {"输入类型": normalize}`：函数接收原记录和 RDS 提供的顶层 `data_source`，返回一条或多条 ODS 记录；每张输出表的字段处理都在 normalizer 内完成。
+- `ODS_FIELDS = {"新输出类型": {"字段": "TEXT"}}`：新表声明业务字段类型；身份、审计、主键、分区由通用执行器管理。现有表使用 `_CATALOG_FIELDS`，不要重复维护 SQL。字段仅允许基础 SQL 类型，不接受任意 DDL 片段。
+- 特殊采集身份、合并或拆分逻辑可导出 `RECORD_ADAPTERS`，继承 `RecordAdapter`；普通来源直接使用通用 Mongo 仓储。
+
+产物可以只有 ETL 导出，无需为此添加空的爬虫适配器类。运行时按业务 `data_source` 查询产物所有者（包括集合别名），每 60 秒刷新缓存；不从原始 `_meta.template` 重算业务来源。首次遇到新类型自动注册和建表；同一类型出现不一致字段声明时明确失败，不自动修改已有表或历史数据。
+已有来源的内置 normalizer/记录规则作为兼容业务插件保留；旧 `app.utils` 来源模块只导出新位置的接口，以兼容已发布产物。
 
 部署时先暂停相关采集、下载、Syncer、旧 RDS 和旧 ODS，再启动新版进程。
 为每个新增类型创建 `${SPIDER_KAFKA_TOPIC}-<类型>` 与 `${SPIDER_ETL_RDS_TOPIC}-<类型>` topic 后，
 启动对应 Syncer，例如 `python -m app.syncer.main --data-type satellite`。
 组织改名时的历史记录按原身份置为待同步，从 `organization` topic 重放。
 
-`ods_entity_relation` 保存真实 ODS 记录之间的三元组，两端都使用完整记录身份：
+目录表通过共同业务标识直接 JOIN，多值标识保留为本记录的 JSONB 数组，不维护关系表或待解析表。
+目标尚未入库时查询自然无匹配；目标入库后，同一条 JOIN 即可查到，无须补边或改写来源记录。
 
-| 内容 | 字段 |
+| 类型 | 直接关联字段与目标 |
 | --- | --- |
-| 由谁 | `source_data_source`、`source_data_type`、`source_record_id` |
-| 到谁 | `target_data_source`、`target_data_type`、`target_record_id` |
-| 关系 | `relation_name`（展示名称）、`relation_type`（稳定关系代码） |
-| 有效期 | `start_time`、`end_time`，无来源依据时为空 |
-| 描述和属性 | `description`、`attributes`；`attributes.references` 保存匹配依据 |
-| 审计 | `created_at`、`updated_at`、`created_by`、`updated_by` |
+| constellation | `member_norad_ids` 包含 satellite 的 `norad_id` |
+| vulnerability | 按 `cve_id` 对照不同漏洞来源；现有组织来源未提供可靠的共同组织标识 |
+| debrisevents | `parent_gcat_id` 对 satellite 的 `gcat_id`；NORAD/COSPAR 对象号对卫星；`cospar_launch` 对发射批次；ESA 原生 `related_objects` 对 debris 的 `source_id` |
+| debris | `norad_id`、`cospar_id` 对卫星和轨道；ESA `source_id` 对碎裂事件的对象列表 |
+| launchvehicles | `manufacturer_codes` 包含 organization 的 `code`；型号 `name`、`variant` 对发射记录的 `rocket_name`、`vehicle_variant` |
+| frequency | `norad_id`、`cospar_id`、`satnogs_sat_id` 对卫星；`itu_earth_notice_id` 对地面站 |
+| groundstations | `itu_earth_notice_id` 对频率记录的地面通知标识 |
+| launchinfo | `cospar_launch` 对卫星发射批次；`provider_codes` 包含组织代码；`site_code`、`pad_name` 对场地；型号和变体对火箭 |
+| satellite | NORAD/COSPAR、SatNOGS ID、GCAT ID、发射批次；`owner_codes`、`manufacturer_codes` 对组织代码 |
+| launchsites | `site_code`、`pad_name` 对发射记录；`operator_codes` 包含组织代码 |
+| orbital | `norad_id`、`cospar_id` 对卫星 |
+| organization | `code`、`parent_codes` 对 GCAT 组织及上下级；`cik` 对 SEC 财报与财务事实 |
 
-主键按来源身份、关系类型和目标身份去重；同一条边的 NORAD/COSPAR 等多条依据合并到属性中。
-不同来源即使 `record_id` 相同，也分别保留。审计时间记录关系实际创建和修改时间，
-迁移创建人为 `catalog_relation_migration`，ETL 创建人为 `etl`，不冒充历史人工操作人。
-重放不重置创建时间，也不覆盖已有的关系有效期、描述或其他业务属性。
-
-`ods_entity_relation_reference` 保留原始业务标识引用，`resolved_count = 0` 表示尚待解析。
-正式关系只写入两端实际存在的记录；目标后来入库时自动补齐，同标识的新来源到达时增加对应边。
-已解析引用也保留为证据，目标标识变化时据此刷新关系。关系维护在调用方事务内完成，
-使用事务锁串行化源、目标到达的关系更新，避免并发提交时漏边。
-不再维护 `ods_entity_identifier` 表和 `ods_resolved_relation` 视图。
-
-关系写入入口为 `ts_ods.py` 的业务落库事务：调用 `relations.write_entity_links` 抽取并保存原始引用，
-由 `relation_targets.py` 直接查询业务主表，匹配出真实目标后写入正式三元组。
-目标后到或标识变更时，通过原始引用反查受影响的来源并刷新关系；自动补齐由新版 ODS 写入触发。
-正式关系表按来源三列身份哈希分区，主键为来源三列、关系类型、目标三列；待解析引用按原记录三列身份分区。
-这两张表的主键和分区均在 `catalogs.py` 声明，通过同一套注册与建表流程执行。
-NORAD/COSPAR 连接卫星、轨道、频率及碎片；GCAT 代码连接卫星、组织、发射事件、场地和火箭；
-ESA ID、SatNOGS ID、星座成员及 CVE 的明确组织标识也用于关联。
-WIC 明确标为 `S` 类型的频率通过地面站通知 ID 关联地面站；普通卫星通知与地面站通知使用不同标识空间。
-财报及财务事实通过业务表的 CIK 直接关联组织，不纳入通用关系表。
-不使用显示名称模糊合并。目录实体、引用及其影响的正式边在同一事务中更新。
-
-例如轨道记录通过正式边关联卫星，不再需要业务标识解析：
+新增 GCAT 关联代码只从该来源提取；多码拆分为数组，原展示字段保留。型号与变体关联须限定来源，不将显示名称作为跨来源的实体标识。
+COSPAR 对象号与发射批次分列；ITU 仅将 WIC 的 `S` 类型通知写入地面通知字段，避免与卫星通知混用。
+ESA 对象编号须同时限定来源和资源域；原生关系链接中没有目标 ID 时，不从 URL 的当前对象编号猜测目标。
+NewSpace 等来源未给成员标识时保留原始信息；漏洞厂商与现有 SEC/GCAT 组织没有公共键时，不按名称强行关联。
 
 ```sql
-SELECT r.source_record_id, r.source_data_source, r.source_data_type,
-       r.relation_name, r.relation_type, r.target_record_id,
-       r.target_data_source, r.target_data_type, s.name, r.attributes
-FROM ts_ods.ods_entity_relation r
-JOIN ts_ods.ods_satellite s
-  ON (r.target_record_id, r.target_data_source, r.target_data_type) =
-     (s.record_id, s.data_source, s.data_type)
-WHERE r.source_data_type = 'orbital' AND r.target_data_type = 'satellite';
+SELECT o.record_id, s.record_id, s.name
+FROM ts_ods.ods_orbital o
+JOIN ts_ods.ods_satellite s ON s.norad_id = o.norad_id;
+
+SELECT c.record_id, s.record_id, s.name
+FROM ts_ods.ods_constellation c
+CROSS JOIN LATERAL jsonb_array_elements_text(c.member_norad_ids) m(norad_id)
+JOIN ts_ods.ods_satellite s ON s.norad_id = m.norad_id::bigint;
+
+SELECT s.record_id, o.record_id, o.name
+FROM ts_ods.ods_satellite s
+JOIN ts_ods.ods_organization o ON s.owner_codes ? o.code;
+
+SELECT f.record_id, g.record_id, g.name
+FROM ts_ods.ods_frequency f
+JOIN ts_ods.ods_groundstations g ON f.itu_earth_notice_id = g.itu_earth_notice_id;
+
+SELECT e.record_id, d.record_id, d.name
+FROM ts_ods.ods_debrisevents e
+JOIN ts_ods.ods_debris d
+  ON e.related_objects @> jsonb_build_array(
+       jsonb_build_object('source_id', d.source_id, 'resource_type', 'object'))
+WHERE e.data_source LIKE 'esa_discos%' AND d.data_source LIKE 'esa_discos%';
 ```
+
+Mongo 使用 `_meta.template` 保存实际集合标识，采集适配器不再额外注入 `_meta.data_source`；通用保存流程不清理历史元数据字段。
+RDS 是采集侧到业务侧的入口，将 `_meta.template` 映射为业务记录的 `data_source`；缺少 template 时拒绝写入。
+ODS 及后续 ETL 只使用业务记录的 `record.data_source` 选择处理器和写入来源，不再读取采集侧 `_meta.template` 或旧 `_meta.data_source` 推导来源，也不接受 normalizer 覆盖。
+财务事实的业务类型为 `financial_fact`，Mongo 集合与 `_meta.template` 均为 `sec_edgar_financial_fact`，新版 RDS 将它映射为同名业务来源。
+Twitter 的 `tw_account`、`tw_tweet` 也按各自 template 作为来源，业务平台标识及 ID 算法仍使用 `twitter`。
+历史来源是 PostgreSQL 复合主键和分区键的一部分，需要单独迁移；迁移前不能按新来源全量重放，避免形成两套来源身份。
 
 ```sql
 SELECT f.record_id, f.concept, f.value, o.name
@@ -388,7 +406,7 @@ WHERE btrim(f.cik) ~ '^[0-9]+$' AND length(ltrim(btrim(f.cik), '0')) BETWEEN 1 A
 
 各 topic 内仍按顺序逐条处理、成功后提交，数据库连接池由 RDS 统一管理。
 RDS 按实际目标表输出到 `${SPIDER_ETL_RDS_TOPIC}-<表名后缀>`，例如 `rds_news` 对应 `etl-rds-news`、`rds_financial_fact` 对应 `etl-rds-financial_fact`（以配置的 topic 前缀为准）。
-上线前创建这些 RDS 输出 topic，并先更新 ODS 再更新 RDS；ODS 兼容订阅旧公共 topic 与新拆分 topic，本次未改变 ODS 的串行处理及公共输出。
+上线前创建这些 RDS 输出 topic，并先更新 ODS 再更新 RDS；ODS 订阅带类型后缀的 RDS topic，逐条处理并输出到配置的公共 ODS topic。
 切换时先排空旧输入 topic，再开放新 Syncer，避免新旧 topic 的同一记录并发写入导致旧版本覆盖。
 Syncer 需要重建 `docker/syncer.Dockerfile` 镜像，RDS 需要重建 `docker/etl.Dockerfile` 镜像。
 
@@ -448,10 +466,10 @@ spider-crawler（旧 topic）     -> RDS -> 按实际写入表拆分输出    �
 
 采集能力由两部分组成：
 
-1. `templates/*.yaml` 描述站点 URL、请求、字段映射、分页、下载资源、批量参数等。
-2. `app/adapters/*.py` 处理站点特有行为，比如特殊请求头、翻页状态、批量参数拼接、错误处理。
+1. YAML 产物描述站点 URL、请求、字段映射、分页、下载资源、批量参数等。
+2. `adapter.py` 产物处理站点特有行为，并按需导出记录规则和 ODS normalizer/字段声明。
 
-新增模板时，建议只新增文件：
+新增来源通过 AI 生成、确认后发布到 MinIO；不要为新增来源修改基础执行代码。仓库内的 `templates/` 和既有适配器模块用于兼容。以下是发布产物示例：
 
 ```yaml
 name: my_site
@@ -473,7 +491,7 @@ list_pagination:
   max_pages: 10
 ```
 
-新增适配器时，建议只新增文件：
+对应的 MinIO 适配器产物示例（新业务类型还需按上文导出 `NORMALIZERS` 和 `ODS_FIELDS`）：
 
 ```python
 from __future__ import annotations
@@ -489,7 +507,7 @@ class MySiteAdapter(BaseSiteAdapter):
         return {"Referer": self._base_url}
 ```
 
-适配器会由 `app.adapters` 自动扫描导入，模板中的 `adapter: my_site` 会绑定到对应注册名。未找到适配器时会回退到 `GenericAdapter`。
+已发布执行从 MinIO 加载适配器，模板中的 `adapter: my_site` 绑定产物内对应注册名。只有模板未声明爬虫适配器时才使用通用采集逻辑；声明了但无法加载时明确报错。已有本地模块仅保留兼容加载。
 
 ## 配置
 

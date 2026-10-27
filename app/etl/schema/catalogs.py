@@ -626,6 +626,7 @@ _EXTRA_ODS_INDEXES = {
     ),
 }
 
+
 def validate_table_name(name: str) -> str:
     # Leave room for the layer prefix and hash-partition suffix in PostgreSQL's 63 bytes.
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,49}", name):
@@ -659,7 +660,6 @@ def ods_columns(table: str, fields: dict[str, str]) -> dict[str, str]:
         **{name: definition.upper() for name, definition in fields.items()},
         **_AUDIT_COLUMNS,
     }
-
 
 
 TABLE_DEFINITIONS: dict[str, dict[str, TableDefinition]] = {
@@ -716,7 +716,11 @@ def current_table_ddl(
     body.append(f"    PRIMARY KEY ({', '.join(RECORD_IDENTITY_COLUMNS)})")
     ddl = (f"CREATE TABLE IF NOT EXISTS {table_ref} (\n" + ",\n".join(body)
            + f"\n) PARTITION BY HASH ({', '.join(RECORD_IDENTITY_COLUMNS)});")
-    for name, expression, predicate, method in definition.get("indexes", ()):
+    indexes = definition.get("indexes", (
+        (f"idx_{layer}_{logical_table}_data_source", "data_source", None, "btree"),
+        (f"idx_{layer}_{logical_table}_updated_at", "updated_at DESC", None, "btree"),
+    ))
+    for name, expression, predicate, method in indexes:
         ddl += (f"\nCREATE INDEX IF NOT EXISTS {name} ON {table_ref} USING {method} ({expression})"
                 + (f" WHERE {predicate}" if predicate else "") + ";")
     return ddl

@@ -4,12 +4,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Literal
 
+from app.etl.schema.catalogs import RECORD_IDENTITY_COLUMNS, TABLE_DEFINITIONS
+
 TableRole = Literal["current", "history"]
 PartitionType = Literal["none", "range", "hash"]
 PartitionGranularity = Literal["month", "year"]
 
 DEFAULT_HASH_PARTITION_COUNT = 32
-RDS_CURRENT_HASH_PARTITION_COLUMN = "record_id, data_source, data_type"
+RDS_CURRENT_HASH_PARTITION_COLUMN = ", ".join(RECORD_IDENTITY_COLUMNS)
 
 
 @dataclass(frozen=True)
@@ -71,14 +73,13 @@ def default_table_layout(
     partition_granularity: PartitionGranularity | None = None
     partition_count: int | None = None
 
-    if role == "current" and layer == "rds":
+    definition = TABLE_DEFINITIONS.get(layer, {}).get(logical_table)
+    if role == "current" and (definition or layer in {"rds", "ods"}):
         partition_type = "hash"
-        partition_column = RDS_CURRENT_HASH_PARTITION_COLUMN
-        partition_count = DEFAULT_HASH_PARTITION_COUNT
-
-    if role == "current" and layer == "ods":
-        partition_type = "hash"
-        partition_column = RDS_CURRENT_HASH_PARTITION_COLUMN
+        partition_column = (
+            ", ".join(definition["partition_columns"])
+            if definition else RDS_CURRENT_HASH_PARTITION_COLUMN
+        )
         partition_count = DEFAULT_HASH_PARTITION_COUNT
 
     return TableLayout(

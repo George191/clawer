@@ -3,10 +3,8 @@
 每个 SiteAdapter 封装一类站点的特殊行为（如 Google Patents 的 gen_204 信令、
 USPTO 的 CAPTCHA 处理等），使 SpiderEngine 保持通用性。
 
-扩展新站点只需：
-1. 创建 app/adapters/<site_name>.py，继承 BaseSiteAdapter
-2. 在 ADAPTER_REGISTRY 中注册
-3. 在 YAML 模板中设置 adapter: <site_name>
+新增采集源由 AI 生成模板和适配器并发布到 MinIO。
+源码中的适配器保留已有来源兼容；新增来源不需要修改基础执行代码。
 """
 
 from __future__ import annotations
@@ -85,9 +83,20 @@ def load_adapter_class_from_source(
     source_key: str,
 ) -> type[BaseSiteAdapter]:
     """Load one released adapter without depending on a local module file."""
+    module = load_adapter_module_from_source(name, source, source_key)
+    registered = getattr(module, "_released_adapter_classes", {})
+    if name in registered:
+        return registered[name]
+    raise ValueError(f"Adapter source did not register '{name}'")
+
+
+def load_adapter_module_from_source(name: str, source: str, source_key: str) -> ModuleType:
+    """Compile an immutable artifact once; it may contain only ETL exports."""
     safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_") or "adapter"
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
     module_name = f"app.adapters._runtime_{safe_name}_{digest}"
+    if module_name in sys.modules:
+        return sys.modules[module_name]
     module = ModuleType(module_name)
     module.__file__ = f"<minio:{source_key}>"
     module.__package__ = "app.adapters"
@@ -95,10 +104,10 @@ def load_adapter_class_from_source(
     sys.modules[module_name] = module
     try:
         exec(compile(source, module.__file__, "exec"), module.__dict__)
-        cls = _ADAPTER_REGISTRY.get(name)
-        if cls is None or cls.__module__ != module_name:
-            raise ValueError(f"Adapter source did not register '{name}'")
-        return cls
+        module._released_adapter_classes = {
+            key: cls for key, cls in _ADAPTER_REGISTRY.items() if cls.__module__ == module_name
+        }
+        return module
     except Exception:
         sys.modules.pop(module_name, None)
         raise

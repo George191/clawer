@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
@@ -10,161 +10,70 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.schema.baselines import RDS_CURRENT_BASELINE_DDLS
+from app.etl.schema.catalogs import (
+    current_insert_sql,
+    current_table_ddl,
+    table_columns,
+    validate_table_name,
+)
+from app.etl.schema.registry import (
+    ensure_ddlregistry_table,
+    get_registered_ddl,
+    save_registered_ddl,
+)
 from app.logger import get_logger
 from app.records.values import require_canonical_record
-from app.records.types import SYNC_DATA_TYPES
-from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 
 logger = get_logger(__name__)
-
-_RDS_INSERT_TEMPLATE = """
-INSERT INTO ts_rds.rds_{table_name}
-    (record_id, data_source, data_type, raw_data, kafka_offset, kafka_partition, kafka_topic, created_at, updated_at)
-VALUES
-    (:record_id, :data_source, :data_type, CAST(:raw_data AS jsonb), :kafka_offset, :kafka_partition, :kafka_topic,
-     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz))
-ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET
-    data_source = EXCLUDED.data_source,
-    data_type = EXCLUDED.data_type,
-    raw_data = EXCLUDED.raw_data,
-    kafka_offset = EXCLUDED.kafka_offset,
-    kafka_partition = EXCLUDED.kafka_partition,
-    kafka_topic = EXCLUDED.kafka_topic,
-    updated_at = EXCLUDED.updated_at
-RETURNING *
-"""
 
 
 class TsRds(ETLBase):
     _layer = "rds"
-    _consumer_topics = [settings.etl_raw_topic] + [
-        f"{settings.kafka_topic}-{data_type}" for data_type in SYNC_DATA_TYPES
-    ]
+    _consumer_pattern = (
+        rf"^(?:{re.escape(settings.etl_raw_topic)}|{re.escape(settings.kafka_topic)}-[a-z][a-z0-9_]*)$"
+    )
     _consumer_group = settings.etl_rds_consumer_group
     _producer_topic = settings.etl_rds_topic
     _producer_client_id = "etl-ts-rds-producer"
 
     def __init__(self, table_name: str = "") -> None:
         super().__init__(table_name)
-        self._topic_workers: list[TsRds] = []
-        self._topic_tasks: list[asyncio.Task] = []
-        self._topic_cleanup_lock = asyncio.Lock()
+        self._ready_types: set[str] = set()
+        if table_name:
+            validate_table_name(table_name)
+            self._consumer_topics = [f"{settings.kafka_topic}-{table_name}"]
+            self._consumer_pattern = ""
 
-    async def run(self) -> None:
-        self._running = True
-        await self._pg.connect()
-        await self._on_init_schema()
+    async def _on_init_schema(self) -> None:
+        await self._pg.execute("CREATE SCHEMA IF NOT EXISTS ts_rds")
+        await ensure_ddlregistry_table(self._pg)
+        for table in RDS_CURRENT_BASELINE_DDLS:
+            if not self._table_name or table == self._table_name:
+                await self._ensure_registered_table(table, "current", create_partitions=False)
 
-        for topic in dict.fromkeys(self._consumer_topics):
-            worker = TsRds(self._table_name)
-            worker._consumer_topics = [topic]
-            worker._log_prefix = f"[RDS:{topic}]"
-            self._topic_workers.append(worker)
-        self._topic_tasks = [
-            asyncio.create_task(self._run_topic(worker)) for worker in self._topic_workers
-        ]
-        try:
-            await asyncio.gather(*self._topic_tasks)
-        finally:
-            await self._stop_topic_workers()
-
-    async def _run_topic(self, worker: TsRds) -> None:
-        worker._running = True
-        await worker._connect_consumer()
-        await worker._connect_producer()
-        logger.info("%s STARTED group=%s", worker._log_prefix, worker._consumer_group)
-        await ETLBase._consume_loop(worker)
-
-    async def _stop_topic_workers(self) -> None:
-        async with self._topic_cleanup_lock:
-            for worker in self._topic_workers:
-                worker._running = False
-            for task in self._topic_tasks:
-                task.cancel()
-            await asyncio.gather(*self._topic_tasks, return_exceptions=True)
-            await asyncio.gather(
-                *(worker._close_consumer() for worker in self._topic_workers),
-                *(worker._close_producer() for worker in self._topic_workers),
-                return_exceptions=True,
+    async def _ensure_type(self, table: str) -> None:
+        validate_table_name(table)
+        if table in self._ready_types:
+            return
+        if not await get_registered_ddl(self._pg, "rds", table, "current"):
+            await save_registered_ddl(
+                self._pg, layer="rds", table=table,
+                ddl_sql=current_table_ddl("rds", table), updated_by="system:rds", allow_update=False,
             )
-
-    async def stop(self) -> None:
-        await self._stop_topic_workers()
-        await super().stop()
-
-    async def _handler_news(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="news")
-
-    async def _handler_patent(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="patent")
-
-    async def _handler_navwarn(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="navwarn")
-
-    async def _handler_intelligence(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="intelligence")
-
-    async def _handler_financial_fact(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="financial_fact")
-
-    async def _handler_filing(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="filing")
-
-    async def _handler_contract(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="contract")
-
-    async def _handler_tender(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="tender")
-
-    async def _handler_constellation(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="constellation")
-
-    async def _handler_vulnerability(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="vulnerability")
-
-    async def _handler_debrisevents(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="debrisevents")
-
-    async def _handler_debris(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="debris")
-
-    async def _handler_launchvehicles(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="launchvehicles")
-
-    async def _handler_frequency(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="frequency")
-
-    async def _handler_groundstations(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="groundstations")
-
-    async def _handler_launchinfo(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="launchinfo")
-
-    async def _handler_satellite(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="satellite")
-
-    async def _handler_launchsites(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="launchsites")
-
-    async def _handler_orbital(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="orbital")
-
-    async def _handler_organization(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="organization")
+        await self._ensure_registered_table(table, "current")
+        self._ready_types.add(table)
 
     async def _dispatch(self, message: dict[str, Any]) -> bool:
-        meta = message.get("_meta") or {}
-        data_type = TWITTER_COLLECTION_TYPES.get(meta.get("template"))
-        # The raw collection defines the type, including retained legacy Kafka messages.
-        if data_type:
-            message = {**message, "_meta": {**meta, "data_type": data_type, "data_source": "twitter"}}
-        return await super()._dispatch(message)
-
-    async def _handler_account(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="account")
-
-    async def _handler_tweet(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="tweet")
+        table = extract_meta(message).get("data_type")
+        try:
+            validate_table_name(table)
+        except ValueError:
+            logger.exception("%s Invalid record data_type", self._log_prefix)
+            return False
+        if self._table_name and table != self._table_name:
+            return False
+        return await self._process_rds_record(message, table)
 
     async def _write_current(
         self,
@@ -172,7 +81,7 @@ class TsRds(ETLBase):
         table: str,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
-        current_sql = _RDS_INSERT_TEMPLATE.replace("{table_name}", table)
+        current_sql = current_insert_sql("rds", table, table_columns("rds", table))
 
         async with self._pg.session() as session:
             result = await session.execute(text(current_sql), payload)
@@ -190,17 +99,11 @@ class TsRds(ETLBase):
             if not record_id:
                 logger.warning("%s Message missing record_id, skipping table=%s", self._log_prefix, table)
                 return False
+            if not data_source:
+                logger.warning("%s Message missing source template, skipping table=%s", self._log_prefix, table)
+                return False
 
             raw_data = dict(message)
-            if table in {"account", "tweet"}:
-                data_type = table
-                if data_source in {"twitter", "tw_account", "tw_tweet"}:
-                    data_source = "twitter"
-                raw_data["_meta"] = {
-                    **(raw_data.get("_meta") or {}),
-                    "data_source": data_source,
-                    "data_type": data_type,
-                }
             kafka_meta = message.get("_kafka_meta", {}) or {}
             now = datetime.now(timezone.utc)
             payload = {
@@ -215,6 +118,7 @@ class TsRds(ETLBase):
                 "updated_at": now,
             }
 
+            await self._ensure_type(table)
             result = await self._execute_with_table_recovery(
                 table,
                 partial(self._write_current, table=table, payload=payload),

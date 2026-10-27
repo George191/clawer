@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 from datetime import date, datetime, timedelta, timezone
+from itertools import count
 from urllib.parse import parse_qs, urlencode, urljoin, urlsplit, urlunsplit
 
 from lxml import html
@@ -16,10 +17,15 @@ from app.downloader.http_client import DownloadError
 from app.engine.template_loader import TemplateLoader
 from app.parser.template_parser import TemplateParser
 from app.storage.redis_client import RedisClient
+from app.utils.connection_errors import is_retryable_connection_error
 from app.utils.runtime_control import check_control_state, controlled_sleep
 
 SHANGHAI = timezone(timedelta(hours=8))
 WEEK_PATH = r"/sitemap/(\d{4})-W(\d{2})(?:-p\d+)?\.html"
+
+
+class _UnexpectedSitemapResponse(ValueError):
+    """The public sitemap was replaced by a challenge or proxy error page."""
 
 
 def canonical(value):
@@ -175,6 +181,16 @@ class GooglePatentDailyAdapter(BaseSiteAdapter):
             if requested <= found.keys():
                 break
         missing = requested - found.keys()
+        if missing and len(requested) > 1:
+            pending = sorted(missing)
+            size = (len(pending) + 1) // 2
+            self._site_logger.warning(
+                "Patent batch incomplete: requested=%d missing=%d; querying smaller batches",
+                len(requested), len(missing),
+            )
+            for offset in range(0, len(pending), size):
+                found.update(await self._read_batch(pending[offset:offset + size], config))
+            missing = requested - found.keys()
         if missing:
             raise ValueError(f"Patent batch missing {len(missing)} requested publications: {','.join(sorted(missing)[:10])}")
         return found
@@ -204,7 +220,7 @@ class GooglePatentDailyAdapter(BaseSiteAdapter):
 
     async def _request(self, url, config, json_response=False, page=0):
         jump_attempted = False
-        for attempt in range(3):
+        for attempt in count():
             await check_control_state()
             use_jump = bool(settings.proxy_pre_proxy_url) and not jump_attempted and (
                 getattr(self, "_jump_only", False) or attempt == 1
@@ -245,20 +261,29 @@ class GooglePatentDailyAdapter(BaseSiteAdapter):
                         raise ValueError("Invalid patent pagination or results")
                     content = data
                 elif "Google Patents Sitemap" not in content or not (self._links(content, url) or self._links(content, url, "patent")):
-                    raise ValueError("Google Patent returned an unexpected sitemap page")
+                    raise _UnexpectedSitemapResponse("Google Patent returned an unexpected sitemap page")
                 if use_jump:
                     self._jump_only = True
                 return content
-            except (OSError, DownloadError, ValueError, KeyError, TypeError) as exc:
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                if status is None:
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                if not (
+                    is_retryable_connection_error(exc)
+                    or isinstance(exc, json.JSONDecodeError | _UnexpectedSitemapResponse)
+                    or status in {403, 407, 408, 429, *settings.http_retry_on_statuses}
+                    or isinstance(status, int) and 500 <= status < 600
+                    or isinstance(exc, DownloadError) and status is None
+                ):
+                    raise
                 source = url if len(url) <= 140 else url[:70] + "..." + url[-70:]
                 self._site_logger.warning("Patent request failed: source=%s attempt=%d error=%s", source, attempt + 1, exc)
                 if use_jump:
                     self._jump_only = False
                 else:
                     await self._client.mark_last_proxy_failed("google_patent")
-                if attempt == 2:
-                    raise RuntimeError(f"Patent request failed after 3 attempts: {source}") from exc
-                await controlled_sleep(5 * (attempt + 1))
+                await controlled_sleep(min(5 * (attempt + 1), 60))
 
     async def on_error(self, error, page, attempt):
         return "abort"
