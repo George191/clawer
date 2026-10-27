@@ -242,7 +242,6 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       );
     }
     function paint(time: number) {
-      time = 2.38; // PARTICLE_SCAN_QA
       if (disposed) return;
       earth.update(time);
       const communication = (time / 6) % 1;
