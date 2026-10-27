@@ -45,14 +45,15 @@ def twitter_account_operations(accounts, now, existing=None, *, collection_name=
         changed_urls = [key for key in ("avatar_url", "banner_url")
                         if key in account and account[key] != old.get(key)]
         fields = {**account, "_meta.updated_at": now, "_meta.template": collection_name,
-                  "_meta.data_type": "account", "_meta.data_source": "twitter",
+                  "_meta.data_type": "account",
                   "_meta.record_id": resolve_record_id({"id": account_id}),
                   "_meta.sync_status": "pending"}
         if changed_urls or not old.get("_meta", {}).get("download_status"):
             fields["_meta.download_status"] = "pending"
-        update = {"$set": fields, "$setOnInsert": {"_meta.created_at": now}}
+        update = {"$set": fields, "$setOnInsert": {"_meta.created_at": now},
+                  "$unset": {"_meta.data_source": ""}}
         if changed_urls:
-            update["$unset"] = {f"assets.{key}": "" for key in changed_urls}
+            update["$unset"].update({f"assets.{key}": "" for key in changed_urls})
         operations.append(UpdateOne({"id": account_id}, update, upsert=True))
     return operations
 

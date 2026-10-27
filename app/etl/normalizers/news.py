@@ -72,7 +72,7 @@ def _news_common(record: dict[str, Any], source: str) -> dict[str, Any]:
     organization = pick("organization")
 
     return {
-        "data_source": safe_str(meta.get("template")),
+        "data_source": safe_str(record.get("data_source")),
         "data_type": safe_str(meta.get("data_type")),
         "record_id": safe_str(meta.get("record_id")),
         "title": safe_str(pick("title")),

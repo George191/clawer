@@ -96,7 +96,7 @@ def _navwarn_common(
     coordinates = _extract_coordinates(message_text)
 
     return {
-        "data_source": safe_str(meta.get("template")),
+        "data_source": safe_str(record.get("data_source")),
         "data_type": safe_str(meta.get("data_type")),
         "record_id": safe_str(meta.get("record_id")),
         "navarea_id": pick("navarea_id"),

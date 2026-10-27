@@ -321,19 +321,15 @@ USAspending 合同模板为 `usaspending`，使用免 Key 的官方批量 CSV �
 公司与组织统一写入 `ts_rds.rds_organization` 和 `ts_ods.ods_organization`，ODS 保留 CIK、证券代码、交易所及原公司字段。
 采集、Mongo、Syncer 和 RDS/ODS 的业务类型统一为 `organization`，使用 `syncer-organization`、`spider-crawler-organization`、`etl-rds-organization`。
 SEC 的集合名和 `data_source` 仍为 `sec_edgar_company`；GCAT 组织集合和来源为 `organization_jonathan`。
-公司内嵌财务事实仍写入 `ods_financial_fact`。注册命令迁移两层历史公司，保留记录 ID、来源、Kafka 位点及时间，
-目标已有更新数据时不覆盖。在同一维护事务中锁定旧表，完成全量核验后删除两层旧公司表及旧注册记录；
-删除不使用 `CASCADE`，核验或删除失败则回滚。发现未迁移的公司历史表时终止清理，后续查询统一使用组织表。
+公司内嵌财务事实仍写入 `ods_financial_fact`。GCAT 模板技术标识 `jonathan_organizations` 保持不变。
+表字段、主键、分区和索引集中声明在 `app/etl/schema/catalogs.py`，由 `baselines.py` 生成基线，
+`registry.py` 管理 DDL 注册，ETL 启动和表恢复流程依据注册信息创建表与分区。
+历史公司合并、组织改名和旧关系结构转换属于一次性升级，不进入运行时流程。
 
-```bash
-python -m app.etl.schema.register_catalogs          # 查看 26 张表、退役对象及历史迁移计划
-python -m app.etl.schema.register_catalogs --apply  # 注册本批表，执行退役及历史公司迁移
-```
-
-该命令要求已有 `ts_meta.ddlregistry`，不执行全库初始化。部署时先暂停相关 Syncer、旧 RDS 和旧 ODS，
-部署新代码并执行本批注册后，再启动新的 ODS、RDS；为每个新增类型创建 `${SPIDER_KAFKA_TOPIC}-<类型>` 与
-`${SPIDER_ETL_RDS_TOPIC}-<类型>` topic 后启动对应 Syncer，例如 `python -m app.syncer.main --data-type satellite`。
-已有 Mongo 记录的同步状态不会被注册脚本重置；需要补历史目录数据时，按原身份重放对应 RDS 消息或执行现有补齐流程。
+部署时先暂停相关采集、下载、Syncer、旧 RDS 和旧 ODS，再启动新版进程。
+为每个新增类型创建 `${SPIDER_KAFKA_TOPIC}-<类型>` 与 `${SPIDER_ETL_RDS_TOPIC}-<类型>` topic 后，
+启动对应 Syncer，例如 `python -m app.syncer.main --data-type satellite`。
+组织改名时的历史记录按原身份置为待同步，从 `organization` topic 重放。
 
 `ods_entity_relation` 保存真实 ODS 记录之间的三元组，两端都使用完整记录身份：
 
@@ -357,19 +353,15 @@ python -m app.etl.schema.register_catalogs --apply  # 注册本批表，执行�
 使用事务锁串行化源、目标到达的关系更新，避免并发提交时漏边。
 不再维护 `ods_entity_identifier` 表和 `ods_resolved_relation` 视图。
 
-升级已有关系表时先停止旧 ODS 和目录补数脚本，部署新代码，执行独立关系迁移，再恢复处理：
-
-```bash
-python -m app.etl.schema.migrate_entity_relations                    # 查看关系表迁移计划
-python -m app.etl.schema.migrate_entity_relations --pg-host HOST --apply  # 转换旧引用并解析真实记录边
-```
-
-该命令只迁移两张关系表及其注册、创建必要的业务标识匹配索引；跳过公司迁移及财务清理。
-旧关系表完整保留为 reference 表，通过集合查询批量生成正式边并验证双端存在；失败时整个事务回滚。
+关系写入入口为 `ts_ods.py` 的业务落库事务：调用 `relations.write_entity_links` 抽取并保存原始引用，
+由 `relation_targets.py` 直接查询业务主表，匹配出真实目标后写入正式三元组。
+目标后到或标识变更时，通过原始引用反查受影响的来源并刷新关系；自动补齐由新版 ODS 写入触发。
+正式关系表按来源三列身份哈希分区，主键为来源三列、关系类型、目标三列；待解析引用按原记录三列身份分区。
+这两张表的主键和分区均在 `catalogs.py` 声明，通过同一套注册与建表流程执行。
 NORAD/COSPAR 连接卫星、轨道、频率及碎片；GCAT 代码连接卫星、组织、发射事件、场地和火箭；
 ESA ID、SatNOGS ID、星座成员及 CVE 的明确组织标识也用于关联。
 WIC 明确标为 `S` 类型的频率通过地面站通知 ID 关联地面站；普通卫星通知与地面站通知使用不同标识空间。
-财报及财务事实通过业务表的 CIK 直接关联组织，不纳入通用关系表；注册时清理历史财务引用，保留业务数据。
+财报及财务事实通过业务表的 CIK 直接关联组织，不纳入通用关系表。
 不使用显示名称模糊合并。目录实体、引用及其影响的正式边在同一事务中更新。
 
 例如轨道记录通过正式边关联卫星，不再需要业务标识解析：

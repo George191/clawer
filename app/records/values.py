@@ -28,7 +28,7 @@ def require_canonical_record(record: dict[str, Any]) -> None:
 
     reject_nested_wrappers(record)
     meta = record.get("_meta") or {}
-    validate_record_field_names(record, data_source=meta.get("data_source") or meta.get("template"))
+    validate_record_field_names(record, data_source=meta.get("template"))
 
 
 def record_values_equal(left: Any, right: Any) -> bool:

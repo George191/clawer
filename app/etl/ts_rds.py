@@ -104,9 +104,6 @@ class TsRds(ETLBase):
     async def _handler_intelligence(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="intelligence")
 
-    async def _handler_company(self, message: dict[str, Any]) -> bool:
-        return await self._process_rds_record(message, table="company")
-
     async def _handler_financial_fact(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="financial_fact")
 
@@ -118,6 +115,42 @@ class TsRds(ETLBase):
 
     async def _handler_tender(self, message: dict[str, Any]) -> bool:
         return await self._process_rds_record(message, table="tender")
+
+    async def _handler_constellation(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="constellation")
+
+    async def _handler_vulnerability(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="vulnerability")
+
+    async def _handler_debrisevents(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="debrisevents")
+
+    async def _handler_debris(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="debris")
+
+    async def _handler_launchvehicles(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="launchvehicles")
+
+    async def _handler_frequency(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="frequency")
+
+    async def _handler_groundstations(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="groundstations")
+
+    async def _handler_launchinfo(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="launchinfo")
+
+    async def _handler_satellite(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="satellite")
+
+    async def _handler_launchsites(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="launchsites")
+
+    async def _handler_orbital(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="orbital")
+
+    async def _handler_organization(self, message: dict[str, Any]) -> bool:
+        return await self._process_rds_record(message, table="organization")
 
     async def _dispatch(self, message: dict[str, Any]) -> bool:
         meta = message.get("_meta") or {}

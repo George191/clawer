@@ -41,7 +41,7 @@ def _normalize_sec_edgar_filing(record: dict[str, Any]) -> dict[str, Any]:
     record_id = safe_str(meta.get("record_id"))
     return {
         "record_id": record_id,
-        "data_source": safe_str(meta.get("template")),
+        "data_source": safe_str(record.get("data_source")),
         "data_type": safe_str(pick("data_type")),
         "cik": safe_str(pick("cik")),
         "accession_number": safe_str(pick("accession_number")),

@@ -44,4 +44,4 @@ def normalize_twitter_account(record: dict[str, Any]) -> dict[str, Any]:
     return normalize_twitter_author(user, safe_datetime(meta.get("updated_at")))
 
 
-register_normalizer("account", "twitter", normalize_twitter_account)
+register_normalizer("account", "tw_account", normalize_twitter_account)

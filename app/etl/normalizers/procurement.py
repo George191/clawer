@@ -78,7 +78,7 @@ def _common(record: dict[str, Any], source: str, data_type: str, source_id: str 
         record_id = resolve_record_id({"id": source_id})
     return {
         "record_id": record_id,
-        "data_source": safe_str(meta.get("data_source")) or source,
+        "data_source": safe_str(record.get("data_source")),
         "data_type": data_type,
         "title": safe_str(record.get("title")),
         "content": safe_str(record.get("content")),

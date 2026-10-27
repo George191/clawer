@@ -70,7 +70,7 @@ class RecordAdapter:
 
 
 class TwitterRecordAdapter(RecordAdapter):
-    metadata = {"data_source": "twitter"}
+    pass
 
 
 class TwitterTweetAdapter(TwitterRecordAdapter):
@@ -249,7 +249,7 @@ class SecCompanyAdapter(RecordAdapter):
 
 
 class SecFinancialFactAdapter(RecordAdapter):
-    metadata = {"data_source": "sec_edgar_company", "download_status": "no_assets"}
+    metadata = {"download_status": "no_assets"}
     collection_indexes = [("_meta.record_id", True), ("cik", False), ("_meta.sync_status", False)]
 
     def identity(self, record: dict[str, Any]) -> dict[str, Any]:

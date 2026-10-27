@@ -105,4 +105,4 @@ async def normalize_twitter_content_linked(record: dict[str, Any]) -> list[dict[
         client.close()
 
 
-register_normalizer("tweet", "twitter", normalize_twitter_content_linked)
+register_normalizer("tweet", "tw_tweet", normalize_twitter_content_linked)

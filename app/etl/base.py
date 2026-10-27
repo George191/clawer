@@ -884,7 +884,7 @@ PIPELINE_VERSION = "2.0"
 def extract_meta(message: dict[str, Any]) -> dict[str, Any]:
     raw_meta = message.get("_meta", {}) or {}
     return {
-        "data_source": raw_meta.get("data_source", "") or raw_meta.get("template", ""),
+        "data_source": raw_meta.get("template", ""),
         "data_type": raw_meta.get("data_type", ""),
         "record_id": raw_meta.get("record_id", ""),
     }

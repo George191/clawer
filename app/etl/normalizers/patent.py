@@ -44,7 +44,7 @@ def normalize_google_patent(record: dict[str, Any]) -> dict[str, Any]:
     figures = patent.get("figures")
 
     return {
-        "data_source": safe_str(meta.get("template")),
+        "data_source": safe_str(record.get("data_source")),
         "data_type": safe_str(meta.get("data_type")),
         "record_id": safe_str(meta.get("record_id")),
         "title": safe_str(pick("title")),
