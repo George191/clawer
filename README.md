@@ -180,24 +180,6 @@ docker compose run --rm --no-deps web python -m app.web.initial_data
 再创建配置的管理员账号。已有账号不会被覆盖或重置密码，重复执行不会重复创建。
 登录使用服务器 `.env` 中的邮箱和密码；初始化只写入密码哈希。
 
-可使用真实 PostgreSQL 验证空库迁移、重复初始化、登录、令牌续期、Flow 建表与数据预览：
-
-```bash
-docker compose run --rm --no-deps -T -v "$PWD/tools:/app/tools:ro" web python tools/check_flow_e2e.py
-```
-
-检查使用 `SPIDER_PG_URL` 连接同一实例的 `postgres` 维护库，账号需要 `CREATEDB` 权限。
-它会创建唯一的 `spider_flow_e2e_*` 临时数据库，Web 和 ETL 均切换到该测试库，结束后自动删除；
-不会向已配置的业务数据库写入测试数据。
-
-部署后可通过真实 Nginx 和 Chromium 浏览器验证登录跳转、单行错误提示、Flow 数据加载和自动续期：
-
-```bash
-docker compose run --rm --no-deps -T -v "$PWD/tools:/app/tools:ro" web python tools/check_flow_live.py
-```
-
-此检查使用配置的管理员登录，只读取业务数据；不保存截图、页面内容或浏览器会话。
-
 部署前应已准备好 AI Collect 数据库表结构。Web 和 Worker 日常启动只建立连接，不执行历史迁移或导入本地模板。来源模板和适配器通过 AI Collect 页面发布到 MinIO；一次性数据修复按实际需求在维护窗口执行，不放入标准运行代码。
 
 ```bash

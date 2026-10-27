@@ -212,7 +212,16 @@ class ETLBase:
         await self._pg.execute(
             f"CREATE SCHEMA IF NOT EXISTS {schema_name_for(self._layer, table_role)}"
         )
-        await self._pg.init_schema([ddl_record["ddl_sql"]])
+        existing = None
+        if self._layer in {"rds", "ods"} and table_role == "current":
+            existing = await self._pg.fetch_one(
+                "SELECT to_regclass(:table_name) AS relation",
+                {"table_name": self._table_fqn(table, table_role)},
+            )
+        # Existing current tables were checked before activation; do not rebuild
+        # optional indexes over their historical data on every worker startup.
+        if not existing or existing["relation"] is None:
+            await self._pg.init_schema([ddl_record["ddl_sql"]])
         logger.info(
             "%s Table ensured: %s",
             self._log_prefix,
@@ -810,11 +819,14 @@ class ETLBase:
         if not self._consumer:
             await self._connect_consumer()
 
+        batch_commit = self._layer in {"rds", "ods"}
+
         while self._running:
             try:
                 records = await self._consumer.getmany(timeout_ms=5000, max_records=50)
                 retry_needed = False
                 for _tp, msgs in records.items():
+                    last_successful_offset = None
                     for msg in msgs:
                         if msg.value is None:
                             continue
@@ -827,11 +839,19 @@ class ETLBase:
                             }
                             success = await self._dispatch(msg.value)
                             if success:
-                                await self._commit_and_save(msg.topic, msg.partition, msg.offset)
+                                if batch_commit:
+                                    last_successful_offset = msg.offset
+                                else:
+                                    await self._commit_and_save(msg.topic, msg.partition, msg.offset)
                         except Exception:
                             success = False
                             logger.exception("%s Handler error", self._log_prefix)
                         if not success:
+                            if batch_commit and last_successful_offset is not None:
+                                await self._commit_and_save(
+                                    _tp.topic, _tp.partition, last_successful_offset
+                                )
+                                last_successful_offset = None
                             self._consumer.seek(_tp, msg.offset)
                             logger.warning(
                                 "%s Retrying topic=%s partition=%d offset=%d",
@@ -839,6 +859,10 @@ class ETLBase:
                             )
                             retry_needed = True
                             break
+                    if batch_commit and last_successful_offset is not None:
+                        await self._commit_and_save(
+                            _tp.topic, _tp.partition, last_successful_offset
+                        )
                 if retry_needed:
                     await asyncio.sleep(1)
             except KAFKA_RETRYABLE_ERRORS as exc:
@@ -904,8 +928,14 @@ PIPELINE_VERSION = "2.0"
 
 def extract_meta(message: dict[str, Any]) -> dict[str, Any]:
     raw_meta = message.get("_meta", {}) or {}
+    source = raw_meta.get("template", "")
+    data_type = raw_meta.get("data_type", "")
+    # Retain the existing business namespaces while raw lineage stays canonical.
+    source = {
+        ("sec_edgar_financial_fact", "financial_fact"): "sec_edgar_company",
+    }.get((source, data_type), source)
     return {
-        "data_source": raw_meta.get("template", ""),
-        "data_type": raw_meta.get("data_type", ""),
+        "data_source": source,
+        "data_type": data_type,
         "record_id": raw_meta.get("record_id", ""),
     }

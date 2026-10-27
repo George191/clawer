@@ -11,9 +11,11 @@ from pydantic import (
     computed_field,
     model_validator,
 )
-from pydantic_core import MultiHostUrl
 from pydantic_settings import SettingsConfigDict, BaseSettings
+from sqlalchemy.engine import make_url
 from typing_extensions import Self
+
+from app.storage.postgres_client import _resolved_pg_url
 
 def parse_cors(v: Any) -> list[str] | str:
     if isinstance(v, str) and not v.startswith("["):
@@ -53,36 +55,19 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
-    POSTGRES_SERVER: str
-    POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str = ""
-    POSTGRES_PASSWORD: str = ""
-    POSTGRES_DB: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def SQLALCHEMY_MIGRATE_DATABASE_URI(self) -> PostgresDsn:
-        return MultiHostUrl.build(
-            scheme="postgresql+psycopg2",
-            username=self.POSTGRES_USER,
-            password=self.POSTGRES_PASSWORD,
-            host=self.POSTGRES_SERVER,
-            port=self.POSTGRES_PORT,
-            path=self.POSTGRES_DB,
+        return PostgresDsn(
+            make_url(_resolved_pg_url()).set(drivername="postgresql+psycopg2").render_as_string(hide_password=False)
         )
         
     
     @computed_field  # type: ignore[prop-decorator]
     @property
     def SQLALCHEMY_RUNNABLE_DATABASE_URI(self) -> PostgresDsn:
-        return MultiHostUrl.build(
-            scheme="postgresql+asyncpg",
-            username=self.POSTGRES_USER,
-            password=self.POSTGRES_PASSWORD,
-            host=self.POSTGRES_SERVER,
-            port=self.POSTGRES_PORT,
-            path=self.POSTGRES_DB,
-        )
+        return PostgresDsn(_resolved_pg_url())
     
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
@@ -154,7 +139,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _enforce_non_default_secrets(self) -> Self:
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
-        self._check_default_secret("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD)
+        self._check_default_secret("SPIDER_PG_URL", make_url(_resolved_pg_url()).password or "")
         self._check_default_secret(
             "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
         )
