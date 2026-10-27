@@ -44,11 +44,11 @@ const particleVertex = `
     float radial = beamRadius * pow(u, 1.6) * (1.0 + sin(time * 0.8 + aSeed * 6.2831853) * 0.004);
     vec4 point = modelViewMatrix * vec4(cos(angle) * radial, distance, sin(angle) * radial, 1.0);
     float fade = smoothstep(0.0, 0.045, u) * (1.0 - smoothstep(0.86, 1.0, u));
-    float size = (0.02 + aSeed * 0.012) * length(modelMatrix[0].xyz);
+    float size = (0.02 + aSeed * 0.012) * mix(1.0, 1.9, smoothstep(0.08, 0.85, u)) * length(modelMatrix[0].xyz);
     float pixels = size * viewportHeight * projectionMatrix[1][1] / (2.0 * max(0.01, -point.z));
     gl_PointSize = max(1.0, pixels);
     float flicker = 0.7 + 0.3 * pow(sin(time * 1.8 + aSeed * 6.2831853), 2.0);
-    vAlpha = strength * fade * flicker * min(1.0, pixels * pixels) * 0.95;
+    vAlpha = min(1.0, strength * fade * flicker * min(1.0, pixels * pixels) * 1.4);
     gl_Position = projectionMatrix * point;
   }
 `;
