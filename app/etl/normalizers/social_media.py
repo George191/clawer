@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.adapters.utils.twitter_record import twitter_entity_id, twitter_record_id
 from app.etl.normalizers.base import apply_asset_path_overrides, safe_local_asset_path, safe_str
+from app.etl.normalizers.social_identity import twitter_entity_id, twitter_record_id
 
 
 def normalize_twitter_media(tweet: dict[str, Any]) -> list[dict[str, Any]]:

@@ -23,13 +23,15 @@ def normalize_sec_edgar_financial_fact(record: dict[str, Any]) -> dict[str, Any]
         return json.dumps(value, ensure_ascii=False) if value is not None else None
 
     meta = _meta(record)
+    form = safe_str(pick("form"))
+    is_amendment = pick("is_amendment")
     return {
         "record_id": safe_str(meta.get("record_id")),
         "data_source": safe_str(record.get("data_source")),
         "data_type": "financial_fact",
         "cik": safe_str(pick("cik")),
         "entity_name": safe_str(pick("entity_name")),
-        "form": safe_str(pick("form")),
+        "form": form,
         "taxonomy": safe_str(pick("taxonomy")),
         "concept": safe_str(pick("concept")),
         "concept_label": safe_str(pick("concept_label")),
@@ -42,7 +44,7 @@ def normalize_sec_edgar_financial_fact(record: dict[str, Any]) -> dict[str, Any]
         "fy": pick("fy"),
         "fp": safe_str(pick("fp")),
         "frame": safe_str(pick("frame")),
-        "is_amendment": pick("is_amendment"),
+        "is_amendment": is_amendment if isinstance(is_amendment, bool) else bool(form and form.endswith("/A")),
     }
 
 

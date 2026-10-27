@@ -5,13 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.adapters.utils.twitter_record import (
+from app.etl.normalizers import register_normalizer
+from app.etl.normalizers.base import safe_datetime, safe_str
+from app.etl.normalizers.social_identity import (
     twitter_entity_id,
     twitter_record_id,
     twitter_record_identity,
 )
-from app.etl.normalizers import register_normalizer
-from app.etl.normalizers.base import safe_datetime, safe_str
 from app.records.field_names import normalize_record_fields
 
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.adapters.utils.twitter_record import twitter_entity_id, twitter_record_id
 from app.etl.normalizers.base import safe_datetime, safe_str
+from app.etl.normalizers.social_identity import twitter_entity_id, twitter_record_id
 from app.utils.record_id import resolve_record_id
 
 
@@ -25,8 +25,7 @@ def normalize_twitter_interaction(tweet: dict[str, Any]) -> dict[str, Any] | Non
         return None
 
     tweet_id = safe_str(tweet["id"])
-    user = tweet.get("author") or {"id": tweet["author_id"]}
-    author_id = safe_str(user["id"])
+    author_id = safe_str(tweet["author_id"])
     created_at = safe_datetime(tweet["created_at"])
     interaction_identity = {
         "interaction_type": interaction_type,

@@ -63,15 +63,10 @@ class RecordAdapter:
 async def get_record_adapter(
     storage: MongoRecordStore, route: dict[str, str], dedup_fields: list[str],
 ) -> RecordAdapter:
-    from app.adapters.record_rules import BUILTIN_RECORD_ADAPTERS
     from app.adapters.runtime import get_source_module
 
     module = await get_source_module(route["collection_name"])
-    adapter = getattr(module, "RECORD_ADAPTERS", {}).get(route["data_type"])
-    if adapter is None:
-        adapter = BUILTIN_RECORD_ADAPTERS.get((route["template_name"], route["data_type"]))
-    if adapter is None:
-        adapter = BUILTIN_RECORD_ADAPTERS.get((route["template_name"], None), RecordAdapter)
+    adapter = getattr(module, "RECORD_ADAPTERS", {}).get(route["data_type"], RecordAdapter)
     if not isinstance(adapter, type) or not issubclass(adapter, RecordAdapter):
         raise ValueError("Published RECORD_ADAPTERS values must extend RecordAdapter")
     return adapter(storage, route, dedup_fields)
