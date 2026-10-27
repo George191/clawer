@@ -1,8 +1,10 @@
-.sp-login { position: relative; isolation: isolate; height: 100dvh; display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); overflow-x: hidden; overflow-y: auto; background: radial-gradient(ellipse at 29% 35%, #0a2033 0%, #07111e 38%, #050a12 76%); color: #f5f7fb; }
+.sp-login { position: relative; isolation: isolate; height: 100dvh; display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); overflow-x: hidden; overflow-y: auto; background: radial-gradient(ellipse at 30% 55%, #0b1925 0%, #03070d 55%, #010306 100%); color: #f5f7fb; }
+.sp-login:after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(0deg, rgba(1,4,9,.88), transparent 56%), linear-gradient(90deg, transparent 53%, rgba(1,4,9,.24)); }
 .sp-login-space { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; pointer-events: none; }
+.sp-login-satellite-veil { z-index: 4; }
 .sp-login-graph { position: relative; min-height: 720px; overflow: visible; background: transparent; }
 .sp-login-copy { position: absolute; z-index: 2; left: clamp(36px, 7vw, 112px); right: 7%; bottom: 10%; max-width: none; }
-.sp-login-copy { animation: sp-auth-copy-enter .2s ease-out both; }
+.sp-login-copy { animation: sp-auth-copy-enter .2s ease-out both; text-shadow: 0 2px 18px rgba(0,0,0,.8); }
 .sp-login-brand, .sp-login-eyebrow { color: #8ab4ff !important; font-size: 12px; letter-spacing: .16em; font-weight: 700; }
 .sp-login-copy h1 { color: #f5f7fb; font-size: clamp(28px, 2.3vw, 44px); margin: 22px 0 4px; letter-spacing: -.045em; line-height: 1.15; }
 .sp-login-copy p { color: #a8b4c6; font-size: 16px; line-height: 1.8; max-width: 580px; }
@@ -48,5 +50,5 @@
 @keyframes sp-auth-copy-enter { from { opacity: .35; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes sp-auth-form-enter { from { opacity: .45; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 960px) { .sp-login { display: block; background: #070d16; } .sp-login-space, .sp-login-graph { display: none; } .sp-login-panel { min-height: 100%; } }
-@media (max-width: 760px) { .sp-login-panel { padding: 24px 18px; } .sp-login-form-wrap { padding: 26px 22px 24px; }.sp-login-form-brand { align-items: flex-start; gap: 10px; }.sp-login-form-wrap h2 { font-size: clamp(22px, 6vw, 28px); }.sp-login-options { gap: 12px; font-size: 12px; }.sp-login-security-note { align-items: flex-start; text-align: center; line-height: 1.6; } }
+@media (max-width: 760px) { .sp-login-panel { padding: 24px 18px; } .sp-login-form-wrap { padding: 26px 22px 24px; }.sp-login-form-brand { gap: 10px; }.sp-login-form-wrap h2 { font-size: clamp(22px, 6vw, 28px); }.sp-login-options { gap: 12px; font-size: 12px; }.sp-login-security-note { text-align: center; line-height: 1.6; } }
 @media (prefers-reduced-motion: reduce) { .sp-login-copy, .sp-login-form-wrap { animation: none !important; } }

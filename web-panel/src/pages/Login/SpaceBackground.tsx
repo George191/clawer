@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { landPolygons } from './earthLand';
+import { createEarthSurface } from './EarthSurface';
 
 type Point = { x: number; y: number; z: number };
 type Relay = { position: Point; target: Point; receiving: boolean; scale: number; angle: number; signal: number; opacity: number };
@@ -53,12 +54,16 @@ const dust = Array.from({ length: 340 }, (_, i) => {
 
 export default function SpaceBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const satelliteVeilRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext('2d');
-    if (!canvas || !context) return;
+    const veilCanvas = satelliteVeilRef.current;
+    const veilContext = veilCanvas?.getContext('2d');
+    if (!canvas || !context || !veilCanvas || !veilContext) return;
     const ctx = context;
+    const veilCtx = veilContext;
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const compact = window.matchMedia('(max-width: 960px)');
     let width = 0;
@@ -68,12 +73,14 @@ export default function SpaceBackground() {
     let lastTime = 0;
     let headingAnchor: { x: number; y: number } | undefined;
     let anchorTime = 0;
+    let earthSurface: ReturnType<typeof createEarthSurface> | undefined;
 
     function render(time: number) {
       ctx.clearRect(0, 0, width, height);
+      veilCtx.clearRect(0, 0, width, height);
       if (compact.matches || !width || !height) return;
       const radius = Math.min(width * .15, height * .21, 230);
-      const cx = width * .28;
+      const cx = width * .28 + Math.max(0, Math.min(20, (1280 - width) * .08));
       const cy = height * .36;
       const rotation = -.55 + time * .035;
       const cos = Math.cos(rotation);
@@ -85,11 +92,11 @@ export default function SpaceBackground() {
         return { x: cx + x * radius, y: cy - (point.y * .98 - z * .2) * radius, z: point.y * .2 + z * .98 };
       }
 
-      function circle(x: number, y: number, r: number, color: string | CanvasGradient) {
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
+      function circle(x: number, y: number, r: number, color: string | CanvasGradient, target = ctx) {
+        target.beginPath();
+        target.arc(x, y, r, 0, Math.PI * 2);
+        target.fillStyle = color;
+        target.fill();
       }
 
       function nebula(x: number, y: number, rx: number, ry: number, color: string, opacity = .085) {
@@ -158,16 +165,36 @@ export default function SpaceBackground() {
       atmosphere.addColorStop(1, 'rgba(13,76,113,0)');
       circle(cx, cy, radius * 2.2, atmosphere);
 
-      function orbitPoint(angle: number, surface = false): Point {
+      function perspective(point: Point) {
+        return 5.2 / (5.2 - point.z);
+      }
+
+      function orbitPoint(angle: number, surface = false, tilt = -.85): Point {
         const x = Math.cos(angle) * (surface ? .5 : 1.68);
         const y = Math.sin(angle) * (surface ? .15 : .55);
         const z = Math.sin(angle) * (surface ? 1.8 : 1.58);
         const length = surface ? Math.hypot(x, y, z) : 1;
-        const tilt = -.85;
+        const depth = z / length;
+        const view = surface ? 1 : perspective({ x: 0, y: 0, z: depth });
         return {
-          x: cx + (x * Math.cos(tilt) - y * Math.sin(tilt)) / length * radius,
-          y: cy + (x * Math.sin(tilt) + y * Math.cos(tilt)) / length * radius,
-          z: z / length,
+          x: cx + (x * Math.cos(tilt) - y * Math.sin(tilt)) / length * radius * view,
+          y: cy + (x * Math.sin(tilt) + y * Math.cos(tilt)) / length * radius * view,
+          z: depth,
+        };
+      }
+
+      function orbitalRelay(angle: number, tilt: number, receiving: boolean, signal: number): Relay {
+        const position = orbitPoint(angle, false, tilt);
+        const ahead = orbitPoint(angle + .002, false, tilt);
+        const behind = orbitPoint(angle - .002, false, tilt);
+        return {
+          position,
+          target: orbitPoint(angle, true, tilt),
+          receiving,
+          scale: (receiving ? .65 : .9) * perspective(position),
+          angle: Math.atan2(ahead.y - behind.y, ahead.x - behind.x) + Math.PI * .5 + Math.sin(angle * 2) * .06,
+          signal,
+          opacity: receiving ? .9 : 1,
         };
       }
 
@@ -176,8 +203,12 @@ export default function SpaceBackground() {
       const sendSignal = communication < .5 ? pulseEnvelope(communication * 2) : 0;
       const receiveSignal = communication >= .5 ? pulseEnvelope((communication - .5) * 2) : 0;
       const relays: Relay[] = [
-        { position: orbitPoint(orbit), target: orbitPoint(orbit, true), receiving: false, scale: .9, angle: -.55, signal: sendSignal, opacity: 1 },
-        { position: orbitPoint(orbit + Math.PI), target: orbitPoint(orbit + Math.PI, true), receiving: true, scale: .65, angle: .3, signal: receiveSignal, opacity: .9 },
+        orbitalRelay(orbit, -.85, false, sendSignal),
+        orbitalRelay(orbit + Math.PI, .48, true, receiveSignal),
+      ];
+      const orbitPaths: Array<(phase: number) => Point> = [
+        phase => orbitPoint(phase),
+        phase => orbitPoint(phase, false, .48),
       ];
 
       if (width >= 1280 && height >= 600) {
@@ -200,15 +231,39 @@ export default function SpaceBackground() {
         const halfY = (end.y - start.y) * .5;
         const verticalRoom = Math.max(0, Math.min(center.y - 52, height - center.y - 52));
         const bow = Math.min(height * .44, Math.sqrt(Math.max(0, verticalRoom ** 2 - halfY ** 2)));
-        const phase = time * Math.PI * 2 / 48;
-        const position = {
+        const wideOrbit = (phase: number): Point => ({
           x: center.x - (end.x - start.x) * .5 * Math.cos(phase) - width * .18 * Math.sin(phase),
           y: center.y - (end.y - start.y) * .5 * Math.cos(phase) - bow * Math.sin(phase),
           z: Math.sin(phase),
-        };
-        relays.push({ position, target: orbitPoint(phase, true), receiving: false, scale: .58, angle: -.3 + Math.sin(phase) * .3, signal: .3 + sendSignal * .4, opacity: .45 });
+        });
+        orbitPaths.push(wideOrbit);
+        const phase = time * Math.PI * 2 / 48;
+        const position = wideOrbit(phase);
+        const vx = (end.x - start.x) * .5 * Math.sin(phase) - width * .18 * Math.cos(phase);
+        const vy = halfY * Math.sin(phase) - bow * Math.cos(phase);
+        relays.push({ position, target: orbitPoint(phase, true), receiving: false, scale: .58 * perspective(position), angle: Math.atan2(vy, vx) + Math.PI * .5 + Math.sin(phase * 2) * .06, signal: .3 + sendSignal * .4, opacity: .45 });
       }
 
+      function drawOrbits(front: boolean) {
+        ctx.save();
+        ctx.lineWidth = .65;
+        for (let index = 0; index < orbitPaths.length; index++) {
+          ctx.beginPath();
+          let penDown = false;
+          for (let step = 0; step <= 192; step++) {
+            const point = orbitPaths[index](step / 192 * Math.PI * 2);
+            if (Math.abs(point.z) < 1e-6 || (point.z >= 0) === front) {
+              if (penDown) ctx.lineTo(point.x, point.y); else ctx.moveTo(point.x, point.y);
+              penDown = true;
+            } else penDown = false;
+          }
+          ctx.strokeStyle = `rgba(133,184,210,${(front ? .2 : .085) * (index === 2 ? .4 : 1)})`;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      drawOrbits(false);
       for (const relay of relays) if (relay.position.z < 0) drawRelay(relay);
 
       const surface = ctx.createRadialGradient(cx - radius * .4, cy - radius * .45, 0, cx, cy, radius);
@@ -217,43 +272,54 @@ export default function SpaceBackground() {
       surface.addColorStop(1, '#06121e');
       circle(cx, cy, radius, surface);
 
-      // Only the visible hemisphere is drawn, including the latitude/longitude grid.
-      ctx.strokeStyle = 'rgba(86,169,203,.115)';
-      ctx.lineWidth = .65;
-      for (let axis = 0; axis < 2; axis++) {
-        const count = axis === 0 ? 7 : 12;
-        for (let line = 0; line < count; line++) {
-          ctx.beginPath();
-          let visible = false;
-          for (let step = 0; step <= 96; step++) {
-            const lat = axis === 0 ? (line - 3) * Math.PI / 12 : -Math.PI / 2 + step / 96 * Math.PI;
-            const lon = axis === 0 ? step / 96 * Math.PI * 2 : line / count * Math.PI * 2;
-            const p = project(spherePoint(lat, lon));
-            if (p.z > 0) {
-              if (visible) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
-              visible = true;
-            } else visible = false;
+      const textured = earthSurface?.draw(ctx, cx, cy, radius, rotation) ?? false;
+      if (!textured) {
+        // Only the visible hemisphere is drawn, including the latitude/longitude grid.
+        ctx.strokeStyle = 'rgba(86,169,203,.115)';
+        ctx.lineWidth = .65;
+        for (let axis = 0; axis < 2; axis++) {
+          const count = axis === 0 ? 7 : 12;
+          for (let line = 0; line < count; line++) {
+            ctx.beginPath();
+            let visible = false;
+            for (let step = 0; step <= 96; step++) {
+              const lat = axis === 0 ? (line - 3) * Math.PI / 12 : -Math.PI / 2 + step / 96 * Math.PI;
+              const lon = axis === 0 ? step / 96 * Math.PI * 2 : line / count * Math.PI * 2;
+              const p = project(spherePoint(lat, lon));
+              if (p.z > 0) {
+                if (visible) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+                visible = true;
+              } else visible = false;
+            }
+            ctx.stroke();
           }
-          ctx.stroke();
+        }
+
+        for (const point of globePoints) {
+          const p = project(point);
+          if (p.z <= 0) continue;
+          const alpha = (point.land ? .45 : .1) + p.z * (point.land ? .47 : .12);
+          circle(p.x, p.y, (point.land ? 1.05 : .6) * Math.max(.7, radius / 190), `rgba(${point.land ? '122,211,232' : '68,144,184'},${alpha})`);
+        }
+        for (const point of coastPoints) {
+          const p = project(point);
+          if (p.z <= 0) continue;
+          circle(p.x, p.y, .65 * Math.max(.7, radius / 190), `rgba(160,229,240,${.25 + p.z * .55})`);
         }
       }
-
-      for (const point of globePoints) {
-        const p = project(point);
-        if (p.z <= 0) continue;
-        const alpha = (point.land ? .45 : .1) + p.z * (point.land ? .47 : .12);
-        circle(p.x, p.y, (point.land ? 1.05 : .6) * Math.max(.7, radius / 190), `rgba(${point.land ? '122,211,232' : '68,144,184'},${alpha})`);
-      }
-      for (const point of coastPoints) {
-        const p = project(point);
-        if (p.z <= 0) continue;
-        circle(p.x, p.y, .65 * Math.max(.7, radius / 190), `rgba(160,229,240,${.25 + p.z * .55})`);
-      }
+      ctx.save();
+      const rim = ctx.createLinearGradient(cx - radius, cy - radius, cx + radius, cy + radius);
+      rim.addColorStop(0, 'rgba(179,219,255,.8)');
+      rim.addColorStop(.5, 'rgba(69,143,218,.32)');
+      rim.addColorStop(1, 'rgba(48,106,164,.035)');
       ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(110,213,247,.3)';
-      ctx.lineWidth = 1;
+      ctx.arc(cx, cy, radius * 1.003, 0, Math.PI * 2);
+      ctx.strokeStyle = rim;
+      ctx.lineWidth = 1.4;
+      ctx.shadowColor = 'rgba(79,160,239,.55)';
+      ctx.shadowBlur = radius * .045;
       ctx.stroke();
+      ctx.restore();
 
       function drawRelay({ position, target, receiving, scale, angle, signal, opacity }: Relay) {
         ctx.save();
@@ -300,19 +366,19 @@ export default function SpaceBackground() {
           }
         }
         ctx.globalAlpha = relayAlpha;
-        drawSatellite(position.x, position.y, scale, angle, receiving, signal);
+        drawSatellite(ctx, position.x, position.y, scale, angle, receiving, signal, position.z);
         ctx.restore();
       }
 
-      function drawSatellite(x: number, y: number, scale: number, angle: number, receiving: boolean, signal: number) {
+      function drawSatellite(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number, angle: number, receiving: boolean, signal: number, depth: number) {
         ctx.save();
         ctx.translate(x, y);
         ctx.scale(scale, scale);
-        if (receiving) {
+        if (receiving && signal > 0) {
           for (let echo = 0; echo < 2; echo++) {
             const pulse = (time / 1.8 + echo * .5) % 1;
             const growth = .04 + (1 - (1 - pulse) ** 2) * 1.46;
-            const alpha = pulseEnvelope(pulse);
+            const alpha = pulseEnvelope(pulse) * signal;
             ctx.save();
             ctx.scale(growth, growth);
             const shield = ctx.createRadialGradient(0, 0, 5, 0, 0, 39);
@@ -335,44 +401,83 @@ export default function SpaceBackground() {
           }
         }
         ctx.save();
-        ctx.globalAlpha *= signal;
+        const signalAlpha = ctx.globalAlpha * signal;
+        const search = (time / 1.5) % 1;
         const radioColor = receiving ? '#9bffda' : '#9ddfff';
-        circle(28, -23, 1.6, radioColor);
+        ctx.globalAlpha = signalAlpha * (.45 + pulseEnvelope(search) * .55);
+        circle(28, -23, 1.8, radioColor, ctx);
         ctx.strokeStyle = radioColor;
-        ctx.lineWidth = 1.2;
-        for (const r of [6, 10, 14]) {
+        ctx.lineCap = 'round';
+        ctx.shadowColor = radioColor;
+        for (let i = 0; i < 3; i++) {
+          const phase = search * 1.8 - i * .3;
+          const wave = phase > 0 && phase < 1 ? pulseEnvelope(phase) : 0;
+          ctx.globalAlpha = signalAlpha * (.1 + wave * .9);
+          ctx.lineWidth = 1.35 + wave * .6;
+          ctx.shadowBlur = wave * 4;
           ctx.beginPath();
-          ctx.arc(28, -23, r, -Math.PI * .8, -Math.PI * .2);
+          ctx.arc(28, -23, 6 + i * 5, -Math.PI * .8, -Math.PI * .2);
           ctx.stroke();
         }
         ctx.restore();
         ctx.rotate(angle);
-        ctx.fillStyle = '#123448';
-        ctx.strokeStyle = '#6bb4cd';
-        ctx.lineWidth = 1;
+        const span = 16 * (.6 + .4 * Math.min(1, Math.abs(depth) / 1.58));
+        const panels = ctx.createLinearGradient(-26, -8, 26, 8);
+        panels.addColorStop(0, '#071827');
+        panels.addColorStop(.45, '#153d58');
+        panels.addColorStop(1, '#081d30');
+        ctx.fillStyle = panels;
+        ctx.strokeStyle = '#608598';
+        ctx.lineWidth = .7;
         for (const side of [-1, 1]) {
-          const start = side < 0 ? -26 : 10;
-          ctx.fillRect(start, -8, 16, 16);
-          ctx.strokeRect(start, -8, 16, 16);
+          const start = side < 0 ? -10 - span : 10;
+          ctx.fillRect(start, -8, span, 16);
+          ctx.strokeRect(start, -8, span, 16);
           ctx.beginPath();
-          ctx.moveTo(start + 8, -8); ctx.lineTo(start + 8, 8);
-          ctx.moveTo(start, 0); ctx.lineTo(start + 16, 0);
+          for (let cell = 1; cell < 4; cell++) {
+            ctx.moveTo(start + span * cell / 4, -8); ctx.lineTo(start + span * cell / 4, 8);
+          }
+          ctx.moveTo(start, 0); ctx.lineTo(start + span, 0);
           ctx.moveTo(side * 6, 0); ctx.lineTo(side * 10, 0);
           ctx.stroke();
         }
-        ctx.fillStyle = '#b3d7e3';
+        ctx.beginPath();
+        ctx.moveTo(6, -10); ctx.lineTo(10, -6); ctx.lineTo(10, 14); ctx.lineTo(6, 10); ctx.closePath();
+        ctx.fillStyle = '#536e7c';
+        ctx.fill();
+        const metal = ctx.createLinearGradient(-6, -10, 6, 10);
+        metal.addColorStop(0, '#e0d5ab');
+        metal.addColorStop(.45, '#acb4af');
+        metal.addColorStop(1, '#627985');
+        ctx.fillStyle = metal;
         ctx.fillRect(-6, -10, 12, 20);
-        ctx.strokeStyle = '#edfaff';
+        ctx.strokeStyle = '#d5dedb';
         ctx.strokeRect(-6, -10, 12, 20);
         ctx.beginPath();
         ctx.moveTo(0, -10); ctx.lineTo(0, -17);
         ctx.moveTo(-4, 15); ctx.quadraticCurveTo(0, 20, 4, 15);
         ctx.stroke();
-        circle(0, -18, 1.5, '#90fff1');
+        circle(0, -18, 1.4, '#f4d497', ctx);
         ctx.restore();
       }
 
+      drawOrbits(true);
       for (const relay of relays) if (relay.position.z >= 0) drawRelay(relay);
+
+      const panelBox = canvas?.parentElement?.querySelector('.sp-login-form-wrap')?.getBoundingClientRect();
+      const canvasBox = canvas?.getBoundingClientRect();
+      if (panelBox && canvasBox) {
+        veilCtx.save();
+        veilCtx.beginPath();
+        veilCtx.rect(panelBox.left - canvasBox.left, panelBox.top - canvasBox.top, panelBox.width, panelBox.height);
+        veilCtx.clip();
+        veilCtx.filter = 'blur(2px)';
+        for (const relay of relays) {
+          veilCtx.globalAlpha = Math.min(.34, relay.opacity * .8);
+          drawSatellite(veilCtx, relay.position.x, relay.position.y, relay.scale, relay.angle, relay.receiving, relay.signal, relay.position.z);
+        }
+        veilCtx.restore();
+      }
     }
 
     function animate(now: number) {
@@ -386,6 +491,9 @@ export default function SpaceBackground() {
 
     function resume() {
       cancelAnimationFrame(frame);
+      if (!compact.matches && !earthSurface) {
+        earthSurface = createEarthSurface('/space/earth-day.jpg', resume, '/space/earth-clouds.jpg');
+      }
       render(motion.matches ? 0 : elapsed);
       if (!compact.matches && !motion.matches && !document.hidden) {
         lastTime = performance.now();
@@ -394,7 +502,7 @@ export default function SpaceBackground() {
     }
 
     function resize() {
-      if (!canvas) return;
+      if (!canvas || !veilCanvas) return;
       width = canvas.clientWidth;
       height = canvas.clientHeight;
       headingAnchor = undefined;
@@ -402,7 +510,10 @@ export default function SpaceBackground() {
       const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
+      veilCanvas.width = canvas.width;
+      veilCanvas.height = canvas.height;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      veilCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       resume();
     }
 
@@ -414,6 +525,7 @@ export default function SpaceBackground() {
     resize();
     return () => {
       cancelAnimationFrame(frame);
+      earthSurface?.dispose();
       observer.disconnect();
       motion.removeEventListener('change', resume);
       compact.removeEventListener('change', resize);
@@ -421,5 +533,5 @@ export default function SpaceBackground() {
     };
   }, []);
 
-  return <canvas ref={canvasRef} className="sp-login-space" aria-hidden="true" />;
+  return <><canvas ref={canvasRef} className="sp-login-space" aria-hidden="true" /><canvas ref={satelliteVeilRef} className="sp-login-space sp-login-satellite-veil" aria-hidden="true" /></>;
 }

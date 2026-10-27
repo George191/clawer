@@ -2,14 +2,24 @@ import React from 'react';
 import { Typography } from 'antd';
 import { LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useLocation } from 'react-router-dom';
-import SpaceBackground from './SpaceBackground';
+const CinematicSpace = React.lazy(() => import('./CinematicSpace').catch(() => ({ default: () => <></> })));
+const SpaceBackground = React.lazy(() => import('./SpaceBackground').catch(() => ({ default: () => <></> })));
 
 const AuthLayout: React.FC<React.PropsWithChildren> = ({ children }) => {
   const isRecovery = useLocation().pathname === '/reset-password';
+  const [compact, setCompact] = React.useState(() => window.matchMedia('(max-width: 960px)').matches);
+  const [backgroundFailed, setBackgroundFailed] = React.useState(false);
+  const backgroundUnavailable = React.useCallback(() => setBackgroundFailed(true), []);
+  React.useEffect(() => {
+    const query = window.matchMedia('(max-width: 960px)');
+    const change = () => setCompact(query.matches);
+    query.addEventListener('change', change);
+    return () => query.removeEventListener('change', change);
+  }, []);
 
   return (
     <div className="sp-login">
-      <SpaceBackground />
+      {!compact && <React.Suspense fallback={null}>{backgroundFailed ? <SpaceBackground /> : <CinematicSpace onUnavailable={backgroundUnavailable} />}</React.Suspense>}
       <div className="sp-login-graph" aria-hidden="true">
         <div className="sp-login-copy" key={isRecovery ? 'recovery-copy' : 'login-copy'}>
           <Typography.Text className="sp-login-brand">ASIRAL HELIO</Typography.Text>
