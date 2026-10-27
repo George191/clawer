@@ -27,8 +27,9 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, ClassVar, TypeVar
 
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, TopicPartition
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRebalanceListener, TopicPartition
 from aiokafka.errors import KafkaConnectionError, NodeNotReadyError, RequestTimedOutError
+from sqlalchemy import text
 
 from app.base.kafka import build_consumer_kwargs, build_producer_kwargs, get_brokers
 from app.config.settings import settings
@@ -59,10 +60,22 @@ KAFKA_RETRYABLE_ERRORS = (
 )
 
 
+class _OffsetRestoreListener(ConsumerRebalanceListener):
+    def __init__(self, worker: ETLBase) -> None:
+        self.worker = worker
+
+    async def on_partitions_revoked(self, revoked) -> None:
+        pass
+
+    async def on_partitions_assigned(self, assigned) -> None:
+        await self.worker._resume_from_redis(assigned)
+
+
 class ETLBase:
     _layer: ClassVar[str] = ""
     _table_role: ClassVar[str] = "current"
     _consumer_topics: ClassVar[list[str]] = []
+    _consumer_pattern: ClassVar[str] = ""
     _consumer_group: ClassVar[str] = ""
     _producer_topic: ClassVar[str] = ""
     _producer_client_id: ClassVar[str] = ""
@@ -705,12 +718,17 @@ class ETLBase:
                         connections_max_idle_ms=540000,
                     )
                 )
+                if self._consumer_pattern:
+                    self._consumer.subscribe(
+                        pattern=self._consumer_pattern, listener=_OffsetRestoreListener(self),
+                    )
                 await self._consumer.start()
                 logger.info(
                     "%s Kafka consumer connected: topics=%s group=%s",
-                    self._log_prefix, self._consumer_topics, self._consumer_group,
+                    self._log_prefix, self._consumer_pattern or self._consumer_topics, self._consumer_group,
                 )
-                await self._resume_from_redis()
+                if not self._consumer_pattern:
+                    await self._resume_from_redis()
                 return
             except KAFKA_RETRYABLE_ERRORS as e:
                 await self._close_consumer()
@@ -723,8 +741,9 @@ class ETLBase:
 
         raise ConnectionError(f"{self._log_prefix} Kafka consumer connection FAILED")
 
-    async def _resume_from_redis(self) -> None:
-        for topic in self._consumer_topics:
+    async def _resume_from_redis(self, assigned=None) -> None:
+        assigned = self._consumer.assignment() if assigned is None else assigned
+        for topic in {tp.topic for tp in assigned}:
             saved = await _OFFSET_MANAGER.load_offsets(self._consumer_group, topic)
 
             if not saved:
@@ -733,6 +752,8 @@ class ETLBase:
 
             for partition, offset in saved.items():
                 tp = TopicPartition(topic, partition)
+                if tp not in assigned:
+                    continue
                 try:
                     self._consumer.seek(tp, offset)
                     logger.info(

@@ -61,6 +61,8 @@ const App: React.FC = () => {
               <Route path="/reset-password" element={<ResetPassword />} />
             </Routes>
           </AuthLayout>
+        ) : !localStorage.getItem('access_token') && !localStorage.getItem('refresh_token') ? (
+          <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`} replace />
         ) : (
           <MainLayout>
           <Routes>

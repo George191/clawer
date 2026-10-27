@@ -3,7 +3,7 @@
 基于 PostgreSQL public.scheduler_tasks 表，提供 CRUD 操作。
 BeatScheduleRegistry 通过本模块从数据库加载任务配置。
 
-表结构见 scripts/init_scheduler_tasks.sql
+表结构见 app/scheduler/sql/init_scheduler_tasks.sql
 """
 
 from __future__ import annotations

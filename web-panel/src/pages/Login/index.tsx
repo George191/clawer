@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { Alert, App, Button, Checkbox, Form, Input, Typography } from 'antd';
 import { LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import './login.css';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -21,10 +22,22 @@ const Login: React.FC = () => {
       });
       if (!response.ok) throw new Error('Incorrect account or password. Please try again.');
       const data = await response.json() as { access_token?: string; refresh_token?: string };
-      if (data.access_token) localStorage.setItem('access_token', data.access_token);
-      if (data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
+      if (typeof data.access_token !== 'string' || !data.access_token) {
+        throw new Error('Sign-in failed: no access token was returned. Please try again.');
+      }
+      localStorage.setItem('access_token', data.access_token);
+      if (typeof data.refresh_token === 'string' && data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
+      else localStorage.removeItem('refresh_token');
+      let next = '/';
+      const target = searchParams.get('next');
+      if (target?.startsWith('/') && !target.startsWith('//') && !target.includes('\\')) {
+        const url = new URL(target, window.location.origin);
+        if (url.origin === window.location.origin && !['/login', '/reset-password'].includes(url.pathname)) {
+          next = url.pathname + url.search + url.hash;
+        }
+      }
       message.success('Signed in successfully');
-      navigate('/');
+      navigate(next, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
     } finally {

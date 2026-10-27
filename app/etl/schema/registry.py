@@ -316,6 +316,7 @@ async def save_registered_ddl(
     partition_count: int | None = None,
     description: str | None = None,
     updated_by: str | None = None,
+    allow_update: bool = True,
 ) -> dict[str, Any]:
     await ensure_ddlregistry_table(pg)
 
@@ -374,6 +375,8 @@ async def save_registered_ddl(
             params,
         )
         current = result.mappings().first()
+        if current and not allow_update and current["checksum"] != checksum:
+            raise ValueError(f"Schema change requires explicit review: {layer}/{table}")
         next_version = int(current["version"]) + 1 if current else 1
 
         if current and current["checksum"] == checksum:

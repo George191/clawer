@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 
+from app.etl.schema.catalogs import RECORD_IDENTITY_COLUMNS, TABLE_DEFINITIONS
 from app.etl.schema.layout import default_table_layout
 
 _CREATE_TABLE_RE = re.compile(
@@ -24,6 +25,7 @@ _TABLE_PRIMARY_KEY_RE = re.compile(
     r"^\s*PRIMARY\s+KEY\s*\([^)]*\)\s*,?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_DECLARED_PRIMARY_KEY_RE = re.compile(r"\bPRIMARY\s+KEY\s*\(([^)]+)\)", re.IGNORECASE)
 
 
 def ddl_checksum(
@@ -113,23 +115,13 @@ def _append_table_constraint(body: str, constraint_sql: str) -> str:
     return "\n".join(lines)
 
 
-def _rewrite_rds_current_primary_key(body: str) -> str:
+def _rewrite_current_primary_key(body: str, columns: tuple[str, ...]) -> str:
     rewritten = _RECORD_ID_INLINE_PK_RE.sub(r"\1 NOT NULL\2", body, count=1)
     rewritten = _TABLE_PRIMARY_KEY_RE.sub("", rewritten)
     rewritten = _clean_table_body(rewritten)
     return _append_table_constraint(
         rewritten,
-        "PRIMARY KEY (record_id, data_source, data_type)",
-    )
-
-
-def _rewrite_ods_current_primary_key(body: str) -> str:
-    rewritten = _RECORD_ID_INLINE_PK_RE.sub(r"\1 NOT NULL\2", body, count=1)
-    rewritten = _TABLE_PRIMARY_KEY_RE.sub("", rewritten)
-    rewritten = _clean_table_body(rewritten)
-    return _append_table_constraint(
-        rewritten,
-        "PRIMARY KEY (record_id, data_source, data_type)",
+        f"PRIMARY KEY ({', '.join(columns)})",
     )
 
 
@@ -152,10 +144,28 @@ def build_current_ddl(
         )
     )
     if not is_export_ddl:
-        if layer == "rds":
-            body = _rewrite_rds_current_primary_key(body)
-        elif layer == "ods":
-            body = _rewrite_ods_current_primary_key(body)
+        definition = TABLE_DEFINITIONS.get(layer, {}).get(logical_table)
+        declared = _DECLARED_PRIMARY_KEY_RE.search(body)
+        declared_columns = (
+            tuple(column.strip().strip('"') for column in declared.group(1).split(","))
+            if declared else ()
+        )
+        primary_key = definition["primary_key"] if definition else declared_columns
+        legacy_record_key = declared_columns == ("record_id",) or (
+            not declared_columns and _RECORD_ID_INLINE_PK_RE.search(body)
+        )
+        partition_columns = tuple(
+            column.strip().strip('"') for column in (partition_column or "").split(",")
+        )
+        if (
+            not definition
+            and legacy_record_key
+            and partition_type == "hash"
+            and partition_columns == RECORD_IDENTITY_COLUMNS
+        ):
+            primary_key = RECORD_IDENTITY_COLUMNS
+        if primary_key and declared_columns != primary_key:
+            body = _rewrite_current_primary_key(body, primary_key)
     statement = _build_create_table_statement(
         table_ref=current_ref,
         body=body,

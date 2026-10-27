@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.adapters.utils.twitter_record import (
+    twitter_entity_id,
+    twitter_record_id,
+    twitter_record_identity,
+)
 from app.etl.normalizers.base import safe_str
-from app.utils.twitter_record import twitter_entity_id, twitter_record_id, twitter_record_identity
 
 
 def normalize_twitter_hashtags(tweet: dict[str, Any]) -> list[dict[str, Any]]:

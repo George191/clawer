@@ -215,6 +215,9 @@ class AICollectStore(AutomationTaskStore):
         return object_key
 
     async def _upload_adapter_code(self, name: str, version: str, adapter_code: str) -> str:
+        from app.adapters.runtime import validate_extension_source
+
+        validate_extension_source(adapter_code)
         object_key = f"{self._artifact_prefix(name, version)}/adapter.py"
         await get_business_metadata_minio_client().upload_bytes_to_key(
             adapter_code.encode("utf-8"),

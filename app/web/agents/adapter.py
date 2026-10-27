@@ -56,6 +56,17 @@ class AdapterAgent(BaseAgent):
                 - Fulfil each download with absolute HTTP(S) URLs under its declared selector. Follow detail_page only for declared resources/content absent from list data. For news, separate cover, body images and document attachments, exclude cover from images, retain useful labels and dedupe normalized URLs. Preserve declared patent PDF/figure/thumbnail and intelligence document/dataset resources; invent no navwarn assets. Resolve internal media IDs only through a verified endpoint.
                 - Keep retries bounded and use HttpClient's shared proxy failure/rotation path. Output valid, complete, minimal Python.
 
+                Collection and ETL extension contract (the same adapter.py is published to MinIO):
+                - Keep all source-specific processing in this artifact. Never require edits or new scripts in app.utils, records, syncer, ts_rds or ts_ods.
+                - Every new input data_type must export NORMALIZERS = {{"<input data_type>": normalize}}, even for a short field passthrough. Existing types may reuse their compatible built-in normalizer. normalize(record) may be sync or async and returns one dict or a list of dicts. Each output declares data_type; reuse record["_meta"]["record_id"] unless a derived record needs its own stable identity. Use record["data_source"] supplied by RDS; never derive business source from _meta.template.
+                - For an existing ODS type, use its fields below and do not redeclare its schema. For a new output type, export a literal ODS_FIELDS = {{"<output data_type>": {{"field": "TEXT"}}}}. Types: TEXT, BIGINT, INTEGER, DOUBLE PRECISION, NUMERIC, BOOLEAN, JSONB, DATE, TIMESTAMPTZ. Use snake_case names up to 50 characters. Do not declare identity/audit columns, defaults, SQL, indexes or migrations. Those are managed by the generic ETL.
+                - Normalizers return business fields only, plus record_id/data_type when needed. JSON values may be objects/lists or valid JSON strings; dates may be Python dates or ISO strings. Omitted fields use database defaults; explicit None means SQL NULL.
+                - Only if collection persistence needs special identity/merge/split behavior, export RECORD_ADAPTERS = {{"<input data_type>": CustomRecordAdapter}} extending app.records.adapters.RecordAdapter. Ordinary field parsing stays in YAML and ordinary persistence uses the generic store.
+                - When YAML has no crawler adapter, the artifact may contain only these module exports; do not invent an empty crawler class or standalone execution entrypoint.
+
+                Existing ODS business fields (empty means a new type requires ODS_FIELDS):
+                {ods_fields}
+
                 Same-data-type adapter summaries (patterns only):
                 {reference_adapters}
 
@@ -91,6 +102,7 @@ class AdapterAgent(BaseAgent):
             ),
             user_request=user_request or "(none)",
             existing_adapter_code=existing_adapter_code or "(none)",
+            ods_fields=json.dumps(self._ods_fields(data_type), ensure_ascii=False),
         )
         streamed_response = ""
         streamed_code_length = 0
@@ -137,6 +149,12 @@ class AdapterAgent(BaseAgent):
         if closing_fence := re.search(r"\s*```\s*$", code):
             return code[: closing_fence.start()]
         return re.sub(r"\s*`{0,2}$", "", code)
+
+    @staticmethod
+    def _ods_fields(data_type: str) -> dict[str, str]:
+        from app.etl.schema.catalogs import _CATALOG_FIELDS
+
+        return _CATALOG_FIELDS.get(data_type, {})
 
     @staticmethod
     def _template_data_type(template_yaml: str) -> str:
@@ -236,11 +254,18 @@ class AdapterAgent(BaseAgent):
             warnings.append("Generated code is empty")
             return warnings
 
-        if "class " not in code:
+        if "class " not in code and "NORMALIZERS" not in code:
             warnings.append("Missing adapter class definition")
 
-        if "def " not in code:
+        if "def " not in code and "NORMALIZERS" not in code:
             warnings.append("Missing method definition")
+
+        from app.adapters.runtime import validate_extension_source
+
+        try:
+            validate_extension_source(code)
+        except (SyntaxError, ValueError) as exc:
+            warnings.append(str(exc))
 
         if re.search(r"(?:_first_value|\bfirst_value)\s*\(", code):
             warnings.append("Avoid multi-key field fallback helpers; use YAML selectors for one verified source field")
@@ -255,14 +280,6 @@ class AdapterAgent(BaseAgent):
             code,
         ):
             warnings.append("Do not synthesize warning_no in the collection adapter; preserve the source value")
-
-        if (
-            not code.strip().endswith(")")
-            and not code.strip().endswith(":")
-            and not code.strip().endswith('"')
-            and not code.strip().endswith("'")
-        ):
-            warnings.append("Code may be truncated")
 
         return warnings
 

@@ -5,10 +5,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.adapters.utils.twitter_record import (
+    twitter_entity_id,
+    twitter_record_id,
+    twitter_record_identity,
+)
 from app.etl.normalizers import register_normalizer
 from app.etl.normalizers.base import safe_datetime, safe_str
 from app.records.field_names import normalize_record_fields
-from app.utils.twitter_record import twitter_entity_id, twitter_record_id, twitter_record_identity
 
 
 def normalize_twitter_author(user: dict[str, Any], captured_at: Any) -> dict[str, Any]:

@@ -174,7 +174,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         route = await collection_route_store.resolve_for_write(
             self._get_collection_name(template_name), data_type,
         )
-        adapter = get_record_adapter(self, route, dedup_fields)
+        adapter = await get_record_adapter(self, route, dedup_fields)
         collection = await self._get_collection_by_name(
             route["collection_name"], indexes=adapter.collection_indexes,
         )
@@ -256,10 +256,10 @@ class MongoRecordStore(MongoClient, RecordStore):
                 ) != final_record["_meta"].get("search_params", {})
                 metadata_changed = any(
                     existing_meta.get(key) != final_record["_meta"].get(key)
-                    for key in ("data_type", "data_source")
+                    for key in ("data_type", "template")
                 )
-                data_source_changed = existing_meta.get("data_source") != final_record["_meta"].get("data_source")
-                if business_changed or data_source_changed:
+                template_changed = existing_meta.get("template") != final_record["_meta"].get("template")
+                if business_changed or template_changed:
                     # A write without a batch identity cannot inherit the old
                     # batch's attribution merely by merging existing metadata.
                     final_params = final_record["_meta"].get("search_params", {})
@@ -294,7 +294,7 @@ class MongoRecordStore(MongoClient, RecordStore):
             else:
                 inserted_count += 1
 
-            if not existing or business_changed or data_source_changed:
+            if not existing or business_changed or template_changed:
                 owner = final_record["_meta"].get("search_params", {})
                 task_id = str(owner.get("__workspace_task_id") or "")
                 run_id = str(owner.get("__workspace_run_id") or "")

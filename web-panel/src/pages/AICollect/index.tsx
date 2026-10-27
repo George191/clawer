@@ -2980,7 +2980,7 @@ const AICollect: React.FC = () => {
         status,
         yaml_content: workspaceTemplateYaml || activeTemplate.raw,
         adapter: generatedAdapterRequired ? adapterFileName : '',
-        adapter_code: generatedAdapterRequired ? workspaceAdapterCode : '',
+        adapter_code: workspaceAdapterCode,
         description: releaseTemplateDescription,
         metadata: { field_count: selectedCount },
         task: createsTask ? {

@@ -16,8 +16,8 @@ import argparse
 import asyncio
 
 from app.config.settings import settings
+from app.etl.schema.catalogs import validate_table_name
 from app.logger import get_logger, setup_service_logging
-from app.records.types import SYNC_DATA_TYPES
 from app.syncer.worker import SyncWorker
 
 logger = get_logger(__name__)
@@ -30,7 +30,7 @@ def setup_logging(service: str = "syncer") -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--template")
-    parser.add_argument("--data-type", choices=SYNC_DATA_TYPES)
+    parser.add_argument("--data-type", type=validate_table_name)
     parser.add_argument("--poll", type=int, default=10)
     parser.add_argument("--batch", type=int, default=50)
     parser.add_argument("--concurrency", type=int, default=10)

@@ -119,6 +119,25 @@ const client = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+let refreshPromise: Promise<string> | null = null;
+let redirectingToLogin = false;
+
+function isAuthenticationError(error: AxiosError): boolean {
+  const data = error.response?.data as { errors?: unknown; detail?: unknown } | undefined;
+  const detail = data?.errors ?? data?.detail;
+  return error.response?.status === 401 || (error.response?.status === 403 &&
+    (detail === 'Not authenticated' || detail === 'Could not validate credentials'));
+}
+
+function requireLogin() {
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
+  if (!redirectingToLogin && !['/login', '/reset-password'].includes(location.pathname)) {
+    redirectingToLogin = true;
+    location.replace(`/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`);
+  }
+}
+
 export const fetchCurrentUserContext = (): Promise<CurrentUserContext> =>
   client.get('/users/me/context').then((r) => unwrap<CurrentUserContext>(r.data));
 
@@ -142,8 +161,46 @@ client.interceptors.response.use(
     setLoading(false);
     return response;
   },
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     setLoading(false);
+    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean }) | undefined;
+    if (isAuthenticationError(error) && config) {
+      if (!config._authRetried) {
+        config._authRetried = true;
+        const currentToken = localStorage.getItem('access_token');
+        // Another request may already have refreshed this request's token.
+        if (currentToken && config.headers.Authorization !== `Bearer ${currentToken}`) {
+          return client(config);
+        }
+        const refreshToken = localStorage.getItem('refresh_token');
+        if (refreshToken) {
+          try {
+            if (!refreshPromise) {
+              refreshPromise = axios.post(`${BASE_URL}/login/refresh-token`, null, {
+                params: { refresh_token: refreshToken }, timeout: 15000,
+              }).then((response) => {
+                const token = unwrap<{ access_token?: string }>(response.data).access_token;
+                if (typeof token !== 'string' || !token) throw new Error('No access token returned');
+                // Do not restore a session that was signed out during the refresh.
+                if (localStorage.getItem('refresh_token') !== refreshToken) throw new Error('Session changed');
+                localStorage.setItem('access_token', token);
+                return token;
+              }).finally(() => { refreshPromise = null; });
+            }
+            await refreshPromise;
+            return client(config);
+          } catch (refreshError) {
+            // A temporary outage must not discard a valid refresh token.
+            if (axios.isAxiosError(refreshError) &&
+                ![400, 401, 403, 404].includes(refreshError.response?.status ?? 0)) {
+              return Promise.reject(refreshError);
+            }
+            if (localStorage.getItem('refresh_token') !== refreshToken) return Promise.reject(error);
+          }
+        }
+      }
+      requireLogin();
+    }
     // 统一记录错误日志
     if (axios.isAxiosError(error)) {
       const friendly = getFriendlyErrorMessage(error);

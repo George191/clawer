@@ -36,7 +36,7 @@ from app.web.utils.template import (
     send_email,
     verify_password_reset_token,
 )
-from app.web.core.security import get_password_hash, verify_password, generate_token, ALGORITHM
+from app.web.core.security import get_password_hash, verify_password, generate_token, ALGORITHM, TokenType
 
 
 router = APIRouter(tags=["login"])
@@ -110,10 +110,13 @@ async def login_refresh(refresh_token: str, session: SessionDep) -> AccessToken:
     """
     try:
         payload = jwt.decode(
-            refresh_token, settings.SECRET_KEY, algorithms=[ALGORITHM]
+            refresh_token, settings.SECRET_KEY, algorithms=[ALGORITHM],
+            options={"require": ["sub", "exp"]},
         )
 
         token_data = TokenPayload(**payload)
+        if token_data.type != TokenType.REFRESH_TOKEN.value or not token_data.sub:
+            raise jwt.InvalidTokenError
     except (jwt.InvalidTokenError, ValidationError):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -134,7 +137,7 @@ async def login_refresh(refresh_token: str, session: SessionDep) -> AccessToken:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    if not user.is_active:
+    if user.status != StatusTypes.ENABLE:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Inactive user"

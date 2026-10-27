@@ -22,7 +22,6 @@ from app.logger import get_logger
 from app.records.collection_routes import collection_route_store
 from app.records.mongo_store import MongoRecordStore
 from app.syncer.publisher import RecordPublisher
-from app.utils.twitter_record import TWITTER_COLLECTION_TYPES
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
@@ -102,10 +101,6 @@ class SyncWorker:
         return sent_count
 
     async def _read_ready_records(self) -> list[dict]:
-        if self._data_type is None and self._template_name is None:
-            return await self._mongo.get_ready_to_sync(
-                template_name=self._template_name, limit=self._batch_size,
-            )
         routes = await collection_route_store.list_by_data_type(
             self._data_type, self._template_name,
         )
@@ -123,7 +118,7 @@ class SyncWorker:
             meta = record.get("_meta", {})
             record_id = meta.get("record_id", "")
             template = meta.get("template", "")
-            data_type = meta.get("data_type") or TWITTER_COLLECTION_TYPES.get(template, "")
+            data_type = meta.get("data_type") or ""
             if not record_id or not template:
                 return False, ""
             if not data_type:
