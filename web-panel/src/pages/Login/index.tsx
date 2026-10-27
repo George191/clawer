@@ -20,7 +20,21 @@ const Login: React.FC = () => {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ username: values.account, password: values.password }),
       });
-      if (!response.ok) throw new Error('Incorrect account or password. Please try again.');
+      if (!response.ok) {
+        let detail: unknown;
+        try {
+          const body = await response.json() as { errors?: unknown; detail?: unknown };
+          detail = body.errors ?? body.detail;
+        } catch { /* Proxy errors may not contain JSON. */ }
+        if (response.status === 401) {
+          throw new Error(detail === 'Inactive user'
+            ? 'This account is inactive. Contact your administrator.'
+            : 'Incorrect account or password. Please try again.');
+        }
+        throw new Error(response.status >= 500
+          ? 'Sign-in service unavailable. Please try again later.'
+          : 'Unable to sign in. Please try again.');
+      }
       const data = await response.json() as { access_token?: string; refresh_token?: string };
       if (typeof data.access_token !== 'string' || !data.access_token) {
         throw new Error('Sign-in failed: no access token was returned. Please try again.');
@@ -39,7 +53,8 @@ const Login: React.FC = () => {
       message.success('Signed in successfully');
       navigate(next, { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
+      setError(err instanceof TypeError ? 'Unable to connect. Please try again.'
+        : err instanceof Error ? err.message : 'Sign-in failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -53,7 +68,7 @@ const Login: React.FC = () => {
           </div>
           <Typography.Title level={2}>Sign in to Asiral Helio</Typography.Title>
           <Typography.Paragraph type="secondary" className="sp-login-form-subtitle">Access your unified data, compute and geospatial workspace.</Typography.Paragraph>
-          {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 18 }} />}
+          {error && <Alert className="sp-login-error" message={<span title={error}>{error}</span>} type="error" showIcon style={{ marginBottom: 18 }} />}
           <Form layout="vertical" onFinish={submit} initialValues={{ account: '', remember: true }}>
             <Form.Item label="Email or phone" name="account" rules={[{ required: true, message: 'Enter your email or phone number' }]}>
               <Input size="large" prefix={<MailOutlined />} placeholder="name@company.com" autoComplete="username" />

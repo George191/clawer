@@ -32,6 +32,9 @@
 .sp-login-form-wrap .ant-typography-secondary { color: #94a3b8; }
 .sp-login-form-wrap > .ant-typography { line-height: 1.65; }
 .sp-login-form-wrap > .sp-login-form-subtitle { margin-bottom: 18px; font-size: 11px; line-height: 1.45; letter-spacing: -.01em; white-space: nowrap; }
+.sp-login-form-wrap .sp-login-error .ant-alert-content { min-width: 0; }
+.sp-login-form-wrap .sp-login-error .ant-alert-message { font-size: 11px; line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sp-login-form-wrap .sp-login-error .ant-alert-icon { font-size: 12px; }
 .sp-login-form-wrap .ant-form-item { margin-bottom: 18px; }
 .sp-login-form-wrap .ant-form-item-label { padding-bottom: 6px; }
 .sp-login-form-wrap .ant-form-item-label > label { color: #c4cbda; font-size: 12px; font-weight: 600; letter-spacing: .02em; }
