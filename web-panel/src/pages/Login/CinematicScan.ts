@@ -44,11 +44,16 @@ const particleVertex = `
     float radial = beamRadius * pow(u, 1.6) * (1.0 + sin(time * 0.8 + aSeed * 6.2831853) * 0.004);
     vec4 point = modelViewMatrix * vec4(cos(angle) * radial, distance, sin(angle) * radial, 1.0);
     float fade = smoothstep(0.0, 0.045, u) * (1.0 - smoothstep(0.86, 1.0, u));
-    float size = (0.02 + aSeed * 0.012) * mix(1.0, 1.9, smoothstep(0.08, 0.85, u)) * length(modelMatrix[0].xyz);
-    float pixels = size * viewportHeight * projectionMatrix[1][1] / (2.0 * max(0.01, -point.z));
-    gl_PointSize = max(1.0, pixels);
+    float scale = length(modelMatrix[0].xyz);
+    float size = (0.02 + aSeed * 0.012) * mix(1.0, 1.9, smoothstep(0.08, 0.85, u)) * scale;
+    float focal = viewportHeight * projectionMatrix[1][1] / (2.0 * max(0.01, -point.z));
+    float pixels = size * focal;
+    float readable = smoothstep(3.5, 4.0, radial * scale * focal);
+    gl_PointSize = max(pixels, mix(1.0, 2.0, readable));
+    float area = min(1.0, pixels * pixels);
+    float coverage = mix(area, max(area, 0.55), readable);
     float flicker = 0.7 + 0.3 * pow(sin(time * 1.8 + aSeed * 6.2831853), 2.0);
-    vAlpha = min(1.0, strength * fade * flicker * min(1.0, pixels * pixels) * 1.4);
+    vAlpha = min(1.0, strength * fade * flicker * coverage * 1.4);
     gl_Position = projectionMatrix * point;
   }
 `;
@@ -179,7 +184,7 @@ export function createCinematicScan(color: number): {
       particleMaterial.uniforms.beamRadius.value = radius;
       particleGeometry.setDrawRange(0, Math.min(MAX_RINGS, Math.ceil(length / 0.65) + 1) * POINTS_PER_RING);
       particleBounds.center.set(0, length * 0.5, 0);
-      particleBounds.radius = Math.hypot(length * 0.5, radius * 1.004) + 0.04;
+      particleBounds.radius = Math.hypot(length * 0.5, radius * 1.004) + 0.15;
       const span = radius * 1.12;
       if (surface) {
         normal.subVectors(end, surface.center).normalize();
