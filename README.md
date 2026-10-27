@@ -319,7 +319,7 @@ USAspending 合同模板为 `usaspending`，使用免 Key 的官方批量 CSV �
 公司与组织统一写入 `ts_rds.rds_organization` 和 `ts_ods.ods_organization`，ODS 保留 CIK、证券代码、交易所及原公司字段。
 采集、Mongo、Syncer 和 RDS/ODS 的业务类型统一为 `organization`，使用 `syncer-organization`、`spider-crawler-organization`、`etl-rds-organization`。
 SEC 组织的集合名和 `data_source` 为 `sec_edgar_company`；GCAT 组织集合和来源为 `organization_jonathan`。
-SEC 聚合响应中的 facts 在写入 Mongo 前拆成独立 `financial_fact` 记录，单独经过 Syncer、RDS、ODS；organization ETL 只处理组织记录，不再拆出财务事实。
+SEC 的 companyfacts 接口由发布的采集适配器单独请求、展开观测值，直接写入 `sec_edgar_financial_fact`。组织采集与仓储不再接收或拆分 facts；事实身份与去重规则也随 SEC 适配器发布。`financial_fact` 单独经过 Syncer、RDS、ODS，修订标记等业务派生由其 normalizer 完成。
 GCAT 模板技术标识 `jonathan_organizations` 保持不变。
 表字段、主键、分区和索引集中声明在 `app/etl/schema/catalogs.py`，由 `baselines.py` 生成基线，
 `registry.py` 管理 DDL 注册，ETL 启动和表恢复流程依据注册信息创建表与分区。
@@ -332,7 +332,7 @@ GCAT 模板技术标识 `jonathan_organizations` 保持不变。
 - 特殊采集身份、合并或拆分逻辑可导出 `RECORD_ADAPTERS`，继承 `RecordAdapter`；普通来源直接使用通用 Mongo 仓储。
 
 产物可以只有 ETL 导出，无需为此添加空的爬虫适配器类。运行时按业务 `data_source` 查询产物所有者（包括集合别名），每 60 秒刷新缓存；不从原始 `_meta.template` 重算业务来源。首次遇到新类型自动注册和建表；同一类型出现不一致字段声明时明确失败，不自动修改已有表或历史数据。
-已有来源的内置 normalizer/记录规则作为兼容业务插件保留；旧 `app.utils` 来源模块只导出新位置的接口，以兼容已发布产物。
+通用仓储只读取已发布产物的 `RECORD_ADAPTERS`，未声明时使用通用规则，不维护来源专用回退注册表。SEC、Twitter、SAM 等采集规则保留在各自 MinIO 产物中；本地不再保留 SEC/Twitter 数据处理辅助模块。Twitter 采集适配器独立保存账号并剥离推文内作者，ODS social normalizer 仅消费规范字段和稳定身份，不重复采集转换、查询 Mongo 或从推文再次生成账号记录。
 
 部署时先暂停相关采集、下载、Syncer、旧 RDS 和旧 ODS，再启动新版进程。
 为每个新增类型创建 `${SPIDER_KAFKA_TOPIC}-<类型>` 与 `${SPIDER_ETL_RDS_TOPIC}-<类型>` topic 后，
