@@ -93,7 +93,9 @@ class TaskLogCapture(logging.Handler):
                 return
             token = _writing_task_logs.set(True)
             try:
-                if item["message"].startswith(PROGRESS_LINE_PREFIXES):
+                # Stored lines carry the celery console prefix, so match the
+                # marker anywhere in the message instead of startswith.
+                if any(marker in item["message"] for marker in PROGRESS_LINE_PREFIXES):
                     await self._write_progress_line(item)
                 else:
                     await self._store.append_task_logs(self.task_id, [item])
