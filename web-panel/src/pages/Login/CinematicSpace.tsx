@@ -120,13 +120,12 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     ];
     const models: THREE.Group[] = [];
     const appearances = Array.from({ length: orbitLanes.length + 1 }, () => ({
-      revealAt: Infinity, alpha: 0, wanted: false,
+      revealAt: Infinity, alpha: 0,
       materials: [] as { material: THREE.Material; opacity: number }[],
     }));
     let openingTime = 0;
     let visibilityTime = 0;
 
-    let flybyScan: ReturnType<typeof createCinematicScan>;
     const scans: ReturnType<typeof createCinematicScan>[] = [];
     const flyby = new THREE.Group();
     const flybyNearScale = .34;
@@ -303,52 +302,12 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         clean: left >= 20 && right <= width - 20 && top >= 20 && bottom <= height - 20
           && !blockedBounds.some(rect => right > rect.x - 20 && left < rect.x + rect.width + 20 && bottom > rect.y - 20 && top < rect.y + rect.height + 20) };
     }
-    const flybyForecast = new THREE.Group();
-    flybyForecast.scale.setScalar(flybyNearScale);
-    const viewFrustum = new THREE.Frustum(), viewProjection = new THREE.Matrix4(), forecastSphere = new THREE.Sphere();
     function updateVisibility(time: number) {
       const objects = [...models, flyby];
-      const points = objects.map(model => marker(model, true));
-      if (width >= 1280 && time >= appearances[models.length].revealAt) {
-        // Reserve the next passage before the fast, growing foreground station arrives.
-        for (const ahead of [1.25, 2.5]) {
-          flybyPosition(time + ahead, flybyForecast.position);
-          const next = marker(flybyForecast, true);
-          const current = points[models.length];
-          const radius = 5.1 * 1.05 * flybyNearScale;
-          if (!next && camera.position.z - flybyForecast.position.z <= camera.near + radius
-            && viewFrustum.intersectsSphere(forecastSphere.set(flybyForecast.position, radius))) {
-            points[models.length] = { x: width / 2, y: height / 2, radius: Math.hypot(width, height), foreground: false, clean: false };
-            break;
-          }
-          if (!next) continue;
-          if (!current) { points[models.length] = next; continue; }
-          const left = Math.min(current.x - current.radius, next.x - next.radius), right = Math.max(current.x + current.radius, next.x + next.radius);
-          const top = Math.min(current.y - current.radius, next.y - next.radius), bottom = Math.max(current.y + current.radius, next.y + next.radius);
-          const x = (left + right) / 2, y = (top + bottom) / 2;
-          points[models.length] = { ...current, x, y, radius: Math.max(Math.hypot(current.x - x, current.y - y) + current.radius, Math.hypot(next.x - x, next.y - y) + next.radius) };
-        }
-      }
-      const gap = Math.max(90, Math.min(170, Math.min(width, height) * .12));
-      const overlaps = (a: number, b: number, padding = 0) => !!points[a] && !!points[b]
-        && Math.hypot(points[a]!.x - points[b]!.x, points[a]!.y - points[b]!.y) < points[a]!.radius + points[b]!.radius + gap + padding;
-      const candidates = appearances.map((_, index) => index).filter(index => time >= appearances[index].revealAt && points[index]
-        && (index < models.length || width >= 1280));
-      // Keep admitted satellites stable; the close flyby gets room for its passage.
-      candidates.sort((a, b) => Number(b === models.length) - Number(a === models.length)
-        || Number(appearances[b].wanted) - Number(appearances[a].wanted) || appearances[b].alpha - appearances[a].alpha || a - b);
-      const limit = Math.min(width < 1280 ? 3 : width >= 2200 ? 5 : 4, 2 + Math.floor(Math.max(0, time - openingTime) / 12));
-      const selected: number[] = [];
-      for (const index of candidates) {
-        if (selected.length < limit && selected.every(other => !overlaps(index, other, appearances[index].wanted ? 0 : 30))) selected.push(index);
-      }
       const delta = Math.min(.1, Math.max(0, time - visibilityTime));
       visibilityTime = time;
       appearances.forEach((appearance, index) => {
-        appearance.wanted = selected.includes(index);
-        const waiting = appearances.some((other, otherIndex) => otherIndex !== index && !selected.includes(otherIndex)
-          && other.alpha > .01 && overlaps(index, otherIndex));
-        appearance.alpha = THREE.MathUtils.damp(appearance.alpha, appearance.wanted && !waiting ? 1 : 0, 3, delta);
+        if (time >= appearance.revealAt) appearance.alpha = THREE.MathUtils.damp(appearance.alpha, 1, 3, delta);
         if (appearance.alpha < .003) appearance.alpha = 0;
         if (appearance.alpha > .997) appearance.alpha = 1;
         objects[index].visible = appearance.alpha > 0 && (index < models.length || width >= 1280);
@@ -404,9 +363,6 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         particleShields[index].update(time + index * 1.3, (.8 + signal * .2) * alpha);
       });
       const flybyAlpha = renderFrame ? appearances[models.length].alpha : 1;
-      target.copy(flyby.position).sub(earth.group.position).normalize().multiplyScalar(scanSurface.radius).add(earth.group.position);
-      flybyScan.update(flyby.position, target, time, (.52 + signals[0] * .48) * flybyAlpha, 1.55, scanSurface);
-      flybyScan.group.visible = flyby.visible && camera.position.z - flyby.position.z > camera.near + .2;
       particleShields[models.length].update(time + 2.6, (.8 + Math.sqrt(signals[0]) * .2) * flybyAlpha);
       const physicalWidth = 8 * flyby.scale.x;
       stars.rotation.y = time * .0003;
@@ -416,9 +372,9 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       veilCtx.clearRect(0, 0, width, height);
       const shieldRadius = 5.1 * 1.05 * flyby.scale.x;
       const panel = panelBounds;
-      veilBounds.min.copy(flyby.position).min(target);
-      veilBounds.max.copy(flyby.position).max(target);
-      veilBounds.expandByScalar(Math.max(shieldRadius, 1.55 * 1.12 * Math.SQRT2) + .15);
+      veilBounds.min.copy(flyby.position);
+      veilBounds.max.copy(flyby.position);
+      veilBounds.expandByScalar(shieldRadius + .15);
       let overlapsPanel = flyby.visible && !!panel && camera.position.z - veilBounds.min.z > camera.near;
       if (overlapsPanel && panel && camera.position.z - veilBounds.max.z > camera.near) {
         let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
@@ -460,7 +416,6 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld();
-      viewFrustum.setFromProjectionMatrix(viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
       veil!.width = Math.round(width * dpr);
       veil!.height = Math.round(height * dpr);
       veilCtx!.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -558,7 +513,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         const j = Math.floor(Math.random() * (i + 1));
         [waiting[i], waiting[j]] = [waiting[j], waiting[i]];
       }
-      openingPair.forEach(index => { appearances[index].revealAt = openingTime; appearances[index].alpha = 1; appearances[index].wanted = true; });
+      openingPair.forEach(index => { appearances[index].revealAt = openingTime; appearances[index].alpha = 1; });
       waiting.forEach((index, order) => { appearances[index].revealAt = openingTime + 8 + order * 8 + Math.random() * 4; });
       appearances[models.length].revealAt = openingTime + 30 + Math.random() * 12;
       // Place later arrivals into natural visibility windows, covering gaps ahead.
@@ -661,14 +616,10 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       scene.environment = environment.texture;
       room.dispose();
       pmrem.dispose();
-      for (let index = 0; index <= orbitLanes.length; index++) {
+      for (let index = 0; index < orbitLanes.length; index++) {
         await yieldTask();
         if (disposed) return;
-        const scan = createCinematicScan(0x2c6fff, index === orbitLanes.length ? .3 : .6);
-        if (index === orbitLanes.length) {
-          flybyScan = scan;
-          scan.group.traverse(object => object.layers.enable(1));
-        }
+        const scan = createCinematicScan(0x2c6fff);
         scans.push(scan);
         scene.add(scan.group);
       }
