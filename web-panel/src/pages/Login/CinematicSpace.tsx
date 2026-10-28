@@ -408,23 +408,37 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       if (ready) paint(sceneTime());
     }
     async function randomizeOpening() {
-      const canvasBox = canvas!.getBoundingClientRect();
-      const copy = canvas!.parentElement?.querySelector('.sp-login-copy')?.getBoundingClientRect();
-      const blocked = [panelBounds, copy && { x: copy.left - canvasBox.left, y: copy.top - canvasBox.top, width: copy.width, height: copy.height }]
-        .filter((rect): rect is NonNullable<typeof rect> => !!rect);
-      const cameraOffset = camera.position.clone().sub(earth.group.position);
+      let blocked: { x: number; y: number; width: number; height: number }[] = [];
+      const cameraOffset = new THREE.Vector3();
+      function refreshBounds() {
+        measurePanel();
+        const canvasBox = canvas!.getBoundingClientRect();
+        const copy = canvas!.parentElement?.querySelector('.sp-login-copy')?.getBoundingClientRect();
+        blocked = [panelBounds, copy && { x: copy.left - canvasBox.left, y: copy.top - canvasBox.top, width: copy.width, height: copy.height }]
+          .filter((rect): rect is NonNullable<typeof rect> => !!rect);
+        cameraOffset.copy(camera.position).sub(earth.group.position);
+        return JSON.stringify([width, height, blocked]);
+      }
+      let boundsVersion = refreshBounds();
       const direction = new THREE.Vector3(), corner = new THREE.Vector3();
       const openingTime = sceneTime();
       const gap = Math.max(70, Math.min(width, height) * .085);
-      function marker(model: THREE.Group) {
+      function marker(model: THREE.Group, wholeOcclusion = false) {
         const radius = 5.1 * 1.05 * model.scale.x;
         if (camera.position.z - model.position.z <= camera.near + radius) return;
         direction.subVectors(model.position, camera.position);
         const distance = direction.length();
         direction.divideScalar(distance);
         const b = cameraOffset.dot(direction);
-        const disc = b * b - cameraOffset.lengthSq() + (earthRadius * 1.006 + radius) ** 2;
-        if (disc >= 0 && -b - Math.sqrt(disc) > 0 && -b - Math.sqrt(disc) < distance) return;
+        const disc = b * b - cameraOffset.lengthSq() + earthRadius ** 2;
+        const hit = disc >= 0 ? -b - Math.sqrt(disc) : Infinity;
+        if (wholeOcclusion) {
+          const offset = Math.acos(THREE.MathUtils.clamp(-b / cameraOffset.length(), -1, 1));
+          if (hit > 0 && hit < distance - radius && offset + Math.asin(Math.min(1, radius / distance)) <= Math.asin(earthRadius / cameraOffset.length())) return;
+        } else {
+          const paddedDisc = b * b - cameraOffset.lengthSq() + (earthRadius * 1.006 + radius) ** 2;
+          if (paddedDisc >= 0 && -b - Math.sqrt(paddedDisc) > 0 && -b - Math.sqrt(paddedDisc) < distance) return;
+        }
         let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
         for (let i = 0; i < 8; i++) {
           corner.set(model.position.x + (i & 1 ? radius : -radius), model.position.y + (i & 2 ? radius : -radius),
@@ -434,11 +448,11 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
           top = Math.min(top, y); bottom = Math.max(bottom, y);
         }
         if (right < 0 || left > width || bottom < 0 || top > height) return;
-        return { x: (left + right) / 2, y: (top + bottom) / 2, radius: Math.max(right - left, bottom - top) / 2,
+        return { x: (left + right) / 2, y: (top + bottom) / 2, radius: Math.max(right - left, bottom - top) / 2, foreground: hit > distance && hit < Infinity,
           clean: left >= 20 && right <= width - 20 && top >= 20 && bottom <= height - 20
             && !blocked.some(rect => right > rect.x - 20 && left < rect.x + rect.width + 20 && bottom > rect.y - 20 && top < rect.y + rect.height + 20) };
       }
-      const markers = () => models.map(marker).filter((point): point is NonNullable<typeof point> => !!point);
+      const markers = () => models.map(model => marker(model)).filter((point): point is NonNullable<typeof point> => !!point);
       let bestScore = Infinity;
       let bestPhases = orbitLanes.map(lane => lane.phase);
       for (let attempt = 0; attempt < 96; attempt++) {
@@ -446,34 +460,44 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         paint(openingTime, false);
         const points = markers();
         const maxVisible = width < height ? 4 : 3;
-        let score = Math.max(0, 2 - points.length, points.length - maxVisible) * 1000;
+        let score = Math.max(0, 2 - points.length) * 100 + Math.max(0, points.length - maxVisible) * 5000;
         for (let i = 0; i < points.length; i++) {
-          if (!points[i].clean) score += 1000;
+          if (!points[i].clean) score += 20000;
           for (let j = 0; j < i; j++) {
-            if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < points[i].radius + points[j].radius + gap) score += 1000;
+            if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < points[i].radius + points[j].radius + gap) score += 200000;
           }
         }
         if (points.length >= 2 && Math.max(...points.map(p => p.x)) - Math.min(...points.map(p => p.x)) < width * .22
           && Math.max(...points.map(p => p.y)) - Math.min(...points.map(p => p.y)) < height * .26) score += 1000;
+        if (!points.some(point => point.clean && (point.foreground || point.x < width * .5))) score += 500;
         if (score < bestScore) { bestScore = score; bestPhases = orbitLanes.map(lane => lane.phase); }
         if (score === 0) break;
-        if (attempt % 8 === 7) { await yieldTask(); if (disposed) return; }
+        if (attempt % 8 === 7 && attempt < 95) {
+          await yieldTask(); if (disposed) return;
+          const nextVersion = refreshBounds();
+          if (nextVersion !== boundsVersion) { boundsVersion = nextVersion; bestScore = Infinity; }
+        }
       }
       orbitLanes.forEach((lane, index) => { lane.phase = bestPhases[index]; });
       paint(openingTime, false);
-      const smallMarkers = markers();
       let flybyChosen = false;
       for (let attempt = 0; attempt < 32; attempt++) {
         flybyStartMean = Math.random() * Math.PI * 2;
         paint(openingTime, false);
-        const point = flyby.visible ? marker(flyby) : undefined;
+        const point = flyby.visible ? marker(flyby, true) : undefined;
+        const smallMarkers = markers();
+        const depth = camera.position.z - flyby.position.z;
+        const radius = 5.1 * 1.05 * flyby.scale.x;
+        const focal = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov * .5)));
+        const bodySpan = focal * projectedSpan(flybySize, flyby.quaternion) * flyby.scale.x / Math.max(camera.near, depth);
         if (camera.position.distanceTo(flyby.position) >= flybyNearDistance * 2.5
+          && depth > camera.near + radius && bodySpan <= Math.min(180, height * .18)
           && (!point || point.clean && point.radius * 2 <= Math.min(240, height * .25)
             && smallMarkers.every(small => Math.hypot(point.x - small.x, point.y - small.y) >= point.radius + small.radius + gap))) {
           flybyChosen = true;
           break;
         }
-        if (attempt % 8 === 7) { await yieldTask(); if (disposed) return; }
+        if (attempt % 8 === 7) { await yieldTask(); if (disposed) return; refreshBounds(); }
       }
       if (!flybyChosen) flybyStartMean = Math.PI + (Math.random() - .5) * .3;
     }
