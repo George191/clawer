@@ -32,8 +32,7 @@ function wrappedScratch(ctx: CanvasRenderingContext2D, x: number, y: number, dx:
   ctx.stroke();
 }
 
-export function weatheredMetalTextures(): { map: THREE.CanvasTexture; roughnessMap: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } {
-  if (metalTextureCache) return { map: metalTextureCache.map.clone(), roughnessMap: metalTextureCache.roughnessMap.clone(), bumpMap: metalTextureCache.bumpMap.clone() };
+function* generateMetalTextures(): Generator<void, void, void> {
   const canvases = Array.from({ length: 3 }, () => {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 512;
@@ -57,6 +56,7 @@ export function weatheredMetalTextures(): { map: THREE.CanvasTexture; roughnessM
       pixels[1].data.set([roughness, roughness, roughness, 255], index);
       pixels[2].data.set([height, height, height, 255], index);
     }
+    if ((y + 1) % 16 === 0) yield;
   }
   contexts.forEach((ctx, index) => { ctx.putImageData(pixels[index], 0, 0); ctx.lineCap = 'round'; });
   for (let i = 0; i < 1100; i++) {
@@ -71,6 +71,7 @@ export function weatheredMetalTextures(): { map: THREE.CanvasTexture; roughnessM
       ctx.lineWidth = .35 + random() * .45;
       wrappedScratch(ctx, x, y, length, dy);
     }
+    if ((i + 1) % 32 === 0) yield;
   }
   // A few offset joints suggest manufactured panels without a repeating brick grid.
   for (const [x, y, dx, dy] of [[117, -18, 0, 341], [117, 323, 146, 0], [364, 127, 167, 0]]) {
@@ -91,6 +92,14 @@ export function weatheredMetalTextures(): { map: THREE.CanvasTexture; roughnessM
   });
   map.colorSpace = THREE.SRGBColorSpace;
   metalTextureCache = { map, roughnessMap, bumpMap };
+}
+
+export function weatheredMetalTextures(): { map: THREE.CanvasTexture; roughnessMap: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } {
+  if (!metalTextureCache) {
+    const generator = generateMetalTextures();
+    while (!generator.next().done) {}
+  }
+  const { map, roughnessMap, bumpMap } = metalTextureCache!;
   return { map: map.clone(), roughnessMap: roughnessMap.clone(), bumpMap: bumpMap.clone() };
 }
 
@@ -147,8 +156,7 @@ export function solarTexture() {
   return texture.clone();
 }
 
-export function foilTexture() {
-  if (foilTextureCache) return foilTextureCache.clone();
+function* generateFoilTexture(): Generator<void, void, void> {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 512;
   const ctx = canvas.getContext('2d')!;
@@ -168,6 +176,7 @@ export function foilTexture() {
       const height = 128 + foldA * 9 + foldB * 6 + crease + fine * 9 + (random() - .5) * 4;
       pixels.data.set([height, height, height, 255], (y * 512 + x) * 4);
     }
+    if ((y + 1) % 16 === 0) yield;
   }
   ctx.putImageData(pixels, 0, 0);
   ctx.lineWidth = .6;
@@ -180,12 +189,37 @@ export function foilTexture() {
     wrappedScratch(ctx, x, y, dx, dy);
     ctx.strokeStyle = 'rgba(220,220,220,.23)';
     wrappedScratch(ctx, x + .7, y + .7, dx, dy);
+    if ((i + 1) % 32 === 0) yield;
   }
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.anisotropy = 8;
   foilTextureCache = texture;
-  return texture.clone();
+}
+
+export function foilTexture() {
+  if (!foilTextureCache) {
+    const generator = generateFoilTexture();
+    while (!generator.next().done) {}
+  }
+  return foilTextureCache!.clone();
+}
+
+export async function prewarmCinematicSatelliteTextures(yieldTask: () => Promise<void>, isCancelled: () => boolean): Promise<void> {
+  for (const create of [() => metalTextureCache ? undefined : generateMetalTextures(), () => foilTextureCache ? undefined : generateFoilTexture()]) {
+    if (isCancelled()) return;
+    const generator = create();
+    if (!generator) continue;
+    try {
+      while (!generator.next().done) {
+        await yieldTask();
+        if (isCancelled()) return;
+      }
+    } finally {
+      generator.return();
+    }
+  }
+  if (!isCancelled()) solarTexture().dispose();
 }
 
 export function createCinematicSatellite(): THREE.Group {

@@ -253,6 +253,12 @@ async def _crawl_template(
         batch_parameter_sets = await _batch_parameter_sets(
             template, policies, released.adapter_class
         )
+        logger.info(
+            "Workspace template released: template=%s version=%s batches=%d",
+            template_name,
+            template_version,
+            len(batch_parameter_sets),
+        )
         if not batch_parameter_sets:
             template.apply_params(params or None)
             batch_parameter_sets = [(params, {})]
@@ -271,6 +277,12 @@ async def _crawl_template(
             incremental=bool(policies.get("incremental")),
             batch_count=len(batch_parameter_sets),
         )
+        if resume_page or resume_batch_index:
+            logger.info(
+                "Workspace resuming from checkpoint: page=%s batch=%s",
+                resume_page,
+                resume_batch_index + 1,
+            )
         redis_watermark = (
             await checkpoint_store.load_watermark()
             if policies.get("incremental") else None
@@ -322,6 +334,11 @@ async def _crawl_template(
                 "incremental_watermark": incremental_watermark,
                 **batch_context,
             }
+            logger.info(
+                "Workspace batch started: batch=%d/%d",
+                batch_index + 1,
+                batch_count,
+            )
 
             async def update_progress(
                 _page: int,
@@ -355,6 +372,14 @@ async def _crawl_template(
                 if current_result.error and is_retryable_connection_error(current_result.error):
                     raise current_result.error
                 raise RuntimeError("; ".join(current_result.errors) or "Crawl failed")
+            logger.info(
+                "Workspace batch completed: batch=%d/%d pages=%d fetched=%d saved=%d",
+                batch_index + 1,
+                batch_count,
+                current_result.pages_processed,
+                current_result.total,
+                current_result.saved_records,
+            )
             await ai_collect_store.update_task(
                 task_id,
                 {
@@ -394,6 +419,12 @@ async def _crawl_template(
         if checkpoint_connected and not checkpoint_saved:
             raise RuntimeError(
                 f"Failed to commit Redis checkpoint for task {task_id}"
+            )
+        if checkpoint_connected:
+            logger.info(
+                "Workspace checkpoint committed: incremental=%s watermark=%s",
+                incremental_watermark.enabled,
+                new_watermark.isoformat() if incremental_watermark.enabled and new_watermark else "n/a",
             )
         final_status = _status_after_success(schedule)
         await ai_collect_store.update_task(
@@ -436,7 +467,12 @@ async def _crawl_template(
             expected_run_id=run_id or None,
             expected_celery_task_id=celery_task_id,
         )
-        logger.error("%s: %s", type(exc).__name__, exc)
+        logger.error(
+            "Workspace crawl task failed: %s: %s",
+            type(exc).__name__,
+            exc,
+            exc_info=True,
+        )
         raise
     finally:
         reset_control_checkpoint(control_token)

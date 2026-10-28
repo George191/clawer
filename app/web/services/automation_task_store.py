@@ -707,7 +707,7 @@ class AutomationTaskStore:
             WITH deleted AS (
                 DELETE FROM public.automation_task_runs
                 WHERE status IN ('completed', 'failed', 'canceled', 'legacy')
-                  AND COALESCE(ended_at, started_at) < now() - interval '1 month'
+                  AND COALESCE(ended_at, started_at) < now() - interval '15 days'
                 RETURNING id
             )
             SELECT count(*) AS deleted_runs FROM deleted
