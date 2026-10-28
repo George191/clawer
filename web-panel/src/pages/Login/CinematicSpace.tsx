@@ -6,7 +6,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createCinematicEarth } from './CinematicEarth';
 import { createCinematicScan } from './CinematicScan';
 import { createCinematicShield } from './CinematicShield';
-import { createCinematicSatellite, disposeCinematicSatellite, updateCinematicSatellite, solarTexture, weatheredMetalTextures, foilTexture } from './CinematicSatellite';
+import { createCinematicSatellite, disposeCinematicSatellite, updateCinematicSatellite, prewarmCinematicSatelliteTextures, solarTexture, weatheredMetalTextures, foilTexture } from './CinematicSatellite';
 
 const smooth = THREE.MathUtils.smoothstep;
 
@@ -117,12 +117,8 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     ];
     const models: THREE.Group[] = [];
 
-    const flybyScan = createCinematicScan(0x2c6fff, .3);
-    const scans = [...orbitLanes.map(() => createCinematicScan(0x2c6fff)), flybyScan];
-    scans.forEach((scan, index) => {
-      if (index === orbitLanes.length) scan.group.traverse(object => object.layers.enable(1));
-      scene.add(scan.group);
-    });
+    let flybyScan: ReturnType<typeof createCinematicScan>;
+    const scans: ReturnType<typeof createCinematicScan>[] = [];
     const flyby = new THREE.Group();
     const flybyNearScale = .34;
     let flybyNearDistance = 4.2;
@@ -443,12 +439,25 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     async function initialize() {
       await yieldTask();
       if (disposed) return;
+      await prewarmCinematicSatelliteTextures(yieldTask, () => disposed);
+      if (disposed) return;
       const room = new RoomEnvironment();
       const pmrem = new THREE.PMREMGenerator(renderer);
       environment = pmrem.fromScene(room, .04);
       scene.environment = environment.texture;
       room.dispose();
       pmrem.dispose();
+      for (let index = 0; index <= orbitLanes.length; index++) {
+        await yieldTask();
+        if (disposed) return;
+        const scan = createCinematicScan(0x2c6fff, index === orbitLanes.length ? .3 : .6);
+        if (index === orbitLanes.length) {
+          flybyScan = scan;
+          scan.group.traverse(object => object.layers.enable(1));
+        }
+        scans.push(scan);
+        scene.add(scan.group);
+      }
       for (const lane of orbitLanes) {
         await yieldTask();
         if (disposed) return;
@@ -463,6 +472,8 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       flybySize.copy(satelliteSize);
       flyby.add(fallback);
       for (const model of [...models, flyby]) {
+        await yieldTask();
+        if (disposed) return;
         const shield = createCinematicShield();
         shield.group.scale.setScalar(5.1);
         model.add(shield.group);

@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
+import os
 import re
 import socket
 import sys
@@ -55,6 +57,97 @@ def _is_aws_waf_challenge(status_code: int, text: str) -> bool:
     return status_code == 202 and all(
         marker in text for marker in _AWS_WAF_CHALLENGE_MARKERS
     )
+
+
+# ── 流式大文件下载 ──────────────────────────────────────────────
+# curl_cffi 特性探测：支持 aiter_content 时大文件下载走逐块流式 +
+# 实时进度行（任务日志捕获层合并为单行进度条）+ 停滞 watchdog；
+# 不支持时回退整体下载（download_response 原路径）。
+_STREAM_REQUEST_KWARGS: dict = {}
+try:
+    from curl_cffi.const import CurlHttpVersion
+
+    _request_params = inspect.signature(curl_requests.AsyncSession.request).parameters
+    _response_cls = curl_requests.models.Response
+    if (
+        "http_version" in _request_params
+        and hasattr(_response_cls, "aiter_content")
+        and hasattr(_response_cls, "aclose")
+    ):
+        # HTTP/1.1 避免 h2 流复位（curl_code=92）中途掐断传输。
+        _STREAM_REQUEST_KWARGS = {"http_version": CurlHttpVersion.V1_1, "stream": True}
+except Exception:
+    _STREAM_REQUEST_KWARGS = {}
+
+# 无字节进展判死阈值；task_log_capture 按 "download progress:" 前缀合并进度行。
+_STREAM_CHUNK_IDLE_SECONDS = 300
+_STREAM_LOG_MIN_SECONDS = 2.0
+_STREAM_BAR_WIDTH = 22
+# curl 总时长下限：基准包（cvelistV5 ~600MB）在劣化链路上远超默认下载超时。
+_STREAM_TOTAL_TIMEOUT_FLOOR = 3600
+
+
+def _download_bar(fraction: float) -> str:
+    fraction = max(0.0, min(float(fraction), 1.0))
+    filled = int(fraction * _STREAM_BAR_WIDTH + 0.5)
+    return "[" + "█" * filled + "░" * (_STREAM_BAR_WIDTH - filled) + "]"
+
+
+def _download_progress_line(received: int, total: int, speed_mbps: float) -> str:
+    speed = f"{speed_mbps:.1f} MB/s"
+    if not total:
+        return (f"download progress: {_download_bar(0.0)} ??% "
+                f"({received / 1048576:.1f} MB) {speed}")
+    pct = min(int(received * 100 // total), 99)
+    return (f"download progress: {_download_bar(received / total)} {pct}% "
+            f"({received / 1048576:.1f}/{total / 1048576:.1f} MB) {speed}")
+
+
+def _stream_watchdog_tick(state: dict, now: float, warned: int):
+    """Pure decision for the stall watchdog: ok | warn | exit."""
+    idle_for = now - state["t"]
+    if idle_for <= _STREAM_CHUNK_IDLE_SECONDS:
+        return "ok", 0
+    return ("warn" if warned < 2 else "exit"), warned + 1
+
+
+async def _stream_download_watchdog(state: dict, hard_deadline_s: float, url: str) -> None:
+    """Independent stall backstop for streaming downloads.
+
+    curl_cffi can block inside a C-level read on a dead socket; asyncio
+    cancellation never lands and wait_for waits for the cancelled await
+    forever (observed in production on SAM.gov). This watchdog lives on the
+    event loop, needs no cooperation from the stuck read, and escalates
+    warn -> warn -> hard process exit so celery replaces the fork-pool child
+    instead of letting it zombie. Outside celery workers it only logs.
+    """
+    warned = 0
+    while True:
+        await asyncio.sleep(30)
+        decision, warned = _stream_watchdog_tick(
+            state, asyncio.get_event_loop().time(), warned)
+        if decision == "ok":
+            continue
+        logger.warning(
+            "download stalled: no bytes for %.0fs (received %.1f MB, hard budget "
+            "%.0fs), escalation %d/3 - %s",
+            asyncio.get_event_loop().time() - state["t"],
+            state["bytes"] / 1048576, hard_deadline_s, warned, url)
+        if decision != "exit":
+            continue
+        from multiprocessing import current_process
+
+        if "ForkPool" in current_process().name and \
+                os.environ.get("DOWNLOAD_WATCHDOG_EXIT", "1") != "0":
+            logger.error(
+                "download watchdog: hard-exiting stuck worker child (os._exit(70)) "
+                "so celery replaces it - %s", url)
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            except Exception:
+                pass
+            os._exit(70)
 
 
 def _init_anti_crawl(*, use_proxy: bool = True):
@@ -585,6 +678,7 @@ class HttpClient:
         config: RequestConfig | None = None,
         *,
         use_proxy: bool | None = None,
+        chunk_callback=None,
     ) -> DownloadResponse:
         config = config or RequestConfig()
         effective_use_proxy = settings.download_use_proxy if use_proxy is None else use_proxy
@@ -647,27 +741,120 @@ class HttpClient:
             pre_proxy_url=pre_proxy_url,
         )
         try:
+            # With a chunk callback the payload streams chunk-by-chunk: a live
+            # progress bar lands in the task log and a stall watchdog guards
+            # against dead sockets. The feature-detected kwargs keep legacy
+            # curl_cffi builds on the non-stream path (see note below).
+            streaming = bool(chunk_callback is not None and _STREAM_REQUEST_KWARGS)
+            total_timeout = max(
+                settings.http_download_timeout, _STREAM_TOTAL_TIMEOUT_FLOOR
+            ) if streaming else settings.http_download_timeout
             stream_kwargs = dict(
                 method=config.method or "GET",
                 url=url,
                 headers=headers,
                 params=config.params,
                 cookies=cookies,
-                timeout=settings.http_download_timeout,
+                timeout=total_timeout,
             )
 
-            # download_bytes() returns the complete payload.  Using
-            # AsyncSession.stream() here triggers curl_cffi's background
-            # perform task; malformed proxy headers then escape as
-            # "Task exception was never retrieved".  A non-stream request
-            # keeps parsing and cleanup in the caller task.
-            stream_kwargs["stream"] = False
+            if streaming:
+                stream_kwargs.update(_STREAM_REQUEST_KWARGS)
+            else:
+                # download_bytes() returns the complete payload.  Using
+                # AsyncSession.stream() here triggers curl_cffi's background
+                # perform task; malformed proxy headers then escape as
+                # "Task exception was never retrieved".  A non-stream request
+                # keeps parsing and cleanup in the caller task.
+                stream_kwargs["stream"] = False
             response = await client.request(**stream_kwargs)
             if response.status_code in settings.http_retry_on_statuses:
                 raise DownloadError(url, response.status_code, "Retryable status code")
 
             response.raise_for_status()
-            data = response.content
+            if streaming:
+                loop = asyncio.get_event_loop()
+                started = loop.time()
+                watchdog_state = {"t": started, "bytes": 0}
+                watchdog = asyncio.ensure_future(
+                    _stream_download_watchdog(watchdog_state, total_timeout, url))
+                length = (response.headers or {}).get("Content-Length") or \
+                    (response.headers or {}).get("content-length") or ""
+                total = int(str(length).strip()) if str(length).strip().isdigit() else 0
+                # Refresh roughly every 1% (>=2s); the task-log capture merges
+                # these lines into ONE live progress row.
+                log_step = max(total // 100, 5 << 20) if total else (20 << 20)
+                last_logged_bytes = 0
+                last_logged_time = started
+                buffer = BytesIO()
+                chunk_iter = response.aiter_content()
+                try:
+                    while True:
+                        try:
+                            chunk = await asyncio.wait_for(
+                                chunk_iter.__anext__(),
+                                timeout=_STREAM_CHUNK_IDLE_SECONDS,
+                            )
+                        except StopAsyncIteration:
+                            break
+                        except asyncio.TimeoutError:
+                            raise DownloadError(
+                                url,
+                                message=(
+                                    f"download stalled: no data for "
+                                    f"{_STREAM_CHUNK_IDLE_SECONDS}s after "
+                                    f"{buffer.getbuffer().nbytes} of "
+                                    f"{total or 'unknown'} bytes"
+                                ),
+                            )
+                        buffer.write(chunk)
+                        received = buffer.getbuffer().nbytes
+                        watchdog_state["t"] = loop.time()
+                        watchdog_state["bytes"] = received
+                        if (received - last_logged_bytes >= log_step
+                                and loop.time() - last_logged_time >= _STREAM_LOG_MIN_SECONDS):
+                            last_logged_bytes = received
+                            last_logged_time = loop.time()
+                            elapsed = max(loop.time() - started, 1e-9)
+                            logger.info("%s", _download_progress_line(
+                                received, total, received / 1048576 / elapsed))
+                        if loop.time() > started + total_timeout:
+                            raise DownloadError(
+                                url,
+                                message=(
+                                    f"download exceeded its {total_timeout}s budget "
+                                    f"after {received} of {total or 'unknown'} bytes"
+                                ),
+                            )
+                    if total and buffer.getbuffer().nbytes != total:
+                        raise DownloadError(
+                            url,
+                            message=(
+                                f"download incomplete: {buffer.getbuffer().nbytes} "
+                                f"of {total} bytes"
+                            ),
+                        )
+                    received_total = buffer.getbuffer().nbytes
+                    elapsed = max(loop.time() - started, 0)
+                    logger.info(
+                        "download finished: %s 100%% (%.1f MB in %.0fs, %.2f MB/s) - %s",
+                        _download_bar(1.0), received_total / 1048576, elapsed,
+                        received_total / 1048576 / max(elapsed, 1e-9), url,
+                    )
+                    if chunk_callback is not None:
+                        chunk_callback(buffer.getbuffer().tobytes())
+                    data = buffer.getvalue()
+                finally:
+                    watchdog.cancel()
+                    try:
+                        await watchdog
+                    except BaseException:
+                        pass
+                    await response.aclose()
+            else:
+                data = response.content
+                if chunk_callback is not None:
+                    chunk_callback(data)
 
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
@@ -706,10 +893,20 @@ class HttpClient:
         *,
         use_proxy: bool | None = None,
     ) -> bytes:
+        """Fetch the complete payload with a live progress bar.
+
+        Streaming is feature-detected: the payload arrives chunk-by-chunk and
+        each refresh logs a "download progress:" line that the task-log
+        capture layer merges into ONE live row. A stall watchdog escalates to
+        os._exit(70) inside celery fork-pool children when the transfer dies
+        mid-flight (see _stream_download_watchdog). Legacy curl_cffi builds
+        fall back to the non-stream download_response path.
+        """
         response = await self.download_response(
             url,
             config,
             use_proxy=use_proxy,
+            chunk_callback=lambda _chunk: None,
         )
         return response.data
 

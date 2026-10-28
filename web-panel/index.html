@@ -7,15 +7,22 @@
     <title>Asiral Helio</title>
     <style>
       .sp-auth-boot { position: fixed; inset: 0; z-index: 1000; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; background: radial-gradient(ellipse at 30% 55%, #0b1925 0%, #03070d 55%, #010306 100%); font-family: system-ui, sans-serif; line-height: 1.5; text-align: center; }
-      .sp-auth-boot img { display: block; width: 148px; height: 148px; }
+      .sp-auth-boot .sp-auth-loading-stage { position: relative; width: 148px; height: 148px; }
+      .sp-auth-boot .sp-auth-loading-stage img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+      .sp-auth-boot .sp-auth-loading-satellite { transform-origin: 50% 50%; will-change: transform; animation: sp-auth-boot-orbit 7s linear infinite; }
       .sp-auth-boot span { color: #8097b7; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+      @keyframes sp-auth-boot-orbit { from { transform: translateZ(0) rotate(0deg); } to { transform: translateZ(0) rotate(360deg); } }
       @media (max-width: 960px) { .sp-auth-boot { display: none; } }
+      @media (prefers-reduced-motion: reduce) { .sp-auth-boot .sp-auth-loading-satellite { animation: none; will-change: auto; } }
     </style>
   </head>
   <body>
     <div id="root">
       <div class="sp-auth-boot" role="status" aria-live="polite">
-        <img src="/space/auth-loading.svg" width="148" height="148" alt="" aria-hidden="true" />
+        <div class="sp-auth-loading-stage" aria-hidden="true">
+          <img class="sp-auth-loading-earth" src="/space/auth-loading.svg" width="148" height="148" alt="" />
+          <img class="sp-auth-loading-satellite" src="/space/auth-loading-satellite.svg" width="148" height="148" alt="" />
+        </div>
         <span>Preparing orbital view</span>
       </div>
     </div>
