@@ -2,6 +2,10 @@ import * as THREE from 'three';
 
 type Position = [number, number, number];
 
+let metalTextureCache: { map: THREE.CanvasTexture; roughnessMap: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } | undefined;
+let solarTextureCache: THREE.CanvasTexture | undefined;
+let foilTextureCache: THREE.CanvasTexture | undefined;
+
 function metalNoise(x: number, y: number, cellsX: number, cellsY: number, seed: number) {
   const u = x / 512 * cellsX;
   const v = y / 512 * cellsY;
@@ -29,6 +33,7 @@ function wrappedScratch(ctx: CanvasRenderingContext2D, x: number, y: number, dx:
 }
 
 export function weatheredMetalTextures(): { map: THREE.CanvasTexture; roughnessMap: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture } {
+  if (metalTextureCache) return { map: metalTextureCache.map.clone(), roughnessMap: metalTextureCache.roughnessMap.clone(), bumpMap: metalTextureCache.bumpMap.clone() };
   const canvases = Array.from({ length: 3 }, () => {
     const canvas = document.createElement('canvas');
     canvas.width = canvas.height = 512;
@@ -85,10 +90,12 @@ export function weatheredMetalTextures(): { map: THREE.CanvasTexture; roughnessM
     return texture;
   });
   map.colorSpace = THREE.SRGBColorSpace;
-  return { map, roughnessMap, bumpMap };
+  metalTextureCache = { map, roughnessMap, bumpMap };
+  return { map: map.clone(), roughnessMap: roughnessMap.clone(), bumpMap: bumpMap.clone() };
 }
 
 export function solarTexture() {
+  if (solarTextureCache) return solarTextureCache.clone();
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 768;
@@ -136,10 +143,12 @@ export function solarTexture() {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
-  return texture;
+  solarTextureCache = texture;
+  return texture.clone();
 }
 
 export function foilTexture() {
+  if (foilTextureCache) return foilTextureCache.clone();
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 512;
   const ctx = canvas.getContext('2d')!;
@@ -175,7 +184,8 @@ export function foilTexture() {
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.anisotropy = 8;
-  return texture;
+  foilTextureCache = texture;
+  return texture.clone();
 }
 
 export function createCinematicSatellite(): THREE.Group {

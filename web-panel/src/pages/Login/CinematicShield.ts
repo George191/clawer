@@ -115,7 +115,6 @@ export function createCinematicShield() {
     transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
   });
   group.add(particles, new THREE.Mesh(shellGeometry, shellMaterial));
-  group.traverse(object => object.layers.enable(1));
   return {
     group,
     update(seconds: number, reception: number) {

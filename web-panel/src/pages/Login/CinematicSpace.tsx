@@ -10,7 +10,7 @@ import { createCinematicSatellite, disposeCinematicSatellite, updateCinematicSat
 
 const smooth = THREE.MathUtils.smoothstep;
 
-export default function CinematicSpace({ onUnavailable }: { onUnavailable: () => void }) {
+export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailable: () => void; onReady?: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const veilRef = useRef<HTMLCanvasElement>(null);
 
@@ -18,7 +18,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
     const canvas = canvasRef.current;
     const veil = veilRef.current;
     const veilContext = veil?.getContext('2d');
-    if (!canvas || !veil || !veilContext) return;
+    if (!canvas || !veil || !veilContext) { onUnavailable(); return; }
     const veilCtx = veilContext;
     let renderer: THREE.WebGLRenderer;
     try {
@@ -26,6 +26,9 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
     } catch { onUnavailable(); return; }
 
     let disposed = false;
+    let prepared = false;
+    let ready = false;
+    const yieldTask = () => new Promise<void>(resolve => setTimeout(resolve, 0));
     let width = 1;
     let height = 1;
     let elapsed = 0;
@@ -42,6 +45,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
     renderer.toneMappingExposure = 1.12;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.autoUpdate = false;
 
     const sunDirection = new THREE.Vector3(-.8, .5, -.32).normalize();
     const sun = new THREE.DirectionalLight(0xe0edff, 3.3);
@@ -60,18 +64,21 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
     rim.layers.enableAll();
     scene.add(rim);
 
-    const room = new RoomEnvironment();
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const environment = pmrem.fromScene(room, .04);
-    scene.environment = environment.texture;
+    let environment: THREE.WebGLRenderTarget | undefined;
     scene.environmentIntensity = .35;
-    room.dispose();
-    pmrem.dispose();
 
     function sceneTime() { return motion.matches && elapsed === 0 ? flybyPeriod * .05 : elapsed; }
-    function repaint() { if (!disposed && motion.matches) paint(sceneTime()); }
+    let uploads = Promise.resolve();
+    function uploadTexture(texture?: THREE.Texture) {
+      const pending = uploads.then(async () => {
+        await yieldTask();
+        if (!disposed && texture) renderer.initTexture(texture);
+      });
+      uploads = pending.catch(() => {});
+      return pending;
+    }
     const textureBudget = canvas.clientWidth * Math.min(window.devicePixelRatio || 1, 2) >= 1920 ? 8192 : 4096;
-    const earth = createCinematicEarth(sunDirection, repaint, {
+    const earth = createCinematicEarth(sunDirection, uploadTexture, {
       maxTextureSize: Math.min(renderer.capabilities.maxTextureSize, textureBudget),
       maxAnisotropy: renderer.capabilities.getMaxAnisotropy(),
     });
@@ -100,58 +107,46 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
     const stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
 
+    // A shared period keeps the staggered handoffs from drifting into a visual gap.
     const orbitLanes = [
       { radiusFactor: 1.10, inclination: -1.35, tilt: .30, phase: .47, angularSpeed: .0120, scale: .075 },
-      { radiusFactor: 1.16, inclination: -1.30, tilt: .34, phase: 1.41, angularSpeed: .0122, scale: .050 },
-      { radiusFactor: 1.22, inclination: -1.25, tilt: .38, phase: 2.74, angularSpeed: .0119, scale: .048 },
-      { radiusFactor: 1.28, inclination: -1.40, tilt: .32, phase: 4.24, angularSpeed: .0121, scale: .046 },
-      { radiusFactor: 1.34, inclination: -1.15, tilt: .30, phase: 5.30, angularSpeed: .0118, scale: .044 },
+      { radiusFactor: 1.16, inclination: -1.30, tilt: .34, phase: 1.41, angularSpeed: .0120, scale: .050 },
+      { radiusFactor: 1.22, inclination: -1.25, tilt: .38, phase: 2.62, angularSpeed: .0120, scale: .048 },
+      { radiusFactor: 1.28, inclination: -1.40, tilt: .32, phase: 3.995, angularSpeed: .0120, scale: .046 },
+      { radiusFactor: 1.34, inclination: -1.15, tilt: .30, phase: 4.88, angularSpeed: .0120, scale: .044 },
     ];
-    const models = orbitLanes.map(lane => {
-      const model = createCinematicSatellite();
-      model.scale.setScalar(lane.scale);
-      return model;
-    });
-    scene.add(...models);
+    const models: THREE.Group[] = [];
 
     const flybyScan = createCinematicScan(0x2c6fff, .3);
-    const scans = [...models.map(() => createCinematicScan(0x2c6fff)), flybyScan];
+    const scans = [...orbitLanes.map(() => createCinematicScan(0x2c6fff)), flybyScan];
     scans.forEach((scan, index) => {
-      if (index === models.length) scan.group.traverse(object => object.layers.enable(1));
+      if (index === orbitLanes.length) scan.group.traverse(object => object.layers.enable(1));
       scene.add(scan.group);
     });
     const flyby = new THREE.Group();
     const flybyNearScale = .34;
     let flybyNearDistance = 4.2;
-    const fallback = createCinematicSatellite();
-    const satelliteSize = new THREE.Box3().setFromObject(fallback).getSize(new THREE.Vector3());
+    let fallback: THREE.Group;
+    const satelliteSize = new THREE.Vector3();
     const flybySize = satelliteSize.clone();
-    flyby.add(fallback);
     flyby.scale.setScalar(flybyNearScale);
-    const particleShields = [...models, flyby].map(model => {
-      const shield = createCinematicShield();
-      shield.group.scale.setScalar(5.1);
-      model.add(shield.group);
-      return shield;
-    });
-    const flybyShield = particleShields[models.length];
-    flyby.traverse(object => object.layers.enable(1));
+    const particleShields: ReturnType<typeof createCinematicShield>[] = [];
     scene.add(flyby);
-    let flybyModel: THREE.Group = fallback;
+    let flybyModel: THREE.Group | undefined;
     let isNasaModel = false;
     function prepareFlybyModel() {
-      flybyModel.traverse(object => {
+      flybyModel?.traverse(object => {
         object.layers.enable(1);
         if (!(object instanceof THREE.Mesh)) return;
         object.castShadow = object.receiveShadow = true;
       });
     }
-    prepareFlybyModel();
     const draco = new DRACOLoader();
     draco.setDecoderPath('/space/draco/').setWorkerLimit(1);
     const loader = new GLTFLoader().setDRACOLoader(draco);
-    loader.load('/space/iss.glb', gltf => {
-      if (disposed) { disposeCinematicSatellite(gltf.scene); draco.dispose(); return; }
+    const loadFlyby = () => new Promise<void>(resolve => loader.load('/space/iss.glb', async gltf => {
+      if (disposed) { disposeCinematicSatellite(gltf.scene); resolve(); return; }
+      try {
       // These seven detached modelling offcuts sit above the exported station.
       const offcuts = new THREE.Group();
       for (const name of ['bendedtru1', 'bendedtru2', 'bendedtru3', 'bendedtrus', 'pCylinder1', 'pCylinder2', 'pCylinder8']) {
@@ -164,8 +159,11 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       cells.repeat.set(7, 5);
       const metal = weatheredMetalTextures();
       const foil = foilTexture();
-      gltf.scene.traverse(object => {
-        if (!(object instanceof THREE.Mesh)) return;
+      const meshes: THREE.Mesh[] = [];
+      gltf.scene.traverse(object => { if (object instanceof THREE.Mesh) meshes.push(object); });
+      for (const object of meshes) {
+        await yieldTask();
+        if (disposed) { disposeCinematicSatellite(gltf.scene); return; }
         const materials = Array.isArray(object.material) ? object.material : [object.material];
         const positions = object.geometry.getAttribute('position');
         const solar = materials.some(material => material.name.startsWith('lambert7SG'));
@@ -202,7 +200,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
           }
           material.needsUpdate = true;
         }
-      });
+      }
       const bounds = new THREE.Box3().setFromObject(gltf.scene);
       const center = bounds.getCenter(new THREE.Vector3());
       const size = bounds.getSize(new THREE.Vector3());
@@ -217,10 +215,12 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       flyby.add(model);
       isNasaModel = true;
       prepareFlybyModel();
-      repaint();
-    }, undefined, () => { if (disposed) draco.dispose(); });
+      } catch {
+        disposeCinematicSatellite(gltf.scene);
+      } finally { resolve(); }
+    }, undefined, () => resolve()));
 
-    const orbitMaterials = [...orbitLanes.map(() => 0x527b91), 0x5d758d].map((color, index) => new THREE.LineBasicMaterial({ color, transparent: true, opacity: index < models.length ? .1 : .16, depthWrite: false }));
+    const orbitMaterials = [...orbitLanes.map(() => 0x527b91), 0x5d758d].map((color, index) => new THREE.LineBasicMaterial({ color, transparent: true, opacity: index < orbitLanes.length ? .1 : .16, depthWrite: false }));
     const orbitLines = orbitMaterials.map(material => {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(193 * 3), 3));
@@ -248,6 +248,13 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
 
     const local = new THREE.Vector3();
     const target = new THREE.Vector3();
+    const screenPosition = new THREE.Vector3();
+    let panelBounds: { x: number; y: number; width: number; height: number } | undefined;
+    function measurePanel() {
+      const panel = canvas!.parentElement?.querySelector('.sp-login-form-wrap')?.getBoundingClientRect();
+      const box = canvas!.getBoundingClientRect();
+      panelBounds = panel ? { x: panel.left - box.left, y: panel.top - box.top, width: panel.width, height: panel.height } : undefined;
+    }
     const projectionRotation = new THREE.Matrix4();
     function projectedSpan(size: THREE.Vector3, attitude: THREE.Quaternion) {
       const m = projectionRotation.makeRotationFromQuaternion(attitude).elements;
@@ -257,7 +264,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       );
     }
     function paint(time: number) {
-      if (disposed) return;
+      if (disposed || !prepared) return;
       earth.update(time);
       const communication = (time / 6) % 1;
       const signals = [communication < .5 ? Math.sin(communication * Math.PI * 2) ** 2 : 0, communication >= .5 ? Math.sin((communication - .5) * Math.PI * 2) ** 2 : 0];
@@ -300,20 +307,26 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       target.copy(flyby.position).sub(earth.group.position).normalize().multiplyScalar(scanSurface.radius).add(earth.group.position);
       flybyScan.update(flyby.position, target, time, .52 + signals[0] * .48, 1.55, scanSurface);
       flybyScan.group.visible = flyby.visible && camera.position.z - flyby.position.z > camera.near + .2;
-      flybyShield.update(time + 2.6, .8 + Math.sqrt(signals[0]) * .2);
+      particleShields[models.length].update(time + 2.6, .8 + Math.sqrt(signals[0]) * .2);
       const physicalWidth = 8 * flyby.scale.x;
       stars.rotation.y = time * .0003;
 
       // Render only the flyby to the glass veil, using the same camera and geometry.
       veilCtx.clearRect(0, 0, width, height);
-      const panel = canvas!.parentElement?.querySelector('.sp-login-form-wrap')?.getBoundingClientRect();
-      const canvasBox = canvas!.getBoundingClientRect();
-      if (flyby.visible && panel) {
+      screenPosition.copy(flyby.position).project(camera);
+      const screenX = (screenPosition.x + 1) * width / 2;
+      const screenY = (1 - screenPosition.y) * height / 2;
+      const shieldRadius = 5.1 * 1.05 * flyby.scale.x;
+      const screenRadius = focal * shieldRadius / Math.max(camera.near, distance - shieldRadius) + 6;
+      const panel = panelBounds;
+      if (flyby.visible && panel && camera.position.z - flyby.position.z + shieldRadius > camera.near
+        && screenX + screenRadius > panel.x && screenX - screenRadius < panel.x + panel.width
+        && screenY + screenRadius > panel.y && screenY - screenRadius < panel.y + panel.height) {
         camera.layers.set(1);
         renderer.render(scene, camera);
         veilCtx.save();
         veilCtx.beginPath();
-        veilCtx.rect(panel.left - canvasBox.left, panel.top - canvasBox.top, panel.width, panel.height);
+        veilCtx.rect(panel.x, panel.y, panel.width, panel.height);
         veilCtx.clip();
         veilCtx.filter = 'blur(2px)';
         veilCtx.globalAlpha = THREE.MathUtils.lerp(.24, .08, smooth(focal * physicalWidth / distance, 120, 600));
@@ -321,14 +334,16 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
         veilCtx.restore();
       }
       camera.layers.set(0);
+      renderer.shadowMap.needsUpdate = true;
       renderer.render(scene, camera);
     }
 
     function resize() {
+      if (!prepared) return;
       width = canvas!.clientWidth;
       height = canvas!.clientHeight;
       if (!width || !height) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.max(1, Math.sqrt(4_000_000 / (width * height))));
       renderer.setPixelRatio(dpr);
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
@@ -369,38 +384,99 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       orbitLines.forEach((line, index) => {
         const positions = line.geometry.getAttribute('position') as THREE.BufferAttribute;
         for (let i = 0; i <= 192; i++) {
-          const point = index === models.length ? flybyPoint(i / 192 * Math.PI * 2, local) : orbitPoint(i / 192 * Math.PI * 2, index);
+          const point = index === orbitLanes.length ? flybyPoint(i / 192 * Math.PI * 2, local) : orbitPoint(i / 192 * Math.PI * 2, index);
           positions.setXYZ(i, point.x, point.y, point.z);
         }
         positions.needsUpdate = true;
         line.geometry.computeBoundingSphere();
       });
-      paint(sceneTime());
+      measurePanel();
+      if (ready) paint(sceneTime());
     }
     function updateLoop() {
       renderer.setAnimationLoop(null);
-      if (document.hidden) return;
+      if (!ready || disposed || document.hidden) return;
       if (motion.matches) { paint(sceneTime()); return; }
       lastTime = performance.now();
       renderer.setAnimationLoop(now => {
         const delta = Math.min((now - lastTime) / 1000, .1);
         elapsed += delta;
         lastTime = now;
-        if (now - lastPaint < 1000 / 30) return;
-        lastPaint = now;
+        if (now - lastPaint < 1000 / 60 - 1) return;
+        lastPaint = now - (now - lastPaint) % (1000 / 60);
         paint(elapsed);
       });
     }
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
+    const panelObserver = new ResizeObserver(measurePanel);
+    const panelElement = canvas.parentElement?.querySelector('.sp-login-form-wrap');
+    if (panelElement) panelObserver.observe(panelElement);
+    const scrollContainer = canvas.parentElement;
+    scrollContainer?.addEventListener('scroll', measurePanel, { passive: true });
     motion.addEventListener('change', updateLoop);
     document.addEventListener('visibilitychange', updateLoop);
-    resize();
-    updateLoop();
+    async function initialize() {
+      await yieldTask();
+      if (disposed) return;
+      const room = new RoomEnvironment();
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      environment = pmrem.fromScene(room, .04);
+      scene.environment = environment.texture;
+      room.dispose();
+      pmrem.dispose();
+      for (const lane of orbitLanes) {
+        await yieldTask();
+        if (disposed) return;
+        const model = createCinematicSatellite();
+        model.scale.setScalar(lane.scale);
+        models.push(model);
+        scene.add(model);
+      }
+      fallback = createCinematicSatellite();
+      flybyModel = fallback;
+      new THREE.Box3().setFromObject(fallback).getSize(satelliteSize);
+      flybySize.copy(satelliteSize);
+      flyby.add(fallback);
+      for (const model of [...models, flyby]) {
+        const shield = createCinematicShield();
+        shield.group.scale.setScalar(5.1);
+        model.add(shield.group);
+        particleShields.push(shield);
+      }
+      flyby.traverse(object => object.layers.enable(1));
+      prepareFlybyModel();
+      await Promise.all([earth.ready, loadFlyby()]);
+      if (disposed) return;
+      const textures = new Set<THREE.Texture>();
+      scene.traverse(object => {
+        if (!(object instanceof THREE.Mesh)) return;
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+          for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
+        }
+      });
+      for (const texture of textures) {
+        await uploadTexture(texture);
+        if (disposed) return;
+      }
+      prepared = true;
+      resize();
+      await renderer.compileAsync(scene, camera);
+      if (disposed) return;
+      paint(sceneTime());
+      await yieldTask();
+      if (disposed) return;
+      ready = true;
+      onReady?.();
+      updateLoop();
+    }
+    void initialize().catch(() => { if (!disposed) onUnavailable(); });
     return () => {
       disposed = true;
       renderer.setAnimationLoop(null);
       observer.disconnect();
+      panelObserver.disconnect();
+      scrollContainer?.removeEventListener('scroll', measurePanel);
       motion.removeEventListener('change', updateLoop);
       document.removeEventListener('visibilitychange', updateLoop);
       earth.dispose();
@@ -409,9 +485,9 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       draco.dispose();
       particleShields.forEach(shield => shield.dispose());
       models.forEach(disposeCinematicSatellite);
-      disposeCinematicSatellite(flybyModel);
+      if (flybyModel) disposeCinematicSatellite(flybyModel);
       scans.forEach(scan => scan.dispose());
-      environment.dispose();
+      environment?.dispose();
       starGeometry.dispose();
       starMaterial.dispose();
       orbitLines.forEach(line => line.geometry.dispose());
@@ -419,7 +495,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       sun.shadow.map?.dispose();
       renderer.dispose();
     };
-  }, [onUnavailable]);
+  }, [onUnavailable, onReady]);
 
   return <><canvas ref={canvasRef} className="sp-login-space sp-cinematic-space" aria-hidden="true" /><canvas ref={veilRef} className="sp-login-space sp-login-satellite-veil" aria-hidden="true" /></>;
 }

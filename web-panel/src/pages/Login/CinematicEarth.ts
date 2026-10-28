@@ -86,7 +86,7 @@ const atmosphereShader = `
 
 export function createCinematicEarth(
   sunDirection: THREE.Vector3,
-  onTextureLoaded: () => void,
+  onTextureLoaded: (texture?: THREE.Texture) => void | Promise<void>,
   capabilities?: { maxTextureSize: number; maxAnisotropy: number },
 ) {
   const group = new THREE.Group();
@@ -143,29 +143,41 @@ export function createCinematicEarth(
   surface.rotation.y = cloudLayer.rotation.y = -.55;
 
   const loader = new THREE.TextureLoader();
-  function load(url: string, target: { value: THREE.Texture }, color: boolean) {
-    loader.load(url, texture => {
-      if (disposed) {
-        texture.dispose();
-        return;
-      }
-      texture.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.minFilter = THREE.LinearMipmapLinearFilter;
-      texture.magFilter = THREE.LinearFilter;
-      texture.generateMipmaps = true;
-      texture.anisotropy = anisotropy;
-      textures.add(texture);
-      target.value = texture;
-      onTextureLoaded();
-    });
+  async function load(url: string, target: { value: THREE.Texture }, color: boolean) {
+    let texture: THREE.Texture;
+    try {
+      texture = await loader.loadAsync(url);
+    } catch {
+      if (!disposed) await onTextureLoaded();
+      return;
+    }
+    if (disposed) {
+      texture.dispose();
+      return;
+    }
+    texture.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = true;
+    texture.anisotropy = anisotropy;
+    textures.add(texture);
+    try {
+      await onTextureLoaded(texture);
+      if (!disposed) target.value = texture;
+    } catch {
+      if (textures.delete(texture)) texture.dispose();
+    }
   }
-  load(`/space/earth-day${textureSuffix}.jpg`, day, true);
-  load(`/space/earth-night${textureSuffix}.jpg`, night, true);
-  load(`/space/earth-clouds${cloudSuffix}.jpg`, clouds, false);
+  const ready = Promise.allSettled([
+    load(`/space/earth-day${textureSuffix}.jpg`, day, true),
+    load(`/space/earth-night${textureSuffix}.jpg`, night, true),
+    load(`/space/earth-clouds${cloudSuffix}.jpg`, clouds, false),
+  ]).then(() => undefined);
 
   return {
     group,
+    ready,
     update(time: number) {
       if (disposed) return;
       surface.rotation.y = -.55 + time * .008;

@@ -168,6 +168,8 @@ export function createCinematicScan(color: number, propagationSpeed = 0.6): {
   group.add(particles, core, ring);
   const materials = [particleMaterial, coreMaterial, ringMaterial];
   let disposed = false;
+  let cachedRadius = NaN;
+  let cachedSurfaceRadius: number | undefined;
 
   return {
     group,
@@ -197,13 +199,17 @@ export function createCinematicScan(color: number, propagationSpeed = 0.6): {
         ring.position.set(0, length - Math.min(0.025, length * 0.01), 0);
         ring.quaternion.setFromAxisAngle(X_AXIS, Math.PI / 2);
       }
-      for (let i = 0; i < ringPositions.count; i++) {
-        const x = (ringUV.getX(i) * 2 - 1) * span, y = (ringUV.getY(i) * 2 - 1) * span;
-        const project = surface ? surface.radius / Math.hypot(x, y, surface.radius) : 1;
-        ringPositions.setXYZ(i, x * project, y * project, surface ? surface.radius * (project - 1) : 0);
+      if (radius !== cachedRadius || surface?.radius !== cachedSurfaceRadius) {
+        for (let i = 0; i < ringPositions.count; i++) {
+          const x = (ringUV.getX(i) * 2 - 1) * span, y = (ringUV.getY(i) * 2 - 1) * span;
+          const project = surface ? surface.radius / Math.hypot(x, y, surface.radius) : 1;
+          ringPositions.setXYZ(i, x * project, y * project, surface ? surface.radius * (project - 1) : 0);
+        }
+        ringPositions.needsUpdate = true;
+        ringBounds.radius = Math.SQRT2 * span;
+        cachedRadius = radius;
+        cachedSurfaceRadius = surface?.radius;
       }
-      ringPositions.needsUpdate = true;
-      ringBounds.radius = Math.SQRT2 * span;
       for (const material of materials) {
         material.uniforms.time.value = time;
         material.uniforms.strength.value = strength;

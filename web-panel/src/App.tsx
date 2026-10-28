@@ -1,32 +1,34 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { ConfigProvider, App as AntApp, theme as antTheme, message } from 'antd';
+import { ConfigProvider, App as AntApp, theme as antTheme, message, Spin } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import enUS from 'antd/locale/en_US';
-import MainLayout from '@/layouts/MainLayout';
 import { useThemeStore } from '@/stores/settings';
 import { themeTokens } from './theme/tokens';
 import { darkTheme } from './theme/dark';
 import { lightTheme } from './theme/light';
 
-import Dashboard from '@/pages/Dashboard';
-import DataLake from '@/pages/DataLake';
-import DataExplorer from '@/pages/DataExplorer';
-import Monitoring from '@/pages/Monitoring';
-import Pipeline from '@/pages/Pipeline';
-import AICollect from '@/pages/AICollect';
-import AICollectGovernance from '@/pages/AICollectGovernance';
-import LogExplorer from '@/pages/LogExplorer';
-import WorkspacePage from '@/pages/WorkspacePage';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/Login/ResetPassword';
-import DataGraph from '@/pages/DataGraph';
-import Organization from '@/pages/Organization';
-import AutomationCenter from '@/pages/AutomationCenter';
-import AccountSettings from '@/pages/AccountSettings';
-import SystemSettings from '@/pages/SystemSettings';
-import FAQ from '@/pages/FAQ';
-import Legal from '@/pages/Legal';
 import AuthLayout from '@/pages/Login/AuthLayout';
+
+const MainLayout = lazy(() => import('@/layouts/MainLayout'));
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const DataLake = lazy(() => import('@/pages/DataLake'));
+const DataExplorer = lazy(() => import('@/pages/DataExplorer'));
+const Monitoring = lazy(() => import('@/pages/Monitoring'));
+const Pipeline = lazy(() => import('@/pages/Pipeline'));
+const AICollect = lazy(() => import('@/pages/AICollect'));
+const AICollectGovernance = lazy(() => import('@/pages/AICollectGovernance'));
+const LogExplorer = lazy(() => import('@/pages/LogExplorer'));
+const WorkspacePage = lazy(() => import('@/pages/WorkspacePage'));
+const DataGraph = lazy(() => import('@/pages/DataGraph'));
+const Organization = lazy(() => import('@/pages/Organization'));
+const AutomationCenter = lazy(() => import('@/pages/AutomationCenter'));
+const AccountSettings = lazy(() => import('@/pages/AccountSettings'));
+const SystemSettings = lazy(() => import('@/pages/SystemSettings'));
+const FAQ = lazy(() => import('@/pages/FAQ'));
+const Legal = lazy(() => import('@/pages/Legal'));
 
 const App: React.FC = () => {
   const { mode, language } = useThemeStore();
@@ -64,6 +66,7 @@ const App: React.FC = () => {
         ) : !localStorage.getItem('access_token') && !localStorage.getItem('refresh_token') ? (
           <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`} replace />
         ) : (
+          <Suspense fallback={<div role="status" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>正在加载页面...</span></div>}>
           <MainLayout>
           <Routes>
             <Route path="/" element={<Dashboard />} />
@@ -126,6 +129,7 @@ const App: React.FC = () => {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
           </MainLayout>
+          </Suspense>
         )}
       </AntApp>
     </ConfigProvider>
