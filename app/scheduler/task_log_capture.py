@@ -21,8 +21,9 @@ _CELERY_CONSOLE_FORMATTER = logging.Formatter(
     "[%(asctime)s: %(levelname)s/%(processName)s] %(message)s"
 )
 # Progress lines are rewritten in place so a download shows ONE live bar row
-# instead of one row per refresh; the finished line is kept as a normal row.
-PROGRESS_LINE_PREFIXES = ("download progress:",)
+# instead of one row per refresh; the finished line rewrites that same row so
+# the row's message simply flips to the finished summary when the download ends.
+PROGRESS_LINE_PREFIXES = ("download progress:", "download finished:")
 
 
 class TaskLogCapture(logging.Handler):
