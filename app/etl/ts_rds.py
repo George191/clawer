@@ -156,11 +156,31 @@ class TsRds(ETLBase):
             results = []
             async with self._pg.session() as session:
                 await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
-                for payload in prepared:
-                    if not self._batch_owned(owner, partition):
-                        raise RuntimeError("RDS batch assignment changed before commit")
-                    row = (await session.execute(current_sql, payload)).mappings().first()
-                    results.append(dict(row) if row else None)
+                identity = lambda row: tuple(row[key] for key in ("record_id", "data_source", "data_type"))
+                identities = [identity(payload) for payload in prepared]
+                if len(set(identities)) == len(prepared):
+                    # One statement for distinct identities. Stable lock order;
+                    # RETURNING order is not assumed to match input order.
+                    ordered = sorted(prepared, key=identity)
+                    parameters = {
+                        f"{key}_{index}": value
+                        for index, payload in enumerate(ordered)
+                        for key, value in payload.items()
+                    }
+                    sql = current_insert_sql("rds", table, table_columns("rds", table), row_count=len(ordered))
+                    rows = (await session.execute(text(sql), parameters)).mappings().all()
+                    by_identity = {identity(row): dict(row) for row in rows}
+                    if len(by_identity) != len(rows) or not by_identity.keys() <= set(identities):
+                        raise ValueError("Unexpected RDS batch RETURNING identities")
+                    results = [by_identity.get(key) for key in identities]
+                else:
+                    # PostgreSQL cannot update the same key twice in one UPSERT.
+                    # Keep the original message/version order for duplicates.
+                    for payload in prepared:
+                        if not self._batch_owned(owner, partition):
+                            raise RuntimeError("RDS batch assignment changed before commit")
+                        row = (await session.execute(current_sql, payload)).mappings().first()
+                        results.append(dict(row) if row else None)
                 if not self._batch_owned(owner, partition):
                     raise RuntimeError("RDS batch assignment changed before commit")
         except Exception:

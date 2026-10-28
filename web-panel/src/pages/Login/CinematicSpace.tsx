@@ -305,6 +305,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     }
     const flybyForecast = new THREE.Group();
     flybyForecast.scale.setScalar(flybyNearScale);
+    const viewFrustum = new THREE.Frustum(), viewProjection = new THREE.Matrix4(), forecastSphere = new THREE.Sphere();
     function updateVisibility(time: number) {
       const objects = [...models, flyby];
       const points = objects.map(model => marker(model, true));
@@ -314,11 +315,18 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
           flybyPosition(time + ahead, flybyForecast.position);
           const next = marker(flybyForecast, true);
           const current = points[models.length];
+          const radius = 5.1 * 1.05 * flybyNearScale;
+          if (!next && camera.position.z - flybyForecast.position.z <= camera.near + radius
+            && viewFrustum.intersectsSphere(forecastSphere.set(flybyForecast.position, radius))) {
+            points[models.length] = { x: width / 2, y: height / 2, radius: Math.hypot(width, height), foreground: false, clean: false };
+            break;
+          }
           if (!next) continue;
           if (!current) { points[models.length] = next; continue; }
           const left = Math.min(current.x - current.radius, next.x - next.radius), right = Math.max(current.x + current.radius, next.x + next.radius);
           const top = Math.min(current.y - current.radius, next.y - next.radius), bottom = Math.max(current.y + current.radius, next.y + next.radius);
-          points[models.length] = { ...current, x: (left + right) / 2, y: (top + bottom) / 2, radius: Math.max(right - left, bottom - top) / 2 };
+          const x = (left + right) / 2, y = (top + bottom) / 2;
+          points[models.length] = { ...current, x, y, radius: Math.max(Math.hypot(current.x - x, current.y - y) + current.radius, Math.hypot(next.x - x, next.y - y) + next.radius) };
         }
       }
       const gap = Math.max(90, Math.min(170, Math.min(width, height) * .12));
@@ -329,7 +337,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       // Keep admitted satellites stable; the close flyby gets room for its passage.
       candidates.sort((a, b) => Number(b === models.length) - Number(a === models.length)
         || Number(appearances[b].wanted) - Number(appearances[a].wanted) || appearances[b].alpha - appearances[a].alpha || a - b);
-      const limit = Math.min(width < 1280 ? 3 : width >= 2200 ? 5 : 4, 2 + Math.floor(Math.max(0, time - openingTime) / 18));
+      const limit = Math.min(width < 1280 ? 3 : width >= 2200 ? 5 : 4, 2 + Math.floor(Math.max(0, time - openingTime) / 12));
       const selected: number[] = [];
       for (const index of candidates) {
         if (selected.length < limit && selected.every(other => !overlaps(index, other, appearances[index].wanted ? 0 : 30))) selected.push(index);
@@ -452,6 +460,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld();
+      viewFrustum.setFromProjectionMatrix(viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
       veil!.width = Math.round(width * dpr);
       veil!.height = Math.round(height * dpr);
       veilCtx!.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -522,7 +531,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
           for (const b of openingCandidates) {
             if (a.index === b.index) continue;
             if (Math.hypot(a.x - b.x, a.y - b.y) < a.radius + b.radius + gap) continue;
-            let score = a.x < width * .55 && a.foreground || b.x < width * .55 && b.foreground ? 0 : 1000;
+            let score = a.x < width * .42 && a.foreground || b.x < width * .42 && b.foreground ? 0 : 1000;
             if (a.x > width * .5 && b.x > width * .5) score += 5000;
             if (Math.abs(a.x - b.x) < width * .26 && Math.abs(a.y - b.y) < height * .34) score += 500;
             if (a.foreground && b.foreground) score += 50;
@@ -550,7 +559,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         [waiting[i], waiting[j]] = [waiting[j], waiting[i]];
       }
       openingPair.forEach(index => { appearances[index].revealAt = openingTime; appearances[index].alpha = 1; appearances[index].wanted = true; });
-      waiting.forEach((index, order) => { appearances[index].revealAt = openingTime + 14 + order * 10 + Math.random() * 4; });
+      waiting.forEach((index, order) => { appearances[index].revealAt = openingTime + 8 + order * 8 + Math.random() * 4; });
       appearances[models.length].revealAt = openingTime + 30 + Math.random() * 12;
       // Place later arrivals into natural visibility windows, covering gaps ahead.
       const coverage: NonNullable<ReturnType<typeof marker>>[][] = Array.from({ length: 76 }, () => []);

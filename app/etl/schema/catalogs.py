@@ -726,21 +726,27 @@ def current_table_ddl(
     return ddl
 
 
-def current_insert_sql(layer: str, table: str, columns: dict[str, str]) -> str:
+def current_insert_sql(layer: str, table: str, columns: dict[str, str], *, row_count: int = 1) -> str:
     validate_table_name(table)
     if layer not in {"rds", "ods"}:
         raise ValueError(f"Unsupported current-table layer: {layer}")
+    if not 1 <= row_count <= 50:
+        raise ValueError("Current-table SQL requires 1 to 50 rows")
     names = ", ".join(f'"{column}"' for column in columns)
-    values = []
-    for column, definition in columns.items():
-        sql_type = definition.split()[0].lower()
-        if sql_type.startswith("geography"):
-            value = f"ST_GeogFromText(NULLIF(BTRIM(CAST(:{column} AS text)), ''))"
-        elif sql_type in {"jsonb", "date", "timestamptz"}:
-            value = f"CAST(:{column} AS {sql_type})"
-        else:
-            value = f":{column}"
-        values.append(value)
+    rows = []
+    for row in range(row_count):
+        values = []
+        for column, definition in columns.items():
+            parameter = f"{column}_{row}" if row_count > 1 else column
+            sql_type = definition.split()[0].lower()
+            if sql_type.startswith("geography"):
+                value = f"ST_GeogFromText(NULLIF(BTRIM(CAST(:{parameter} AS text)), ''))"
+            elif sql_type in {"jsonb", "date", "timestamptz"}:
+                value = f"CAST(:{parameter} AS {sql_type})"
+            else:
+                value = f":{parameter}"
+            values.append(value)
+        rows.append(f"({', '.join(values)})")
     updates = ", ".join(
         f'"{column}" = EXCLUDED."{column}"'
         for column in columns
@@ -756,7 +762,7 @@ def current_insert_sql(layer: str, table: str, columns: dict[str, str]) -> str:
             )
         guard = f"WHERE {version('target')} <= {version('EXCLUDED')}\n"
     return (
-        f"INSERT INTO ts_{layer}.{layer}_{table}{alias} ({names}) VALUES ({', '.join(values)})\n"
+        f"INSERT INTO ts_{layer}.{layer}_{table}{alias} ({names}) VALUES {', '.join(rows)}\n"
         f"ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET {updates}\n"
         f"{guard}"
         "RETURNING *"
