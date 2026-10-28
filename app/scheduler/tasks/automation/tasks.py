@@ -22,7 +22,7 @@ async def _dispatch_due_tasks() -> dict[str, int]:
         try:
             dispatch_run(task)
             await automation_task_store.append_task_log(
-                task_id, "info", "周期调度已提交到 Celery Worker", run_id=run_id,
+                task_id, "info", "Recurring dispatch submitted to Celery worker", run_id=run_id,
             )
             dispatched += 1
         except Exception:

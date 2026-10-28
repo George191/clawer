@@ -116,11 +116,11 @@ class SyncConfig:
         try:
             import yaml
         except ImportError as e:
-            raise ImportError("PyYAML 未安装，请执行: pip install pyyaml") from e
+            raise ImportError("PyYAML is not installed. Install it with: pip install pyyaml") from e
 
         path = Path(path)
         if not path.exists():
-            raise FileNotFoundError(f"ES 同步器配置文件不存在: {path}")
+            raise FileNotFoundError(f"ES syncer config file not found: {path}")
 
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         config = cls.from_settings()

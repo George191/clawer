@@ -98,7 +98,7 @@ class SyncWorker:
             await ai_collect_store.increment_run_stats(task_id, run_id, synced=count)
             record = logger.makeRecord(
                 logger.name, logging.INFO, __file__, 0,
-                "[task=%s run=%s] Kafka 发布已确认：records=%d batch_records=%d；RDS/ODS 异步消费",
+                "[task=%s run=%s] Kafka publish acknowledged: records=%d batch_records=%d; RDS/ODS consume asynchronously",
                 (task_id, run_id, count, len(ready)), None,
             )
             await ai_collect_store.append_task_logs(task_id, [{
