@@ -932,6 +932,7 @@ const templateKindHints: Record<string, SiteKind> = {
   breakingdefense: 'news',
   clearspace: 'news',
   cve_project: 'vulnerability',
+  ddlregistry: 'system',
   defenseone: 'news',
   esa_discos_fragmentations: 'debrisevents',
   esa_discos_launch_vehicles: 'launchvehicles',
@@ -948,11 +949,13 @@ const templateKindHints: Record<string, SiteKind> = {
   launch_ussf: 'launchinfo',
   mike_mccants: 'orbital',
   nanosats: 'satellite',
+  navwarn: 'warning',
   newspace: 'constellation',
   nga: 'warning',
   nvd: 'vulnerability',
   nvd_api: 'vulnerability',
   nvd_feed: 'vulnerability',
+  organization: 'organizations',
   planet: 'intelligence',
   planet_investors: 'news',
   planet_pulse: 'news',
@@ -965,6 +968,11 @@ const templateKindHints: Record<string, SiteKind> = {
   satnogs_transmitters: 'frequency',
   sealagom: 'warning',
   sec_edgar: 'financial_report',
+  social_account: 'social_media',
+  social_content: 'social_media',
+  social_content_hashtag: 'social_media',
+  social_hashtag: 'social_media',
+  social_interaction: 'social_media',
   space_com: 'news',
   space_launch_now: 'launchinfo',
   space_launch_now_launches: 'launchinfo',
@@ -974,6 +982,8 @@ const templateKindHints: Record<string, SiteKind> = {
   starlink: 'groundstations',
   stk: 'satellite',
   thespacedevs: 'news',
+  tweet: 'social_media',
+  twitter: 'social_media',
   unseenlabs: 'news',
   usaspending: 'contract',
   wikipedia_nro: 'launchinfo',
@@ -985,22 +995,29 @@ const templateKindHints: Record<string, SiteKind> = {
 
 export const inferSiteKind = (value: string, fallback?: string): SiteKind => {
   const text = value.replace(/@.*$/, '').trim().toLowerCase();
-  if (Object.prototype.hasOwnProperty.call(siteKindMeta, text)) return text as SiteKind;
+  // Layer tables carry warehouse prefixes and partition suffixes
+  // (ods_contract_p31); strip them so hints/SiteKind lookup still hits.
+  const stripped = text
+    .replace(/^(ods|raw|dwd|dim|ads|stg|etl|tmp|dw|dm)_/, '')
+    .replace(/_p\d{1,3}$/, '');
   if (text === 'other') return 'generic';
-  if (Object.prototype.hasOwnProperty.call(templateKindHints, text)) return templateKindHints[text];
-  if (Object.prototype.hasOwnProperty.call(siteProfileRegistry, text)) return siteProfileRegistry[text].kind;
-  const namedKind = (Object.keys(siteKindMeta) as SiteKind[]).find((kind) => (
-    text.startsWith(`${kind}_`) || text.endsWith(`_${kind}`)
-  ));
-  if (namedKind) return namedKind;
-  if (/financial[_\s-]*report/.test(text)) return 'financial_report';
-  if (/social[_\s-]*media|twitter|tweet|社交媒体/.test(text)) return 'social_media';
-  if (text.includes('game') || text.includes('游戏')) return 'game';
-  if (text.includes('patent') || text.includes('专利')) return 'patent';
-  if (text.includes('warn') || text.includes('warning') || text.includes('告警')) return 'warning';
-  if (text.includes('notice') || text.includes('news') || text.includes('公告') || text.includes('新闻')) return 'news';
-  if (text.includes('signal') || text.includes('quality') || text.includes('质量')) return 'signal';
-  if (text.includes('market') || text.includes('intel') || text.includes('情报') || text.includes('pdf') || text.includes('document')) return 'intelligence';
+  for (const key of [text, stripped]) {
+    if (Object.prototype.hasOwnProperty.call(siteKindMeta, key)) return key as SiteKind;
+    if (Object.prototype.hasOwnProperty.call(templateKindHints, key)) return templateKindHints[key];
+    if (Object.prototype.hasOwnProperty.call(siteProfileRegistry, key)) return siteProfileRegistry[key].kind;
+    const namedKind = (Object.keys(siteKindMeta) as SiteKind[]).find((kind) => (
+      key.startsWith(`${kind}_`) || key.endsWith(`_${kind}`)
+    ));
+    if (namedKind) return namedKind;
+  }
+  if (/financial[_\s-]*report/.test(stripped)) return 'financial_report';
+  if (/social[_\s-]*media|twitter|tweet|社交媒体/.test(stripped)) return 'social_media';
+  if (stripped.includes('game') || stripped.includes('游戏')) return 'game';
+  if (stripped.includes('patent') || stripped.includes('专利')) return 'patent';
+  if (stripped.includes('warn') || stripped.includes('warning') || stripped.includes('告警')) return 'warning';
+  if (stripped.includes('notice') || stripped.includes('news') || stripped.includes('公告') || stripped.includes('新闻')) return 'news';
+  if (stripped.includes('signal') || stripped.includes('quality') || stripped.includes('质量')) return 'signal';
+  if (stripped.includes('market') || stripped.includes('intel') || stripped.includes('情报') || stripped.includes('pdf') || stripped.includes('document')) return 'intelligence';
   return fallback ? inferSiteKind(fallback) : 'generic';
 };
 

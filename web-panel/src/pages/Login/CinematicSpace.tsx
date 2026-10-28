@@ -107,7 +107,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     const stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
 
-    // A shared period keeps the staggered handoffs from drifting into a visual gap.
+    // Distinct orbital planes and signed speeds keep the constellation dispersed.
     const orbitLanes = [
       { radiusFactor: 1.10, inclination: -1.35, tilt: .30, phase: .47, angularSpeed: .0120, scale: .075 },
       { radiusFactor: 1.16, inclination: -1.30, tilt: .34, phase: 1.41, angularSpeed: .0120, scale: .050 },
@@ -224,7 +224,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       scene.add(line);
       return line;
     });
-    const laneAxes = orbitLanes.map(() => ({ u: new THREE.Vector3(), v: new THREE.Vector3() }));
+    const laneAxes = orbitLanes.map(() => ({ u: new THREE.Vector3(), v: new THREE.Vector3(), normal: new THREE.Vector3() }));
     const laneRadii = orbitLanes.map(() => 1);
     const viewNormal = new THREE.Vector3(), viewRight = new THREE.Vector3(), viewUp = new THREE.Vector3(), laneSide = new THREE.Vector3();
     const orbitPoint = (phase: number, index: number) => new THREE.Vector3().copy(laneAxes[index].u).multiplyScalar(Math.cos(phase))
@@ -269,6 +269,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         const lane = orbitLanes[index];
         const signal = signals[index % signals.length];
         model.position.copy(orbitPoint(lane.phase + time * lane.angularSpeed, index));
+        model.up.copy(laneAxes[index].normal);
         model.lookAt(earth.group.position);
         model.rotateZ(Math.sin(time * .05 + index) * .1);
         updateCinematicSatellite(model, time);
@@ -376,6 +377,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         laneAxes[index].u.copy(viewRight).multiplyScalar(c).addScaledVector(viewUp, s);
         laneSide.copy(viewRight).multiplyScalar(-s).addScaledVector(viewUp, c);
         laneAxes[index].v.copy(laneSide).multiplyScalar(Math.cos(lane.tilt)).addScaledVector(viewNormal, Math.sin(lane.tilt));
+        laneAxes[index].normal.crossVectors(laneAxes[index].u, laneAxes[index].v).normalize().multiplyScalar(Math.sign(lane.angularSpeed));
         const shieldRadius = lane.scale * 5.1 * 1.05;
         const previousClearance = index ? laneRadii[index - 1] + orbitLanes[index - 1].scale * 5.1 * 1.05 + shieldRadius + .08 : 0;
         laneRadii[index] = Math.max(earthRadius * lane.radiusFactor, earthRadius * 1.006 + shieldRadius + .15, previousClearance);
