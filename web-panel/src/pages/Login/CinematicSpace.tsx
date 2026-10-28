@@ -109,7 +109,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
 
     // Distinct orbital planes and signed speeds keep the constellation dispersed.
     const orbitLanes = [
-      { radiusFactor: 1.10, inclination: -.20, tilt: 1.10, phase: 5.884, angularSpeed: .0120, scale: .075 },
+      { radiusFactor: 1.10, inclination: -.20, tilt: 1.10, phase: 1.20, angularSpeed: .0120, scale: .075 },
       { radiusFactor: 1.16, inclination: -1.30, tilt: .30, phase: 1.553, angularSpeed: -.0120, scale: .050 },
       { radiusFactor: 1.22, inclination: -1.40, tilt: .34, phase: 4.531, angularSpeed: .0120, scale: .048 },
       { radiusFactor: 1.28, inclination: 1.10, tilt: 1.16, phase: 3.095, angularSpeed: -.0105, scale: .046 },
