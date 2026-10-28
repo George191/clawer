@@ -250,6 +250,14 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         .addScaledVector(orbitU, semiMajor * (Math.cos(eccentricAnomaly) - eccentricity))
         .addScaledVector(orbitV, semiMinor * Math.sin(eccentricAnomaly));
     }
+    function flybyPosition(time: number, out: THREE.Vector3) {
+      const meanAnomaly = (flybyStartMean - time / flybyPeriod * Math.PI * 2) % (Math.PI * 2);
+      let eccentricAnomaly = meanAnomaly;
+      for (let i = 0; i < 6; i++) {
+        eccentricAnomaly -= (eccentricAnomaly - eccentricity * Math.sin(eccentricAnomaly) - meanAnomaly) / (1 - eccentricity * Math.cos(eccentricAnomaly));
+      }
+      return flybyPoint(eccentricAnomaly, out);
+    }
 
     const local = new THREE.Vector3();
     const target = new THREE.Vector3();
@@ -295,9 +303,24 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         clean: left >= 20 && right <= width - 20 && top >= 20 && bottom <= height - 20
           && !blockedBounds.some(rect => right > rect.x - 20 && left < rect.x + rect.width + 20 && bottom > rect.y - 20 && top < rect.y + rect.height + 20) };
     }
+    const flybyForecast = new THREE.Group();
+    flybyForecast.scale.setScalar(flybyNearScale);
     function updateVisibility(time: number) {
       const objects = [...models, flyby];
       const points = objects.map(model => marker(model, true));
+      if (width >= 1280 && time >= appearances[models.length].revealAt) {
+        // Reserve the next passage before the fast, growing foreground station arrives.
+        for (const ahead of [1.25, 2.5]) {
+          flybyPosition(time + ahead, flybyForecast.position);
+          const next = marker(flybyForecast, true);
+          const current = points[models.length];
+          if (!next) continue;
+          if (!current) { points[models.length] = next; continue; }
+          const left = Math.min(current.x - current.radius, next.x - next.radius), right = Math.max(current.x + current.radius, next.x + next.radius);
+          const top = Math.min(current.y - current.radius, next.y - next.radius), bottom = Math.max(current.y + current.radius, next.y + next.radius);
+          points[models.length] = { ...current, x: (left + right) / 2, y: (top + bottom) / 2, radius: Math.max(right - left, bottom - top) / 2 };
+        }
+      }
       const gap = Math.max(90, Math.min(170, Math.min(width, height) * .12));
       const overlaps = (a: number, b: number, padding = 0) => !!points[a] && !!points[b]
         && Math.hypot(points[a]!.x - points[b]!.x, points[a]!.y - points[b]!.y) < points[a]!.radius + points[b]!.radius + gap + padding;
@@ -347,12 +370,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       });
 
       // Kepler's equation keeps this closed orbit continuous and faster near Earth.
-      const meanAnomaly = (flybyStartMean - time / flybyPeriod * Math.PI * 2) % (Math.PI * 2);
-      let eccentricAnomaly = meanAnomaly;
-      for (let i = 0; i < 6; i++) {
-        eccentricAnomaly -= (eccentricAnomaly - eccentricity * Math.sin(eccentricAnomaly) - meanAnomaly) / (1 - eccentricity * Math.cos(eccentricAnomaly));
-      }
-      flybyPoint(eccentricAnomaly, flyby.position);
+      flybyPosition(time, flyby.position);
       const cameraDistance = camera.position.distanceTo(flyby.position);
       const tangent = Math.tan(THREE.MathUtils.degToRad(camera.fov * .5));
       const focal = height / (2 * tangent);
@@ -495,9 +513,9 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       let bestPhases = orbitLanes.map(lane => lane.phase);
       let openingPair: number[] = [];
       const openingCandidates: (ReturnType<typeof markers>[number] & { phase: number })[] = [];
+      const phaseOffsets = orbitLanes.map(() => Math.random() * Math.PI * 2);
       for (let attempt = 0; attempt < 96; attempt++) {
-        // More of the waiting constellation starts on the rear hemisphere.
-        orbitLanes.forEach(lane => { lane.phase = Math.random() < .65 ? Math.PI * (1 + Math.random()) : Math.random() * Math.PI * 2; });
+        orbitLanes.forEach((lane, index) => { lane.phase = (phaseOffsets[index] + attempt / 96 * Math.PI * 2) % (Math.PI * 2); });
         paint(openingTime, false);
         const points = markers().filter(point => point.clean).map(point => ({ ...point, phase: orbitLanes[point.index].phase }));
         for (const a of points) {
@@ -534,6 +552,39 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       openingPair.forEach(index => { appearances[index].revealAt = openingTime; appearances[index].alpha = 1; appearances[index].wanted = true; });
       waiting.forEach((index, order) => { appearances[index].revealAt = openingTime + 14 + order * 10 + Math.random() * 4; });
       appearances[models.length].revealAt = openingTime + 30 + Math.random() * 12;
+      // Place later arrivals into natural visibility windows, covering gaps ahead.
+      const coverage: NonNullable<ReturnType<typeof marker>>[][] = Array.from({ length: 76 }, () => []);
+      const sampleLane = (index: number, phase: number, slot: number) => {
+        const time = openingTime + slot * 8;
+        if (time < appearances[index].revealAt) return;
+        models[index].position.copy(orbitPoint(phase + time * orbitLanes[index].angularSpeed, index));
+        const point = marker(models[index]);
+        return point?.clean ? point : undefined;
+      };
+      for (const index of openingPair) {
+        coverage.forEach((points, slot) => { const point = sampleLane(index, orbitLanes[index].phase, slot); if (point) points.push(point); });
+      }
+      for (const index of waiting) {
+        const offset = Math.random() * Math.PI * 2;
+        let chosenPhase = orbitLanes[index].phase, chosenScore = -Infinity;
+        let chosenPoints: ReturnType<typeof marker>[] = [];
+        for (let candidate = 0; candidate < 32; candidate++) {
+          const phase = (offset + candidate / 32 * Math.PI * 2) % (Math.PI * 2);
+          const rear = Math.sin(phase + openingTime * orbitLanes[index].angularSpeed) < 0;
+          let score = rear ? 3 : 0;
+          const samples = coverage.map((points, slot) => {
+            const point = sampleLane(index, phase, slot);
+            if (point && points.every(other => Math.hypot(point.x - other.x, point.y - other.y) >= point.radius + other.radius + gap)) {
+              score += (points.length === 0 ? 10 : points.length === 1 ? 2 : -2) * (slot <= 15 ? 2 : 1);
+              return point;
+            }
+          });
+          if (score > chosenScore) { chosenScore = score; chosenPhase = phase; chosenPoints = samples; }
+          if (candidate % 8 === 7) { await yieldTask(); if (disposed) return; }
+        }
+        orbitLanes[index].phase = chosenPhase;
+        chosenPoints.forEach((point, slot) => { if (point) coverage[slot].push(point); });
+      }
       paint(openingTime, false);
       let flybyChosen = false;
       for (let attempt = 0; attempt < 32; attempt++) {
