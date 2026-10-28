@@ -13,7 +13,7 @@
 .sp-login-graph { position: relative; min-height: 720px; overflow: visible; background: transparent; }
 .sp-login-copy { position: absolute; z-index: 2; left: clamp(36px, 7vw, 112px); right: 7%; bottom: 10%; max-width: none; }
 .sp-login-copy { animation: sp-auth-copy-enter .2s ease-out both; text-shadow: 0 2px 18px rgba(0,0,0,.8); }
-.sp-login-brand, .sp-login-eyebrow { color: #8ab4ff !important; font-size: 12px; letter-spacing: .16em; font-weight: 700; }
+.sp-login-brand, .sp-login-eyebrow { color: #2dd4bf !important; font-size: 12px; letter-spacing: .16em; font-weight: 700; }
 .sp-login-copy h1 { color: #f5f7fb; font-size: clamp(28px, 2.3vw, 44px); margin: 22px 0 4px; letter-spacing: -.045em; line-height: 1.15; }
 .sp-login-copy p { color: #a8b4c6; font-size: 16px; line-height: 1.8; max-width: 580px; }
 .sp-login-domain-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
@@ -51,9 +51,9 @@
 .sp-recovery-progress span { height: 2px; border-radius: 2px; background: rgba(138,180,255,.13); transition: background .25s ease, box-shadow .25s ease; }
 .sp-recovery-progress span.is-active { background: linear-gradient(90deg, #018bff, #2dd4bf); box-shadow: 0 0 10px rgba(1,139,255,.3); }
 .sp-login-form-wrap .sp-verification-code { height: 54px; border-color: rgba(138,180,255,.14); border-radius: 6px; background: rgba(12,15,21,.72); text-align: center; color: #55c5ff; font-family: "Courier New", monospace; font-size: 24px; font-weight: 700; letter-spacing: .45em; padding-left: .45em; }
-.sp-recovery-back { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 20px; color: #8ab4ff; font-size: 12px; }
+.sp-recovery-back { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 20px; color: #2dd4bf; font-size: 12px; }
 .sp-login-form-wrap { animation: sp-auth-form-enter .22s ease-out both; }
-.sp-reset-password .sp-login-form-wrap .ant-btn-link { margin-top: 8px; color: #8ab4ff; font-size: 12px; }
+.sp-reset-password .sp-login-form-wrap .ant-btn-link { margin-top: 8px; color: #2dd4bf; font-size: 12px; }
 .sp-reset-password .sp-login-form-wrap .ant-btn-link:disabled { color: #687386; }
 @keyframes sp-auth-copy-enter { from { opacity: .35; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes sp-auth-form-enter { from { opacity: .45; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -70,6 +70,12 @@
 .sp-sso-button { height: 36px; }
 .sp-login-options { font-size: 12px; }
 .sp-login-options .ant-checkbox + span { font-size: 12px; padding-inline-start: 7px; }
+.sp-login-options a { color: #2dd4bf; }
+.sp-login-options a:hover { color: #5eead4; }
+/* Compact 14px checkbox, custom centered check mark */
+.sp-login-options .ant-checkbox-inner { width: 14px; height: 14px; border-radius: 3px; }
+.sp-login-options .ant-checkbox-inner:after { top: 50%; left: 50%; margin: 0; width: 5px; height: 8px; border: solid #fff; border-width: 0 1.5px 1.5px 0; transform: translate(-50%, -56%) rotate(45deg) scale(0); }
+.sp-login-options .ant-checkbox-checked .ant-checkbox-inner:after { opacity: 1; transform: translate(-50%, -56%) rotate(45deg) scale(1); }
 @media (max-width: 960px) { .sp-login { display: block; background: #070d16; } .sp-login-space, .sp-login-graph, .sp-login-background-loader { display: none; } .sp-login-panel { min-height: 100%; } }
 @media (max-width: 760px) { .sp-login-panel { padding: 24px 18px; } .sp-login-form-wrap { padding: 26px 22px 24px; }.sp-login-form-brand { gap: 10px; }.sp-login-form-wrap h2 { font-size: clamp(22px, 6vw, 28px); }.sp-login-options { gap: 12px; font-size: 12px; }.sp-login-security-note { text-align: center; line-height: 1.6; } }
 @media (prefers-reduced-motion: reduce) { .sp-login-copy, .sp-login-form-wrap, .sp-login-background-loader ~ .sp-login-space, .sp-login-background-loader .sp-auth-loading-satellite { animation: none !important; } .sp-login-background-loader .sp-auth-loading-satellite { will-change: auto; } .sp-login-background-loader, .sp-login:has(> .sp-login-background-loader) > :is(.sp-login-graph, .sp-login-panel) { transition: none !important; } }
