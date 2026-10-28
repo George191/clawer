@@ -21,6 +21,15 @@ const AuthBackground = () => {
   const [ready, setReady] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const active = React.useRef(true);
+  const orbitRef = React.useRef<HTMLImageElement>(null);
+  React.useLayoutEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const epoch = Number.parseFloat(document.documentElement.style.getPropertyValue('--sp-auth-orbit-epoch'));
+    const animation = orbitRef.current?.getAnimations()[0];
+    if (!Number.isFinite(epoch) || !animation?.effect) return;
+    const delay = animation.effect.getTiming().delay;
+    if (typeof delay === 'number') animation.startTime = epoch - delay;
+  }, []);
   // LOADING_QA_START
   React.useEffect(() => {
     if (ready) return;
@@ -67,7 +76,7 @@ const AuthBackground = () => {
     <div className={`sp-login-background-loader${ready ? ' is-ready' : ''}`} role="status" aria-live="polite">
       <div className="sp-auth-loading-stage" aria-hidden="true">
         <img className="sp-auth-loading-earth" src="/space/auth-loading.svg" width="148" height="148" alt="" />
-        <img className="sp-auth-loading-satellite" src="/space/auth-loading-satellite.svg" width="148" height="148" alt="" style={{ animationDelay: `${orbitDelay}ms` }} />
+        <img ref={orbitRef} className="sp-auth-loading-satellite" src="/space/auth-loading-satellite.svg" width="148" height="148" alt="" style={{ animationDelay: `${orbitDelay}ms` }} />
       </div>
       <span>Preparing orbital view</span>
     </div>
