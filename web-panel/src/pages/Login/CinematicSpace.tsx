@@ -31,6 +31,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
     let elapsed = 0;
     let lastTime = performance.now();
     let lastPaint = 0;
+    const flybyPeriod = 72;
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(42, 1, .1, 1600);
@@ -67,7 +68,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
     room.dispose();
     pmrem.dispose();
 
-    function sceneTime() { return motion.matches && elapsed === 0 ? 2.38 : elapsed; }
+    function sceneTime() { return motion.matches && elapsed === 0 ? flybyPeriod * .05 : elapsed; }
     function repaint() { if (!disposed && motion.matches) paint(sceneTime()); }
     const textureBudget = canvas.clientWidth * Math.min(window.devicePixelRatio || 1, 2) >= 1920 ? 8192 : 4096;
     const earth = createCinematicEarth(sunDirection, repaint, {
@@ -99,14 +100,24 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
     const stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
 
-    const models = [createCinematicSatellite(), createCinematicSatellite()];
-    models[0].scale.setScalar(.075);
-    models[1].scale.setScalar(.05);
+    const orbitLanes = [
+      { radiusFactor: 1.10, inclination: -1.35, tilt: .30, phase: .47, angularSpeed: .0120, scale: .075 },
+      { radiusFactor: 1.16, inclination: -1.30, tilt: .34, phase: 1.41, angularSpeed: .0122, scale: .050 },
+      { radiusFactor: 1.22, inclination: -1.25, tilt: .38, phase: 2.74, angularSpeed: .0119, scale: .048 },
+      { radiusFactor: 1.28, inclination: -1.40, tilt: .32, phase: 4.24, angularSpeed: .0121, scale: .046 },
+      { radiusFactor: 1.34, inclination: -1.15, tilt: .30, phase: 5.30, angularSpeed: .0118, scale: .044 },
+    ];
+    const models = orbitLanes.map(lane => {
+      const model = createCinematicSatellite();
+      model.scale.setScalar(lane.scale);
+      return model;
+    });
     scene.add(...models);
 
-    const scans = [0x2c6fff, 0x2c6fff, 0x2c6fff].map(createCinematicScan);
+    const flybyScan = createCinematicScan(0x2c6fff, .3);
+    const scans = [...models.map(() => createCinematicScan(0x2c6fff)), flybyScan];
     scans.forEach((scan, index) => {
-      if (index === 2) scan.group.traverse(object => object.layers.enable(1));
+      if (index === models.length) scan.group.traverse(object => object.layers.enable(1));
       scene.add(scan.group);
     });
     const flyby = new THREE.Group();
@@ -123,6 +134,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       model.add(shield.group);
       return shield;
     });
+    const flybyShield = particleShields[models.length];
     flyby.traverse(object => object.layers.enable(1));
     scene.add(flyby);
     let flybyModel: THREE.Group = fallback;
@@ -208,7 +220,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       repaint();
     }, undefined, () => { if (disposed) draco.dispose(); });
 
-    const orbitMaterials = [0x527b91, 0x527f83, 0x5d758d].map(color => new THREE.LineBasicMaterial({ color, transparent: true, opacity: .22, depthWrite: false }));
+    const orbitMaterials = [...orbitLanes.map(() => 0x527b91), 0x5d758d].map((color, index) => new THREE.LineBasicMaterial({ color, transparent: true, opacity: index < models.length ? .1 : .16, depthWrite: false }));
     const orbitLines = orbitMaterials.map(material => {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(193 * 3), 3));
@@ -216,8 +228,11 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       scene.add(line);
       return line;
     });
-    const orbitPoint = (phase: number, index: number) => new THREE.Vector3(Math.cos(phase), Math.sin(phase) * .75, Math.sin(phase) * .66)
-      .applyAxisAngle(new THREE.Vector3(0, 0, 1), index ? .55 : -.6).multiplyScalar(earthRadius * 1.17).add(earth.group.position);
+    const laneAxes = orbitLanes.map(() => ({ u: new THREE.Vector3(), v: new THREE.Vector3() }));
+    const laneRadii = orbitLanes.map(() => 1);
+    const viewNormal = new THREE.Vector3(), viewRight = new THREE.Vector3(), viewUp = new THREE.Vector3(), laneSide = new THREE.Vector3();
+    const orbitPoint = (phase: number, index: number) => new THREE.Vector3().copy(laneAxes[index].u).multiplyScalar(Math.cos(phase))
+      .addScaledVector(laneAxes[index].v, Math.sin(phase)).multiplyScalar(laneRadii[index]).add(earth.group.position);
 
     const eccentricity = .45;
     const orbitU = new THREE.Vector3();
@@ -247,17 +262,19 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       const communication = (time / 6) % 1;
       const signals = [communication < .5 ? Math.sin(communication * Math.PI * 2) ** 2 : 0, communication >= .5 ? Math.sin((communication - .5) * Math.PI * 2) ** 2 : 0];
       models.forEach((model, index) => {
-        model.position.copy(orbitPoint(time * .035 + 1.2 + index * Math.PI, index));
+        const lane = orbitLanes[index];
+        const signal = signals[index % signals.length];
+        model.position.copy(orbitPoint(lane.phase + time * lane.angularSpeed, index));
         model.lookAt(earth.group.position);
         model.rotateZ(Math.sin(time * .05 + index) * .1);
         updateCinematicSatellite(model, time);
         target.copy(model.position).sub(earth.group.position).normalize().multiplyScalar(scanSurface.radius).add(earth.group.position);
-        scans[index].update(model.position, target, time, .42 + signals[index] * .58, 1.1, scanSurface);
-        particleShields[index].update(time + index * 1.3, .8 + signals[index] * .2);
+        scans[index].update(model.position, target, time, .42 + signal * .58, 1.1, scanSurface);
+        particleShields[index].update(time + index * 1.3, .8 + signal * .2);
       });
 
       // Kepler's equation keeps this closed orbit continuous and faster near Earth.
-      const meanAnomaly = (.32 - time / 48 * Math.PI * 2) % (Math.PI * 2);
+      const meanAnomaly = (.32 - time / flybyPeriod * Math.PI * 2) % (Math.PI * 2);
       let eccentricAnomaly = meanAnomaly;
       for (let i = 0; i < 6; i++) {
         eccentricAnomaly -= (eccentricAnomaly - eccentricity * Math.sin(eccentricAnomaly) - meanAnomaly) / (1 - eccentricity * Math.cos(eccentricAnomaly));
@@ -281,9 +298,9 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       flyby.scale.setScalar(Math.min(safeScale, Math.max(flybyNearScale * distanceScale, minimumScale)));
       flyby.visible = width >= 1280;
       target.copy(flyby.position).sub(earth.group.position).normalize().multiplyScalar(scanSurface.radius).add(earth.group.position);
-      scans[2].update(flyby.position, target, time, .52 + signals[0] * .48, 1.55, scanSurface);
-      scans[2].group.visible = flyby.visible && camera.position.z - flyby.position.z > camera.near + .2;
-      particleShields[2].update(time + 2.6, .8 + Math.sqrt(signals[0]) * .2);
+      flybyScan.update(flyby.position, target, time, .52 + signals[0] * .48, 1.55, scanSurface);
+      flybyScan.group.visible = flyby.visible && camera.position.z - flyby.position.z > camera.near + .2;
+      flybyShield.update(time + 2.6, .8 + Math.sqrt(signals[0]) * .2);
       const physicalWidth = 8 * flyby.scale.x;
       stars.rotation.y = time * .0003;
 
@@ -327,6 +344,18 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       earth.group.scale.setScalar(earthRadius);
       scanSurface.radius = earthRadius * 1.0015;
       sun.target.position.copy(earth.group.position);
+      viewNormal.copy(camera.position).sub(earth.group.position).normalize();
+      viewRight.set(1, 0, 0).addScaledVector(viewNormal, -viewNormal.x).normalize();
+      viewUp.crossVectors(viewNormal, viewRight).normalize();
+      orbitLanes.forEach((lane, index) => {
+        const c = Math.cos(lane.inclination), s = Math.sin(lane.inclination);
+        laneAxes[index].u.copy(viewRight).multiplyScalar(c).addScaledVector(viewUp, s);
+        laneSide.copy(viewRight).multiplyScalar(-s).addScaledVector(viewUp, c);
+        laneAxes[index].v.copy(laneSide).multiplyScalar(Math.cos(lane.tilt)).addScaledVector(viewNormal, Math.sin(lane.tilt));
+        const shieldRadius = lane.scale * 5.1 * 1.05;
+        const previousClearance = index ? laneRadii[index - 1] + orbitLanes[index - 1].scale * 5.1 * 1.05 + shieldRadius + .08 : 0;
+        laneRadii[index] = Math.max(earthRadius * lane.radiusFactor, earthRadius * 1.006 + shieldRadius + .15, previousClearance);
+      });
       // Aim periapsis just in front of the camera; the orbital plane crosses the
       // screen from lower left to upper right, while the whole model stays clear.
       flybyNearDistance = Math.max(4.2, height / (2 * tangent) * 8 * flybyNearScale / Math.min(height * .9, width * .56));
@@ -340,7 +369,7 @@ export default function CinematicSpace({ onUnavailable }: { onUnavailable: () =>
       orbitLines.forEach((line, index) => {
         const positions = line.geometry.getAttribute('position') as THREE.BufferAttribute;
         for (let i = 0; i <= 192; i++) {
-          const point = index === 2 ? flybyPoint(i / 192 * Math.PI * 2, local) : orbitPoint(i / 192 * Math.PI * 2, index);
+          const point = index === models.length ? flybyPoint(i / 192 * Math.PI * 2, local) : orbitPoint(i / 192 * Math.PI * 2, index);
           positions.setXYZ(i, point.x, point.y, point.z);
         }
         positions.needsUpdate = true;

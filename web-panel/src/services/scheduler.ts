@@ -1,6 +1,5 @@
 import client from './api';
 import type { ProductDomain, SchedulerTaskConfig, WorkspaceTask } from './types';
-import { formatWorkspaceScheduleLabel } from './taskSchedule';
 
 export const intervalUnitSeconds = { minute: 60, hour: 3600, day: 86400, week: 604800, month: 2592000, second: 1 };
 export type IntervalUnit = keyof typeof intervalUnitSeconds;
@@ -9,8 +8,6 @@ export interface AutomationSchedule extends Omit<SchedulerTaskConfig, 'id'> {
   id?: number | string;
   workspace_task_id?: string;
   workspace_task_canceled?: boolean;
-  workspace_task_status?: WorkspaceTask['status'];
-  workspace_task_owner?: string;
   display_name?: string;
   schedule_label?: string;
   interval_value?: number;
@@ -49,8 +46,6 @@ export const mapWorkspaceSchedules = (tasks: WorkspaceTask[]): AutomationSchedul
         id: task.id,
         workspace_task_id: task.id,
         workspace_task_canceled: task.control_state === 'canceled',
-        workspace_task_status: task.status,
-        workspace_task_owner: task.owner,
         display_name: task.name,
         task_name: task.id,
         task_path: task.task_path || task.template_name || '',
@@ -65,7 +60,9 @@ export const mapWorkspaceSchedules = (tasks: WorkspaceTask[]): AutomationSchedul
         interval_value: interval,
         interval_unit: unit,
         interval_seconds: interval * intervalUnitSeconds[unit],
-        schedule_label: formatWorkspaceScheduleLabel(schedule),
+        schedule_label: mode === 'interval'
+          ? `Every ${interval} ${unit}${interval === 1 ? '' : 's'}`
+          : `Daily at ${hour}:${minute} (Asia/Shanghai)`,
         args: [], kwargs: {}, options: {},
         enabled: task.control_state !== 'canceled' && (typeof schedule.enabled === 'boolean'
           ? schedule.enabled : !['paused', 'completed'].includes(task.status)),

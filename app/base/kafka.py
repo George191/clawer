@@ -20,6 +20,7 @@ from typing import Any
 from app.config.settings import settings
 
 KAFKA_MAX_MESSAGE_BYTES = 4 * 1024 * 1024
+KAFKA_PRODUCER_MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 
 
 def get_brokers(bootstrap_servers: str | None = None) -> list[str]:
@@ -84,7 +85,7 @@ def build_producer_kwargs(**extra: Any) -> dict[str, Any]:
     kwargs.setdefault("acks", "all")
     kwargs.setdefault("enable_idempotence", settings.kafka_enable_idempotence)
     kwargs.setdefault("compression_type", "gzip")
-    kwargs.setdefault("max_request_size", KAFKA_MAX_MESSAGE_BYTES)
+    kwargs.setdefault("max_request_size", KAFKA_PRODUCER_MAX_MESSAGE_BYTES)
     kwargs.setdefault("request_timeout_ms", 30000)
     kwargs.setdefault("connections_max_idle_ms", 540000)
     return kwargs

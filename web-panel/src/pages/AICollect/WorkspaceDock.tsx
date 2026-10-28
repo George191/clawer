@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Alert, Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Table, Tooltip, Typography, Upload } from 'antd';
 import {
   ApartmentOutlined,
+  BankOutlined,
   BellOutlined,
   BugOutlined,
   CalendarOutlined,
@@ -56,8 +57,6 @@ import {
   type WorkspaceTemplate,
 } from '@/services/aiApi';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
-import { intervalUnitSeconds } from '@/services/scheduler';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import type {
@@ -72,7 +71,6 @@ const { TextArea } = Input;
 const aura = workspacePalette;
 const defaultPageSize = 10;
 const listLoadThreshold = 56;
-const taskFilterStorageKey = 'automation-runs-task-filter';
 
 export type WorkspacePanel = 'templates' | 'tasks';
 
@@ -81,6 +79,7 @@ interface WorkspaceDockProps {
   embedded?: boolean;
   taskDomain?: string;
   taskDataType?: string;
+  onTaskDataTypesChange?: (dataTypes: string[]) => void;
   taskKeyword?: string;
   taskId?: string | null;
   onTaskSelect?: (taskId: string | null) => void;
@@ -119,8 +118,8 @@ type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
 type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic'
   | 'satellite' | 'constellation' | 'orbital' | 'debris' | 'debrisevents' | 'frequency'
-  | 'launchinfo' | 'launchsites' | 'launchvehicles' | 'groundstations' | 'organization' | 'vulnerability'
-  | 'account' | 'filing' | 'financial_fact';
+  | 'launchinfo' | 'launchsites' | 'launchvehicles' | 'groundstations' | 'organizations' | 'vulnerability'
+  | 'account' | 'company' | 'filing' | 'financial_fact';
 
 interface TemplateDraft {
   adapter: string;
@@ -158,7 +157,6 @@ interface DockTask extends CollectTask {
   taskType: 'template' | 'celery';
   scheduleEnabled?: boolean;
   dataType?: string;
-  dataTypes?: string[];
   faviconUrl?: string;
 }
 
@@ -726,9 +724,10 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
   launchsites: { icon: <EnvironmentOutlined />, label: '发射场 / 发射点', tint: '#8AD2A3' },
   launchvehicles: { icon: <RocketOutlined />, label: '运载火箭', tint: '#F2A66F' },
   groundstations: { icon: <GroundStationGlyph />, label: '地面站', tint: '#7BCDD0' },
-  organization: { icon: <ApartmentOutlined />, label: '组织机构', tint: '#9DB5EE' },
+  organizations: { icon: <ApartmentOutlined />, label: '组织机构', tint: '#9DB5EE' },
   vulnerability: { icon: <BugOutlined />, label: '漏洞', tint: '#EF8FB1' },
   account: { icon: <UserOutlined />, label: '账号', tint: '#8DCFE8' },
+  company: { icon: <BankOutlined />, label: '公司', tint: '#AFB9ED' },
   filing: { icon: <FileTextOutlined />, label: '申报文件', tint: '#9AD8B2' },
   financial_fact: { icon: <LineChartOutlined />, label: '财务指标', tint: '#E4CB86' },
   system: { icon: <SettingOutlined />, label: '系统', tint: '#A0AEC0' },
@@ -809,14 +808,12 @@ const formatNextExecution = (item: WorkspaceTask): string | null => {
   if (recurringMode !== 'interval') return null;
 
   const value = Number(schedule.interval_value);
-  const unit = String(schedule.interval_unit ?? 'minute');
-  const seconds = unit !== 'second' && unit in intervalUnitSeconds
-    ? intervalUnitSeconds[unit as keyof typeof intervalUnitSeconds] : 60;
+  const unit = schedule.interval_unit === 'hour' ? 'hour' : 'minute';
   const anchor = item.started_at ?? item.created_at;
   if (!Number.isFinite(value) || value <= 0 || !anchor) return null;
 
   const next = new Date(anchor);
-  next.setTime(next.getTime() + value * seconds * 1000);
+  next.setTime(next.getTime() + value * (unit === 'hour' ? 60 * 60 * 1000 : 60 * 1000));
   if (Number.isNaN(next.getTime())) return null;
   const now = new Date();
   const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
@@ -879,17 +876,16 @@ const mapWorkspaceTask = (item: WorkspaceTask): DockTask => ({
   group: 'prototype',
   area: item.template_name ? `${item.template_name.replace(/_/g, ' ')} workspace` : item.product_domain ?? 'platform',
   dataType: item.data_type?.trim() || undefined,
-  dataTypes: item.data_types,
   faviconUrl: item.favicon_url,
   status: item.status,
   progress: item.progress,
   records: String(item.records),
   lag: item.status === 'running' ? 'live' : '-',
   nextRun: item.schedule?.mode === 'once'
-    ? formatWorkspaceScheduleLabel(item.schedule)
+    ? '一次性任务'
     : (() => {
       const nextExecution = formatNextExecution(item);
-      const scheduleLabel = formatWorkspaceScheduleLabel(item.schedule, item.status === 'running' ? 'Continuous' : 'Waiting');
+      const scheduleLabel = String(item.schedule?.label ?? (item.status === 'running' ? 'Continuous' : 'Waiting'));
       return nextExecution ? `${scheduleLabel} (${nextExecution})` : scheduleLabel;
     })(),
   owner: item.owner,
@@ -1168,13 +1164,12 @@ const inferIncrementalField = (templateValue: string) => {
   return 'date';
 };
 
-const formatTaskNextRun = (draft: TaskComposerDraft) => formatWorkspaceScheduleLabel({
-  mode: draft.scheduleMode,
-  recurring_mode: draft.recurringMode,
-  daily_time: draft.dailyTime,
-  interval_value: draft.intervalValue,
-  interval_unit: draft.intervalUnit,
-});
+const formatTaskNextRun = (draft: TaskComposerDraft) => {
+  if (draft.scheduleMode === 'once') return 'One-time task';
+  if (draft.recurringMode === 'daily') return `Daily at ${draft.dailyTime}`;
+  const unit = draft.intervalUnit === 'minute' ? 'minute' : 'hour';
+  return `Every ${draft.intervalValue} ${unit}${draft.intervalValue === 1 ? '' : 's'}`;
+};
 
 const formatIncrementalSummary = (draft: TaskComposerDraft) => {
   if (!draft.incremental) return '全量采集';
@@ -1246,6 +1241,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   embedded = false,
   taskDomain = 'all',
   taskDataType,
+  onTaskDataTypesChange,
   taskKeyword,
   taskId,
   onTaskSelect,
@@ -1269,16 +1265,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [templates, setTemplates] = useState<TemplateAsset[]>([]);
   const [keyword, setKeyword] = useState('');
   const [templateFilter, setTemplateFilter] = useState<TemplateFilter>('all');
-  const [taskFilter, setTaskFilter] = useState<TaskFilter>(() => {
-    if (!embedded) return 'all';
-    try {
-      const saved = sessionStorage.getItem(taskFilterStorageKey);
-      return saved === 'running' || saved === 'queued' || saved === 'paused'
-        || saved === 'completed' || saved === 'failed' ? saved : 'all';
-    } catch {
-      return 'all';
-    }
-  });
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>('all');
   const [taskTemplateFilter, setTaskTemplateFilter] = useState<string | null>(null);
   const [templateDetailMode, setTemplateDetailMode] = useState<TemplateDetailMode>('overview');
   const [templateDetailLoading, setTemplateDetailLoading] = useState(false);
@@ -1341,15 +1328,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [bodyScrollState, setBodyScrollState] = useState({ canScroll: false, isAtBottom: true });
 
   useEffect(() => {
-    if (!embedded) return;
-    try {
-      sessionStorage.setItem(taskFilterStorageKey, taskFilter);
-    } catch {
-      // Keep filtering available when browser storage is disabled.
-    }
-  }, [embedded, taskFilter]);
-
-  useEffect(() => {
     if (!releaseTaskDefaults) return;
     setTaskConcurrency(releaseTaskDefaults.concurrency);
     setTaskPriority(releaseTaskDefaults.priority);
@@ -1383,7 +1361,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           ? {
             ...mappedTask,
             dataType: mappedTask.dataType ?? task.dataType,
-            dataTypes: mappedTask.dataTypes ?? task.dataTypes,
             faviconUrl: mappedTask.faviconUrl ?? task.faviconUrl,
           }
           : task))
@@ -1410,7 +1387,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       return {
         ...mappedTask,
         dataType: mappedTask.dataType ?? current.find((task) => task.key === item.id)?.dataType,
-        dataTypes: mappedTask.dataTypes ?? current.find((task) => task.key === item.id)?.dataTypes,
       };
     }));
     setTaskRuntime((current) => Object.fromEntries(items.map((item) => {
@@ -1676,11 +1652,19 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     }
   }, [embedded, selectedTaskKey, setSelectedTaskKey, taskItems]);
 
+  const taskDataTypes = useMemo(() => [...new Set(allTaskRows
+    .filter((item) => taskDomain === 'all' || item.productDomain === taskDomain)
+    .map((item) => item.dataType).filter(Boolean))].sort(), [allTaskRows, taskDomain]);
+
+  useEffect(() => {
+    onTaskDataTypesChange?.(taskDataTypes);
+  }, [onTaskDataTypesChange, taskDataTypes]);
+
   const taskRows = useMemo(() => allTaskRows
     .filter((item) => {
       const query = (taskKeyword ?? keyword).trim().toLowerCase();
       const matchDomain = taskDomain === 'all' || item.productDomain === taskDomain;
-      const matchDataType = !taskDataType || item.dataType === taskDataType || item.dataTypes?.includes(taskDataType);
+      const matchDataType = !taskDataType || item.dataType === taskDataType;
       const matchFilter = taskFilter === 'all' || item.runtime.status === taskFilter;
       const matchTemplate = !taskTemplateFilter || normalizeTemplateKey(item.template) === taskTemplateFilter;
       const matchKeyword = !query
@@ -3156,6 +3140,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const taskCanceled = runtime.controlState === 'canceled';
     const templateTask = selectedTask.taskType === 'template';
     const pipelineControlsDisabled = taskCanceled || runtime.status === 'queued';
+    const taskDeletable = runtime.status === 'queued' || runtime.status === 'completed' || runtime.status === 'failed';
     const taskPinned = Boolean(pinnedTaskKeys[selectedTask.key]);
 
     return (
@@ -3241,25 +3226,27 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </button>
               </Tooltip>
             ) : null}
-            <Popconfirm
-              title="删除任务？"
-              description="任务及其运行记录将被删除，无法恢复。"
-              okText="删除"
-              cancelText="保留"
-              okButtonProps={{ danger: true }}
-              rootClassName="workspace-dock-control-popconfirm"
-              onConfirm={() => handleDeleteTask(selectedTask.key)}
-            >
-              <Tooltip title="删除任务" placement="top" rootClassName="workspace-dock-control-tooltip">
-                <button
-                  type="button"
-                  className="workspace-dock-detail-icon-btn is-danger"
-                  aria-label="删除任务"
-                >
-                  <DeleteOutlined />
-                </button>
-              </Tooltip>
-            </Popconfirm>
+            {taskDeletable ? (
+              <Popconfirm
+                title="删除任务？"
+                description="任务及其运行记录将被删除，无法恢复。"
+                okText="删除"
+                cancelText="保留"
+                okButtonProps={{ danger: true }}
+                rootClassName="workspace-dock-control-popconfirm"
+                onConfirm={() => handleDeleteTask(selectedTask.key)}
+              >
+                <Tooltip title="删除任务" placement="top" rootClassName="workspace-dock-control-tooltip">
+                  <button
+                    type="button"
+                    className="workspace-dock-detail-icon-btn is-danger"
+                    aria-label="删除任务"
+                  >
+                    <DeleteOutlined />
+                  </button>
+                </Tooltip>
+              </Popconfirm>
+            ) : null}
             {templateTask && <>{runtime.downloadState === 'running' ? (
               <Tooltip title="暂停下载" placement="top" rootClassName="workspace-dock-control-tooltip">
                 <button

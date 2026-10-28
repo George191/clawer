@@ -182,7 +182,9 @@ async def _batch_parameter_sets(
 
 
 def _merge_crawl_result(target: CrawlResult, source: CrawlResult) -> None:
-    target.records.extend(source.records)
+    if target.retain_records:
+        target.records.extend(source.records)
+    target._record_count += source.total
     target.saved_records += source.saved_records
     target.inserted_records += source.inserted_records
     target.updated_records += source.updated_records
@@ -286,8 +288,8 @@ async def _crawl_template(
                 incremental_watermark.window_start.isoformat()
                 if incremental_watermark.window_start else "full",
             )
-        engine = SpiderEngine(adapter_class=released.adapter_class)
-        result = CrawlResult(template.name, template.data_type)
+        engine = SpiderEngine(adapter_class=released.adapter_class, retain_records=False)
+        result = CrawlResult(template.name, template.data_type, retain_records=False)
         batch_count = len(batch_parameter_sets)
         batch_policy = policies.get("batch") or {}
         delay = float(batch_policy.get(

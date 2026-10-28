@@ -820,10 +820,23 @@ class ETLBase:
             await self._connect_consumer()
 
         batch_commit = self._layer in {"rds", "ods"}
+        partition_cursor = 0
 
         while self._running:
             try:
-                records = await self._consumer.getmany(timeout_ms=5000, max_records=50)
+                records = {}
+                if batch_commit:
+                    partitions = sorted(self._consumer.assignment())
+                    for _ in partitions:
+                        partition = partitions[partition_cursor % len(partitions)]
+                        partition_cursor += 1
+                        records = await self._consumer.getmany(
+                            partition, timeout_ms=0, max_records=50,
+                        )
+                        if records:
+                            break
+                if not records:
+                    records = await self._consumer.getmany(timeout_ms=5000, max_records=50)
                 retry_needed = False
                 for _tp, msgs in records.items():
                     last_successful_offset = None

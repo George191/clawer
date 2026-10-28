@@ -75,10 +75,16 @@ def _create_storage() -> RecordStore:
 
 
 class CrawlResult:
-    def __init__(self, template_name: str, data_type: str) -> None:
+    def __init__(
+        self, template_name: str, data_type: str, *, retain_records: bool = True,
+    ) -> None:
         self.template_name = template_name
         self.data_type = data_type
+        self.retain_records = retain_records
         self.records: list[dict[str, Any]] = []
+        self._record_count = 0
+        # Adapter saves can include extras; final totals follow list-page output.
+        self._listed_record_count = 0
         self.saved_records = 0
         self.inserted_records = 0
         self.updated_records = 0
@@ -96,7 +102,7 @@ class CrawlResult:
 
     @property
     def total(self) -> int:
-        return len(self.records)
+        return len(self.records) if self.retain_records else self._record_count
 
     @property
     def success(self) -> bool:
@@ -130,12 +136,15 @@ class SpiderEngine:
         storage: RecordStore | None = None,
         adapter_class: type[BaseSiteAdapter] | None = None,
         adapter_classes: dict[str, type[BaseSiteAdapter]] | None = None,
+        *,
+        retain_records: bool = True,
     ) -> None:
         self._client = http_client or HttpClient()
         self._parser = parser or TemplateParser()
         self._storage = storage or _create_storage()
         self._adapter_class = adapter_class
         self._adapter_classes = adapter_classes or {}
+        self._retain_records = retain_records
         self._semaphore = asyncio.Semaphore(settings.max_concurrent_tasks)
         # 断点续采过期时间（默认7天）
 
@@ -206,7 +215,9 @@ class SpiderEngine:
                     template.name, attempt + 1, error,
                 )
                 await controlled_sleep(min(2 ** min(attempt, 5), 30))
-        result.records.extend(records)
+        if result.retain_records:
+            result.records.extend(records)
+        result._record_count += len(records)
         saved_count = len(record_ids)
         result.saved_records += saved_count
         save_stats = getattr(self._storage, "last_save_stats", {})
@@ -263,7 +274,9 @@ class SpiderEngine:
         resume_page: int | None,
         progress_callback: Callable[[int, CrawlResult], Awaitable[None]] | None = None,
     ) -> CrawlResult:
-        result = CrawlResult(template.name, template.data_type)
+        result = CrawlResult(
+            template.name, template.data_type, retain_records=self._retain_records,
+        )
         template._crawl_context["_crawl_result"] = result
 
         logger.info(
@@ -301,6 +314,7 @@ class SpiderEngine:
                 )
 
             result.records = list_records
+            result._record_count = result._listed_record_count
 
         except Exception as e:
             logger.error("Crawl failed for template %s: %s", template.name, e)
@@ -447,13 +461,15 @@ class SpiderEngine:
                         filtered, _ = await self._filter_and_save_page_records(
                             template, records, result
                         )
-                    all_records.extend(filtered.records)
+                    if result.retain_records:
+                        all_records.extend(filtered.records)
+                    result._listed_record_count += len(filtered.records)
 
                     logger.info(
                         "Page %d: found %d records (total: %d)",
                         current_page,
                         len(records),
-                        len(all_records),
+                        result._listed_record_count,
                     )
 
                     result.pages_processed += 1
@@ -619,7 +635,9 @@ class SpiderEngine:
             filtered1, saved_count = await self._filter_and_save_page_records(
                 template, records1, result
             )
-        all_records.extend(filtered1.records)
+        if result.retain_records:
+            all_records.extend(filtered1.records)
+        result._listed_record_count += len(filtered1.records)
         if records1:
             await adapter.on_records_saved(
                 page1_task_id,
@@ -913,7 +931,9 @@ class SpiderEngine:
                 filtered, saved_count = await self._filter_and_save_page_records(
                     template, records, result
                 )
-            all_records.extend(filtered.records)
+            if result.retain_records:
+                all_records.extend(filtered.records)
+            result._listed_record_count += len(filtered.records)
             if records:
                 await adapter.on_records_saved(
                     page_task_id,

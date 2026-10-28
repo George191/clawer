@@ -27,11 +27,11 @@ const coreFragment = `
   }
 `;
 const particleVertex = `
-  uniform float time, strength, beamLength, beamRadius, viewportHeight;
+  uniform float time, strength, beamLength, beamRadius, viewportHeight, propagationSpeed;
   attribute float aRing, aAngle, aSeed;
   varying float vAlpha;
   void main() {
-    float distance = (aRing + fract(time * 0.6 / 0.65)) * 0.65;
+    float distance = (aRing + fract(time * propagationSpeed / 0.65)) * 0.65;
     float u = distance / beamLength;
     vAlpha = 0.0;
     if (u <= 0.0 || u >= 1.0) {
@@ -102,7 +102,7 @@ const ringFragment = `
   }
 `;
 
-export function createCinematicScan(color: number): {
+export function createCinematicScan(color: number, propagationSpeed = 0.6): {
   group: THREE.Group;
   update(start: THREE.Vector3, end: THREE.Vector3, time: number, strength: number, radius?: number,
     surface?: { center: THREE.Vector3; radius: number }, volumeVisibility?: number): void;
@@ -145,7 +145,7 @@ export function createCinematicScan(color: number): {
     blending: THREE.AdditiveBlending, toneMapped: false,
   });
   const particleMaterial = new THREE.ShaderMaterial({
-    uniforms: { color: { value: tint }, time: { value: 0 }, strength: { value: 0 }, beamLength: { value: 1 }, beamRadius: { value: 0.5 }, viewportHeight: { value: 1 } },
+    uniforms: { color: { value: tint }, time: { value: 0 }, strength: { value: 0 }, beamLength: { value: 1 }, beamRadius: { value: 0.5 }, viewportHeight: { value: 1 }, propagationSpeed: { value: propagationSpeed } },
     vertexShader: particleVertex, fragmentShader: particleFragment,
     transparent: true, depthTest: true, depthWrite: false, blending: THREE.AdditiveBlending,
   });

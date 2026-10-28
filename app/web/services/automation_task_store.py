@@ -9,7 +9,6 @@ from typing import Any
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
 from app.utils.runtime_control import get_workspace_run
-from app.utils.task_schedule import with_task_schedule_label
 from app.web.services.task_events import publish_task_change, publish_task_log, publish_task_run
 
 
@@ -21,24 +20,6 @@ class AutomationTaskStore:
     async def initialize(self) -> None:
         async with self._initialize_lock:
             await self._pg.connect()
-
-    async def list_data_types(self) -> list[str]:
-        await self.initialize()
-        rows = await self._pg.fetch_all(
-            """
-            SELECT data_type
-            FROM (
-                SELECT NULLIF(btrim(data_type), '') AS data_type
-                FROM public.ai_collect_templates
-                UNION
-                SELECT NULLIF(btrim(data_type), '') AS data_type
-                FROM public.ai_collect_template_alias
-            ) AS types
-            WHERE data_type IS NOT NULL
-            ORDER BY data_type
-            """
-        )
-        return [row["data_type"] for row in rows]
 
     async def list_tasks(self, product_domain: str | None = None) -> list[dict[str, Any]]:
         await self.initialize()
@@ -62,23 +43,8 @@ class AutomationTaskStore:
         if not names:
             return tasks
         templates = await self._pg.fetch_all(
-            """
-            SELECT t.name, t.version, t.data_type, t.icon,
-                   ARRAY(
-                       SELECT data_type
-                       FROM (
-                           SELECT NULLIF(btrim(t.data_type), '') AS data_type
-                           UNION
-                           SELECT NULLIF(btrim(alias.data_type), '') AS data_type
-                           FROM public.ai_collect_template_alias alias
-                           WHERE alias.template_name = t.name
-                       ) AS types
-                       WHERE data_type IS NOT NULL
-                       ORDER BY data_type
-                   ) AS data_types
-            FROM public.ai_collect_templates t
-            WHERE t.name = ANY(CAST(:names AS text[]))
-            """,
+            "SELECT name, version, data_type, icon FROM public.ai_collect_templates "
+            "WHERE name = ANY(CAST(:names AS text[]))",
             {"names": names},
         )
         templates_by_version = {(row["name"], row["version"]): row for row in templates}
@@ -88,7 +54,6 @@ class AutomationTaskStore:
                 (task.get("template_name"), task.get("template_version")), {},
             )
             task["data_type"] = template.get("data_type") or ""
-            task["data_types"] = template.get("data_types") or []
             task["favicon_url"] = minio.build_object_url(str(template.get("icon") or ""))
         return tasks
 
@@ -237,7 +202,7 @@ class AutomationTaskStore:
                 "owner": "System" if payload.get("task_type") == "celery" else "AI Collect",
                 **payload,
                 "stage_state": "paused" if payload.get("task_type") == "celery" else "running",
-                "schedule": json.dumps(with_task_schedule_label(payload.get("schedule", {})), ensure_ascii=False),
+                "schedule": json.dumps(payload.get("schedule", {}), ensure_ascii=False),
                 "parameters": json.dumps(payload.get("parameters", {}), ensure_ascii=False),
                 "policies": json.dumps(policies, ensure_ascii=False),
             },
@@ -320,25 +285,11 @@ class AutomationTaskStore:
     async def update_task_schedule(
         self, task_id: str, changes: dict[str, Any], *, expected_mode: str,
     ) -> dict[str, Any] | None:
-        """Merge recurring settings and stop an active run when disabling."""
+        """Merge recurring settings without changing execution or run state."""
         await self.initialize()
-        current = await self._pg.fetch_one(
-            "SELECT schedule FROM public.automation_tasks "
-            "WHERE id = CAST(:id AS uuid) AND deleted_at IS NULL",
-            {"id": task_id},
-        )
-        if current is None:
-            return None
-        schedule = current["schedule"] or {}
-        merged = dict(changes)
-        if schedule.get("mode") == "recurring" and "mode" in merged:
-            merged["recurring_mode"] = merged.pop("mode")
-        label = with_task_schedule_label({**schedule, **merged}).get("label")
-        changes = {**changes, "label": label}
         task = await self._pg.fetch_one(
             """
-            WITH changed AS (
-              UPDATE public.automation_tasks SET
+            UPDATE public.automation_tasks SET
                 schedule = COALESCE(schedule, '{}'::jsonb) || CASE
                     WHEN schedule->>'mode' = 'recurring'
                          AND CAST(:changes AS jsonb) ? 'mode'
@@ -346,51 +297,19 @@ class AutomationTaskStore:
                          || jsonb_build_object('recurring_mode', CAST(:changes AS jsonb)->'mode')
                     ELSE CAST(:changes AS jsonb)
                 END,
-                status = CASE WHEN :disable_schedule AND status IN ('running', 'paused')
-                              THEN 'failed' ELSE status END,
-                control_state = CASE
-                    WHEN :disable_schedule AND status IN ('running', 'paused') THEN 'canceled'
-                    WHEN :enable_schedule AND control_state = 'canceled' THEN NULL
-                    ELSE control_state END,
-                throughput = CASE WHEN :disable_schedule AND status IN ('running', 'paused')
-                                  THEN 0 ELSE throughput END,
-                download_state = CASE
-                    WHEN :disable_schedule AND status IN ('running', 'paused') THEN 'paused'
-                    WHEN :enable_schedule AND control_state = 'canceled' AND task_type = 'template'
-                    THEN 'running' ELSE download_state END,
-                sync_state = CASE
-                    WHEN :disable_schedule AND status IN ('running', 'paused') THEN 'canceled'
-                    WHEN :enable_schedule AND control_state = 'canceled' AND task_type = 'template'
-                    THEN 'running' ELSE sync_state END,
-                celery_task_id = CASE WHEN (:disable_schedule AND status IN ('running', 'paused'))
-                                         OR (:enable_schedule AND control_state = 'canceled')
-                                      THEN NULL ELSE celery_task_id END,
                 updated_at = now()
             WHERE id = CAST(:id AS uuid)
               AND deleted_at IS NULL
-              AND schedule IS NOT DISTINCT FROM CAST(:expected_schedule AS jsonb)
-              AND (control_state IS DISTINCT FROM 'canceled' OR :enable_schedule)
+              AND control_state IS DISTINCT FROM 'canceled'
               AND (CASE WHEN schedule->>'mode' = 'recurring'
                     THEN schedule->>'recurring_mode' ELSE schedule->>'mode' END) = :expected_mode
               AND :expected_mode IN ('daily', 'interval')
             RETURNING *
-            ), changed_run AS (
-                UPDATE public.automation_task_runs run SET status = 'canceled', ended_at = now()
-                FROM changed
-                WHERE :disable_schedule AND changed.control_state = 'canceled'
-                  AND run.id = changed.current_run_id AND run.task_id = changed.id
-                  AND run.status IN ('running', 'paused')
-                RETURNING run.id
-            )
-            SELECT * FROM changed
             """,
             {
                 "id": task_id,
                 "changes": json.dumps(changes, ensure_ascii=False),
-                "expected_schedule": json.dumps(current["schedule"], ensure_ascii=False),
                 "expected_mode": expected_mode,
-                "disable_schedule": changes.get("enabled") is False,
-                "enable_schedule": changes.get("enabled") is True,
             },
         )
         if task:
@@ -520,20 +439,12 @@ class AutomationTaskStore:
                     (
                       (CASE WHEN schedule->>'mode' = 'recurring'
                          THEN schedule->>'recurring_mode' ELSE schedule->>'mode' END) = 'daily'
+                      AND (now() AT TIME ZONE 'Asia/Shanghai')::time
+                          >= COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time
                       AND (
-                        (started_at IS NULL
-                         AND (now() AT TIME ZONE 'Asia/Shanghai')::time
-                             >= COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time)
-                        OR COALESCE(started_at, created_at) < (
-                          (now() AT TIME ZONE 'Asia/Shanghai')::date
-                          + COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time
-                          - CASE
-                              WHEN (now() AT TIME ZONE 'Asia/Shanghai')::time
-                                   < COALESCE(NULLIF(schedule->>'daily_time', ''), '09:00')::time
-                              THEN interval '1 day'
-                              ELSE interval '0 days'
-                            END
-                        ) AT TIME ZONE 'Asia/Shanghai'
+                        started_at IS NULL
+                        OR (started_at AT TIME ZONE 'Asia/Shanghai')::date
+                           < (now() AT TIME ZONE 'Asia/Shanghai')::date
                       )
                     )
                     OR
