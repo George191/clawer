@@ -70,8 +70,6 @@
 .sp-sso-button { height: 36px; }
 .sp-login-options { font-size: 12px; }
 .sp-login-options .ant-checkbox + span { font-size: 12px; padding-inline-start: 7px; }
-.sp-login-options .ant-checkbox-inner { width: 14px; height: 14px; }
-.sp-login-options .ant-checkbox-inner:after { width: 4px; height: 7px; }
 @media (max-width: 960px) { .sp-login { display: block; background: #070d16; } .sp-login-space, .sp-login-graph, .sp-login-background-loader { display: none; } .sp-login-panel { min-height: 100%; } }
 @media (max-width: 760px) { .sp-login-panel { padding: 24px 18px; } .sp-login-form-wrap { padding: 26px 22px 24px; }.sp-login-form-brand { gap: 10px; }.sp-login-form-wrap h2 { font-size: clamp(22px, 6vw, 28px); }.sp-login-options { gap: 12px; font-size: 12px; }.sp-login-security-note { text-align: center; line-height: 1.6; } }
 @media (prefers-reduced-motion: reduce) { .sp-login-copy, .sp-login-form-wrap, .sp-login-background-loader ~ .sp-login-space, .sp-login-background-loader .sp-auth-loading-satellite { animation: none !important; } .sp-login-background-loader .sp-auth-loading-satellite { will-change: auto; } .sp-login-background-loader, .sp-login:has(> .sp-login-background-loader) > :is(.sp-login-graph, .sp-login-panel) { transition: none !important; } }
