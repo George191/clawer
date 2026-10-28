@@ -38,24 +38,7 @@ const AuthBackground = () => {
 
   return <>
     <div className={`sp-login-background-loader${ready ? ' is-ready' : ''}`} role="status" aria-live="polite">
-      <svg viewBox="0 0 160 160" fill="none" aria-hidden="true">
-        <circle cx="80" cy="80" r="56" stroke="#386dca" strokeOpacity=".35" strokeDasharray="2 6" />
-        <g className="sp-login-loader-earth">
-          <circle cx="80" cy="80" r="34" stroke="#2c6fff" strokeOpacity=".18" strokeWidth="6" />
-          <circle cx="80" cy="80" r="29" fill="#091e35" stroke="#528dff" strokeOpacity=".7" />
-          <ellipse cx="80" cy="80" rx="12" ry="29" stroke="#3e74c7" strokeOpacity=".5" />
-          <path d="M53 71Q80 85 107 71M53 90Q80 77 107 90" stroke="#3e74c7" strokeOpacity=".45" />
-          <path d="M65 59L78 56L85 63L81 72L74 73L70 83L64 78L66 70ZM84 80L94 83L97 91L90 102L84 96L86 89L80 85Z" fill="#3268aa" fillOpacity=".7" />
-        </g>
-        <g className="sp-login-loader-orbit">
-          <g transform="translate(136 80) rotate(-20)">
-            <circle r="13" fill="#2c6fff" fillOpacity=".1" stroke="#2c6fff" strokeOpacity=".4" />
-            <path d="M-13-4H-6V4H-13ZM6-4H13V4H6Z" fill="#285cb4" stroke="#89b5ff" strokeWidth=".7" />
-            <path d="M-6 0H6M0-7V-3" stroke="#a8caff" />
-            <rect x="-3" y="-5" width="6" height="10" rx="1" fill="#b5d1f5" />
-          </g>
-        </g>
-      </svg>
+      <img src="/space/auth-loading.svg" width="148" height="148" alt="" aria-hidden="true" />
       <span>Preparing orbital view</span>
     </div>
     {mounted && <React.Suspense fallback={null}>{failed ? <SpaceBackground /> : <CinematicSpace onUnavailable={backgroundUnavailable} onReady={backgroundReady} />}</React.Suspense>}

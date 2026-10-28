@@ -147,74 +147,74 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     const loadFlyby = () => new Promise<void>(resolve => loader.load('/space/iss.glb', async gltf => {
       if (disposed) { disposeCinematicSatellite(gltf.scene); resolve(); return; }
       try {
-      // These seven detached modelling offcuts sit above the exported station.
-      const offcuts = new THREE.Group();
-      for (const name of ['bendedtru1', 'bendedtru2', 'bendedtru3', 'bendedtrus', 'pCylinder1', 'pCylinder2', 'pCylinder8']) {
-        const object = gltf.scene.getObjectByName(name);
-        if (object) offcuts.add(object);
-      }
-      disposeCinematicSatellite(offcuts);
-      const cells = solarTexture();
-      cells.wrapS = cells.wrapT = THREE.RepeatWrapping;
-      cells.repeat.set(7, 5);
-      const metal = weatheredMetalTextures();
-      const foil = foilTexture();
-      const meshes: THREE.Mesh[] = [];
-      gltf.scene.traverse(object => { if (object instanceof THREE.Mesh) meshes.push(object); });
-      for (const object of meshes) {
-        await yieldTask();
-        if (disposed) { disposeCinematicSatellite(gltf.scene); return; }
-        const materials = Array.isArray(object.material) ? object.material : [object.material];
-        const positions = object.geometry.getAttribute('position');
-        const solar = materials.some(material => material.name.startsWith('lambert7SG'));
-        if (!object.geometry.hasAttribute('normal')) object.geometry.computeVertexNormals();
-        const normals = object.geometry.getAttribute('normal');
-        const uv = new Float32Array(positions.count * 2);
-        for (let i = 0; i < positions.count; i++) {
-          const nx = Math.abs(normals.getX(i));
-          const ny = Math.abs(normals.getY(i));
-          const nz = Math.abs(normals.getZ(i));
-          const axis = nx >= ny && nx >= nz ? 'x' : ny >= nz ? 'y' : 'z';
-          // The NASA export has no UVs; use its local surface axes for metal detail.
-          uv[i * 2] = solar ? (positions.getZ(i) + 22.87) / 45.55 : (axis === 'x' ? positions.getZ(i) : positions.getX(i)) / 3;
-          uv[i * 2 + 1] = solar ? (positions.getY(i) + 4.17) / 29.94 : (axis === 'y' ? positions.getZ(i) : positions.getY(i)) / 3;
+        // These seven detached modelling offcuts sit above the exported station.
+        const offcuts = new THREE.Group();
+        for (const name of ['bendedtru1', 'bendedtru2', 'bendedtru3', 'bendedtrus', 'pCylinder1', 'pCylinder2', 'pCylinder8']) {
+          const object = gltf.scene.getObjectByName(name);
+          if (object) offcuts.add(object);
         }
-        object.geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-        for (const material of materials) {
-          if (!(material instanceof THREE.MeshStandardMaterial)) continue;
-          const blanket = material.name.startsWith('anisotropic');
-          const radiator = material.name.startsWith('lambert3SG') || material.name.startsWith('lambert4SG');
-          material.map = metal.map;
-          material.roughnessMap = metal.roughnessMap;
-          material.bumpMap = blanket ? foil : metal.bumpMap;
-          material.bumpScale = blanket ? .16 : .055;
-          material.metalness = radiator ? .28 : .82;
-          material.roughness = blanket ? .86 : radiator ? .94 : .8;
-          material.color.set(blanket ? 0xa58b55 : radiator ? 0xc1c5c3 : 0xa5afb4);
-          if (material.name.startsWith('lambert7SG')) {
-            material.map = cells;
-            material.bumpMap = material.roughnessMap = null;
-            material.color.set(0xa6a7aa);
-            material.metalness = .25;
-            material.roughness = .46;
+        disposeCinematicSatellite(offcuts);
+        const cells = solarTexture();
+        cells.wrapS = cells.wrapT = THREE.RepeatWrapping;
+        cells.repeat.set(7, 5);
+        const metal = weatheredMetalTextures();
+        const foil = foilTexture();
+        const meshes: THREE.Mesh[] = [];
+        gltf.scene.traverse(object => { if (object instanceof THREE.Mesh) meshes.push(object); });
+        for (const object of meshes) {
+          await yieldTask();
+          if (disposed) { disposeCinematicSatellite(gltf.scene); return; }
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          const positions = object.geometry.getAttribute('position');
+          const solar = materials.some(material => material.name.startsWith('lambert7SG'));
+          if (!object.geometry.hasAttribute('normal')) object.geometry.computeVertexNormals();
+          const normals = object.geometry.getAttribute('normal');
+          const uv = new Float32Array(positions.count * 2);
+          for (let i = 0; i < positions.count; i++) {
+            const nx = Math.abs(normals.getX(i));
+            const ny = Math.abs(normals.getY(i));
+            const nz = Math.abs(normals.getZ(i));
+            const axis = nx >= ny && nx >= nz ? 'x' : ny >= nz ? 'y' : 'z';
+            // The NASA export has no UVs; use its local surface axes for metal detail.
+            uv[i * 2] = solar ? (positions.getZ(i) + 22.87) / 45.55 : (axis === 'x' ? positions.getZ(i) : positions.getX(i)) / 3;
+            uv[i * 2 + 1] = solar ? (positions.getY(i) + 4.17) / 29.94 : (axis === 'y' ? positions.getZ(i) : positions.getY(i)) / 3;
           }
-          material.needsUpdate = true;
+          object.geometry.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+          for (const material of materials) {
+            if (!(material instanceof THREE.MeshStandardMaterial)) continue;
+            const blanket = material.name.startsWith('anisotropic');
+            const radiator = material.name.startsWith('lambert3SG') || material.name.startsWith('lambert4SG');
+            material.map = metal.map;
+            material.roughnessMap = metal.roughnessMap;
+            material.bumpMap = blanket ? foil : metal.bumpMap;
+            material.bumpScale = blanket ? .16 : .055;
+            material.metalness = radiator ? .28 : .82;
+            material.roughness = blanket ? .86 : radiator ? .94 : .8;
+            material.color.set(blanket ? 0xa58b55 : radiator ? 0xc1c5c3 : 0xa5afb4);
+            if (material.name.startsWith('lambert7SG')) {
+              material.map = cells;
+              material.bumpMap = material.roughnessMap = null;
+              material.color.set(0xa6a7aa);
+              material.metalness = .25;
+              material.roughness = .46;
+            }
+            material.needsUpdate = true;
+          }
         }
-      }
-      const bounds = new THREE.Box3().setFromObject(gltf.scene);
-      const center = bounds.getCenter(new THREE.Vector3());
-      const size = bounds.getSize(new THREE.Vector3());
-      flybySize.copy(size).multiplyScalar(8 / Math.max(size.x, size.y, size.z));
-      const model = new THREE.Group();
-      gltf.scene.position.sub(center);
-      model.add(gltf.scene);
-      model.scale.setScalar(8 / Math.max(size.x, size.y, size.z));
-      flyby.remove(fallback);
-      disposeCinematicSatellite(fallback);
-      flybyModel = model;
-      flyby.add(model);
-      isNasaModel = true;
-      prepareFlybyModel();
+        const bounds = new THREE.Box3().setFromObject(gltf.scene);
+        const center = bounds.getCenter(new THREE.Vector3());
+        const size = bounds.getSize(new THREE.Vector3());
+        flybySize.copy(size).multiplyScalar(8 / Math.max(size.x, size.y, size.z));
+        const model = new THREE.Group();
+        gltf.scene.position.sub(center);
+        model.add(gltf.scene);
+        model.scale.setScalar(8 / Math.max(size.x, size.y, size.z));
+        flyby.remove(fallback);
+        disposeCinematicSatellite(fallback);
+        flybyModel = model;
+        flyby.add(model);
+        isNasaModel = true;
+        prepareFlybyModel();
       } catch {
         disposeCinematicSatellite(gltf.scene);
       } finally { resolve(); }
@@ -249,6 +249,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     const local = new THREE.Vector3();
     const target = new THREE.Vector3();
     const screenPosition = new THREE.Vector3();
+    const veilBounds = new THREE.Box3();
     let panelBounds: { x: number; y: number; width: number; height: number } | undefined;
     function measurePanel() {
       const panel = canvas!.parentElement?.querySelector('.sp-login-form-wrap')?.getBoundingClientRect();
@@ -314,15 +315,25 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
 
       // Render only the flyby to the glass veil, using the same camera and geometry.
       veilCtx.clearRect(0, 0, width, height);
-      screenPosition.copy(flyby.position).project(camera);
-      const screenX = (screenPosition.x + 1) * width / 2;
-      const screenY = (1 - screenPosition.y) * height / 2;
       const shieldRadius = 5.1 * 1.05 * flyby.scale.x;
-      const screenRadius = focal * shieldRadius / Math.max(camera.near, distance - shieldRadius) + 6;
       const panel = panelBounds;
-      if (flyby.visible && panel && camera.position.z - flyby.position.z + shieldRadius > camera.near
-        && screenX + screenRadius > panel.x && screenX - screenRadius < panel.x + panel.width
-        && screenY + screenRadius > panel.y && screenY - screenRadius < panel.y + panel.height) {
+      veilBounds.min.copy(flyby.position).min(target);
+      veilBounds.max.copy(flyby.position).max(target);
+      veilBounds.expandByScalar(Math.max(shieldRadius, 1.55 * 1.12 * Math.SQRT2) + .15);
+      let overlapsPanel = flyby.visible && !!panel && camera.position.z - veilBounds.min.z > camera.near;
+      if (overlapsPanel && panel && camera.position.z - veilBounds.max.z > camera.near) {
+        let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+        for (let corner = 0; corner < 8; corner++) {
+          screenPosition.set(corner & 1 ? veilBounds.max.x : veilBounds.min.x,
+            corner & 2 ? veilBounds.max.y : veilBounds.min.y,
+            corner & 4 ? veilBounds.max.z : veilBounds.min.z).project(camera);
+          const x = (screenPosition.x + 1) * width / 2, y = (1 - screenPosition.y) * height / 2;
+          left = Math.min(left, x); right = Math.max(right, x);
+          top = Math.min(top, y); bottom = Math.max(bottom, y);
+        }
+        overlapsPanel = right > panel.x && left < panel.x + panel.width && bottom > panel.y && top < panel.y + panel.height;
+      }
+      if (overlapsPanel && panel) {
         camera.layers.set(1);
         renderer.render(scene, camera);
         veilCtx.save();
@@ -349,6 +360,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
       veil!.width = Math.round(width * dpr);
       veil!.height = Math.round(height * dpr);
       veilCtx!.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -411,8 +423,19 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
     const panelObserver = new ResizeObserver(measurePanel);
-    const panelElement = canvas.parentElement?.querySelector('.sp-login-form-wrap');
+    let panelElement = canvas.parentElement?.querySelector('.sp-login-form-wrap');
     if (panelElement) panelObserver.observe(panelElement);
+    const formObserver = new MutationObserver(() => {
+      const next = canvas.parentElement?.querySelector('.sp-login-form-wrap');
+      if (next !== panelElement) {
+        panelObserver.disconnect();
+        panelElement = next;
+        if (next) panelObserver.observe(next);
+      }
+      measurePanel();
+    });
+    const panelContainer = canvas.parentElement?.querySelector('.sp-login-panel');
+    if (panelContainer) formObserver.observe(panelContainer, { childList: true, subtree: true });
     const scrollContainer = canvas.parentElement;
     scrollContainer?.addEventListener('scroll', measurePanel, { passive: true });
     motion.addEventListener('change', updateLoop);
@@ -465,10 +488,6 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       paint(sceneTime(), false);
       await renderer.compileAsync(scene, camera);
       if (disposed) return;
-      camera.layers.set(1);
-      await renderer.compileAsync(scene, camera);
-      if (disposed) return;
-      camera.layers.set(0);
       paint(sceneTime());
       await yieldTask();
       if (disposed) return;
@@ -482,6 +501,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       renderer.setAnimationLoop(null);
       observer.disconnect();
       panelObserver.disconnect();
+      formObserver.disconnect();
       scrollContainer?.removeEventListener('scroll', measurePanel);
       motion.removeEventListener('change', updateLoop);
       document.removeEventListener('visibilitychange', updateLoop);
