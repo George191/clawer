@@ -17,6 +17,9 @@ _STOP = object()
 _CELERY_CONSOLE_FORMATTER = logging.Formatter(
     "[%(asctime)s: %(levelname)s/%(processName)s] %(message)s"
 )
+# Progress lines are rewritten in place so a download shows ONE live bar row
+# instead of one row per refresh; the finished line is kept as a normal row.
+PROGRESS_LINE_PREFIXES = ("download progress:",)
 
 
 class TaskLogCapture(logging.Handler):
@@ -33,6 +36,7 @@ class TaskLogCapture(logging.Handler):
         self._writer_task: asyncio.Task[None] | None = None
         self._loggers: list[logging.Logger] = []
         self._formatters: dict[str, logging.Formatter] = {}
+        self._progress_log_id: int | None = None
 
     def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -89,11 +93,27 @@ class TaskLogCapture(logging.Handler):
                 return
             token = _writing_task_logs.set(True)
             try:
-                await self._store.append_task_logs(self.task_id, [item])
+                if item["message"].startswith(PROGRESS_LINE_PREFIXES):
+                    await self._write_progress_line(item)
+                else:
+                    await self._store.append_task_logs(self.task_id, [item])
             except Exception as exc:
                 sys.stderr.write(f"Automation task log write failed: {exc}\n")
             finally:
                 _writing_task_logs.reset(token)
+
+    async def _write_progress_line(self, item: dict[str, Any]) -> None:
+        """Insert once, then keep rewriting the same row so the UI shows one bar."""
+        if self._progress_log_id is not None:
+            rewritten = await self._store.update_task_log_message(
+                self.task_id, self._progress_log_id, item["message"]
+            )
+            if rewritten:
+                return
+            self._progress_log_id = None
+        inserted = await self._store.append_task_logs(self.task_id, [item])
+        if inserted and inserted[0].get("id") is not None:
+            self._progress_log_id = inserted[0]["id"]
 
 
 WorkspaceTaskLogCapture = TaskLogCapture

@@ -87,7 +87,7 @@ class AutomationTaskStore:
                  AND run.task_id = task.id
                 WHERE task.id = CAST(:task_id AS uuid)
                   AND task.deleted_at IS NULL
-                RETURNING run_id, level, message, created_at
+                RETURNING id, run_id, level, message, created_at
             ), counted AS (
                 UPDATE public.automation_task_runs run
                 SET log_count = run.log_count + totals.log_count
@@ -95,12 +95,33 @@ class AutomationTaskStore:
                 WHERE run.id = totals.run_id
                 RETURNING run.id
             )
-            SELECT run_id::text AS run_id, level, message, created_at FROM inserted
+            SELECT id, run_id::text AS run_id, level, message, created_at FROM inserted
             """,
             {"task_id": task_id, "logs": json.dumps(logs, default=str, ensure_ascii=False)},
         )
         for log in inserted:
             await publish_task_log(task_id, log)
+        return inserted
+
+    async def update_task_log_message(self, task_id: str, log_id: int, message: str) -> None:
+        """Rewrite one log row in place (e.g. a live progress bar) and republish it.
+
+        The row id is stable, so websocket clients that key by id render a single
+        updating line instead of a new row per refresh.
+        """
+        updated = await self._pg.fetch_one(
+            """
+            UPDATE public.automation_task_logs
+            SET message = :message
+            WHERE id = :log_id
+            RETURNING id, run_id::text AS run_id, level, message, created_at
+            """,
+            {"log_id": log_id, "message": message},
+        )
+        if not updated:
+            return False
+        await publish_task_log(task_id, dict(updated))
+        return True
 
     async def increment_run_stats(
         self,
