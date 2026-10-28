@@ -90,35 +90,104 @@ class TsRds(ETLBase):
             current_row = result.mappings().first()
             return dict(current_row) if current_row else None
 
+    def _prepare_payload(self, message: dict[str, Any], table: str) -> dict[str, Any]:
+        require_canonical_record(message)
+        meta = extract_meta(message)
+        data_source = meta.get("data_source") or ""
+        data_type = meta.get("data_type") or table
+        record_id = meta.get("record_id") or message.get("record_id") or ""
+
+        if not record_id:
+            logger.warning("%s Message missing record_id, skipping table=%s", self._log_prefix, table)
+            raise ValueError("RDS input identity is missing")
+        if not data_source:
+            logger.warning("%s Message missing source template, skipping table=%s", self._log_prefix, table)
+            raise ValueError("RDS input identity is missing")
+
+        raw_data = dict(message)
+        kafka_meta = message.get("_kafka_meta", {}) or {}
+        now = datetime.now(timezone.utc)
+        payload = {
+            "record_id": record_id,
+            "data_source": data_source,
+            "data_type": data_type,
+            "raw_data": json.dumps(raw_data, ensure_ascii=False, default=str),
+            "kafka_offset": kafka_meta.get("kafka_offset"),
+            "kafka_partition": kafka_meta.get("kafka_partition"),
+            "kafka_topic": kafka_meta.get("kafka_topic"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        return payload
+
+    async def _dispatch_batch(self, messages, owner, partition):
+        # A batch failure falls back to the existing one-record/repair path.
+        # Unknown commit ACKs are replayed, never treated as successful offsets.
+        if len(messages) < 2 or len(messages) > 50:
+            return None
+        prepared = []
+        total_bytes = 0
+        try:
+            table = None
+            for message in messages:
+                if message.value is None:
+                    return None
+                candidate = extract_meta(message.value).get("data_type")
+                validate_table_name(candidate)
+                if table is not None and candidate != table:
+                    return None
+                if self._table_name and candidate != self._table_name:
+                    return None
+                table = candidate
+                message.value["_kafka_meta"] = {
+                    "kafka_offset": message.offset,
+                    "kafka_partition": message.partition,
+                    "kafka_topic": message.topic,
+                }
+                payload = self._prepare_payload(message.value, table)
+                total_bytes += len(payload["raw_data"].encode("utf-8"))
+                if total_bytes > 4 * 1024 * 1024:
+                    return None
+                prepared.append(payload)
+            await self._ensure_type(table)
+            if not self._batch_owned(owner, partition):
+                return False
+            current_sql = text(current_insert_sql("rds", table, table_columns("rds", table)))
+            results = []
+            async with self._pg.session() as session:
+                await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
+                for payload in prepared:
+                    if not self._batch_owned(owner, partition):
+                        raise RuntimeError("RDS batch assignment changed before commit")
+                    row = (await session.execute(current_sql, payload)).mappings().first()
+                    results.append(dict(row) if row else None)
+                if not self._batch_owned(owner, partition):
+                    raise RuntimeError("RDS batch assignment changed before commit")
+        except Exception:
+            logger.exception("%s RDS transaction batch failed; using single-record path", self._log_prefix)
+            return None
+        # No output is visible to downstream before the database commit succeeds.
+        try:
+            for payload, result in zip(prepared, results, strict=True):
+                if not self._batch_owned(owner, partition):
+                    return False
+                if result is not None:
+                    await self._emit(
+                        result, record_id=payload["record_id"],
+                        data_source=payload["data_source"], data_type=payload["data_type"],
+                        topic=f"{settings.etl_rds_topic}-{table}",
+                    )
+        except Exception:
+            logger.exception("%s RDS batch output failed; replaying input batch", self._log_prefix)
+            return False
+        return True
+
     async def _process_rds_record(self, message: dict[str, Any], table: str) -> bool:
         try:
-            require_canonical_record(message)
-            meta = extract_meta(message)
-            data_source = meta.get("data_source") or ""
-            data_type = meta.get("data_type") or table
-            record_id = meta.get("record_id") or message.get("record_id") or ""
-
-            if not record_id:
-                logger.warning("%s Message missing record_id, skipping table=%s", self._log_prefix, table)
-                return False
-            if not data_source:
-                logger.warning("%s Message missing source template, skipping table=%s", self._log_prefix, table)
-                return False
-
-            raw_data = dict(message)
-            kafka_meta = message.get("_kafka_meta", {}) or {}
-            now = datetime.now(timezone.utc)
-            payload = {
-                "record_id": record_id,
-                "data_source": data_source,
-                "data_type": data_type,
-                "raw_data": json.dumps(raw_data, ensure_ascii=False, default=str),
-                "kafka_offset": kafka_meta.get("kafka_offset"),
-                "kafka_partition": kafka_meta.get("kafka_partition"),
-                "kafka_topic": kafka_meta.get("kafka_topic"),
-                "created_at": now,
-                "updated_at": now,
-            }
+            payload = self._prepare_payload(message, table)
+            record_id = payload["record_id"]
+            data_source = payload["data_source"]
+            data_type = payload["data_type"]
 
             await self._ensure_type(table)
             result = await self._execute_with_table_recovery(

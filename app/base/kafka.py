@@ -20,7 +20,7 @@ from typing import Any
 from app.config.settings import settings
 
 KAFKA_MAX_MESSAGE_BYTES = 4 * 1024 * 1024
-KAFKA_PRODUCER_MAX_MESSAGE_BYTES = 8 * 1024 * 1024
+KAFKA_PRODUCER_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
 
 def get_brokers(bootstrap_servers: str | None = None) -> list[str]:

@@ -65,9 +65,10 @@ class _OffsetRestoreListener(ConsumerRebalanceListener):
         self.worker = worker
 
     async def on_partitions_revoked(self, revoked) -> None:
-        pass
+        self.worker._assignment_epoch += 1
 
     async def on_partitions_assigned(self, assigned) -> None:
+        self.worker._assignment_epoch += 1
         await self.worker._resume_from_redis(assigned)
 
 
@@ -89,6 +90,7 @@ class ETLBase:
         self._pg = get_pg_client()
         self._running = False
         self._pending_offsets: dict[str, int] = {}
+        self._assignment_epoch = 0
 
     async def _close_consumer(self) -> None:
         if not self._consumer:
@@ -779,8 +781,12 @@ class ETLBase:
         await _OFFSET_MANAGER.reset_offsets(self._consumer_group, topic)
         logger.info("%s Manual resume: topic=%s partition=%d → offset=%d", self._log_prefix, topic, partition, offset)
 
-    async def _commit_and_save(self, topic: str, partition: int, offset: int) -> None:
+    async def _commit_and_save(self, topic: str, partition: int, offset: int, *, owner=None) -> None:
+        if owner is not None and not self._batch_owned(owner, TopicPartition(topic, partition)):
+            return
         await self._consumer.commit({TopicPartition(topic, partition): offset + 1})
+        if owner is not None and not self._batch_owned(owner, TopicPartition(topic, partition)):
+            return
         key = self._offset_key(topic, partition)
         self._pending_offsets[key] = offset + 1
         for pending_key, off in self._pending_offsets.items():
@@ -815,6 +821,17 @@ class ETLBase:
 
         await self._consume_loop()
 
+    def _batch_owned(self, owner, partition) -> bool:
+        consumer, epoch = owner
+        return (
+            self._consumer is consumer
+            and self._assignment_epoch == epoch
+            and partition in consumer.assignment()
+        )
+
+    async def _dispatch_batch(self, messages, owner, partition):
+        return None
+
     async def _consume_loop(self) -> None:
         if not self._consumer:
             await self._connect_consumer()
@@ -825,22 +842,40 @@ class ETLBase:
         while self._running:
             try:
                 records = {}
+                poll_consumer = self._consumer
                 if batch_commit:
-                    partitions = sorted(self._consumer.assignment())
+                    partitions = sorted(poll_consumer.assignment())
                     for _ in partitions:
                         partition = partitions[partition_cursor % len(partitions)]
                         partition_cursor += 1
-                        records = await self._consumer.getmany(
+                        records = await poll_consumer.getmany(
                             partition, timeout_ms=0, max_records=50,
                         )
                         if records:
                             break
                 if not records:
-                    records = await self._consumer.getmany(timeout_ms=5000, max_records=50)
+                    records = await poll_consumer.getmany(timeout_ms=5000, max_records=50)
+                owner = (poll_consumer, self._assignment_epoch)
                 retry_needed = False
                 for _tp, msgs in records.items():
+                    if batch_commit and not self._batch_owned(owner, _tp):
+                        continue
+                    batch_result = await self._dispatch_batch(msgs, owner, _tp)
+                    if batch_result is not None:
+                        if self._batch_owned(owner, _tp):
+                            if batch_result:
+                                await self._commit_and_save(_tp.topic, _tp.partition, msgs[-1].offset, owner=owner)
+                            else:
+                                self._consumer.seek(_tp, msgs[0].offset)
+                                retry_needed = True
+                        continue
+                    if batch_commit and not self._batch_owned(owner, _tp):
+                        continue
                     last_successful_offset = None
                     for msg in msgs:
+                        if batch_commit and not self._batch_owned(owner, _tp):
+                            last_successful_offset = None
+                            break
                         if msg.value is None:
                             continue
                         success = False
@@ -851,6 +886,9 @@ class ETLBase:
                                 "kafka_topic": msg.topic,
                             }
                             success = await self._dispatch(msg.value)
+                            if batch_commit and not self._batch_owned(owner, _tp):
+                                last_successful_offset = None
+                                break
                             if success:
                                 if batch_commit:
                                     last_successful_offset = msg.offset
@@ -859,12 +897,17 @@ class ETLBase:
                         except Exception:
                             success = False
                             logger.exception("%s Handler error", self._log_prefix)
+                        if batch_commit and not self._batch_owned(owner, _tp):
+                            last_successful_offset = None
+                            break
                         if not success:
                             if batch_commit and last_successful_offset is not None:
                                 await self._commit_and_save(
-                                    _tp.topic, _tp.partition, last_successful_offset
+                                    _tp.topic, _tp.partition, last_successful_offset, owner=owner
                                 )
                                 last_successful_offset = None
+                            if batch_commit and not self._batch_owned(owner, _tp):
+                                break
                             self._consumer.seek(_tp, msg.offset)
                             logger.warning(
                                 "%s Retrying topic=%s partition=%d offset=%d",
@@ -874,7 +917,7 @@ class ETLBase:
                             break
                     if batch_commit and last_successful_offset is not None:
                         await self._commit_and_save(
-                            _tp.topic, _tp.partition, last_successful_offset
+                            _tp.topic, _tp.partition, last_successful_offset, owner=owner
                         )
                 if retry_needed:
                     await asyncio.sleep(1)
