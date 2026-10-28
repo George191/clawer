@@ -77,11 +77,11 @@
 .sp-login-options .ant-checkbox-inner:after { top: 50%; left: 50%; margin: 0; width: 5px; height: 8px; border: solid #fff; border-width: 0 1.5px 1.5px 0; transform: translate(-50%, -56%) rotate(45deg) scale(0); }
 .sp-login-options .ant-checkbox-checked .ant-checkbox-inner:after { opacity: 1; transform: translate(-50%, -56%) rotate(45deg) scale(1); }
 /* Sign in button and checkbox checked state follow the teal accent */
-.sp-login-form-wrap .ant-btn-primary { background: #0d9488; border-color: #0d9488; }
-.sp-login-form-wrap .ant-btn-primary:not(:disabled):hover { background: #14b8a6; border-color: #14b8a6; }
-.sp-login-form-wrap .ant-btn-primary:not(:disabled):active { background: #0f766e; border-color: #0f766e; }
-.sp-login-options .ant-checkbox-checked .ant-checkbox-inner { background-color: #0d9488; border-color: #0d9488; }
-.sp-login-options .ant-checkbox:hover .ant-checkbox-inner { border-color: #14b8a6; }
+.sp-login-form-wrap .ant-btn-primary { background: #0d9488 !important; border-color: #0d9488 !important; }
+.sp-login-form-wrap .ant-btn-primary:not(:disabled):hover { background: #14b8a6 !important; border-color: #14b8a6 !important; }
+.sp-login-form-wrap .ant-btn-primary:not(:disabled):active { background: #0f766e !important; border-color: #0f766e !important; }
+.sp-login-options .ant-checkbox-checked .ant-checkbox-inner { background-color: #0d9488 !important; border-color: #0d9488 !important; }
+.sp-login-options .ant-checkbox:hover .ant-checkbox-inner { border-color: #14b8a6 !important; }
 @media (max-width: 960px) { .sp-login { display: block; background: #070d16; } .sp-login-space, .sp-login-graph, .sp-login-background-loader { display: none; } .sp-login-panel { min-height: 100%; } }
 @media (max-width: 760px) { .sp-login-panel { padding: 24px 18px; } .sp-login-form-wrap { padding: 26px 22px 24px; }.sp-login-form-brand { gap: 10px; }.sp-login-form-wrap h2 { font-size: clamp(22px, 6vw, 28px); }.sp-login-options { gap: 12px; font-size: 12px; }.sp-login-security-note { text-align: center; line-height: 1.6; } }
 @media (prefers-reduced-motion: reduce) { .sp-login-copy, .sp-login-form-wrap, .sp-login-background-loader ~ .sp-login-space, .sp-login-background-loader .sp-auth-loading-satellite { animation: none !important; } .sp-login-background-loader .sp-auth-loading-satellite { will-change: auto; } .sp-login-background-loader, .sp-login:has(> .sp-login-background-loader) > :is(.sp-login-graph, .sp-login-panel) { transition: none !important; } }
