@@ -21,6 +21,29 @@ const AuthBackground = () => {
   const [ready, setReady] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const active = React.useRef(true);
+  // LOADING_QA_START
+  React.useEffect(() => {
+    if (ready) return;
+    const gaps: number[] = [], tasks: number[] = [], errors: number[] = [];
+    let frame = 0, previous = 0;
+    const observer = new PerformanceObserver(list => { for (const entry of list.getEntries()) tasks.push(entry.duration); });
+    observer.observe({ type: 'longtask' });
+    const tick = (now: number) => {
+      if (previous) gaps.push(now - previous);
+      previous = now;
+      const orbit = document.querySelector('.sp-login-background-loader .sp-auth-loading-satellite')?.getAnimations()[0];
+      const epoch = Number.parseFloat(document.documentElement.style.getPropertyValue('--sp-auth-orbit-epoch'));
+      if (orbit && typeof orbit.currentTime === 'number' && Number.isFinite(epoch)) errors.push(Math.abs(orbit.currentTime - Number(orbit.effect!.getTiming().delay) - (now - epoch)));
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frame); observer.disconnect();
+      const sorted = [...gaps].sort((a,b) => a-b);
+      document.documentElement.dataset.loadingPerf = JSON.stringify({ samples:gaps.length, median:sorted[Math.floor(sorted.length*.5)], p95:sorted[Math.floor(sorted.length*.95)], max:sorted[sorted.length-1], tasks, phaseErrorMax:Math.max(0,...errors) });
+    };
+  }, [ready]);
+  // LOADING_QA_END
   const backgroundReady = React.useCallback(() => { if (active.current) setReady(true); }, []);
   const backgroundUnavailable = React.useCallback(() => {
     if (!active.current) return;
