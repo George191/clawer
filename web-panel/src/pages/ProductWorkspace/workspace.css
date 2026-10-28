@@ -1500,6 +1500,15 @@ body:has(.flow-home){overflow:hidden}
 .flow-layers--tagged .flow-data-table .ant-table-thead>tr>th{white-space:nowrap}
 .flow-layers--tagged .flow-data-table .ant-table-thead>tr>th,.flow-layers--tagged .flow-data-table .ant-table-tbody>tr>td{text-align:center}
 
+/* /flow/layers header sort buttons (navicat style) */
+.flow-layers--tagged .flow-data-table .flow-col-head{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:0;max-width:100%}
+.flow-layers--tagged .flow-data-table .flow-col-head-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.flow-layers--tagged .flow-data-table .flow-col-sort-btn{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;flex:none;padding:0;border:0;border-radius:3px;background:transparent;color:#728090;opacity:0;cursor:pointer;transition:opacity .12s ease,color .12s ease,background .12s ease}
+.flow-layers--tagged .flow-data-table .ant-table-thead>tr>th:hover .flow-col-sort-btn{opacity:1}
+.flow-layers--tagged .flow-data-table .flow-col-sort-btn:hover{background:rgba(255,255,255,.08);color:#d0dae4;opacity:1}
+.flow-layers--tagged .flow-data-table .flow-col-sort-btn.is-active{opacity:1;color:#8b82f8}
+.flow-layers--tagged .flow-data-table .flow-col-sort-btn svg{display:block;width:10px;height:10px}
+
 /* /flow/layers row JSON preview modal */
 .flow-json-preview-modal .ant-modal-header{margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(148,163,184,.12)}
 .flow-json-preview-modal .ant-modal-title{font-size:14px;font-weight:700;color:#e8edf7}
