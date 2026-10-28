@@ -109,11 +109,13 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
 
     // Distinct orbital planes and signed speeds keep the constellation dispersed.
     const orbitLanes = [
-      { radiusFactor: 1.10, inclination: -1.35, tilt: .30, phase: .47, angularSpeed: .0120, scale: .075 },
-      { radiusFactor: 1.16, inclination: -1.30, tilt: .34, phase: 1.41, angularSpeed: .0120, scale: .050 },
-      { radiusFactor: 1.22, inclination: -1.25, tilt: .38, phase: 2.62, angularSpeed: .0120, scale: .048 },
-      { radiusFactor: 1.28, inclination: -1.40, tilt: .32, phase: 3.995, angularSpeed: .0120, scale: .046 },
-      { radiusFactor: 1.34, inclination: -1.15, tilt: .30, phase: 4.88, angularSpeed: .0120, scale: .044 },
+      { radiusFactor: 1.10, inclination: -.20, tilt: 1.10, phase: 5.884, angularSpeed: .0120, scale: .075 },
+      { radiusFactor: 1.16, inclination: -1.30, tilt: .30, phase: 1.553, angularSpeed: -.0120, scale: .050 },
+      { radiusFactor: 1.22, inclination: -1.40, tilt: .34, phase: 4.531, angularSpeed: .0120, scale: .048 },
+      { radiusFactor: 1.28, inclination: 1.10, tilt: 1.16, phase: 3.095, angularSpeed: -.0105, scale: .046 },
+      { radiusFactor: 1.34, inclination: .50, tilt: .72, phase: 3.038, angularSpeed: .0135, scale: .044 },
+      { radiusFactor: 1.40, inclination: -.95, tilt: .62, phase: 3.876, angularSpeed: .0092, scale: .044 },
+      { radiusFactor: 1.46, inclination: .05, tilt: 1.08, phase: .642, angularSpeed: -.0148, scale: .042 },
     ];
     const models: THREE.Group[] = [];
 
