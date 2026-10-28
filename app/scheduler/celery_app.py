@@ -100,6 +100,14 @@ class CeleryAppFactory:
             "task_acks_late": False,                   # 开始执行即确认，避免长任务因可见超时重复投递
             "task_reject_on_worker_lost": True,        # Worker 异常退出时拒绝任务（重新入队）
             "worker_prefetch_multiplier": 1,           # 每次只预取 1 个任务（长任务场景）
+
+            # ── 硬超时（防僵尸子进程）──
+            # curl_cffi 等 C 扩展阻塞在死 socket 上时 asyncio 取消无法传播，
+            # 子进程无法自救。hard time_limit 由父进程侧 guardian 强制 SIGKILL，
+            # 不依赖任务自身配合；槽位随即释放，不会形成僵尸。
+            # 4h 上限覆盖最慢的全量下载（SAM.gov 218MB @ 0.1MB/s 劣化链路）。
+            "task_soft_time_limit": 3 * 3600,          # 任务内抛 SoftTimeLimitExceeded，可优雅收尾
+            "task_time_limit": 4 * 3600,
             "broker_transport_options": {
                 "visibility_timeout": 24 * 3600,
             },

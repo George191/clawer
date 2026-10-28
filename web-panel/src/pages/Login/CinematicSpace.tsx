@@ -145,7 +145,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     draco.setDecoderPath('/space/draco/').setWorkerLimit(1);
     const loader = new GLTFLoader().setDRACOLoader(draco);
     const loadFlyby = () => new Promise<void>(resolve => loader.load('/space/iss.glb', async gltf => {
-      if (disposed) { disposeCinematicSatellite(gltf.scene); resolve(); return; }
+      if (disposed) { disposeCinematicSatellite(gltf.scene); draco.dispose(); resolve(); return; }
       try {
         // These seven detached modelling offcuts sit above the exported station.
         const offcuts = new THREE.Group();
@@ -163,7 +163,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         gltf.scene.traverse(object => { if (object instanceof THREE.Mesh) meshes.push(object); });
         for (const object of meshes) {
           await yieldTask();
-          if (disposed) { disposeCinematicSatellite(gltf.scene); return; }
+          if (disposed) { disposeCinematicSatellite(gltf.scene); draco.dispose(); return; }
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           const positions = object.geometry.getAttribute('position');
           const solar = materials.some(material => material.name.startsWith('lambert7SG'));
@@ -218,7 +218,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       } catch {
         disposeCinematicSatellite(gltf.scene);
       } finally { resolve(); }
-    }, undefined, () => resolve()));
+    }, undefined, () => { if (disposed) draco.dispose(); resolve(); }));
 
     const orbitMaterials = [...orbitLanes.map(() => 0x527b91), 0x5d758d].map((color, index) => new THREE.LineBasicMaterial({ color, transparent: true, opacity: index < orbitLanes.length ? .1 : .16, depthWrite: false }));
     const orbitLines = orbitMaterials.map(material => {
