@@ -37,8 +37,8 @@ const AuthBackground = () => {
   }, []);
 
   return <>
-    <div className={`sp-login-background-loader${ready ? ' is-ready' : ''}`} aria-hidden="true">
-      <svg viewBox="0 0 160 160" fill="none">
+    <div className={`sp-login-background-loader${ready ? ' is-ready' : ''}`} role="status" aria-live="polite">
+      <svg viewBox="0 0 160 160" fill="none" aria-hidden="true">
         <circle cx="80" cy="80" r="56" stroke="#386dca" strokeOpacity=".35" strokeDasharray="2 6" />
         <g className="sp-login-loader-earth">
           <circle cx="80" cy="80" r="34" stroke="#2c6fff" strokeOpacity=".18" strokeWidth="6" />

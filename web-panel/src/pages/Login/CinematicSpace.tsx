@@ -263,7 +263,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         Math.abs(m[1]) * size.x + Math.abs(m[5]) * size.y + Math.abs(m[9]) * size.z,
       );
     }
-    function paint(time: number) {
+    function paint(time: number, renderFrame = true) {
       if (disposed || !prepared) return;
       earth.update(time);
       const communication = (time / 6) % 1;
@@ -310,6 +310,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       particleShields[models.length].update(time + 2.6, .8 + Math.sqrt(signals[0]) * .2);
       const physicalWidth = 8 * flyby.scale.x;
       stars.rotation.y = time * .0003;
+      if (!renderFrame) return;
 
       // Render only the flyby to the glass veil, using the same camera and geometry.
       veilCtx.clearRect(0, 0, width, height);
@@ -461,8 +462,13 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       }
       prepared = true;
       resize();
+      paint(sceneTime(), false);
       await renderer.compileAsync(scene, camera);
       if (disposed) return;
+      camera.layers.set(1);
+      await renderer.compileAsync(scene, camera);
+      if (disposed) return;
+      camera.layers.set(0);
       paint(sceneTime());
       await yieldTask();
       if (disposed) return;
