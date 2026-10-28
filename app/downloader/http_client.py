@@ -96,10 +96,10 @@ def _download_bar(fraction: float) -> str:
 def _download_progress_line(received: int, total: int, speed_mbps: float) -> str:
     speed = f"{speed_mbps:.1f} MB/s"
     if not total:
-        return (f"download progress: {_download_bar(0.0)} ??% "
+        return (f"download progress:\n  {_download_bar(0.0)} ??% "
                 f"({received / 1048576:.1f} MB) {speed}")
     pct = min(int(received * 100 // total), 99)
-    return (f"download progress: {_download_bar(received / total)} {pct}% "
+    return (f"download progress:\n  {_download_bar(received / total)} {pct}% "
             f"({received / 1048576:.1f}/{total / 1048576:.1f} MB) {speed}")
 
 
@@ -837,7 +837,7 @@ class HttpClient:
                     received_total = buffer.getbuffer().nbytes
                     elapsed = max(loop.time() - started, 0)
                     logger.info(
-                        "download finished: %s 100%% (%.1f MB in %.0fs, %.2f MB/s) - %s",
+                        "download finished:\n  %s 100%% (%.1f MB in %.0fs, %.2f MB/s) - %s",
                         _download_bar(1.0), received_total / 1048576, elapsed,
                         received_total / 1048576 / max(elapsed, 1e-9), url,
                     )

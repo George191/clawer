@@ -119,6 +119,12 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       { radiusFactor: 1.46, inclination: .05, tilt: 1.08, phase: .642, angularSpeed: -.0148, scale: .042 },
     ];
     const models: THREE.Group[] = [];
+    const appearances = Array.from({ length: orbitLanes.length + 1 }, () => ({
+      revealAt: Infinity, alpha: 0, wanted: false,
+      materials: [] as { material: THREE.Material; opacity: number }[],
+    }));
+    let openingTime = 0;
+    let visibilityTime = 0;
 
     let flybyScan: ReturnType<typeof createCinematicScan>;
     const scans: ReturnType<typeof createCinematicScan>[] = [];
@@ -250,10 +256,73 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     const screenPosition = new THREE.Vector3();
     const veilBounds = new THREE.Box3();
     let panelBounds: { x: number; y: number; width: number; height: number } | undefined;
+    let blockedBounds: { x: number; y: number; width: number; height: number }[] = [];
     function measurePanel() {
       const panel = canvas!.parentElement?.querySelector('.sp-login-form-wrap')?.getBoundingClientRect();
+      const copy = canvas!.parentElement?.querySelector('.sp-login-copy')?.getBoundingClientRect();
       const box = canvas!.getBoundingClientRect();
       panelBounds = panel ? { x: panel.left - box.left, y: panel.top - box.top, width: panel.width, height: panel.height } : undefined;
+      blockedBounds = [panelBounds, copy && { x: copy.left - box.left, y: copy.top - box.top, width: copy.width, height: copy.height }]
+        .filter((rect): rect is NonNullable<typeof rect> => !!rect);
+    }
+    const cameraOffset = new THREE.Vector3(), markerDirection = new THREE.Vector3(), markerCorner = new THREE.Vector3();
+    function marker(model: THREE.Group, wholeOcclusion = false) {
+      const radius = 5.1 * 1.05 * model.scale.x;
+      if (camera.position.z - model.position.z <= camera.near + radius) return;
+      markerDirection.subVectors(model.position, camera.position);
+      const distance = markerDirection.length();
+      markerDirection.divideScalar(distance);
+      const b = cameraOffset.dot(markerDirection);
+      const disc = b * b - cameraOffset.lengthSq() + earthRadius ** 2;
+      const hit = disc >= 0 ? -b - Math.sqrt(disc) : Infinity;
+      if (wholeOcclusion) {
+        const offset = Math.acos(THREE.MathUtils.clamp(-b / cameraOffset.length(), -1, 1));
+        if (hit > 0 && hit < distance - radius && offset + Math.asin(Math.min(1, radius / distance)) <= Math.asin(earthRadius / cameraOffset.length())) return;
+      } else {
+        const paddedDisc = b * b - cameraOffset.lengthSq() + (earthRadius * 1.006 + radius) ** 2;
+        if (paddedDisc >= 0 && -b - Math.sqrt(paddedDisc) > 0 && -b - Math.sqrt(paddedDisc) < distance) return;
+      }
+      let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+      for (let i = 0; i < 8; i++) {
+        markerCorner.set(model.position.x + (i & 1 ? radius : -radius), model.position.y + (i & 2 ? radius : -radius),
+          model.position.z + (i & 4 ? radius : -radius)).project(camera);
+        const x = (markerCorner.x + 1) * width / 2, y = (1 - markerCorner.y) * height / 2;
+        left = Math.min(left, x); right = Math.max(right, x);
+        top = Math.min(top, y); bottom = Math.max(bottom, y);
+      }
+      if (right < 0 || left > width || bottom < 0 || top > height) return;
+      return { x: (left + right) / 2, y: (top + bottom) / 2, radius: Math.max(right - left, bottom - top) / 2, foreground: hit > distance && hit < Infinity,
+        clean: left >= 20 && right <= width - 20 && top >= 20 && bottom <= height - 20
+          && !blockedBounds.some(rect => right > rect.x - 20 && left < rect.x + rect.width + 20 && bottom > rect.y - 20 && top < rect.y + rect.height + 20) };
+    }
+    function updateVisibility(time: number) {
+      const objects = [...models, flyby];
+      const points = objects.map(model => marker(model, true));
+      const gap = Math.max(90, Math.min(170, Math.min(width, height) * .12));
+      const overlaps = (a: number, b: number, padding = 0) => !!points[a] && !!points[b]
+        && Math.hypot(points[a]!.x - points[b]!.x, points[a]!.y - points[b]!.y) < points[a]!.radius + points[b]!.radius + gap + padding;
+      const candidates = appearances.map((_, index) => index).filter(index => time >= appearances[index].revealAt && points[index]
+        && (index < models.length || width >= 1280));
+      // Keep admitted satellites stable; the close flyby gets room for its passage.
+      candidates.sort((a, b) => Number(b === models.length) - Number(a === models.length)
+        || Number(appearances[b].wanted) - Number(appearances[a].wanted) || appearances[b].alpha - appearances[a].alpha || a - b);
+      const limit = Math.min(width < 1280 ? 3 : width >= 2200 ? 5 : 4, 2 + Math.floor(Math.max(0, time - openingTime) / 18));
+      const selected: number[] = [];
+      for (const index of candidates) {
+        if (selected.length < limit && selected.every(other => !overlaps(index, other, appearances[index].wanted ? 0 : 30))) selected.push(index);
+      }
+      const delta = Math.min(.1, Math.max(0, time - visibilityTime));
+      visibilityTime = time;
+      appearances.forEach((appearance, index) => {
+        appearance.wanted = selected.includes(index);
+        const waiting = appearances.some((other, otherIndex) => otherIndex !== index && !selected.includes(otherIndex)
+          && other.alpha > .01 && overlaps(index, otherIndex));
+        appearance.alpha = THREE.MathUtils.damp(appearance.alpha, appearance.wanted && !waiting ? 1 : 0, 3, delta);
+        if (appearance.alpha < .003) appearance.alpha = 0;
+        if (appearance.alpha > .997) appearance.alpha = 1;
+        objects[index].visible = appearance.alpha > 0 && (index < models.length || width >= 1280);
+        for (const { material, opacity } of appearance.materials) material.opacity = opacity * appearance.alpha;
+      });
     }
     const projectionRotation = new THREE.Matrix4();
     function projectedSpan(size: THREE.Vector3, attitude: THREE.Quaternion) {
@@ -270,15 +339,11 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       const signals = [communication < .5 ? Math.sin(communication * Math.PI * 2) ** 2 : 0, communication >= .5 ? Math.sin((communication - .5) * Math.PI * 2) ** 2 : 0];
       models.forEach((model, index) => {
         const lane = orbitLanes[index];
-        const signal = signals[index % signals.length];
         model.position.copy(orbitPoint(lane.phase + time * lane.angularSpeed, index));
         model.up.copy(laneAxes[index].normal);
         model.lookAt(earth.group.position);
         model.rotateZ(Math.sin(time * .05 + index) * .1);
         updateCinematicSatellite(model, time);
-        target.copy(model.position).sub(earth.group.position).normalize().multiplyScalar(scanSurface.radius).add(earth.group.position);
-        scans[index].update(model.position, target, time, .42 + signal * .58, 1.1, scanSurface);
-        particleShields[index].update(time + index * 1.3, .8 + signal * .2);
       });
 
       // Kepler's equation keeps this closed orbit continuous and faster near Earth.
@@ -304,11 +369,19 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       const minimumScale = minimumPixels * distance / (focal * projectedSpan(flybySize, flyby.quaternion));
       const safeScale = (flyby.position.distanceTo(earth.group.position) - earthRadius * 1.006 - .15) / (5.1 * 1.05);
       flyby.scale.setScalar(Math.min(safeScale, Math.max(flybyNearScale * distanceScale, minimumScale)));
-      flyby.visible = width >= 1280;
+      if (renderFrame) updateVisibility(time);
+      models.forEach((model, index) => {
+        const signal = signals[index % signals.length];
+        const alpha = renderFrame ? appearances[index].alpha : 1;
+        target.copy(model.position).sub(earth.group.position).normalize().multiplyScalar(scanSurface.radius).add(earth.group.position);
+        scans[index].update(model.position, target, time, (.42 + signal * .58) * alpha, 1.1, scanSurface);
+        particleShields[index].update(time + index * 1.3, (.8 + signal * .2) * alpha);
+      });
+      const flybyAlpha = renderFrame ? appearances[models.length].alpha : 1;
       target.copy(flyby.position).sub(earth.group.position).normalize().multiplyScalar(scanSurface.radius).add(earth.group.position);
-      flybyScan.update(flyby.position, target, time, .52 + signals[0] * .48, 1.55, scanSurface);
+      flybyScan.update(flyby.position, target, time, (.52 + signals[0] * .48) * flybyAlpha, 1.55, scanSurface);
       flybyScan.group.visible = flyby.visible && camera.position.z - flyby.position.z > camera.near + .2;
-      particleShields[models.length].update(time + 2.6, .8 + Math.sqrt(signals[0]) * .2);
+      particleShields[models.length].update(time + 2.6, (.8 + Math.sqrt(signals[0]) * .2) * flybyAlpha);
       const physicalWidth = 8 * flyby.scale.x;
       stars.rotation.y = time * .0003;
       if (!renderFrame) return;
@@ -367,6 +440,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       const distance = 24;
       const tangent = Math.tan(THREE.MathUtils.degToRad(camera.fov * .5));
       earth.group.position.set(-.4 * distance * tangent * camera.aspect, -.55 * distance * tangent, 18 - distance);
+      cameraOffset.copy(camera.position).sub(earth.group.position);
       const desiredRadius = Math.min(width * .38, height * .68);
       earthRadius = desiredRadius * distance * 2 * tangent / height;
       earth.group.scale.setScalar(earthRadius);
@@ -408,77 +482,58 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       if (ready) paint(sceneTime());
     }
     async function randomizeOpening() {
-      let blocked: { x: number; y: number; width: number; height: number }[] = [];
-      const cameraOffset = new THREE.Vector3();
       function refreshBounds() {
         measurePanel();
-        const canvasBox = canvas!.getBoundingClientRect();
-        const copy = canvas!.parentElement?.querySelector('.sp-login-copy')?.getBoundingClientRect();
-        blocked = [panelBounds, copy && { x: copy.left - canvasBox.left, y: copy.top - canvasBox.top, width: copy.width, height: copy.height }]
-          .filter((rect): rect is NonNullable<typeof rect> => !!rect);
-        cameraOffset.copy(camera.position).sub(earth.group.position);
-        return JSON.stringify([width, height, blocked]);
+        return JSON.stringify([width, height, blockedBounds]);
       }
       let boundsVersion = refreshBounds();
-      const direction = new THREE.Vector3(), corner = new THREE.Vector3();
-      const openingTime = sceneTime();
-      const gap = Math.max(70, Math.min(width, height) * .085);
-      function marker(model: THREE.Group, wholeOcclusion = false) {
-        const radius = 5.1 * 1.05 * model.scale.x;
-        if (camera.position.z - model.position.z <= camera.near + radius) return;
-        direction.subVectors(model.position, camera.position);
-        const distance = direction.length();
-        direction.divideScalar(distance);
-        const b = cameraOffset.dot(direction);
-        const disc = b * b - cameraOffset.lengthSq() + earthRadius ** 2;
-        const hit = disc >= 0 ? -b - Math.sqrt(disc) : Infinity;
-        if (wholeOcclusion) {
-          const offset = Math.acos(THREE.MathUtils.clamp(-b / cameraOffset.length(), -1, 1));
-          if (hit > 0 && hit < distance - radius && offset + Math.asin(Math.min(1, radius / distance)) <= Math.asin(earthRadius / cameraOffset.length())) return;
-        } else {
-          const paddedDisc = b * b - cameraOffset.lengthSq() + (earthRadius * 1.006 + radius) ** 2;
-          if (paddedDisc >= 0 && -b - Math.sqrt(paddedDisc) > 0 && -b - Math.sqrt(paddedDisc) < distance) return;
-        }
-        let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
-        for (let i = 0; i < 8; i++) {
-          corner.set(model.position.x + (i & 1 ? radius : -radius), model.position.y + (i & 2 ? radius : -radius),
-            model.position.z + (i & 4 ? radius : -radius)).project(camera);
-          const x = (corner.x + 1) * width / 2, y = (1 - corner.y) * height / 2;
-          left = Math.min(left, x); right = Math.max(right, x);
-          top = Math.min(top, y); bottom = Math.max(bottom, y);
-        }
-        if (right < 0 || left > width || bottom < 0 || top > height) return;
-        return { x: (left + right) / 2, y: (top + bottom) / 2, radius: Math.max(right - left, bottom - top) / 2, foreground: hit > distance && hit < Infinity,
-          clean: left >= 20 && right <= width - 20 && top >= 20 && bottom <= height - 20
-            && !blocked.some(rect => right > rect.x - 20 && left < rect.x + rect.width + 20 && bottom > rect.y - 20 && top < rect.y + rect.height + 20) };
-      }
-      const markers = () => models.map(model => marker(model)).filter((point): point is NonNullable<typeof point> => !!point);
+      openingTime = visibilityTime = sceneTime();
+      const gap = Math.max(130, Math.min(width, height) * .18);
+      const markers = () => models.map((model, index) => { const point = marker(model); return point && { ...point, index }; })
+        .filter((point): point is NonNullable<typeof point> => !!point);
       let bestScore = Infinity;
       let bestPhases = orbitLanes.map(lane => lane.phase);
+      let openingPair: number[] = [];
+      const openingCandidates: (ReturnType<typeof markers>[number] & { phase: number })[] = [];
       for (let attempt = 0; attempt < 96; attempt++) {
-        orbitLanes.forEach(lane => { lane.phase = Math.random() * Math.PI * 2; });
+        // More of the waiting constellation starts on the rear hemisphere.
+        orbitLanes.forEach(lane => { lane.phase = Math.random() < .65 ? Math.PI * (1 + Math.random()) : Math.random() * Math.PI * 2; });
         paint(openingTime, false);
-        const points = markers();
-        const maxVisible = width < height ? 4 : 3;
-        let score = Math.max(0, 2 - points.length) * 100 + Math.max(0, points.length - maxVisible) * 5000;
-        for (let i = 0; i < points.length; i++) {
-          if (!points[i].clean) score += 20000;
-          for (let j = 0; j < i; j++) {
-            if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < points[i].radius + points[j].radius + gap) score += 200000;
+        const points = markers().filter(point => point.clean).map(point => ({ ...point, phase: orbitLanes[point.index].phase }));
+        for (const a of points) {
+          for (const b of openingCandidates) {
+            if (a.index === b.index) continue;
+            if (Math.hypot(a.x - b.x, a.y - b.y) < a.radius + b.radius + gap) continue;
+            let score = a.x < width * .55 && a.foreground || b.x < width * .55 && b.foreground ? 0 : 1000;
+            if (a.x > width * .5 && b.x > width * .5) score += 5000;
+            if (Math.abs(a.x - b.x) < width * .26 && Math.abs(a.y - b.y) < height * .34) score += 500;
+            if (a.foreground && b.foreground) score += 50;
+            if (score < bestScore) {
+              bestScore = score;
+              bestPhases = orbitLanes.map(lane => lane.phase);
+              bestPhases[a.index] = a.phase;
+              bestPhases[b.index] = b.phase;
+              openingPair = [a.index, b.index];
+            }
           }
+          openingCandidates.push(a);
         }
-        if (points.length >= 2 && Math.max(...points.map(p => p.x)) - Math.min(...points.map(p => p.x)) < width * .22
-          && Math.max(...points.map(p => p.y)) - Math.min(...points.map(p => p.y)) < height * .26) score += 1000;
-        if (!points.some(point => point.clean && (point.foreground || point.x < width * .5))) score += 500;
-        if (score < bestScore) { bestScore = score; bestPhases = orbitLanes.map(lane => lane.phase); }
-        if (score === 0) break;
+        if (bestScore === 0) break;
         if (attempt % 8 === 7 && attempt < 95) {
           await yieldTask(); if (disposed) return;
           const nextVersion = refreshBounds();
-          if (nextVersion !== boundsVersion) { boundsVersion = nextVersion; bestScore = Infinity; }
+          if (nextVersion !== boundsVersion) { boundsVersion = nextVersion; bestScore = Infinity; openingCandidates.length = 0; }
         }
       }
       orbitLanes.forEach((lane, index) => { lane.phase = bestPhases[index]; });
+      const waiting = orbitLanes.map((_, index) => index).filter(index => !openingPair.includes(index));
+      for (let i = waiting.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [waiting[i], waiting[j]] = [waiting[j], waiting[i]];
+      }
+      openingPair.forEach(index => { appearances[index].revealAt = openingTime; appearances[index].alpha = 1; appearances[index].wanted = true; });
+      waiting.forEach((index, order) => { appearances[index].revealAt = openingTime + 14 + order * 10 + Math.random() * 4; });
+      appearances[models.length].revealAt = openingTime + 30 + Math.random() * 12;
       paint(openingTime, false);
       let flybyChosen = false;
       for (let attempt = 0; attempt < 32; attempt++) {
@@ -582,6 +637,20 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       prepareFlybyModel();
       await Promise.all([earth.ready, loadFlyby()]);
       if (disposed) return;
+      // Compile the fade variant up front, retaining opaque depth and metal shading.
+      [...models, flyby].forEach((model, index) => {
+        const materials = new Set<THREE.Material>();
+        model.traverse(object => {
+          if (!(object instanceof THREE.Mesh)) return;
+          for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+            if (!(material instanceof THREE.ShaderMaterial)) materials.add(material);
+          }
+        });
+        for (const material of materials) {
+          material.alphaHash = true;
+          appearances[index].materials.push({ material, opacity: material.opacity });
+        }
+      });
       const textures = new Set<THREE.Texture>();
       scene.traverse(object => {
         if (!(object instanceof THREE.Mesh)) return;
