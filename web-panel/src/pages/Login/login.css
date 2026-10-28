@@ -60,6 +60,18 @@
 @keyframes sp-auth-scene-enter { from { opacity: 0; } to { opacity: 1; } }
 @keyframes sp-auth-loader-orbit { from { transform: translateZ(0) rotate(0deg); } to { transform: translateZ(0) rotate(360deg); } }
 @media (min-width: 961px) { .sp-login:has(> .sp-login-background-loader) > :is(.sp-login-graph, .sp-login-panel) { opacity: 1; visibility: visible; transition: opacity .35s ease; } .sp-login:has(> .sp-login-background-loader:not(.is-ready)) > :is(.sp-login-graph, .sp-login-panel) { opacity: 0; visibility: hidden; pointer-events: none; transition: none; } }
+
+/* Compact form typography: antd size="large" renders 16px text and 40px controls,
+   which dwarfs the surrounding 10-12px copy. */
+.sp-login-form-wrap .ant-input-affix-wrapper-lg, .sp-login-form-wrap .ant-input-lg:not(.sp-verification-code) { font-size: 13px; }
+.sp-login-form-wrap .ant-input-affix-wrapper-lg { padding: 5px 12px; }
+.sp-login-form-wrap .ant-input-affix-wrapper-lg .ant-input-prefix { margin-inline-end: 8px; }
+.sp-login-form-wrap .ant-btn-lg { height: 36px; padding: 0 15px; font-size: 13px; }
+.sp-sso-button { height: 36px; }
+.sp-login-options { font-size: 12px; }
+.sp-login-options .ant-checkbox + span { font-size: 12px; padding-inline-start: 7px; }
+.sp-login-options .ant-checkbox-inner { width: 14px; height: 14px; }
+.sp-login-options .ant-checkbox-inner:after { width: 4px; height: 7px; }
 @media (max-width: 960px) { .sp-login { display: block; background: #070d16; } .sp-login-space, .sp-login-graph, .sp-login-background-loader { display: none; } .sp-login-panel { min-height: 100%; } }
 @media (max-width: 760px) { .sp-login-panel { padding: 24px 18px; } .sp-login-form-wrap { padding: 26px 22px 24px; }.sp-login-form-brand { gap: 10px; }.sp-login-form-wrap h2 { font-size: clamp(22px, 6vw, 28px); }.sp-login-options { gap: 12px; font-size: 12px; }.sp-login-security-note { text-align: center; line-height: 1.6; } }
 @media (prefers-reduced-motion: reduce) { .sp-login-copy, .sp-login-form-wrap, .sp-login-background-loader ~ .sp-login-space, .sp-login-background-loader .sp-auth-loading-satellite { animation: none !important; } .sp-login-background-loader .sp-auth-loading-satellite { will-change: auto; } .sp-login-background-loader, .sp-login:has(> .sp-login-background-loader) > :is(.sp-login-graph, .sp-login-panel) { transition: none !important; } }
