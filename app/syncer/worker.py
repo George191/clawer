@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -27,9 +26,6 @@ from app.syncer.publisher import RecordPublisher
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
-_TASK_LOG_FORMATTER = logging.Formatter(
-    "[%(asctime)s: %(levelname)s/Syncer] %(message)s"
-)
 
 
 class SyncWorker:
@@ -96,17 +92,11 @@ class SyncWorker:
 
         for (task_id, run_id), count in synced_by_run.items():
             await ai_collect_store.increment_run_stats(task_id, run_id, synced=count)
-            record = logger.makeRecord(
-                logger.name, logging.INFO, __file__, 0,
-                "[task=%s run=%s] Kafka publish acknowledged: records=%d batch_records=%d; RDS/ODS consume asynchronously",
-                (task_id, run_id, count, len(ready)), None,
+            await ai_collect_store.write_task_log(
+                task_id, run_id, "Syncer", logging.INFO,
+                "Kafka publish acknowledged: records=%d batch_records=%d; RDS/ODS consume asynchronously",
+                count, len(ready),
             )
-            await ai_collect_store.append_task_logs(task_id, [{
-                "run_id": run_id,
-                "level": "info",
-                "message": _TASK_LOG_FORMATTER.format(record),
-                "created_at": datetime.fromtimestamp(record.created, timezone.utc),
-            }])
 
         logger.info(
             "SyncWorker: Kafka acknowledged %d/%d records; RDS/ODS consume asynchronously",

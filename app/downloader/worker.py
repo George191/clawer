@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import mimetypes
-from time import perf_counter
+from time import perf_counter, time
 from typing import Any
 from urllib.parse import unquote
 
@@ -146,7 +147,14 @@ class DownloadWorker:
         if not collection or not record_id:
             return
 
+        owner = meta.get("search_params") or {}
+        task_id = str(owner.get("__workspace_task_id") or "")
+        run_id = str(owner.get("__workspace_run_id") or "")
         started_at = perf_counter()
+        message: str | None = None
+        message_args: tuple[Any, ...] = ()
+        level = logging.INFO
+        created_at = None
         try:
             template = await self._load_template(template_name)
             if template is None:
@@ -206,22 +214,22 @@ class DownloadWorker:
                 claim_token,
             )
             if completed:
-                logger.info(
+                message = (
                     "DownloadWorker: record completed | collection=%s template=%s datatype=%s record=%s status=%s "
-                    "| downloaded=%d reused=%d not_found=%d failed=%d elapsed=%.2fs",
+                    "| downloaded=%d reused=%d not_found=%d failed=%d elapsed=%.2fs"
+                )
+                message_args = (
                     collection, template_name, data_type, record_id,
                     "failed" if failed else "downloaded",
                     downloaded_count, reused_count, not_found_count, failed,
                     perf_counter() - started_at,
                 )
             else:
-                logger.warning(
-                    "DownloadWorker: result not saved; claim no longer matches | collection=%s record=%s",
-                    collection, record_id,
-                )
-            owner = meta.get("search_params") or {}
-            task_id = str(owner.get("__workspace_task_id") or "")
-            run_id = str(owner.get("__workspace_run_id") or "")
+                message = "DownloadWorker: result not saved; claim no longer matches | collection=%s record=%s"
+                message_args = (collection, record_id)
+                level = logging.WARNING
+            created_at = time()
+            logger.log(level, message, *message_args)
             if completed and not failed and task_id and run_id:
                 try:
                     await ai_collect_store.increment_run_stats(task_id, run_id, downloaded=1)
@@ -231,15 +239,26 @@ class DownloadWorker:
                         task_id, run_id, record_id,
                     )
         except Exception as exc:
-            logger.error(
-                "DownloadWorker failed for %s | error=%s: %s",
-                record_id,
-                type(exc).__name__,
-                exc,
-            )
+            message = "DownloadWorker failed for %s | error=%s: %s"
+            message_args = (record_id, type(exc).__name__, exc)
+            level = logging.ERROR
+            created_at = time()
+            logger.log(level, message, *message_args)
             await self._mongo.update_file_status(
                 collection, record_id, "failed", claim_token=claim_token,
             )
+        finally:
+            if message is not None and task_id and run_id:
+                try:
+                    await ai_collect_store.write_task_log(
+                        task_id, run_id, "Downloader", level, message, *message_args,
+                        created_at=created_at,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Download task log write failed: task=%s run=%s record=%s",
+                        task_id, run_id, record_id,
+                    )
 
     def _download_template_fields(
         self,

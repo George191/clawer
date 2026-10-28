@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from app.storage.minio_client import get_business_metadata_minio_client
@@ -64,13 +66,59 @@ class AutomationTaskStore:
             "level": level, "message": message, "run_id": run_id,
         }])
 
+    async def write_task_log(
+        self,
+        task_id: str,
+        run_id: str,
+        executor: str,
+        level: int | str,
+        message: str,
+        *args: Any,
+        created_at: datetime | float | None = None,
+        log_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Write an execution event using one UTC display and storage format.
+
+        Pass the event time when capturing an existing LogRecord. An explicit
+        owner is required so background workers never fall back to a newer run.
+        ``log_id`` replaces a live progress row without incrementing log_count.
+        Raw append_task_log(s) remain available for existing callers and batches.
+        """
+        if not task_id or not run_id:
+            raise ValueError("Task logs require task_id and run_id")
+        levelno = level if isinstance(level, int) else getattr(logging, level.upper(), None)
+        if level == "ok":
+            levelno = logging.INFO
+        if not isinstance(levelno, int):
+            raise ValueError(f"Unknown task log level: {level}")
+        if isinstance(created_at, datetime):
+            event_time = created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo is None else created_at.astimezone(timezone.utc)
+        elif created_at is not None:
+            event_time = datetime.fromtimestamp(created_at, timezone.utc)
+        else:
+            event_time = datetime.now(timezone.utc)
+        level_name = "OK" if level == "ok" else logging.getLevelName(levelno)
+        text = logging.LogRecord(executor, levelno, "", 0, message, args, None).getMessage()
+        timestamp = event_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+        formatted = f"[{timestamp}: {level_name}/{executor}] {text}"
+        if log_id is not None and await self.update_task_log_message(
+            task_id, log_id, formatted, run_id=run_id,
+        ):
+            return [{"id": log_id}]
+        return await self.append_task_logs(task_id, [{
+            "run_id": run_id,
+            "level": "ok" if level == "ok" else "warn" if levelno >= logging.WARNING else "info",
+            "message": formatted,
+            "created_at": event_time,
+        }])
+
     async def append_task_logs(
         self,
         task_id: str,
         logs: list[dict[str, Any]],
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         if not logs:
-            return
+            return []
         await self.initialize()
         inserted = await self._pg.fetch_all(
             """
@@ -103,7 +151,9 @@ class AutomationTaskStore:
             await publish_task_log(task_id, log)
         return inserted
 
-    async def update_task_log_message(self, task_id: str, log_id: int, message: str) -> None:
+    async def update_task_log_message(
+        self, task_id: str, log_id: int, message: str, *, run_id: str | None = None,
+    ) -> bool:
         """Rewrite one log row in place (e.g. a live progress bar) and republish it.
 
         The row id is stable, so websocket clients that key by id render a single
@@ -114,9 +164,11 @@ class AutomationTaskStore:
             UPDATE public.automation_task_logs
             SET message = :message
             WHERE id = :log_id
+              AND task_id = CAST(:task_id AS uuid)
+              AND (CAST(:run_id AS uuid) IS NULL OR run_id = CAST(:run_id AS uuid))
             RETURNING id, run_id::text AS run_id, level, message, created_at
             """,
-            {"log_id": log_id, "message": message},
+            {"task_id": task_id, "run_id": run_id, "log_id": log_id, "message": message},
         )
         if not updated:
             return False

@@ -68,6 +68,7 @@ const App: React.FC = () => {
         ) : (
           <Suspense fallback={<div role="status" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>正在加载页面...</span></div>}>
           <MainLayout>
+          <Suspense fallback={<div role="status" style={{ minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>正在加载页面...</span></div>}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />
@@ -128,6 +129,7 @@ const App: React.FC = () => {
             <Route path="/learning" element={<WorkspacePage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
           </MainLayout>
           </Suspense>
         )}

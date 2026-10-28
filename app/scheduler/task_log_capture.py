@@ -13,6 +13,9 @@ from typing import Any
 from app.web.services.automation_task_store import automation_task_store
 
 _writing_task_logs: ContextVar[bool] = ContextVar("writing_task_logs", default=False)
+_workspace_log_capture: ContextVar[WorkspaceTaskLogCapture | None] = ContextVar(
+    "workspace_log_capture", default=None,
+)
 _STOP = object()
 _CELERY_CONSOLE_FORMATTER = logging.Formatter(
     "[%(asctime)s: %(levelname)s/%(processName)s] %(message)s"
@@ -55,18 +58,21 @@ class TaskLogCapture(logging.Handler):
         if _writing_task_logs.get() or self._loop is None or self._queue is None:
             return
         try:
-            item = {
-                "run_id": self.run_id,
-                "level": "warn" if record.levelno >= logging.WARNING else "info",
-                "message": _format_console_record(record, self._formatters),
-                "created_at": datetime.fromtimestamp(record.created, timezone.utc),
-            }
+            item = self._log_item(record)
             if threading.get_ident() == self._loop_thread_id:
                 self._queue.put_nowait(item)
             else:
                 self._loop.call_soon_threadsafe(self._queue.put_nowait, item)
         except Exception:
             self.handleError(record)
+
+    def _log_item(self, record: logging.LogRecord) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "level": "warn" if record.levelno >= logging.WARNING else "info",
+            "message": _format_console_record(record, self._formatters),
+            "created_at": datetime.fromtimestamp(record.created, timezone.utc),
+        }
 
     async def stop(self) -> None:
         for logger in self._loggers:
@@ -93,16 +99,19 @@ class TaskLogCapture(logging.Handler):
                 return
             token = _writing_task_logs.set(True)
             try:
-                # Stored lines carry the celery console prefix, so match the
-                # marker anywhere in the message instead of startswith.
-                if any(marker in item["message"] for marker in PROGRESS_LINE_PREFIXES):
-                    await self._write_progress_line(item)
-                else:
-                    await self._store.append_task_logs(self.task_id, [item])
+                await self._write_item(item)
             except Exception as exc:
                 sys.stderr.write(f"Automation task log write failed: {exc}\n")
             finally:
                 _writing_task_logs.reset(token)
+
+    async def _write_item(self, item: dict[str, Any]) -> None:
+        # Stored lines carry the celery console prefix, so match the
+        # marker anywhere in the message instead of startswith.
+        if any(marker in item["message"] for marker in PROGRESS_LINE_PREFIXES):
+            await self._write_progress_line(item)
+        else:
+            await self._store.append_task_logs(self.task_id, [item])
 
     async def _write_progress_line(self, item: dict[str, Any]) -> None:
         """Insert once, then keep rewriting the same row so the UI shows one bar."""
@@ -118,7 +127,39 @@ class TaskLogCapture(logging.Handler):
             self._progress_log_id = inserted[0]["id"]
 
 
-WorkspaceTaskLogCapture = TaskLogCapture
+class WorkspaceTaskLogCapture(TaskLogCapture):
+    """Capture only this crawl's context and delegate formatting to the store."""
+
+    def start(self) -> None:
+        self._capture_token = _workspace_log_capture.set(self)
+        super().start()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if _workspace_log_capture.get() is self:
+            super().emit(record)
+
+    def _log_item(self, record: logging.LogRecord) -> dict[str, Any]:
+        return {
+            "level": record.levelno,
+            "message": logging.Formatter("%(message)s").format(record),
+            "created_at": record.created,
+        }
+
+    async def _write_item(self, item: dict[str, Any]) -> None:
+        progress = any(marker in item["message"] for marker in PROGRESS_LINE_PREFIXES)
+        inserted = await self._store.write_task_log(
+            self.task_id, self.run_id, "Crawler", item["level"], item["message"],
+            created_at=item["created_at"],
+            log_id=self._progress_log_id if progress else None,
+        )
+        if progress and inserted:
+            self._progress_log_id = inserted[0].get("id")
+
+    async def stop(self) -> None:
+        try:
+            await super().stop()
+        finally:
+            _workspace_log_capture.reset(self._capture_token)
 
 
 def _all_loggers() -> list[logging.Logger]:
