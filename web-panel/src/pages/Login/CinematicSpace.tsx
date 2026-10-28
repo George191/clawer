@@ -35,6 +35,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     let lastTime = performance.now();
     let lastPaint = 0;
     const flybyPeriod = 72;
+    let flybyStartMean = 0;
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(42, 1, .1, 1600);
@@ -267,11 +268,10 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       earth.update(time);
       const communication = (time / 6) % 1;
       const signals = [communication < .5 ? Math.sin(communication * Math.PI * 2) ** 2 : 0, communication >= .5 ? Math.sin((communication - .5) * Math.PI * 2) ** 2 : 0];
-      const orbitTime = time + 180;
       models.forEach((model, index) => {
         const lane = orbitLanes[index];
         const signal = signals[index % signals.length];
-        model.position.copy(orbitPoint(lane.phase + orbitTime * lane.angularSpeed, index));
+        model.position.copy(orbitPoint(lane.phase + time * lane.angularSpeed, index));
         model.up.copy(laneAxes[index].normal);
         model.lookAt(earth.group.position);
         model.rotateZ(Math.sin(time * .05 + index) * .1);
@@ -282,7 +282,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       });
 
       // Kepler's equation keeps this closed orbit continuous and faster near Earth.
-      const meanAnomaly = (.32 - time / flybyPeriod * Math.PI * 2) % (Math.PI * 2);
+      const meanAnomaly = (flybyStartMean - time / flybyPeriod * Math.PI * 2) % (Math.PI * 2);
       let eccentricAnomaly = meanAnomaly;
       for (let i = 0; i < 6; i++) {
         eccentricAnomaly -= (eccentricAnomaly - eccentricity * Math.sin(eccentricAnomaly) - meanAnomaly) / (1 - eccentricity * Math.cos(eccentricAnomaly));
@@ -407,6 +407,76 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       measurePanel();
       if (ready) paint(sceneTime());
     }
+    async function randomizeOpening() {
+      const canvasBox = canvas!.getBoundingClientRect();
+      const copy = canvas!.parentElement?.querySelector('.sp-login-copy')?.getBoundingClientRect();
+      const blocked = [panelBounds, copy && { x: copy.left - canvasBox.left, y: copy.top - canvasBox.top, width: copy.width, height: copy.height }]
+        .filter((rect): rect is NonNullable<typeof rect> => !!rect);
+      const cameraOffset = camera.position.clone().sub(earth.group.position);
+      const direction = new THREE.Vector3(), corner = new THREE.Vector3();
+      const openingTime = sceneTime();
+      const gap = Math.max(70, Math.min(width, height) * .085);
+      function marker(model: THREE.Group) {
+        const radius = 5.1 * 1.05 * model.scale.x;
+        if (camera.position.z - model.position.z <= camera.near + radius) return;
+        direction.subVectors(model.position, camera.position);
+        const distance = direction.length();
+        direction.divideScalar(distance);
+        const b = cameraOffset.dot(direction);
+        const disc = b * b - cameraOffset.lengthSq() + (earthRadius * 1.006 + radius) ** 2;
+        if (disc >= 0 && -b - Math.sqrt(disc) > 0 && -b - Math.sqrt(disc) < distance) return;
+        let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+        for (let i = 0; i < 8; i++) {
+          corner.set(model.position.x + (i & 1 ? radius : -radius), model.position.y + (i & 2 ? radius : -radius),
+            model.position.z + (i & 4 ? radius : -radius)).project(camera);
+          const x = (corner.x + 1) * width / 2, y = (1 - corner.y) * height / 2;
+          left = Math.min(left, x); right = Math.max(right, x);
+          top = Math.min(top, y); bottom = Math.max(bottom, y);
+        }
+        if (right < 0 || left > width || bottom < 0 || top > height) return;
+        return { x: (left + right) / 2, y: (top + bottom) / 2, radius: Math.max(right - left, bottom - top) / 2,
+          clean: left >= 20 && right <= width - 20 && top >= 20 && bottom <= height - 20
+            && !blocked.some(rect => right > rect.x - 20 && left < rect.x + rect.width + 20 && bottom > rect.y - 20 && top < rect.y + rect.height + 20) };
+      }
+      const markers = () => models.map(marker).filter((point): point is NonNullable<typeof point> => !!point);
+      let bestScore = Infinity;
+      let bestPhases = orbitLanes.map(lane => lane.phase);
+      for (let attempt = 0; attempt < 96; attempt++) {
+        orbitLanes.forEach(lane => { lane.phase = Math.random() * Math.PI * 2; });
+        paint(openingTime, false);
+        const points = markers();
+        const maxVisible = width < height ? 4 : 3;
+        let score = Math.max(0, 2 - points.length, points.length - maxVisible) * 1000;
+        for (let i = 0; i < points.length; i++) {
+          if (!points[i].clean) score += 1000;
+          for (let j = 0; j < i; j++) {
+            if (Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) < points[i].radius + points[j].radius + gap) score += 1000;
+          }
+        }
+        if (points.length >= 2 && Math.max(...points.map(p => p.x)) - Math.min(...points.map(p => p.x)) < width * .22
+          && Math.max(...points.map(p => p.y)) - Math.min(...points.map(p => p.y)) < height * .26) score += 1000;
+        if (score < bestScore) { bestScore = score; bestPhases = orbitLanes.map(lane => lane.phase); }
+        if (score === 0) break;
+        if (attempt % 8 === 7) { await yieldTask(); if (disposed) return; }
+      }
+      orbitLanes.forEach((lane, index) => { lane.phase = bestPhases[index]; });
+      paint(openingTime, false);
+      const smallMarkers = markers();
+      let flybyChosen = false;
+      for (let attempt = 0; attempt < 32; attempt++) {
+        flybyStartMean = Math.random() * Math.PI * 2;
+        paint(openingTime, false);
+        const point = flyby.visible ? marker(flyby) : undefined;
+        if (camera.position.distanceTo(flyby.position) >= flybyNearDistance * 2.5
+          && (!point || point.clean && point.radius * 2 <= Math.min(240, height * .25)
+            && smallMarkers.every(small => Math.hypot(point.x - small.x, point.y - small.y) >= point.radius + small.radius + gap))) {
+          flybyChosen = true;
+          break;
+        }
+        if (attempt % 8 === 7) { await yieldTask(); if (disposed) return; }
+      }
+      if (!flybyChosen) flybyStartMean = Math.PI + (Math.random() - .5) * .3;
+    }
     function updateLoop() {
       renderer.setAnimationLoop(null);
       if (!ready || disposed || document.hidden) return;
@@ -501,6 +571,8 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       }
       prepared = true;
       resize();
+      await randomizeOpening();
+      if (disposed) return;
       paint(sceneTime(), false);
       await renderer.compileAsync(scene, camera);
       if (disposed) return;
