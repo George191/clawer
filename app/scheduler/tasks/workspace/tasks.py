@@ -18,6 +18,7 @@ from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.scheduler.celery_app import app, run_async
 from app.scheduler.task_log_capture import WorkspaceTaskLogCapture
+from app.scheduler.task_watchdog import TaskWatchdog
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.utils.connection_errors import is_retryable_connection_error
 from app.utils.runtime_control import (
@@ -48,9 +49,12 @@ def _status_after_success(schedule: dict[str, Any]) -> str:
 async def _wait_until_runnable(
     task_id: str,
     celery_task_id: str | None = None,
+    watchdog: TaskWatchdog | None = None,
 ) -> bool:
     """Wait while paused and return false when the task was canceled."""
     while True:
+        if watchdog is not None:
+            watchdog.touch()
         control = await ai_collect_store.get_task_control(task_id)
         if control is None or control.get("control_state") == "canceled":
             return False
@@ -205,6 +209,7 @@ async def _crawl_template(
     template_name: str,
     parameters: dict[str, Any],
     celery_task_id: str | None = None,
+    watchdog: TaskWatchdog | None = None,
 ) -> dict[str, Any]:
     engine: SpiderEngine | None = None
     checkpoint_store: PageCheckpointStore | None = None
@@ -213,7 +218,7 @@ async def _crawl_template(
     run_id = ""
     run_token = None
     control_token = set_control_checkpoint(
-        lambda: _wait_until_runnable(task_id, celery_task_id)
+        lambda: _wait_until_runnable(task_id, celery_task_id, watchdog)
     )
     try:
         task = await ai_collect_store.get_task_for_execution(task_id)
@@ -236,6 +241,8 @@ async def _crawl_template(
         if not run_id:
             raise RuntimeError(f"Workspace execution batch is missing for task {task_id}")
         run_token = set_workspace_run(task_id, run_id, celery_task_id)
+        if watchdog is not None:
+            watchdog.start(run_id)
         log_capture = WorkspaceTaskLogCapture(task_id, run_id, ai_collect_store)
         log_capture.start()
         logger.info("Workspace crawl task started: %s", task_id)
@@ -499,6 +506,7 @@ def crawl_template(
     parameters: dict[str, Any],
 ) -> dict[str, Any]:
     """Run one released workspace template in a Celery worker."""
+    watchdog = TaskWatchdog(task_id, str(self.request.id))
     try:
         return run_async(
             _crawl_template(
@@ -506,12 +514,15 @@ def crawl_template(
                 template_name,
                 parameters,
                 celery_task_id=str(self.request.id),
+                watchdog=watchdog,
             )
         )
     except Exception as exc:
         if not is_retryable_connection_error(exc):
             raise
         raise self.retry(exc=exc, countdown=0) from exc
+    finally:
+        watchdog.close()
 
 
 async def _dispatch_due_workspace_tasks() -> dict[str, Any]:

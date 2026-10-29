@@ -3395,11 +3395,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 ) : null}
               </div>
               <div className="workspace-dock-diff-stats" aria-label="Selected run statistics">
-                <span className="is-added">+{selectedLogRun?.inserted_records ?? '--'} Added</span>
-                <span className="is-updated">~{selectedLogRun?.updated_records ?? '--'} Updated</span>
-                <span className="is-deleted">-{selectedLogRun?.deleted_records ?? '--'} Deleted</span>
-                <span className="is-download"><DownloadOutlined />{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)} Downloaded</span>
-                <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records)} Synced</span>
+                <span className="is-added">+{selectedLogRun?.inserted_records ?? '--'}</span>
+                <span className="is-updated">~{selectedLogRun?.updated_records ?? '--'}</span>
+                <span className="is-deleted">-{selectedLogRun?.deleted_records ?? '--'}</span>
+                <span className="is-download"><DownloadOutlined />{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)}</span>
+                <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records)}</span>
               </div>
             </div>
             <div className="workspace-dock-log-list is-detail">
