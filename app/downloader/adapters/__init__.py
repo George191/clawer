@@ -25,12 +25,6 @@ for adapter in (sec_edgar, twitter):
         register_download_adapter(data_type, template_name=template_name)(adapter.download)
 
 
-def collections_for_template(template_name: str | None) -> tuple[str | None, ...]:
-    collections = tuple(collection for collection, route in _COLLECTION_ROUTES.items()
-                        if route[0] == template_name)
-    return collections or (template_name,)
-
-
 def resolve_download_record(record: dict[str, Any]) -> tuple[str, str]:
     meta = record.get("_meta") or {}
     collection = meta.get("template") or ""

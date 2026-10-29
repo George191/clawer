@@ -117,13 +117,13 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 | 服务 | 入口 | 说明 |
 | --- | --- | --- |
 | Crawler | `python -m app.crawler.main` | 加载模板并执行采集 |
-| Downloader | `python -m app.downloader.main` | 轮询 MongoDB，下载资源到 MinIO/本地 |
-| Syncer | `python -m app.syncer.main` | 轮询 MongoDB，将已处理数据推送到 Kafka |
+| Downloader | `python -m app.downloader.main` | 优先消费主动投递队列，下载资源到 MinIO/本地，MongoDB 低频补偿 |
+| Syncer | `python -m app.syncer.main` | 优先消费主动投递队列，将记录推送到 Kafka，MongoDB 低频补偿 |
 | ETL | `python -m app.etl.main --layer <layer>` | 消费 Kafka，写入 Postgres/TimescaleDB |
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
 
-下载器按 PostgreSQL 模板分组并关联 `public.ai_collect_template_alias`，以别名映射的业务 `data_type` 筛选实际集合；未配置别名映射的模板使用原 `data_type` 和同名集合。匹配集合的待下载记录合并成一批（总数不超过 `--batch`）统一下载，每批及空闲轮询时重读数据库。不传 `--datatype` 时保留原行为，也可与 `--template` 同用；指定类型时，`--template` 支持父模板名和实际集合名：
+下载器按 PostgreSQL 模板分组并关联 `public.ai_collect_template_alias`，以映射的业务 `data_type` 筛选实际集合；未配置映射的已注册模板按 `数据类型_网站或端点标识` 生成集合名。优先接收 Redis 中的完整记录快照，原子认领后直接下载；MongoDB 默认每 60 秒扫描补偿待下载记录，集合路由在补偿间隔内缓存。不传 `--datatype` 时处理所有已启用路由，也可与 `--template` 同用；`--template` 支持父模板名和实际集合名：
 
 ```bash
 python -m app.downloader.main --datatype news
@@ -131,7 +131,7 @@ python -m app.downloader.main --template ssc_news --datatype=news
 python -m app.downloader.main --template sec_edgar --datatype filing
 ```
 
-下载并发使用 `SPIDER_DOWNLOAD_ASSET_CONCURRENCY`（默认 64），实际同时处理记录数不超过 `--batch`；每条记录内的资源依次下载。仅领取 `pending` 记录，`downloading` 不按时间自动重新领取；遗留下载状态须在确认原下载进程停止后修复。记录结束时释放对应的 HTTP 会话和代理租约。
+下载并发使用 `SPIDER_DOWNLOAD_ASSET_CONCURRENCY`（默认 64），实际同时处理记录数不超过 `--batch`；完成一条即补充下一条，不等待整批中最慢的下载，每条记录内的资源仍依次下载。仅领取 `pending` 记录，队列快照须匹配 MongoDB 当前版本。活动下载每 60 秒续租，超过 5 分钟无心跳的 `downloading` 在低频补偿时恢复为 `pending`；旧认领令牌不能回写结果。正常取消会释放认领，记录结束时释放对应的 HTTP 会话和代理租约。升级时重启所有下载器，避免无心跳的旧版进程与新版回收同时运行。
 
 ## 外部基础设施
 
@@ -257,15 +257,18 @@ npm run dev
 
 Compose 为 news、patent、navwarn、intelligence、organization、financial_fact、filing、account、tweet
 分别启动独立 Syncer 容器。原 `syncer` 服务负责 news，其余服务为 `syncer-<类型>`（服务名中的下划线改为连字符）。
-每批从 MongoDB 读取 50 条，进程内最多 10 个协程同时发送及回写状态；Kafka 中每条记录仍是独立消息。
+每批最多处理 50 条，进程内最多 10 个协程同时发送及回写状态；Kafka 中每条记录仍是独立消息。
 仅发送成功后标记对应版本为 synced，失败记录保留待重试。
 采集记录落库即标记为 pending，Syncer 查询不依赖下载状态；每条记录下载处理完成后立即原子回写资源、下载状态、更新时间并重置为 pending，不等待同批其他记录。下载回写同时递增 download_version；同步确认匹配发送时的 updated_at 和下载版本，避免同一毫秒内的下载更新被旧同步确认覆盖。
-同步由轮询触发：新采集记录和下载更新均在下一次轮询发送，空闲轮询默认间隔 10 秒，可通过 `--poll` 调整。
-指定类型时，与下载器共用模板分组及 `ai_collect_template_alias` 别名映射查询，只读取匹配业务类型的实际集合；MongoDB 仅按原同步状态条件查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
+新增或实际变化的记录在 MongoDB 写入成功后，将合并后的完整快照投递到现有 Redis（复用 `SPIDER_REDIS_URL` 的任务逻辑库），同步器直接消费快照，不再为每条正常投递额外回读 MongoDB；原样重复采集不重复投递。下载结果通过原子更新返回最终记录，再投递同步，保留并发采集更新。采集只等待有 0.5 秒网络期限的批量投递，不等待 Kafka ACK 或下载完成。
+MongoDB `pending` 状态保留为补偿依据：默认每 60 秒扫描一次（`--poll`），同步和下载补偿均跳过最近一个补偿间隔内更新的记录。满批积压可连续处理，不必每批等待整个补偿间隔；到期补偿不会被持续的新队列任务饿死。Redis 不可用、队列满、投递中断或进程退出均由补偿恢复。队列按物理集合及同步/下载用途隔离，每队列最多 1000 条、闲置 1 小时过期，超过 1 MiB 的完整快照直接走 MongoDB 补偿。该通道允许重复投递，沿用版本 ACK 和下游版本检查；不降低 Kafka 的业务消息量。
+指定类型时，与下载器共用模板分组及 `ai_collect_template_alias` 别名映射查询，只读取匹配业务类型的实际集合；MongoDB 按同步状态和补偿等待时间查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
 
 模板与集合的别名映射由 `app/records/collection_routes.py` 查询 `public.ai_collect_template_alias`，供采集、下载和同步共用。表结构由部署迁移维护，业务映射单独配置。映射以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行的下载和同步启停，不影响采集写入。模板存在映射时不再回退到同名集合，禁用映射也不会触发回退。
-模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 organization 或 filing。修改路由在下一批生效，已读入的当前批次继续完成。
+模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 organization 或 filing。修改路由在服务刷新路由缓存后生效，已开始的记录继续完成。
 模板的 `download[].collection` 使用实际集合名，变更实际集合时应一并更新对应下载配置。
+
+记录的 `_meta.template` 与实际集合名统一，ETL 直接注册标准来源名，不保留旧来源别名或额外的 `_meta.collection`。上线前须一次性完成发布模板、适配器、集合路由、Mongo 历史元数据及 RDS/ODS 来源与主键的迁移，并处理在途消息、重启相关服务；本仓库不提供保留旧身份的集合重命名脚本。
 
 模板标题和任务名称只使用来源或产品名，调度周期、执行方式和数据类型使用各自字段。同源多模板的内部 `name` 保留必要的栏目或端点区别；标识改名时须同步已发布 YAML、任务引用、集合路由和断点中的模板字段，保留任务及运行批次 UUID。执行入口使用任务当前的模板标识，避免旧队列参数覆盖改名后的引用。
 

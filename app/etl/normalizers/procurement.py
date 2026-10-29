@@ -183,6 +183,6 @@ def normalize_sam_gov_opportunity(record: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-register_normalizer("contract", "sam_gov_awards", normalize_sam_gov_award)
-register_normalizer("tender", "sam_gov_opportunities", normalize_sam_gov_opportunity)
-register_normalizer("contract", "usaspending", normalize_usaspending_contract)
+register_normalizer("contract", "contract_sam_gov_awards", normalize_sam_gov_award)
+register_normalizer("tender", "tender_sam_gov_opportunities", normalize_sam_gov_opportunity)
+register_normalizer("contract", "contract_usaspending", normalize_usaspending_contract)

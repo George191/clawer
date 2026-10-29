@@ -2,7 +2,7 @@
 
 工作流程
 --------
-1. 轮询 MongoDB 中 sync_status 未标为 synced 的记录，不等待下载
+1. 优先接收主动投递的完整记录，低频扫描 MongoDB 补偿遗漏，不等待下载
 2. 按记录 data_type 将记录推送至对应 Kafka 主题
 3. Kafka ACK 后，将对应版本的 sync_status 标为 synced（RDS/ODS 另行异步消费）
 
@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
+from time import monotonic
 
 from app.config.settings import settings
 from app.logger import get_logger
 from app.records.collection_routes import collection_route_store
+from app.records.delivery import RecordDelivery
 from app.records.mongo_store import MongoRecordStore
 from app.syncer.publisher import RecordPublisher
 from app.web.services.ai_collect_store import ai_collect_store
@@ -31,14 +34,14 @@ logger = get_logger(__name__)
 class SyncWorker:
     def __init__(
         self,
-        poll_interval: int = 10,
+        poll_interval: int = 60,
         batch_size: int = 50,
         template_name: str | None = None,
         data_type: str | None = None,
         concurrency: int = 10,
     ) -> None:
-        if batch_size < 1 or concurrency < 1:
-            raise ValueError("batch_size and concurrency must be positive")
+        if poll_interval < 0 or batch_size < 1 or concurrency < 1:
+            raise ValueError("poll_interval must be non-negative; batch_size and concurrency must be positive")
         self._poll_interval = poll_interval
         self._batch_size = batch_size
         self._template_name = template_name
@@ -47,8 +50,11 @@ class SyncWorker:
         self._semaphore = asyncio.Semaphore(concurrency)
         self._kafka: RecordPublisher | None = None
         self._mongo = MongoRecordStore()
+        self._delivery = RecordDelivery()
         self._running = False
         self._collection_cursor = 0
+        self._collection_names: list[str] = []
+        self._routes_refreshed_at: float | None = None
 
     async def run(self) -> None:
         self._running = True
@@ -63,17 +69,27 @@ class SyncWorker:
             self._topic if self._data_type else f"{settings.kafka_topic}-*",
         )
 
+        next_scan = 0.0
         while self._running:
             try:
-                count = await self._process_batch()
-                if count == 0:
-                    await asyncio.sleep(self._poll_interval)
+                ready = await self._read_queued_records()
+                if ready:
+                    await self._process_batch(ready)
+                if monotonic() >= next_scan:
+                    count = await self._process_batch()
+                    next_scan = monotonic() + (
+                        self._poll_interval if count < self._batch_size else 0
+                    )
+                if not ready:
+                    await asyncio.sleep(0.5)
             except Exception:
                 logger.exception("SyncWorker loop error")
-                await asyncio.sleep(self._poll_interval)
+                next_scan = monotonic() + self._poll_interval
+                await asyncio.sleep(0.5)
 
-    async def _process_batch(self) -> int:
-        ready = await self._read_ready_records()
+    async def _process_batch(self, ready: list[dict] | None = None) -> int:
+        if ready is None:
+            ready = await self._read_ready_records()
         if not ready:
             return 0
 
@@ -104,12 +120,29 @@ class SyncWorker:
         )
         return sent_count
 
-    async def _read_ready_records(self) -> list[dict]:
-        routes = await collection_route_store.list_by_data_type(
-            self._data_type, self._template_name,
+    async def _get_collection_names(self) -> list[str]:
+        if self._routes_refreshed_at is None or monotonic() - self._routes_refreshed_at >= 10:
+            routes = await collection_route_store.list_by_data_type(
+                self._data_type, self._template_name,
+            )
+            self._collection_names = list(dict.fromkeys(
+                route["collection_name"] for route in routes
+            ))
+            self._routes_refreshed_at = monotonic()
+        return self._collection_names
+
+    async def _read_queued_records(self) -> list[dict]:
+        names = await self._get_collection_names()
+        if not names:
+            return []
+        return await self._delivery.receive(
+            kind="sync", collections=names, limit=self._batch_size,
         )
+
+    async def _read_ready_records(self) -> list[dict]:
+        names = await self._get_collection_names()
         records = []
-        names = list(dict.fromkeys(route["collection_name"] for route in routes))
+        before = datetime.now(timezone.utc) - timedelta(seconds=self._poll_interval)
         if names:
             start = self._collection_cursor % len(names)
             names = names[start:] + names[:start]
@@ -117,6 +150,7 @@ class SyncWorker:
         for name in names:
             records.extend(await self._mongo.get_ready_to_sync(
                 template_name=name, limit=self._batch_size - len(records),
+                before=before,
             ))
             if len(records) >= self._batch_size:
                 break
@@ -140,8 +174,11 @@ class SyncWorker:
                 )
                 return False, ""
             try:
-                await self._kafka.send_record(
-                    record, topic=f"{settings.kafka_topic}-{data_type}",
+                await asyncio.wait_for(
+                    self._kafka.send_record(
+                        record, topic=f"{settings.kafka_topic}-{data_type}",
+                    ),
+                    timeout=30,
                 )
                 acknowledged = await self._mongo.update_sync_status(
                     template, data_type, record_id, "synced",
@@ -156,6 +193,7 @@ class SyncWorker:
 
     async def stop(self) -> None:
         self._running = False
+        await self._delivery.close()
         if self._kafka:
             await self._kafka.close()
         await self._mongo.close()

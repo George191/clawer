@@ -265,5 +265,5 @@ def normalize_nga_navwarn(record: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-register_normalizer("navwarn", "sealagom_navwarn", normalize_sealagom_navwarn)
-register_normalizer("navwarn", "nga_navwarn", normalize_nga_navwarn)
+register_normalizer("navwarn", "navwarn_sealagom", normalize_sealagom_navwarn)
+register_normalizer("navwarn", "navwarn_nga", normalize_nga_navwarn)

@@ -78,4 +78,4 @@ def normalize_twitter_content(record: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
-register_normalizer("tweet", "tw_tweet", normalize_twitter_content)
+register_normalizer("tweet", "tweet_twitter", normalize_twitter_content)

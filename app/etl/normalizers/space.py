@@ -268,9 +268,8 @@ def normalize_frequency(record: dict[str, Any]) -> dict[str, Any]:
             if row.values[target] is None:
                 row.take(target, source, cast=lambda value: number * multiplier if (number := _number(value)) is not None else None)
     # SatNOGS documents these four native fields in Hz; no unit is inferred for other sources.
-    source = str(record.get("source") or record.get("data_source") or "")
     for field in ("uplink_low", "uplink_high", "downlink_low", "downlink_high"):
-        row.take(field + "_hz", field + "_hz", *([field] if source.startswith("satnogs") else []))
+        row.take(field + "_hz", field + "_hz", *([field] if row.is_satnogs else []))
     return row.finish()
 
 
@@ -286,7 +285,7 @@ def normalize_groundstations(record: dict[str, Any]) -> dict[str, Any]:
     if any(source.startswith(("itu_", "groundstations_itu_")) for source in row.sources):
         row.take("itu_earth_notice_id", "ntc_id")
     row.take("altitude_m", "altitude_m")
-    if str(record.get("data_source") or "").startswith("starlink"):
+    if str(record.get("data_source") or "").startswith("groundstations_starlink"):
         row.take("altitude_m", "alt")  # KML Point altitude is explicitly meters.
     return row.finish()
 

@@ -1,9 +1,9 @@
-"""下载服务入口 — 独立进程运行 DownloadWorker 监听 MongoDB 并下载资源。
+"""下载服务入口 — 独立进程消费下载投递，并从 MongoDB 补偿遗漏记录。
 
 启动参数：
     --template <name>    只处理指定模板（默认扫描所有模板）
     --datatype <type>    按模板及集合路由解析业务类型（默认所有类型）
-    --poll <seconds>      轮询间隔（默认 10）
+    --poll <seconds>      MongoDB 补偿间隔及待处理记录最小年龄（默认 60）
     --batch <n>           每次处理记录数（默认 50）
     --cik-file <path>     只下载文件中 CIK 对应的 SEC 记录
 """
@@ -27,7 +27,7 @@ def setup_logging(service: str = "downloader") -> None:
 async def run() -> None:
     template_name: str | None = None
     data_type: str | None = None
-    poll_interval = 10
+    poll_interval = 60
     batch_size = 50
     cik_file: str | None = None
 

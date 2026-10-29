@@ -65,7 +65,7 @@ async def get_record_adapter(
 ) -> RecordAdapter:
     from app.adapters.runtime import get_source_module
 
-    module = await get_source_module(route["collection_name"])
+    module = await get_source_module(route["template_name"])
     adapter = getattr(module, "RECORD_ADAPTERS", {}).get(route["data_type"], RecordAdapter)
     if not isinstance(adapter, type) or not issubclass(adapter, RecordAdapter):
         raise ValueError("Published RECORD_ADAPTERS values must extend RecordAdapter")

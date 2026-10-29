@@ -46,4 +46,4 @@ def normalize_planet(record: dict[str, Any]) -> dict[str, Any]:
         "file_type": file_type,
     }
 
-register_normalizer("intelligence", "planet", normalize_planet)
+register_normalizer("intelligence", "intelligence_planet", normalize_planet)

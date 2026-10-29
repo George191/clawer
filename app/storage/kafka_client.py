@@ -67,6 +67,14 @@ class KafkaClient:
                 logger.info("Connected to Kafka: %s, topic: %s", settings.kafka_brokers, self._topic)
                 return
 
+            except asyncio.CancelledError:
+                self._connected = False
+                producer, self._producer = self._producer, None
+                if producer is not None:
+                    with suppress(Exception):
+                        await producer.stop()
+                raise
+
             except retryable as e:
                 self._connected = False
                 if self._producer is not None:

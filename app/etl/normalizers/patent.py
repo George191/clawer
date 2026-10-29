@@ -68,4 +68,4 @@ def normalize_google_patent(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-register_normalizer("patent", "google_patent", normalize_google_patent)
+register_normalizer("patent", "patent_google", normalize_google_patent)

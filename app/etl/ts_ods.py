@@ -105,7 +105,7 @@ class TsOds(ETLBase):
             inputs = [message.value for message in messages]
             if any(not isinstance(message, dict)
                    or message.get("data_type") != "financial_fact"
-                   or message.get("data_source") != "sec_edgar_company"
+                   or message.get("data_source") != "organization_sec_edgar"
                    or not message.get("record_id") for message in inputs):
                 return None
             def identity(row):
@@ -113,8 +113,9 @@ class TsOds(ETLBase):
             identities = [identity(message) for message in inputs]
             if len(set(identities)) != len(identities):
                 return None
-            module = await get_source_module("sec_edgar_company", export="NORMALIZERS")
-            normalizer = getattr(module, "NORMALIZERS", {}).get("financial_fact") or get_normalizer("financial_fact", "sec_edgar_company")
+            data_source = inputs[0]["data_source"]
+            module = await get_source_module(data_source, export="NORMALIZERS")
+            normalizer = getattr(module, "NORMALIZERS", {}).get("financial_fact") or get_normalizer("financial_fact", data_source)
             if normalizer is None:
                 return None
             fields = getattr(module, "ODS_FIELDS", {})
@@ -260,7 +261,7 @@ class TsOds(ETLBase):
 
     async def _write_filing_outputs(self, normalized_records, source, fields, now):
         # One input/source lock only. Never batch different filing inputs.
-        if source["data_type"] != "filing" or source["data_source"] != "sec_edgar_filing":
+        if source["data_type"] != "filing" or source["data_source"] != "filing_sec_edgar":
             return None
         if not 2 <= len(normalized_records) <= 50:
             return None
@@ -370,7 +371,7 @@ class TsOds(ETLBase):
                 "record_id": record_id, "data_source": data_source, "data_type": table,
                 "meta": raw_data.get("_meta") or {},
             }
-            if table == "filing" and data_source == "sec_edgar_filing":
+            if table == "filing" and data_source == "filing_sec_edgar":
                 emitted_records = await self._write_filing_outputs(normalized_records, source, fields, now)
             if emitted_records is None:
                 emitted_records = []

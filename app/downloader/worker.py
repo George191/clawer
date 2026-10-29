@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import mimetypes
+from datetime import datetime, timedelta, timezone
 from time import perf_counter, time
 from typing import Any
 from urllib.parse import unquote
@@ -14,7 +15,6 @@ from app.base.http import DownloadError, DownloadResponse
 from app.config.settings import settings
 from app.downloader.adapters import (
     DownloadItem,
-    collections_for_template,
     get_download_adapter,
     get_download_response_validator,
     resolve_download_record,
@@ -25,6 +25,7 @@ from app.logger import get_logger
 from app.models.template import SiteTemplate
 from app.records.asset_store import AssetStore
 from app.records.collection_routes import collection_route_store
+from app.records.delivery import RecordDelivery
 from app.records.mongo_store import MongoRecordStore
 from app.utils.download_paths import iter_download_nodes, iter_download_values
 from app.utils.path import get_nested_value
@@ -44,11 +45,13 @@ class DownloadWorker:
 
     def __init__(
         self,
-        poll_interval: int = 10,
+        poll_interval: int = 60,
         batch_size: int = 50,
         template_name: str | None = None,
         data_type: str | None = None,
     ) -> None:
+        if poll_interval < 0 or batch_size < 1:
+            raise ValueError("poll_interval must be non-negative and batch_size must be positive")
         self._poll_interval = poll_interval
         self._batch_size = batch_size
         self._template_name = template_name
@@ -60,6 +63,11 @@ class DownloadWorker:
         self._collection_routes: dict[str, dict[str, str]] = {}
         self._running = False
         self._collection_cursor = 0
+        self._delivery = RecordDelivery()
+        self._downloads: set[asyncio.Task] = set()
+        self._collections: tuple[str, ...] | None = None
+        self._routes_refreshed_at = 0.0
+        self._next_claim_recovery = 0.0
 
     async def run(self) -> None:
         self._running = True
@@ -68,71 +76,138 @@ class DownloadWorker:
             self._poll_interval, self._batch_size, self._template_name or "ALL",
             self._data_type or "ALL",
         )
-        while self._running:
-            records = await self._read_pending_records()
-            if records:
-                logger.info(
-                    "DownloadWorker: claimed %d records for template=%s datatype=%s",
-                    len(records), self._template_name or "ALL",
-                    self._data_type or "ALL",
-                )
-                await self._download_list(records)
-            else:
-                logger.info(
-                    "DownloadWorker: no records claimed for template=%s datatype=%s",
-                    self._template_name or "ALL", self._data_type or "ALL",
-                )
-                await asyncio.sleep(self._poll_interval)
+        capacity = min(self._batch_size, settings.download_asset_concurrency)
+        next_scan = 0.0
+        prefer_delivery = False
+        loop = asyncio.get_running_loop()
+        try:
+            while self._running:
+                finished = {task for task in self._downloads if task.done()}
+                self._downloads.difference_update(finished)
+                for task in finished:
+                    if not task.cancelled():
+                        try:
+                            task.result()
+                        except Exception:
+                            logger.exception("DownloadWorker: download task failed")
+                try:
+                    await self._target_collections()
+                    available = capacity - len(self._downloads)
+                    if available:
+                        reserve_recovery = loop.time() >= next_scan and not prefer_delivery
+                        queue_limit = max(available - 1, 0) if reserve_recovery else available
+                        prefer_delivery = False
+                        records = await self._delivery.receive(
+                            kind="download", collections=list(self._collection_routes), limit=queue_limit,
+                        ) if queue_limit else []
+                        for record in records:
+                            claimed = await self._mongo.claim_download(record)
+                            if claimed is not None:
+                                self._downloads.add(asyncio.create_task(self._run_download(claimed)))
+                        available = capacity - len(self._downloads)
+                        if available and loop.time() >= next_scan:
+                            before = datetime.now(timezone.utc) - timedelta(seconds=self._poll_interval)
+                            records = await self._read_pending_records(limit=available, before=before)
+                            for record in records:
+                                self._downloads.add(asyncio.create_task(self._run_download(record)))
+                            if len(records) < available:
+                                next_scan = loop.time() + max(self._poll_interval, 0.5)
+                            else:
+                                prefer_delivery = True
+                except Exception:
+                    logger.exception("DownloadWorker: delivery or recovery failed")
+                    next_scan = loop.time() + max(self._poll_interval, 0.5)
+                if self._downloads:
+                    await asyncio.wait(self._downloads, timeout=0.5, return_when=asyncio.FIRST_COMPLETED)
+                else:
+                    await asyncio.sleep(0.5)
+        finally:
+            await self._cancel_downloads()
 
-    async def _read_pending_records(self) -> list[dict[str, Any]]:
+    async def _read_pending_records(
+        self, *, limit: int | None = None, before: datetime | None = None,
+    ) -> list[dict[str, Any]]:
         """Read and claim the next pending Mongo records."""
         collections = await self._target_collections()
+        now = asyncio.get_running_loop().time()
+        if now >= self._next_claim_recovery:
+            stale_before = datetime.now(timezone.utc) - timedelta(minutes=5)
+            for collection in collections:
+                await self._mongo.recover_stale_downloads(collection, stale_before)
+            self._next_claim_recovery = now + max(self._poll_interval, 1)
         if not collections:
             return []
         start = self._collection_cursor % len(collections)
         collections = collections[start:] + collections[:start]
         self._collection_cursor += 1
         records = []
+        batch_limit = self._batch_size if limit is None else limit
         for index, collection in enumerate(collections):
-            remaining = self._batch_size - len(records)
+            remaining = batch_limit - len(records)
             if remaining <= 0:
                 break
             count = len(collections) - index
             limit = (remaining + count - 1) // count
             records.extend(await self._mongo.get_pending_downloads(
-                template_name=collection, limit=limit,
+                template_name=collection, limit=limit, before=before,
             ))
         return records
 
-    async def _target_collections(self) -> tuple[str | None, ...]:
-        """Refresh configured collection routes from PostgreSQL on every batch."""
+    async def _target_collections(self) -> tuple[str, ...]:
+        """Cache configured routes between low-frequency recovery scans."""
+        now = asyncio.get_running_loop().time()
+        if self._collections is not None and now - self._routes_refreshed_at < max(self._poll_interval, 1):
+            return self._collections
         routes = await collection_route_store.list_by_data_type(
             self._data_type, self._template_name,
         )
         self._collection_routes = {route["collection_name"]: route for route in routes}
-        if self._data_type is None and self._template_name is None:
-            return collections_for_template(self._template_name)
-        return tuple(self._collection_routes)
+        self._routes_refreshed_at = now
+        self._collections = tuple(self._collection_routes)
+        return self._collections
 
-    async def _download_list(self, records: list[dict[str, Any]]) -> None:
-        """Download a claimed record list with bounded concurrency."""
-        semaphore = asyncio.Semaphore(settings.download_asset_concurrency)
-
-        async def download(record: dict[str, Any]) -> None:
-            async with semaphore:
-                try:
-                    await self._download_record(record)
-                finally:
-                    await self._http.release_current_task_proxy()
-
-        downloads = [asyncio.create_task(download(record)) for record in records]
+    async def _run_download(self, record: dict[str, Any]) -> None:
+        meta = record.get("_meta") or {}
+        collection = meta.get("template")
+        record_id = meta.get("record_id")
+        token = meta.get("download_claim_token")
+        heartbeat = asyncio.create_task(self._renew_claim(collection, record_id, token, asyncio.current_task()))
         try:
-            await asyncio.gather(*downloads)
+            await self._download_record(record)
+        except asyncio.CancelledError:
+            try:
+                await self._mongo.release_download_claim(collection, record_id, token)
+            except Exception:
+                logger.exception("DownloadWorker: could not release cancelled claim for %s", record_id)
+            raise
+        except Exception:
+            logger.exception("DownloadWorker: record processing failed for %s", record_id)
         finally:
-            for task in downloads:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*downloads, return_exceptions=True)
+            heartbeat.cancel()
+            try:
+                await asyncio.gather(heartbeat, return_exceptions=True)
+            finally:
+                try:
+                    await self._http.release_current_task_proxy()
+                except Exception:
+                    logger.exception("DownloadWorker: could not release download HTTP resources for %s", record_id)
+
+    async def _renew_claim(self, collection: str, record_id: str, token: str, owner: asyncio.Task) -> None:
+        while True:
+            await asyncio.sleep(60)
+            try:
+                if not await self._mongo.renew_download_claim(collection, record_id, token):
+                    logger.warning("DownloadWorker: claim lost for %s", record_id)
+                    owner.cancel()
+                    return
+            except Exception:
+                logger.exception("DownloadWorker: could not renew claim for %s", record_id)
+
+    async def _cancel_downloads(self) -> None:
+        downloads, self._downloads = self._downloads, set()
+        for task in downloads:
+            task.cancel()
+        await asyncio.gather(*downloads, return_exceptions=True)
 
     async def _download_record(self, record: dict[str, Any]) -> None:
         meta = record.get("_meta") or {}
@@ -271,7 +346,8 @@ class DownloadWorker:
             if selector_type != "json":
                 continue
             collection = getattr(config, "collection", None)
-            if collection and collection != (record.get("_meta") or {}).get("template"):
+            meta = record.get("_meta") or {}
+            if collection and collection != meta.get("template"):
                 continue
             recursive = getattr(config, "recursive", None)
             if collection or recursive or "[]" in config.selector or "*" in config.selector:
@@ -424,6 +500,8 @@ class DownloadWorker:
 
     async def stop(self) -> None:
         self._running = False
+        await self._cancel_downloads()
+        await self._delivery.close()
         await self._http.close()
         await self._minio.close()
         await self._mongo.close()

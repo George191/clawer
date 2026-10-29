@@ -16,12 +16,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bson.codec_options import CodecOptions
-from pymongo import ReplaceOne
+from pymongo import ReplaceOne, ReturnDocument
 
 from app.logger import get_logger
 from app.records.adapters import get_record_adapter
 from app.records.base import RecordStore
 from app.records.collection_routes import collection_route_store
+from app.records.delivery import RecordDelivery
 from app.records.field_names import normalize_record_fields
 from app.records.values import record_values_equal, require_canonical_record
 from app.storage.mongo_client import MongoClient
@@ -36,10 +37,17 @@ def _ready_to_sync_filter() -> dict[str, Any]:
     return {"_meta.sync_status": {"$ne": "synced"}}
 
 
+def _pending_before(before: datetime | None) -> dict[str, Any]:
+    if before is None:
+        return {}
+    return {"_meta.updated_at": {"$lte": before}}
+
+
 class MongoRecordStore(MongoClient, RecordStore):
     def __init__(self) -> None:
         super().__init__()
         self._initialized_collections: set[str] = set()
+        self._delivery = RecordDelivery()
         self.last_save_stats = {
             "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
         }
@@ -49,7 +57,8 @@ class MongoRecordStore(MongoClient, RecordStore):
 
 
     async def _get_collection(self, template_name: str):
-        return await self._get_collection_by_name(self._get_collection_name(template_name))
+        name = await collection_route_store.resolve_collection_name(template_name)
+        return await self._get_collection_by_name(name)
 
     async def _get_collection_by_name(
         self, collection_name: str, *, indexes: list[tuple[str, bool]] | None = None,
@@ -222,6 +231,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         run_stats: dict[tuple[str, str], dict[str, int]] = {}
 
         operations: list[ReplaceOne] = []
+        delivery_records: list[dict[str, Any]] = []
         processed_ids: set[str] = set()
         for record_id, cleaned_record, search_params in reversed(prepared_records):
             if record_id in processed_ids:
@@ -308,6 +318,8 @@ class MongoRecordStore(MongoClient, RecordStore):
             deleted_count += int(deletion)
             if sync_status is not None:
                 final_record["_meta"]["sync_status"] = sync_status
+            if not existing or business_changed or template_changed:
+                delivery_records.append(final_record)
             operations.append(
                 ReplaceOne(
                     {"_meta.record_id": record_id},
@@ -318,6 +330,7 @@ class MongoRecordStore(MongoClient, RecordStore):
 
         if operations:
             await collection.bulk_write(operations, ordered=False)
+            await self._delivery.publish(delivery_records, download=True)
         await adapter.after_save(run_stats)
         self.last_save_stats = {
             "inserted": inserted_count,
@@ -338,7 +351,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         query = {"_meta.record_id": record_id}
         if claim_token:
             query["_meta.download_claim_token"] = claim_token
-        result = await collection.update_one(
+        record = await collection.find_one_and_update(
             query,
             {
                 "$set": {
@@ -351,9 +364,12 @@ class MongoRecordStore(MongoClient, RecordStore):
                     "_meta.download_claim_token": "",
                 },
             },
+            return_document=ReturnDocument.AFTER,
         )
+        if record is not None:
+            await self._delivery.publish([record])
         logger.debug("Updated file_status for %s: %s", record_id, download_status)
-        return bool(result.matched_count)
+        return record is not None
 
 
     async def update_record_fields(
@@ -392,7 +408,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         query = {"_meta.record_id": record_id}
         if claim_token:
             query["_meta.download_claim_token"] = claim_token
-        result = await collection.update_one(
+        record = await collection.find_one_and_update(
             query,
             {
                 "$set": {
@@ -404,14 +420,17 @@ class MongoRecordStore(MongoClient, RecordStore):
                 "$inc": {"_meta.download_version": 1},
                 "$unset": fields_to_unset,
             },
+            return_document=ReturnDocument.AFTER,
         )
+        if record is not None:
+            await self._delivery.publish([record])
         logger.debug(
             "Updated download result for %s: status=%s fields=%d",
             record_id,
             download_status,
             len(updates),
         )
-        return bool(result.matched_count)
+        return record is not None
 
     async def update_sync_status(
         self,
@@ -425,7 +444,8 @@ class MongoRecordStore(MongoClient, RecordStore):
     ) -> bool:
         # Acknowledging a sync must not wait for index creation either.
         await self._ensure_connection()
-        collection = self._db[self._get_collection_name(template_name)]
+        collection_name = await collection_route_store.resolve_collection_name(template_name, data_type)
+        collection = self._db[collection_name]
         query = {"_meta.record_id": record_id}
         set_fields: dict[str, Any] = {"_meta.sync_status": sync_status}
         if sync_status == "synced":
@@ -451,13 +471,9 @@ class MongoRecordStore(MongoClient, RecordStore):
         data_type: str,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        collection = await self._get_collection(template_name)
-        cursor = collection.find(
-            {"$or": [
-                {"_meta.sync_status": {"$ne": "synced"}},
-                {"_meta.sync_status": {"$exists": False}},
-            ]}
-        ).limit(limit)
+        collection_name = await collection_route_store.resolve_collection_name(template_name, data_type)
+        collection = await self._get_collection_by_name(collection_name)
+        cursor = collection.find(_ready_to_sync_filter()).limit(limit)
         results: list[dict[str, Any]] = []
         async for doc in cursor:
             doc.pop("_id", None)
@@ -469,14 +485,15 @@ class MongoRecordStore(MongoClient, RecordStore):
         template_name: str | None = None,
         data_type: str | None = None,
         limit: int = 100,
+        before: datetime | None = None,
     ) -> list[dict[str, Any]]:
         await self._ensure_connection()
 
-        filter_query = _ready_to_sync_filter()
+        filter_query = {**_ready_to_sync_filter(), **_pending_before(before)}
 
         if template_name:
             # The syncer must not block its hot path on create_index calls.
-            coll_name = self._get_collection_name(template_name)
+            coll_name = await collection_route_store.resolve_collection_name(template_name, data_type)
             collection = self._db[coll_name].with_options(codec_options=CodecOptions(tz_aware=True))
             cursor = collection.find(filter_query).limit(limit)
             results: list[dict[str, Any]] = []
@@ -502,6 +519,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         template_name: str | None = None,
         limit: int = 50,
         balanced: bool = True,
+        before: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """获取待下载记录。
 
@@ -515,7 +533,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         """
         await self._ensure_connection()
 
-        filter_query = self._download_claim_filter()
+        filter_query = {**self._download_claim_filter(), **_pending_before(before)}
 
         if template_name:
             collection = await self._get_collection(template_name)
@@ -548,6 +566,78 @@ class MongoRecordStore(MongoClient, RecordStore):
     @staticmethod
     def _download_claim_filter() -> dict[str, Any]:
         return {"_meta.download_status": "pending"}
+
+    async def claim_download(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        """Claim a delivered snapshot only while its persisted version is current."""
+        meta = record.get("_meta") or {}
+        name = meta.get("template")
+        if not name or not meta.get("record_id"):
+            return None
+        collection = await self._get_collection(name)
+        query = {
+            "_meta.record_id": meta["record_id"],
+            "_meta.updated_at": meta.get("updated_at"),
+            "_meta.download_version": (
+                meta["download_version"] if meta.get("download_version")
+                else {"$in": [None, 0]}
+            ),
+            **self._download_claim_filter(),
+        }
+        now = datetime.now(timezone.utc)
+        token = uuid.uuid4().hex
+        result = await collection.update_one(query, {
+            "$set": {
+                "_meta.download_status": "downloading",
+                "_meta.download_claimed_at": now,
+                "_meta.download_claim_token": token,
+            },
+            "$inc": {"_meta.download_attempts": 1},
+        })
+        if not result.matched_count:
+            return None
+        return {**record, "_meta": {
+            **meta,
+            "download_status": "downloading",
+            "download_claimed_at": now,
+            "download_claim_token": token,
+            "download_attempts": int(meta.get("download_attempts") or 0) + 1,
+        }}
+
+    async def renew_download_claim(
+        self, template_name: str, record_id: str, claim_token: str,
+    ) -> bool:
+        collection = await self._get_collection(template_name)
+        result = await collection.update_one(
+            {"_meta.record_id": record_id, "_meta.download_claim_token": claim_token,
+             "_meta.download_status": "downloading"},
+            {"$set": {"_meta.download_claimed_at": datetime.now(timezone.utc)}},
+        )
+        return bool(result.matched_count)
+
+    async def release_download_claim(
+        self, template_name: str, record_id: str, claim_token: str,
+    ) -> None:
+        collection = await self._get_collection(template_name)
+        await collection.update_one(
+            {"_meta.record_id": record_id, "_meta.download_claim_token": claim_token,
+             "_meta.download_status": "downloading"},
+            {"$set": {"_meta.download_status": "pending"},
+             "$unset": {"_meta.download_claim_token": "", "_meta.download_claimed_at": ""}},
+        )
+
+    async def recover_stale_downloads(
+        self, template_name: str, before: datetime,
+    ) -> int:
+        """Return claims without a recent worker heartbeat to the pending backlog."""
+        await self._ensure_connection()
+        name = await collection_route_store.resolve_collection_name(template_name)
+        result = await self._db[name].update_many(
+            {"_meta.download_status": "downloading",
+             "_meta.download_claimed_at": {"$lte": before}},
+            {"$set": {"_meta.download_status": "pending"},
+             "$unset": {"_meta.download_claim_token": "", "_meta.download_claimed_at": ""}},
+        )
+        return result.modified_count
 
     async def _claim_pending_downloads_from_collection(
         self,
@@ -583,7 +673,6 @@ class MongoRecordStore(MongoClient, RecordStore):
                     "_meta.download_status": "downloading",
                     "_meta.download_claimed_at": now,
                     "_meta.download_claim_token": claim_token,
-                    "_meta.updated_at": now,
                 },
                 "$inc": {"_meta.download_attempts": 1},
             },
@@ -641,7 +730,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         await self._ensure_connection()
         stats = []
         if template_name:
-            template_name = self._get_collection_name(template_name)
+            template_name = await collection_route_store.resolve_collection_name(template_name)
             all_colls = await self._db.list_collection_names()
             if template_name not in all_colls:
                 if missing_ok:
@@ -677,3 +766,7 @@ class MongoRecordStore(MongoClient, RecordStore):
                 "failed": failed,
             })
         return stats
+
+    async def close(self) -> None:
+        await self._delivery.close()
+        await super().close()

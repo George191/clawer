@@ -5,5 +5,5 @@ SYNC_DATA_TYPES = (
     "financial_fact", "filing", "account", "tweet", "contract", "tender",
     "constellation", "vulnerability", "debrisevents", "debris", "launchvehicles",
     "frequency", "groundstations", "launchinfo", "satellite", "launchsites",
-    "orbital",
+    "orbital", "acticle",
 )

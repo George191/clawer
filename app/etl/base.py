@@ -986,9 +986,9 @@ def extract_meta(message: dict[str, Any]) -> dict[str, Any]:
     raw_meta = message.get("_meta", {}) or {}
     source = raw_meta.get("template", "")
     data_type = raw_meta.get("data_type", "")
-    # Retain the existing business namespaces while raw lineage stays canonical.
+    # Financial facts retain the SEC organization namespace across collection renames.
     source = {
-        ("sec_edgar_financial_fact", "financial_fact"): "sec_edgar_company",
+        ("financial_fact_sec_edgar", "financial_fact"): "organization_sec_edgar",
     }.get((source, data_type), source)
     return {
         "data_source": source,

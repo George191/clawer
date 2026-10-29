@@ -13,8 +13,8 @@ ZSCALER_MARKERS = re.compile(
 )
 
 COLLECTION_ROUTES = {
-    "sec_edgar_company": ("sec_edgar", "organization"),
-    "sec_edgar_filing": ("sec_edgar", "filing"),
+    "organization_sec_edgar": ("sec_edgar", "organization"),
+    "filing_sec_edgar": ("sec_edgar", "filing"),
 }
 
 

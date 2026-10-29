@@ -36,6 +36,7 @@ def get_normalizer(
 
 
 from app.etl.normalizers import (
+    acticle,  # noqa: E402, F401
     intelligence,  # noqa: E402, F401
     navwarn,  # noqa: E402, F401
     news,  # noqa: E402, F401

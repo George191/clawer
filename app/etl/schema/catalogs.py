@@ -32,6 +32,28 @@ _SPACE_COMMON_COLUMNS = {
 }
 
 _CATALOG_FIELDS: dict[str, dict[str, str]] = {
+    "acticle": {
+        "source_id": "TEXT",
+        "account": "TEXT",
+        "gh_id": "TEXT",
+        "zoro_guid": "TEXT",
+        "title": "TEXT",
+        "url": "TEXT",
+        "cover": "TEXT",
+        "summary": "TEXT",
+        "summary_html": "TEXT",
+        "content": "TEXT",
+        "content_html": "TEXT",
+        "publish_time": "TIMESTAMPTZ",
+        "publish_time_raw": "TEXT",
+        "info_source": "TEXT",
+        "source_type": "TEXT",
+        "images": "JSONB",
+        "reads": "BIGINT",
+        "likes": "BIGINT",
+        "is_original": "BOOLEAN",
+        "history_fetched_at": "TIMESTAMPTZ",
+    },
     "contract": {
         "title": "TEXT",
         "content": "TEXT",
@@ -531,6 +553,11 @@ _RDS_COLUMNS = {
     **_AUDIT_COLUMNS,
 }
 _EXTRA_ODS_INDEXES = {
+    "acticle": (
+        ("idx_ods_acticle_publish_time", "publish_time DESC", None, "btree"),
+        ("idx_ods_acticle_account_time", "account, publish_time DESC", None, "btree"),
+        ("idx_ods_acticle_gh_id", "gh_id", "gh_id IS NOT NULL", "btree"),
+    ),
     "constellation": (
         ("idx_ods_constellation_member_norad_ids", "member_norad_ids", "member_norad_ids IS NOT NULL", "gin"),
     ),

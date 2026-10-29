@@ -8,6 +8,7 @@ from types import ModuleType
 
 from app.adapters import load_adapter_module_from_source
 from app.etl.schema.catalogs import validate_ods_fields, validate_table_name
+from app.records.collection_routes import collection_route_store
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
 
@@ -49,8 +50,7 @@ async def get_source_module(data_source: str, *, export: str = "RECORD_ADAPTERS"
     cached = _MODULES.get(cache_key)
     if cached and cached[0] > monotonic():
         return cached[1]
-    row = await get_pg_client().fetch_one(
-        """
+    query = """
         SELECT name, adapter
         FROM public.ai_collect_templates
         WHERE name = COALESCE(
@@ -58,9 +58,12 @@ async def get_source_module(data_source: str, *, export: str = "RECORD_ADAPTERS"
              WHERE collection_name = :source LIMIT 1), :source)
         ORDER BY (status = 'active') DESC, updated_at DESC
         LIMIT 1
-        """,
-        {"source": data_source},
-    )
+        """
+    row = await get_pg_client().fetch_one(query, {"source": data_source})
+    if row is None:
+        routes = await collection_route_store.list_by_data_type(None, data_source)
+        if len(routes) == 1:
+            row = await get_pg_client().fetch_one(query, {"source": routes[0]["template_name"]})
     module = None
     if row and row.get("adapter"):
         key = str(row["adapter"])

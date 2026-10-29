@@ -109,4 +109,4 @@ def normalize_sec_edgar_filing_documents(
     return rows
 
 
-register_normalizer("filing_document", "sec_edgar_filing", normalize_sec_edgar_filing_document)
+register_normalizer("filing_document", "filing_sec_edgar", normalize_sec_edgar_filing_document)

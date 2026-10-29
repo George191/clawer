@@ -48,4 +48,4 @@ def normalize_sec_edgar_organization(record: dict[str, Any]) -> dict[str, Any]:
     return organization
 
 
-register_normalizer("organization", "sec_edgar_company", normalize_sec_edgar_organization)
+register_normalizer("organization", "organization_sec_edgar", normalize_sec_edgar_organization)

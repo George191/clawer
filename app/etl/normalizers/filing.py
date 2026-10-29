@@ -73,4 +73,4 @@ def normalize_sec_edgar_filing(record: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-register_normalizer("filing", "sec_edgar_filing", normalize_sec_edgar_filing)
+register_normalizer("filing", "filing_sec_edgar", normalize_sec_edgar_filing)

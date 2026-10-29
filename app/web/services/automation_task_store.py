@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
+from app.logger.task_format import format_task_log_message, task_log_time
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
 from app.utils.runtime_control import get_workspace_run
@@ -82,7 +83,7 @@ class AutomationTaskStore:
         Pass the event time when capturing an existing LogRecord. An explicit
         owner is required so background workers never fall back to a newer run.
         ``log_id`` replaces a live progress row without incrementing log_count.
-        Raw append_task_log(s) remain available for existing callers and batches.
+        Existing append_task_log(s) callers use the same format at insertion.
         """
         if not task_id or not run_id:
             raise ValueError("Task logs require task_id and run_id")
@@ -91,16 +92,9 @@ class AutomationTaskStore:
             levelno = logging.INFO
         if not isinstance(levelno, int):
             raise ValueError(f"Unknown task log level: {level}")
-        if isinstance(created_at, datetime):
-            event_time = created_at.replace(tzinfo=timezone.utc) if created_at.tzinfo is None else created_at.astimezone(timezone.utc)
-        elif created_at is not None:
-            event_time = datetime.fromtimestamp(created_at, timezone.utc)
-        else:
-            event_time = datetime.now(timezone.utc)
-        level_name = "OK" if level == "ok" else logging.getLevelName(levelno)
+        event_time = task_log_time(created_at)
         text = logging.LogRecord(executor, levelno, "", 0, message, args, None).getMessage()
-        timestamp = event_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
-        formatted = f"[{timestamp}: {level_name}/{executor}] {text}"
+        formatted = format_task_log_message(text, "ok" if level == "ok" else levelno, executor, event_time)
         if log_id is not None and await self.update_task_log_message(
             task_id, log_id, formatted, run_id=run_id,
         ):
@@ -119,6 +113,15 @@ class AutomationTaskStore:
     ) -> list[dict[str, Any]]:
         if not logs:
             return []
+        entries = []
+        for log in logs:
+            entry = dict(log)
+            event_time = task_log_time(entry.get("created_at"))
+            entry["message"] = format_task_log_message(
+                entry["message"], entry.get("level", "info"), entry.get("executor") or "System", event_time,
+            )
+            entry["created_at"] = event_time
+            entries.append(entry)
         await self.initialize()
         inserted = await self._pg.fetch_all(
             """
@@ -145,7 +148,7 @@ class AutomationTaskStore:
             )
             SELECT id, run_id::text AS run_id, level, message, created_at FROM inserted
             """,
-            {"task_id": task_id, "logs": json.dumps(logs, default=str, ensure_ascii=False)},
+            {"task_id": task_id, "logs": json.dumps(entries, default=str, ensure_ascii=False)},
         )
         for log in inserted:
             await publish_task_log(task_id, log)
@@ -159,6 +162,18 @@ class AutomationTaskStore:
         The row id is stable, so websocket clients that key by id render a single
         updating line instead of a new row per refresh.
         """
+        event_time = task_log_time()
+        formatted = format_task_log_message(message, "info", created_at=event_time)
+        if formatted != message:
+            current = await self._pg.fetch_one(
+                "SELECT level FROM public.automation_task_logs WHERE id = :log_id "
+                "AND task_id = CAST(:task_id AS uuid) "
+                "AND (CAST(:run_id AS uuid) IS NULL OR run_id = CAST(:run_id AS uuid))",
+                {"task_id": task_id, "run_id": run_id, "log_id": log_id},
+            )
+            if current is None:
+                return False
+            formatted = format_task_log_message(message, current["level"], created_at=event_time)
         updated = await self._pg.fetch_one(
             """
             UPDATE public.automation_task_logs
@@ -168,7 +183,7 @@ class AutomationTaskStore:
               AND (CAST(:run_id AS uuid) IS NULL OR run_id = CAST(:run_id AS uuid))
             RETURNING id, run_id::text AS run_id, level, message, created_at
             """,
-            {"task_id": task_id, "run_id": run_id, "log_id": log_id, "message": message},
+            {"task_id": task_id, "run_id": run_id, "log_id": log_id, "message": formatted},
         )
         if not updated:
             return False

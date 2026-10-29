@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from uuid import UUID
 
+from app.logger.task_format import format_task_log_message
+
 logger = logging.getLogger(__name__)
 _HEARTBEAT_INTERVAL = 15.0
 _HEARTBEAT_TIMEOUT = 600.0
@@ -136,9 +138,9 @@ async def _record_failure(task_id: str, run_id: str, delivery_id: str, reason: s
                 if run is None:
                     return
                 observed = datetime.now(timezone.utc)
-                message = (
-                    f"[{observed:%Y-%m-%d %H:%M:%S}: ERROR/Watchdog] "
-                    f"{reason}; delivery={delivery_id}"
+                message = format_task_log_message(
+                    f"{reason}; delivery={delivery_id}", logging.ERROR, "Watchdog",
+                    created_at=observed,
                 )
                 await connection.execute(
                     """INSERT INTO public.automation_task_logs

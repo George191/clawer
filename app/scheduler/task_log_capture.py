@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
+from app.logger.task_format import format_task_log_message
 from app.web.services.automation_task_store import automation_task_store
 
 _writing_task_logs: ContextVar[bool] = ContextVar("writing_task_logs", default=False)
@@ -17,9 +18,6 @@ _workspace_log_capture: ContextVar[WorkspaceTaskLogCapture | None] = ContextVar(
     "workspace_log_capture", default=None,
 )
 _STOP = object()
-_CELERY_CONSOLE_FORMATTER = logging.Formatter(
-    "[%(asctime)s: %(levelname)s/%(processName)s] %(message)s"
-)
 # Progress lines are rewritten in place so a download shows ONE live bar row
 # instead of one row per refresh; the finished line rewrites that same row so
 # the row's message simply flips to the finished summary when the download ends.
@@ -39,7 +37,6 @@ class TaskLogCapture(logging.Handler):
         self._queue: asyncio.Queue[dict[str, Any] | object] | None = None
         self._writer_task: asyncio.Task[None] | None = None
         self._loggers: list[logging.Logger] = []
-        self._formatters: dict[str, logging.Formatter] = {}
         self._progress_log_id: int | None = None
 
     def start(self) -> None:
@@ -48,7 +45,6 @@ class TaskLogCapture(logging.Handler):
         self._queue = asyncio.Queue()
         self._writer_task = asyncio.create_task(self._write_logs())
         all_loggers = _all_loggers()
-        self._formatters = _console_formatters(all_loggers)
         self._loggers = [
             logger for logger in all_loggers if logger is logging.getLogger() or not logger.propagate
         ]
@@ -68,11 +64,15 @@ class TaskLogCapture(logging.Handler):
             self.handleError(record)
 
     def _log_item(self, record: logging.LogRecord) -> dict[str, Any]:
+        event_time = datetime.fromtimestamp(record.created, timezone.utc)
         return {
             "run_id": self.run_id,
             "level": "warn" if record.levelno >= logging.WARNING else "info",
-            "message": _format_console_record(record, self._formatters),
-            "created_at": datetime.fromtimestamp(record.created, timezone.utc),
+            "message": format_task_log_message(
+                logging.Formatter("%(message)s").format(record), record.levelno,
+                "Scheduler", created_at=event_time,
+            ),
+            "created_at": event_time,
         }
 
     async def stop(self) -> None:
@@ -85,7 +85,6 @@ class TaskLogCapture(logging.Handler):
                 self._queue.put_nowait(_STOP)
                 await self._writer_task
         finally:
-            self._formatters = {}
             self._writer_task = None
             self._queue = None
             self._loop = None
@@ -169,43 +168,3 @@ def _all_loggers() -> list[logging.Logger]:
         if isinstance(value, logging.Logger):
             loggers.append(value)
     return loggers
-
-
-def _is_console_handler(handler: logging.Handler) -> bool:
-    return isinstance(handler, logging.StreamHandler) and not isinstance(
-        handler, logging.FileHandler
-    )
-
-
-def _console_formatters(
-    loggers: list[logging.Logger],
-) -> dict[str, logging.Formatter]:
-    formatters: dict[str, logging.Formatter] = {}
-    for logger in loggers:
-        for handler in logger.handlers:
-            if _is_console_handler(handler):
-                formatters[logger.name] = handler.formatter or logging.Formatter(
-                    "%(message)s"
-                )
-                break
-    return formatters
-
-
-def _format_console_record(
-    record: logging.LogRecord,
-    formatters: dict[str, logging.Formatter] | None = None,
-) -> str:
-    logger = logging.getLogger(record.name)
-    while True:
-        formatter = (formatters or {}).get(logger.name)
-        if formatter is not None:
-            return formatter.format(record)
-        if formatters is None:
-            for handler in logger.handlers:
-                if _is_console_handler(handler):
-                    formatter = handler.formatter or logging.Formatter("%(message)s")
-                    return formatter.format(record)
-        if not logger.propagate or logger.parent is None:
-            break
-        logger = logger.parent
-    return _CELERY_CONSOLE_FORMATTER.format(record)

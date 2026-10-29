@@ -4,7 +4,7 @@
 
 启动参数：
     --template <name>    只处理指定模板（默认扫描所有模板）
-    --poll <seconds>      轮询间隔（默认 10）
+    --poll <seconds>      MongoDB 补偿扫描间隔（默认 60）
     --batch <n>           每次处理记录数（默认 50）
     --data-type <type>    仅同步指定类型，发送到 <SPIDER_KAFKA_TOPIC>-<type>
     --concurrency <n>     进程内并发 I/O 数（默认 10）
@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--template")
     parser.add_argument("--data-type", type=validate_table_name)
-    parser.add_argument("--poll", type=int, default=10)
+    parser.add_argument("--poll", type=int, default=60)
     parser.add_argument("--batch", type=int, default=50)
     parser.add_argument("--concurrency", type=int, default=10)
     parser.add_argument("--startup-delay", type=int, default=0)
