@@ -42,6 +42,7 @@ class TaskWatchdog:
         self._last_activity = float("-inf")
         self._lock = threading.Lock()
         self._handler: logging.Handler | None = None
+        self._loggers: list[logging.Logger] = []
 
     def start(self, run_id: str) -> None:
         if self.delivery_id is None or self._process is not None:
@@ -56,7 +57,13 @@ class TaskWatchdog:
         )
         self.touch()
         self._handler = _ActivityHandler(self)
-        logging.getLogger().addHandler(self._handler)
+        from app.logger.fields import ADAPTER_LOGGER_NAMES
+
+        self._loggers = [logging.getLogger(), *(
+            logging.getLogger(name) for name in ADAPTER_LOGGER_NAMES.values()
+        )]
+        for task_logger in self._loggers:
+            task_logger.addHandler(self._handler)
 
     def touch(self) -> None:
         with self._lock:
@@ -76,7 +83,9 @@ class TaskWatchdog:
 
     def close(self) -> None:
         if self._handler is not None:
-            logging.getLogger().removeHandler(self._handler)
+            for task_logger in self._loggers:
+                task_logger.removeHandler(self._handler)
+            self._loggers = []
             self._handler.close()
             self._handler = None
         with self._lock:
