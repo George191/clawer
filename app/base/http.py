@@ -10,6 +10,10 @@ class DownloadError(Exception):
         super().__init__(f"Download failed: {url} (status={status_code}): {message}")
 
 
+class DownloadCleanupError(DownloadError):
+    """Transport cleanup is unconfirmed; this run must stop without retrying."""
+
+
 @dataclass(frozen=True, slots=True)
 class DownloadResponse:
     source_url: str

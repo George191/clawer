@@ -73,18 +73,18 @@ class BatchParamReader:
             OSError: 其他文件操作错误
         """
         if not self.file_path.exists():
-            raise FileNotFoundError(f"参数文件不存在: {self.file_path}")
+            raise FileNotFoundError(f"Parameter file does not exist: {self.file_path}")
         
         if not self.file_path.is_file():
-            raise OSError(f"路径不是文件: {self.file_path}")
+            raise OSError(f"Path is not a file: {self.file_path}")
         
         try:
             with open(self.file_path, "r", encoding="utf-8") as f:
                 f.read(1)
         except PermissionError:
-            raise PermissionError(f"没有文件读取权限: {self.file_path}")
+            raise PermissionError(f"File read permission denied: {self.file_path}")
         except OSError as e:
-            raise OSError(f"读取文件失败: {self.file_path}, 错误: {e}")
+            raise OSError(f"Failed to read file: {self.file_path}, error: {e}")
 
     def read(self) -> Generator[tuple[str, int], None, None]:
         """
@@ -104,7 +104,7 @@ class BatchParamReader:
         line_count = 0
         yielded_count = 0
         
-        logger.info(f"开始读取参数文件: {self.file_path}")
+        logger.info(f"Reading parameter file: {self.file_path}")
         
         try:
             with open(self.file_path, "r", encoding="utf-8") as f:
@@ -117,7 +117,7 @@ class BatchParamReader:
                     
                     # 检查是否达到限制
                     if self.limit is not None and yielded_count >= self.limit:
-                        logger.info(f"已达到限制数量 {self.limit}，停止读取")
+                        logger.info(f"Limit {self.limit} reached; stopping file read")
                         break
                     
                     # 处理行内容
@@ -127,13 +127,13 @@ class BatchParamReader:
                         yield value, line_num
         
         except UnicodeDecodeError as e:
-            logger.error(f"文件编码错误，请确保文件使用 UTF-8 编码: {e}")
+            logger.error(f"Invalid file encoding; ensure the file uses UTF-8: {e}")
             raise
         except OSError as e:
-            logger.error(f"读取文件时发生错误: {e}")
+            logger.error(f"Error reading file: {e}")
             raise
         
-        logger.info(f"文件读取完成，共 {line_count} 行，有效参数 {yielded_count} 个")
+        logger.info(f"File read completed; {line_count} lines, valid parameters {yielded_count} items")
 
 
 def parse_template_arg(arg: str) -> tuple[str, dict[str, str]]:
@@ -152,7 +152,7 @@ def load_param_file(file_path: str) -> list[dict[str, Any]]:
     """从 JSON 文件读取多个模板参数。"""
     path = Path(file_path)
     if not path.exists():
-        raise FileNotFoundError(f"参数文件不存在: {file_path}")
+        raise FileNotFoundError(f"Parameter file does not exist: {file_path}")
 
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -162,7 +162,7 @@ def load_param_file(file_path: str) -> list[dict[str, Any]]:
     elif isinstance(data, dict):
         return [data]
     else:
-        raise ValueError(f"参数文件必须包含一个列表或字典: {file_path}")
+        raise ValueError(f"Parameter file must contain a list or dictionary: {file_path}")
 
 
 async def run_single_template(
@@ -184,13 +184,13 @@ async def run_single_template(
     try:
         result = await engine.crawl(template)
         if result.success:
-            logger.info(f"[OK] 成功采集: {template.name}, 参数: {params}")
+            logger.info(f"[OK] Crawl succeeded: {template.name}, Parameters: {params}")
             return True
         else:
-            logger.warning(f"[FAIL] 采集失败: {template.name}, 错误: {result.errors}")
+            logger.warning(f"[FAIL] Crawl failed: {template.name}, error: {result.errors}")
             return False
     except Exception as e:
-        logger.exception(f"[ERROR] 采集异常: {template.name}, 错误: {e}")
+        logger.exception(f"[ERROR] Crawl error: {template.name}, error: {e}")
         return False
 
 
@@ -217,18 +217,18 @@ async def run_batch_from_config(
         logger.error(str(e))
         return
     except Exception as e:
-        logger.error(f"加载模板 '{template_name}' 失败: {e}")
+        logger.error(f"Loading template '{template_name}' failed: {e}")
         return
     engine = SpiderEngine(adapter_class=released.adapter_class)
     adapter_cls = released.adapter_class or GenericAdapter
 
     logger.info("=" * 80)
-    logger.info(f"使用模板配置的批量参数: {template_name}")
-    logger.info(f"  文件路径: {batch_config.file_path}")
-    logger.info(f"  参数名称: {batch_config.param_name}")
-    logger.info(f"  起始行: {batch_config.start_line}")
-    logger.info(f"  限制数量: {batch_config.limit}")
-    logger.info(f"  请求延迟: {batch_config.delay}秒")
+    logger.info(f"Using batch parameters from template: {template_name}")
+    logger.info(f"  File path: {batch_config.file_path}")
+    logger.info(f"  Parameter name: {batch_config.param_name}")
+    logger.info(f"  Start row: {batch_config.start_line}")
+    logger.info(f"  Limit: {batch_config.limit}")
+    logger.info(f"  Request delay: {batch_config.delay}s")
     logger.info("=" * 80)
     
     success_count = 0
@@ -250,7 +250,7 @@ async def run_batch_from_config(
                 adapter_cls.build_batch_param_value,
             )
             
-            logger.info(f"[{idx + 1}] 处理第 {line_num} 行: {value}")
+            logger.info(f"[{idx + 1}] Processing row {line_num}: {value}")
             
             try:
                 # 重新加载模板并应用参数
@@ -268,7 +268,7 @@ async def run_batch_from_config(
                     fail_count += 1
             
             except Exception as e:
-                logger.exception(f"处理第 {line_num} 行时发生异常: {value}, 错误: {e}")
+                logger.exception(f"Error processing row {line_num}: {value}, error: {e}")
                 fail_count += 1
             
             # 添加延迟
@@ -276,26 +276,26 @@ async def run_batch_from_config(
                 await asyncio.sleep(batch_config.delay)
     
     except FileNotFoundError as e:
-        logger.error(f"批量采集失败: {e}")
+        logger.error(f"Batch crawl failed: {e}")
         return
     except PermissionError as e:
-        logger.error(f"批量采集失败: {e}")
+        logger.error(f"Batch crawl failed: {e}")
         return
     except UnicodeDecodeError as e:
-        logger.error(f"批量采集失败: 文件编码错误，请使用 UTF-8 编码")
+        logger.error(f"Batch crawl failed: Invalid file encoding; use UTF-8")
         return
     except Exception as e:
-        logger.exception(f"批量采集发生异常: {e}")
+        logger.exception(f"Batch crawl error: {e}")
         return
     finally:
         await engine.close()
     
     # 输出统计
     logger.info("=" * 80)
-    logger.info(f"批量采集完成！")
-    logger.info(f"  成功: {success_count}")
-    logger.info(f"  失败: {fail_count}")
-    logger.info(f"  跳过: {skip_count}")
+    logger.info(f"Batch crawl completed")
+    logger.info(f"  Succeeded: {success_count}")
+    logger.info(f"  Failed: {fail_count}")
+    logger.info(f"  Skipped: {skip_count}")
     logger.info("=" * 80)
 
 
@@ -345,7 +345,7 @@ async def run_from_list_file_stream(
         logger.error(str(e))
         return False
     except Exception as e:
-        logger.error(f"加载模板 '{template_name}' 失败: {e}")
+        logger.error(f"Loading template '{template_name}' failed: {e}")
         return False
     engine = SpiderEngine(adapter_class=released.adapter_class)
     success_count = 0
@@ -361,7 +361,7 @@ async def run_from_list_file_stream(
     adapter_cls = released.adapter_class or GenericAdapter
     if tmpl_meta.list_pagination:
         default_start_page = tmpl_meta.list_pagination.start_page
-    logger.info(f"预加载模板 '{template_name}'，适配器: {adapter_cls.__name__}")
+    logger.info(f"Preloaded template '{template_name}'; adapter: {adapter_cls.__name__}")
     
     try:
         await checkpoint_store.connect()
@@ -372,14 +372,14 @@ async def run_from_list_file_stream(
             batch_size = saved_state.batch_size
             run_state = saved_state
             logger.info(
-                "从 Redis 恢复运行参数: start=%d, limit=%s, batch_size=%d",
+                "Restored runtime parameters from Redis: start=%d, limit=%s, batch_size=%d",
                 start_line,
                 limit,
                 batch_size,
             )
         else:
             if resume:
-                raise RuntimeError("Redis 中没有统一格式的可恢复 checkpoint")
+                raise RuntimeError("No compatible resumable checkpoint found in Redis")
             last_assigned_line = (0 if start_line is None else start_line) - 1
             start_line = 0 if start_line is None else start_line
             await checkpoint_store.clear()
@@ -435,18 +435,18 @@ async def run_from_list_file_stream(
         else:
             batch_count = sum(1 for _ in iter_batches())
         if batch_count == 0:
-            logger.info("没有数据需要处理")
+            logger.info("No data to process")
             await checkpoint_store.clear()
             return True
 
         if resume:
             logger.info(
-                "重新采集 %d 个中断批次，并从第 %d 行后继续分配新批次",
+                "Retrying %d interrupted batches; assigning new batches after row %d",
                 len(valid_ranges), last_assigned_line,
             )
         
         logger.info(
-            "参数文件包含 %d 个批次，max_concurrent_tasks=%d",
+            "Parameter file contains %d batches; max_concurrent_tasks=%d",
             batch_count,
             settings.max_concurrent_tasks,
         )
@@ -460,7 +460,7 @@ async def run_from_list_file_stream(
         # 错峰启动: 每个 task 依次延迟启动，避免 N 个协程同一瞬间打向服务器
         stagger = max(delay, 1.0) if delay > 0 else 1.0
         logger.info(
-            "错峰启动: 每批间隔 %.1fs",
+            "Staggered start: batch interval %.1fs",
             stagger,
         )
         
@@ -475,8 +475,8 @@ async def run_from_list_file_stream(
                     adapter_cls.build_batch_param_value,
                 )
                 logger.info(
-                    f"[批次 {idx + 1}/{batch_count}] 行 {start_line_num}-{end_line_num}, "
-                    f"共 {len(batch_data)} 条: {batch_data[0]}...{batch_data[-1]}"
+                    f"[Batch {idx + 1}/{batch_count}] rows {start_line_num}-{end_line_num}, "
+                    f"total {len(batch_data)} records: {batch_data[0]}...{batch_data[-1]}"
                 )
                 
                 checkpoint = BatchCheckpoint(
@@ -524,20 +524,20 @@ async def run_from_list_file_stream(
                     
                     if result.success:
                         await checkpoint_store.delete(checkpoint.identity)
-                        logger.info(f"[OK] 批次 {idx + 1} 成功")
+                        logger.info(f"[OK] Batch {idx + 1} Succeeded")
                         return len(batch_data)
-                    logger.warning(f"[FAIL] 批次 {idx + 1} 失败: {result.errors}")
+                    logger.warning(f"[FAIL] Batch {idx + 1} Failed: {result.errors}")
                     return -len(batch_data)
                 
                 except Exception as e:
-                    logger.exception(f"[ERROR] 批次 {idx + 1} 异常: {e}")
+                    logger.exception(f"[ERROR] Batch {idx + 1} error: {e}")
                     return -len(batch_data)
         
         async def _safe_worker(batch_data, start_line_num, end_line_num, idx):
             try:
                 return await _worker(batch_data, start_line_num, end_line_num, idx)
             except Exception as e:
-                logger.exception(f"[ERROR] 批次 {idx + 1} 异常: {e}")
+                logger.exception(f"[ERROR] Batch {idx + 1} error: {e}")
                 return -len(batch_data)
 
         def collect_results(done: set[asyncio.Task[int]]) -> None:
@@ -574,14 +574,14 @@ async def run_from_list_file_stream(
         if fail_count == 0:
             await checkpoint_store.clear()
         logger.info(
-            f"流式采集完成！共 {batch_count} 批, "
-            f"成功: {success_count}, 失败: {fail_count}"
+            f"Streaming crawl completed; {batch_count} batches, "
+            f"Succeeded: {success_count}, Failed: {fail_count}"
         )
         logger.info("=" * 80)
         return success
     
     except Exception as e:
-        logger.exception(f"流式采集发生异常: {e}")
+        logger.exception(f"Streaming crawl error: {e}")
         return False
     
     finally:
@@ -621,14 +621,14 @@ async def run_from_command_line(
         except FileNotFoundError as e:
             logger.error(str(e))
         except Exception as e:
-            logger.error(f"加载模板 '{name}' 失败: {e}")
+            logger.error(f"Loading template '{name}' failed: {e}")
 
     if not templates:
-        logger.error("没有找到有效的模板")
+        logger.error("No valid templates found")
         return False
 
-    logger.info(f"找到 {len(templates)} 个有效模板")
-    logger.info(f"启动并发采集，max_concurrent_tasks={settings.max_concurrent_tasks}")
+    logger.info(f"Found {len(templates)} valid templates")
+    logger.info(f"Starting concurrent crawl; max_concurrent_tasks={settings.max_concurrent_tasks}")
 
     # 创建单个 engine 实例，所有任务共享
     engine = SpiderEngine(adapter_classes=adapter_classes)
@@ -643,23 +643,23 @@ async def run_from_command_line(
         """单个任务的 worker 函数。"""
         async with semaphore:
             logger.info("=" * 80)
-            logger.info(f"采集 [{idx + 1}/{total}]: {template.name}")
+            logger.info(f"Crawling [{idx + 1}/{total}]: {template.name}")
             if params:
-                logger.info(f"  参数: {params}")
+                logger.info(f"  Parameters: {params}")
 
             try:
                 result = await engine.crawl_from_page(template, start_page)
                 success = result.success
 
                 if success:
-                    logger.info(f"[OK] 成功: {template.name}, 参数: {params}")
+                    logger.info(f"[OK] Succeeded: {template.name}, Parameters: {params}")
                     return True
                 else:
-                    logger.warning(f"[FAIL] 失败: {template.name}, 错误: {result.errors}")
+                    logger.warning(f"[FAIL] Failed: {template.name}, error: {result.errors}")
                     return False
 
             except Exception as e:
-                logger.exception(f"[ERROR] 异常: {template.name}, 错误: {e}")
+                logger.exception(f"[ERROR] error: {template.name}, error: {e}")
                 return False
 
     try:
@@ -674,7 +674,7 @@ async def run_from_command_line(
         # 统计结果
         for result in results:
             if isinstance(result, Exception):
-                logger.error(f"任务异常: {result}")
+                logger.error(f"Task error: {result}")
                 fail_count += 1
             elif result:
                 success_count += 1
@@ -682,7 +682,7 @@ async def run_from_command_line(
                 fail_count += 1
 
         logger.info("=" * 80)
-        logger.info(f"采集完成！成功: {success_count}, 失败: {fail_count}")
+        logger.info(f"Crawl completedSucceeded: {success_count}, Failed: {fail_count}")
         logger.info("=" * 80)
         return fail_count == 0
 
@@ -786,7 +786,7 @@ def main() -> None:
     # 优先处理 --list-file
     if args.list_file:
         if not args.list_param:
-            logger.error("错误: 使用 --list-file 时必须同时指定 --list-param")
+            logger.error("Error: --list-file requires --list-param")
             sys.exit(1)
         
         # --template-name 优先，否则从 --template 参数中提取模板名
@@ -799,7 +799,7 @@ def main() -> None:
         elif args.template_args:
             _, template_params = parse_template_arg(args.template_args[0])
         if not tmpl_name:
-            logger.error("错误: 使用 --list-file 时必须指定 --template-name 或 --template")
+            logger.error("Error: --list-file requires --template-name or --template")
             sys.exit(1)
         
         success = asyncio.run(run_from_list_file_stream(

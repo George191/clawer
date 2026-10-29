@@ -46,19 +46,19 @@ def _preflight_check() -> None:
     errors: list[str] = []
 
     if not settings.kafka_brokers:
-        errors.append("SPIDER_KAFKA_BROKERS 未配置 — ETL 管道依赖 Kafka")
+        errors.append("SPIDER_KAFKA_BROKERS is not configured; the ETL pipeline requires Kafka")
     if not settings.pg_url or settings.pg_url == settings.__class__.model_fields["pg_url"].default:
-        errors.append("SPIDER_PG_URL 未配置 — ETL 管道依赖 Postgres")
+        errors.append("SPIDER_PG_URL is not configured; the ETL pipeline requires Postgres")
 
     if errors:
         print("=" * 60, file=sys.stderr)
-        print("ETL 启动前置检查 FAILED:", file=sys.stderr)
+        print("ETL startup preflight FAILED:", file=sys.stderr)
         for e in errors:
             print(f"  ✗ {e}", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
-        print("请检查 .env 文件中的以下配置项:", file=sys.stderr)
-        print("  SPIDER_KAFKA_BROKERS  — Kafka Broker 地址 (如 kafka:9092)", file=sys.stderr)
-        print("  SPIDER_PG_URL         — Postgres 连接 URL", file=sys.stderr)
+        print("Check the following settings in .env:", file=sys.stderr)
+        print("  SPIDER_KAFKA_BROKERS  — Kafka broker address (e.g. kafka:9092)", file=sys.stderr)
+        print("  SPIDER_PG_URL         — Postgres connection URL", file=sys.stderr)
         sys.exit(1)
 
 
@@ -72,7 +72,7 @@ async def _run_layer(worker_class: type, layer_name: str) -> None:
     try:
         await worker.run()
     except ConnectionError:
-        logger.critical("%s Worker 因连接失败退出，请检查上述错误日志", layer_name.upper())
+        logger.critical("%s worker exited after connection failure; check the error logs above", layer_name.upper())
         sys.exit(1)
     finally:
         await worker.stop()
@@ -157,8 +157,8 @@ async def run_all() -> None:
         )
         for result in results:
             if isinstance(result, Exception):
-                logger.critical("Worker 异常退出: %s", result)
-        logger.critical("全部 Worker 已退出")
+                logger.critical("Worker exited with an error: %s", result)
+        logger.critical("All workers have exited")
         sys.exit(1)
     finally:
         await asyncio.gather(

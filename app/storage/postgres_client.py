@@ -111,8 +111,8 @@ class PostgresClient:
             max_retries, masked_url, masked_error,
         )
         raise ConnectionError(
-            f"无法连接到 Postgres ({masked_url})，已重试 {max_retries} 次。"
-            f"最后错误: {masked_error}"
+            f"Unable to connect to Postgres ({masked_url}); retried {max_retries} times. "
+            f"Last error: {masked_error}"
         ) from last_error
 
     async def close(self) -> None:

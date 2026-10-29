@@ -21,10 +21,6 @@ async def _dispatch_due_tasks() -> dict[str, int]:
         run_id = str(task["current_run_id"])
         try:
             dispatch_run(task)
-            await automation_task_store.append_task_log(
-                task_id, "info", "Recurring dispatch submitted to Celery worker", run_id=run_id,
-            )
-            dispatched += 1
         except Exception:
             await automation_task_store.update_task(
                 task_id, {"status": "failed", "throughput": 0},
@@ -32,6 +28,15 @@ async def _dispatch_due_tasks() -> dict[str, int]:
                 expected_celery_task_id=str(task["celery_task_id"]),
             )
             logger.exception("Failed to dispatch automation task %s", task_id)
+            continue
+        dispatched += 1
+        try:
+            await automation_task_store.write_task_log(
+                task_id, run_id, "Scheduler", "info",
+                "Recurring dispatch submitted to Celery worker",
+            )
+        except Exception:
+            logger.exception("Failed to write recurring dispatch log for task %s", task_id)
     return {"claimed": len(tasks), "dispatched": dispatched}
 
 

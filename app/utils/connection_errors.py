@@ -13,6 +13,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLTimeoutError
 from urllib3 import exceptions as urllib_errors
 
+from app.base.http import DownloadCleanupError
+
 try:
     from playwright.async_api import TimeoutError as BrowserTimeoutError
 except ImportError:
@@ -54,6 +56,8 @@ def is_retryable_connection_error(error: BaseException) -> bool:
     seen: set[int] = set()
     while error is not None and id(error) not in seen:
         seen.add(id(error))
+        if isinstance(error, DownloadCleanupError):
+            return False
         if isinstance(error, (AuthenticationError, AuthorizationError, *_NON_RETRYABLE_HTTP_ERRORS)):
             return False
         if isinstance(error, curl_errors.RequestException):

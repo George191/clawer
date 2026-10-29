@@ -280,7 +280,7 @@ async def _handle_crawl(
         logger.error(str(e))
         return {"records": [], "errors": [str(e)]}
     except Exception as e:
-        logger.error(f"Step '{step.id}' 加载模板 '{step.template}' 失败: {e}")
+        logger.error(f"Step '{step.id}' Loading template '{step.template}' failed: {e}")
         return {"records": [], "errors": [str(e)]}
     template = released.template
 

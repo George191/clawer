@@ -80,7 +80,7 @@ class PageCheckpointStore:
                 if not self.task_id or not is_retryable_connection_error(exc):
                     raise
                 self._connection.mark_unavailable()
-                logger.warning("Redis 任务断点连接失败，%s 秒后重试: %s", delay, exc)
+                logger.warning("Redis task checkpoint connection failed; %ss before retry: %s", delay, exc)
                 await controlled_sleep(delay)
                 delay = min(delay * 2, 30)
 
@@ -92,12 +92,12 @@ class PageCheckpointStore:
             page = int(raw)
             return page if page >= 0 else None
         except (TypeError, ValueError):
-            logger.warning("忽略无效 Redis 页断点: key=%s", self.key)
+            logger.warning("Ignoring invalid Redis page checkpoint: key=%s", self.key)
             return None
         except Exception as exc:
             if self.task_id:
                 raise
-            logger.warning("读取 Redis 页断点失败: %s", exc)
+            logger.warning("Failed to read Redis page checkpoint: %s", exc)
             self._connection.mark_unavailable()
             return None
 
@@ -119,7 +119,7 @@ class PageCheckpointStore:
         except Exception as exc:
             if self.task_id:
                 raise
-            logger.warning("写入 Redis 页断点失败: %s", exc)
+            logger.warning("Failed to write Redis page checkpoint: %s", exc)
             self._connection.mark_unavailable()
 
     async def load_batch_index(self) -> int | None:
@@ -130,12 +130,12 @@ class PageCheckpointStore:
             batch_index = int(raw)
             return batch_index if batch_index >= 0 else 0
         except (TypeError, ValueError):
-            logger.warning("忽略无效 Redis 批次断点: key=%s", self.key)
+            logger.warning("Ignoring invalid Redis batch checkpoint: key=%s", self.key)
             return None
         except Exception as exc:
             if self.task_id:
                 raise
-            logger.warning("读取 Redis 批次断点失败: %s", exc)
+            logger.warning("Failed to read Redis batch checkpoint: %s", exc)
             self._connection.mark_unavailable()
             return None
 
@@ -146,7 +146,7 @@ class PageCheckpointStore:
         except Exception as exc:
             if self.task_id:
                 raise
-            logger.warning("读取 Redis 水位失败: %s", exc)
+            logger.warning("Failed to read Redis watermark: %s", exc)
             self._connection.mark_unavailable()
             return None
 
@@ -172,7 +172,7 @@ class PageCheckpointStore:
         except Exception as exc:
             if self.task_id:
                 raise
-            logger.warning("提交 Redis 水位失败: %s", exc)
+            logger.warning("Failed to commit Redis watermark: %s", exc)
             self._connection.mark_unavailable()
             return False
 
@@ -186,7 +186,7 @@ class PageCheckpointStore:
         except Exception as exc:
             if self.task_id:
                 raise
-            logger.warning("删除 Redis 页断点失败: %s", exc)
+            logger.warning("Failed to delete Redis page checkpoint: %s", exc)
             self._connection.mark_unavailable()
             return False
 
@@ -252,7 +252,7 @@ class BatchCheckpointStore:
             )
             return state
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            logger.warning("忽略无效 Redis 运行元数据: %s", exc)
+            logger.warning("Ignoring invalid Redis runtime metadata: %s", exc)
             return None
 
     async def save_run_state(self, state: CrawlRunState) -> None:
@@ -265,12 +265,12 @@ class BatchCheckpointStore:
             pipeline.expire(self.key, CHECKPOINT_TTL_SECONDS)
             await pipeline.execute()
         except Exception as exc:
-            logger.warning("写入 Redis 运行元数据失败: %s", exc)
+            logger.warning("Failed to write Redis runtime metadata: %s", exc)
             self._connection.mark_unavailable()
 
     async def connect(self) -> bool:
         if not settings.redis_url and self._connection.client is None:
-            logger.info("Redis 未配置，断点续传缓存已禁用")
+            logger.info("Redis is not configured; checkpoint cache disabled")
         return await self._get_redis() is not None
 
     async def load(self) -> list[BatchCheckpoint]:
@@ -280,7 +280,7 @@ class BatchCheckpointStore:
         try:
             raw_items = await redis.hgetall(self.key)
         except Exception as exc:
-            logger.warning("读取 Redis checkpoint 失败: %s", exc)
+            logger.warning("Failed to read Redis checkpoint: %s", exc)
             self._connection.mark_unavailable()
             return []
         return self._decode_checkpoints(
@@ -299,7 +299,7 @@ class BatchCheckpointStore:
                     current_page=int(data["current_page"]),
                 ))
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-                logger.warning("忽略无效 Redis checkpoint: %r", raw)
+                logger.warning("Ignoring invalid Redis checkpoint: %r", raw)
         return sorted(checkpoints, key=lambda item: item.start_line)
 
     async def save(self, checkpoint: BatchCheckpoint) -> None:
@@ -312,7 +312,7 @@ class BatchCheckpointStore:
             pipeline.expire(self.key, CHECKPOINT_TTL_SECONDS)
             await pipeline.execute()
         except Exception as exc:
-            logger.warning("写入 Redis checkpoint 失败: %s", exc)
+            logger.warning("Failed to write Redis checkpoint: %s", exc)
             self._connection.mark_unavailable()
 
     async def delete(self, checkpoint_identity: str) -> None:
@@ -321,7 +321,7 @@ class BatchCheckpointStore:
             try:
                 await redis.hdel(self.key, checkpoint_identity)
             except Exception as exc:
-                logger.warning("删除 Redis checkpoint 失败: %s", exc)
+                logger.warning("Failed to delete Redis checkpoint: %s", exc)
                 self._connection.mark_unavailable()
 
     async def clear(self) -> None:
@@ -330,7 +330,7 @@ class BatchCheckpointStore:
             try:
                 await redis.delete(self.key)
             except Exception as exc:
-                logger.warning("清理 Redis checkpoint 失败: %s", exc)
+                logger.warning("Failed to clear Redis checkpoint: %s", exc)
                 self._connection.mark_unavailable()
 
     async def close(self) -> None:

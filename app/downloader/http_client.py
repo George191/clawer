@@ -14,10 +14,10 @@ import asyncio
 import inspect
 import json
 import logging
-import os
 import re
 import socket
 import sys
+import weakref
 from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
 
@@ -25,7 +25,7 @@ from curl_cffi import CurlECode, CurlOpt
 from curl_cffi import requests as curl_requests
 from curl_cffi.requests.exceptions import HTTPError, ProxyError, RequestException
 
-from app.base.http import DownloadError, DownloadResponse
+from app.base.http import DownloadCleanupError, DownloadError, DownloadResponse
 from app.config.settings import settings
 from app.logger import get_logger
 from app.models.template import RequestConfig
@@ -85,6 +85,7 @@ _STREAM_LOG_MIN_SECONDS = 2.0
 _STREAM_BAR_WIDTH = 22
 # curl 总时长下限：基准包（cvelistV5 ~600MB）在劣化链路上远超默认下载超时。
 _STREAM_TOTAL_TIMEOUT_FLOOR = 3600
+_DOWNLOAD_CLEANUP_SECONDS = 5.0
 
 
 def _download_bar(fraction: float) -> str:
@@ -112,15 +113,7 @@ def _stream_watchdog_tick(state: dict, now: float, warned: int):
 
 
 async def _stream_download_watchdog(state: dict, hard_deadline_s: float, url: str) -> None:
-    """Independent stall backstop for streaming downloads.
-
-    curl_cffi can block inside a C-level read on a dead socket; asyncio
-    cancellation never lands and wait_for waits for the cancelled await
-    forever (observed in production on SAM.gov). This watchdog lives on the
-    event loop, needs no cooperation from the stuck read, and escalates
-    warn -> warn -> hard process exit so celery replaces the fork-pool child
-    instead of letting it zombie. Outside celery workers it only logs.
-    """
+    """Legacy adapter watchdog; callers must observe its controlled failure."""
     warned = 0
     while True:
         await asyncio.sleep(30)
@@ -135,19 +128,7 @@ async def _stream_download_watchdog(state: dict, hard_deadline_s: float, url: st
             state["bytes"] / 1048576, hard_deadline_s, warned, url)
         if decision != "exit":
             continue
-        from multiprocessing import current_process
-
-        if "ForkPool" in current_process().name and \
-                os.environ.get("DOWNLOAD_WATCHDOG_EXIT", "1") != "0":
-            logger.error(
-                "download watchdog: hard-exiting stuck worker child (os._exit(70)) "
-                "so celery replaces it - %s", url)
-            try:
-                sys.stdout.flush()
-                sys.stderr.flush()
-            except Exception:
-                pass
-            os._exit(70)
+        raise DownloadError(url, message="download watchdog: stalled transfer")
 
 
 def _init_anti_crawl(*, use_proxy: bool = True):
@@ -203,6 +184,43 @@ class HttpClient:
             tuple[str | None, str | None, curl_requests.AsyncSession],
         ] = {}
         self._download_client_lock: asyncio.Lock | None = None
+        self._download_operations: dict[int, set[asyncio.Future]] = {}
+        self._download_owners: dict[int, asyncio.Task] = {}
+        self._download_cleanup_blocked: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
+        self._download_pending_tasks: set[asyncio.Future] = set()
+
+    def _consume_download_task(self, task: asyncio.Future) -> None:
+        self._download_pending_tasks.discard(task)
+        if not task.cancelled():
+            task.exception()
+
+    async def _finish_download_tasks(
+        self, task_id: int, tasks: set[asyncio.Future], *, url: str = "",
+        cleanup_tasks: set[asyncio.Future] | None = None,
+    ) -> None:
+        if not tasks:
+            return
+        try:
+            done, pending = await asyncio.wait(tasks, timeout=_DOWNLOAD_CLEANUP_SECONDS)
+        except asyncio.CancelledError:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+                self._download_pending_tasks.add(task)
+                task.add_done_callback(self._consume_download_task)
+            self._download_cleanup_blocked.add(asyncio.current_task())
+            raise
+        for task in done:
+            self._consume_download_task(task)
+        for task in pending:
+            task.cancel()
+            self._download_pending_tasks.add(task)
+            task.add_done_callback(self._consume_download_task)
+        failed = any(task.cancelled() or task.exception() is not None
+                     for task in cleanup_tasks or () if task in done)
+        if pending or failed:
+            self._download_cleanup_blocked.add(asyncio.current_task())
+            raise DownloadCleanupError(url, message="HTTP cleanup unconfirmed; this download task cannot start another request")
 
     @staticmethod
     def _error_status_code(error: Exception) -> int | None:
@@ -261,6 +279,8 @@ class HttpClient:
         proxy_url: str | None,
         pre_proxy_url: str | None,
     ) -> curl_requests.AsyncSession:
+        if asyncio.current_task() in self._download_cleanup_blocked:
+            raise DownloadCleanupError("", message="Previous HTTP cleanup unconfirmed; no new request started")
         lock = await self._get_download_client_lock()
         async with lock:
             cached = self._download_clients.get(task_id)
@@ -269,7 +289,8 @@ class HttpClient:
                 if (cached_proxy, cached_pre_proxy) == (proxy_url, pre_proxy_url):
                     return client
                 del self._download_clients[task_id]
-                await client.close()
+                close_task = asyncio.ensure_future(client.close())
+                await self._finish_download_tasks(task_id, {close_task}, cleanup_tasks={close_task})
 
             client = await self._create_client(
                 proxy_url,
@@ -283,7 +304,8 @@ class HttpClient:
         async with lock:
             cached = self._download_clients.pop(task_id, None)
         if cached is not None:
-            await cached[2].close()
+            close_task = asyncio.ensure_future(cached[2].close())
+            await self._finish_download_tasks(task_id, {close_task}, cleanup_tasks={close_task})
 
     async def _create_client(
         self,
@@ -559,88 +581,116 @@ class HttpClient:
 
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
-        # ── 每次请求创建新的 AsyncSession，确保每次请求都能获取新的出口IP ──────────
+        # Each page request owns its session; close it without an unbounded
+        # async-context exit or wait_for cancellation handshake.
+        if asyncio.current_task() in self._download_cleanup_blocked:
+            raise DownloadCleanupError(url, message="Previous HTTP cleanup unconfirmed; no new request started")
+        client = None
+        cancelled = False
         async def _do_request() -> str:
-            async with await self._create_client(
-                proxy_url,
-                no_timeout=no_timeout,
-                pre_proxy_url=pre_proxy_url,
-            ) as client:
-                try:
-                    request_kwargs = dict(
-                        method=config.method,
-                        url=url,
-                        headers=headers,
-                        params=config.params,
-                        cookies=cookies,
-                    )
-                    if config.method.upper() == "POST":
-                        if config.json_data is not None:
-                            request_kwargs["json"] = config.json_data
-                        else:
-                            request_kwargs["data"] = config.form_data
+            nonlocal client
+            client = await self._create_client(
+                proxy_url, no_timeout=no_timeout, pre_proxy_url=pre_proxy_url,
+            )
+            try:
+                request_kwargs = dict(
+                    method=config.method,
+                    url=url,
+                    headers=headers,
+                    params=config.params,
+                    cookies=cookies,
+                )
+                if config.method.upper() == "POST":
+                    if config.json_data is not None:
+                        request_kwargs["json"] = config.json_data
+                    else:
+                        request_kwargs["data"] = config.form_data
 
-                    tunnel_info = await self._before_request(
-                        client=client,
-                        proxy_url=proxy_url,
-                        pre_proxy_url=pre_proxy_url,
-                        url_display=url_display,
-                        page=page,
-                        attempt=attempt,
-                        method=config.method,
-                        use_anti_crawl=use_anti_crawl,
-                        task_id=task_id,
-                    )
+                tunnel_info = await self._before_request(
+                    client=client,
+                    proxy_url=proxy_url,
+                    pre_proxy_url=pre_proxy_url,
+                    url_display=url_display,
+                    page=page,
+                    attempt=attempt,
+                    method=config.method,
+                    use_anti_crawl=use_anti_crawl,
+                    task_id=task_id,
+                )
 
-                    response = await client.request(**request_kwargs)
+                response = await client.request(**request_kwargs)
 
-                    if config.encoding:
-                        response.encoding = config.encoding
+                if config.encoding:
+                    response.encoding = config.encoding
 
-                    if _is_aws_waf_challenge(response.status_code, response.text):
-                        raise DownloadError(
-                            url_display,
-                            response.status_code,
-                            "AWS WAF challenge response",
-                        )
-
-                    if response.status_code in settings.http_retry_on_statuses:
-                        raise DownloadError(url_display, response.status_code, "Retryable status code")
-
-                    response.raise_for_status()
-
-                    await self._after_request(
-                        response=response,
-                        proxy_url=proxy_url,
-                        url_display=url_display,
-                        page=page,
-                        attempt=attempt,
-                        method=config.method,
-                        tunnel_info=tunnel_info,
-                        use_anti_crawl=use_anti_crawl,
-                        task_id=task_id,
+                if _is_aws_waf_challenge(response.status_code, response.text):
+                    raise DownloadError(
+                        url_display,
+                        response.status_code,
+                        "AWS WAF challenge response",
                     )
 
-                    return response.text
+                if response.status_code in settings.http_retry_on_statuses:
+                    raise DownloadError(url_display, response.status_code, "Retryable status code")
 
-                except Exception as e:
-                    if (
-                        _proxy_pool is not None
-                        and proxy_url
-                        and self._should_mark_proxy_failure(e, pre_proxy_url)
-                    ):
-                        await _proxy_pool.mark_failure(proxy_url, adapter_name)
-                        await self._release_failed_proxy(task_id, proxy_url, adapter_name)
+                response.raise_for_status()
+
+                await self._after_request(
+                    response=response,
+                    proxy_url=proxy_url,
+                    url_display=url_display,
+                    page=page,
+                    attempt=attempt,
+                    method=config.method,
+                    tunnel_info=tunnel_info,
+                    use_anti_crawl=use_anti_crawl,
+                    task_id=task_id,
+                )
+
+                return response.text
+
+            except Exception as e:
+                if (
+                    _proxy_pool is not None
+                    and proxy_url
+                    and self._should_mark_proxy_failure(e, pre_proxy_url)
+                ):
+                    await _proxy_pool.mark_failure(proxy_url, adapter_name)
+                    await self._release_failed_proxy(task_id, proxy_url, adapter_name)
+                raise
+
+        request_task = asyncio.ensure_future(_do_request())
+        operations = {request_task}
+        self._download_operations[task_id] = operations
+        if asyncio.current_task() is not None:
+            self._download_owners[task_id] = asyncio.current_task()
+        try:
+            ready, _ = await asyncio.wait(
+                {request_task}, timeout=None if no_timeout else settings.http_request_timeout * 2,
+            )
+            if not ready:
+                raise asyncio.TimeoutError("Page request exceeded its time budget")
+            return request_task.result()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        finally:
+            self._download_operations.pop(task_id, None)
+            self._download_owners.pop(task_id, None)
+            if not request_task.done():
+                request_task.cancel()
+            cleanup_tasks = set()
+            if client is not None:
+                close_task = asyncio.ensure_future(client.close())
+                cleanup_tasks.add(close_task)
+                operations.add(close_task)
+            try:
+                await self._finish_download_tasks(task_id, operations, url=url, cleanup_tasks=cleanup_tasks)
+            except DownloadError:
+                if cancelled:
+                    logger.warning("HTTP cleanup unconfirmed during page cancellation")
+                else:
                     raise
-
-        if no_timeout:
-            return await _do_request()
-
-        # 兜底超时：curl_cffi 的 timeout 在隧道代理场景下可能不触发，
-        # AsyncSession.close() 也可能永久 hang，此处用 asyncio.wait_for 兜底，
-        # 防止 request_page 永不返回导致整个 Celery 任务挂死。
-        fallback_timeout = settings.http_request_timeout * 2
-        return await asyncio.wait_for(_do_request(), timeout=fallback_timeout)
 
     async def _release_failed_proxy(
         self,
@@ -740,15 +790,24 @@ class HttpClient:
             proxy_url,
             pre_proxy_url=pre_proxy_url,
         )
+        response = request_task = None
+        operations: set[asyncio.Future] = set()
+        self._download_operations[task_id] = operations
+        if asyncio.current_task() is not None:
+            self._download_owners[task_id] = asyncio.current_task()
+        streaming = bool(chunk_callback is not None and _STREAM_REQUEST_KWARGS)
+        completed = cancelled = False
+        buffer = None
         try:
             # With a chunk callback the payload streams chunk-by-chunk: a live
-            # progress bar lands in the task log and a stall watchdog guards
-            # against dead sockets. The feature-detected kwargs keep legacy
-            # curl_cffi builds on the non-stream path (see note below).
-            streaming = bool(chunk_callback is not None and _STREAM_REQUEST_KWARGS)
+            # progress bar lands in the task log. Bounded waits do not wait
+            # forever for a stalled read to acknowledge cancellation.
             total_timeout = max(
                 settings.http_download_timeout, _STREAM_TOTAL_TIMEOUT_FLOOR
             ) if streaming else settings.http_download_timeout
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            deadline = started + total_timeout
             stream_kwargs = dict(
                 method=config.method or "GET",
                 url=url,
@@ -767,17 +826,20 @@ class HttpClient:
                 # "Task exception was never retrieved".  A non-stream request
                 # keeps parsing and cleanup in the caller task.
                 stream_kwargs["stream"] = False
-            response = await client.request(**stream_kwargs)
+            request_task = asyncio.ensure_future(client.request(**stream_kwargs))
+            operations.add(request_task)
+            ready, _ = await asyncio.wait({request_task}, timeout=max(0.0, deadline - loop.time()))
+            if not ready:
+                raise DownloadError(url, message=f"download exceeded its {total_timeout}s budget before response headers")
+            response = request_task.result()
+            transfer = getattr(response, "astream_task", None)
+            if isinstance(transfer, asyncio.Future):
+                operations.add(transfer)
             if response.status_code in settings.http_retry_on_statuses:
                 raise DownloadError(url, response.status_code, "Retryable status code")
 
             response.raise_for_status()
             if streaming:
-                loop = asyncio.get_event_loop()
-                started = loop.time()
-                watchdog_state = {"t": started, "bytes": 0}
-                watchdog = asyncio.ensure_future(
-                    _stream_download_watchdog(watchdog_state, total_timeout, url))
                 length = (response.headers or {}).get("Content-Length") or \
                     (response.headers or {}).get("content-length") or ""
                 total = int(str(length).strip()) if str(length).strip().isdigit() else 0
@@ -788,69 +850,48 @@ class HttpClient:
                 last_logged_time = started
                 buffer = BytesIO()
                 chunk_iter = response.aiter_content()
-                try:
-                    while True:
-                        try:
-                            chunk = await asyncio.wait_for(
-                                chunk_iter.__anext__(),
-                                timeout=_STREAM_CHUNK_IDLE_SECONDS,
-                            )
-                        except StopAsyncIteration:
-                            break
-                        except asyncio.TimeoutError:
-                            raise DownloadError(
-                                url,
-                                message=(
-                                    f"download stalled: no data for "
-                                    f"{_STREAM_CHUNK_IDLE_SECONDS}s after "
-                                    f"{buffer.getbuffer().nbytes} of "
-                                    f"{total or 'unknown'} bytes"
-                                ),
-                            )
-                        buffer.write(chunk)
-                        received = buffer.getbuffer().nbytes
-                        watchdog_state["t"] = loop.time()
-                        watchdog_state["bytes"] = received
-                        if (received - last_logged_bytes >= log_step
-                                and loop.time() - last_logged_time >= _STREAM_LOG_MIN_SECONDS):
-                            last_logged_bytes = received
-                            last_logged_time = loop.time()
-                            elapsed = max(loop.time() - started, 1e-9)
-                            logger.info("%s", _download_progress_line(
-                                received, total, received / 1048576 / elapsed))
-                        if loop.time() > started + total_timeout:
-                            raise DownloadError(
-                                url,
-                                message=(
-                                    f"download exceeded its {total_timeout}s budget "
-                                    f"after {received} of {total or 'unknown'} bytes"
-                                ),
-                            )
-                    if total and buffer.getbuffer().nbytes != total:
+                received = 0
+                while True:
+                    chunk_task = asyncio.ensure_future(chunk_iter.__anext__())
+                    operations.add(chunk_task)
+                    remaining = min(_STREAM_CHUNK_IDLE_SECONDS, max(0.0, deadline - loop.time()))
+                    ready, _ = await asyncio.wait({chunk_task}, timeout=remaining)
+                    if not ready:
                         raise DownloadError(
                             url,
                             message=(
-                                f"download incomplete: {buffer.getbuffer().nbytes} "
-                                f"of {total} bytes"
+                                f"download stalled or exceeded its {total_timeout}s budget "
+                                f"after {received} of {total or 'unknown'} bytes"
                             ),
                         )
-                    received_total = buffer.getbuffer().nbytes
-                    elapsed = max(loop.time() - started, 0)
-                    logger.info(
-                        "download finished:\n  %s 100%% (%.1f MB in %.0fs, %.2f MB/s) - %s",
-                        _download_bar(1.0), received_total / 1048576, elapsed,
-                        received_total / 1048576 / max(elapsed, 1e-9), url,
-                    )
-                    if chunk_callback is not None:
-                        chunk_callback(buffer.getbuffer().tobytes())
-                    data = buffer.getvalue()
-                finally:
-                    watchdog.cancel()
                     try:
-                        await watchdog
-                    except BaseException:
-                        pass
-                    await response.aclose()
+                        chunk = chunk_task.result()
+                    except StopAsyncIteration:
+                        break
+                    finally:
+                        operations.discard(chunk_task)
+                    buffer.write(chunk)
+                    received += len(chunk)
+                    if (received - last_logged_bytes >= log_step
+                            and loop.time() - last_logged_time >= _STREAM_LOG_MIN_SECONDS):
+                        last_logged_bytes = received
+                        last_logged_time = loop.time()
+                        elapsed = max(loop.time() - started, 1e-9)
+                        logger.info("%s", _download_progress_line(
+                            received, total, received / 1048576 / elapsed))
+                    if loop.time() > deadline:
+                        raise DownloadError(url, message=f"download exceeded its {total_timeout}s budget after {received} bytes")
+                if total and received != total:
+                    raise DownloadError(url, message=f"download incomplete: {received} of {total} bytes")
+                elapsed = max(loop.time() - started, 0)
+                logger.info(
+                    "download finished:\n  %s 100%% (%.1f MB in %.0fs, %.2f MB/s) - %s",
+                    _download_bar(1.0), received / 1048576, elapsed,
+                    received / 1048576 / max(elapsed, 1e-9), url,
+                )
+                data = buffer.getvalue()
+                if chunk_callback is not None:
+                    chunk_callback(data)
             else:
                 data = response.content
                 if chunk_callback is not None:
@@ -859,16 +900,17 @@ class HttpClient:
             if _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
 
-            return DownloadResponse(
+            result = DownloadResponse(
                 source_url=url,
                 final_url=str(response.url or url),
                 status_code=response.status_code,
                 headers={str(k).lower(): str(v) for k, v in response.headers.items()},
                 data=data,
             )
-
+            completed = True
+            return result
         except asyncio.CancelledError:
-            await self._discard_download_client(task_id)
+            cancelled = True
             raise
         except Exception as e:
             proxy_failed = (
@@ -876,15 +918,55 @@ class HttpClient:
                 and proxy_url
                 and self._should_mark_download_proxy_failure(e, pre_proxy_url)
             )
-            transport_failed = (
-                not self._error_status_code(e) or self._is_download_transport_error(e)
-            )
-            if proxy_failed or transport_failed:
-                await self._discard_download_client(task_id)
             if proxy_failed:
                 await _proxy_pool.mark_failure(proxy_url)
                 await self._release_failed_proxy(task_id, proxy_url)
             raise
+        finally:
+            self._download_operations.pop(task_id, None)
+            self._download_owners.pop(task_id, None)
+            if buffer is not None:
+                buffer.close()
+            if response is None and request_task is not None and request_task.done() and not request_task.cancelled() and request_task.exception() is None:
+                response = request_task.result()
+            transfer = getattr(response, "astream_task", None)
+            if isinstance(transfer, asyncio.Future):
+                operations.add(transfer)
+            quit_now = getattr(response, "quit_now", None)
+            if quit_now is not None:
+                quit_now.set()
+            cleanup_tasks = set()
+            if not completed:
+                for operation in operations:
+                    if not operation.done():
+                        operation.cancel()
+                lock = await self._get_download_client_lock()
+                async with lock:
+                    cached = self._download_clients.pop(task_id, None)
+                if cached is not None:
+                    close_task = asyncio.ensure_future(cached[2].close())
+                    operations.add(close_task)
+                    cleanup_tasks.add(close_task)
+            if streaming and response is not None:
+                close_task = asyncio.ensure_future(response.aclose())
+                operations.add(close_task)
+                if completed:
+                    cleanup_tasks.add(close_task)
+            try:
+                await self._finish_download_tasks(task_id, operations, url=url, cleanup_tasks=cleanup_tasks)
+            except asyncio.CancelledError:
+                try:
+                    await self._discard_download_client(task_id)
+                except DownloadError:
+                    logger.warning("HTTP session cleanup unconfirmed during download cancellation")
+                raise
+            except DownloadError:
+                # Keep cancellation visible to the application shutdown path.
+                if cancelled:
+                    logger.warning("HTTP cleanup unconfirmed during download cancellation")
+                else:
+                    await self._discard_download_client(task_id)
+                    raise
 
     async def download_bytes(
         self,
@@ -897,9 +979,9 @@ class HttpClient:
 
         Streaming is feature-detected: the payload arrives chunk-by-chunk and
         each refresh logs a "download progress:" line that the task-log
-        capture layer merges into ONE live row. A stall watchdog escalates to
-        os._exit(70) inside celery fork-pool children when the transfer dies
-        mid-flight (see _stream_download_watchdog). Legacy curl_cffi builds
+        capture layer merges into ONE live row. Stalls raise DownloadError
+        after bounded transport cleanup. The returned bytes still require
+        memory proportional to the complete payload. Legacy curl_cffi builds
         fall back to the non-stream download_response path.
         """
         response = await self.download_response(
@@ -915,18 +997,30 @@ class HttpClient:
         
         关闭按资源 worker 复用的下载会话，并清理协程级代理租约。
         """
+        owners = set(self._download_owners.values())
         clients = [cached[2] for cached in self._download_clients.values()]
         self._download_clients.clear()
-        if clients:
-            await asyncio.gather(
-                *(client.close() for client in clients),
-                return_exceptions=True,
-            )
+        tasks = set(self._download_pending_tasks)
+        for owner in self._download_owners.values():
+            if owner is not asyncio.current_task():
+                owner.cancel()
+                tasks.add(owner)
+        for operations in self._download_operations.values():
+            tasks.update(operations)
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        cleanup_tasks = {asyncio.ensure_future(client.close()) for client in clients}
         if _proxy_pool is not None:
             for task_id in list(self._leased_proxies):
-                await _proxy_pool.release_proxy(task_id)
+                cleanup_tasks.add(asyncio.ensure_future(_proxy_pool.release_proxy(task_id)))
         self._leased_proxies.clear()
         self._last_proxy_urls.clear()
+        try:
+            await self._finish_download_tasks(0, tasks | cleanup_tasks, cleanup_tasks=cleanup_tasks)
+        except BaseException:
+            self._download_cleanup_blocked.update(owners)
+            raise
 
     async def release_current_task_proxy(self) -> None:
         """Release the proxy lease owned by the current download task."""

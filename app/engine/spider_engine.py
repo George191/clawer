@@ -25,6 +25,7 @@ from datetime import datetime
 from typing import Any
 
 from app.adapters import BaseSiteAdapter, get_adapter
+from app.base.http import DownloadCleanupError
 from app.config.settings import settings
 from app.crawler.incremental import (
     FilteredRecords,
@@ -479,6 +480,8 @@ class SpiderEngine:
                     page_succeeded = True
                     break  # 页面成功，跳出重试循环
 
+                except DownloadCleanupError:
+                    raise
                 except Exception as e:
                     if is_retryable_connection_error(e):
                         logger.warning(
@@ -820,6 +823,8 @@ class SpiderEngine:
                     await check_control_state()
                     continue
 
+            except DownloadCleanupError:
+                raise
             except Exception as e:
                 if is_retryable_connection_error(e):
                     logger.warning(

@@ -56,7 +56,7 @@ try:
     from celery import Celery
 except ImportError as e:
     raise ImportError(
-        "Celery 未安装，请执行: pip install celery redis"
+        "Celery is not installed; run: pip install celery redis"
     ) from e
 
 

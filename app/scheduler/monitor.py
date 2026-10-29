@@ -94,7 +94,7 @@ class SchedulerMonitor:
                 "task_name": task_name,
                 "healthy": False,
                 "alert": "NEVER_RUN",
-                "message": f"任务 {task_name} 从未执行过",
+                "message": f"Task {task_name} has never run",
             }
 
         latest = recent[0]
@@ -108,7 +108,7 @@ class SchedulerMonitor:
                     "task_name": task_name,
                     "healthy": False,
                     "alert": "OVERDUE",
-                    "message": f"任务 {task_name} 已 {hours_since:.1f} 小时未执行",
+                    "message": f"Task {task_name} has not run for {hours_since:.1f} hours",
                     "last_run": latest_time.isoformat(),
                 }
 
@@ -122,7 +122,7 @@ class SchedulerMonitor:
                         "task_name": task_name,
                         "healthy": False,
                         "alert": "STUCK",
-                        "message": f"任务 {task_name} 卡在 started 状态 {stuck_hours:.1f} 小时",
+                        "message": f"Task {task_name} has been in started state for {stuck_hours:.1f} hours",
                         "task_id": latest.get("_id"),
                     }
 
@@ -136,7 +136,7 @@ class SchedulerMonitor:
                 "task_name": task_name,
                 "healthy": False,
                 "alert": "HIGH_FAILURE_RATE",
-                "message": f"任务 {task_name} 失败率 {failure_rate:.0%} ({failed}/{total})",
+                "message": f"Task {task_name} failure rate {failure_rate:.0%} ({failed}/{total})",
                 "failure_rate": failure_rate,
             }
 
@@ -144,7 +144,7 @@ class SchedulerMonitor:
             "task_name": task_name,
             "healthy": True,
             "alert": None,
-            "message": "正常",
+            "message": "Healthy",
             "last_run": latest_time.isoformat() if latest_time else None,
             "last_status": latest.get("status"),
             "recent_total": total,
@@ -192,11 +192,11 @@ class SchedulerMonitor:
             report = await self.check_all()
 
         logger.info("=" * 60)
-        logger.info("调度任务健康报告")
+        logger.info("Scheduled task health report")
         logger.info("=" * 60)
 
-        status = "健康" if report.overall_healthy else "有告警"
-        logger.info("整体状态: %s", status)
+        status = "Healthy" if report.overall_healthy else "Alerts detected"
+        logger.info("Overall status: %s", status)
 
         for task in report.tasks:
             icon = "[OK]" if task["healthy"] else "[ALERT]"
@@ -205,7 +205,7 @@ class SchedulerMonitor:
             logger.info("  %s %s: %s", icon, name, msg)
 
         if report.alerts:
-            logger.warning("告警列表:")
+            logger.warning("Alerts:")
             for alert in report.alerts:
                 logger.warning("  - %s", alert)
 
