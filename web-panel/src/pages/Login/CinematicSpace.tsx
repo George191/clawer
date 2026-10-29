@@ -303,9 +303,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       const delta = Math.min(.1, Math.max(0, time - visibilityTime));
       visibilityTime = time;
       appearances.forEach((appearance, index) => {
-        const lane = orbitLanes[index];
-        const foreground = !lane || Math.sin(lane.phase + time * lane.angularSpeed) > .5;
-        if (time >= appearance.revealAt) appearance.alpha = THREE.MathUtils.damp(appearance.alpha, foreground ? 1 : 0, 3, delta);
+        if (time >= appearance.revealAt) appearance.alpha = THREE.MathUtils.damp(appearance.alpha, 1, 3, delta);
         if (appearance.alpha < .003) appearance.alpha = 0;
         if (appearance.alpha > .997) appearance.alpha = 1;
         objects[index].visible = appearance.alpha > 0 && (index < models.length || width >= 1280);

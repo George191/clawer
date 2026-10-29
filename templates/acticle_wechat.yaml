@@ -1,0 +1,17 @@
+name: "acticle_wechat"
+display_name: "取阅公众号文章"
+base_url: https://feed.zoro.build
+data_type: acticle
+adapter: acticle_wechat
+description: 取阅（feed.zoro.build）聚合 RSS，覆盖全部已添加公众号；Plus 套餐输出全文，字段含 account/title/url/summary/publish_time
+anti_crawl_enabled: false
+response_type: html
+list_page: /feed/IGR64patkkKgZ-pj01-0TuEPfTH3fcQ5.xml
+list_request:
+  force_direct: true
+list_fields: []
+incremental:
+  field: publish_time
+  format: "%Y-%m-%dT%H:%M:%S%z"
+dedup_fields:
+- url
