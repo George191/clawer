@@ -65,6 +65,7 @@ class DownloadWorker:
         self._collection_cursor = 0
         self._delivery = RecordDelivery()
         self._downloads: set[asyncio.Task] = set()
+        self._claim_heartbeats: dict[asyncio.Task, asyncio.Task] = {}
         self._collections: tuple[str, ...] | None = None
         self._routes_refreshed_at = 0.0
         self._next_claim_recovery = 0.0
@@ -98,7 +99,7 @@ class DownloadWorker:
                         queue_limit = max(available - 1, 0) if reserve_recovery else available
                         prefer_delivery = False
                         records = await self._delivery.receive(
-                            kind="download", collections=list(self._collection_routes), limit=queue_limit,
+                            collections=list(self._collection_routes), limit=queue_limit,
                         ) if queue_limit else []
                         for record in records:
                             claimed = await self._mongo.claim_download(record)
@@ -171,7 +172,9 @@ class DownloadWorker:
         collection = meta.get("template")
         record_id = meta.get("record_id")
         token = meta.get("download_claim_token")
-        heartbeat = asyncio.create_task(self._renew_claim(collection, record_id, token, asyncio.current_task()))
+        owner = asyncio.current_task()
+        heartbeat = asyncio.create_task(self._renew_claim(collection, record_id, token, owner))
+        self._claim_heartbeats[owner] = heartbeat
         try:
             await self._download_record(record)
         except asyncio.CancelledError:
@@ -183,6 +186,7 @@ class DownloadWorker:
         except Exception:
             logger.exception("DownloadWorker: record processing failed for %s", record_id)
         finally:
+            self._claim_heartbeats.pop(owner, None)
             heartbeat.cancel()
             try:
                 await asyncio.gather(heartbeat, return_exceptions=True)
@@ -319,6 +323,9 @@ class DownloadWorker:
             level = logging.ERROR
             created_at = time()
             logger.log(level, message, *message_args)
+            heartbeat = self._claim_heartbeats.get(asyncio.current_task())
+            if heartbeat is not None:
+                heartbeat.cancel()
             await self._mongo.update_file_status(
                 collection, record_id, "failed", claim_token=claim_token,
             )
@@ -458,6 +465,10 @@ class DownloadWorker:
         status: str,
         claim_token: str,
     ) -> bool:
+        # Persistence ends the claim; its Kafka ACK can take longer than a heartbeat.
+        heartbeat = self._claim_heartbeats.get(asyncio.current_task())
+        if heartbeat is not None:
+            heartbeat.cancel()
         return await self._mongo.update_download_result(
             collection, record_id, updates, status, claim_token=claim_token,
         )

@@ -4,7 +4,7 @@
 #  App Services:
 #    1. crawler     — 采集：爬取数据，保存到 MongoDB
 #    2. downloader  — 下载：消费 Redis 记录快照，MongoDB 补偿，资源写入 MinIO
-#    3. syncer      — 同步：消费 Redis 记录快照，MongoDB 补偿，推送 Kafka
+#    3. syncer      — 同步：低频扫描 MongoDB，补偿直发 Kafka 遗漏的记录
 #    4. web         — Web 管理面板 (FastAPI)
 #
 #  Infrastructure connections are loaded from .env.

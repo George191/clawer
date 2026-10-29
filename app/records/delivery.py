@@ -1,4 +1,4 @@
-"""Best-effort record delivery; persisted Mongo pending states remain the fallback."""
+"""Best-effort download delivery; Mongo pending states remain the fallback."""
 
 from __future__ import annotations
 
@@ -47,27 +47,27 @@ return records
 
 
 class RecordDelivery:
-    """Exchange full record snapshots across the existing independent workers."""
+    """Deliver full record snapshots to the independent download worker."""
 
     def __init__(self) -> None:
         self._connection = RedisClient(
             settings.task_redis_url, socket_connect_timeout=DELIVERY_TIMEOUT_SECONDS,
         )
-        self._cursor: dict[str, int] = {}
+        self._cursor = 0
 
     @staticmethod
-    def _key(kind: str, collection: str) -> str:
-        return f"spider:{settings.db_name}:records:{kind}:{collection}"
+    def _key(collection: str) -> str:
+        return f"spider:{settings.db_name}:records:download:{collection}"
 
     async def publish(
-        self, records: list[dict[str, Any]], *, sync: bool = True, download: bool = False,
+        self, records: list[dict[str, Any]],
     ) -> None:
         """Offer a batch within one deadline; overflow stays pending in Mongo."""
-        if not records or not (sync or download):
+        if not records:
             return
         try:
             await asyncio.wait_for(
-                self._publish(records, sync=sync, download=download),
+                self._publish(records),
                 timeout=DELIVERY_TIMEOUT_SECONDS,
             )
         except Exception as exc:
@@ -75,7 +75,7 @@ class RecordDelivery:
             logger.warning("Record delivery unavailable; Mongo will compensate: %s", exc)
 
     async def _publish(
-        self, records: list[dict[str, Any]], *, sync: bool, download: bool,
+        self, records: list[dict[str, Any]],
     ) -> None:
         redis = await self._connection.ensure_connected()
         if redis is None:
@@ -86,12 +86,7 @@ class RecordDelivery:
             collection = meta.get("template")
             if not collection or not meta.get("record_id"):
                 continue
-            kinds = []
-            if sync and meta.get("sync_status") != "synced":
-                kinds.append("sync")
-            if download and meta.get("download_status") == "pending":
-                kinds.append("download")
-            if not kinds:
+            if meta.get("download_status") != "pending":
                 continue
             try:
                 payload = dumps(
@@ -103,26 +98,25 @@ class RecordDelivery:
                 continue
             if len(payload.encode("utf-8")) > MAX_PAYLOAD_BYTES:
                 continue
-            for kind in kinds:
-                batches.setdefault(self._key(kind, collection), []).append(payload)
+            batches.setdefault(self._key(collection), []).append(payload)
         for key, payloads in batches.items():
             await redis.eval(
                 _PUSH_SCRIPT, 1, key, QUEUE_MAX_RECORDS, QUEUE_TTL_SECONDS, *payloads,
             )
 
     async def receive(
-        self, kind: str, collections: list[str], limit: int,
+        self, collections: list[str], limit: int,
     ) -> list[dict[str, Any]]:
         """Pop FIFO snapshots, rotating the first collection to avoid starvation."""
         names = list(dict.fromkeys(collections))
         if not names or limit <= 0:
             return []
-        start = self._cursor.get(kind, 0) % len(names)
-        self._cursor[kind] = (start + 1) % len(names)
+        start = self._cursor % len(names)
+        self._cursor = (start + 1) % len(names)
         names = names[start:] + names[:start]
         try:
             payloads = await asyncio.wait_for(
-                self._receive(kind, names, limit), timeout=DELIVERY_TIMEOUT_SECONDS,
+                self._receive(names, limit), timeout=DELIVERY_TIMEOUT_SECONDS,
             )
         except Exception as exc:
             self._connection.mark_unavailable()
@@ -143,11 +137,11 @@ class RecordDelivery:
             records.append(record)
         return records
 
-    async def _receive(self, kind: str, collections: list[str], limit: int) -> list[str]:
+    async def _receive(self, collections: list[str], limit: int) -> list[str]:
         redis = await self._connection.ensure_connected()
         if redis is None:
             return []
-        keys = [self._key(kind, collection) for collection in collections]
+        keys = [self._key(collection) for collection in collections]
         return await redis.eval(_POP_SCRIPT, len(keys), *keys, limit)
 
     async def close(self) -> None:

@@ -18,6 +18,7 @@ from typing import Any
 from bson.codec_options import CodecOptions
 from pymongo import ReplaceOne, ReturnDocument
 
+from app.config.settings import settings
 from app.logger import get_logger
 from app.records.adapters import get_record_adapter
 from app.records.base import RecordStore
@@ -26,6 +27,7 @@ from app.records.delivery import RecordDelivery
 from app.records.field_names import normalize_record_fields
 from app.records.values import record_values_equal, require_canonical_record
 from app.storage.mongo_client import MongoClient
+from app.syncer.publisher import RecordPublisher
 from app.utils.record_id import resolve_record_id
 from app.utils.runtime_control import workspace_search_params
 
@@ -48,6 +50,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         super().__init__()
         self._initialized_collections: set[str] = set()
         self._delivery = RecordDelivery()
+        self._publisher: RecordPublisher | None = None
         self.last_save_stats = {
             "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
         }
@@ -330,7 +333,8 @@ class MongoRecordStore(MongoClient, RecordStore):
 
         if operations:
             await collection.bulk_write(operations, ordered=False)
-            await self._delivery.publish(delivery_records, download=True)
+            await self._sync_records(delivery_records)
+            await self._delivery.publish(delivery_records)
         await adapter.after_save(run_stats)
         self.last_save_stats = {
             "inserted": inserted_count,
@@ -339,6 +343,14 @@ class MongoRecordStore(MongoClient, RecordStore):
             "deleted": deleted_count,
         }
         return ids
+
+    async def _sync_records(self, records: list[dict[str, Any]]) -> None:
+        records = [record for record in records if (record.get("_meta") or {}).get("sync_status") != "synced"]
+        if not records:
+            return
+        if self._publisher is None:
+            self._publisher = RecordPublisher(topic=f"{settings.kafka_topic}-{records[0]['_meta']['data_type']}")
+        await self._publisher.sync_records(records, self)
 
     async def update_file_status(
         self,
@@ -367,7 +379,7 @@ class MongoRecordStore(MongoClient, RecordStore):
             return_document=ReturnDocument.AFTER,
         )
         if record is not None:
-            await self._delivery.publish([record])
+            await self._sync_records([record])
         logger.debug("Updated file_status for %s: %s", record_id, download_status)
         return record is not None
 
@@ -423,7 +435,7 @@ class MongoRecordStore(MongoClient, RecordStore):
             return_document=ReturnDocument.AFTER,
         )
         if record is not None:
-            await self._delivery.publish([record])
+            await self._sync_records([record])
         logger.debug(
             "Updated download result for %s: status=%s fields=%d",
             record_id,
@@ -768,5 +780,9 @@ class MongoRecordStore(MongoClient, RecordStore):
         return stats
 
     async def close(self) -> None:
-        await self._delivery.close()
-        await super().close()
+        try:
+            if self._publisher is not None:
+                await self._publisher.close()
+        finally:
+            await self._delivery.close()
+            await super().close()
