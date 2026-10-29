@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createCinematicEarth } from './CinematicEarth';
+import { SMALL_ORBIT_LANES, planSmallOrbitPhases } from './CinematicOrbits';
 import { createCinematicScan } from './CinematicScan';
 import { createCinematicShield } from './CinematicShield';
 import { createCinematicSatellite, disposeCinematicSatellite, updateCinematicSatellite, prewarmCinematicSatelliteTextures, solarTexture, weatheredMetalTextures, foilTexture } from './CinematicSatellite';
@@ -108,12 +109,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     const stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
 
-    // Equal altitude, widely separated planes, and staggered foreground passes.
-    const orbitLanes = [
-      { radiusFactor: 1.10, inclination: -.20, tilt: 1.10, phase: 5.884, angularSpeed: .0120, scale: .075 },
-      { radiusFactor: 1.10, inclination: .85, tilt: 1.10, phase: 1.553, angularSpeed: .0120, scale: .050 },
-      { radiusFactor: 1.10, inclination: -1.25, tilt: 1.10, phase: 4.531, angularSpeed: .0120, scale: .048 },
-    ];
+    const orbitLanes = SMALL_ORBIT_LANES.map(lane => ({ ...lane }));
     const models: THREE.Group[] = [];
     const appearances = Array.from({ length: orbitLanes.length + 1 }, () => ({
       revealAt: Infinity, alpha: 0,
@@ -364,7 +360,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       stars.rotation.y = time * .0003;
       if (!renderFrame) return;
 
-      // Render only the flyby to the glass veil, using the same camera and geometry.
+      // Keep satellites visible through the form glass, using the same Earth depth.
       veilCtx.clearRect(0, 0, width, height);
       const shieldRadius = 5.1 * 1.05 * flyby.scale.x;
       const panel = panelBounds;
@@ -384,7 +380,12 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         }
         overlapsPanel = right > panel.x && left < panel.x + panel.width && bottom > panel.y && top < panel.y + panel.height;
       }
-      if (overlapsPanel && panel) {
+      const smallOverlapsPanel = panel && models.some(model => {
+        const point = marker(model, true);
+        return point && point.x + point.radius > panel.x && point.x - point.radius < panel.x + panel.width
+          && point.y + point.radius > panel.y && point.y - point.radius < panel.y + panel.height;
+      });
+      if ((overlapsPanel || smallOverlapsPanel) && panel) {
         camera.layers.set(1);
         renderer.render(scene, camera);
         veilCtx.save();
@@ -392,7 +393,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         veilCtx.rect(panel.x, panel.y, panel.width, panel.height);
         veilCtx.clip();
         veilCtx.filter = 'blur(2px)';
-        veilCtx.globalAlpha = THREE.MathUtils.lerp(.24, .08, smooth(focal * physicalWidth / distance, 120, 600));
+        veilCtx.globalAlpha = overlapsPanel ? THREE.MathUtils.lerp(.24, .08, smooth(focal * physicalWidth / distance, 120, 600)) : .24;
         veilCtx.drawImage(canvas!, 0, 0, width, height);
         veilCtx.restore();
       }
@@ -455,7 +456,19 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         line.geometry.computeBoundingSphere();
       });
       measurePanel();
-      if (ready) paint(sceneTime());
+      if (ready) {
+        arrangeSmallOrbits(sceneTime());
+        paint(sceneTime());
+      }
+    }
+    function arrangeSmallOrbits(time: number, openingPhase = orbitLanes[0].phase + time * orbitLanes[0].angularSpeed) {
+      const phases = planSmallOrbitPhases(laneAxes.map((axes, index) => ({ ...axes, radius: laneRadii[index] })),
+        camera, earth.group.position, earthRadius, width, height, openingPhase);
+      orbitLanes.forEach((lane, index) => {
+        lane.phase = phases[index] - time * lane.angularSpeed;
+        appearances[index].revealAt = openingTime;
+        appearances[index].alpha = 1;
+      });
     }
     async function randomizeOpening() {
       function refreshBounds() {
@@ -482,11 +495,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
           refreshBounds();
         }
       }
-      orbitLanes.forEach((lane, index) => {
-        lane.phase = openingPhase - index * Math.PI * 2 / 3 - openingTime * lane.angularSpeed;
-        appearances[index].revealAt = openingTime;
-        appearances[index].alpha = index === 0 ? 1 : 0;
-      });
+      arrangeSmallOrbits(openingTime, openingPhase);
       appearances[models.length].revealAt = openingTime + 30 + Math.random() * 12;
       paint(openingTime, false);
       let flybyChosen = false;
@@ -583,7 +592,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         model.add(shield.group);
         particleShields.push(shield);
       }
-      flyby.traverse(object => object.layers.enable(1));
+      [...models, flyby].forEach(model => model.traverse(object => object.layers.enable(1)));
       prepareFlybyModel();
       await Promise.all([earth.ready, loadFlyby()]);
       if (disposed) return;
