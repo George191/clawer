@@ -663,6 +663,7 @@ class AutomationTaskStore:
                        FROM (
                            SELECT created_at,
                                   jsonb_build_object(
+                                      'id', id,
                                       'level', level,
                                       'message', message,
                                       'created_at', created_at,
@@ -722,9 +723,9 @@ class AutomationTaskStore:
         await self.initialize()
         return await self._pg.fetch_all(
             """
-            SELECT level, message, created_at, run_id::text AS run_id
+            SELECT id, level, message, created_at, run_id::text AS run_id
             FROM (
-                SELECT log.level, log.message, log.created_at, log.run_id
+                SELECT log.id, log.level, log.message, log.created_at, log.run_id
                 FROM public.automation_task_logs log
                 JOIN public.automation_tasks task ON task.id = log.task_id
                 WHERE log.task_id = CAST(:task_id AS uuid)
