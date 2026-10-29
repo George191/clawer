@@ -218,6 +218,7 @@ export interface WorkspaceTemplate {
 }
 
 export interface WorkspaceTaskLog {
+  id?: number | string;
   level: 'info' | 'ok' | 'warn';
   message: string;
   created_at: string;

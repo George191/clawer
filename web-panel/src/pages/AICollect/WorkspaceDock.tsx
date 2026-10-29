@@ -130,6 +130,7 @@ interface TemplateDraft {
 }
 
 interface TaskLog {
+  id?: WorkspaceTaskLog['id'];
   createdAt: string;
   time: string;
   level: TaskLogLevel;
@@ -575,6 +576,19 @@ const mergeTaskLogRuns = (
   ]);
 };
 
+const mergeTaskLog = (logs: TaskLog[], incoming: TaskLog): TaskLog[] => {
+  const index = logs.findIndex((log) => (
+    log.id != null && incoming.id != null
+      ? String(log.id) === String(incoming.id)
+      : log.runId === incoming.runId
+        && log.createdAt === incoming.createdAt
+        && log.message === incoming.message
+  ));
+  if (index < 0) return [...logs, incoming].slice(-200);
+  if (logs[index].message === incoming.message && logs[index].id === incoming.id) return logs;
+  return logs.map((log, position) => (position === index ? incoming : log));
+};
+
 const taskWriteCountHelp = 'Successful inserts and updates in the current run across all record types, excluding unchanged records. Deletions are already included and are not added again.';
 
 const getTaskWriteCount = (runtime: TaskRuntimeItem): number | null => {
@@ -901,6 +915,7 @@ const mapWorkspaceTaskRuntime = (item: WorkspaceTask): TaskRuntimeItem => ({
   throughput: item.throughput,
   history: createHistory(item.records),
   logs: item.logs.map((log) => ({
+    id: log.id,
     createdAt: log.created_at,
     time: formatDateTime(log.created_at),
     level: log.level,
@@ -1526,6 +1541,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       } else if (message.type === 'task_log' && message.task_id && message.data) {
         const log = message.data as WorkspaceTaskLog;
         const mappedLog: TaskLog = {
+          id: log.id,
           createdAt: log.created_at,
           time: formatDateTime(log.created_at),
           level: log.level,
@@ -1535,19 +1551,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         setTaskRuntime((current) => {
           const runtime = current[message.task_id!];
           if (!runtime) return current;
-          const duplicate = runtime.logs.some((item) => (
-            item.runId === mappedLog.runId
-            && item.createdAt === mappedLog.createdAt
-            && item.message === mappedLog.message
-          ));
-          if (duplicate) return current;
           const latestRunId = runtime.currentRunId ?? runtime.logRuns[0]?.id ?? null;
           const currentLogRunId = runtime.logs[runtime.logs.length - 1]?.runId ?? null;
           const nextLogs = log.run_id === latestRunId
             ? currentLogRunId === latestRunId
-              ? [...runtime.logs, mappedLog].slice(-200)
+              ? mergeTaskLog(runtime.logs, mappedLog)
               : [mappedLog]
             : runtime.logs;
+          if (nextLogs === runtime.logs) return current;
           return {
             ...current,
             [message.task_id!]: {
@@ -1562,14 +1573,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             || current.taskId !== message.task_id
             || current.runId !== log.run_id
           ) return current;
-          const duplicateHistoricalLog = current.logs.some((item) => (
-            item.runId === mappedLog.runId
-            && item.createdAt === mappedLog.createdAt
-            && item.message === mappedLog.message
-          ));
-          return duplicateHistoricalLog
+          const logs = mergeTaskLog(current.logs, mappedLog);
+          return logs === current.logs
             ? current
-            : { ...current, logs: [...current.logs, mappedLog].slice(-200) };
+            : { ...current, logs };
         });
       } else if (message.type === 'task_deleted' && message.task_id) {
         taskListRevisionRef.current += 1;
@@ -1798,6 +1805,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         taskId: selectedTaskKey,
         runId,
         logs: logs.map((log) => ({
+          id: log.id,
           createdAt: log.created_at,
           time: formatDateTime(log.created_at),
           level: log.level,
@@ -3405,7 +3413,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             <div className="workspace-dock-log-list is-detail">
               {taskLogsLoading ? <div className="workspace-dock-log-row">正在加载执行日志…</div> : null}
               {selectedRunLogs.slice().reverse().map((log, index) => (
-                <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.runId}-${log.createdAt}-${log.message}-${index}`}>
+                <div className={`workspace-dock-log-row is-${log.level}`} key={log.id != null ? `${selectedTask.key}-${log.id}` : `${selectedTask.key}-${log.runId}-${log.createdAt}-${log.message}-${index}`}>
                   <code>{renderConsoleLogMessage(log.message)}</code>
                 </div>
               ))}
