@@ -194,18 +194,19 @@ def _monitor(
         reason = "Worker exited without completing task cleanup"
         if not state["eof"]:
             reason = f"No crawl activity for {timeout_seconds:g}s; worker terminated"
-            # A reparented monitor must never kill a recycled, unrelated PID.
-            if os.getppid() == owner_pid:
-                try:
-                    os.kill(owner_pid, signal.SIGTERM if sys.platform == "win32" else signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                except OSError as exc:
-                    logger.error("Watchdog could not terminate worker: task=%s error=%s",
-                                 task_id, type(exc).__name__)
-                    return
-            else:
-                reason = f"No crawl activity for {timeout_seconds:g}s; original worker exited"
+        # A reparented monitor must never kill a recycled, unrelated PID.
+        # Unexpected pipe closure also stops a still-live owner before failing it.
+        if os.getppid() == owner_pid:
+            try:
+                os.kill(owner_pid, signal.SIGTERM if sys.platform == "win32" else signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                logger.error("Watchdog could not terminate worker: task=%s error=%s",
+                             task_id, type(exc).__name__)
+                return
+        elif not state["eof"]:
+            reason = f"No crawl activity for {timeout_seconds:g}s; original worker exited"
     try:
         asyncio.run((record_failure or _record_failure)(task_id, run_id, delivery_id, reason))
     except Exception as exc:
