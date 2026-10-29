@@ -600,9 +600,31 @@ const getTaskWriteCount = (runtime: TaskRuntimeItem): number | null => {
 
 const consoleLogPrefixPattern = /^(\[)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})(:\s*)([A-Z]+)(\/)([^\]]+)(\])(\s*)/;
 
+const renderDownloadLogText = (message: string): React.ReactNode => {
+  if (!/download (?:progress|finished):/.test(message)) return message;
+  return message.split(/(\[[█░]+\])/g).map((part, index) => {
+    if (!/^\[[█░]+\]$/.test(part)) return part;
+    const cells = part.slice(1, -1);
+    return (
+      <span
+        className="workspace-dock-download-bar"
+        key={index}
+      >
+        {'['}
+        {[...cells].map((cell, cellIndex) => (
+          <span className={`workspace-dock-download-cell${cell === '█' ? ' is-filled' : ''}`} key={cellIndex}>
+            {cell}
+          </span>
+        ))}
+        {']'}
+      </span>
+    );
+  });
+};
+
 const renderConsoleLogMessage = (message: string): React.ReactNode => {
   const match = message.match(consoleLogPrefixPattern);
-  if (!match) return message;
+  if (!match) return renderDownloadLogText(message);
   const level = match[4].toLowerCase();
   return (
     <>
@@ -614,7 +636,7 @@ const renderConsoleLogMessage = (message: string): React.ReactNode => {
       <span className="workspace-dock-log-process">{match[6]}</span>
       <span className="workspace-dock-log-bracket">{match[7]}</span>
       {match[8]}
-      {message.slice(match[0].length)}
+      {renderDownloadLogText(message.slice(match[0].length))}
     </>
   );
 };
@@ -4887,6 +4909,27 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           white-space: pre-wrap;
           word-break: break-word;
+        }
+        .workspace-dock-download-bar {
+          display: inline-flex;
+          align-items: center;
+          height: 1em;
+          overflow: hidden;
+          line-height: 1;
+          vertical-align: middle;
+          white-space: nowrap;
+        }
+        .workspace-dock-download-cell {
+          display: inline-block;
+          flex: 0 0 1ch;
+          width: 1ch;
+          height: 0.75em;
+          overflow: hidden;
+          color: transparent;
+          background: rgba(255, 255, 255, 0.14);
+        }
+        .workspace-dock-download-cell.is-filled {
+          background: #fff;
         }
         .workspace-dock-log-bracket {
           color: rgba(255, 255, 255, 0.38);
