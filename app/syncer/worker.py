@@ -2,7 +2,7 @@
 
 工作流程
 --------
-1. 低频扫描 MongoDB，补偿采集和下载直发 Kafka 时遗漏的记录
+1. 低频扫描 MongoDB，同步下载回写，并补偿采集直发 Kafka 时遗漏的记录
 2. 按记录 data_type 将记录推送至对应 Kafka 主题
 3. Kafka ACK 后，将对应版本的 sync_status 标为 synced（RDS/ODS 另行异步消费）
 

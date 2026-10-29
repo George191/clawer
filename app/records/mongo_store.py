@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from bson.codec_options import CodecOptions
-from pymongo import ReplaceOne, ReturnDocument
+from pymongo import ReplaceOne
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -365,7 +365,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         query = {"_meta.record_id": record_id}
         if claim_token:
             query["_meta.download_claim_token"] = claim_token
-        record = await collection.find_one_and_update(
+        result = await collection.update_one(
             query,
             {
                 "$set": {
@@ -378,12 +378,9 @@ class MongoRecordStore(MongoClient, RecordStore):
                     "_meta.download_claim_token": "",
                 },
             },
-            return_document=ReturnDocument.AFTER,
         )
-        if record is not None:
-            await self._sync_records([record])
         logger.debug("Updated file_status for %s: %s", record_id, download_status)
-        return record is not None
+        return bool(result.matched_count)
 
 
     async def update_record_fields(
@@ -422,7 +419,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         query = {"_meta.record_id": record_id}
         if claim_token:
             query["_meta.download_claim_token"] = claim_token
-        record = await collection.find_one_and_update(
+        result = await collection.update_one(
             query,
             {
                 "$set": {
@@ -434,17 +431,14 @@ class MongoRecordStore(MongoClient, RecordStore):
                 "$inc": {"_meta.download_version": 1},
                 "$unset": fields_to_unset,
             },
-            return_document=ReturnDocument.AFTER,
         )
-        if record is not None:
-            await self._sync_records([record])
         logger.debug(
             "Updated download result for %s: status=%s fields=%d",
             record_id,
             download_status,
             len(updates),
         )
-        return record is not None
+        return bool(result.matched_count)
 
     async def update_sync_status(
         self,

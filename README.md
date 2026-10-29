@@ -118,7 +118,7 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 | --- | --- | --- |
 | Crawler | `python -m app.crawler.main` | 加载模板并执行采集 |
 | Downloader | `python -m app.downloader.main` | 优先消费主动投递队列，下载资源到 MinIO/本地，MongoDB 低频补偿 |
-| Syncer | `python -m app.syncer.main` | 低频扫描 MongoDB，补偿采集和下载直发 Kafka 时遗漏的记录 |
+| Syncer | `python -m app.syncer.main` | 低频扫描 MongoDB，同步下载回写，并补偿采集直发时遗漏的记录 |
 | ETL | `python -m app.etl.main --layer <layer>` | 消费 Kafka，写入 Postgres/TimescaleDB |
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
@@ -260,7 +260,7 @@ Compose 为 news、patent、navwarn、intelligence、organization、financial_fa
 每批最多处理 50 条，进程内最多 10 个协程同时发送及回写状态；Kafka 中每条记录仍是独立消息。
 仅发送成功后标记对应版本为 synced，失败记录保留待重试。
 采集记录落库即标记为 pending，Syncer 查询不依赖下载状态；每条记录下载处理完成后立即原子回写资源、下载状态、更新时间并重置为 pending，不等待同批其他记录。下载回写同时递增 download_version；同步确认匹配发送时的 updated_at 和下载版本，避免同一毫秒内的下载更新被旧同步确认覆盖。
-新增或实际变化的记录在 MongoDB 写入成功后，直接复用内存中的完整记录发送 Kafka，正常同步路径不回读 MongoDB，也不经过 Redis；原样重复采集不重复发送。下载结果通过原子更新返回最终记录后直接发送，保留并发采集更新。每个 Mongo 存储实例复用发布器，每批最多 10 条并发并等待 Kafka ACK，整批同步期限 30 秒；失败或未完成记录保持 `pending`，不把已成功落库的数据当成保存失败。发送时去除 Mongo `_id`，元数据时间与 Mongo 的毫秒精度一致。
+新增或实际变化的采集记录在 MongoDB 写入成功后，直接复用内存中的完整记录发送 Kafka，正常同步路径不回读 MongoDB，也不经过 Redis；原样重复采集不重复发送。下载器只原子回写资源、下载版本和 `pending` 同步状态，由 Syncer 读取最新记录发送 Kafka，下载器不需要 Kafka 依赖。采集存储实例复用发布器，每批最多 10 条并发并等待 Kafka ACK，整批同步期限 30 秒；失败或未完成记录保持 `pending`，不把已成功落库的数据当成保存失败。发送时去除 Mongo `_id`，元数据时间与 Mongo 的毫秒精度一致。
 MongoDB `pending` 状态保留为补偿依据：Syncer 默认每 60 秒扫描一次（`--poll`），同步和下载补偿均跳过最近一个补偿间隔内更新的记录。满批积压可连续处理，不必每批等待整个补偿间隔。Redis 仅用于下载任务投递（复用 `SPIDER_REDIS_URL` 的任务逻辑库），按物理集合隔离，每队列最多 1000 条、闲置 1 小时过期，超过 1 MiB 的完整快照直接走 MongoDB 下载补偿。Kafka 发送失败、Redis 不可用、队列满、投递中断或进程退出均由相应的 Mongo 补偿恢复；允许重复消息，沿用版本 ACK 和下游版本检查。
 指定类型时，与下载器共用模板分组及 `ai_collect_template_alias` 别名映射查询，只读取匹配业务类型的实际集合；MongoDB 按同步状态和补偿等待时间查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
 

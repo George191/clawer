@@ -465,7 +465,7 @@ class DownloadWorker:
         status: str,
         claim_token: str,
     ) -> bool:
-        # Persistence ends the claim; its Kafka ACK can take longer than a heartbeat.
+        # The final state write ends the claim.
         heartbeat = self._claim_heartbeats.get(asyncio.current_task())
         if heartbeat is not None:
             heartbeat.cancel()
