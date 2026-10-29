@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -27,7 +28,7 @@ from app.records.delivery import RecordDelivery
 from app.records.field_names import normalize_record_fields
 from app.records.values import record_values_equal, require_canonical_record
 from app.storage.mongo_client import MongoClient
-from app.syncer.publisher import RecordPublisher
+from app.syncer.publisher import SYNC_TIMEOUT_SECONDS, RecordPublisher
 from app.utils.record_id import resolve_record_id
 from app.utils.runtime_control import workspace_search_params
 
@@ -333,7 +334,8 @@ class MongoRecordStore(MongoClient, RecordStore):
 
         if operations:
             await collection.bulk_write(operations, ordered=False)
-            await self._sync_records(delivery_records)
+            if route.get("enabled", True):
+                await self._sync_records(delivery_records)
             await self._delivery.publish(delivery_records)
         await adapter.after_save(run_stats)
         self.last_save_stats = {
@@ -782,7 +784,11 @@ class MongoRecordStore(MongoClient, RecordStore):
     async def close(self) -> None:
         try:
             if self._publisher is not None:
-                await self._publisher.close()
+                await asyncio.wait_for(self._publisher.close(), timeout=SYNC_TIMEOUT_SECONDS)
+        except Exception:
+            logger.exception("Could not close the record publisher")
         finally:
-            await self._delivery.close()
-            await super().close()
+            try:
+                await self._delivery.close()
+            finally:
+                await super().close()

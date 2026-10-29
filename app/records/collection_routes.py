@@ -35,7 +35,7 @@ class CollectionRouteStore:
         """Resolve a write target; enabled only controls downstream consumption."""
         routes = await get_pg_client().fetch_all(
             """
-            SELECT template_name, collection_name, data_type
+            SELECT template_name, collection_name, data_type, enabled
             FROM public.ai_collect_template_alias AS routes
             WHERE template_name = :template_name OR collection_name = :template_name
             """,
