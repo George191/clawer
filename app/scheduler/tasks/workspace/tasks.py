@@ -55,7 +55,7 @@ async def _wait_until_runnable(
     """Wait while paused and return false when the task was canceled."""
     while True:
         if watchdog is not None:
-            watchdog.touch()
+            watchdog.check()
         control = await ai_collect_store.get_task_control(task_id)
         if control is None or control.get("control_state") == "canceled":
             return False
@@ -453,6 +453,13 @@ async def _crawl_template(
         )
         return {"task_id": task_id, "status": final_status, **result.to_dict()}
     except asyncio.CancelledError:
+        if watchdog is not None and watchdog.failure is not None:
+            await ai_collect_store.update_task(
+                task_id, {"status": "failed", "throughput": 0},
+                expected_run_id=run_id or None,
+                expected_celery_task_id=celery_task_id,
+            )
+            raise watchdog.failure from None
         logger.info("Workspace crawl task canceled: %s", task_id)
         return {"task_id": task_id, "status": "canceled"}
     except Exception as exc:
@@ -483,6 +490,8 @@ async def _crawl_template(
         )
         raise
     finally:
+        if watchdog is not None:
+            watchdog.stop_heartbeat()
         reset_control_checkpoint(control_token)
         if run_token is not None:
             reset_workspace_run(run_token)

@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
-_ACTIVITY_INTERVAL = 15.0
-_ACTIVITY_TIMEOUT = 600.0
+_HEARTBEAT_INTERVAL = 15.0
+_HEARTBEAT_TIMEOUT = 600.0
 _CLOSE_TIMEOUT = 2.0
 FailureRecorder = Callable[[str, str, str, str], Awaitable[None]]
 
@@ -25,69 +25,64 @@ class WatchdogCleanupError(RuntimeError):
     """The worker must exit instead of accepting another task with a live watchdog."""
 
 
-class _ActivityHandler(logging.Handler):
-    def __init__(self, watchdog: TaskWatchdog) -> None:
-        super().__init__()
-        self.watchdog = watchdog
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self.watchdog.touch()
-
-
 class TaskWatchdog:
     def __init__(self, task_id: str, delivery_id: str | None) -> None:
         self.task_id = task_id
         self.delivery_id = delivery_id
         self._process: subprocess.Popen | None = None
-        self._last_activity = float("-inf")
         self._lock = threading.Lock()
-        self._handler: logging.Handler | None = None
-        self._loggers: list[logging.Logger] = []
+        self._heartbeat: asyncio.TimerHandle | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._owner: asyncio.Task | None = None
+        self.failure: RuntimeError | None = None
 
     def start(self, run_id: str) -> None:
         if self.delivery_id is None or self._process is not None:
             return
         for value in (self.task_id, run_id, self.delivery_id):
             UUID(value)
+        self._loop = asyncio.get_running_loop()
+        self._owner = asyncio.current_task()
         self._process = subprocess.Popen(
             [sys.executable, "-m", __name__, str(os.getpid()),
              self.task_id, run_id, self.delivery_id],
             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, bufsize=0,
             start_new_session=sys.platform != "win32",
         )
-        self.touch()
-        self._handler = _ActivityHandler(self)
-        from app.logger.fields import ADAPTER_LOGGER_NAMES
+        self._beat()
 
-        self._loggers = [logging.getLogger(), *(
-            logging.getLogger(name) for name in ADAPTER_LOGGER_NAMES.values()
-        )]
-        for task_logger in self._loggers:
-            task_logger.addHandler(self._handler)
+    def check(self) -> None:
+        if self.failure is not None:
+            raise self.failure
+        if self._process is not None and self._process.poll() is not None:
+            raise RuntimeError("Task heartbeat watchdog exited unexpectedly")
 
-    def touch(self) -> None:
-        with self._lock:
-            process = self._process
-            if process is None:
-                return
-            now = time.monotonic()
-            if now - self._last_activity < _ACTIVITY_INTERVAL:
-                return
-            if process.poll() is not None:
-                raise RuntimeError("Task activity watchdog exited unexpectedly")
-            try:
-                process.stdin.write(b"ACTIVITY\n")
-            except (BrokenPipeError, OSError) as exc:
-                raise RuntimeError("Task activity watchdog is unavailable") from exc
-            self._last_activity = now
+    def _beat(self) -> None:
+        # This callback must run on the crawl's loop, never on a logging thread.
+        if self._owner is not None and self._owner.done():
+            return
+        try:
+            with self._lock:
+                process = self._process
+                if process is None:
+                    return
+                self.check()
+                process.stdin.write(b"HEARTBEAT\n")
+        except (RuntimeError, OSError):
+            self.failure = RuntimeError("Task heartbeat watchdog is unavailable")
+            if self._owner is not None:
+                self._owner.cancel()
+            return
+        self._heartbeat = self._loop.call_later(_HEARTBEAT_INTERVAL, self._beat)
+
+    def stop_heartbeat(self) -> None:
+        """Keep guarding cleanup without allowing idle loop ticks to mask it."""
+        if self._heartbeat is not None:
+            self._heartbeat.cancel()
+            self._heartbeat = None
 
     def close(self) -> None:
-        if self._handler is not None:
-            for task_logger in self._loggers:
-                task_logger.removeHandler(self._handler)
-            self._loggers = []
-            self._handler.close()
-            self._handler = None
+        self.stop_heartbeat()
         with self._lock:
             process, self._process = self._process, None
             if process is None:
@@ -169,7 +164,7 @@ async def _record_failure(task_id: str, run_id: str, delivery_id: str, reason: s
 
 def _monitor(
     owner_pid: int, task_id: str, run_id: str, delivery_id: str, *,
-    timeout_seconds: float = _ACTIVITY_TIMEOUT, poll_seconds: float = 1.0,
+    timeout_seconds: float = _HEARTBEAT_TIMEOUT, poll_seconds: float = 1.0,
     record_failure: FailureRecorder | None = None,
 ) -> None:
     condition = threading.Condition()
@@ -183,7 +178,7 @@ def _monitor(
                         state["done"] = True
                         condition.notify()
                         return
-                    if line == b"ACTIVITY\n":
+                    if line == b"HEARTBEAT\n":
                         state["last_activity"] = time.monotonic()
                         condition.notify()
         finally:
@@ -202,7 +197,7 @@ def _monitor(
             return
         reason = "Worker exited without completing task cleanup"
         if not state["eof"]:
-            reason = f"No crawl activity for {timeout_seconds:g}s; worker terminated"
+            reason = f"Crawl event loop or cleanup unresponsive for {timeout_seconds:g}s; worker terminated"
         # A reparented monitor must never kill a recycled, unrelated PID.
         # Unexpected pipe closure also stops a still-live owner before failing it.
         if os.getppid() == owner_pid:
@@ -215,7 +210,7 @@ def _monitor(
                              task_id, type(exc).__name__)
                 return
         elif not state["eof"]:
-            reason = f"No crawl activity for {timeout_seconds:g}s; original worker exited"
+            reason = f"Crawl heartbeat absent for {timeout_seconds:g}s; original worker exited"
     try:
         asyncio.run((record_failure or _record_failure)(task_id, run_id, delivery_id, reason))
     except Exception as exc:
