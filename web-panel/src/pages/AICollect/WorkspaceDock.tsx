@@ -36,6 +36,7 @@ import {
   UploadOutlined,
   UserOutlined,
   WarningOutlined,
+  WechatOutlined,
   WifiOutlined,
 } from '@ant-design/icons';
 import {
@@ -116,7 +117,7 @@ type TaskComposerMode = 'once' | 'recurring';
 type TaskRecurringMode = 'daily' | 'interval';
 type TaskIntervalUnit = 'minute' | 'hour';
 type TaskLogLevel = 'info' | 'ok' | 'warn';
-type SiteKind = 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic'
+type SiteKind = 'acticle' | 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic'
   | 'satellite' | 'constellation' | 'orbital' | 'debris' | 'debrisevents' | 'frequency'
   | 'launchinfo' | 'launchsites' | 'launchvehicles' | 'groundstations' | 'organizations' | 'vulnerability'
   | 'account' | 'company' | 'filing' | 'financial_fact';
@@ -718,6 +719,7 @@ const GroundStationGlyph = () => (
 );
 
 const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tint: string }> = {
+  acticle: { icon: <FileTextOutlined />, label: '文章', tint: '#8AB4FF' },
   financial_report: { icon: <FinancialReportGlyph />, label: 'Financial report', tint: '#69D3B0' },
   social_media: { icon: <SocialMediaGlyph />, label: 'Social media', tint: '#75CBFF' },
   contract: { icon: <ContractGlyph />, label: '合同', tint: '#74C7A5' },
@@ -749,6 +751,8 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
 };
 
 const siteProfileRegistry: Record<string, SiteProfile> = {
+  acticle_wechat: { kind: 'acticle', brand: 'WeChat', logo: <WechatOutlined style={{ color: '#07C160', fontSize: 14 }} />, hue: '#07C160' },
+  wechat_acticle: { kind: 'acticle', brand: 'WeChat', logo: <WechatOutlined style={{ color: '#07C160', fontSize: 14 }} />, hue: '#07C160' },
   twitter: { kind: 'social_media', brand: 'X / Twitter', logo: 'X', hue: '#75CBFF' },
   google_patent_contract: { kind: 'patent', brand: 'Google Patent', logo: 'GP', hue: '#7BA8FF' },
   sealagom_navwarn_contract: { kind: 'warning', brand: 'Navwarn', logo: 'NW', hue: '#66D5A3' },
@@ -1233,7 +1237,7 @@ const TaskPulseGlyph: React.FC<{ kind: SiteKind; active?: boolean; className?: s
 
 const SiteLogoMark: React.FC<{ site: SiteProfile; faviconUrl?: string }> = ({ site, faviconUrl }) => {
   const [failedSource, setFailedSource] = useState('');
-  const source = faviconUrl || site.faviconUrl;
+  const source = React.isValidElement(site.logo) ? undefined : faviconUrl || site.faviconUrl;
   return (
     <i className="workspace-dock-meta-logo" style={{ '--brand-hue': site.hue } as React.CSSProperties} aria-hidden="true">
       {source && source !== failedSource
