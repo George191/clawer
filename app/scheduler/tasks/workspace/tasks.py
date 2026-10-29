@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from app.adapters import BaseSiteAdapter, GenericAdapter
@@ -18,7 +19,7 @@ from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.scheduler.celery_app import app, run_async
 from app.scheduler.task_log_capture import WorkspaceTaskLogCapture
-from app.scheduler.task_watchdog import TaskWatchdog
+from app.scheduler.task_watchdog import TaskWatchdog, WatchdogCleanupError
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.utils.connection_errors import is_retryable_connection_error
 from app.utils.runtime_control import (
@@ -522,7 +523,11 @@ def crawl_template(
             raise
         raise self.retry(exc=exc, countdown=0) from exc
     finally:
-        watchdog.close()
+        try:
+            watchdog.close()
+        except WatchdogCleanupError:
+            logger.exception("Unable to reap task watchdog; retiring worker process")
+            os._exit(1)
 
 
 async def _dispatch_due_workspace_tasks() -> dict[str, Any]:

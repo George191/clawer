@@ -318,6 +318,9 @@ class AutomationTaskStore:
                    OR current_run_id = CAST(:expected_run_id AS uuid))
               AND (CAST(:expected_celery_task_id AS text) IS NULL
                    OR celery_task_id = :expected_celery_task_id)
+              AND ((CAST(:expected_run_id AS uuid) IS NULL
+                    AND CAST(:expected_celery_task_id AS text) IS NULL)
+                   OR status IN ('running', 'paused'))
               RETURNING *
             ), changed_run AS (
                 UPDATE public.automation_task_runs run SET
