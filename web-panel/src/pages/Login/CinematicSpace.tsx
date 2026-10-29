@@ -108,15 +108,11 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     const stars = new THREE.Points(starGeometry, starMaterial);
     scene.add(stars);
 
-    // Distinct orbital planes and signed speeds keep the constellation dispersed.
+    // Equal altitude, widely separated planes, and staggered foreground passes.
     const orbitLanes = [
       { radiusFactor: 1.10, inclination: -.20, tilt: 1.10, phase: 5.884, angularSpeed: .0120, scale: .075 },
-      { radiusFactor: 1.16, inclination: -1.30, tilt: .30, phase: 1.553, angularSpeed: -.0120, scale: .050 },
-      { radiusFactor: 1.22, inclination: -1.40, tilt: .34, phase: 4.531, angularSpeed: .0120, scale: .048 },
-      { radiusFactor: 1.28, inclination: 1.10, tilt: 1.16, phase: 3.095, angularSpeed: -.0105, scale: .046 },
-      { radiusFactor: 1.34, inclination: .50, tilt: .72, phase: 3.038, angularSpeed: .0135, scale: .044 },
-      { radiusFactor: 1.40, inclination: -.95, tilt: .62, phase: 3.876, angularSpeed: .0092, scale: .044 },
-      { radiusFactor: 1.46, inclination: .05, tilt: 1.08, phase: .642, angularSpeed: -.0148, scale: .042 },
+      { radiusFactor: 1.10, inclination: .85, tilt: 1.10, phase: 1.553, angularSpeed: .0120, scale: .050 },
+      { radiusFactor: 1.10, inclination: -1.25, tilt: 1.10, phase: 4.531, angularSpeed: .0120, scale: .048 },
     ];
     const models: THREE.Group[] = [];
     const appearances = Array.from({ length: orbitLanes.length + 1 }, () => ({
@@ -307,7 +303,9 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       const delta = Math.min(.1, Math.max(0, time - visibilityTime));
       visibilityTime = time;
       appearances.forEach((appearance, index) => {
-        if (time >= appearance.revealAt) appearance.alpha = THREE.MathUtils.damp(appearance.alpha, 1, 3, delta);
+        const lane = orbitLanes[index];
+        const foreground = !lane || Math.sin(lane.phase + time * lane.angularSpeed) > .5;
+        if (time >= appearance.revealAt) appearance.alpha = THREE.MathUtils.damp(appearance.alpha, foreground ? 1 : 0, 3, delta);
         if (appearance.alpha < .003) appearance.alpha = 0;
         if (appearance.alpha > .997) appearance.alpha = 1;
         objects[index].visible = appearance.alpha > 0 && (index < models.length || width >= 1280);
@@ -437,9 +435,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         laneSide.copy(viewRight).multiplyScalar(-s).addScaledVector(viewUp, c);
         laneAxes[index].v.copy(laneSide).multiplyScalar(Math.cos(lane.tilt)).addScaledVector(viewNormal, Math.sin(lane.tilt));
         laneAxes[index].normal.crossVectors(laneAxes[index].u, laneAxes[index].v).normalize().multiplyScalar(Math.sign(lane.angularSpeed));
-        const shieldRadius = lane.scale * 5.1 * 1.05;
-        const previousClearance = index ? laneRadii[index - 1] + orbitLanes[index - 1].scale * 5.1 * 1.05 + shieldRadius + .08 : 0;
-        laneRadii[index] = Math.max(earthRadius * lane.radiusFactor, earthRadius * 1.006 + shieldRadius + .15, previousClearance);
+        laneRadii[index] = Math.max(earthRadius * lane.radiusFactor, earthRadius * 1.006 + orbitLanes[0].scale * 5.1 * 1.05 + .15);
       });
       // Aim periapsis just in front of the camera; the orbital plane crosses the
       // screen from lower left to upper right, while the whole model stays clear.
@@ -466,89 +462,34 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     async function randomizeOpening() {
       function refreshBounds() {
         measurePanel();
-        return JSON.stringify([width, height, blockedBounds]);
       }
-      let boundsVersion = refreshBounds();
+      refreshBounds();
       openingTime = visibilityTime = sceneTime();
       const gap = Math.max(130, Math.min(width, height) * .18);
       const markers = () => models.map((model, index) => { const point = marker(model); return point && { ...point, index }; })
         .filter((point): point is NonNullable<typeof point> => !!point);
+      // Keep the opening satellite in front of the Earth, clear of the form.
       let bestScore = Infinity;
-      let bestPhases = orbitLanes.map(lane => lane.phase);
-      let openingPair: number[] = [];
-      const openingCandidates: (ReturnType<typeof markers>[number] & { phase: number })[] = [];
-      const phaseOffsets = orbitLanes.map(() => Math.random() * Math.PI * 2);
+      let openingPhase = Math.PI / 2;
       for (let attempt = 0; attempt < 96; attempt++) {
-        orbitLanes.forEach((lane, index) => { lane.phase = (phaseOffsets[index] + attempt / 96 * Math.PI * 2) % (Math.PI * 2); });
-        paint(openingTime, false);
-        const points = markers().filter(point => point.clean).map(point => ({ ...point, phase: orbitLanes[point.index].phase }));
-        for (const a of points) {
-          for (const b of openingCandidates) {
-            if (a.index === b.index) continue;
-            if (Math.hypot(a.x - b.x, a.y - b.y) < a.radius + b.radius + gap) continue;
-            let score = a.x < width * .42 && a.foreground || b.x < width * .42 && b.foreground ? 0 : 1000;
-            if (a.x > width * .5 && b.x > width * .5) score += 5000;
-            if (Math.abs(a.x - b.x) < width * .26 && Math.abs(a.y - b.y) < height * .34) score += 500;
-            if (a.foreground && b.foreground) score += 50;
-            if (score < bestScore) {
-              bestScore = score;
-              bestPhases = orbitLanes.map(lane => lane.phase);
-              bestPhases[a.index] = a.phase;
-              bestPhases[b.index] = b.phase;
-              openingPair = [a.index, b.index];
-            }
-          }
-          openingCandidates.push(a);
+        const phase = Math.PI / 6 + .1 + attempt / 95 * (Math.PI * 2 / 3 - .2);
+        models[0].position.copy(orbitPoint(phase, 0));
+        const point = marker(models[0]);
+        if (point?.clean && point.foreground) {
+          const score = Math.hypot(point.x - width * .28, point.y - height * .48);
+          if (score < bestScore) { bestScore = score; openingPhase = phase; }
         }
-        if (bestScore === 0) break;
-        if (attempt % 8 === 7 && attempt < 95) {
+        if (attempt % 8 === 7) {
           await yieldTask(); if (disposed) return;
-          const nextVersion = refreshBounds();
-          if (nextVersion !== boundsVersion) { boundsVersion = nextVersion; bestScore = Infinity; openingCandidates.length = 0; }
+          refreshBounds();
         }
       }
-      orbitLanes.forEach((lane, index) => { lane.phase = bestPhases[index]; });
-      const waiting = orbitLanes.map((_, index) => index).filter(index => !openingPair.includes(index));
-      for (let i = waiting.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [waiting[i], waiting[j]] = [waiting[j], waiting[i]];
-      }
-      openingPair.forEach(index => { appearances[index].revealAt = openingTime; appearances[index].alpha = 1; });
-      waiting.forEach((index, order) => { appearances[index].revealAt = openingTime + 8 + order * 8 + Math.random() * 4; });
+      orbitLanes.forEach((lane, index) => {
+        lane.phase = openingPhase - index * Math.PI * 2 / 3 - openingTime * lane.angularSpeed;
+        appearances[index].revealAt = openingTime;
+        appearances[index].alpha = index === 0 ? 1 : 0;
+      });
       appearances[models.length].revealAt = openingTime + 30 + Math.random() * 12;
-      // Place later arrivals into natural visibility windows, covering gaps ahead.
-      const coverage: NonNullable<ReturnType<typeof marker>>[][] = Array.from({ length: 76 }, () => []);
-      const sampleLane = (index: number, phase: number, slot: number) => {
-        const time = openingTime + slot * 8;
-        if (time < appearances[index].revealAt) return;
-        models[index].position.copy(orbitPoint(phase + time * orbitLanes[index].angularSpeed, index));
-        const point = marker(models[index]);
-        return point?.clean ? point : undefined;
-      };
-      for (const index of openingPair) {
-        coverage.forEach((points, slot) => { const point = sampleLane(index, orbitLanes[index].phase, slot); if (point) points.push(point); });
-      }
-      for (const index of waiting) {
-        const offset = Math.random() * Math.PI * 2;
-        let chosenPhase = orbitLanes[index].phase, chosenScore = -Infinity;
-        let chosenPoints: ReturnType<typeof marker>[] = [];
-        for (let candidate = 0; candidate < 32; candidate++) {
-          const phase = (offset + candidate / 32 * Math.PI * 2) % (Math.PI * 2);
-          const rear = Math.sin(phase + openingTime * orbitLanes[index].angularSpeed) < 0;
-          let score = rear ? 3 : 0;
-          const samples = coverage.map((points, slot) => {
-            const point = sampleLane(index, phase, slot);
-            if (point && points.every(other => Math.hypot(point.x - other.x, point.y - other.y) >= point.radius + other.radius + gap)) {
-              score += (points.length === 0 ? 10 : points.length === 1 ? 2 : -2) * (slot <= 15 ? 2 : 1);
-              return point;
-            }
-          });
-          if (score > chosenScore) { chosenScore = score; chosenPhase = phase; chosenPoints = samples; }
-          if (candidate % 8 === 7) { await yieldTask(); if (disposed) return; }
-        }
-        orbitLanes[index].phase = chosenPhase;
-        chosenPoints.forEach((point, slot) => { if (point) coverage[slot].push(point); });
-      }
       paint(openingTime, false);
       let flybyChosen = false;
       for (let attempt = 0; attempt < 32; attempt++) {
