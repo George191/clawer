@@ -5,8 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from bson import BSON, Int64
-
 from app.records.field_names import SYSTEM_ROOT_FIELDS, validate_record_field_names
 
 
@@ -34,6 +32,8 @@ def require_canonical_record(record: dict[str, Any]) -> None:
 def record_values_equal(left: Any, right: Any) -> bool:
     """Keep booleans distinct from numbers when detecting business changes."""
     if type(left) is not type(right):
+        from bson import BSON, Int64
+
         if type(left) in (int, Int64) and type(right) in (int, Int64):
             return BSON.encode({"value": left}) == BSON.encode({"value": right})
         return False
