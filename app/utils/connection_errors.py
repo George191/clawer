@@ -5,7 +5,6 @@ import socket
 
 from curl_cffi.const import CurlECode
 from curl_cffi.requests import exceptions as curl_errors
-from pymongo.errors import ConnectionFailure, PyMongoError
 from redis.exceptions import AuthenticationError, AuthorizationError
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import TimeoutError as RedisTimeoutError
@@ -14,6 +13,15 @@ from sqlalchemy.exc import TimeoutError as SQLTimeoutError
 from urllib3 import exceptions as urllib_errors
 
 from app.base.http import DownloadCleanupError
+
+try:
+    from pymongo.errors import ConnectionFailure, PyMongoError
+except ImportError:
+    _MONGO_CONNECTION_ERRORS = ()
+    _MONGO_ERRORS = ()
+else:
+    _MONGO_CONNECTION_ERRORS = (ConnectionFailure,)
+    _MONGO_ERRORS = (PyMongoError,)
 
 try:
     from playwright.async_api import TimeoutError as BrowserTimeoutError
@@ -73,13 +81,13 @@ def is_retryable_connection_error(error: BaseException) -> bool:
         if isinstance(error, urllib_errors.MaxRetryError):
             error = error.reason
             continue
-        if isinstance(error, _BROWSER_TIMEOUT_ERRORS):
+        if isinstance(error, _BROWSER_TIMEOUT_ERRORS + _MONGO_CONNECTION_ERRORS):
             return True
-        if isinstance(error, ConnectionFailure | ConnectionError | TimeoutError
+        if isinstance(error, ConnectionError | TimeoutError
                       | socket.gaierror | RedisConnectionError | RedisTimeoutError
                       | SQLTimeoutError | urllib_errors.HTTPError):
             return True
-        if isinstance(error, PyMongoError) and error.timeout:
+        if isinstance(error, _MONGO_ERRORS) and error.timeout:
             return True
         sqlstate = str(getattr(error, "sqlstate", None) or getattr(error, "pgcode", "") or "")
         if sqlstate.startswith("08") or sqlstate in {"57P01", "57P02", "57P03", "53300"}:

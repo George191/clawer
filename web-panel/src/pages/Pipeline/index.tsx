@@ -5,7 +5,7 @@ import  enUS  from  'antd/locale/en_US';
 import  {  AlertOutlined,  ApartmentOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  BranchesOutlined,  CaretRightOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  ExperimentOutlined,  PlusOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  UploadOutlined  }  from  '@ant-design/icons';
 import  '../ProductWorkspace/workspace.css';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
-import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, fetchTablePartitions, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, fetchEtlConnections, createEtlConnection, updateEtlConnection, deleteEtlConnection, updateEtlSchema, deleteEtlSchema, createEtlTable, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadVulnerabilityKeywordsExample } from '../../services/api';
+import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, fetchTablePartitions, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, fetchEtlConnections, createEtlConnection, updateEtlConnection, deleteEtlConnection, updateEtlSchema, deleteEtlSchema, createEtlTable, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
 import type { EtlConnection, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
 import  type  {  LayerNode,  LayerTable,  QueryResult,  EtlPartition,  EtlStreamState  }  from  '../../services/types';
 
@@ -611,9 +611,9 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         } catch (error) { message.error(errorText(error)); } finally { setKeywordsSaving(false); }
     };
     const downloadKeywords = async (version?: string) => {
-        setKeywordDownload(version || 'example');
+        setKeywordDownload(version || 'current');
         try {
-            const blob = version ? await downloadVulnerabilityKeywordVersion(version) : await downloadVulnerabilityKeywordsExample();
+            const blob = version ? await downloadVulnerabilityKeywordVersion(version) : await downloadCurrentVulnerabilityKeywords();
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url; link.download = `satellite-vulnerability-keywords${version ? `-${version}` : ''}.yaml`; link.click();
@@ -1095,7 +1095,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         <p>Keywords select satellite-related vulnerability records. Upload a YAML file with a keywords array (up to 1 MiB, 1,000 keywords, 200 characters each). Matching ignores case, uses word boundaries, and supports multiple keywords per record. An empty array disables matching.</p>
                         <p>Activating a version takes effect within 30 seconds for subsequent processing. Rerun historical records to update their results.</p>
                         <div className="flow-script-actions">
-                            <Button icon={<DownloadOutlined />} loading={keywordDownload === 'example'} disabled={!!keywordDownload} onClick={() => downloadKeywords()}>Download example YAML</Button>
+                            <Button icon={<DownloadOutlined />} loading={keywordDownload === 'current'} disabled={!!keywordDownload || !keywordConfig?.current_version} onClick={() => downloadKeywords()}>Download current YAML</Button>
                             {canManage && <Upload accept=".yaml,.yml" showUploadList={false} disabled={keywordsLoading || keywordsSaving} beforeUpload={(file) => { void uploadKeywords(file); return false; }}><Button type="primary" icon={<UploadOutlined />} loading={keywordsSaving} disabled={keywordsLoading}>Upload and activate YAML</Button></Upload>}
                         </div>
                         {keywordsError && <p role="alert">{keywordsError}</p>}

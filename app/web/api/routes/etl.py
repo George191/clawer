@@ -62,9 +62,10 @@ async def download_vulnerability_keywords(version: str) -> Response:
     })
 
 
-@read.get("/task-config/vulnerability-keywords/example")
-async def vulnerability_keywords_example() -> Response:
-    return Response(keyword_files.example_file(), media_type="application/yaml", headers={
+@read.get("/task-config/vulnerability-keywords/current/file")
+@read.get("/task-config/vulnerability-keywords/example", include_in_schema=False)
+async def download_current_vulnerability_keywords() -> Response:
+    return Response(await keyword_files.download(), media_type="application/yaml", headers={
         "Content-Disposition": 'attachment; filename="satellite-vulnerability-keywords.yaml"',
     })
 

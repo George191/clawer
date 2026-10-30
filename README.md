@@ -455,11 +455,11 @@ spider-crawler（旧 topic）     -> RDS -> 按实际写入表拆分输出    �
 - `app/etl/tasks/extractors/` 与 `converters/` 并列，包含抽取接口 `BaseExtractor`、通用关键词匹配器 `KeywordExtractor` 和词表版本/缓存管理 `KeywordFileStore`。专项任务仅选择业务字段并封装结果；新增关键词专项任务可复用匹配器，并以任务名建立隔离的词表目录。
 - 关键词保存在现有 MinIO bucket 的 `tasks/satellite_vulnerability_extract/keywords/versions/<UUID>.yaml`，`tasks/satellite_vulnerability_extract/keywords/current.json` 指向当前版本；每次上传保留独立文件，启用历史版本即可回滚。并发启用以最后成功写入指针的操作为准，不修改 bucket 的版本设置，也不使用数据库配置表。
 - 在 Flow → `ts_task` → `task_vulnerability` → **Satellite extraction** 中查看当前词表、下载 YAML 和历史文件；管理员可上传并启用新文件或启用历史版本。文件格式为 `keywords: [GPS, VSAT]`，支持空数组停用；限制为 UTF-8 YAML、1 MiB、1000 个词、每词 200 字符。
-- 原交接的 38 个关键词只保留在 `app/etl/tasks/satellite_vulnerability_keywords.yaml` 示例文件中，可由前端下载并首次上传。TASK 不自动上传或回退到默认词表；未配置、文件损坏或 MinIO 读取失败均报错。任务缓存当前词表最多 30 秒，版本不变时不重复下载词表文件。
+- 前端直接下载 MinIO 中当前启用的词表，不读取本地示例文件。TASK 不自动上传或回退到默认词表；未配置、文件损坏或 MinIO 读取失败均报错。任务缓存当前词表最多 30 秒，版本不变时不重复下载词表文件。
 - 匹配 ODS 的 `description`、`descriptions`、`affected`、`weaknesses`、`configurations` 中的字符串值，忽略大小写并使用单词边界；不匹配字段名、引用链接或系统元数据。原 CVE 规则之外，补充支持 NVD 的受影响产品配置。
 - 仅命中记录写入 `ts_task.task_vulnerability.result`（JSONB 数组，例如 `["satellite", "satellite modem", "GPS"]`），`result_type=json`；同一来源 record/task 更新最新命中结果，无命中视为处理成功并提交消费进度，不写库、不发送下游消息，不复制 ODS 内容。
 
-Compose 中的 `task-worker` 使用 `python -m app.etl.main --layer task --table vulnerability`，仅处理漏洞并在启动时自动建结果表。部署时重建 Web API 和 TASK worker，并在前端上传首个词表。已有记录不会因配置变化自动重算；需要重跑对应 ODS 消息。文件接口位于 `/etl/task-config/vulnerability-keywords`（API 前缀按部署配置）：`GET` 查询当前词表和版本，`POST /versions` 上传文件（multipart `file`），`PUT /current` 启用版本（`{"version": "UUID"}`），`GET /versions/{version}/file` 下载历史文件，`GET /example` 下载示例。
+Compose 中的 `task-worker` 使用 `python -m app.etl.main --layer task --table vulnerability`，仅处理漏洞并在启动时自动建结果表。部署时重建 Web API 和 TASK worker，并在前端上传首个词表。已有记录不会因配置变化自动重算；需要重跑对应 ODS 消息。文件接口位于 `/etl/task-config/vulnerability-keywords`（API 前缀按部署配置）：`GET` 查询当前词表和版本，`POST /versions` 上传文件（multipart `file`），`PUT /current` 启用版本（`{"version": "UUID"}`），`GET /versions/{version}/file` 下载历史文件，`GET /current/file` 下载当前 MinIO 文件（未启用词表时返回 404），原 `GET /example` 路径兼容返回当前文件。
 
 ## Web API
 

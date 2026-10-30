@@ -311,8 +311,8 @@ export const activateVulnerabilityKeywordVersion = (version: string): Promise<Vu
   client.put('/etl/task-config/vulnerability-keywords/current', { version }).then((r) => unwrap<VulnerabilityKeywordConfig>(r.data));
 export const downloadVulnerabilityKeywordVersion = (version: string): Promise<Blob> =>
   client.get(`/etl/task-config/vulnerability-keywords/versions/${encodeURIComponent(version)}/file`, { responseType: 'blob' }).then((r) => r.data as Blob);
-export const downloadVulnerabilityKeywordsExample = (): Promise<Blob> =>
-  client.get('/etl/task-config/vulnerability-keywords/example', { responseType: 'blob' }).then((r) => r.data as Blob);
+export const downloadCurrentVulnerabilityKeywords = (): Promise<Blob> =>
+  client.get('/etl/task-config/vulnerability-keywords/current/file', { responseType: 'blob' }).then((r) => r.data as Blob);
 
 export const executeQuery = (sql: string): Promise<QueryResult> =>
   client.post('/etl/query', { sql }).then((r) => unwrap<QueryResult>(r.data));
