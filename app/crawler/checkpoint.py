@@ -273,15 +273,19 @@ class BatchCheckpointStore:
             logger.info("Redis is not configured; checkpoint cache disabled")
         return await self._get_redis() is not None
 
-    async def load(self) -> list[BatchCheckpoint]:
+    async def load(self, *, strict: bool = False) -> list[BatchCheckpoint]:
         redis = await self._get_redis()
         if redis is None or self.key is None:
+            if strict:
+                raise RuntimeError("Redis checkpoint is unavailable while resuming")
             return []
         try:
             raw_items = await redis.hgetall(self.key)
         except Exception as exc:
             logger.warning("Failed to read Redis checkpoint: %s", exc)
             self._connection.mark_unavailable()
+            if strict:
+                raise
             return []
         return self._decode_checkpoints(
             raw for field, raw in raw_items.items() if field != "run"

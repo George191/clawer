@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import mimetypes
 from datetime import datetime, timedelta, timezone
 from time import perf_counter, time
 from typing import Any
 from urllib.parse import unquote
+
+import filetype
 
 from app.base.http import DownloadError, DownloadResponse
 from app.config.settings import settings
@@ -435,8 +436,12 @@ class DownloadWorker:
                 await asyncio.sleep(min(2 ** attempt, 8))
         if response is None:
             return None
-        content_type = response.content_type or "application/octet-stream"
         response_data = response.data
+        filename = item.filename
+        detected_type = filetype.guess(response_data)
+        if detected_type is not None:
+            content_type = detected_type.mime
+            filename += f".{detected_type.extension}"
         validator = get_download_response_validator(template_name)
         if validator is not None:
             validator(item, response)
@@ -446,7 +451,7 @@ class DownloadWorker:
             response_data,
             template_name,
             data_type,
-            f"{record_id}/{item.filename}",
+            f"{record_id}/{filename}",
             content_type,
         )
         logger.info(
@@ -504,10 +509,8 @@ class DownloadWorker:
         stem, dot, ext = name.rpartition(".")
         if not stem or len(stem) > 60:
             stem = hashlib.md5(url.encode()).hexdigest()[:12]
-        if not dot or not ext:
-            ext = mimetypes.guess_extension("application/octet-stream")
-            ext = ext.lstrip(".")
-        return f"{stem}{suffix}.{ext}"
+        extension = f".{ext}" if dot and ext else ""
+        return f"{stem}{suffix}{extension}"
 
     async def stop(self) -> None:
         self._running = False

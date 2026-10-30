@@ -320,19 +320,19 @@ services:
     networks:
       - asiral-helio
 
-  # # ── TASK Worker — 任务调度层 ─────────────────────────────────
-  # task-worker:
-  #   build:
-  #     context: .
-  #     dockerfile: docker/etl.Dockerfile
-  #   container_name: task-worker
-  #   restart: unless-stopped
-  #   env_file:
-  #     - .env
-  #   working_dir: /app
-  #   command: python -m app.etl.main --layer task
-  #   networks:
-  #     - asiral-helio
+  # ── TASK Worker — 卫星漏洞抽取 ─────────────────────────────────
+  task-worker:
+    build:
+      context: .
+      dockerfile: docker/etl.Dockerfile
+    container_name: task-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    working_dir: /app
+    command: python -m app.etl.main --layer task --table vulnerability
+    networks:
+      - asiral-helio
 
   # # ── DWD Worker — 明细数据层 ───────────────────────────────────
   # dwd-worker:

@@ -12,7 +12,7 @@
 
 任务目录 app/etl/tasks/：
     - pdf_to_markdown   PDF 下载 + 转换 + 上传 MinIO，返回 minio 相对路径
-    - vulnerability_keyword_match   漏洞关键词匹配，返回命中关键词 JSON 数组
+    - satellite_vulnerability_extract   卫星漏洞抽取，返回命中关键词 JSON 数组
 
 扩展：
     - 新增任务：tasks/ 下新建模块 → register_task → handler 中 get_tasks("task1", "task2")
@@ -20,12 +20,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
 
 from app.config.settings import settings
-from app.etl.base import ETLBase
+from app.etl.base import ETLBase, extract_meta
 from app.etl.schema.registry import get_registered_ddl, save_registered_ddl
 from app.etl.tasks import get_tasks
 from app.logger import get_logger
@@ -86,6 +87,12 @@ class TsTask(ETLBase):
     _producer_topic = settings.etl_task_topic
     _producer_client_id = "etl-ts-task-producer"
 
+    async def _dispatch(self, message: dict[str, Any]) -> bool:
+        data_type = extract_meta(message).get("data_type") or message.get("data_type")
+        if data_type and data_type not in self._handlers:
+            return True
+        return await super()._dispatch(message)
+
     async def _on_init_schema(self) -> None:
         if "vulnerability" in self._handlers and not await get_registered_ddl(
             self._pg, "task", "vulnerability",
@@ -96,7 +103,7 @@ class TsTask(ETLBase):
                 table="vulnerability",
                 ddl_sql=TASK_VULNERABILITY_DDL,
                 partition_type="none",
-                description="Vulnerability keyword matching results",
+                description="Satellite vulnerability extraction results",
                 updated_by="system:task",
                 allow_update=False,
             )
@@ -109,9 +116,11 @@ class TsTask(ETLBase):
             if not data_source or not record_id:
                 raise ValueError("Vulnerability task requires record_id and data_source")
 
-            results = await get_tasks("vulnerability_keyword_match").execute(message=message)
+            results = await get_tasks("satellite_vulnerability_extract").execute(message=message)
             now = datetime.now(timezone.utc)
             for task_name, task_result in results.items():
+                if not json.loads(task_result.data):
+                    continue
                 payload = {
                     "data_source": data_source,
                     "data_type": "vulnerability",

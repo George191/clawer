@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
 
-from app.etl.keyword_match_config import MAX_FILE_SIZE
+from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import get_current_active_superuser, get_current_user
 from app.web.api.models.etl import (
     CodePayload,
@@ -58,14 +58,14 @@ async def activate_vulnerability_keywords(payload: KeywordVersion) -> dict[str, 
 async def download_vulnerability_keywords(version: str) -> Response:
     data = await keyword_files.download(version)
     return Response(data, media_type="application/yaml", headers={
-        "Content-Disposition": f'attachment; filename="vulnerability-keywords-{version}.yaml"',
+        "Content-Disposition": f'attachment; filename="satellite-vulnerability-keywords-{version}.yaml"',
     })
 
 
 @read.get("/task-config/vulnerability-keywords/example")
 async def vulnerability_keywords_example() -> Response:
     return Response(keyword_files.example_file(), media_type="application/yaml", headers={
-        "Content-Disposition": 'attachment; filename="vulnerability-keywords.yaml"',
+        "Content-Disposition": 'attachment; filename="satellite-vulnerability-keywords.yaml"',
     })
 
 

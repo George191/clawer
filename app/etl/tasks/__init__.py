@@ -51,7 +51,7 @@ def _get_task(name: str) -> BaseTask:
 
 
 def get_tasks(*names: str) -> TaskRunner:
+    # Web 也会使用 extractors 的词表管理，导入该包时不加载 PDF 依赖。
+    from app.etl.tasks import pdf_to_markdown, satellite_vulnerability_extract  # noqa: F401
+
     return TaskRunner([_get_task(name) for name in names])
-
-
-from app.etl.tasks import pdf_to_markdown, vulnerability_keyword_match  # noqa: E402, F401

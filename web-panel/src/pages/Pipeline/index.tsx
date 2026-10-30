@@ -616,7 +616,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             const blob = version ? await downloadVulnerabilityKeywordVersion(version) : await downloadVulnerabilityKeywordsExample();
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
-            link.href = url; link.download = `vulnerability-keywords-${version || 'example'}.yaml`; link.click();
+            link.href = url; link.download = `satellite-vulnerability-keywords${version ? `-${version}` : ''}.yaml`; link.click();
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch (error) { message.error(errorText(error)); } finally { setKeywordDownload(undefined); }
     };
@@ -1049,7 +1049,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         </div>
                         <div  className="flow-table-header-right">
                             <div className="flow-health-badge" title={stream?.reason || streamError}><i className={`flow-dot ${stream?.available || schemaNode?.status === 'running' ? 'flow-dot--green' : ''}`} /><span>{stream?.available ? 'Stream available' : schemaNode?.status === 'running' ? 'Schema accessible' : 'Unavailable'}</span></div>
-                            {selectedSchema === 'ts_task' && table.name === 'task_vulnerability' && <Button size="small" onClick={() => setKeywordsOpen(true)}>Keywords</Button>}
+                            {selectedSchema === 'ts_task' && table.name === 'task_vulnerability' && <Button size="small" onClick={() => setKeywordsOpen(true)}>Satellite extraction</Button>}
                             {canManage && <Button size="small" disabled={!stream?.available || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
                         </div>
                     </div>
@@ -1091,8 +1091,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
 
                         </div>
                     </Modal>
-                    <Modal title="Vulnerability keyword files" open={keywordsOpen} onCancel={() => { if (!keywordsSaving) setKeywordsOpen(false); }} footer={<Button disabled={keywordsSaving} onClick={() => setKeywordsOpen(false)}>Close</Button>} width={760}>
-                        <p>Upload a YAML file with a keywords array (up to 1 MiB, 1,000 keywords, 200 characters each). Matching ignores case, uses word boundaries, and supports multiple keywords per record. An empty array disables matching.</p>
+                    <Modal title="Satellite vulnerability extraction" open={keywordsOpen} onCancel={() => { if (!keywordsSaving) setKeywordsOpen(false); }} footer={<Button disabled={keywordsSaving} onClick={() => setKeywordsOpen(false)}>Close</Button>} width={760}>
+                        <p>Keywords select satellite-related vulnerability records. Upload a YAML file with a keywords array (up to 1 MiB, 1,000 keywords, 200 characters each). Matching ignores case, uses word boundaries, and supports multiple keywords per record. An empty array disables matching.</p>
                         <p>Activating a version takes effect within 30 seconds for subsequent processing. Rerun historical records to update their results.</p>
                         <div className="flow-script-actions">
                             <Button icon={<DownloadOutlined />} loading={keywordDownload === 'example'} disabled={!!keywordDownload} onClick={() => downloadKeywords()}>Download example YAML</Button>

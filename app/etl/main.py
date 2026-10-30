@@ -4,6 +4,7 @@
     python -m app.etl.main --layer rds     # 启动 RDS 层
     python -m app.etl.main --layer ods     # 启动 ODS 层
     python -m app.etl.main --layer task     # 启动 TASK 层
+    python -m app.etl.main --layer task --table vulnerability  # 仅处理漏洞任务
     python -m app.etl.main --layer dwd     # 启动 DWD 层
     python -m app.etl.main --layer dws     # 启动 DWS 层
     python -m app.etl.main --layer dim     # 启动 DIM 层
@@ -62,13 +63,13 @@ def _preflight_check() -> None:
         sys.exit(1)
 
 
-async def _run_layer(worker_class: type, layer_name: str) -> None:
+async def _run_layer(worker_class: type, layer_name: str, table_name: str = "") -> None:
     setup_logging(f"etl-{layer_name}")
     _preflight_check()
 
     logger.info("=== ETL %s Worker Starting ===", layer_name.upper())
 
-    worker = worker_class()
+    worker = worker_class(table_name=table_name) if table_name else worker_class()
     try:
         await worker.run()
     except ConnectionError:
@@ -86,8 +87,8 @@ async def run_ods() -> None:
     await _run_layer(TsOds, "ods")
 
 
-async def run_task() -> None:
-    await _run_layer(TsTask, "task")
+async def run_task(table_name: str = "") -> None:
+    await _run_layer(TsTask, "task", table_name=table_name)
 
 
 async def run_dwd() -> None:
@@ -174,9 +175,12 @@ def main() -> None:
         return
 
     layer = ""
+    table_name = ""
     for i, arg in enumerate(sys.argv):
         if arg == "--layer" and i + 1 < len(sys.argv):
             layer = sys.argv[i + 1].lower()
+        elif arg == "--table" and i + 1 < len(sys.argv):
+            table_name = sys.argv[i + 1]
 
     runners: dict[str, callable] = {
         "rds": run_rds,
@@ -193,7 +197,7 @@ def main() -> None:
         print(f"Unknown layer: {layer}. Expected: rds, ods, task, dwd, dws, dim, all", file=sys.stderr)
         sys.exit(1)
 
-    asyncio.run(runner())
+    asyncio.run(runner(table_name=table_name) if layer == "task" else runner())
 
 
 if __name__ == "__main__":

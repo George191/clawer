@@ -410,7 +410,7 @@ async def run_from_list_file_stream(
             if batch:
                 yield batch, batch_start_line, line_num
 
-        saved = await checkpoint_store.load() if resume else []
+        saved = await checkpoint_store.load(strict=True) if resume else []
         saved_ranges = {(item.start_line, item.end_line) for item in saved}
         valid_ranges: set[tuple[int, int]] = set()
         batch_count = 0
