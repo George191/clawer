@@ -6,6 +6,7 @@ from typing import Any
 
 from app.config.settings import settings
 from app.logger import get_logger
+from app.logger.task_format import redact_connection_userinfo
 
 logger = get_logger(__name__)
 
@@ -25,9 +26,9 @@ class MongoClient:
             self._client = AsyncIOMotorClient(settings.db_url)
             self._db = self._client[settings.db_name]
             await self._client.admin.command("ping")
-            logger.info("Connected to MongoDB: %s/%s", settings.db_url, settings.db_name)
+            logger.info("Connected to MongoDB: %s/%s", redact_connection_userinfo(settings.db_url), settings.db_name)
         except Exception as e:
-            logger.error("Failed to connect to MongoDB: %s", e)
+            logger.error("Failed to connect to MongoDB: %s", redact_connection_userinfo(str(e)))
             raise
 
 

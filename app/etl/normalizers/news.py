@@ -137,9 +137,14 @@ def normalize_ssc_news(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_blacksky_press(record: dict[str, Any]) -> dict[str, Any]:
-    record["thumbnail"] = record.get("featured_media")
+    featured_media = record.get("featured_media")
+    record["thumbnail"] = (
+        featured_media.get("source_url") if isinstance(featured_media, dict) else None
+    )
     if record.get("assets"):
-        record["assets"]["thumbnail"] = record["assets"].get("featured_media")
+        record["assets"]["thumbnail"] = (
+            record["assets"].get("featured_media") or {}
+        ).get("source_url")
 
     record["summary_html"] = record.get("excerpt_html")
     normalized = _news_common(record, "blacksky_press")
@@ -149,9 +154,14 @@ def normalize_blacksky_press(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_blacksky_news(record: dict[str, Any]) -> dict[str, Any]:
-    record["thumbnail"] = record.get("featured_media")
+    featured_media = record.get("featured_media")
+    record["thumbnail"] = (
+        featured_media.get("source_url") if isinstance(featured_media, dict) else None
+    )
     if record.get("assets"):
-        record["assets"]["thumbnail"] = record["assets"].get("featured_media")
+        record["assets"]["thumbnail"] = (
+            record["assets"].get("featured_media") or {}
+        ).get("source_url")
 
     record["organization"] = record.get("source_names")
     normalized = _news_common(record, "blacksky_news")
@@ -161,9 +171,14 @@ def normalize_blacksky_news(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_blacksky_posts(record: dict[str, Any]) -> dict[str, Any]:
-    record["thumbnail"] = record.get("featured_media")
+    featured_media = record.get("featured_media")
+    record["thumbnail"] = (
+        featured_media.get("source_url") if isinstance(featured_media, dict) else None
+    )
     if record.get("assets"):
-        record["assets"]["thumbnail"] = record["assets"].get("featured_media")
+        record["assets"]["thumbnail"] = (
+            record["assets"].get("featured_media") or {}
+        ).get("source_url")
         
     record["summary_html"] = record.get("excerpt_html")
     normalized = _news_common(record, "blacksky_posts")

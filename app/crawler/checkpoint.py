@@ -66,6 +66,12 @@ class PageCheckpointStore:
     async def connect(self) -> bool:
         return await self._run_redis_operation() is not None
 
+    async def run_redis_operation(
+        self, operation: Callable[[Any], Awaitable[Any]],
+    ) -> Any:
+        """Reuse task checkpoint connectivity and retries for incremental state."""
+        return await self._run_redis_operation(operation)
+
     async def _run_redis_operation(
         self, operation: Callable[[Any], Awaitable[Any]] | None = None,
     ) -> Any:

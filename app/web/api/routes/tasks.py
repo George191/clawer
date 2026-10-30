@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
 
 from app.web.api.models.tasks import AutomationTaskRequest, TaskAction
@@ -45,8 +45,22 @@ async def create_run(payload: AutomationTaskRequest) -> dict[str, Any]:
 
 
 @router.get("/runs/{task_id}/logs/{run_id}")
-async def task_logs(task_id: UUID, run_id: UUID) -> dict[str, Any]:
-    return {"items": await automation_task_store.get_task_logs(str(task_id), str(run_id))}
+async def task_logs(
+    task_id: UUID,
+    run_id: UUID,
+    before_id: int | None = Query(default=None, ge=1, le=9223372036854775807),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> dict[str, Any]:
+    logs = await automation_task_store.get_task_logs(
+        str(task_id), str(run_id), before_id=before_id, limit=limit + 1,
+    )
+    has_more = len(logs) > limit
+    items = logs[-limit:]
+    return {
+        "items": items,
+        "has_more": has_more,
+        "next_before_id": str(items[0]["id"]) if has_more else None,
+    }
 
 
 @router.get("/runs/{task_id}/log-runs")

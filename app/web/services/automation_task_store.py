@@ -268,6 +268,7 @@ class AutomationTaskStore:
         if payload.get("task_type", "template") == "template":
             policies = {key: value for key, value in policies.items()
                         if key not in {"watermark", "incremental_field"}}
+            policies["incremental"] = True
         task = await self._pg.fetch_one(
             """
             INSERT INTO public.automation_tasks
@@ -674,9 +675,9 @@ class AutomationTaskStore:
             """
             SELECT task.*, to_jsonb(current_run) AS current_run,
                    COALESCE((
-                       SELECT jsonb_agg(log_row.payload ORDER BY log_row.created_at)
+                       SELECT jsonb_agg(log_row.payload ORDER BY log_row.created_at, log_row.id)
                        FROM (
-                           SELECT created_at,
+                           SELECT id, created_at,
                                   jsonb_build_object(
                                       'id', id,
                                       'level', level,
@@ -686,7 +687,7 @@ class AutomationTaskStore:
                                   ) AS payload
                            FROM public.automation_task_logs
                            WHERE task_id = task.id AND run_id = current_run.id
-                           ORDER BY created_at DESC
+                           ORDER BY created_at DESC, id DESC
                            LIMIT 200
                        ) log_row
                    ), '[]'::jsonb) AS logs,
@@ -716,7 +717,13 @@ class AutomationTaskStore:
             """,
             {"id": task_id},
         )
-        return (await self._with_task_icons([task]))[0] if task is not None else None
+        if task is None:
+            return None
+        for log in task["logs"]:
+            log["message"] = format_task_log_message(
+                log["message"], log["level"], created_at=log["created_at"],
+            )
+        return (await self._with_task_icons([task]))[0]
 
     async def cleanup_task_logs(self) -> dict[str, int]:
         """Delete expired terminal runs; foreign keys remove logs and clear run references."""
@@ -734,9 +741,11 @@ class AutomationTaskStore:
         )
         return {"deleted_runs": result["deleted_runs"]}
 
-    async def get_task_logs(self, task_id: str, run_id: str) -> list[dict[str, Any]]:
+    async def get_task_logs(
+        self, task_id: str, run_id: str, *, before_id: int | None = None, limit: int = 200,
+    ) -> list[dict[str, Any]]:
         await self.initialize()
-        return await self._pg.fetch_all(
+        logs = await self._pg.fetch_all(
             """
             SELECT id, level, message, created_at, run_id::text AS run_id
             FROM (
@@ -746,13 +755,25 @@ class AutomationTaskStore:
                 WHERE log.task_id = CAST(:task_id AS uuid)
                   AND log.run_id = CAST(:run_id AS uuid)
                   AND task.deleted_at IS NULL
-                ORDER BY log.created_at DESC
-                LIMIT 200
+                  AND (CAST(:before_id AS bigint) IS NULL OR (log.created_at, log.id) < (
+                      SELECT cursor.created_at, cursor.id
+                      FROM public.automation_task_logs cursor
+                      WHERE cursor.id = CAST(:before_id AS bigint)
+                        AND cursor.task_id = CAST(:task_id AS uuid)
+                        AND cursor.run_id = CAST(:run_id AS uuid)
+                  ))
+                ORDER BY log.created_at DESC, log.id DESC
+                LIMIT :limit
             ) run_logs
-            ORDER BY created_at
+            ORDER BY created_at, id
             """,
-            {"task_id": task_id, "run_id": run_id},
+            {"task_id": task_id, "run_id": run_id, "before_id": before_id, "limit": limit},
         )
+        for log in logs:
+            log["message"] = format_task_log_message(
+                log["message"], log["level"], created_at=log["created_at"],
+            )
+        return logs
 
     async def get_task_log_runs(
         self,

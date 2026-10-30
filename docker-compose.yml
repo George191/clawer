@@ -41,6 +41,8 @@ services:
     env_file:
       - .env
     working_dir: /app
+    volumes:
+      - crawler-incremental-data:/app/data/incremental
     command: celery -A app.scheduler.celery_app worker --loglevel=info --concurrency=${SPIDER_CELERY_CONCURRENCY:-5}
     deploy:
       replicas: ${SPIDER_CELERY_WORKER_REPLICAS:-1}
@@ -407,4 +409,5 @@ networks:
     driver: bridge
 
 volumes:
+  crawler-incremental-data:
   celerybeat-data:

@@ -1216,7 +1216,7 @@ const AICollect: React.FC = () => {
   const [releaseIntervalMinutes, setReleaseIntervalMinutes] = useState(60);
   const [releaseIntervalUnit, setReleaseIntervalUnit] = useState<'minute' | 'hour'>('minute');
   const [releaseEmptyPageLimit, setReleaseEmptyPageLimit] = useState(2);
-  const [releaseIncremental, setReleaseIncremental] = useState(false);
+  const [releaseIncremental, setReleaseIncremental] = useState(true);
   const [releaseBatchInput, setReleaseBatchInput] = useState(false);
   const [releaseTaskParamValues, setReleaseTaskParamValues] = useState<Record<string, string>>({});
   const [releaseBatchObjectKey, setReleaseBatchObjectKey] = useState('');
@@ -1750,7 +1750,7 @@ const AICollect: React.FC = () => {
       setReleaseScheduleKind('once');
       setReleaseDailyTime('09:00');
       setReleaseIntervalMinutes(60);
-      setReleaseIncremental(false);
+      setReleaseIncremental(true);
       setReleaseBatchInput(false);
       setReleaseTaskParamValues({});
       setReleaseBatchObjectKey('');
@@ -5032,11 +5032,11 @@ const AICollect: React.FC = () => {
                         <InputNumber min={0} max={100} value={taskPriority} onChange={(value) => setTaskPriority(value ?? 50)} />
                       </label>
                       <label>
-                        <span><strong>Incremental</strong><small>{releaseIncremental ? 'Continue from last boundary' : 'Collect full scope'}</small></span>
+                        <span><strong>Incremental</strong><small>Automatically uses a time watermark or catalog content changes</small></span>
                         <Checkbox
                           className="ai-session-task-checkbox"
-                          checked={releaseIncremental}
-                          onChange={(event) => setReleaseIncremental(event.target.checked)}
+                          checked
+                          disabled
                         />
                       </label>
                       <label>

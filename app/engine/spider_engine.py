@@ -256,9 +256,16 @@ class SpiderEngine:
 
         saved_count = 0
         if filtered.records:
-            saved_count = await self._save_page_records(
-                template, filtered.records, result
-            )
+            records_to_save = filtered.records
+            snapshot_store = template._crawl_context.get("snapshot_store")
+            if snapshot_store is not None:
+                records_to_save = await snapshot_store.filter_records(
+                    records_to_save, template.dedup_fields
+                )
+            if records_to_save:
+                saved_count = await self._save_page_records(
+                    template, records_to_save, result
+                )
             if filtered.latest_time and (
                 result.latest_record_time is None
                 or filtered.latest_time > result.latest_record_time
@@ -396,6 +403,7 @@ class SpiderEngine:
 
             for attempt in self._retry_loop():
                 try:
+                    adapter._snapshot_page_unchanged = False
                     await adapter.on_before_page(current_page, is_first)
 
                     url = template.get_full_list_url(current_page, results_per_page)
@@ -442,6 +450,13 @@ class SpiderEngine:
                     records = await adapter.on_after_page(current_page, records)
 
                     if not records:
+                        if getattr(adapter, "_snapshot_page_unchanged", False):
+                            page_skipped = True
+                            result.pages_processed += 1
+                            if progress_callback is not None:
+                                await progress_callback(current_page, result)
+                            page_succeeded = True
+                            break
                         logger.info(
                             "No more records at page %d, stopping pagination",
                             current_page,
@@ -677,7 +692,7 @@ class SpiderEngine:
             return all_records
 
         # ── Phase 2: 并行获取剩余页面 ───────────────────────────────
-        known_total = isinstance(dynamic_pages, int) and dynamic_pages > 1
+        known_total = isinstance(dynamic_pages, int)
 
         if known_total:
             # 已知总页数：一次性计算所有剩余页面并分批并行获取
@@ -771,7 +786,24 @@ class SpiderEngine:
                 records = self._parser.parse_list_json(
                     json_data, item_path, template.list_fields
                 )
-                records = await adapter.on_after_page(page, records)
+                records = await adapter.normalize_list_records(page, records)
+                watermark = template._crawl_context.get("incremental_watermark")
+                if isinstance(watermark, TimeWatermark) and watermark.enabled:
+                    list_filtered = filter_records_by_watermark(records, watermark)
+                    if not list_filtered.all_before_window:
+                        eligible = [
+                            record
+                            for record in records
+                            if parse_record_time(
+                                get_nested_value(record, watermark.field),
+                                watermark.record_time_format,
+                            ) is None
+                            or record in list_filtered.records
+                        ]
+                        old_records = [record for record in records if record not in eligible]
+                        records = old_records + await adapter.on_after_page(page, eligible)
+                else:
+                    records = await adapter.on_after_page(page, records)
 
                 # 仅第一页提取分页元数据
                 if is_first and template.json_total_path:

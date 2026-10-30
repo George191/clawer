@@ -13,7 +13,8 @@ from app.crawler.batch_params import (
     normalize_batch_param_names,
 )
 from app.crawler.checkpoint import PageCheckpointStore
-from app.crawler.incremental import build_time_watermark
+from app.crawler.incremental import TimeWatermark, build_time_watermark
+from app.crawler.snapshot import SnapshotStore
 from app.engine.spider_engine import CrawlResult, SpiderEngine
 from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
@@ -249,6 +250,7 @@ async def _crawl_template(
         logger.info("Workspace crawl task started: %s", task_id)
         schedule = dict(task.get("schedule") or {})
         policies = dict(task.get("policies") or {})
+        policies["incremental"] = True
         params = {str(key): str(value) for key, value in parameters.items() if value is not None}
         template_version = str(task.get("template_version") or "v1.0")
         template_name = str(task.get("template_name") or template_name)
@@ -276,28 +278,31 @@ async def _crawl_template(
             task_id=task_id,
         )
         checkpoint_connected = await checkpoint_store.connect()
-        if policies.get("incremental") and not checkpoint_connected:
+        if not checkpoint_connected:
             raise RuntimeError(
                 f"Redis is required for incremental task {task_id}"
             )
+        redis_watermark = await checkpoint_store.load_watermark() if template.incremental else None
+        incremental_watermark = (
+            build_time_watermark(template, policies, redis_watermark)
+            if template.incremental else TimeWatermark(False, "", None, "")
+        )
+        snapshot_store = None if template.incremental else SnapshotStore(checkpoint_store)
         resume_page, resume_batch_index = await _load_resume_position(
             checkpoint_store,
-            incremental=bool(policies.get("incremental")),
+            incremental=bool(incremental_watermark.value),
             batch_count=len(batch_parameter_sets),
         )
+        if snapshot_store is not None and getattr(
+            released.adapter_class, "resume_from_checkpoint", True,
+        ) is False:
+            resume_page, resume_batch_index = None, 0
         if resume_page or resume_batch_index:
             logger.info(
                 "Workspace resuming from checkpoint: page=%s batch=%s",
                 resume_page,
                 resume_batch_index + 1,
             )
-        redis_watermark = (
-            await checkpoint_store.load_watermark()
-            if policies.get("incremental") else None
-        )
-        incremental_watermark = build_time_watermark(
-            template, policies, redis_watermark
-        )
         if incremental_watermark.enabled:
             logger.info(
                 "Workspace incremental crawl: task=%s field=%s watermark=%s window_start=%s",
@@ -308,6 +313,8 @@ async def _crawl_template(
                 incremental_watermark.window_start.isoformat()
                 if incremental_watermark.window_start else "full",
             )
+        else:
+            logger.info("Workspace incremental snapshot crawl: task=%s", task_id)
         engine = SpiderEngine(adapter_class=released.adapter_class, retain_records=False)
         result = CrawlResult(template.name, template.data_type, retain_records=False)
         batch_count = len(batch_parameter_sets)
@@ -340,6 +347,7 @@ async def _crawl_template(
                 "batch_index": batch_index + 1,
                 "batch_count": batch_count,
                 "incremental_watermark": incremental_watermark,
+                "snapshot_store": snapshot_store,
                 **batch_context,
             }
             logger.info(
@@ -423,6 +431,7 @@ async def _crawl_template(
                 new_watermark.isoformat() if new_watermark else None
             )
         else:
+            await snapshot_store.commit()
             checkpoint_saved = await checkpoint_store.clear()
         if checkpoint_connected and not checkpoint_saved:
             raise RuntimeError(
@@ -431,7 +440,7 @@ async def _crawl_template(
         if checkpoint_connected:
             logger.info(
                 "Workspace checkpoint committed: incremental=%s watermark=%s",
-                incremental_watermark.enabled,
+                True,
                 new_watermark.isoformat() if incremental_watermark.enabled and new_watermark else "n/a",
             )
         final_status = _status_after_success(schedule)

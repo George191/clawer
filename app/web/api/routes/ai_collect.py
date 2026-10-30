@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from uuid import UUID
 from datetime import datetime, timezone
 from typing import Any, Literal
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.web.agents.adapter import AdapterAgent
 from app.web.agents.template import template_agent
+from app.web.api.models.tasks import TaskAction, WorkspaceTaskRequest
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.browser_renderer import browser_renderer
-from app.web.api.models.tasks import TaskAction, WorkspaceTaskRequest
 from app.web.services.task_runs import delete_run, run_action
 
 router = APIRouter(prefix="/ai", tags=["ai-collect"])
@@ -211,8 +211,22 @@ async def workspace_task(task_id: str) -> dict[str, Any]:
 
 
 @router.get("/workspace/tasks/{task_id}/logs/{run_id}")
-async def workspace_task_logs(task_id: str, run_id: str) -> dict[str, Any]:
-    return {"items": await ai_collect_store.get_task_logs(task_id, run_id)}
+async def workspace_task_logs(
+    task_id: UUID,
+    run_id: UUID,
+    before_id: int | None = Query(default=None, ge=1, le=9223372036854775807),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> dict[str, Any]:
+    logs = await ai_collect_store.get_task_logs(
+        str(task_id), str(run_id), before_id=before_id, limit=limit + 1,
+    )
+    has_more = len(logs) > limit
+    items = logs[-limit:]
+    return {
+        "items": items,
+        "has_more": has_more,
+        "next_before_id": str(items[0]["id"]) if has_more else None,
+    }
 
 
 @router.get("/workspace/tasks/{task_id}/log-runs")

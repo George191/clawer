@@ -225,6 +225,12 @@ export interface WorkspaceTaskLog {
   run_id: string | null;
 }
 
+export interface WorkspaceTaskLogPage {
+  items: WorkspaceTaskLog[];
+  has_more: boolean;
+  next_before_id: string | null;
+}
+
 export interface WorkspaceTaskLogRun {
   id: string;
   task_id: string;
@@ -359,8 +365,12 @@ export const fetchWorkspaceTaskDataTypes = (): Promise<string[]> =>
 export const fetchWorkspaceTask = (taskId: string): Promise<WorkspaceTask> =>
   client.get(`/tasks/runs/${taskId}`).then((r) => r.data);
 
-export const fetchWorkspaceTaskLogs = (taskId: string, runId: string): Promise<WorkspaceTaskLog[]> =>
-  client.get(`/tasks/runs/${taskId}/logs/${runId}`).then((r) => r.data.items);
+export const fetchWorkspaceTaskLogs = (
+  taskId: string,
+  runId: string,
+  beforeId?: string,
+): Promise<WorkspaceTaskLogPage> =>
+  client.get(`/tasks/runs/${taskId}/logs/${runId}`, { params: { before_id: beforeId } }).then((r) => r.data);
 
 export const fetchWorkspaceTaskRun = (taskId: string, runId: string): Promise<WorkspaceTaskLogRun> =>
   client.get(`/tasks/runs/${taskId}/log-runs/${runId}`).then((r) => r.data);

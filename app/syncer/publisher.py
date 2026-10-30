@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -92,11 +93,10 @@ class RecordPublisher(KafkaClient):
         for (task_id, run_id), count in synced_by_run.items():
             try:
                 await ai_collect_store.increment_run_stats(task_id, run_id, synced=count)
-                await ai_collect_store.append_task_log(
-                    task_id, "info",
-                    "Kafka publish acknowledged: records=%d batch_records=%d; RDS/ODS consume asynchronously"
-                    % (count, len(records)),
-                    run_id=run_id,
+                await ai_collect_store.write_task_log(
+                    task_id, run_id, "Syncer", logging.INFO,
+                    "Kafka publish acknowledged: records=%d batch_records=%d; RDS/ODS consume asynchronously",
+                    count, len(records),
                 )
             except Exception:
                 logger.exception("RecordPublisher: sync statistics failed for task=%s run=%s", task_id, run_id)

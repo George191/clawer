@@ -590,6 +590,24 @@ const mergeTaskLog = (logs: TaskLog[], incoming: TaskLog): TaskLog[] => {
   return logs.map((log, position) => (position === index ? incoming : log));
 };
 
+const mergeTaskLogs = (logs: TaskLog[], incoming: TaskLog[]): TaskLog[] => {
+  const merged = new Map<string, TaskLog>();
+  for (const log of [...logs, ...incoming]) {
+    const key = log.id != null ? String(log.id) : `${log.runId}-${log.createdAt}-${log.message}`;
+    merged.set(key, log);
+  }
+  return [...merged.values()].sort((left, right) => {
+    const timeDifference = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    if (timeDifference) return timeDifference;
+    const fractionDifference = Number(left.createdAt.match(/\.(\d+)/)?.[1].padEnd(6, '0') ?? 0)
+      - Number(right.createdAt.match(/\.(\d+)/)?.[1].padEnd(6, '0') ?? 0);
+    if (fractionDifference) return fractionDifference;
+    const leftId = String(left.id ?? '');
+    const rightId = String(right.id ?? '');
+    return leftId.length - rightId.length || leftId.localeCompare(rightId);
+  });
+};
+
 const taskWriteCountHelp = 'Successful inserts and updates in the current run across all record types, excluding unchanged records. Deletions are already included and are not added again.';
 
 const getTaskWriteCount = (runtime: TaskRuntimeItem): number | null => {
@@ -1229,10 +1247,7 @@ const formatTaskNextRun = (draft: TaskComposerDraft) => {
   return `Every ${draft.intervalValue} ${unit}${draft.intervalValue === 1 ? '' : 's'}`;
 };
 
-const formatIncrementalSummary = (draft: TaskComposerDraft) => {
-  if (!draft.incremental) return '全量采集';
-  return `${draft.incrementalField}：Redis 水位线减 1 天`;
-};
+const formatIncrementalSummary = (_draft: TaskComposerDraft) => '增量采集：按模板选择时间水位或目录内容差分';
 
 const stripDecorativeSuffix = (value: string) => value.replace(/\s+[^\u4E00-\u9FFFa-zA-Z0-9]+$/g, '');
 
@@ -1319,6 +1334,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const taskListRequestRef = useRef<Promise<WorkspaceTask[]> | null>(null);
   const taskListRevisionRef = useRef(0);
   const taskLogsRequestRef = useRef(0);
+  const taskLogsLoadingRef = useRef(false);
+  const selectedTaskLogRunRef = useRef<string | null>(null);
   const taskLogRunsRequestRef = useRef(0);
   const [templates, setTemplates] = useState<TemplateAsset[]>([]);
   const [keyword, setKeyword] = useState('');
@@ -1362,7 +1379,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     intervalValue: 30,
     intervalUnit: 'minute',
     templateParams: [],
-    incremental: false,
+    incremental: true,
     incrementalField: 'date',
     maxEmptyPages: 2,
   });
@@ -1402,12 +1419,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const [taskItems, setTaskItems] = useState<DockTask[]>([]);
   const [taskRuntime, setTaskRuntime] = useState<Record<string, TaskRuntimeItem>>({});
   const [selectedTaskLogRunId, setSelectedTaskLogRunId] = useState<string | null>(null);
-  const [historicalTaskLogs, setHistoricalTaskLogs] = useState<{
+  const [selectedTaskLogs, setSelectedTaskLogs] = useState<{
     taskId: string;
     runId: string;
     logs: TaskLog[];
+    beforeId: string | null;
+    hasMore: boolean;
   } | null>(null);
   const [taskLogsLoading, setTaskLogsLoading] = useState(false);
+  const [taskLogsError, setTaskLogsError] = useState('');
   const [taskLogRunsLoading, setTaskLogRunsLoading] = useState(false);
   const [taskLogRunOpen, setTaskLogRunOpen] = useState(false);
 
@@ -1436,6 +1456,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         runtime.logRunCount = Math.max(runtime.logRunCount, existing.logRunCount);
       }
       return { ...current, [item.id]: runtime };
+    });
+    setSelectedTaskLogs((current) => {
+      if (!current || current.taskId !== item.id || !item.logs.length) return current;
+      const logs = mapWorkspaceTaskRuntime(item).logs.filter((log) => log.runId === current.runId);
+      return logs.length ? { ...current, logs: mergeTaskLogs(current.logs, logs) } : current;
     });
   }, []);
 
@@ -1593,16 +1618,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             },
           };
         });
-        setHistoricalTaskLogs((current) => {
+        setSelectedTaskLogs((current) => {
           if (
             !current
             || current.taskId !== message.task_id
             || current.runId !== log.run_id
           ) return current;
-          const logs = mergeTaskLog(current.logs, mappedLog);
-          return logs === current.logs
-            ? current
-            : { ...current, logs };
+          return { ...current, logs: mergeTaskLogs(current.logs, [mappedLog]) };
         });
       } else if (message.type === 'task_deleted' && message.task_id) {
         taskListRevisionRef.current += 1;
@@ -1784,13 +1806,15 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   const latestTaskLogRunId = selectedTask?.runtime.currentRunId
     ?? selectedTask?.runtime.logRuns[0]?.id
     ?? null;
+  const selectedLogRunId = selectedTaskLogRunId
+    && selectedTask?.runtime.logRuns.some((run) => run.id === selectedTaskLogRunId)
+    ? selectedTaskLogRunId
+    : latestTaskLogRunId;
+  selectedTaskLogRunRef.current = selectedLogRunId;
 
   useEffect(() => {
-    taskLogsRequestRef.current += 1;
     taskLogRunsRequestRef.current += 1;
     setSelectedTaskLogRunId(null);
-    setHistoricalTaskLogs(null);
-    setTaskLogsLoading(false);
     setTaskLogRunsLoading(false);
     setTaskLogRunOpen(false);
   }, [selectedTaskKey]);
@@ -1803,53 +1827,88 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     ));
   }, [latestTaskLogRunId, selectedTask]);
 
-  const handleTaskLogRunChange = useCallback(async (runId: string) => {
-    if (!selectedTaskKey) return;
+  const loadTaskLogs = useCallback(async (taskId: string, runId: string, beforeId?: string) => {
+    if (taskLogsLoadingRef.current) return;
     const requestId = ++taskLogsRequestRef.current;
-    setSelectedTaskLogRunId(runId === latestTaskLogRunId ? null : runId);
-    if (runId === latestTaskLogRunId) {
-      setHistoricalTaskLogs(null);
-      setTaskLogsLoading(false);
-      return;
-    }
+    taskLogsLoadingRef.current = true;
     setTaskLogsLoading(true);
+    setTaskLogsError('');
+    const isCurrentRequest = () => requestId === taskLogsRequestRef.current
+      && taskId === selectedTaskKeyRef.current
+      && runId === selectedTaskLogRunRef.current;
     try {
-      const [logs, run] = await Promise.all([
-        fetchWorkspaceTaskLogs(selectedTaskKey, runId),
-        fetchWorkspaceTaskRun(selectedTaskKey, runId),
+      const [page, run] = await Promise.all([
+        fetchWorkspaceTaskLogs(taskId, runId, beforeId),
+        beforeId ? Promise.resolve(null) : fetchWorkspaceTaskRun(taskId, runId),
       ]);
-      if (requestId !== taskLogsRequestRef.current || selectedTaskKey !== selectedTaskKeyRef.current) return;
-      setTaskRuntime((current) => {
-        const runtime = current[selectedTaskKey];
+      if (!isCurrentRequest()) return;
+      if (run) setTaskRuntime((current) => {
+        const runtime = current[taskId];
         if (!runtime) return current;
         return {
           ...current,
-          [selectedTaskKey]: { ...runtime, logRuns: mergeTaskLogRuns([run], runtime.logRuns) },
+          [taskId]: { ...runtime, logRuns: mergeTaskLogRuns([run], runtime.logRuns) },
         };
       });
-      setHistoricalTaskLogs({
-        taskId: selectedTaskKey,
-        runId,
-        logs: logs.map((log) => ({
-          id: log.id,
-          createdAt: log.created_at,
-          time: formatDateTime(log.created_at),
-          level: log.level,
-          message: log.message,
-          runId: log.run_id,
-        })),
+      setSelectedTaskLogs((current) => {
+        if (!current || current.taskId !== taskId || current.runId !== runId) return current;
+        return {
+          ...current,
+          logs: mergeTaskLogs(page.items.map((log) => ({
+            id: log.id,
+            createdAt: log.created_at,
+            time: formatDateTime(log.created_at),
+            level: log.level,
+            message: log.message,
+            runId: log.run_id,
+          })), current.logs),
+          beforeId: page.next_before_id,
+          hasMore: page.has_more,
+        };
       });
     } catch (error) {
       console.error('Failed to load task run logs', error);
-      if (requestId === taskLogsRequestRef.current && selectedTaskKey === selectedTaskKeyRef.current) {
-        setHistoricalTaskLogs({ taskId: selectedTaskKey, runId, logs: [] });
-      }
+      if (isCurrentRequest()) setTaskLogsError('执行日志加载失败');
     } finally {
-      if (requestId === taskLogsRequestRef.current && selectedTaskKey === selectedTaskKeyRef.current) {
+      if (isCurrentRequest()) {
+        taskLogsLoadingRef.current = false;
         setTaskLogsLoading(false);
       }
     }
-  }, [latestTaskLogRunId, selectedTaskKey]);
+  }, []);
+
+  useEffect(() => {
+    taskLogsRequestRef.current += 1;
+    taskLogsLoadingRef.current = false;
+    setTaskLogsLoading(false);
+    setTaskLogsError('');
+    setSelectedTaskLogs(activePanel === 'tasks' && selectedTaskKey && selectedLogRunId
+      ? { taskId: selectedTaskKey, runId: selectedLogRunId, logs: [], beforeId: null, hasMore: true }
+      : null);
+    if (activePanel === 'tasks' && selectedTaskKey && selectedLogRunId) {
+      void loadTaskLogs(selectedTaskKey, selectedLogRunId);
+    }
+    return () => {
+      taskLogsRequestRef.current += 1;
+      taskLogsLoadingRef.current = false;
+    };
+  }, [activePanel, loadTaskLogs, selectedTaskKey, selectedLogRunId]);
+
+  const loadMoreTaskLogs = useCallback(() => {
+    if (!selectedTaskLogs?.hasMore || taskLogsLoadingRef.current) return;
+    void loadTaskLogs(selectedTaskLogs.taskId, selectedTaskLogs.runId, selectedTaskLogs.beforeId ?? undefined);
+  }, [loadTaskLogs, selectedTaskLogs]);
+
+  const handleTaskLogsScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget;
+    if (target.scrollTop + target.clientHeight >= target.scrollHeight - listLoadThreshold) {
+      loadMoreTaskLogs();
+    }
+  }, [loadMoreTaskLogs]);
+
+  const handleTaskLogRunChange = useCallback((runId: string) => {
+    setSelectedTaskLogRunId(runId === latestTaskLogRunId ? null : runId);
+  }, [latestTaskLogRunId]);
 
   const handleTaskLogRunPopupScroll = useCallback(async (
     event: React.UIEvent<HTMLDivElement>,
@@ -2080,10 +2139,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       intervalValue: 30,
       intervalUnit: 'minute' as TaskIntervalUnit,
       templateParams: buildTaskTemplateParameterDrafts(template),
-      incremental: scheduleMode === 'recurring',
       incrementalField: defaultField,
       maxEmptyPages: 2,
       ...patch,
+      incremental: true,
     };
   }, [buildTaskTemplateParameterDrafts, taskTemplateOptions]);
 
@@ -2108,6 +2167,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskComposerDraft((prev) => ({
       ...prev,
       ...patch,
+      incremental: true,
     }));
   }, []);
 
@@ -2118,6 +2178,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       templateParams: buildTaskTemplateParameterDrafts(templateValue),
       incrementalField: inferIncrementalField(templateValue),
       ...patch,
+      incremental: true,
     }));
   }, [buildTaskTemplateParameterDrafts]);
 
@@ -2132,7 +2193,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     setTaskComposerDraft((prev) => ({
       ...prev,
       scheduleMode,
-      incremental: scheduleMode === 'recurring',
+      incremental: true,
     }));
   }, []);
 
@@ -2490,10 +2551,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const matchedTemplate = templates.find((item) => `${item.name}@${item.version}` === taskComposerDraft.template) ?? null;
     const composerKind = matchedTemplate ? inferSiteKind(matchedTemplate.dataType || '', matchedTemplate.name) : 'generic';
     const composerSummary = taskComposerDraft.scheduleMode === 'once'
-      ? '一次性任务适合补采、验证模板参数，默认按全量采集执行。'
+      ? '一次性任务按增量方式采集，自动选择时间水位或目录内容差分。'
       : taskComposerDraft.recurringMode === 'daily'
-        ? `周期任务会在每天 ${taskComposerDraft.dailyTime} 执行，默认按增量方式续采。`
-        : `周期任务会按每 ${taskComposerDraft.intervalValue} ${taskComposerDraft.intervalUnit === 'minute' ? '分钟' : '小时'} 执行，默认按增量方式续采。`;
+        ? `周期任务会在每天 ${taskComposerDraft.dailyTime} 执行，按增量方式续采。`
+        : `周期任务会按每 ${taskComposerDraft.intervalValue} ${taskComposerDraft.intervalUnit === 'minute' ? '分钟' : '小时'} 执行，按增量方式续采。`;
     const incrementalSummary = formatIncrementalSummary(taskComposerDraft);
     const nextRunSummary = formatTaskNextRun(taskComposerDraft);
     const templateSelectionRequired = !taskComposerDraft.templateLocked;
@@ -2661,11 +2722,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           <div className="workspace-dock-switch-row">
             <div>
               <strong>增量采集</strong>
-              <small>开启后使用 Redis 记录最后入库时间，下次从该时间减 1 天采集。</small>
+              <small>固定开启，按模板自动选择时间水位或目录内容差分。</small>
             </div>
             <Switch
-              checked={taskComposerDraft.incremental}
-              onChange={(checked) => updateTaskComposerDraft({ incremental: checked })}
+              checked
+              disabled
             />
           </div>
           {taskComposerDraft.incremental ? (
@@ -2677,12 +2738,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
               <div className="workspace-dock-form-grid" style={{ marginTop: 10 }}>
                 <label>
-                  <span>时间字段</span>
-                  <Input value={taskComposerDraft.incrementalField} readOnly />
+                  <span>增量方式</span>
+                  <Input value="由模板自动选择" readOnly />
                 </label>
                 <label>
                   <span>固定策略</span>
-                  <Input value="最后入库时间减 1 天" readOnly />
+                  <Input value="时间水位 / 目录内容差分" readOnly />
                 </label>
               </div>
             </div>
@@ -2719,12 +2780,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       : taskComposerDraft.recurringMode === 'daily'
         ? `Daily ${taskComposerDraft.dailyTime}`
         : `Every ${taskComposerDraft.intervalValue} ${taskComposerDraft.intervalUnit === 'minute' ? 'minutes' : 'hours'}`;
-    const incrementalSummary = taskComposerDraft.incremental ? 'Incremental collect' : 'Full collect';
+    const incrementalSummary = 'Incremental: time watermark or catalog content changes';
     const composerSummary = taskComposerDraft.scheduleMode === 'once'
-      ? 'Run this task once for validation, sampling, or a full manual collection.'
+      ? 'Run this task once using incremental collection.'
       : taskComposerDraft.recurringMode === 'daily'
-        ? `Run this task every day at ${taskComposerDraft.dailyTime}. Incremental collect is enabled by default.`
-        : `Run this task every ${taskComposerDraft.intervalValue} ${taskComposerDraft.intervalUnit === 'minute' ? 'minutes' : 'hours'}. Incremental collect is enabled by default.`;
+        ? `Run this task every day at ${taskComposerDraft.dailyTime} using incremental collection.`
+        : `Run this task every ${taskComposerDraft.intervalValue} ${taskComposerDraft.intervalUnit === 'minute' ? 'minutes' : 'hours'} using incremental collection.`;
 
     return (
       <section className="workspace-dock-detail is-task-composer">
@@ -2970,12 +3031,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           <div className="workspace-dock-switch-row">
             <div>
               <strong>Incremental Collect</strong>
-              <small>Turn off for a full run. Turn on to continue incrementally.</small>
+              <small>Required. Automatically uses a time watermark or catalog content changes.</small>
             </div>
             <Checkbox
               className="workspace-dock-task-checkbox"
-              checked={taskComposerDraft.incremental}
-              onChange={(event) => updateTaskComposerDraft({ incremental: event.target.checked })}
+              checked
+              disabled
             />
           </div>
           <div className="workspace-dock-switch-row">
@@ -3175,13 +3236,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
     const { runtime, display } = selectedTask;
     const writeCount = getTaskWriteCount(runtime);
-    const selectedRunLogs = selectedTaskLogRunId
-      && selectedTaskLogRunId !== latestTaskLogRunId
-      ? historicalTaskLogs?.taskId === selectedTask.key
-        && historicalTaskLogs.runId === selectedTaskLogRunId
-        ? historicalTaskLogs.logs
-        : []
-      : runtime.logs.filter((log) => log.runId === latestTaskLogRunId);
+    const selectedRunLogs = selectedTaskLogs?.taskId === selectedTask.key
+      && selectedTaskLogs.runId === selectedLogRunId
+      ? selectedTaskLogs.logs
+      : [];
     const selectedLogRun = runtime.logRuns.find((run) => run.id === (selectedTaskLogRunId ?? latestTaskLogRunId))
       ?? null;
     const logRunOptions = runtime.logRuns.map((run) => ({
@@ -3436,13 +3494,19 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records)}</span>
               </div>
             </div>
-            <div className="workspace-dock-log-list is-detail">
-              {taskLogsLoading ? <div className="workspace-dock-log-row">正在加载执行日志…</div> : null}
+            <div className="workspace-dock-log-list is-detail" key={`${selectedTask.key}-${selectedLogRunId}`} onScroll={handleTaskLogsScroll}>
               {selectedRunLogs.slice().reverse().map((log, index) => (
                 <div className={`workspace-dock-log-row is-${log.level}`} key={log.id != null ? `${selectedTask.key}-${log.id}` : `${selectedTask.key}-${log.runId}-${log.createdAt}-${log.message}-${index}`}>
                   <code>{renderConsoleLogMessage(log.message)}</code>
                 </div>
               ))}
+              <div className="workspace-dock-log-row" role={taskLogsError ? 'alert' : 'status'}>
+                {taskLogsLoading ? '正在加载执行日志…' : taskLogsError ? (
+                  <>{taskLogsError} <Button type="link" size="small" onClick={loadMoreTaskLogs}>重试</Button></>
+                ) : selectedTaskLogs?.hasMore ? (
+                  <Button type="link" size="small" onClick={loadMoreTaskLogs}>加载更早日志</Button>
+                ) : selectedRunLogs.length ? '已加载全部执行日志' : '暂无执行日志'}
+              </div>
             </div>
           </div>
         </div>

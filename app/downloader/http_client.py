@@ -509,7 +509,8 @@ class HttpClient:
         no_timeout: bool = False,
         adapter_name: str | None = None,
         rotate_proxy: bool = False,
-    ) -> str:
+        return_response: bool = False,
+    ) -> str | DownloadResponse:
         """请求页面并返回文本内容。
 
         Args:
@@ -647,6 +648,14 @@ class HttpClient:
                     task_id=task_id,
                 )
 
+                if return_response:
+                    return DownloadResponse(
+                        source_url=url,
+                        final_url=str(response.url),
+                        status_code=response.status_code,
+                        headers={str(k).lower(): str(v) for k, v in response.headers.items()},
+                        data=response.content,
+                    )
                 return response.text
 
             except Exception as e:
