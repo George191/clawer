@@ -105,7 +105,7 @@ class TsOds(ETLBase):
             inputs = [message.value for message in messages]
             if any(not isinstance(message, dict)
                    or message.get("data_type") != "financial_fact"
-                   or message.get("data_source") != "organization_sec_edgar"
+                   or message.get("data_source") != "financial_fact_sec_edgar"
                    or not message.get("record_id") for message in inputs):
                 return None
             def identity(row):

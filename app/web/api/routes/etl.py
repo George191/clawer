@@ -2,11 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi.responses import Response
 
+from app.etl.keyword_match_config import MAX_FILE_SIZE
 from app.web.api.dependencies.common import get_current_active_superuser, get_current_user
-from app.web.api.models.etl import CodePayload, DataQuery, OffsetUpdate, SqlQuery
+from app.web.api.models.etl import (
+    CodePayload,
+    DataQuery,
+    KeywordVersion,
+    OffsetUpdate,
+    SqlQuery,
+)
 from app.web.services import etl_runtime
+from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
 
@@ -24,6 +33,40 @@ async def published_data(token: str, limit: int = Query(50, ge=1, le=500),
 @read.get("/layers")
 async def layers() -> list[dict[str, Any]]:
     return await get_etl_layers().layers()
+
+
+@read.get("/task-config/vulnerability-keywords")
+async def vulnerability_keywords() -> dict[str, Any]:
+    return await keyword_files.configuration()
+
+
+@write.post("/task-config/vulnerability-keywords/versions")
+async def upload_vulnerability_keywords(file: UploadFile = File(...)) -> dict[str, Any]:
+    try:
+        data = await file.read(MAX_FILE_SIZE + 1)
+    finally:
+        await file.close()
+    return await keyword_files.upload(data)
+
+
+@write.put("/task-config/vulnerability-keywords/current")
+async def activate_vulnerability_keywords(payload: KeywordVersion) -> dict[str, Any]:
+    return await keyword_files.activate(payload.version)
+
+
+@read.get("/task-config/vulnerability-keywords/versions/{version}/file")
+async def download_vulnerability_keywords(version: str) -> Response:
+    data = await keyword_files.download(version)
+    return Response(data, media_type="application/yaml", headers={
+        "Content-Disposition": f'attachment; filename="vulnerability-keywords-{version}.yaml"',
+    })
+
+
+@read.get("/task-config/vulnerability-keywords/example")
+async def vulnerability_keywords_example() -> Response:
+    return Response(keyword_files.example_file(), media_type="application/yaml", headers={
+        "Content-Disposition": 'attachment; filename="vulnerability-keywords.yaml"',
+    })
 
 
 @read.get("/connections")

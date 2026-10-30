@@ -450,6 +450,16 @@ spider-crawler-financial_fact -> RDS -> etl-rds-financial_fact ├-> ODS -> etl-
 spider-crawler（旧 topic）     -> RDS -> 按实际写入表拆分输出    ┘
 ```
 
+漏洞关键词匹配沿用 PDF 内容提取的任务注册与结果落表方式：
+
+- 关键词保存在现有 MinIO bucket 的 `tasks/vulnerability_keyword_match/keywords/versions/<UUID>.yaml`，`tasks/vulnerability_keyword_match/keywords/current.json` 指向当前版本；每次上传保留独立文件，启用历史版本即可回滚。并发启用以最后成功写入指针的操作为准，不修改 bucket 的版本设置，也不使用数据库配置表。
+- 在 Flow → `ts_task` → `task_vulnerability` → **Keywords** 中查看当前词表、下载 YAML 和历史文件；管理员可上传并启用新文件或启用历史版本。文件格式为 `keywords: [GPS, VSAT]`，支持空数组停用；限制为 UTF-8 YAML、1 MiB、1000 个词、每词 200 字符。
+- 原交接的 38 个关键词只保留在 `app/etl/tasks/vulnerability_keywords.yaml` 示例文件中，可由前端下载并首次上传。TASK 不自动上传或回退到默认词表；未配置、文件损坏或 MinIO 读取失败均报错。任务缓存当前词表最多 30 秒，版本不变时不重复下载词表文件。
+- 匹配 ODS 的 `description`、`descriptions`、`affected`、`weaknesses`、`configurations` 中的字符串值，忽略大小写并使用单词边界；不匹配字段名、引用链接或系统元数据。原 CVE 规则之外，补充支持 NVD 的受影响产品配置。
+- 结果写入 `ts_task.task_vulnerability.result`（JSONB 数组，例如 `["satellite", "satellite modem", "GPS"]`），`result_type=json`；同一来源 record/task 更新最新结果，无命中保存 `[]`，不复制 ODS 内容。
+
+部署后运行 `python -m app.etl.main --init-schema`，重启 Web API 和 TASK worker，并在前端上传首个词表。已有记录不会因配置变化自动重算；需要重跑对应 ODS 消息。文件接口位于 `/etl/task-config/vulnerability-keywords`（API 前缀按部署配置）：`GET` 查询当前词表和版本，`POST /versions` 上传文件（multipart `file`），`PUT /current` 启用版本（`{"version": "UUID"}`），`GET /versions/{version}/file` 下载历史文件，`GET /example` 下载示例。
+
 ## Web API
 
 核心路由挂载在 `/api` 下：

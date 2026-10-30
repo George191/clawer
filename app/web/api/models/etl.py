@@ -30,3 +30,8 @@ class CodePayload(BaseModel):
 
 class SqlQuery(BaseModel):
     sql: str = Field(min_length=1, max_length=50_000)
+
+
+class KeywordVersion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: str = Field(min_length=36, max_length=36)

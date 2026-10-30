@@ -1,12 +1,12 @@
 import  React,  {  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
 import  {  useLocation,  useNavigate  }  from  'react-router-dom';
-import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Spin,  Table,  Tag,  Tabs,  message  }  from  'antd';
+import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Spin,  Table,  Tag,  Tabs,  Upload,  message  }  from  'antd';
 import  enUS  from  'antd/locale/en_US';
 import  {  AlertOutlined,  ApartmentOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  BranchesOutlined,  CaretRightOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  ExperimentOutlined,  PlusOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  UploadOutlined  }  from  '@ant-design/icons';
 import  '../ProductWorkspace/workspace.css';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
-import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, fetchTablePartitions, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, fetchEtlConnections, createEtlConnection, updateEtlConnection, deleteEtlConnection, updateEtlSchema, deleteEtlSchema, createEtlTable, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi } from '../../services/api';
-import type { EtlConnection, EtlDataQuery, EtlPublishedApi } from '../../services/api';
+import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, fetchTablePartitions, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, fetchEtlConnections, createEtlConnection, updateEtlConnection, deleteEtlConnection, updateEtlSchema, deleteEtlSchema, createEtlTable, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadVulnerabilityKeywordsExample } from '../../services/api';
+import type { EtlConnection, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
 import  type  {  LayerNode,  LayerTable,  QueryResult,  EtlPartition,  EtlStreamState  }  from  '../../services/types';
 
 const  pageMeta:  Record<string,  {  title:  string;  description:  string  }>  =  {
@@ -378,6 +378,12 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const [streamError, setStreamError] = useState('');
     const [scriptNote, setScriptNote] = useState('');
     const [mutationLoading, setMutationLoading] = useState(false);
+    const [keywordsOpen, setKeywordsOpen] = useState(false);
+    const [keywordConfig, setKeywordConfig] = useState<VulnerabilityKeywordConfig>();
+    const [keywordsLoading, setKeywordsLoading] = useState(false);
+    const [keywordsError, setKeywordsError] = useState('');
+    const [keywordsSaving, setKeywordsSaving] = useState(false);
+    const [keywordDownload, setKeywordDownload] = useState<string>();
     const [refreshVersion, setRefreshVersion] = useState(0);
     const [pageNumber, setPageNumber] = useState(1);
     const [pageSize, setPageSize] = useState(20);
@@ -587,6 +593,33 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const removeApi = (api: OpenApiAccess) => Modal.confirm({ title: 'Revoke this read API?', content: api.url, onOk: async () => {
         try { await deleteEtlApi(selectedSchema, table.name, api.id); setOpenApis((current) => current.filter((item) => item.id !== api.id)); } catch (error) { message.error(errorText(error)); throw error; }
     } });
+    const uploadKeywords = async (file: File) => {
+        if (!canManage || keywordsSaving) return;
+        if (file.size > 1024 * 1024) { message.error('YAML files must be at most 1 MiB'); return; }
+        setKeywordsSaving(true);
+        try {
+            setKeywordConfig(await uploadVulnerabilityKeywords(file));
+            setKeywordsError(''); message.success('YAML uploaded and activated; changes take effect within 30 seconds');
+        } catch (error) { message.error(errorText(error)); } finally { setKeywordsSaving(false); }
+    };
+    const activateKeywords = async (version: string) => {
+        if (!canManage || keywordsSaving) return;
+        setKeywordsSaving(true);
+        try {
+            setKeywordConfig(await activateVulnerabilityKeywordVersion(version));
+            setKeywordsError(''); message.success('Version activated; changes take effect within 30 seconds');
+        } catch (error) { message.error(errorText(error)); } finally { setKeywordsSaving(false); }
+    };
+    const downloadKeywords = async (version?: string) => {
+        setKeywordDownload(version || 'example');
+        try {
+            const blob = version ? await downloadVulnerabilityKeywordVersion(version) : await downloadVulnerabilityKeywordsExample();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url; link.download = `vulnerability-keywords-${version || 'example'}.yaml`; link.click();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) { message.error(errorText(error)); } finally { setKeywordDownload(undefined); }
+    };
     const  [newTableName,  setNewTableName]  =  useState('');
     const  [newTableDescription,  setNewTableDescription]  =  useState('');
     const  [fields,  setFields]  =  useState([{  id:  'field-1',  name:  'record_id',  type:  'TEXT',  length:  '',  nullable:  false,  primary:  true,  comment:  'Business  record  identifier'  },  {  id:  'field-empty',  name:  '',  type:  'TEXT',  length:  '',  nullable:  true,  primary:  false,  comment:  ''  }]);
@@ -688,6 +721,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     }, [search, serverTables, tablesLoading, tablesLoadedSchema, selectedSchema]);
     selection.current = `${selectedSchema}/${table.name}`;
     useEffect(() => {
+        setKeywordsOpen(false);
         cancelRowEdit(); setPartition(undefined); setPageNumber(1); setData(undefined); setPartitions([]); setScript(''); setScriptNote(''); setOpenApis([]); setInputTopics([]); setActiveTopicIndex(0); setStream(undefined); setOffsets([]); setStreamError(''); setOffsetPartition(undefined); setOffset(undefined); setOffsetOpen(false);
         setFilterText(''); setReferenceColumns({}); setFilterRules([{ id: 'rule-1', field: '', operator: '=', value: '', active: true, join: 'and' }]); setSortField(''); setSortConditions([]); setAppliedQuery({ filters: [], sorts: [], search: '' });
         if (!table.name) return;
@@ -697,6 +731,15 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         Promise.all([fetchLayerScript(selectedSchema, table.name), fetchHandlerCode(selectedSchema, table.name)]).then(([result, draft]) => { if (valid()) { setScript(draft.code || result.code || ''); setScriptNote(draft.code && draft.code !== result.code ? 'Saved draft' : result.available ? result.path || 'Deployed handler' : result.reason || 'No deployed handler'); } }).catch((error) => { if (valid()) setScriptNote(errorText(error)); });
         return () => { metadataRequest.current++; };
     }, [selectedSchema, table.name]);
+    useEffect(() => {
+        if (!keywordsOpen) return;
+        let active = true;
+        setKeywordsLoading(true); setKeywordsError(''); setKeywordConfig(undefined);
+        fetchVulnerabilityKeywords().then((config) => {
+            if (active) setKeywordConfig(config);
+        }).catch((error) => { if (active) setKeywordsError(errorText(error)); }).finally(() => { if (active) setKeywordsLoading(false); });
+        return () => { active = false; };
+    }, [keywordsOpen]);
     useEffect(() => {
         const version = ++apiRequest.current;
         if (!canManage || !table.name) { setOpenApis([]); return; }
@@ -1006,6 +1049,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         </div>
                         <div  className="flow-table-header-right">
                             <div className="flow-health-badge" title={stream?.reason || streamError}><i className={`flow-dot ${stream?.available || schemaNode?.status === 'running' ? 'flow-dot--green' : ''}`} /><span>{stream?.available ? 'Stream available' : schemaNode?.status === 'running' ? 'Schema accessible' : 'Unavailable'}</span></div>
+                            {selectedSchema === 'ts_task' && table.name === 'task_vulnerability' && <Button size="small" onClick={() => setKeywordsOpen(true)}>Keywords</Button>}
                             {canManage && <Button size="small" disabled={!stream?.available || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
                         </div>
                     </div>
@@ -1046,6 +1090,25 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             <div  className="flow-script-actions"><Button type="primary" onClick={runDryRun} disabled={!script}>Validate syntax</Button>{canManage && <Button onClick={saveScript} disabled={!script}>Save draft</Button>}<span>AST validation only; code is not executed</span></div>
 
                         </div>
+                    </Modal>
+                    <Modal title="Vulnerability keyword files" open={keywordsOpen} onCancel={() => { if (!keywordsSaving) setKeywordsOpen(false); }} footer={<Button disabled={keywordsSaving} onClick={() => setKeywordsOpen(false)}>Close</Button>} width={760}>
+                        <p>Upload a YAML file with a keywords array (up to 1 MiB, 1,000 keywords, 200 characters each). Matching ignores case, uses word boundaries, and supports multiple keywords per record. An empty array disables matching.</p>
+                        <p>Activating a version takes effect within 30 seconds for subsequent processing. Rerun historical records to update their results.</p>
+                        <div className="flow-script-actions">
+                            <Button icon={<DownloadOutlined />} loading={keywordDownload === 'example'} disabled={!!keywordDownload} onClick={() => downloadKeywords()}>Download example YAML</Button>
+                            {canManage && <Upload accept=".yaml,.yml" showUploadList={false} disabled={keywordsLoading || keywordsSaving} beforeUpload={(file) => { void uploadKeywords(file); return false; }}><Button type="primary" icon={<UploadOutlined />} loading={keywordsSaving} disabled={keywordsLoading}>Upload and activate YAML</Button></Upload>}
+                        </div>
+                        {keywordsError && <p role="alert">{keywordsError}</p>}
+                        {keywordsLoading ? <Spin size="small" /> : keywordConfig && <>
+                            <p>Current version: <strong>{keywordConfig.current_version || 'None'}</strong> · {keywordConfig.keywords.length} keywords</p>
+                            <div aria-label="Current keywords" style={{ maxHeight: 160, overflowY: 'auto', marginBottom: 16 }}>{keywordConfig.keywords.length ? keywordConfig.keywords.map((keyword) => <Tag key={keyword}>{keyword}</Tag>) : <span>No active keywords</span>}</div>
+                            <Table className="flow-data-table" size="small" rowKey="version" dataSource={keywordConfig.versions} pagination={{ pageSize: 5 }} columns={[
+                                { title: 'Version', dataIndex: 'version', key: 'version', ellipsis: true, render: (version: string) => <span>{version}{version === keywordConfig.current_version && <Tag color="blue">Current</Tag>}</span> },
+                                { title: 'Created', dataIndex: 'created_at', key: 'created_at', render: (value: string) => new Date(value).toLocaleString() },
+                                { title: 'Size', dataIndex: 'size', key: 'size', render: (size: number) => `${size.toLocaleString()} B` },
+                                { title: 'Actions', key: 'actions', width: 180, render: (_: unknown, row: VulnerabilityKeywordConfig['versions'][number]) => <><Button size="small" loading={keywordDownload === row.version} disabled={!!keywordDownload} onClick={() => downloadKeywords(row.version)}>Download</Button>{canManage && row.version !== keywordConfig.current_version && <Button size="small" disabled={keywordsSaving} onClick={() => activateKeywords(row.version)}>Activate</Button>}</> },
+                            ]} />
+                        </>}
                     </Modal>
                 </div>}
             </section>

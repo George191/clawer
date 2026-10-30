@@ -54,4 +54,4 @@ def get_tasks(*names: str) -> TaskRunner:
     return TaskRunner([_get_task(name) for name in names])
 
 
-from app.etl.tasks import pdf_to_markdown  # noqa: E402, F401
+from app.etl.tasks import pdf_to_markdown, vulnerability_keyword_match  # noqa: E402, F401

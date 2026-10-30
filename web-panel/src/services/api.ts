@@ -295,6 +295,25 @@ export const updateEtlApi = (layer: string, table: string, id: string, payload: 
 export const deleteEtlApi = (layer: string, table: string, id: string): Promise<void> =>
   client.delete(`/etl/${layer}/${table}/apis/${id}`).then(() => undefined);
 
+export interface VulnerabilityKeywordConfig {
+  current_version: string | null;
+  keywords: string[];
+  versions: Array<{ version: string; created_at: string; size: number }>;
+}
+export const fetchVulnerabilityKeywords = (): Promise<VulnerabilityKeywordConfig> =>
+  client.get('/etl/task-config/vulnerability-keywords').then((r) => unwrap<VulnerabilityKeywordConfig>(r.data));
+export const uploadVulnerabilityKeywords = (file: File): Promise<VulnerabilityKeywordConfig> => {
+  const data = new FormData();
+  data.append('file', file);
+  return client.post('/etl/task-config/vulnerability-keywords/versions', data, { headers: { 'Content-Type': 'multipart/form-data' } }).then((r) => unwrap<VulnerabilityKeywordConfig>(r.data));
+};
+export const activateVulnerabilityKeywordVersion = (version: string): Promise<VulnerabilityKeywordConfig> =>
+  client.put('/etl/task-config/vulnerability-keywords/current', { version }).then((r) => unwrap<VulnerabilityKeywordConfig>(r.data));
+export const downloadVulnerabilityKeywordVersion = (version: string): Promise<Blob> =>
+  client.get(`/etl/task-config/vulnerability-keywords/versions/${encodeURIComponent(version)}/file`, { responseType: 'blob' }).then((r) => r.data as Blob);
+export const downloadVulnerabilityKeywordsExample = (): Promise<Blob> =>
+  client.get('/etl/task-config/vulnerability-keywords/example', { responseType: 'blob' }).then((r) => r.data as Blob);
+
 export const executeQuery = (sql: string): Promise<QueryResult> =>
   client.post('/etl/query', { sql }).then((r) => unwrap<QueryResult>(r.data));
 
