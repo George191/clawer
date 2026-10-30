@@ -7,10 +7,8 @@ import logging
 import sys
 import threading
 from contextvars import ContextVar
-from datetime import datetime, timezone
 from typing import Any
 
-from app.logger.task_format import format_task_log_message
 from app.web.services.automation_task_store import automation_task_store
 
 _writing_task_logs: ContextVar[bool] = ContextVar("writing_task_logs", default=False)
@@ -26,6 +24,8 @@ PROGRESS_LINE_PREFIXES = ("download progress:", "download finished:")
 
 class TaskLogCapture(logging.Handler):
     """Copy task-scoped console records to ``automation_task_logs``."""
+
+    executor = "Scheduler"
 
     def __init__(self, task_id: str, run_id: str, store: Any = automation_task_store) -> None:
         super().__init__(logging.NOTSET)
@@ -64,15 +64,10 @@ class TaskLogCapture(logging.Handler):
             self.handleError(record)
 
     def _log_item(self, record: logging.LogRecord) -> dict[str, Any]:
-        event_time = datetime.fromtimestamp(record.created, timezone.utc)
         return {
-            "run_id": self.run_id,
-            "level": "warn" if record.levelno >= logging.WARNING else "info",
-            "message": format_task_log_message(
-                logging.Formatter("%(message)s").format(record), record.levelno,
-                "Scheduler", created_at=event_time,
-            ),
-            "created_at": event_time,
+            "level": record.levelno,
+            "message": logging.Formatter("%(message)s").format(record),
+            "created_at": record.created,
         }
 
     async def stop(self) -> None:
@@ -106,29 +101,20 @@ class TaskLogCapture(logging.Handler):
                 _writing_task_logs.reset(token)
 
     async def _write_item(self, item: dict[str, Any]) -> None:
-        # Stored lines carry the celery console prefix, so match the
-        # marker anywhere in the message instead of startswith.
-        if any(marker in item["message"] for marker in PROGRESS_LINE_PREFIXES):
-            await self._write_progress_line(item)
-        else:
-            await self._store.append_task_logs(self.task_id, [item])
-
-    async def _write_progress_line(self, item: dict[str, Any]) -> None:
-        """Insert once, then keep rewriting the same row so the UI shows one bar."""
-        if self._progress_log_id is not None:
-            rewritten = await self._store.update_task_log_message(
-                self.task_id, self._progress_log_id, item["message"]
-            )
-            if rewritten:
-                return
-            self._progress_log_id = None
-        inserted = await self._store.append_task_logs(self.task_id, [item])
-        if inserted and inserted[0].get("id") is not None:
-            self._progress_log_id = inserted[0]["id"]
+        progress = any(marker in item["message"] for marker in PROGRESS_LINE_PREFIXES)
+        inserted = await self._store.write_task_log(
+            self.task_id, self.run_id, self.executor, item["level"], item["message"],
+            created_at=item["created_at"],
+            log_id=self._progress_log_id if progress else None,
+        )
+        if progress and inserted:
+            self._progress_log_id = inserted[0].get("id")
 
 
 class WorkspaceTaskLogCapture(TaskLogCapture):
     """Capture only this crawl's context and delegate formatting to the store."""
+
+    executor = "Crawler"
 
     def start(self) -> None:
         self._capture_token = _workspace_log_capture.set(self)
@@ -137,23 +123,6 @@ class WorkspaceTaskLogCapture(TaskLogCapture):
     def emit(self, record: logging.LogRecord) -> None:
         if _workspace_log_capture.get() is self:
             super().emit(record)
-
-    def _log_item(self, record: logging.LogRecord) -> dict[str, Any]:
-        return {
-            "level": record.levelno,
-            "message": logging.Formatter("%(message)s").format(record),
-            "created_at": record.created,
-        }
-
-    async def _write_item(self, item: dict[str, Any]) -> None:
-        progress = any(marker in item["message"] for marker in PROGRESS_LINE_PREFIXES)
-        inserted = await self._store.write_task_log(
-            self.task_id, self.run_id, "Crawler", item["level"], item["message"],
-            created_at=item["created_at"],
-            log_id=self._progress_log_id if progress else None,
-        )
-        if progress and inserted:
-            self._progress_log_id = inserted[0].get("id")
 
     async def stop(self) -> None:
         try:

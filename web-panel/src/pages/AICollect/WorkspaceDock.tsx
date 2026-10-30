@@ -131,12 +131,12 @@ interface TemplateDraft {
 }
 
 interface TaskLog {
-  id?: WorkspaceTaskLog['id'];
+  id: WorkspaceTaskLog['id'];
   createdAt: string;
   time: string;
   level: TaskLogLevel;
   message: string;
-  runId: string | null;
+  runId: string;
 }
 
 interface TaskRuntimeItem {
@@ -578,13 +578,7 @@ const mergeTaskLogRuns = (
 };
 
 const mergeTaskLog = (logs: TaskLog[], incoming: TaskLog): TaskLog[] => {
-  const index = logs.findIndex((log) => (
-    log.id != null && incoming.id != null
-      ? String(log.id) === String(incoming.id)
-      : log.runId === incoming.runId
-        && log.createdAt === incoming.createdAt
-        && log.message === incoming.message
-  ));
+  const index = logs.findIndex((log) => String(log.id) === String(incoming.id));
   if (index < 0) return [...logs, incoming].slice(-200);
   if (logs[index].message === incoming.message && logs[index].id === incoming.id) return logs;
   return logs.map((log, position) => (position === index ? incoming : log));
@@ -593,8 +587,7 @@ const mergeTaskLog = (logs: TaskLog[], incoming: TaskLog): TaskLog[] => {
 const mergeTaskLogs = (logs: TaskLog[], incoming: TaskLog[]): TaskLog[] => {
   const merged = new Map<string, TaskLog>();
   for (const log of [...logs, ...incoming]) {
-    const key = log.id != null ? String(log.id) : `${log.runId}-${log.createdAt}-${log.message}`;
-    merged.set(key, log);
+    merged.set(String(log.id), log);
   }
   return [...merged.values()].sort((left, right) => {
     const timeDifference = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
@@ -602,8 +595,8 @@ const mergeTaskLogs = (logs: TaskLog[], incoming: TaskLog[]): TaskLog[] => {
     const fractionDifference = Number(left.createdAt.match(/\.(\d+)/)?.[1].padEnd(6, '0') ?? 0)
       - Number(right.createdAt.match(/\.(\d+)/)?.[1].padEnd(6, '0') ?? 0);
     if (fractionDifference) return fractionDifference;
-    const leftId = String(left.id ?? '');
-    const rightId = String(right.id ?? '');
+    const leftId = String(left.id);
+    const rightId = String(right.id);
     return leftId.length - rightId.length || leftId.localeCompare(rightId);
   });
 };
@@ -641,8 +634,7 @@ const renderDownloadLogText = (message: string): React.ReactNode => {
 };
 
 const renderConsoleLogMessage = (message: string): React.ReactNode => {
-  const match = message.match(consoleLogPrefixPattern);
-  if (!match) return renderDownloadLogText(message);
+  const match = message.match(consoleLogPrefixPattern)!;
   const level = match[4].toLowerCase();
   return (
     <>
@@ -3495,8 +3487,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               </div>
             </div>
             <div className="workspace-dock-log-list is-detail" key={`${selectedTask.key}-${selectedLogRunId}`} onScroll={handleTaskLogsScroll}>
-              {selectedRunLogs.slice().reverse().map((log, index) => (
-                <div className={`workspace-dock-log-row is-${log.level}`} key={log.id != null ? `${selectedTask.key}-${log.id}` : `${selectedTask.key}-${log.runId}-${log.createdAt}-${log.message}-${index}`}>
+              {selectedRunLogs.slice().reverse().map((log) => (
+                <div className={`workspace-dock-log-row is-${log.level}`} key={`${selectedTask.key}-${log.id}`}>
                   <code>{renderConsoleLogMessage(log.message)}</code>
                 </div>
               ))}

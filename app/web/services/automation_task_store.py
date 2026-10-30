@@ -60,13 +60,6 @@ class AutomationTaskStore:
             task["favicon_url"] = minio.build_object_url(str(template.get("icon") or ""))
         return tasks
 
-    async def append_task_log(
-        self, task_id: str, level: str, message: str, run_id: str | None = None,
-    ) -> None:
-        await self.append_task_logs(task_id, [{
-            "level": level, "message": message, "run_id": run_id,
-        }])
-
     async def write_task_log(
         self,
         task_id: str,
@@ -83,10 +76,9 @@ class AutomationTaskStore:
         Pass the event time when capturing an existing LogRecord. An explicit
         owner is required so background workers never fall back to a newer run.
         ``log_id`` replaces a live progress row without incrementing log_count.
-        Existing append_task_log(s) callers use the same format at insertion.
         """
-        if not task_id or not run_id:
-            raise ValueError("Task logs require task_id and run_id")
+        if not task_id or not run_id or not executor:
+            raise ValueError("Task logs require task_id, run_id and executor")
         levelno = level if isinstance(level, int) else getattr(logging, level.upper(), None)
         if level == "ok":
             levelno = logging.INFO
@@ -95,46 +87,39 @@ class AutomationTaskStore:
         event_time = task_log_time(created_at)
         text = logging.LogRecord(executor, levelno, "", 0, message, args, None).getMessage()
         formatted = format_task_log_message(text, "ok" if level == "ok" else levelno, executor, event_time)
-        if log_id is not None and await self.update_task_log_message(
-            task_id, log_id, formatted, run_id=run_id,
+        stored_level = "ok" if level == "ok" else "warn" if levelno >= logging.WARNING else "info"
+        if log_id is not None and await self._update_task_log_message(
+            task_id, run_id, log_id, stored_level, formatted,
         ):
             return [{"id": log_id}]
-        return await self.append_task_logs(task_id, [{
+        return await self._append_task_logs(task_id, [{
             "run_id": run_id,
-            "level": "ok" if level == "ok" else "warn" if levelno >= logging.WARNING else "info",
+            "level": stored_level,
             "message": formatted,
             "created_at": event_time,
         }])
 
-    async def append_task_logs(
+    async def _append_task_logs(
         self,
         task_id: str,
         logs: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         if not logs:
             return []
-        entries = []
-        for log in logs:
-            entry = dict(log)
-            event_time = task_log_time(entry.get("created_at"))
-            entry["message"] = format_task_log_message(
-                entry["message"], entry.get("level", "info"), entry.get("executor") or "System", event_time,
-            )
-            entry["created_at"] = event_time
-            entries.append(entry)
+        if not task_id or any(not log.get("run_id") for log in logs):
+            raise ValueError("Task logs require task_id and run_id")
         await self.initialize()
         inserted = await self._pg.fetch_all(
             """
             WITH inserted AS (
                 INSERT INTO public.automation_task_logs
                     (task_id, run_id, level, message, created_at)
-                SELECT task.id, run.id, entry.level, entry.message,
-                       COALESCE(entry.created_at, now())
+                SELECT task.id, run.id, entry.level, entry.message, entry.created_at
                 FROM public.automation_tasks task
                 CROSS JOIN jsonb_to_recordset(CAST(:logs AS jsonb))
                     AS entry(run_id uuid, level text, message text, created_at timestamptz)
                 JOIN public.automation_task_runs run
-                  ON run.id = COALESCE(entry.run_id, task.current_run_id)
+                  ON run.id = entry.run_id
                  AND run.task_id = task.id
                 WHERE task.id = CAST(:task_id AS uuid)
                   AND task.deleted_at IS NULL
@@ -148,42 +133,33 @@ class AutomationTaskStore:
             )
             SELECT id, run_id::text AS run_id, level, message, created_at FROM inserted
             """,
-            {"task_id": task_id, "logs": json.dumps(entries, default=str, ensure_ascii=False)},
+            {"task_id": task_id, "logs": json.dumps(logs, default=str, ensure_ascii=False)},
         )
         for log in inserted:
             await publish_task_log(task_id, log)
         return inserted
 
-    async def update_task_log_message(
-        self, task_id: str, log_id: int, message: str, *, run_id: str | None = None,
+    async def _update_task_log_message(
+        self, task_id: str, run_id: str, log_id: int, level: str, message: str,
     ) -> bool:
         """Rewrite one log row in place (e.g. a live progress bar) and republish it.
 
         The row id is stable, so websocket clients that key by id render a single
         updating line instead of a new row per refresh.
         """
-        event_time = task_log_time()
-        formatted = format_task_log_message(message, "info", created_at=event_time)
-        if formatted != message:
-            current = await self._pg.fetch_one(
-                "SELECT level FROM public.automation_task_logs WHERE id = :log_id "
-                "AND task_id = CAST(:task_id AS uuid) "
-                "AND (CAST(:run_id AS uuid) IS NULL OR run_id = CAST(:run_id AS uuid))",
-                {"task_id": task_id, "run_id": run_id, "log_id": log_id},
-            )
-            if current is None:
-                return False
-            formatted = format_task_log_message(message, current["level"], created_at=event_time)
+        if not task_id or not run_id:
+            raise ValueError("Task logs require task_id and run_id")
+        await self.initialize()
         updated = await self._pg.fetch_one(
             """
             UPDATE public.automation_task_logs
-            SET message = :message
+            SET level = :level, message = :message
             WHERE id = :log_id
               AND task_id = CAST(:task_id AS uuid)
-              AND (CAST(:run_id AS uuid) IS NULL OR run_id = CAST(:run_id AS uuid))
+              AND run_id = CAST(:run_id AS uuid)
             RETURNING id, run_id::text AS run_id, level, message, created_at
             """,
-            {"task_id": task_id, "run_id": run_id, "log_id": log_id, "message": formatted},
+            {"task_id": task_id, "run_id": run_id, "log_id": log_id, "level": level, "message": message},
         )
         if not updated:
             return False
@@ -719,10 +695,6 @@ class AutomationTaskStore:
         )
         if task is None:
             return None
-        for log in task["logs"]:
-            log["message"] = format_task_log_message(
-                log["message"], log["level"], created_at=log["created_at"],
-            )
         return (await self._with_task_icons([task]))[0]
 
     async def cleanup_task_logs(self) -> dict[str, int]:
@@ -745,7 +717,7 @@ class AutomationTaskStore:
         self, task_id: str, run_id: str, *, before_id: int | None = None, limit: int = 200,
     ) -> list[dict[str, Any]]:
         await self.initialize()
-        logs = await self._pg.fetch_all(
+        return await self._pg.fetch_all(
             """
             SELECT id, level, message, created_at, run_id::text AS run_id
             FROM (
@@ -769,11 +741,6 @@ class AutomationTaskStore:
             """,
             {"task_id": task_id, "run_id": run_id, "before_id": before_id, "limit": limit},
         )
-        for log in logs:
-            log["message"] = format_task_log_message(
-                log["message"], log["level"], created_at=log["created_at"],
-            )
-        return logs
 
     async def get_task_log_runs(
         self,

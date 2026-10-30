@@ -128,22 +128,18 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
 
             code = data.get("code", "")
             if code == ERROR_CODE_RATE_LIMIT:
-                msg = data.get("msg", "Unknown error")
                 logger.warning(
-                    "ZdopenAPI returned code=%s: %s retrying in %ds",
+                    "ZdopenAPI rate limited: code=%s; retrying in %ds",
                     code,
-                    msg,
                     RATE_LIMIT_WAIT_SECONDS,
                 )
                 await controlled_sleep(RATE_LIMIT_WAIT_SECONDS)
                 continue
 
             if code == ERROR_CODE_IP_IN_USE:
-                msg = data.get("msg", "Unknown error")
                 logger.warning(
-                    "ZdopenAPI returned code=%s: %s; skipping this source so another configured source can be used",
+                    "ZdopenAPI client IP already in use: code=%s; skipping this source so another configured source can be used",
                     code,
-                    msg,
                 )
                 return []
 
@@ -179,9 +175,8 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
         code = data.get("code")
         if code != "10001":
             logger.warning(
-                "ZdopenAPI returned error code=%s: %s",
+                "ZdopenAPI request failed: code=%s",
                 code,
-                data.get("msg", "Unknown error"),
             )
             return []
 

@@ -218,11 +218,11 @@ export interface WorkspaceTemplate {
 }
 
 export interface WorkspaceTaskLog {
-  id?: number | string;
+  id: number | string;
   level: 'info' | 'ok' | 'warn';
   message: string;
   created_at: string;
-  run_id: string | null;
+  run_id: string;
 }
 
 export interface WorkspaceTaskLogPage {
