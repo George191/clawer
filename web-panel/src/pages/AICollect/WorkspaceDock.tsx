@@ -3494,8 +3494,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 <span className="is-added">+{selectedLogRun?.inserted_records ?? '--'}</span>
                 <span className="is-updated">~{selectedLogRun?.updated_records ?? '--'}</span>
                 <span className="is-deleted">-{selectedLogRun?.deleted_records ?? '--'}</span>
-                <span className="is-download"><DownloadOutlined />{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)}</span>
-                <span className="is-sync"><SyncOutlined />{syncedRecordCount}</span>
               </div>
             </div>
             <div className="workspace-dock-worker-notice workspace-dock-sync-notice" role="status" aria-live="polite">
@@ -4933,10 +4931,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           align-items: center;
           gap: 4px;
         }
-        .workspace-dock-diff-stats .anticon {
-          font-size: 10px;
-          line-height: 1;
-        }
         .workspace-dock-diff-stats .is-added {
           color: ${aura.success};
         }
@@ -4945,18 +4939,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-diff-stats .is-deleted {
           color: #F4A4C1;
-        }
-        .workspace-dock-diff-stats .is-download {
-          color: #F6C35B;
-        }
-        .workspace-dock-diff-stats .is-download .anticon {
-          color: #F6C35B;
-        }
-        .workspace-dock-diff-stats .is-sync {
-          color: #8AB4FF;
-        }
-        .workspace-dock-diff-stats .is-sync .anticon {
-          color: #8AB4FF;
         }
         .workspace-dock-history-bars {
           margin-top: 10px;
