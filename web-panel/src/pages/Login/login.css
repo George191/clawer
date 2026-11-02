@@ -39,9 +39,10 @@
 .sp-login-form-wrap .ant-input-affix-wrapper:hover { background: rgba(8,12,19,.9); }
 .sp-login-form-wrap .ant-input-affix-wrapper-focused { border-color: #018bff; box-shadow: 0 0 0 2px rgba(1,139,255,.12), 0 0 22px rgba(1,139,255,.08); }
 .sp-login-form-wrap .ant-input { background: transparent; }.sp-login-form-wrap .ant-input-prefix { color: #6f8198; margin-right: 10px; }
-/* Override the browser autofill fill and Ant Design's important focus shadow reset. */
+/* Apply the autofill mask immediately, without Ant Design's input shadow transition. */
 .sp-login .sp-login-form-wrap input.ant-input:is(:autofill, :-webkit-autofill) {
   box-shadow: 0 0 0 1000px #0c0f15 inset !important;
+  transition: none;
   -webkit-text-fill-color: #f5f7fb;
   caret-color: #f5f7fb;
 }
@@ -58,7 +59,7 @@
 .sp-recovery-progress span.is-active { background: linear-gradient(90deg, #018bff, #2dd4bf); box-shadow: 0 0 10px rgba(1,139,255,.3); }
 .sp-login-form-wrap .sp-verification-code { height: 54px; border-color: rgba(138,180,255,.14); border-radius: 6px; background: rgba(12,15,21,.72); text-align: center; color: #55c5ff; font-family: "Courier New", monospace; font-size: 24px; font-weight: 700; letter-spacing: .45em; padding-left: .45em; }
 .sp-recovery-back { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 20px; color: #2dd4bf; font-size: 12px; }
-.sp-login-form-wrap { animation: sp-auth-form-enter .22s ease-out both; }
+.sp-login-panel { animation: sp-auth-form-enter .22s ease-out backwards; }
 .sp-reset-password .sp-login-form-wrap .ant-btn-link { margin-top: 8px; color: #2dd4bf; font-size: 12px; }
 .sp-reset-password .sp-login-form-wrap .ant-btn-link:disabled { color: #687386; }
 @keyframes sp-auth-copy-enter { from { opacity: .35; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -90,4 +91,4 @@
 .sp-login-options .ant-checkbox:hover .ant-checkbox-inner { border-color: #14b8a6 !important; }
 @media (max-width: 960px) { .sp-login { display: block; background: #070d16; } .sp-login-space, .sp-login-graph, .sp-login-background-loader { display: none; } .sp-login-panel { min-height: 100%; } }
 @media (max-width: 760px) { .sp-login-panel { padding: 24px 18px; } .sp-login-form-wrap { padding: 26px 22px 24px; }.sp-login-form-brand { gap: 10px; }.sp-login-form-wrap h2 { font-size: clamp(22px, 6vw, 28px); }.sp-login-options { gap: 12px; font-size: 12px; }.sp-login-security-note { text-align: center; line-height: 1.6; } }
-@media (prefers-reduced-motion: reduce) { .sp-login-copy, .sp-login-form-wrap, .sp-login-background-loader ~ .sp-login-space, .sp-login-background-loader .sp-auth-loading-satellite { animation: none !important; } .sp-login-background-loader .sp-auth-loading-satellite { will-change: auto; } .sp-login-background-loader, .sp-login:has(> .sp-login-background-loader) > :is(.sp-login-graph, .sp-login-panel) { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .sp-login-copy, .sp-login-panel, .sp-login-background-loader ~ .sp-login-space, .sp-login-background-loader .sp-auth-loading-satellite { animation: none !important; } .sp-login-background-loader .sp-auth-loading-satellite { will-change: auto; } .sp-login-background-loader, .sp-login:has(> .sp-login-background-loader) > :is(.sp-login-graph, .sp-login-panel) { transition: none !important; } }

@@ -58,10 +58,11 @@ const App: React.FC = () => {
       <AntApp>
         {['/login', '/reset-password'].includes(location.pathname) ? (
           <AuthLayout>
-            <Routes>
-              <Route path="/login" element={<Login />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
-            </Routes>
+            {location.pathname === '/reset-password' && <ResetPassword />}
+            {/* Preserve native autofill values when returning from password recovery. */}
+            <div hidden={location.pathname !== '/login'} style={{ width: 'min(430px, 100%)' }}>
+              <Login />
+            </div>
           </AuthLayout>
         ) : !localStorage.getItem('access_token') && !localStorage.getItem('refresh_token') ? (
           <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`} replace />

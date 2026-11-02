@@ -126,7 +126,7 @@ const ResetPassword: React.FC = () => {
           {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 18 }} />}
 
           {step === 'email' && (
-            <Form form={form} layout="vertical" onFinish={(values: { email: string }) => sendCode(values.email)}>
+            <Form name="recovery" form={form} layout="vertical" onFinish={(values: { email: string }) => sendCode(values.email)}>
               <Form.Item label="Work email" name="email" rules={[{ required: true, message: 'Enter your email address' }, { type: 'email', message: 'Enter a valid email address' }]}>
                 <Input size="large" prefix={<MailOutlined />} placeholder="name@company.com" autoComplete="email" autoFocus />
               </Form.Item>
@@ -135,7 +135,7 @@ const ResetPassword: React.FC = () => {
           )}
 
           {step === 'code' && (
-            <Form form={form} layout="vertical" onFinish={verifyCode}>
+            <Form name="recovery" form={form} layout="vertical" onFinish={verifyCode}>
               <Form.Item label="Verification code" name="code" rules={[{ required: true, message: 'Enter the verification code' }, { pattern: /^\d{6}$/, message: 'Enter the six-digit code' }]}>
                 <Input className="sp-verification-code" size="large" inputMode="numeric" maxLength={6} placeholder="000000" autoComplete="one-time-code" autoFocus />
               </Form.Item>
@@ -147,7 +147,7 @@ const ResetPassword: React.FC = () => {
           )}
 
           {step === 'password' && (
-            <Form form={form} layout="vertical" onFinish={updatePassword}>
+            <Form name="recovery" form={form} layout="vertical" onFinish={updatePassword}>
               <Form.Item label="New password" name="password" rules={[{ required: true, message: 'Enter a new password' }, { min: 8, message: 'Use at least 8 characters' }]}>
                 <Input.Password size="large" prefix={<LockOutlined />} placeholder="Enter a new password" autoComplete="new-password" autoFocus />
               </Form.Item>
