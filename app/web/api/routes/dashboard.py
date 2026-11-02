@@ -1,23 +1,23 @@
-from datetime import datetime, timedelta, timezone
+import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.web.api.dependencies.common import get_current_user
 from app.web.services.ai_collect_store import ai_collect_store
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(get_current_user)])
 
 
-def _empty_series() -> list[dict[str, object]]:
-    now = datetime.now(timezone.utc)
-    return [
-        {"ts": (now - timedelta(minutes=5 - index)).isoformat(), "v": 0}
-        for index in range(6)
-    ]
+async def _tasks() -> list[dict]:
+    try:
+        return await asyncio.wait_for(ai_collect_store.list_tasks(), timeout=5)
+    except Exception as exc:
+        raise HTTPException(503, "任务指标暂时无法读取") from exc
 
 
 @router.get("/metrics")
 async def metrics() -> dict:
-    tasks = await ai_collect_store.list_tasks()
+    tasks = await _tasks()
     counts = {status: 0 for status in ("queued", "running", "completed", "failed", "paused")}
     for task in tasks:
         status = str(task.get("status") or "queued")
@@ -29,9 +29,9 @@ async def metrics() -> dict:
             "completed": counts["completed"],
             "failed": counts["failed"],
         },
-        "etl_throughput": {"current": 0, "history": _empty_series()},
-        "kafka_lag": {"total": 0, "by_layer": {}},
-        "data_volume": {"total": sum(int(task.get("records") or 0) for task in tasks), "daily_increment": 0},
+        "etl_throughput": {"current": None, "history": []},
+        "kafka_lag": {"total": None, "by_layer": {}},
+        "data_volume": {"total": sum(int(task.get("records") or 0) for task in tasks), "daily_increment": None},
         "pipeline_nodes": [],
         "layer_throughput_history": [],
         "task_status_dist": [
@@ -39,15 +39,16 @@ async def metrics() -> dict:
             for status, count in counts.items()
             if count
         ],
-        "error_rate_history": _empty_series(),
-        "error_threshold": 5,
-        "kafka_lag_history": _empty_series(),
+        "error_rate_history": [],
+        "error_threshold": None,
+        "kafka_lag_history": [],
+        "unavailable_metrics": ["ETL 吞吐", "Kafka 积压", "每日增量", "错误率趋势"],
     }
 
 
 @router.get("/alerts")
 async def alerts() -> list[dict]:
-    tasks = await ai_collect_store.list_tasks()
+    tasks = await _tasks()
     return [
         {
             "id": str(task["id"]),

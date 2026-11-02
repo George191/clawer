@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 
-from app.etl.schema.catalogs import RECORD_IDENTITY_COLUMNS, TABLE_DEFINITIONS
+from app.etl.schema.catalogs import RECORD_IDENTITY_COLUMNS, TABLE_DEFINITIONS, lineage_columns
 from app.etl.schema.layout import default_table_layout
 
 _CREATE_TABLE_RE = re.compile(
@@ -136,6 +136,9 @@ def build_current_ddl(
     current_ref = _current_table_ref(layer, logical_table)
     create_table = _parse_create_table_statement(current_ddl_sql)
     body = str(create_table["body"])
+    for column in lineage_columns(layer):
+        if not re.search(rf'(?mi)^\s*"?{column}"?\s+', body):
+            body = _append_table_constraint(body, f"{column} TEXT")
     is_export_ddl = bool(
         re.search(
             r"CREATE TABLE\s+\"[^\"]+\"\.\"[^\"]+\"",
@@ -192,4 +195,5 @@ def build_current_ddl(
             rebuilt_ddl,
             flags=re.IGNORECASE,
         )
-    return rebuilt_ddl
+    identity = f"ALTER TABLE {current_ref} REPLICA IDENTITY FULL;"
+    return rebuilt_ddl if identity in rebuilt_ddl else rebuilt_ddl + f"\n{identity}"

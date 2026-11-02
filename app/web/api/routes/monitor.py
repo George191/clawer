@@ -1,14 +1,18 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-router = APIRouter(prefix="/monitor", tags=["monitor"])
+from app.web.api.dependencies.common import get_current_user
+
+router = APIRouter(prefix="/monitor", tags=["monitor"], dependencies=[Depends(get_current_user)])
 
 
 @router.get("/stats")
-async def stats() -> dict[str, float | int]:
+async def stats() -> dict[str, float | int | str | bool | None]:
     return {
-        "reqRate": 0,
-        "successRate": 100,
-        "antiCrawlTriggers": 0,
-        "proxyAvailable": 0,
-        "proxyTotal": 0,
+        "reqRate": None,
+        "successRate": None,
+        "antiCrawlTriggers": None,
+        "proxyAvailable": None,
+        "proxyTotal": None,
+        "available": False,
+        "reason": "尚未接入请求、反爬和代理池的运行指标；未知值不代表零流量或全部成功",
     }

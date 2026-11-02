@@ -77,6 +77,7 @@ class FileRecordStore(FileClient, RecordStore):
         data_type: str,
         dedup_fields: list[str],
         record: dict[str, Any],
+        *, download_template: Any = None,
     ) -> str:
         record = normalize_record_fields(record, data_source=template_name)
         require_canonical_record(record)
@@ -122,6 +123,7 @@ class FileRecordStore(FileClient, RecordStore):
         data_type: str,
         dedup_fields: list[str],
         records: list[dict[str, Any]],
+        *, download_template: Any = None,
     ) -> list[str]:
         records = [normalize_record_fields(record, data_source=template_name) for record in records]
         for record in records:

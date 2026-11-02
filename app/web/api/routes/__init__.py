@@ -7,7 +7,7 @@ from . import (
     provider, thread, upload, dataset, embedding,
     health, dashboard, templates, tasks, ai_collect, automation,
     monitor,
-    etl, infrastructure, scheduler,
+    etl, infrastructure, scheduler, cdc,
 )
 from app.web.core.config import settings
 
@@ -36,6 +36,7 @@ api_router.include_router(scheduler.router)
 api_router.include_router(monitor.router)
 api_router.include_router(etl.router)
 api_router.include_router(infrastructure.router)
+api_router.include_router(cdc.router)
 
 if settings.ENVIRONMENT == "local":
     ...

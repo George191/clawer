@@ -29,8 +29,11 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import text
+
 from app.config.settings import settings
 from app.etl.base import ETLBase
+from app.etl.source_fences import current_ods_revision, source_snapshot_current, source_snapshot_revision
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -55,7 +58,10 @@ UPDATE ts_dwd.dwd_patent SET
     original_file = :original_file,
     thumbnail = :thumbnail,
     figures = CAST(:figures AS jsonb),
-    updated_at = CAST(:updated_at AS timestamptz)
+    updated_at = CAST(:updated_at AS timestamptz),
+    ods_revision = :source_revision,
+    task_results = CASE WHEN task_revision=:source_revision THEN task_results ELSE NULL END,
+    task_revision = CASE WHEN task_revision=:source_revision THEN task_revision ELSE NULL END
 WHERE record_id = :record_id AND data_source = :data_source
 RETURNING *
 """
@@ -63,6 +69,7 @@ RETURNING *
 DWD_PATENT_UPDATE_TASK = """
 UPDATE ts_dwd.dwd_patent SET
     task_results = CAST(:task_results AS jsonb),
+    task_revision = :source_revision,
     updated_at = CAST(:updated_at AS timestamptz)
 WHERE record_id = :record_id AND data_source = :data_source
 RETURNING *
@@ -76,7 +83,7 @@ INSERT INTO ts_dwd.dwd_patent (
     abstract, claims, legal_status,
     ipc_classification, cpc_classification, patent_type,
     original_file, thumbnail, figures,
-    created_at, updated_at
+    created_at, updated_at, ods_revision
 ) VALUES (
     :data_source, :data_type, :record_id,
     :title, :publication_number, :application_number, :assignee, :inventor,
@@ -85,7 +92,7 @@ INSERT INTO ts_dwd.dwd_patent (
     :abstract, CAST(:claims AS jsonb), :legal_status,
     :ipc_classification, :cpc_classification, :patent_type,
     :original_file, :thumbnail, CAST(:figures AS jsonb),
-    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz), :source_revision
 )
 RETURNING *
 """
@@ -94,11 +101,11 @@ DWD_PATENT_INSERT_TASK = """
 INSERT INTO ts_dwd.dwd_patent (
     data_source, data_type, record_id,
     task_results,
-    created_at, updated_at
+    created_at, updated_at, task_revision
 ) VALUES (
     :data_source, :data_type, :record_id,
     CAST(:task_results AS jsonb),
-    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
+    CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz), :source_revision
 )
 RETURNING *
 """
@@ -109,13 +116,10 @@ WHERE record_id = :record_id AND data_source = :data_source
 LIMIT 1
 """
 
-# 完整度检查：只有 ODS 专利字段 + TASK 分析结果都就位，记录才算完整
-DWD_COMPLETENESS_CHECK = """
-SELECT title IS NOT NULL AND task_results IS NOT NULL AS is_complete
-FROM ts_dwd.dwd_patent
-WHERE record_id = :record_id AND data_source = :data_source
-LIMIT 1
-"""
+def graph_record_complete(row: dict[str, Any]) -> bool:
+    """Check graph eligibility from the exact persisted row, without a newer read."""
+    return (row.get("title") is not None and row.get("task_results") is not None
+            and bool(row.get("ods_revision")) and row["ods_revision"] == row.get("task_revision"))
 
 
 class TsDwd(ETLBase):
@@ -140,19 +144,6 @@ class TsDwd(ETLBase):
     # =================================================================
     #  完整度门控 — 只有双方数据都就位才 emit 到 Graph
     # =================================================================
-    async def _is_record_complete(self, record_id: str, data_source: str) -> bool:
-        """检查 ODS 专利字段 + TASK 分析结果是否都已到位。
-
-        ODS 先到 → title 有值，task_results 为空 → 不完整
-        TASK 先到 → task_results 有值，title 为空 → 不完整
-        双方都到 → 完整 → 可以 emit
-        """
-        row = await self._pg.fetch_one(
-            DWD_COMPLETENESS_CHECK,
-            {"record_id": record_id, "data_source": data_source},
-        )
-        return bool(row and row.get("is_complete"))
-
     async def _emit_if_complete(
         self, result: dict[str, Any] | None,
         record_id: str, data_source: str, data_type: str,
@@ -162,7 +153,7 @@ class TsDwd(ETLBase):
             logger.debug("%s record_id=%s: no result, skip emit", self._log_prefix, record_id)
             return False
 
-        is_complete = await self._is_record_complete(record_id, data_source)
+        is_complete = graph_record_complete(result)
         if is_complete:
             await self._emit(
                 result, record_id=record_id,
@@ -215,7 +206,7 @@ class TsDwd(ETLBase):
         return json.dumps({task_name: {"result": result_data, "result_type": result_type}})
 
     # =================================================================
-    #  Handler: patent — 兜底（无 topic hint 或未知 topic）
+    #  Handler: patent
     # =================================================================
     async def _handler_patent(self, message: dict[str, Any]) -> bool:
         try:
@@ -225,56 +216,24 @@ class TsDwd(ETLBase):
 
             kafka_meta = message.get("_kafka_meta", {})
             kafka_topic = kafka_meta.get("kafka_topic", "")
+            if kafka_topic not in {settings.etl_ods_topic, settings.etl_task_topic}:
+                raise ValueError("DWD requires a known ODS or TASK input topic")
             is_ods_source = kafka_topic == settings.etl_ods_topic
 
             now = datetime.now(timezone.utc)
-
-            existing = await self._pg.fetch_one(DWD_EXISTS, {
-                "record_id": record_id,
-                "data_source": data_source,
-            })
-
-            if existing is None:
+            lock_key = "dwd:" + json.dumps([record_id, data_source, data_type])
+            async with self._pg.locked_transaction(lock_key) as session:
                 if is_ods_source:
-                    params = self._build_patent_params(message)
-                    params.update({
-                        "data_source": data_source,
-                        "data_type": data_type,
-                        "record_id": record_id,
-                        "created_at": now,
-                        "updated_at": now,
-                    })
-                    result = await self._pg.fetch_one(DWD_PATENT_INSERT_ODS, params)
+                    revision = await source_snapshot_revision(session, "ods", message)
                 else:
-                    task_results = self._build_task_results(message)
-                    result = await self._pg.fetch_one(DWD_PATENT_INSERT_TASK, {
-                        "data_source": data_source,
-                        "data_type": data_type,
-                        "record_id": record_id,
-                        "task_results": task_results,
-                        "created_at": now,
-                        "updated_at": now,
-                    })
-                is_new = True
-            elif is_ods_source:
-                params = self._build_patent_params(message)
-                params.update({
-                    "record_id": record_id,
-                    "data_source": data_source,
-                    "updated_at": now,
-                })
-                result = await self._pg.fetch_one(DWD_PATENT_UPDATE_ODS, params)
-                is_new = False
-            else:
-                task_results = self._build_task_results(message)
-                params = {
-                    "record_id": record_id,
-                    "data_source": data_source,
-                    "task_results": task_results,
-                    "updated_at": now,
-                }
-                result = await self._pg.fetch_one(DWD_PATENT_UPDATE_TASK, params)
-                is_new = False
+                    revision = message.get("source_revision")
+                    if not revision or revision != await current_ods_revision(session, message):
+                        return True
+                    if not await source_snapshot_current(session, "task", message):
+                        return True
+                if revision is None:
+                    return True
+                result, is_new = await self._merge_patent(session, message, is_ods_source, now, revision)
 
             emitted = await self._emit_if_complete(
                 result, record_id=record_id,
@@ -295,3 +254,19 @@ class TsDwd(ETLBase):
         except Exception:
             logger.exception("%s Failed to merge patent (fallback)", self._log_prefix)
             return False
+
+    async def _merge_patent(self, session, message, is_ods_source, now, revision):
+        """Merge one verified upstream snapshot while holding the DWD identity lock."""
+        identity = {name: message[name] for name in ("record_id", "data_source", "data_type")}
+        existing = (await session.execute(text(DWD_EXISTS), identity)).mappings().first()
+        params = {**identity, "updated_at": now, "source_revision": revision}
+        if existing is None:
+            params["created_at"] = now
+        if is_ods_source:
+            params.update(self._build_patent_params(message))
+            sql = DWD_PATENT_INSERT_ODS if existing is None else DWD_PATENT_UPDATE_ODS
+        else:
+            params["task_results"] = self._build_task_results(message)
+            sql = DWD_PATENT_INSERT_TASK if existing is None else DWD_PATENT_UPDATE_TASK
+        row = (await session.execute(text(sql), params)).mappings().first()
+        return dict(row) if row else None, existing is None

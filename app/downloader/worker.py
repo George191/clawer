@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from time import perf_counter
 from typing import Any
-from urllib.parse import unquote
 
 import filetype
 
@@ -27,8 +25,18 @@ from app.models.template import SiteTemplate
 from app.records.asset_store import AssetStore
 from app.records.change_feed import MongoChangeFeed
 from app.records.collection_routes import collection_route_store
+from app.records.download_resources import (
+    decode_manifest,
+    decode_plan,
+    encode_manifest,
+    encode_plan,
+    item_fingerprint,
+    resource_filename,
+    resource_manifest,
+    source_fingerprint,
+    template_download_items,
+)
 from app.records.mongo_store import MongoRecordStore
-from app.utils.download_paths import iter_download_nodes, iter_download_values
 from app.utils.path import get_nested_value
 from app.web.services.ai_collect_store import ai_collect_store
 
@@ -62,6 +70,7 @@ class DownloadWorker:
         self._minio = AssetStore()
         self._mongo = MongoRecordStore()
         self._templates: dict[str, SiteTemplate] = {}
+        self._templates_checked_at: dict[str, float] = {}
         self._collection_routes: dict[str, dict[str, str]] = {}
         self._running = False
         self._collection_cursor = 0
@@ -123,6 +132,8 @@ class DownloadWorker:
                                 next_scan = loop.time() + max(self._poll_interval, 0.5)
                             else:
                                 prefer_changes = True
+                    else:
+                        await self._changes.keep_alive()
                 except Exception:
                     logger.exception("DownloadWorker: change feed or recovery failed")
                     next_scan = loop.time() + max(self._poll_interval, 0.5)
@@ -278,20 +289,38 @@ class DownloadWorker:
             await notify(force=True)
             template = await self._load_template(template_name)
             if template is None:
-                completed = await self._update_mongo(collection, record_id, {}, "no_assets", claim_token)
-                status = "no_assets" if completed else "claim_lost"
+                await self._mongo.release_download_claim(collection, record_id, claim_token)
+                status = "pending_retry"
                 return
 
-            items = self._download_template_fields(record, template.download)
-            adapter = get_download_adapter(
-                record, template_name=template_name, data_type=data_type,
-            )
-            if adapter is not None:
-                items.extend(adapter(record, template, self._filename))
-
+            if "download_plan" in meta:
+                items = decode_plan(meta["download_plan"])
+                manifest = resource_manifest(items)
+            else:
+                items, manifest = self._plan_download(record, template, template_name, data_type)
+            if "download_plan" not in meta and "download_inputs" in meta and manifest != decode_manifest(meta["download_inputs"]):
+                template = await self._load_template(template_name, refresh=True)
+                if template is not None:
+                    items, manifest = self._plan_download(record, template, template_name, data_type)
+                if template is None:
+                    await self._mongo.release_download_claim(collection, record_id, claim_token)
+                    status = "pending_retry"
+                    return
+            if "download_inputs" in meta and manifest != decode_manifest(meta["download_inputs"]):
+                await self._update_mongo(collection, record_id, {
+                    "_meta.download_error": "Resource plan does not match saved inputs; recrawl required",
+                }, "failed", claim_token)
+                status = "failed"
+                logger.error("Download resource plan cannot be verified; recrawl required: %s", record_id)
+                return
             items_total = len(items)
+            completed_inputs = decode_manifest(meta.get("downloaded_inputs"))
+            stale_assets = set(decode_manifest(meta.get("download_inputs"))) - set(manifest)
+            stale_assets.update(key for key, fingerprint in manifest.items() if completed_inputs.get(key) != fingerprint)
             if not items:
-                completed = await self._update_mongo(collection, record_id, {}, "no_assets", claim_token)
+                completed = await self._update_mongo(collection, record_id, {
+                    "_meta.download_inputs": [], "_meta.downloaded_inputs": [], "_meta.download_plan": [],
+                }, "no_assets", claim_token, unset_fields=stale_assets)
                 status = "no_assets" if completed else "claim_lost"
                 return
 
@@ -299,13 +328,18 @@ class DownloadWorker:
             status = "downloading"
             await notify(force=True)
             downloaded_urls = {
-                item.url: path for item in items
-                if (path := self._existing_path(record, item.asset_key))
+                source_fingerprint(item): path for item in items
+                if completed_inputs.get(item.asset_key) == item_fingerprint(item)
+                and (path := self._existing_path(record, item.asset_key))
             }
+            verified_inputs = {}
             for item in items:
-                existing = downloaded_urls.get(item.url)
+                fingerprint = item_fingerprint(item)
+                source = source_fingerprint(item)
+                existing = downloaded_urls.get(source)
                 if existing:
                     updates[item.asset_key] = existing
+                    verified_inputs[item.asset_key] = fingerprint
                     reused_count += 1
                     processed += 1
                     await notify()
@@ -327,18 +361,24 @@ class DownloadWorker:
                     await notify()
                     continue
                 updates[item.asset_key] = path if path else dict(NOT_FOUND_ASSET)
+                verified_inputs[item.asset_key] = fingerprint
                 if path:
-                    downloaded_urls[item.url] = path
+                    downloaded_urls[source] = path
                     downloaded_count += 1
                 else:
                     not_found_count += 1
                 processed += 1
                 await notify()
 
+            updates.update({
+                "_meta.download_inputs": encode_manifest(manifest),
+                "_meta.download_plan": encode_plan(items),
+                "_meta.downloaded_inputs": encode_manifest(verified_inputs),
+            })
             completed = await self._update_mongo(
                 collection, record_id, updates,
                 "failed" if failed else "downloaded",
-                claim_token,
+                claim_token, unset_fields=stale_assets - set(updates),
             )
             if completed:
                 status = "failed" if failed else "complete"
@@ -386,60 +426,17 @@ class DownloadWorker:
         record: dict[str, Any],
         configs: list[Any],
     ) -> list[DownloadItem]:
-        items: list[DownloadItem] = []
-        for config in configs:
-            selector_type = getattr(config.selector_type, "value", config.selector_type)
-            if selector_type != "json":
-                continue
-            collection = getattr(config, "collection", None)
-            meta = record.get("_meta") or {}
-            if collection and collection != meta.get("template"):
-                continue
-            recursive = getattr(config, "recursive", None)
-            if collection or recursive or "[]" in config.selector or "*" in config.selector:
-                for prefix, node in iter_download_nodes(record, recursive):
-                    for path, value in iter_download_values(node, config.selector):
-                        full_path = f"{prefix}.{path}" if prefix else path
-                        for field, url in self._urls_from_value(value, config):
-                            if not url:
-                                continue
-                            key = f"assets.{full_path}"
-                            if isinstance(value, dict):
-                                key += f".{field}"
-                            suffix = "_" + hashlib.md5(key.encode()).hexdigest()[:10]
-                            items.append(DownloadItem(url=url, filename=self._filename(url, suffix), asset_key=key))
-                continue
-            value = get_nested_value(record, config.selector)
-            values = value if isinstance(value, list) else [value]
-            for index, entry in enumerate(values):
-                for field, url in self._urls_from_value(entry, config):
-                    suffix = f"_{index:05d}" if len(values) > 1 else ""
-                    key = f"assets.{config.selector}"
-                    if len(values) > 1:
-                        key += f".{index}"
-                    if isinstance(entry, dict):
-                        key += f".{field}"
-                    items.append(DownloadItem(
-                        url=url,
-                        filename=self._filename(url, suffix),
-                        asset_key=key,
-                    ))
-        return items
+        return template_download_items(record, configs)
 
-    @staticmethod
-    def _urls_from_value(value: Any, config: Any) -> list[tuple[str, str]]:
-        if value is None:
-            return []
-        prefix = getattr(config, "url_prefix", None) or ""
-        if isinstance(value, dict):
-            fields = ("href", "src", "url", "link", "full", "thumbnail", "pdf")
-            return [
-                (field, prefix + str(value[field]))
-                for field in fields if value.get(field)
-            ]
-        if isinstance(value, str):
-            return [("url", prefix + value)]
-        return []
+    def _plan_download(
+        self, record: dict[str, Any], template: SiteTemplate, template_name: str, data_type: str,
+    ) -> tuple[list[DownloadItem], dict[str, str]]:
+        """Generate resource inputs through the same template and adapter contract."""
+        items = self._download_template_fields(record, template.download)
+        adapter = get_download_adapter(record, template_name=template_name, data_type=data_type)
+        if adapter is not None:
+            items.extend(adapter(record, template, self._filename))
+        return items, resource_manifest(items)
 
     async def _download_item(
         self,
@@ -475,6 +472,7 @@ class DownloadWorker:
         if response is None:
             return None
         response_data = response.data
+        content_type = response.content_type or "application/octet-stream"
         filename = item.filename
         detected_type = filetype.guess(response_data)
         if detected_type is not None:
@@ -489,7 +487,7 @@ class DownloadWorker:
             response_data,
             template_name,
             data_type,
-            f"{record_id}/{filename}",
+            f"{record_id}/{source_fingerprint(item)}/{filename}",
             content_type,
         )
         logger.debug(
@@ -508,17 +506,19 @@ class DownloadWorker:
         updates: dict[str, Any],
         status: str,
         claim_token: str,
+        *, unset_fields: set[str] | None = None,
     ) -> bool:
         # The final state write ends the claim.
         heartbeat = self._claim_heartbeats.get(asyncio.current_task())
         if heartbeat is not None:
             heartbeat.cancel()
         return await self._mongo.update_download_result(
-            collection, record_id, updates, status, claim_token=claim_token,
+            collection, record_id, updates, status, claim_token=claim_token, unset_fields=unset_fields,
         )
 
-    async def _load_template(self, name: str) -> SiteTemplate | None:
-        if name in self._templates:
+    async def _load_template(self, name: str, *, refresh: bool = False) -> SiteTemplate | None:
+        now = perf_counter()
+        if not refresh and name in self._templates and now - self._templates_checked_at.get(name, 0) < settings.download_template_cache_seconds:
             return self._templates[name]
         try:
             released = await TemplateLoader().load_released(
@@ -533,6 +533,7 @@ class DownloadWorker:
             )
             return None
         self._templates[name] = released.template
+        self._templates_checked_at[name] = perf_counter()
         return released.template
 
     @staticmethod
@@ -544,12 +545,7 @@ class DownloadWorker:
 
     @staticmethod
     def _filename(url: str, suffix: str = "") -> str:
-        name = unquote(url.split("?", 1)[0].rsplit("/", 1)[-1])
-        stem, dot, ext = name.rpartition(".")
-        if not stem or len(stem) > 60:
-            stem = hashlib.md5(url.encode()).hexdigest()[:12]
-        extension = f".{ext}" if dot and ext else ""
-        return f"{stem}{suffix}{extension}"
+        return resource_filename(url, suffix)
 
     async def stop(self) -> None:
         self._running = False

@@ -13,15 +13,23 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any
 
 from bson.codec_options import CodecOptions
-from pymongo import ReplaceOne
+from pymongo import UpdateOne
 
+from app.config.settings import settings
 from app.logger import get_logger
 from app.records.adapters import get_record_adapter
 from app.records.base import RecordStore
 from app.records.collection_routes import collection_route_store
+from app.records.download_resources import (
+    apply_record_updates,
+    decode_manifest,
+    prepare_download_state,
+    preserve_resource_removals,
+)
 from app.records.field_names import normalize_record_fields
 from app.records.values import record_values_equal, require_canonical_record
 from app.storage.mongo_client import MongoClient
@@ -29,6 +37,78 @@ from app.utils.record_id import resolve_record_id
 from app.utils.runtime_control import workspace_search_params
 
 logger = get_logger(__name__)
+
+_DOWNLOAD_META_FIELDS = frozenset({
+    "download_status", "download_version", "download_attempts", "download_inputs", "downloaded_inputs", "download_plan",
+    "download_claim_token", "download_claimed_at",
+})
+
+
+def _field_changes(before: Any, after: Any, prefix: str = "") -> dict[str, Any]:
+    """Write only changed leaves, keeping concurrently updated sibling fields intact."""
+    if record_values_equal(before, after):
+        return {}
+    if isinstance(before, dict) and isinstance(after, dict):
+        result = {}
+        for key, value in after.items():
+            path = f"{prefix}.{key}" if prefix else key
+            result.update(_field_changes(before.get(key), value, path))
+        return result
+    if isinstance(before, list) and isinstance(after, list) and len(before) == len(after):
+        result = {}
+        for index, value in enumerate(after):
+            result.update(_field_changes(before[index], value, f"{prefix}.{index}"))
+        return result
+    return {prefix: after}
+
+
+def _record_update(
+    existing: dict[str, Any], record: dict[str, Any], resources_changed: bool, *, compare_version: bool = False,
+) -> UpdateOne:
+    """Keep download-owned fields server-side; explicitly invalidate changed resources."""
+    old_meta, meta = existing.get("_meta") or {}, record["_meta"]
+    business = {key: value for key, value in record.items() if key not in {"_id", "_meta", "assets"}}
+    previous = {key: value for key, value in existing.items() if key not in {"_id", "_meta", "assets"}}
+    fields = _field_changes(previous, business)
+    for key, value in meta.items():
+        if key not in _DOWNLOAD_META_FIELDS | {"updated_at"} and not record_values_equal(old_meta.get(key), value):
+            fields[f"_meta.{key}"] = value
+    if old_meta.get("write_token") != meta.get("write_token"):
+        fields["_meta.sync_status"] = meta["sync_status"]
+    update: dict[str, Any] = {"$set": fields}
+    if meta.get("updated_at") is not None:
+        update["$max"] = {"_meta.updated_at": meta["updated_at"]}
+    if resources_changed:
+        desired = decode_manifest(meta.get("download_inputs"))
+        previous_inputs = decode_manifest(old_meta.get("download_inputs"))
+        verified = decode_manifest(old_meta.get("downloaded_inputs"))
+        invalid = {key for key, value in previous_inputs.items() if desired.get(key) != value}
+        invalid.update(key for key in desired if key not in previous_inputs)
+        invalid.update(key for key in verified if key not in desired)
+        fields.update({
+            "_meta.download_status": "pending", "_meta.download_inputs": meta["download_inputs"],
+            "_meta.download_plan": meta["download_plan"],
+        })
+        if "download_inputs" not in old_meta:
+            # Legacy files have no provable source identity and are verified once.
+            invalid = {"assets"}
+            fields["_meta.downloaded_inputs"] = []
+        elif invalid:
+            update["$pull"] = {"_meta.downloaded_inputs": {"asset_key": {"$in": sorted(invalid)}}}
+        paths = []
+        for path in sorted(invalid, key=len):
+            if not any(path == parent or path.startswith(parent + ".") for parent in paths):
+                paths.append(path)
+        update["$unset"] = dict.fromkeys([
+            *paths, "_meta.download_claim_token", "_meta.download_claimed_at", "_meta.download_error",
+        ], "")
+    if not fields:
+        update.pop("$set")
+    query = {"_meta.record_id": meta["record_id"]}
+    if resources_changed or compare_version:
+        query.update({"_meta.write_token": old_meta.get("write_token"),
+                      "_meta.download_inputs": old_meta.get("download_inputs")})
+    return UpdateOne(query, update)
 
 
 def _ready_to_sync_filter() -> dict[str, Any]:
@@ -46,6 +126,8 @@ class MongoRecordStore(MongoClient, RecordStore):
     def __init__(self) -> None:
         super().__init__()
         self._initialized_collections: set[str] = set()
+        self._download_templates: dict[str, Any] = {}
+        self._download_templates_checked_at: dict[str, float] = {}
         self.last_save_stats = {
             "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
         }
@@ -165,13 +247,78 @@ class MongoRecordStore(MongoClient, RecordStore):
             ]
         return value
 
-    async def save_record(self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any]) -> str:
-        ids = await self.save_records(template_name, data_type, dedup_fields, [record])
+    async def save_record(
+        self, template_name: str, data_type: str, dedup_fields: list[str], record: dict[str, Any],
+        *, download_template: Any = None,
+    ) -> str:
+        ids = await self.save_records(template_name, data_type, dedup_fields, [record], download_template=download_template)
         return ids[0]
+
+    async def _download_template(self, name: str, provided: Any = None) -> Any:
+        """Reuse the crawler's template; resolve legacy direct writers once per store."""
+        if provided is not None:
+            self._download_templates[name] = provided
+            self._download_templates_checked_at[name] = monotonic()
+        if name not in self._download_templates or monotonic() - self._download_templates_checked_at.get(name, 0) >= settings.download_template_cache_seconds:
+            from app.engine.template_loader import TemplateLoader
+
+            released = await TemplateLoader().load_released(name, validate_params=False, load_adapter=False)
+            self._download_templates[name] = released.template
+            self._download_templates_checked_at[name] = monotonic()
+        return self._download_templates[name]
+
+    async def _merge_insert_collision(
+        self, collection: Any, adapter: Any, route: dict[str, str], incoming: dict[str, Any], download_template: Any,
+        sync_status: str | None = None,
+    ) -> tuple[str, dict[str, Any], bool]:
+        """Rebuild only a conflicting record; successful batch writes stay untouched."""
+        record_id = incoming["_meta"]["record_id"]
+        for _ in range(3):
+            existing = await collection.find_one({"_meta.record_id": record_id})
+            if existing is None:
+                result = await collection.update_one(
+                    {"_meta.record_id": record_id}, {"$setOnInsert": incoming}, upsert=True,
+                )
+                if result.upserted_id is not None:
+                    return "inserted", incoming, adapter.is_deletion(None, incoming)
+                continue
+            merged = await adapter.finalize(adapter.merge(existing, incoming), incoming["_meta"].get("search_params", {}))
+            merged = preserve_resource_removals(merged, incoming, download_template.download)
+            old_meta, meta = existing.get("_meta") or {}, merged["_meta"]
+            meta["created_at"] = old_meta.get("created_at", meta["created_at"])
+            meta["download_status"] = old_meta.get("download_status", "pending")
+            resources_changed = prepare_download_state(existing, merged, download_template, route["template_name"], route["data_type"])
+            changed = resources_changed or not record_values_equal(self._business_content(existing), self._business_content(merged))
+            if changed:
+                meta["sync_status"] = "pending"
+                meta["write_token"] = uuid.uuid4().hex
+                for key in ("__workspace_task_id", "__workspace_run_id"):
+                    if key not in incoming["_meta"].get("search_params", {}):
+                        meta.setdefault("search_params", {}).pop(key, None)
+            else:
+                for key in ("sync_status", "updated_at", "write_token"):
+                    if key in old_meta:
+                        meta[key] = old_meta[key]
+                    else:
+                        meta.pop(key, None)
+                for key in ("__workspace_task_id", "__workspace_run_id"):
+                    params = meta.setdefault("search_params", {})
+                    if key in old_meta.get("search_params", {}):
+                        params[key] = old_meta["search_params"][key]
+                    else:
+                        params.pop(key, None)
+            require_canonical_record(merged)
+            if sync_status is not None:
+                meta["sync_status"] = sync_status
+            operation = _record_update(existing, merged, resources_changed, compare_version=True)
+            result = await collection.update_one(operation._filter, operation._doc)
+            if result.matched_count:
+                return "updated" if changed else "unchanged", merged, adapter.is_deletion(existing, merged)
+        raise RuntimeError("Record changed repeatedly while resolving a concurrent write")
 
     async def save_records(
         self, template_name: str, data_type: str, dedup_fields: list[str], records: list[dict[str, Any]],
-        *, sync_status: str | None = None,
+        *, sync_status: str | None = None, download_template: Any = None,
     ) -> list[str]:
         if not records:
             return []
@@ -183,6 +330,7 @@ class MongoRecordStore(MongoClient, RecordStore):
             self._get_collection_name(template_name), data_type,
         )
         adapter = await get_record_adapter(self, route, dedup_fields)
+        download_template = await self._download_template(route["template_name"], download_template)
         collection = await self._get_collection_by_name(
             route["collection_name"], indexes=adapter.collection_indexes,
         )
@@ -228,7 +376,10 @@ class MongoRecordStore(MongoClient, RecordStore):
         deleted_count = 0
         run_stats: dict[tuple[str, str], dict[str, int]] = {}
 
-        operations: list[ReplaceOne] = []
+        operations: list[UpdateOne] = []
+        new_records: dict[int, tuple[dict[str, Any], bool]] = {}
+        resource_writes: list[tuple[UpdateOne, dict[str, Any], dict[str, Any], bool]] = []
+        conflicts: list[tuple[str, dict[str, Any], dict[str, Any], bool]] = []
         processed_ids: set[str] = set()
         for record_id, cleaned_record, search_params in reversed(prepared_records):
             if record_id in processed_ids:
@@ -249,13 +400,16 @@ class MongoRecordStore(MongoClient, RecordStore):
             deletion = adapter.is_deletion(existing, cleaned_record)
             final_record = adapter.merge(existing or {}, record_with_meta)
             final_record = await adapter.finalize(final_record, search_params)
+            final_record = preserve_resource_removals(final_record, cleaned_record, download_template.download)
             require_canonical_record(final_record)
+            if existing:
+                final_record["_meta"]["download_status"] = (existing.get("_meta") or {}).get("download_status", "pending")
+            resources_changed = prepare_download_state(
+                existing, final_record, download_template, route["template_name"], route["data_type"],
+            )
             if existing:
                 existing_meta = existing.get("_meta", {})
                 final_record["_meta"]["created_at"] = existing_meta.get("created_at", now)
-                final_record["_meta"]["download_status"] = existing_meta.get(
-                    "download_status", "pending"
-                )
                 business_changed = not record_values_equal(
                     self._business_content(existing), self._business_content(final_record),
                 )
@@ -267,7 +421,7 @@ class MongoRecordStore(MongoClient, RecordStore):
                     for key in ("data_type", "template")
                 )
                 template_changed = existing_meta.get("template") != final_record["_meta"].get("template")
-                if business_changed or template_changed:
+                if business_changed or template_changed or resources_changed:
                     # A write without a batch identity cannot inherit the old
                     # batch's attribution merely by merging existing metadata.
                     final_params = final_record["_meta"].get("search_params", {})
@@ -302,7 +456,7 @@ class MongoRecordStore(MongoClient, RecordStore):
             else:
                 inserted_count += 1
 
-            if not existing or business_changed or template_changed:
+            if not existing or business_changed or template_changed or resources_changed:
                 # Mongo dates have millisecond precision; distinguish business
                 # writes even when timestamps and download versions collide.
                 final_record["_meta"]["write_token"] = uuid.uuid4().hex
@@ -318,17 +472,54 @@ class MongoRecordStore(MongoClient, RecordStore):
             deleted_count += int(deletion)
             if sync_status is not None:
                 final_record["_meta"]["sync_status"] = sync_status
-            operations.append(
-                ReplaceOne(
-                    {"_meta.record_id": record_id},
-                    final_record,
-                    upsert=True,
-                )
-            )
+            if existing:
+                operation = _record_update(existing, final_record, resources_changed)
+                if resources_changed:
+                    resource_writes.append((operation, final_record, record_with_meta, deletion))
+                else:
+                    operations.append(operation)
+            else:
+                new_records[len(operations)] = (final_record, deletion)
+                operations.append(UpdateOne(
+                    {"_meta.record_id": record_id}, {"$setOnInsert": final_record}, upsert=True,
+                ))
 
         if operations:
-            await collection.bulk_write(operations, ordered=False)
-        await adapter.after_save(run_stats)
+            result = await collection.bulk_write(operations, ordered=False)
+            if new_records and isinstance(result.upserted_ids, dict):
+                for index, (incoming, deletion) in new_records.items():
+                    if index in result.upserted_ids:
+                        continue
+                    conflicts.append(("inserted", incoming, incoming, deletion))
+        for operation, planned, incoming, deletion in resource_writes:
+            result = await collection.update_one(operation._filter, operation._doc)
+            if not result.matched_count:
+                conflicts.append(("updated", planned, incoming, deletion))
+        for planned_kind, planned, incoming, deletion in conflicts:
+            inserted_count -= int(planned_kind == "inserted")
+            updated_count -= int(planned_kind == "updated")
+            deleted_count -= int(deletion)
+            owner = planned["_meta"].get("search_params", {})
+            identity = (str(owner.get("__workspace_task_id") or ""), str(owner.get("__workspace_run_id") or ""))
+            if identity in run_stats:
+                run_stats[identity][planned_kind] -= 1
+                if deletion:
+                    run_stats[identity]["deleted"] -= 1
+            kind, persisted, deleted = await self._merge_insert_collision(
+                collection, adapter, route, incoming, download_template, sync_status,
+            )
+            inserted_count += int(kind == "inserted")
+            updated_count += int(kind == "updated")
+            unchanged_count += int(kind == "unchanged")
+            deleted_count += int(deleted)
+            owner = persisted["_meta"].get("search_params", {})
+            identity = (str(owner.get("__workspace_task_id") or ""), str(owner.get("__workspace_run_id") or ""))
+            if all(identity) and kind != "unchanged":
+                counts = run_stats.setdefault(identity, {"inserted": 0, "updated": 0})
+                counts[kind] += 1
+                if deleted:
+                    counts["deleted"] = counts.get("deleted", 0) + 1
+        await adapter.after_save({owner: counts for owner, counts in run_stats.items() if any(counts.values())})
         self.last_save_stats = {
             "inserted": inserted_count,
             "updated": updated_count,
@@ -373,18 +564,47 @@ class MongoRecordStore(MongoClient, RecordStore):
         updates: dict[str, Any],
     ) -> None:
         collection = await self._get_collection(template_name)
-        set_fields = {
-            **updates,
-            "_meta.updated_at": datetime.now(timezone.utc),
-            "_meta.sync_status": "pending",
-            "_meta.write_token": uuid.uuid4().hex,
-        }
-
-        await collection.update_one(
-            {"_meta.record_id": record_id},
-            {"$set": set_fields},
-        )
-        logger.debug("Updated %d fields for %s", len(updates), record_id)
+        for _ in range(3):
+            existing = await collection.find_one({"_meta.record_id": record_id})
+            if existing is None:
+                return
+            meta = existing.get("_meta") or {}
+            route = await collection_route_store.resolve_for_write(template_name, meta.get("data_type"))
+            template = await self._download_template(route["template_name"])
+            record = apply_record_updates(existing, updates)
+            resources_changed = prepare_download_state(existing, record, template, route["template_name"], route["data_type"])
+            set_fields = {
+                **updates,
+                "_meta.updated_at": datetime.now(timezone.utc),
+                "_meta.sync_status": "pending",
+                "_meta.write_token": uuid.uuid4().hex,
+                "_meta.download_inputs": record["_meta"]["download_inputs"],
+                "_meta.download_plan": record["_meta"]["download_plan"],
+            }
+            unset_fields = {}
+            if resources_changed:
+                set_fields.update({
+                    "_meta.download_status": "pending",
+                    "_meta.downloaded_inputs": record["_meta"]["downloaded_inputs"],
+                })
+                if "assets" in record:
+                    set_fields = {key: value for key, value in set_fields.items() if not key.startswith("assets.")}
+                    set_fields["assets"] = record["assets"]
+                unset_fields = dict.fromkeys((
+                    "_meta.download_claim_token", "_meta.download_claimed_at", "_meta.download_error",
+                ), "")
+            query = {
+                "_meta.record_id": record_id, "_meta.write_token": meta.get("write_token"),
+                "_meta.download_version": meta.get("download_version"),
+                "_meta.download_claim_token": meta.get("download_claim_token"),
+            }
+            update = {"$set": set_fields}
+            if unset_fields:
+                update["$unset"] = unset_fields
+            result = await collection.update_one(query, update)
+            if result.matched_count:
+                return
+        raise RuntimeError("Record changed concurrently while updating resource inputs")
 
     async def update_download_result(
         self,
@@ -399,7 +619,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         collection = await self._get_collection(template_name)
         fields_to_unset = {
             "_meta.download_claim_token": "",
-            **{field: "" for field in (unset_fields or set())},
+            **dict.fromkeys(unset_fields or (), ""),
         }
         query = {"_meta.record_id": record_id}
         if claim_token:

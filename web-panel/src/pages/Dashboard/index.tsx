@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
-import { App, Button, Select, Skeleton } from 'antd';
+import { Alert as AlertBanner, App, Button, Select, Skeleton } from 'antd';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from '@/pages/AICollect/palette';
@@ -293,12 +293,15 @@ const Dashboard: React.FC = () => {
         </div>
       ) : (
         <>
+          {!!metrics?.unavailable_metrics?.length && <AlertBanner type="info" showIcon
+            message={`尚未采集：${metrics.unavailable_metrics.join('、')}。未知指标不代表零流量或链路健康。`}
+            style={{ marginBottom: 16 }} />}
           <section className="dashboard-hero-grid">
             <article className={`dashboard-card dashboard-summary ${hasAttention ? 'dashboard-summary--attention' : ''}`}>
               <div className="dashboard-summary-top">
                 <div className={`dashboard-summary-kicker ${hasAttention ? 'dashboard-summary-kicker--attention' : ''}`}>
                   {hasAttention ? <ExclamationCircleFilled /> : <CheckCircleFilled />}
-                  {hasAttention ? '存在待处理事项' : metrics ? '运行状态良好' : '等待实时数据'}
+                  {hasAttention ? '存在待处理事项' : metrics ? '任务运行快照' : '等待实时数据'}
                 </div>
                 <div className="dashboard-controls">
                   <Select<TimeWindow>
@@ -319,7 +322,7 @@ const Dashboard: React.FC = () => {
                   </span>
                 </div>
               </div>
-              <h2>{!metrics ? '等待实时运行快照' : hasAttention ? '有事项需要关注' : '今日数据链路运行平稳'}</h2>
+              <h2>{!metrics ? '等待实时运行快照' : hasAttention ? '有事项需要关注' : '当前任务与数据指标'}</h2>
               <p>{summaryText}</p>
               <div className="dashboard-summary-actions">
                 <Button type="primary" onClick={() => navigate('/tasks')}>查看运行任务 <ArrowRightOutlined /></Button>
@@ -359,7 +362,7 @@ const Dashboard: React.FC = () => {
                 {!topAlerts.length && failedTasks === 0 && (
                   <div className="dashboard-healthy-empty">
                     <CheckCircleFilled />
-                    <div><b>当前没有需要处理的告警</b><span>数据链路将持续通过 WebSocket 更新</span></div>
+                    <div><b>当前任务快照没有失败告警</b><span>尚未采集的基础设施状态仍需单独验证</span></div>
                   </div>
                 )}
               </div>

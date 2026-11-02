@@ -48,6 +48,7 @@ def build_kafka_kwargs(**extra: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "bootstrap_servers": get_brokers(),
         "client_id": settings.kafka_client_id or "spider",
+        "security_protocol": settings.kafka_security_protocol,
     }
 
     # SASL 认证配置
@@ -61,11 +62,9 @@ def build_kafka_kwargs(**extra: Any) -> dict[str, Any]:
             }
         )
 
-    # SSL 配置（自签名证书）
+    # Validate both the certificate chain and broker hostname.
     if settings.kafka_security_protocol in ("SSL", "SASL_SSL"):
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
+        ssl_context = ssl.create_default_context(cafile=settings.kafka_ssl_cafile or None)
         kwargs["ssl_context"] = ssl_context
 
     kwargs.update(extra)
@@ -103,6 +102,7 @@ def build_consumer_kwargs(**extra: Any) -> dict[str, Any]:
     kwargs.setdefault("key_deserializer", lambda k: k.decode("utf-8") if k else None)
     kwargs.setdefault("auto_offset_reset", "earliest")
     kwargs.setdefault("enable_auto_commit", False)
+    kwargs.setdefault("isolation_level", "read_committed")
     kwargs.setdefault("max_poll_records", 100)
     kwargs.setdefault("max_partition_fetch_bytes", KAFKA_MAX_MESSAGE_BYTES)
     kwargs.setdefault("session_timeout_ms", 30000)

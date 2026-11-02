@@ -14,6 +14,7 @@ class RecordStore(abc.ABC):
         data_type: str,
         dedup_fields: list[str],
         record: dict[str, Any],
+        *, download_template: Any = None,
     ) -> str:
         ...
 
@@ -24,6 +25,7 @@ class RecordStore(abc.ABC):
         data_type: str,
         dedup_fields: list[str],
         records: list[dict[str, Any]],
+        *, download_template: Any = None,
     ) -> list[str]:
         ...
 

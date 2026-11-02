@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 async def request_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
      
      errors = exc.errors()
-     await logger.error(f"Request Validation Error: {errors}")
+     await logger.error(f"Request Validation Error: {len(errors)} invalid fields")
 
      return JSONResponse(
          status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -34,18 +34,14 @@ async def request_exception_handler(request: Request, exc: RequestValidationErro
 
 async def response_exception_handler(request: Request, exc: ResponseValidationError) -> JSONResponse:
      
-     errors = exc.errors()
-     await logger.error(f"Response Validation Error: {errors}")
+     await logger.error("Response Validation Error")
 
      return JSONResponse(
-         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
          content={
-            "status_code": 422,
+            "status_code": 500,
             "message": "Response Validation Error",
-            "errors": [
-                {'.'.join(map(str, e['loc'])): e['msg']}
-                for e in exc.errors()
-            ]
+            "errors": "Invalid server response"
         },   
     )
 
@@ -53,7 +49,7 @@ async def response_exception_handler(request: Request, exc: ResponseValidationEr
 async def validate_exception_handler(request: Request, exc: ValidationError) -> JSONResponse:
      
      errors = exc.errors()
-     await logger.error(f"Validation Error: {errors}")
+     await logger.error(f"Validation Error: {len(errors)} invalid fields")
 
      return JSONResponse(
          status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -100,7 +96,7 @@ async def websocket_exception_handler(request: Request, exc: WebSocketException)
 
 async def argument_exception_handler(request: Request, exc: ArgumentError) -> JSONResponse:
      
-     errors = str(exc)
+     errors = "Invalid database operation"
      await logger.error(f"HTTP Error: {errors}")
 
      return JSONResponse(
@@ -115,23 +111,22 @@ async def argument_exception_handler(request: Request, exc: ArgumentError) -> JS
 
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
      
-     errors = str(exc)
-     await logger.error(f"API Error: {errors}")
+     await logger.error(f"API Error: {type(exc).__name__}")
 
      return JSONResponse(
          status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
          content={
             "status_code": 500,
             "message": "API Error",
-            "errors": str(exc)
+            "errors": "Internal server error"
 
         },   
     )
 
 async def sqlalchemy_exception_handler(request: Request, exc: DBAPIError) -> JSONResponse:
      
-     errors = exc._message()
-     await logger.error(f"DBAPI Error: {errors}")
+     errors = "Database operation failed"
+     await logger.error(f"DBAPI Error: {type(exc).__name__}")
 
      return JSONResponse(
          status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

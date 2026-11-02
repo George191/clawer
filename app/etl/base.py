@@ -23,8 +23,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Awaitable, Callable, ClassVar, TypeVar
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRebalanceListener, TopicPartition
@@ -224,6 +223,8 @@ class ETLBase:
         # optional indexes over their historical data on every worker startup.
         if not existing or existing["relation"] is None:
             await self._pg.init_schema([ddl_record["ddl_sql"]])
+        if table_role == "current" and settings.etl_output_mode == "debezium":
+            await self._ensure_cdc_identity(self._table_fqn(table, table_role))
         logger.info(
             "%s Table ensured: %s",
             self._log_prefix,
@@ -231,6 +232,24 @@ class ETLBase:
         )
         if create_partitions:
             await self._create_partitions(table, table_role=table_role, ddl_record=ddl_record)
+
+    async def _ensure_cdc_identity(self, table_name: str) -> None:
+        """Ensure complete CDC images before an existing table receives new writes."""
+        row = await self._pg.fetch_one(
+            "SELECT relreplident FROM pg_class WHERE oid=to_regclass(:table_name)",
+            {"table_name": table_name},
+        )
+        if row and row["relreplident"] != "f":
+            await self._pg.execute(f"ALTER TABLE {table_name} REPLICA IDENTITY FULL")
+
+    async def _create_partition(self, sql: str, table_name: str, table_role: str) -> None:
+        """Publish a new partition only after its full-row identity is configured."""
+        if table_role != "current" or settings.etl_output_mode != "debezium":
+            await self._pg.execute(sql)
+            return
+        async with self._pg.session() as session:
+            await session.execute(text(sql))
+            await session.execute(text(f"ALTER TABLE {table_name} REPLICA IDENTITY FULL"))
 
     async def _create_partitions(
         self,
@@ -301,7 +320,7 @@ class ETLBase:
                 f"{range_bound}"
             )
             try:
-                await self._pg.execute(partition_sql)
+                await self._create_partition(partition_sql, partition_name, role)
                 logger.debug("%s Partition ensured: %s", self._log_prefix, partition_name)
             except Exception as e:
                 if self._is_default_partition_overlap_error(e):
@@ -379,7 +398,7 @@ class ETLBase:
                 f"PARTITION OF {parent_table} "
                 f"{hash_bound}"
             )
-            await self._pg.execute(partition_sql)
+            await self._create_partition(partition_sql, partition_name, table_role)
 
     async def _materialize_range_partition_from_default(
         self,
@@ -414,6 +433,8 @@ class ETLBase:
                 CREATE TABLE IF NOT EXISTS {partition_name}
                 (LIKE {parent_table} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING GENERATED INCLUDING IDENTITY INCLUDING STORAGE INCLUDING COMMENTS)
             """))
+            if table_role == "current" and settings.etl_output_mode == "debezium":
+                await session.execute(text(f"ALTER TABLE {partition_name} REPLICA IDENTITY FULL"))
             await session.execute(
                 text(f"""
                     INSERT INTO {partition_name} ({column_sql})
@@ -684,6 +705,10 @@ class ETLBase:
             data_type: str | None = None,
             topic: str | None = None,
         ) -> None:
+        if settings.etl_output_mode == "debezium":
+            # The committed table mutation is the durable message source. Direct
+            # output remains an explicit rollback mode; never dual-publish.
+            return
         if not self._producer:
             await self._connect_producer()
 
@@ -806,12 +831,19 @@ class ETLBase:
         await self._pg.connect()
         logger.info("%s Postgres connected", self._log_prefix)
 
-        logger.info("%s Connecting to Kafka...", self._log_prefix)
-        await self._connect_consumer()
-        await self._connect_producer()
-
         logger.info("%s Initializing schema...", self._log_prefix)
         await self._on_init_schema()
+        if settings.etl_output_mode == "debezium":
+            from app.syncer.postgres_cdc import check_database
+
+            # No input is consumed before WAL retention/position is ready. A
+            # no_data connector registered later would lose this startup window.
+            await check_database(self._pg, require_slot=True, require_replication=False)
+
+        logger.info("%s Connecting to Kafka...", self._log_prefix)
+        await self._connect_consumer()
+        if settings.etl_output_mode == "direct":
+            await self._connect_producer()
 
         handler_count = len(self._handlers)
         logger.info(

@@ -24,6 +24,7 @@ from app.etl.schema.registry import (
 )
 from app.logger import get_logger
 from app.records.values import require_canonical_record
+from app.etl.source_fences import reject_ambiguous_stream
 
 logger = get_logger(__name__)
 
@@ -81,14 +82,27 @@ class TsRds(ETLBase):
         table: str,
         payload: dict[str, Any],
     ) -> dict[str, Any] | None:
-        current_sql = current_insert_sql("rds", table, table_columns("rds", table))
+        current_sql = current_insert_sql(
+            "rds", table, table_columns("rds", table), replay_equal=settings.etl_output_mode == "direct",
+        )
 
         async with self._pg.session() as session:
             # Legacy BSON timestamps were serialized without an offset but represent UTC.
             await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
             result = await session.execute(text(current_sql), payload)
             current_row = result.mappings().first()
+            if current_row is None:
+                await self._check_skipped_stream(session, table, payload)
             return dict(current_row) if current_row else None
+
+    async def _check_skipped_stream(self, session, table: str, payload: dict[str, Any]) -> None:
+        """A cross-topic equal-version collision must stop, rather than silently skip."""
+        current = (await session.execute(text(
+            f"SELECT raw_data,kafka_topic,kafka_partition,kafka_offset FROM ts_rds.rds_{table} "
+            "WHERE record_id=:record_id AND data_source=:data_source AND data_type=:data_type FOR SHARE"
+        ), {name: payload[name] for name in ("record_id", "data_source", "data_type")})).mappings().first()
+        if current is not None:
+            reject_ambiguous_stream(payload, current)
 
     def _prepare_payload(self, message: dict[str, Any], table: str) -> dict[str, Any]:
         require_canonical_record(message)
@@ -152,7 +166,9 @@ class TsRds(ETLBase):
             await self._ensure_type(table)
             if not self._batch_owned(owner, partition):
                 return False
-            current_sql = text(current_insert_sql("rds", table, table_columns("rds", table)))
+            current_sql = text(current_insert_sql(
+                "rds", table, table_columns("rds", table), replay_equal=settings.etl_output_mode == "direct",
+            ))
             results = []
             async with self._pg.session() as session:
                 await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
@@ -167,7 +183,10 @@ class TsRds(ETLBase):
                         for index, payload in enumerate(ordered)
                         for key, value in payload.items()
                     }
-                    sql = current_insert_sql("rds", table, table_columns("rds", table), row_count=len(ordered))
+                    sql = current_insert_sql(
+                        "rds", table, table_columns("rds", table), row_count=len(ordered),
+                        replay_equal=settings.etl_output_mode == "direct",
+                    )
                     rows = (await session.execute(text(sql), parameters)).mappings().all()
                     by_identity = {identity(row): dict(row) for row in rows}
                     if len(by_identity) != len(rows) or not by_identity.keys() <= set(identities):
@@ -181,6 +200,9 @@ class TsRds(ETLBase):
                             raise RuntimeError("RDS batch assignment changed before commit")
                         row = (await session.execute(current_sql, payload)).mappings().first()
                         results.append(dict(row) if row else None)
+                for payload, result in zip(prepared, results, strict=True):
+                    if result is None:
+                        await self._check_skipped_stream(session, table, payload)
                 if not self._batch_owned(owner, partition):
                     raise RuntimeError("RDS batch assignment changed before commit")
         except Exception:

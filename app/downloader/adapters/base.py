@@ -13,6 +13,7 @@ class DownloadItem:
     filename: str
     asset_key: str
     attachment: bool = False
+    version: Any = None
 
 
 Filename = Callable[[str, str], str]

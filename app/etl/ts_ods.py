@@ -28,6 +28,7 @@ from app.etl.schema.registry import (
     get_registered_ddl,
     save_registered_ddl,
 )
+from app.etl.source_fences import POSITION_COLUMNS, source_revision_current
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -137,7 +138,11 @@ class TsOds(ETLBase):
                     normalized = normalized[0]
                 if not isinstance(normalized, dict):
                     return None
-                source = {**{name: message[name] for name in ("record_id", "data_source", "data_type")}, "meta": raw_data.get("_meta") or {}}
+                source = {
+                    **{name: message[name] for name in ("record_id", "data_source", "data_type")},
+                    "meta": raw_data.get("_meta") or {},
+                    "position": {name: message.get(name) for name in POSITION_COLUMNS},
+                }
                 payload = await self._prepare_payload(normalized, source, fields, now)
                 total_bytes += len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf8"))
                 if (total_bytes > 4 * 1024 * 1024 or identity(payload) != identity(source)
@@ -158,15 +163,13 @@ class TsOds(ETLBase):
                 for index in range(len(ordered))
             )
             source_sql = (
-                "SELECT src.record_id, src.data_source, src.data_type, src.raw_data->'_meta' AS meta "
+                "SELECT src.record_id, src.data_source, src.data_type, src.raw_data->'_meta' AS meta, "
+                "src.kafka_topic,src.kafka_partition,src.kafka_offset "
                 "FROM ts_rds.rds_financial_fact AS src JOIN (VALUES " + values + ") "
                 "AS incoming(record_id, data_source, data_type) "
                 "USING (record_id, data_source, data_type) "
                 "ORDER BY src.record_id, src.data_source, src.data_type FOR SHARE OF src"
             )
-            def version(meta):
-                return (safe_datetime(meta.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc),
-                        int(meta.get("download_version") or 0))
             results = {}
             async with self._pg.session() as session:
                 rows = (await session.execute(text(source_sql), parameters)).mappings().all()
@@ -175,11 +178,7 @@ class TsOds(ETLBase):
                     raise ValueError("ODS financial batch source RDS row is missing")
                 eligible = []
                 for source, payload in zip(sources, prepared, strict=True):
-                    incoming_version = version(source.get("meta") or {})
-                    current_version = version(current[identity(source)]["meta"] or {})
-                    if incoming_version > current_version:
-                        raise ValueError("ODS message is ahead of its RDS source version")
-                    if incoming_version == current_version:
+                    if source_revision_current(source, current[identity(source)]):
                         eligible.append(payload)
                 if not self._batch_owned(owner, partition):
                     raise RuntimeError("ODS financial batch assignment changed before commit")
@@ -215,24 +214,13 @@ class TsOds(ETLBase):
         source_table = source["data_type"]
         validate_table_name(source_table)
         source_row = (await session.execute(text(
-            f"SELECT raw_data->'_meta' AS meta FROM ts_rds.rds_{source_table} "
+            f"SELECT raw_data->'_meta' AS meta,kafka_topic,kafka_partition,kafka_offset FROM ts_rds.rds_{source_table} "
             "WHERE record_id=:record_id AND data_source=:data_source "
             "AND data_type=:data_type FOR SHARE"
         ), {name: source[name] for name in ("record_id", "data_source", "data_type")})).mappings().first()
         if source_row is None:
             raise ValueError("ODS source RDS row is missing")
-        def version(meta: dict[str, Any]) -> tuple[datetime, int]:
-            return (
-                safe_datetime(meta.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc),
-                int(meta.get("download_version") or 0),
-            )
-        incoming_version = version(source.get("meta") or {})
-        current_version = version(source_row["meta"] or {})
-        if incoming_version < current_version:
-            return False
-        if incoming_version > current_version:
-            raise ValueError("ODS message is ahead of its RDS source version")
-        return True
+        return source_revision_current(source, source_row)
 
     async def _prepare_payload(self, normalized, source, fields, now) -> dict[str, Any]:
         if not isinstance(normalized, dict):
@@ -370,6 +358,7 @@ class TsOds(ETLBase):
             source = {
                 "record_id": record_id, "data_source": data_source, "data_type": table,
                 "meta": raw_data.get("_meta") or {},
+                "position": {name: message.get(name) for name in POSITION_COLUMNS},
             }
             if table == "filing" and data_source == "filing_sec_edgar":
                 emitted_records = await self._write_filing_outputs(normalized_records, source, fields, now)

@@ -64,9 +64,4 @@ from .embedding import (
     CurrentInstance as CurrentInstanceEmbedding,
     InstanceStatement as InstanceStatementEmbedding,
 )
-from .user import (
-    InstanceStatement as InstanceStatementUser,
-    CurrentInstance as CurrentInstanceUser,
-    CheckUserUpdatePermission as CheckUserUpdatePermissionUser,
-)
 

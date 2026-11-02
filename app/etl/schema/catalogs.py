@@ -18,6 +18,13 @@ class TableDefinition(_TableDefinition, total=False):
 
 
 RECORD_IDENTITY_COLUMNS = ("record_id", "data_source", "data_type")
+
+
+def lineage_columns(layer: str) -> tuple[str, ...]:
+    """Persist the association between an ODS revision and its derived results."""
+    return {"task": ("source_revision",), "dwd": ("ods_revision", "task_revision")}.get(layer, ())
+
+
 _AUDIT_COLUMNS = {
     "created_at": "TIMESTAMPTZ NOT NULL DEFAULT NOW()",
     "updated_at": "TIMESTAMPTZ NOT NULL DEFAULT NOW()",
@@ -750,10 +757,13 @@ def current_table_ddl(
     for name, expression, predicate, method in indexes:
         ddl += (f"\nCREATE INDEX IF NOT EXISTS {name} ON {table_ref} USING {method} ({expression})"
                 + (f" WHERE {predicate}" if predicate else "") + ";")
+    ddl += f"\nALTER TABLE {table_ref} REPLICA IDENTITY FULL;"
     return ddl
 
 
-def current_insert_sql(layer: str, table: str, columns: dict[str, str], *, row_count: int = 1) -> str:
+def current_insert_sql(
+    layer: str, table: str, columns: dict[str, str], *, row_count: int = 1, replay_equal: bool = False,
+) -> str:
     validate_table_name(table)
     if layer not in {"rds", "ods"}:
         raise ValueError(f"Unsupported current-table layer: {layer}")
@@ -787,7 +797,14 @@ def current_insert_sql(layer: str, table: str, columns: dict[str, str], *, row_c
                 f"(COALESCE(({alias}.raw_data->'_meta'->>'updated_at')::timestamptz, '-infinity'::timestamptz), "
                 f"COALESCE(({alias}.raw_data->'_meta'->>'download_version')::bigint, 0))"
             )
-        guard = f"WHERE {version('target')} <= {version('EXCLUDED')}\n"
+        offset_operator = "<=" if replay_equal else "<"
+        guard = (
+            f"WHERE {version('target')} < {version('EXCLUDED')} OR ("
+            f"{version('target')} = {version('EXCLUDED')} AND "
+            "target.kafka_topic = EXCLUDED.kafka_topic AND "
+            "target.kafka_partition = EXCLUDED.kafka_partition AND "
+            f"target.kafka_offset {offset_operator} EXCLUDED.kafka_offset)\n"
+        )
     return (
         f"INSERT INTO ts_{layer}.{layer}_{table}{alias} ({names}) VALUES {', '.join(rows)}\n"
         f"ON CONFLICT (record_id, data_source, data_type) DO UPDATE SET {updates}\n"

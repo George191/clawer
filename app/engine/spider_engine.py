@@ -42,8 +42,8 @@ from app.models.template import (
 )
 from app.parser.template_parser import TemplateParser
 from app.records.base import RecordStore
-from app.records.file_store import FileRecordStore
 from app.records.field_names import normalize_record_fields
+from app.records.file_store import FileRecordStore
 from app.utils.connection_errors import is_retryable_connection_error
 from app.utils.path import get_nested_value
 from app.utils.runtime_control import check_control_state, controlled_sleep
@@ -205,7 +205,8 @@ class SpiderEngine:
             await check_control_state()
             try:
                 record_ids = await self._storage.save_records(
-                    template.name, template.data_type, template.dedup_fields, records
+                    template.name, template.data_type, template.dedup_fields, records,
+                    download_template=template,
                 )
                 break
             except Exception as error:

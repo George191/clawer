@@ -87,6 +87,11 @@ class ValidationRuleEngine:
 
     def validate(self, records: list[dict[str, Any]]) -> ValidationResult:
         """Run all rules against all records. Returns ValidationResult."""
+        return self._validate_records(records)[0]
+
+    def _validate_records(
+        self, records: list[dict[str, Any]],
+    ) -> tuple[ValidationResult, list[dict[str, Any]]]:
         result = ValidationResult(total=len(records))
         seen_keys: set[str] = set()
         valid_records: list[dict[str, Any]] = []
@@ -186,12 +191,11 @@ class ValidationRuleEngine:
             else:
                 result.failed += 1
 
-        return result
+        return result, valid_records
 
     def filter_valid(self, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Return only valid + deduplicated records."""
-        result = self.validate(records)
-        return records  # We can't return the filtered list from validate directly easily
+        return self._validate_records(records)[1]
 
     @staticmethod
     def from_template_fields(fields: list, primary_key: str = "patent_id") -> ValidationRuleEngine:

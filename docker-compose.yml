@@ -19,7 +19,6 @@ services:
   # Explicitly enabled during the Mongo CDC migration; brokers/Mongo remain external.
   mongo-cdc-connect:
     image: quay.io/debezium/connect:3.4
-    profiles: ["mongo-cdc"]
     restart: unless-stopped
     env_file:
       - .env
@@ -29,6 +28,20 @@ services:
       - ./docker/mongo-cdc-connect.sh:/mongo-cdc-connect.sh:ro
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     entrypoint: ["bash", "/mongo-cdc-connect.sh"]
+    networks:
+      - asiral-helio
+
+  postgres-syncer:
+    build:
+      context: .
+      dockerfile: docker/syncer.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    working_dir: /app
+    volumes:
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
+    command: ["python", "-m", "app.syncer.postgres_worker", "--batch", "50"]
     networks:
       - asiral-helio
 
@@ -115,6 +128,8 @@ services:
     env_file:
       - .env
     working_dir: /app
+    volumes:
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: ["python", "-m", "app.downloader.main", "--poll", "60"]
     networks:
       - asiral-helio
@@ -129,6 +144,8 @@ services:
     env_file:
       - .env
     working_dir: /app
+    volumes:
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: ["python", "-m", "app.syncer.main", "--data-type", "news", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
     networks:
       - asiral-helio
@@ -270,6 +287,7 @@ services:
     volumes:
       - ./output:/app/output
       - ./models:/app/models:ro
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     working_dir: /app
     command: uvicorn app.web.main:app --host 0.0.0.0 --port 8000
     healthcheck:
@@ -315,6 +333,8 @@ services:
     env_file:
       - .env
     working_dir: /app
+    volumes:
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: >
       sh -c "python -m app.etl.main --init-schema &&
              python -m app.etl.main --layer rds"
@@ -334,6 +354,8 @@ services:
     env_file:
       - .env
     working_dir: /app
+    volumes:
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: python -m app.etl.main --layer ods
     networks:
       - asiral-helio
@@ -348,6 +370,8 @@ services:
     env_file:
       - .env
     working_dir: /app
+    volumes:
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     command: python -m app.etl.main --layer task --table vulnerability
     networks:
       - asiral-helio

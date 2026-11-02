@@ -3,8 +3,6 @@ import uuid
 from sqlmodel import select
 from sqlmodel.sql._expression_select_cls import SelectOfScalar
 
-from typing_extensions import Annotated
-
 from fastapi import Depends, HTTPException, status
 
 

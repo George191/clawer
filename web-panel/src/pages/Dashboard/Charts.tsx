@@ -237,7 +237,7 @@ const TaskStatusDonutChart: React.FC<{
 // ============ Line: Error Rate Trend ============
 const ErrorRateTrendChart: React.FC<{
   data: { ts: string; v: number }[];
-  threshold: number;
+  threshold: number | null;
   token: any;
 }> = ({ data, threshold, token }) => {
   const option = useMemo(() => ({
@@ -249,7 +249,7 @@ const ErrorRateTrendChart: React.FC<{
       formatter: (params: any) => {
         const p = Array.isArray(params) ? params[0] : params;
         const v = p?.value;
-        const overThreshold = typeof v === 'number' && v > threshold;
+        const overThreshold = threshold !== null && typeof v === 'number' && v > threshold;
         return `<span>${p?.axisValue}</span><br/>
           <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff4d4f;margin-right:6px"></span>
           错误率: <b style="color:${overThreshold ? '#ff4d4f' : token.colorText}">${v}%</b>
@@ -290,7 +290,7 @@ const ErrorRateTrendChart: React.FC<{
           { offset: 1, color: '#ff4d4f02' },
         ]),
       },
-      markLine: {
+      markLine: threshold === null ? undefined : {
         silent: true,
         symbol: 'none' as const,
         lineStyle: { color: '#ff4d4f', type: 'dashed' as const, width: 1.5 },

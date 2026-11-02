@@ -7,18 +7,21 @@
 
 字段映射:
     RDS 表结构: record_id / data_source / data_type / raw_data(JSONB) / updated_at
-    ES 文档:    record_id 作为 _id, raw_data 展开为顶层字段 + 元数据字段
+    ES 文档:    三元业务身份生成 _id, raw_data 展开为顶层字段 + 元数据字段
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
 from app.config.settings import settings
 from app.logger import get_logger
 from app.records.values import require_canonical_record
+from app.etl.schema.catalogs import validate_table_name
 
 logger = get_logger(__name__)
 
@@ -34,7 +37,7 @@ class TableSyncConfig:
     schema_name: str = "ts_rds"               # RDS schema 名
     target_index: str = ""                    # ES 索引名（空则用 index_prefix + table_name）
     watermark_column: str = "updated_at"      # 增量水位线列
-    doc_id_field: str = "record_id"           # ES 文档 _id 来源字段
+    doc_id_field: str | None = None           # 空值使用三元业务身份，自定义字段显式覆盖
     include_metadata: bool = True             # 是否包含元数据字段（data_source/data_type 等）
     include_raw_data: bool = True             # 是否将 raw_data 展开为顶层字段
     field_mapping: dict[str, str] = field(    # 字段重命名映射（source_field → target_field）
@@ -44,6 +47,13 @@ class TableSyncConfig:
         default_factory=list
     )
 
+    def __post_init__(self) -> None:
+        names = [self.table_name, self.schema_name, self.watermark_column]
+        if self.doc_id_field is not None:
+            names.append(self.doc_id_field)
+        for name in names:
+            validate_table_name(name)
+
     @property
     def source_table(self) -> str:
         """源表全名（schema.table）。"""
@@ -52,9 +62,13 @@ class TableSyncConfig:
     @property
     def index_name(self) -> str:
         """目标 ES 索引名。"""
+        return self.resolve_index_name(settings.es_index_prefix)
+
+    def resolve_index_name(self, index_prefix: str) -> str:
+        """Resolve the owning syncer's prefix, preserving an explicit target index."""
         if self.target_index:
             return self.target_index
-        return f"{settings.es_index_prefix}{self.table_name}"
+        return f"{index_prefix}{self.table_name}"
 
 
 @dataclass
@@ -80,6 +94,10 @@ class SyncConfig:
 
     # 表级配置
     tables: list[TableSyncConfig] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.batch_size < 1 or self.max_retries < 1 or self.poll_interval < 0 or self.retry_backoff < 0:
+            raise ValueError("ES batch/retries must be positive and poll/backoff non-negative")
 
     @classmethod
     def from_settings(cls) -> SyncConfig:
@@ -141,7 +159,7 @@ class SyncConfig:
                     schema_name=table_data.get("schema_name", "ts_rds"),
                     target_index=table_data.get("target_index", ""),
                     watermark_column=table_data.get("watermark_column", "updated_at"),
-                    doc_id_field=table_data.get("doc_id_field", "record_id"),
+                    doc_id_field=table_data.get("doc_id_field"),
                     include_metadata=table_data.get("include_metadata", True),
                     include_raw_data=table_data.get("include_raw_data", True),
                     field_mapping=table_data.get("field_mapping", {}),
@@ -152,7 +170,20 @@ class SyncConfig:
             "ES syncer config loaded from %s: %d tables",
             path, len(config.tables),
         )
+        config.__post_init__()
         return config
+
+
+def build_document_id(row: dict[str, Any], field: str | None = None) -> str:
+    """Use canonical business identity unless a custom document ID field is explicit."""
+    if field is not None:
+        value = row.get(field)
+        return str(value) if value is not None else ""
+    identity = [row.get(key) for key in ("record_id", "data_source", "data_type")]
+    if any(not isinstance(value, str) or not value for value in identity):
+        return ""
+    encoded = json.dumps(identity, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def build_doc_from_row(
@@ -168,9 +199,7 @@ def build_doc_from_row(
     Returns:
         (doc_id, doc) 元组
     """
-    import json
-
-    doc_id = str(row.get(table_config.doc_id_field, ""))
+    doc_id = build_document_id(row, table_config.doc_id_field)
     doc: dict[str, Any] = {}
 
     # 展开原始数据（raw_data JSONB）

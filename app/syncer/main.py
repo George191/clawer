@@ -18,6 +18,7 @@ import asyncio
 from app.config.settings import settings
 from app.etl.schema.catalogs import validate_table_name
 from app.logger import get_logger, setup_service_logging
+from app.logger.task_format import redact_connection_userinfo
 from app.syncer.worker import SyncWorker
 
 logger = get_logger(__name__)
@@ -63,7 +64,7 @@ async def run() -> None:
 def main() -> None:
     setup_logging("syncer")
     logger.info("=== Syncer Service Starting ===")
-    logger.info("  MongoDB: %s", settings.db_url)
+    logger.info("  MongoDB: %s", redact_connection_userinfo(settings.db_url))
     logger.info("  Kafka:   %s -> %s-<data_type>", settings.kafka_brokers, settings.kafka_topic)
     logger.info("=" * 40)
     asyncio.run(run())

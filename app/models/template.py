@@ -10,9 +10,9 @@ import random
 import uuid
 from enum import Enum
 from typing import Any
-from urllib.parse import urlparse, urlunparse, quote
+from urllib.parse import quote, urlparse, urlunparse
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 
 
 class ResponseType(str, Enum):
@@ -81,6 +81,9 @@ class PaginationConfig(BaseModel):
 
 class DownloadConfig(BaseModel):
     selector: str = Field(description="下载链接选择器或JSON路径")
+    version_selector: str | None = Field(
+        default=None, description="资源版本路径；对象下载项相对该对象，字符串下载项相对当前递归节点",
+    )
     collection: str | None = Field(default=None, description="仅处理指定 Mongo 集合，留空适用于所有集合")
     recursive: str | None = Field(default=None, description="递归子对象路径，如 referenced_tweets[].tweet")
     selector_type: SelectorType = Field(default=SelectorType.CSS)

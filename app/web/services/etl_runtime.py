@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from app.base.kafka import build_admin_client_kwargs, build_consumer_kwargs
 from app.config.settings import settings
 from app.etl.state.offsets import OVERRIDE_KEY_PREFIX, get_offset_manager
+from app.etl.schema.catalogs import validate_table_name
 from app.storage.postgres_client import get_pg_client
 from app.storage.redis_client import RedisClient
 
@@ -58,7 +59,12 @@ def _source(layer: str) -> tuple[Path, str, set[str]]:
 
 
 def _binding(layer: str, table: str) -> tuple[str, list[str]]:
-    if table not in _source(layer)[2]:
+    if layer in {"rds", "ods"}:
+        try:
+            validate_table_name(table)
+        except ValueError:
+            return "", []
+    elif table not in _source(layer)[2]:
         return "", []
     topics: list[str] = []
     group = getattr(settings, f"etl_{layer}_consumer_group", "")
@@ -198,11 +204,11 @@ async def script(layer: str, table: str) -> dict[str, Any]:
     source, code, handlers = _source(layer_name)
     if not code:
         return {"available": False, "reason": "Deployed worker source is unavailable", "code": ""}
-    handler_available = logical in handlers and row["schemaName"] == f"ts_{layer_name}"
+    handler_available = (layer_name in {"rds", "ods"} or logical in handlers) and row["schemaName"] == f"ts_{layer_name}"
     return {
         "available": True, "code": code, "language": "python",
         "path": f"app/etl/{source.name}", "sourcePath": f"app/etl/{source.name}",
-        "handler": f"_handler_{logical}",
+        "handler": "_dispatch" if layer_name in {"rds", "ods"} else f"_handler_{logical}",
         "handlerAvailable": handler_available,
         "reason": None if handler_available else "Layer source shown; this table has no deployed handler",
         "updatedAt": datetime.fromtimestamp(source.stat().st_mtime, timezone.utc).isoformat(),

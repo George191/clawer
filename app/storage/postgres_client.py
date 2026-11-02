@@ -43,7 +43,8 @@ _DDL_INDEX_IF_NOT_EXISTS = re.compile(
 
 
 class PostgresClient:
-    def __init__(self) -> None:
+    def __init__(self, url: str | None = None) -> None:
+        self._url = url
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker | None = None
         self._connected = False
@@ -52,7 +53,7 @@ class PostgresClient:
         if self._engine is not None and self._connected:
             return
 
-        pg_url = _resolved_pg_url()
+        pg_url = self._url or _resolved_pg_url()
         masked_url = _mask_url(pg_url)
         attempt = 0
         last_error: Exception | None = None

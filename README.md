@@ -265,9 +265,15 @@ CDC 用于驱动当前状态同步，不是逐条保留历史版本的审计流�
 MongoDB `pending` 状态保留为补偿依据：Syncer 默认每 60 秒扫描一次（`--poll`），同步和下载补偿均跳过最近一个补偿间隔内更新的记录。满批积压可连续处理，不必每批等待整个补偿间隔。CDC 通知读取后推进 Kafka 消费位点，后续处理失败由持久化的 `pending`/下载认领状态恢复；Kafka 不可用、CDC 中断或进程退出时仍保留扫描补偿。允许重复消息，沿用版本 ACK 和下游版本检查。Redis 不再承担这条下载或同步数据投递链路。
 指定类型时，与下载器共用模板分组及 `ai_collect_template_alias` 别名映射查询，只读取匹配业务类型的实际集合；MongoDB 按同步状态和补偿等待时间查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
 
-### Mongo CDC 部署与切换
+### Debezium 整体迁移与发布门槛
 
-本阶段只迁移 MongoDB，Postgres 各层写入及消息发送保持现状。Mongo 必须是支持 Change Streams 的副本集或分片集群；现有账号需要目标数据库的读取及 `changeStream` 权限。连接串必须让 Connect 容器能够访问拓扑中公布的全部节点。部署使用 Debezium Connect 3.4，配置和行为参见 [MongoDB connector 官方文档](https://debezium.io/documentation/reference/3.4/connectors/mongodb.html)。
+MongoDB 与 PostgreSQL 的出站统一由 Debezium Connect 捕获，Python Worker 保留采集、下载、标准化及算法职责。Mongo 必须为支持 Change Streams 的副本集或分片集群；账号需要目标数据库的读取及 `changeStream` 权限，Connect 必须能访问拓扑公布的全部节点。Postgres 使用 `pgoutput`，本实现要求 PostgreSQL 15+、`wal_level=logical`、发布表完整行镜像和持久复制槽。部署使用 Debezium Connect 3.4，参见 [MongoDB 文档](https://debezium.io/documentation/reference/3.4/connectors/mongodb.html)及 [PostgreSQL 文档](https://debezium.io/documentation/reference/3.4/connectors/postgresql.html)。
+
+资源下载按模板 `download` 与适配器生成的下载项比较输入签名，普通标题等业务字段更新不重下文件；URL、资源版本、目标资源字段等输入变化时失效对应旧路径并重新排队。纯输入计划随记录冻结到 `_meta.download_plan`，同名模板发布新版本不会改写旧任务；缓存按 `SPIDER_DOWNLOAD_TEMPLATE_CACHE_SECONDS` 刷新，摘要不匹配时立即验证。模板可声明 `version_selector`，适配器可提供 `DownloadItem.version`；同 URL 内容变化而来源未提供版本信息时，系统无法自动判断。历史无签名的文件会安全重验一次；无冻结计划且无法验证历史摘要的记录会明确失败并要求重新采集，不会无限挂起或假报完成。下载认领、资源输入和对象路径均隔离旧版本，业务 ACK 仍使用 `write_token` 与下载版本检查。并发资源更新使用 CAS，仅冲突记录重读，资源变化路径会增加单条数据库请求，不能把离线微基准当成实际数据库吞吐。
+
+PG 各实际已实现层的 current 表写入经 WAL → Debezium → 原始 CDC topic → `postgres-syncer` → 原业务 topic。relay 在同一 Kafka 事务中发送输出与提交源位点，下游消费者使用 `read_committed`；这不等于数据库、算法调用及所有外部系统之间具备端到端 exactly-once。RDS/ODS/TASK/DWD 已存在的业务逻辑保留；DWS/DIM 没有业务 handler、ADS 没有 worker 的部分不被宣称为已实现功能。PG 适配使用事件本身的完整 `after`，不回读最新数据库冒充历史快照；JSONB、金额、微秒时间和空间字段按 Connect schema 解析。缺失 TOAST 数据或无契约的物理删除会阻止位点推进并报告错误，业务软删除仍正常传播。
+
+工作台在 CDC 模式下拒绝 current 表的物理行删除，防止一个受支持的 UI 操作把 relay 卡在无删除契约的事件上；应通过业务软删除表达失效。普通历史/自定义 schema 继续使用既有主键及权限校验。直接在数据库执行破坏性操作仍需遵守迁移/恢复流程。
 
 先用现有环境配置进行只读检查，不修改 Mongo 拓扑、不注册 connector：
 
@@ -275,17 +281,56 @@ MongoDB `pending` 状态保留为补偿依据：Syncer 默认每 60 秒扫描一
 python -m app.syncer.mongo_cdc --check
 ```
 
-Connect 复用 `SPIDER_KAFKA_BROKERS`、`SPIDER_KAFKA_TOPIC` 及已有 Kafka SASL/安全协议配置。内部配置、位点和状态 topic 分别为 `${SPIDER_KAFKA_TOPIC}-mongo-connect-configs`、`-offsets`、`-status`，必须保留；其副本数由 `SPIDER_MONGO_CDC_REPLICATION_FACTOR` 控制，默认 3，单 broker 环境需显式设为 1。CDC 集合 topic 为单分区，副本数使用 broker 默认值，消息上限设为 16 MiB；账号需要对应 topic 的创建、读写及消费组权限。TLS 默认使用 Java 信任库；使用仓库中自签 CA 时先确认 `docker/kafka.crt` 正确，并设置 `SPIDER_MONGO_CDC_TLS_CA=/etc/kafka/kafka.crt`。REST 配置接口含 Mongo 连接信息，仅映射到本机 `127.0.0.1:8083`。
+Connect 复用 `SPIDER_KAFKA_BROKERS`、`SPIDER_KAFKA_TOPIC` 及已有 Kafka SASL/安全协议配置。内部配置、位点和状态 topic 分别为 `${SPIDER_KAFKA_TOPIC}-mongo-connect-configs`、`-offsets`、`-status`，必须保留；其副本数由 `SPIDER_MONGO_CDC_REPLICATION_FACTOR` 控制，默认 3，单 broker 测试环境需显式设为 1。CDC topic 为单分区，副本数使用 broker 默认值，消息上限设为 16 MiB。PG relay 同时要求 broker 正确配置事务状态日志、副本及 ACL；账号需要原始/业务 topic 的读写、创建、消费组与 transactional ID 权限。Python 与 Connect 共享 `SPIDER_KAFKA_SSL_CAFILE`，留空使用系统信任库；自签 CA 可配置为容器内 `/etc/kafka/kafka.crt`，证书须与 broker 主机名匹配，不再关闭证书校验。旧 `SPIDER_MONGO_CDC_TLS_CA` 仍兼容 Connect。REST 接口含连接配置，仅映射本机 `127.0.0.1:8083`；管理页面通过 `SPIDER_CDC_CONNECT_URL` 指向可访问的受保护管理地址。
 
 先启动 Connect、构建新版 Syncer 镜像，再注册 connector；注册命令仅在 connector 和任务都为 `RUNNING` 后成功退出，不输出连接密码或服务端错误正文：
 
 ```bash
-docker compose --profile mongo-cdc up -d mongo-cdc-connect
+docker compose up -d mongo-cdc-connect
 docker compose build syncer
 docker compose run --rm --no-deps syncer python -m app.syncer.mongo_cdc --connect-url http://mongo-cdc-connect:8083
 ```
 
 注册采用 `snapshot.mode=no_data`，不全量重发已同步记录，历史待下载/待同步记录由现有扫描补偿处理。确认 connector 正常后，通过现有发布流程重建并重启 crawler、全部下载器及所有正在运行的 `syncer`/`syncer-*` 实例；不要让同一范围的新旧下载器、同步器长期并行运行。验证新增记录、业务更新、下载回写均能到达原业务 topic，并检查同步 ACK/下载心跳没有产生业务消息循环。暂停并恢复 Connect 后应从内部 offset topic 续接；停机超过 oplog 保留窗口时需检查 connector 状态并恢复采集，期间 Mongo 补偿继续处理当前待处理状态。不要删除内部 topic 来重置正常位点。
+
+PG 首次切换须先暂停 ETL 写入并排空旧发送路径，按以下顺序准备。`--prepare` 会修改 publication、REPLICA IDENTITY 与 lineage 列，须在部署环境审阅执行；`--check` 只读，不能与 `--prepare` 同用。准备阶段使用 `SPIDER_PG_URL` 指定的部署 owner/DBA 身份，须具备表迁移及 schema publication 创建权限；准备完成后恢复普通应用凭据，不要给长期复制账号追加 DDL 管理权限。检查、注册由 `SPIDER_PG_CDC_URL` 指定的独立复制账号执行，ETL 应用账号无需持有复制权限。连接串使用完整 SQLAlchemy asyncpg URL，目标数据库须与应用相同。
+
+```bash
+docker compose build syncer rds-worker ods-worker task-worker
+docker compose run --rm --no-deps rds-worker python -m app.etl.main --init-schema
+docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --prepare
+docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --check
+docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --connect-url http://mongo-cdc-connect:8083
+docker compose up -d postgres-syncer
+```
+
+确认 PG connector/task 为 RUNNING 且 slot 位点有效后再启动 ETL。`SPIDER_ETL_OUTPUT_MODE=debezium` 为默认模式；未具备 publication/slot 时 ETL 会拒绝消费输入，避免先写库而没有变更捕获。默认 `no_data` 只接续注册后的变化，首次注册前的历史数据必须单独回填，不能依赖不存在的旧 slot 补回；若需初始快照可显式选择 `--snapshot-mode initial`，先估算数据库和 Kafka 负载。原始 PG topic 为 `${SPIDER_KAFKA_TOPIC}-postgres-cdc.<schema>.<table>`，不要删除内部位点 topic 或直接重置复制槽。复制槽保留 WAL，须对保留字节、未确认字节及磁盘空间设置部署环境告警。
+
+TASK 的 `source_revision` 与 DWD 的 `ods_revision`/`task_revision` 保存完整上游 ODS 输入的规范摘要。算法在锁外执行，落库前验证当前源行；ODS 换版清除不匹配的旧算法结果，图谱仅发布 revision 一致的完整记录。算法没有声明输入字段契约，因此摘要保留所有持久输入字段，包括审计时间，可能增加重算次数，需要压测。历史 NULL lineage 代表关联未知，不能据此发布图谱；须从最新 ODS 显式重算 TASK/DWD，`no_data` 不会代替这项迁移。RDS 同业务版本只接受同 topic/partition 的 offset 有序更新；跨流同版本但内容冲突会阻断，切换 topic 时必须先排空并核对版本，不能通过静默跳过规避。
+
+`direct` 只作为受控回滚模式：先停止 relay、排空或隔离在途输出，再将 ETL 切为 `SPIDER_ETL_OUTPUT_MODE=direct` 并重启，禁止两条出站路径并行。保留 Connect 内部 topic/复制槽以便恢复，并核对下游版本与身份。ES 的索引版本不能混用无 LSN 的旧消息与 CDC 版本；需要重新建立隔离索引、核对后切换 alias，不能假定 direct 模式自动回滚全部 ES 状态。
+
+ES 默认文档身份使用业务三元组，迁移旧 `record_id` 索引时须创建新索引与新的 `syncer_name`。先创建全部配置的 RDS 业务 topic，启动 CDC 消费并等待完成分区分配，再执行 `--once` 历史回填；新消费组从启动时的最新位点接续，已有组恢复已提交位点，缺少 topic 会拒绝启动。核对数量/样本后原子切换 alias，旧索引保留供回滚，不自动删除。历史回填按时间加业务身份的复合游标和固定上界推进；无 CDC LSN 的历史写入只能补不存在的文档，不能覆盖已接收到的新版本。连续 direct 模式和 CDC 消息缺失 LSN 时 ES 拒绝处理，避免把冲突当成同步成功。
+
+### 实施分工与验收
+
+| 角色 | 负责范围 | 验收重点 |
+| --- | --- | --- |
+| 项目负责人/PM | 接口协调、范围、发布与回滚门槛 | 不以离线测试代替生产验收 |
+| 架构/大数据 | WAL、publication、分区、relay、ES | 位点恢复、事务、类型精度、历史回填 |
+| Python | 资源身份、Mongo 并发、下载认领 | 普通字段不重下、旧结果不覆盖新资源 |
+| 产品/前端/UI | CDC 管理状态、监控与错误提示 | 真实读数，未采集显示未知，不伪造健康 |
+| 独立质检 | 跨模块复核、故障回归与发布核对 | 先复现再修复，阻断项关闭后复验 |
+
+仓库默认 `python -m pytest` 收集 `app` 下的回归测试；同名测试模块采用 importlib 模式。前端运行 `npm run build` 和已有 Node 回归。离线 CPU 基准可运行 `python -m app.quality.benchmark_cdc --records 10000 --rounds 5 --payload-bytes 1024`，报告明确不包含网络、数据库或 Kafka，不能作为端到端容量承诺。
+
+单元测试通过 `app/conftest.py` 使用惰性、本机不可用连接，避免依赖开发者的真实 `.env`；运行时镜像不包含测试目录或 conftest。可选真实 PG 回放测试须显式设置 `SPIDER_TEST_PG_URL`，并限制为 loopback 主机及明确 test 库名，仅创建临时表。2026-11-02 本轮最终离线回归为 433 通过、1 个真实 PG 用例因缺少测试库跳过；Node 回归 12 项通过，TypeScript/Vite 构建通过。本地模拟 API 的 Edge 检查覆盖 CDC 未配置与任务失败状态、桌面与 390px 宽度，不等于真实环境联调。
+
+下载 CLI 保持 `--datatype`，并接受同义的 `--data-type`；未知、缺值或误拼的范围参数会直接报错。旧文档中的 `--cik-file` 从未实现筛选，现在明确拒绝该参数，避免误以为已限制范围而下载全部集合。
+
+全仓静态审计另发现既有孤立文件 `app/web/core/graph/build.py` 依赖缺失的 members/workflow 模块，且引用未导入的 `AsyncPostgresSaver`。该文件不在当前正式路由调用链，本轮未擅自删除或以新功能替换；它不计入已验收功能，全仓静态检查仍保留此项遗留错误。当前实际链路中的假监控指标、重复依赖导入、校验器返回未过滤数据、连接信息日志与数据库异常响应泄露等问题已分别修正并补回归。
+
+投产前仍须在测试/预生产环境验证：真实 TLS/ACL、PG15+ publication/新分区、RI FULL/大 JSONB、Kafka 事务中止与重启、Mongo 断线与 oplog 窗口、旧下载结果/并发采集、ES 回填与 alias 回滚；并测端到端 P50/P95/P99、稳定/峰值吞吐、数据库读写/WAL 与 Kafka lag。当前尚无用户确认的容量或延迟目标，也无联调环境，因此真实环境性能与生产验收不能标为通过。
 
 模板与集合的别名映射由 `app/records/collection_routes.py` 查询 `public.ai_collect_template_alias`，供采集、下载和同步共用。表结构由部署迁移维护，业务映射单独配置。映射以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行的下载和同步启停，不影响采集写入。模板存在映射时不再回退到同名集合，禁用映射也不会触发回退。
 模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 organization 或 filing。修改路由在服务刷新路由缓存后生效，已开始的记录继续完成。

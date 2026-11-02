@@ -5,17 +5,17 @@
     --datatype <type>    按模板及集合路由解析业务类型（默认所有类型）
     --poll <seconds>      MongoDB 补偿间隔及待处理记录最小年龄（默认 60）
     --batch <n>           每次处理记录数（默认 50）
-    --cik-file <path>     只下载文件中 CIK 对应的 SEC 记录
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
-import sys
 
 from app.config.settings import settings
 from app.downloader.worker import DownloadWorker
 from app.logger import get_logger, setup_service_logging
+from app.logger.task_format import redact_connection_userinfo
 
 logger = get_logger(__name__)
 
@@ -24,30 +24,26 @@ def setup_logging(service: str = "downloader") -> None:
     setup_service_logging(service, settings.log_level)
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Reject unknown scope flags before any records can be claimed."""
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    parser.add_argument("--template")
+    parser.add_argument("--datatype", "--data-type", dest="data_type")
+    parser.add_argument("--poll", type=int, default=60)
+    parser.add_argument("--batch", type=int, default=50)
+    args = parser.parse_args(argv)
+    if args.poll < 0 or args.batch < 1:
+        parser.error("poll must be non-negative and batch must be positive")
+    return args
+
+
 async def run() -> None:
-    template_name: str | None = None
-    data_type: str | None = None
-    poll_interval = 60
-    batch_size = 50
-    cik_file: str | None = None
-
-    for i, arg in enumerate(sys.argv):
-        if arg == "--template" and i + 1 < len(sys.argv):
-            template_name = sys.argv[i + 1]
-        elif arg == "--datatype" and i + 1 < len(sys.argv):
-            data_type = sys.argv[i + 1]
-        elif arg.startswith("--datatype="):
-            data_type = arg.split("=", 1)[1]
-        elif arg == "--poll" and i + 1 < len(sys.argv):
-            poll_interval = int(sys.argv[i + 1])
-        elif arg == "--batch" and i + 1 < len(sys.argv):
-            batch_size = int(sys.argv[i + 1])
-
+    args = parse_args()
     worker = DownloadWorker(
-        poll_interval=poll_interval,
-        batch_size=batch_size,
-        template_name=template_name,
-        data_type=data_type,
+        poll_interval=args.poll,
+        batch_size=args.batch,
+        template_name=args.template,
+        data_type=args.data_type,
     )
     try:
         await worker.run()
@@ -58,7 +54,7 @@ async def run() -> None:
 def main() -> None:
     setup_logging("downloader")
     logger.info("=== Downloader Service Starting ===")
-    logger.info("  MongoDB: %s", settings.db_url)
+    logger.info("  MongoDB: %s", redact_connection_userinfo(settings.db_url))
     logger.info("  MinIO:   %s", settings.minio_endpoint)
     logger.info("=" * 40)
     asyncio.run(run())

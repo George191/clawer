@@ -8,16 +8,16 @@ export interface DashboardMetrics {
     failed: number;
   };
   etl_throughput: {
-    current: number;
+    current: number | null;
     history: { ts: string; v: number }[];
   };
   kafka_lag: {
-    total: number;
+    total: number | null;
     by_layer: Record<string, number>;
   };
   data_volume: {
     total: number;
-    daily_increment: number;
+    daily_increment: number | null;
   };
   /** Pipeline topology nodes */
   pipeline_nodes: PipelineNodeData[];
@@ -28,7 +28,8 @@ export interface DashboardMetrics {
   /** Error rate time series */
   error_rate_history: { ts: string; v: number }[];
   /** Error rate threshold % */
-  error_threshold: number;
+  error_threshold: number | null;
+  unavailable_metrics?: string[];
   /** Kafka lag time series for trend chart */
   kafka_lag_history: { ts: string; v: number }[];
 }
@@ -122,11 +123,13 @@ export interface LogEntry {
 }
 
 export interface MonitorStats {
-  reqRate: number;
-  successRate: number;
-  antiCrawlTriggers: number;
-  proxyAvailable: number;
-  proxyTotal: number;
+  reqRate: number | null;
+  successRate: number | null;
+  antiCrawlTriggers: number | null;
+  proxyAvailable: number | null;
+  proxyTotal: number | null;
+  available?: boolean;
+  reason?: string;
 }
 
 // ==================== Scheduler ====================
@@ -341,6 +344,24 @@ export interface EtlScript {
   path?: string;
   language?: string;
   code: string;
+}
+
+export interface CdcProbe {
+  state: 'unconfigured' | 'available' | 'unavailable' | 'not_ready';
+  reason?: string | null;
+}
+
+export interface CdcStatus {
+  checkedAt: string;
+  outputMode: 'debezium' | 'direct';
+  connect: CdcProbe & { connectors: { name: string; state: string; taskStates: string[] }[] };
+  mongo: CdcProbe;
+  postgres: CdcProbe & {
+    walLevel?: string | null;
+    expectedSlot?: string | null;
+    slots: { name: string; active: boolean; retainedBytes: number | null; unconfirmedBytes: number | null }[];
+  };
+  kafka: CdcProbe & { consumers: { group: string; lag: number; partitions: number }[] };
 }
 
 export type ProductDomain = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'knowledge-graph' | 'knowledge-rag' | 'platform';

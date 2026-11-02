@@ -20,15 +20,17 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
+
+from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
 from app.etl.schema.registry import get_registered_ddl, save_registered_ddl
 from app.etl.tasks import get_tasks
+from app.etl.source_fences import source_snapshot_revision
 from app.logger import get_logger
 
 logger = get_logger(__name__)
@@ -41,6 +43,7 @@ CREATE TABLE IF NOT EXISTS ts_task.task_vulnerability (
     task TEXT NOT NULL,
     result JSONB NOT NULL CHECK (jsonb_typeof(result) = 'array'),
     result_type TEXT NOT NULL,
+    source_revision TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (record_id, data_source, task)
@@ -50,15 +53,16 @@ CREATE TABLE IF NOT EXISTS ts_task.task_vulnerability (
 TASK_VULNERABILITY_INSERT = """
 INSERT INTO ts_task.task_vulnerability (
     data_source, data_type, record_id,
-    task, result, result_type, created_at, updated_at
+    task, result, result_type, source_revision, created_at, updated_at
 ) VALUES (
     :data_source, :data_type, :record_id,
-    :task, CAST(:result AS jsonb), :result_type,
+    :task, CAST(:result AS jsonb), :result_type, :source_revision,
     CAST(:created_at AS timestamptz), CAST(:updated_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, task) DO UPDATE SET
     result = EXCLUDED.result,
     result_type = EXCLUDED.result_type,
+    source_revision = EXCLUDED.source_revision,
     updated_at = EXCLUDED.updated_at
 RETURNING *
 """
@@ -66,16 +70,17 @@ RETURNING *
 TASK_PATENT_INSERT = """
 INSERT INTO ts_task.task_patent (
     data_source, data_type, record_id,
-    task, result, result_type,
+    task, result, result_type, source_revision,
     created_at
 ) VALUES (
     :data_source, :data_type, :record_id,
-    :task, :result, :result_type,
+    :task, :result, :result_type, :source_revision,
     CAST(:created_at AS timestamptz)
 )
 ON CONFLICT (record_id, data_source, task, created_at) DO UPDATE SET
     result = EXCLUDED.result,
-    result_type = EXCLUDED.result_type
+    result_type = EXCLUDED.result_type,
+    source_revision = EXCLUDED.source_revision
 RETURNING *
 """
 
@@ -109,6 +114,17 @@ class TsTask(ETLBase):
             )
         await super()._on_init_schema()
 
+    async def _write_result(
+        self, message: dict[str, Any], sql: str, payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Validate the current ODS snapshot after computation, then commit its result."""
+        async with self._pg.session() as session:
+            revision = await source_snapshot_revision(session, "ods", message)
+            if revision is None:
+                return None
+            row = (await session.execute(text(sql), {**payload, "source_revision": revision})).mappings().first()
+            return dict(row) if row else None
+
     async def _handler_vulnerability(self, message: dict[str, Any]) -> bool:
         try:
             data_source = message.get("data_source")
@@ -119,8 +135,6 @@ class TsTask(ETLBase):
             results = await get_tasks("satellite_vulnerability_extract").execute(message=message)
             now = datetime.now(timezone.utc)
             for task_name, task_result in results.items():
-                if not json.loads(task_result.data):
-                    continue
                 payload = {
                     "data_source": data_source,
                     "data_type": "vulnerability",
@@ -133,12 +147,13 @@ class TsTask(ETLBase):
                 }
                 result = await self._execute_with_table_recovery(
                     "vulnerability",
-                    partial(self._pg.fetch_one, TASK_VULNERABILITY_INSERT, payload),
+                    partial(self._write_result, message, TASK_VULNERABILITY_INSERT, payload),
                     payload=payload,
                 )
-                await self._emit(
-                    result, record_id=record_id, data_source=data_source, data_type="vulnerability",
-                )
+                if result is not None:
+                    await self._emit(
+                        result, record_id=record_id, data_source=data_source, data_type="vulnerability",
+                    )
             return True
         except Exception:
             logger.exception("%s Failed to match vulnerability keywords", self._log_prefix)
@@ -156,7 +171,8 @@ class TsTask(ETLBase):
             now = datetime.now(timezone.utc)
             for task_name, task_result in results.items():
 
-                result = await self._pg.fetch_one(
+                result = await self._write_result(
+                    message,
                     TASK_PATENT_INSERT,
                     {
                         "data_source": data_source,
@@ -169,7 +185,8 @@ class TsTask(ETLBase):
                     },
                 )
 
-                await self._emit(result, record_id=record_id, data_source=data_source, data_type=data_type)
+                if result is not None:
+                    await self._emit(result, record_id=record_id, data_source=data_source, data_type=data_type)
                 logger.debug(
                     "%s task=%s result_type=%s record_id=%s → ADS",
                     self._log_prefix, task_name, task_result.data_type, record_id,

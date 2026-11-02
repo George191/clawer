@@ -9,6 +9,7 @@
 - 调度增强：域名速率控制、请求降级回退
 """
 
+from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import Field
@@ -86,6 +87,9 @@ class AppSettings(BaseSettings):
 
     db_url: str = Field(default="", description="MongoDB连接URL, 留空则仅使用文件存储")
     db_name: str = Field(default="", description="MongoDB数据库名")
+    download_template_cache_seconds: float = Field(
+        default=60, gt=0, description="下载输入规则缓存秒数；manifest 不匹配时立即刷新",
+    )
     redis_url: str = Field(default="", description="Redis连接URL, 留空则不使用去重缓存")
 
     @property
@@ -117,6 +121,12 @@ class AppSettings(BaseSettings):
     kafka_topic: str = Field(default="", description="Kafka推送主题")
     kafka_client_id: str = Field(default="", description="Kafka客户端ID")
     kafka_enable_idempotence: bool = Field(default=True, description="是否启用幂等生产者")
+    kafka_ssl_cafile: str = Field(default="", description="Kafka TLS CA 文件，留空使用系统信任库")
+    cdc_connect_url: str = Field(default="", description="Kafka Connect 管理地址，留空时不进行运行状态查询")
+    pg_cdc_url: str = Field(default="", description="专用 Postgres CDC 复制账号连接串，留空复用 PG_URL")
+    etl_output_mode: Literal["debezium", "direct"] = Field(
+        default="debezium", description="ETL 出站由 Debezium 负责；direct 仅用于回滚",
+    )
 
     # ── Kafka SASL Authentication ────────────────────────────────
     kafka_sasl_mechanism: str = Field(
@@ -189,6 +199,16 @@ class AppSettings(BaseSettings):
     )
     pg_pool_min: int = Field(default=2, description="Postgres 连接池最小值")
     pg_pool_max: int = Field(default=10, description="Postgres 连接池最大值")
+    es_url: str = Field(default="", description="Elasticsearch 地址，留空不启用 ES 同步")
+    es_username: str = Field(default="", description="Elasticsearch 用户名")
+    es_password: str = Field(default="", description="Elasticsearch 密码")
+    es_index_prefix: str = Field(default="spider_", description="Elasticsearch 索引前缀")
+    es_syncer_poll_interval: int = Field(default=60, ge=0, description="显式 ES 历史回填扫描间隔")
+    es_syncer_batch_size: int = Field(default=100, ge=1, description="ES 同步批量大小")
+    es_syncer_max_retries: int = Field(default=3, ge=1, description="ES 写入重试次数")
+    es_syncer_retry_backoff: float = Field(default=2.0, gt=0, description="ES 重试退避秒数")
+    es_syncer_tables: str = Field(default="", description="ES 同步表列表，逗号分隔，留空不隐式扩展范围")
+    es_syncer_config: str = Field(default="", description="可选 ES 同步映射文件")
 
     # ETL Kafka Topics
     etl_raw_topic: str = Field(

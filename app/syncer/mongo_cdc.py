@@ -61,8 +61,8 @@ async def check_mongo() -> None:
         client.close()
 
 
-def register_connector(connect_url: str, config: dict[str, str]) -> None:
-    name = f"{config['topic.prefix']}-{settings.db_name}"
+def register_connector(connect_url: str, config: dict[str, str], *, name: str | None = None) -> None:
+    name = name or f"{config['topic.prefix']}-{settings.db_name}"
     path = f"{connect_url.rstrip('/')}/connectors/{quote(name, safe='')}"
     with httpx.Client(timeout=30, trust_env=False) as client:
         response = client.put(f"{path}/config", json=config)

@@ -1,0 +1,8 @@
+.cdc-status-panel { margin-top: 20px; }
+.cdc-status-panel .ant-table-wrapper { margin-top: 14px; overflow-x: auto; }
+.cdc-probes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
+.cdc-probe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.cdc-probe > span:last-child { flex-basis: 100%; color: var(--text-secondary, #9aa3af); font-size: 12px; }
+.cdc-explanation { margin-top: 14px; margin-bottom: 0 !important; font-size: 12px; }
+@media (max-width: 900px) { .cdc-probes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .cdc-probes { grid-template-columns: minmax(0, 1fr); } }

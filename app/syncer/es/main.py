@@ -5,13 +5,13 @@
     --poll <seconds>     轮询间隔（默认 10）
     --batch <n>          每次处理记录数（默认 200）
     --tables <names>     只处理指定表（逗号分隔，默认全部）
-    --once                只执行一轮同步后退出（用于测试/补数）
+    --once                按固定上界分批补齐缺失文档后退出，不覆盖已有文档
 
 启动示例:
     python -m app.syncer.es.main
     python -m app.syncer.es.main --tables patent --batch 500
     python -m app.syncer.es.main --config /etc/spider/es_syncer.yaml
-    python -m app.syncer.es.main --once  # 单次同步
+    python -m app.syncer.es.main --once  # 有界 create-only 回填
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from app.config.settings import settings
 from app.logger import get_logger, setup_service_logging
 from app.syncer.es.config import SyncConfig
 from app.syncer.es.worker import EsSyncWorker
+from app.logger.task_format import redact_connection_userinfo
 
 logger = get_logger(__name__)
 
@@ -100,8 +101,8 @@ async def run() -> None:
     config = _build_config(args)
 
     logger.info("=== ES Syncer Service Starting ===")
-    logger.info("  RDS (Postgres): %s", _mask_pg_url(settings.pg_url))
-    logger.info("  Elasticsearch:  %s", config.es_url)
+    logger.info("  RDS (Postgres): %s", redact_connection_userinfo(settings.pg_url))
+    logger.info("  Elasticsearch:  %s", redact_connection_userinfo(config.es_url))
     logger.info("  Tables:         %s", [t.source_table for t in config.tables])
     logger.info("  Poll interval:  %ds", config.poll_interval)
     logger.info("  Batch size:     %d", config.batch_size)
@@ -109,23 +110,14 @@ async def run() -> None:
 
     worker = EsSyncWorker(config=config)
 
-    if args["once"]:
-        # 单次模式：执行一轮后退出
-        logger.info("[ES-Syncer] Running in --once mode")
-        await worker.run_once()
-        await worker.stop()
-    else:
-        # 持续模式
-        try:
+    try:
+        if args["once"]:
+            logger.info("[ES-Syncer] Running bounded create-only backfill")
+            await worker.run_once()
+        else:
             await worker.run()
-        finally:
-            await worker.stop()
-
-
-def _mask_pg_url(url: str) -> str:
-    """脱敏 PG URL。"""
-    import re
-    return re.sub(r"://[^@]+@", "://***:***@", url)
+    finally:
+        await worker.stop()
 
 
 def main() -> None:

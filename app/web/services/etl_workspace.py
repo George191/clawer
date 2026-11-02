@@ -17,6 +17,8 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from app.config.settings import settings
+from app.etl.cdc import cdc_schemas
 from app.storage.postgres_client import get_pg_client
 from app.web.core.config import settings as web_settings
 from app.web.services.etl_layers import (
@@ -393,6 +395,8 @@ class EtlWorkspace:
 
     async def _write_row(self, layer: str, table: str, payload: dict[str, Any], delete: bool) -> dict[str, Any]:
         schema = resolve_schema(layer)
+        if delete and settings.etl_output_mode == "debezium" and schema in cdc_schemas():
+            raise HTTPException(409, "CDC current tables require business soft deletion; physical deletion propagation is unavailable")
         qualified = f"{quote_identifier(schema)}.{quote_identifier(table)}"
         columns = await self._layers.columns(schema, table)
         primary = [column["name"] for column in columns if column.get("primary")]

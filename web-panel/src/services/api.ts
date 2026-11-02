@@ -11,6 +11,7 @@ import type {
   EtlPartition,
   EtlScript,
   EtlStreamState,
+  CdcStatus,
   KafkaTopic,
   RedisOffset,
   SchedulerItem,
@@ -230,6 +231,9 @@ export const DASHBOARD_WS_URL = `${
 // ============================================================
 export const fetchLayers = (): Promise<LayerNode[]> =>
   client.get('/etl/layers').then((r) => unwrap<LayerNode[]>(r.data));
+
+export const fetchCdcStatus = (signal?: AbortSignal): Promise<CdcStatus> =>
+  client.get('/cdc/status', { signal }).then((r) => unwrap<CdcStatus>(r.data));
 
 export const fetchLayerTables = (layer: string, tableRole = 'current'): Promise<LayerTable[]> =>
   client.get(`/etl/${layer}/tables`, { params: { tableRole } }).then((r) => unwrap<LayerTable[]>(r.data));

@@ -52,9 +52,10 @@ if [[ -n "$mechanism" ]]; then
 fi
 for prefix in '' producer. consumer. admin.; do
     property "${prefix}security.protocol" "$protocol"
-    if [[ -n "${SPIDER_MONGO_CDC_TLS_CA:-}" ]]; then
+    kafka_ca=${SPIDER_KAFKA_SSL_CAFILE:-${SPIDER_MONGO_CDC_TLS_CA:-}}
+    if [[ -n "$kafka_ca" ]]; then
         property "${prefix}ssl.truststore.type" PEM
-        property "${prefix}ssl.truststore.location" "$SPIDER_MONGO_CDC_TLS_CA"
+        property "${prefix}ssl.truststore.location" "$kafka_ca"
     fi
     if [[ -n "$mechanism" ]]; then
         property "${prefix}sasl.mechanism" "$mechanism"

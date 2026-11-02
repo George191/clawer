@@ -20,6 +20,7 @@ from app.logger import get_logger
 from app.storage.mongo_client import MongoClient
 
 logger = get_logger(__name__)
+MONGO_CDC_GROUP_PREFIX = "spider-mongo-cdc-"
 
 # These writes maintain worker ownership/ACKs, without changing a business version.
 _CONTROL_FIELDS = frozenset({
@@ -75,9 +76,10 @@ class MongoChangeFeed(MongoClient):
         self._role = role
         self._data_type = data_type
         scope = json.dumps([mongo_cdc_topic_prefix(), settings.db_name, data_type, template_name])
-        self.group_id = f"spider-mongo-cdc-{role}-{hashlib.sha256(scope.encode()).hexdigest()[:16]}"
+        self.group_id = f"{MONGO_CDC_GROUP_PREFIX}{role}-{hashlib.sha256(scope.encode()).hexdigest()[:16]}"
         self._consumer: AIOKafkaConsumer | None = None
         self._startup: asyncio.Task | None = None
+        self._paused_partitions: set = set()
         self._collections: tuple[str, ...] = ()
         self._retry_at = 0.0
         self.has_more = False
@@ -90,13 +92,44 @@ class MongoChangeFeed(MongoClient):
             # Kafka polling and Mongo reads must not hold up compensation scans.
             return await asyncio.wait_for(self._receive(collections, limit), timeout=2)
         except Exception as exc:
-            logger.warning(
-                "Mongo CDC unavailable (%s); recovering from Mongo pending records",
-                type(exc).__name__,
-            )
-            self._retry_at = monotonic() + 10
-            await self._disconnect()
+            await self._recover_connection(exc)
             return []
+
+    async def keep_alive(self) -> None:
+        """Poll without consuming while download slots are occupied."""
+        if self._consumer is None:
+            return
+        try:
+            if not await self._finish_startup():
+                return
+            await asyncio.wait_for(self._poll_paused(), timeout=2)
+        except Exception as exc:
+            await self._recover_connection(exc)
+
+    async def _poll_paused(self) -> None:
+        consumer = self._consumer
+        partitions = consumer.assignment() - consumer.paused()
+        consumer.pause(*partitions)
+        self._paused_partitions.update(partitions)
+        # Keep the assignment paused between polls. Briefly resuming each time
+        # would repeatedly fetch and discard buffered records during long downloads.
+        await consumer.getmany(timeout_ms=0)
+
+    async def _recover_connection(self, exc: Exception) -> None:
+        logger.warning(
+            "Mongo CDC unavailable (%s); recovering from Mongo pending records",
+            type(exc).__name__,
+        )
+        self._retry_at = monotonic() + 10
+        await self._disconnect()
+
+    async def _finish_startup(self) -> bool:
+        if self._startup is not None:
+            if not self._startup.done():
+                return False
+            await self._startup
+            self._startup = None
+        return True
 
     async def _receive(self, collections: list[str], limit: int) -> list[dict[str, Any]]:
         names = tuple(sorted(set(collections)))
@@ -104,7 +137,8 @@ class MongoChangeFeed(MongoClient):
             self._consumer = AIOKafkaConsumer(**build_consumer_kwargs(
                 group_id=self.group_id, metadata_max_age_ms=10000,
                 max_partition_fetch_bytes=16 * 1024 * 1024,
-                key_deserializer=lambda value: json.loads(value) if value else None,
+                # Decode per record so malformed notifications cannot poison a partition.
+                key_deserializer=None, value_deserializer=None,
             ))
             self._subscribe(names)
             # Group assignment can take several seconds. Start in the background
@@ -114,11 +148,11 @@ class MongoChangeFeed(MongoClient):
             )
         elif names != self._collections:
             self._subscribe(names)
-        if self._startup is not None:
-            if not self._startup.done():
-                return []
-            await self._startup
-            self._startup = None
+        if not await self._finish_startup():
+            return []
+        if self._paused_partitions:
+            self._consumer.resume(*(self._paused_partitions & self._consumer.assignment()))
+            self._paused_partitions.clear()
 
         batches = await self._consumer.getmany(timeout_ms=100, max_records=limit)
         self.has_more = sum(len(messages) for messages in batches.values()) >= limit
@@ -173,6 +207,7 @@ class MongoChangeFeed(MongoClient):
         self._collections = names
 
     async def _disconnect(self) -> None:
+        self._paused_partitions.clear()
         startup, self._startup = self._startup, None
         if startup is not None:
             startup.cancel()

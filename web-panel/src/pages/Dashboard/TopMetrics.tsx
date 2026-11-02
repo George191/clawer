@@ -5,8 +5,6 @@ import {
   CloudUploadOutlined,
   HourglassOutlined,
   DatabaseOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
 } from '@ant-design/icons';
 import Sparkline from './Sparkline';
 import type { DashboardMetrics } from '@/services/types';
@@ -79,7 +77,6 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       value: metrics.tasks.total,
       unit: '个',
       subtitle: `运行 ${metrics.tasks.running}  |  完成 ${metrics.tasks.completed}  |  失败 ${metrics.tasks.failed}`,
-      trend: metrics.tasks.failed > 0 ? -(metrics.tasks.failed / Math.max(1, metrics.tasks.total) * 100) : 8.5,
       sparklineData: metrics.layer_throughput_history.map((p) => p.Crawl),
       icon: <ThunderboltOutlined />,
       gradient: 'linear-gradient(135deg, #3B82F6, #2563EB)',
@@ -90,7 +87,6 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       title: 'ETL 吞吐',
       value: metrics.etl_throughput.current,
       unit: 'msg/s',
-      trend: metrics.etl_throughput.current > 400 ? 5.2 : -2.8,
       sparklineData: metrics.etl_throughput.history.map((p) => p.v),
       icon: <CloudUploadOutlined />,
       gradient: 'linear-gradient(135deg, #10B981, #059669)',
@@ -101,7 +97,6 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
       title: 'Kafka Lag',
       value: metrics.kafka_lag.total,
       unit: '',
-      trend: metrics.kafka_lag.total > 500 ? 7.3 : -12.5,
       sparklineData: metrics.kafka_lag_history.map((p) => p.v),
       icon: <HourglassOutlined />,
       gradient: 'linear-gradient(135deg, #F59E0B, #D97706)',
@@ -109,10 +104,9 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
     },
     {
       key: 'dataVolume',
-      title: '数据总量',
+      title: '任务累计记录数',
       value: metrics.data_volume.total,
-      unit: 'TB',
-      trend: metrics.data_volume.daily_increment > 0.2 ? 6.8 : -1.5,
+      unit: '条',
       sparklineData: metrics.etl_throughput.history.map((p) => p.v),
       icon: <DatabaseOutlined />,
       gradient: 'linear-gradient(135deg, #8B5CF6, #6D28D9)',
@@ -123,8 +117,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
   return (
     <Row gutter={[16, 16]}>
       {cards.map((c) => {
-        const trendDir = c.trend >= 0 ? 1 : -1;
-        const trendColor = trendDir > 0 ? '#34D399' : '#F87171';
+        const trendColor = '#94A3B8';
 
         return (
           <Col xs={24} md={12} xl={6} key={c.key}>
@@ -179,7 +172,7 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
 
               {/* Value */}
               <div style={{ fontSize: 28, fontWeight: 700, lineHeight: 1.3, marginBottom: 6, color: '#F1F5F9', letterSpacing: '-0.02em' }}>
-                {c.value.toLocaleString()}
+                {c.value === null ? '—' : c.value.toLocaleString()}
                 {c.unit && (
                   <span style={{ fontSize: 13, fontWeight: 500, color: '#94A3B8', marginLeft: 4 }}>
                     {c.unit}
@@ -201,18 +194,6 @@ const TopMetrics: React.FC<TopMetricsProps> = ({ metrics, loading }) => {
                 </div>
               )}
 
-              {/* Trend */}
-              <div style={{ display: 'flex', alignItems: 'center' }}>
-                {trendDir > 0 ? (
-                  <ArrowUpOutlined style={{ color: trendColor, fontSize: 11 }} />
-                ) : (
-                  <ArrowDownOutlined style={{ color: trendColor, fontSize: 11 }} />
-                )}
-                <span style={{ color: trendColor, fontSize: 12, fontWeight: 600, marginLeft: 4 }}>
-                  {c.trend >= 0 ? '+' : ''}{Math.abs(c.trend).toFixed(1)}%
-                </span>
-                <span style={{ color: '#475569', fontSize: 11, marginLeft: 4 }}>同比</span>
-              </div>
             </Card>
           </Col>
         );
