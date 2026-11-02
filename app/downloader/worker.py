@@ -25,8 +25,8 @@ from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate
 from app.records.asset_store import AssetStore
+from app.records.change_feed import MongoChangeFeed
 from app.records.collection_routes import collection_route_store
-from app.records.delivery import RecordDelivery
 from app.records.mongo_store import MongoRecordStore
 from app.utils.download_paths import iter_download_nodes, iter_download_values
 from app.utils.path import get_nested_value
@@ -64,7 +64,9 @@ class DownloadWorker:
         self._collection_routes: dict[str, dict[str, str]] = {}
         self._running = False
         self._collection_cursor = 0
-        self._delivery = RecordDelivery()
+        self._changes = MongoChangeFeed(
+            role="downloader", data_type=data_type, template_name=template_name,
+        )
         self._downloads: set[asyncio.Task] = set()
         self._claim_heartbeats: dict[asyncio.Task, asyncio.Task] = {}
         self._collections: tuple[str, ...] | None = None
@@ -80,7 +82,7 @@ class DownloadWorker:
         )
         capacity = min(self._batch_size, settings.download_asset_concurrency)
         next_scan = 0.0
-        prefer_delivery = False
+        prefer_changes = False
         loop = asyncio.get_running_loop()
         try:
             while self._running:
@@ -96,12 +98,16 @@ class DownloadWorker:
                     await self._target_collections()
                     available = capacity - len(self._downloads)
                     if available:
-                        reserve_recovery = loop.time() >= next_scan and not prefer_delivery
+                        reserve_recovery = loop.time() >= next_scan and not prefer_changes
                         queue_limit = max(available - 1, 0) if reserve_recovery else available
-                        prefer_delivery = False
-                        records = await self._delivery.receive(
-                            collections=list(self._collection_routes), limit=queue_limit,
-                        ) if queue_limit else []
+                        prefer_changes = False
+                        try:
+                            records = await self._changes.receive(
+                                collections=list(self._collection_routes), limit=queue_limit,
+                            ) if queue_limit else []
+                        except Exception:
+                            logger.exception("DownloadWorker: CDC unavailable; continuing Mongo recovery")
+                            records = []
                         for record in records:
                             claimed = await self._mongo.claim_download(record)
                             if claimed is not None:
@@ -115,9 +121,9 @@ class DownloadWorker:
                             if len(records) < available:
                                 next_scan = loop.time() + max(self._poll_interval, 0.5)
                             else:
-                                prefer_delivery = True
+                                prefer_changes = True
                 except Exception:
-                    logger.exception("DownloadWorker: delivery or recovery failed")
+                    logger.exception("DownloadWorker: change feed or recovery failed")
                     next_scan = loop.time() + max(self._poll_interval, 0.5)
                 if self._downloads:
                     await asyncio.wait(self._downloads, timeout=0.5, return_when=asyncio.FIRST_COMPLETED)
@@ -515,7 +521,7 @@ class DownloadWorker:
     async def stop(self) -> None:
         self._running = False
         await self._cancel_downloads()
-        await self._delivery.close()
+        await self._changes.close()
         await self._http.close()
         await self._minio.close()
         await self._mongo.close()

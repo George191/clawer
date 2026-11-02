@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -19,16 +18,13 @@ from typing import Any
 from bson.codec_options import CodecOptions
 from pymongo import ReplaceOne
 
-from app.config.settings import settings
 from app.logger import get_logger
 from app.records.adapters import get_record_adapter
 from app.records.base import RecordStore
 from app.records.collection_routes import collection_route_store
-from app.records.delivery import RecordDelivery
 from app.records.field_names import normalize_record_fields
 from app.records.values import record_values_equal, require_canonical_record
 from app.storage.mongo_client import MongoClient
-from app.syncer.publisher import SYNC_TIMEOUT_SECONDS, RecordPublisher
 from app.utils.record_id import resolve_record_id
 from app.utils.runtime_control import workspace_search_params
 
@@ -50,8 +46,6 @@ class MongoRecordStore(MongoClient, RecordStore):
     def __init__(self) -> None:
         super().__init__()
         self._initialized_collections: set[str] = set()
-        self._delivery = RecordDelivery()
-        self._publisher: RecordPublisher | None = None
         self.last_save_stats = {
             "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0,
         }
@@ -235,7 +229,6 @@ class MongoRecordStore(MongoClient, RecordStore):
         run_stats: dict[tuple[str, str], dict[str, int]] = {}
 
         operations: list[ReplaceOne] = []
-        delivery_records: list[dict[str, Any]] = []
         processed_ids: set[str] = set()
         for record_id, cleaned_record, search_params in reversed(prepared_records):
             if record_id in processed_ids:
@@ -322,8 +315,6 @@ class MongoRecordStore(MongoClient, RecordStore):
             deleted_count += int(deletion)
             if sync_status is not None:
                 final_record["_meta"]["sync_status"] = sync_status
-            if not existing or business_changed or template_changed:
-                delivery_records.append(final_record)
             operations.append(
                 ReplaceOne(
                     {"_meta.record_id": record_id},
@@ -334,9 +325,6 @@ class MongoRecordStore(MongoClient, RecordStore):
 
         if operations:
             await collection.bulk_write(operations, ordered=False)
-            if route.get("enabled", True):
-                await self._sync_records(delivery_records)
-            await self._delivery.publish(delivery_records)
         await adapter.after_save(run_stats)
         self.last_save_stats = {
             "inserted": inserted_count,
@@ -345,14 +333,6 @@ class MongoRecordStore(MongoClient, RecordStore):
             "deleted": deleted_count,
         }
         return ids
-
-    async def _sync_records(self, records: list[dict[str, Any]]) -> None:
-        records = [record for record in records if (record.get("_meta") or {}).get("sync_status") != "synced"]
-        if not records:
-            return
-        if self._publisher is None:
-            self._publisher = RecordPublisher(topic=f"{settings.kafka_topic}-{records[0]['_meta']['data_type']}")
-        await self._publisher.sync_records(records, self)
 
     async def update_file_status(
         self,
@@ -393,6 +373,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         set_fields = {
             **updates,
             "_meta.updated_at": datetime.now(timezone.utc),
+            "_meta.sync_status": "pending",
         }
 
         await collection.update_one(
@@ -775,14 +756,3 @@ class MongoRecordStore(MongoClient, RecordStore):
             })
         return stats
 
-    async def close(self) -> None:
-        try:
-            if self._publisher is not None:
-                await asyncio.wait_for(self._publisher.close(), timeout=SYNC_TIMEOUT_SECONDS)
-        except Exception:
-            logger.exception("Could not close the record publisher")
-        finally:
-            try:
-                await self._delivery.close()
-            finally:
-                await super().close()

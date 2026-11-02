@@ -3230,10 +3230,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const writeCount = getTaskWriteCount(runtime);
     const selectedRunLogs = selectedTaskLogs?.taskId === selectedTask.key
       && selectedTaskLogs.runId === selectedLogRunId
-      ? selectedTaskLogs.logs
+      ? selectedTaskLogs.logs.filter((log) => log.level === 'warn'
+        || !/^(?:RecordPublisher: sent →|sync progress:)/.test(log.message.replace(consoleLogPrefixPattern, '')))
       : [];
     const selectedLogRun = runtime.logRuns.find((run) => run.id === (selectedTaskLogRunId ?? latestTaskLogRunId))
       ?? null;
+    const syncedRecordCount = selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records);
+    const syncRunning = selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running';
     const logRunOptions = runtime.logRuns.map((run) => ({
       value: run.id,
       label: formatDateTime(run.started_at),
@@ -3483,8 +3486,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 <span className="is-updated">~{selectedLogRun?.updated_records ?? '--'}</span>
                 <span className="is-deleted">-{selectedLogRun?.deleted_records ?? '--'}</span>
                 <span className="is-download"><DownloadOutlined />{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)}</span>
-                <span className="is-sync"><SyncOutlined spin={selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running'} />{selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records)}</span>
+                <span className="is-sync"><SyncOutlined spin={syncRunning} />{syncedRecordCount}</span>
               </div>
+            </div>
+            <div className="workspace-dock-sync-notice" role="status">
+              <span><SyncOutlined spin={syncRunning} />数据推送</span>
+              <span>同步总数 <strong>{syncedRecordCount}</strong></span>
             </div>
             <div className="workspace-dock-log-list is-detail" key={`${selectedTask.key}-${selectedLogRunId}`} onScroll={handleTaskLogsScroll}>
               {selectedRunLogs.slice().reverse().map((log) => (
@@ -3497,7 +3504,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   <>{taskLogsError} <Button type="link" size="small" onClick={loadMoreTaskLogs}>重试</Button></>
                 ) : selectedTaskLogs?.hasMore ? (
                   <Button type="link" size="small" onClick={loadMoreTaskLogs}>加载更早日志</Button>
-                ) : selectedRunLogs.length ? (
+                ) : selectedTaskLogs?.logs.length ? (
                   <span className="workspace-dock-log-end">已加载全部执行日志</span>
                 ) : '暂无执行日志'}
               </div>
@@ -4938,6 +4945,26 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-history-bars span.is-current {
           background: rgba(138, 180, 255, 0.42);
+        }
+        .workspace-dock-sync-notice {
+          display: flex;
+          flex-shrink: 0;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-top: 10px;
+          padding: 8px 10px;
+          border: 1px solid ${aura.border};
+          border-radius: 6px;
+          background: ${aura.accentSoft};
+          color: ${aura.accent};
+          font-size: 11px;
+        }
+        .workspace-dock-sync-notice > span {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          white-space: nowrap;
         }
         .workspace-dock-log-list {
           margin-top: 10px;
