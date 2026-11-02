@@ -3243,6 +3243,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       ?? null;
     const syncedRecordCount = selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records);
     const syncRunning = selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running';
+    const downloadRunning = selectedLogRun?.id === runtime.currentRunId
+      && runtime.downloadState === 'running' && runtime.controlState !== 'canceled'
+      && (downloadNotice?.status === 'preparing' || downloadNotice?.status === 'downloading');
     const logRunOptions = runtime.logRuns.map((run) => ({
       value: run.id,
       label: formatDateTime(run.started_at),
@@ -3504,7 +3507,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               <span>Total <strong>{syncedRecordCount}</strong></span>
             </div>
             <div className="workspace-dock-worker-notice workspace-dock-download-notice" role="status" aria-live="polite">
-              <span><DownloadOutlined />Download</span>
+              <span>
+                <svg className={`workspace-dock-download-icon${downloadRunning ? ' is-active' : ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                  <path className="workspace-dock-download-arrow" d="M8 2v8M4.5 6.5 8 10l3.5-3.5" />
+                  <path d="M3 11.5V14h10v-2.5" />
+                </svg>
+                Download
+              </span>
               <span className="workspace-dock-worker-notice-detail" title={downloadNotice?.recordId}>
                 {downloadNotice?.recordId ? <code>{downloadNotice.recordId}</code> : downloadNotice ? 'Record details unavailable' : 'Waiting for updates'}
               </span>
@@ -4980,14 +4989,23 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           border-radius: 4px;
           background: rgba(246, 195, 91, 0.08);
           color: ${aura.warning};
-          font-size: 9px;
+          font-size: 10px;
+          font-weight: 400;
           line-height: 14px;
+          letter-spacing: normal;
+          font-variant-numeric: tabular-nums;
         }
         .workspace-dock-worker-notice > span {
           display: inline-flex;
           align-items: center;
           gap: 4px;
           white-space: nowrap;
+        }
+        .workspace-dock-worker-notice > span:first-child {
+          font-weight: 500;
+        }
+        .workspace-dock-worker-notice strong {
+          font-weight: 600;
         }
         .workspace-dock-worker-notice .workspace-dock-worker-notice-detail {
           flex: 1;
@@ -4998,12 +5016,33 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           min-width: 0;
           overflow: hidden;
           text-overflow: ellipsis;
+          font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           font-size: inherit;
         }
         .workspace-dock-download-notice {
           border-color: rgba(101, 213, 163, 0.25);
           background: rgba(101, 213, 163, 0.07);
           color: ${aura.success};
+        }
+        .workspace-dock-download-icon {
+          width: 1em;
+          height: 1em;
+          flex-shrink: 0;
+          overflow: hidden;
+        }
+        .workspace-dock-download-icon.is-active .workspace-dock-download-arrow {
+          animation: workspaceDownloadArrow 1.1s linear infinite;
+        }
+        @keyframes workspaceDownloadArrow {
+          0% { transform: translateY(-2px); opacity: 0; }
+          20% { opacity: 1; }
+          80% { transform: translateY(2px); opacity: 1; }
+          100% { transform: translateY(3px); opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .workspace-dock-download-icon.is-active .workspace-dock-download-arrow {
+            animation: none;
+          }
         }
         .workspace-dock-log-list {
           margin-top: 10px;
@@ -5024,13 +5063,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-log-row {
           display: block;
           color: ${aura.muted};
-          font-size: 10px;
-          line-height: 1.45;
+          font-size: 11px;
+          line-height: 16px;
         }
         .workspace-dock-log-row code {
           display: block;
           color: inherit;
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+          font-size: inherit;
+          letter-spacing: normal;
+          font-variant-numeric: tabular-nums;
           white-space: pre-wrap;
           word-break: break-word;
         }
@@ -5040,7 +5082,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           gap: 10px;
           margin-top: 8px;
           color: rgba(255, 255, 255, 0.32);
-          font-size: 9px;
+          font-size: 10px;
           white-space: nowrap;
         }
         .workspace-dock-log-end::before,
@@ -5078,7 +5120,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-log-level {
           color: #8AB4FF;
-          font-weight: 700;
+          font-weight: 600;
         }
         .workspace-dock-log-level.is-debug {
           color: #BFA8FF;
@@ -5095,7 +5137,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-log-process {
           color: #C4A7FF;
-          font-weight: 600;
+          font-weight: 500;
         }
         .workspace-dock-subtask-list {
           display: flex;
