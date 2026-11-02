@@ -71,22 +71,26 @@ class SyncWorker:
 
         next_scan = 0.0
         while self._running:
+            backlog = False
             try:
                 records = await self._changes.receive(
                     collections=await self._get_collection_names(), limit=self._batch_size,
                 )
                 if records:
                     await self._process_batch(records)
+                backlog = self._changes.has_more
             except Exception:
                 logger.exception("SyncWorker CDC failed; Mongo scan will compensate")
             if monotonic() >= next_scan:
                 try:
                     count = await self._process_batch()
+                    backlog = backlog or count >= self._batch_size
                     next_scan = monotonic() + (max(self._poll_interval, 0.5) if count < self._batch_size else 0)
                 except Exception:
                     logger.exception("SyncWorker recovery failed")
                     next_scan = monotonic() + max(self._poll_interval, 0.5)
-            await asyncio.sleep(0.5)
+            if not backlog:
+                await asyncio.sleep(0.5)
 
     async def _process_batch(self, ready: list[dict] | None = None) -> int:
         if ready is None:

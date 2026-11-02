@@ -117,13 +117,13 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 | 服务 | 入口 | 说明 |
 | --- | --- | --- |
 | Crawler | `python -m app.crawler.main` | 加载模板并执行采集 |
-| Downloader | `python -m app.downloader.main` | 优先消费主动投递队列，下载资源到 MinIO/本地，MongoDB 低频补偿 |
-| Syncer | `python -m app.syncer.main` | 低频扫描 MongoDB，同步下载回写，并补偿采集直发时遗漏的记录 |
+| Downloader | `python -m app.downloader.main` | 消费 Mongo CDC 事件，下载资源到 MinIO/本地，MongoDB 低频补偿 |
+| Syncer | `python -m app.syncer.main` | 消费 Mongo CDC 事件，按当前 Mongo 记录发送 Kafka，MongoDB 低频补偿 |
 | ETL | `python -m app.etl.main --layer <layer>` | 消费 Kafka，写入 Postgres/TimescaleDB |
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
 
-下载器按 PostgreSQL 模板分组并关联 `public.ai_collect_template_alias`，以映射的业务 `data_type` 筛选实际集合；未配置映射的已注册模板按 `数据类型_网站或端点标识` 生成集合名。优先接收 Redis 中的完整记录快照，原子认领后直接下载；MongoDB 默认每 60 秒扫描补偿待下载记录，集合路由在补偿间隔内缓存。不传 `--datatype` 时处理所有已启用路由，也可与 `--template` 同用；`--template` 支持父模板名和实际集合名：
+下载器按 PostgreSQL 模板分组并关联 `public.ai_collect_template_alias`，以映射的业务 `data_type` 筛选实际集合；未配置映射的已注册模板按 `数据类型_网站或端点标识` 生成集合名。通过独立消费组接收 Debezium Mongo CDC 事件，读取 MongoDB 当前待下载记录并原子认领；采集器不再主动投递 Redis 下载快照。MongoDB 默认每 60 秒扫描补偿待下载记录，集合路由在补偿间隔内缓存。不传 `--datatype` 时处理所有已启用路由，也可与 `--template` 同用；`--template` 支持父模板名和实际集合名：
 
 ```bash
 python -m app.downloader.main --datatype news
@@ -131,13 +131,13 @@ python -m app.downloader.main --template ssc_news --datatype=news
 python -m app.downloader.main --template sec_edgar --datatype filing
 ```
 
-下载并发使用 `SPIDER_DOWNLOAD_ASSET_CONCURRENCY`（默认 64），实际同时处理记录数不超过 `--batch`；完成一条即补充下一条，不等待整批中最慢的下载，每条记录内的资源仍依次下载。仅领取 `pending` 记录，队列快照须匹配 MongoDB 当前版本。活动下载每 60 秒续租，超过 5 分钟无心跳的 `downloading` 在低频补偿时恢复为 `pending`；旧认领令牌不能回写结果。正常取消会释放认领，记录结束时释放对应的 HTTP 会话和代理租约。升级时重启所有下载器，避免无心跳的旧版进程与新版回收同时运行。
+下载并发使用 `SPIDER_DOWNLOAD_ASSET_CONCURRENCY`（默认 64），实际同时处理记录数不超过 `--batch`；完成一条即补充下一条，不等待整批中最慢的下载，每条记录内的资源仍依次下载。仅领取 `pending` 记录，认领须匹配 MongoDB 当前版本。活动下载每 60 秒续租，超过 5 分钟无心跳的 `downloading` 在低频补偿时恢复为 `pending`；旧认领令牌不能回写结果。正常取消会释放认领，记录结束时释放对应的 HTTP 会话和代理租约。升级时重启所有下载器，避免无心跳的旧版进程与新版回收同时运行。
 
 ## 外部基础设施
 
 MongoDB、Redis、MinIO、Kafka 和 PostgreSQL/TimescaleDB 由外部环境提供，
-`docker-compose.yml` 只启动项目应用服务。所有连接地址、认证信息、Topic
-和 Consumer Group 均从 `.env` 读取，Compose 不覆盖这些值。
+`docker-compose.yml` 默认只启动项目应用服务；显式启用 `mongo-cdc` profile 时增加 Debezium Kafka Connect。
+连接地址、认证信息和业务 Topic 从 `.env` 读取；CDC Topic 和消费组按业务 Topic、数据库及服务处理范围派生。
 
 | 组件 | 常用端口 | 用途 |
 | --- | --- | --- |
@@ -259,10 +259,33 @@ Compose 为 news、patent、navwarn、intelligence、organization、financial_fa
 分别启动独立 Syncer 容器。原 `syncer` 服务负责 news，其余服务为 `syncer-<类型>`（服务名中的下划线改为连字符）。
 每批最多处理 50 条，进程内最多 10 个协程同时发送及回写状态；Kafka 中每条记录仍是独立消息。
 仅发送成功后标记对应版本为 synced，失败记录保留待重试。
-采集记录落库即标记为 pending，Syncer 查询不依赖下载状态；每条记录下载处理完成后立即原子回写资源、下载状态、更新时间并重置为 pending，不等待同批其他记录。下载回写同时递增 download_version；同步确认匹配发送时的 updated_at 和下载版本，避免同一毫秒内的下载更新被旧同步确认覆盖。
-新增或实际变化的采集记录在 MongoDB 写入成功后，直接复用内存中的完整记录发送 Kafka，正常同步路径不回读 MongoDB，也不经过 Redis；原样重复采集不重复发送。下载器只原子回写资源、下载版本和 `pending` 同步状态，由 Syncer 读取最新记录发送 Kafka，下载器不需要 Kafka 依赖。采集存储实例复用发布器，每批最多 10 条并发并等待 Kafka ACK，整批同步期限 30 秒；失败或未完成记录保持 `pending`，不把已成功落库的数据当成保存失败。发送时去除 Mongo `_id`，元数据时间与 Mongo 的毫秒精度一致。
-MongoDB `pending` 状态保留为补偿依据：Syncer 默认每 60 秒扫描一次（`--poll`），同步和下载补偿均跳过最近一个补偿间隔内更新的记录。满批积压可连续处理，不必每批等待整个补偿间隔。Redis 仅用于下载任务投递（复用 `SPIDER_REDIS_URL` 的任务逻辑库），按物理集合隔离，每队列最多 1000 条、闲置 1 小时过期，超过 1 MiB 的完整快照直接走 MongoDB 下载补偿。Kafka 发送失败、Redis 不可用、队列满、投递中断或进程退出均由相应的 Mongo 补偿恢复；允许重复消息，沿用版本 ACK 和下游版本检查。
+采集记录落库即标记为 pending，Syncer 查询不依赖下载状态；每条记录下载处理完成后立即原子回写资源、下载状态、更新时间并重置为 pending，不等待同批其他记录。业务写入生成唯一 write_token，下载回写同时递增 download_version；同步确认匹配发送时的 write_token、updated_at 和下载版本，避免同一毫秒内的新业务内容或下载更新被旧同步确认覆盖。历史记录没有 write_token 时仍可同步；旧快照不会确认后来生成新 token 的版本。下载认领也检查相同业务写入标记。
+采集器只写 MongoDB，不再发送 Kafka 或投递 Redis 下载快照。Debezium 将 Mongo Change Streams 写入 `${SPIDER_KAFKA_TOPIC}-mongo-cdc.<数据库>.<集合>`；下载器和 Syncer 各自使用独立消费组，按已启用的集合路由消费事件，再读取 MongoDB 当前版本。Syncer 复用现有完整记录格式、`record_id` 分区键和业务类型 topic；仅在独立 Syncer 内等待 Kafka ACK，失败记录保持 `pending`。发送时去除 Mongo `_id`，元数据时间与 Mongo 的毫秒精度一致。
+CDC 用于驱动当前状态同步，不是逐条保留历史版本的审计流；连续更新可以合并为最新状态。写入契约仍是业务变更更新 `_meta.updated_at` 并设置 `_meta.sync_status=pending`，下载完成还需递增 `_meta.download_version`；需要下载的记录须保持 `_meta.download_status=pending`。同步 ACK、下载认领及心跳等纯内部状态事件被过滤，下载结果更新会触发同步。原样重复采集不触发业务发送；物理删除暂不向下游传播，现有业务软删除仍按普通记录更新处理。禁用来源仍由集合路由过滤，不因数据库级 CDC 而开放处理。
+MongoDB `pending` 状态保留为补偿依据：Syncer 默认每 60 秒扫描一次（`--poll`），同步和下载补偿均跳过最近一个补偿间隔内更新的记录。满批积压可连续处理，不必每批等待整个补偿间隔。CDC 通知读取后推进 Kafka 消费位点，后续处理失败由持久化的 `pending`/下载认领状态恢复；Kafka 不可用、CDC 中断或进程退出时仍保留扫描补偿。允许重复消息，沿用版本 ACK 和下游版本检查。Redis 不再承担这条下载或同步数据投递链路。
 指定类型时，与下载器共用模板分组及 `ai_collect_template_alias` 别名映射查询，只读取匹配业务类型的实际集合；MongoDB 按同步状态和补偿等待时间查询，不增加 `_meta.data_type` 过滤，发送前在内存中校验记录类型，不再用启动参数覆盖错误类型。
+
+### Mongo CDC 部署与切换
+
+本阶段只迁移 MongoDB，Postgres 各层写入及消息发送保持现状。Mongo 必须是支持 Change Streams 的副本集或分片集群；现有账号需要目标数据库的读取及 `changeStream` 权限。连接串必须让 Connect 容器能够访问拓扑中公布的全部节点。部署使用 Debezium Connect 3.4，配置和行为参见 [MongoDB connector 官方文档](https://debezium.io/documentation/reference/3.4/connectors/mongodb.html)。
+
+先用现有环境配置进行只读检查，不修改 Mongo 拓扑、不注册 connector：
+
+```bash
+python -m app.syncer.mongo_cdc --check
+```
+
+Connect 复用 `SPIDER_KAFKA_BROKERS`、`SPIDER_KAFKA_TOPIC` 及已有 Kafka SASL/安全协议配置。内部配置、位点和状态 topic 分别为 `${SPIDER_KAFKA_TOPIC}-mongo-connect-configs`、`-offsets`、`-status`，必须保留；其副本数由 `SPIDER_MONGO_CDC_REPLICATION_FACTOR` 控制，默认 3，单 broker 环境需显式设为 1。CDC 集合 topic 为单分区，副本数使用 broker 默认值，消息上限设为 16 MiB；账号需要对应 topic 的创建、读写及消费组权限。TLS 默认使用 Java 信任库；使用仓库中自签 CA 时先确认 `docker/kafka.crt` 正确，并设置 `SPIDER_MONGO_CDC_TLS_CA=/etc/kafka/kafka.crt`。REST 配置接口含 Mongo 连接信息，仅映射到本机 `127.0.0.1:8083`。
+
+先启动 Connect、构建新版 Syncer 镜像，再注册 connector；注册命令仅在 connector 和任务都为 `RUNNING` 后成功退出，不输出连接密码或服务端错误正文：
+
+```bash
+docker compose --profile mongo-cdc up -d mongo-cdc-connect
+docker compose build syncer
+docker compose run --rm --no-deps syncer python -m app.syncer.mongo_cdc --connect-url http://mongo-cdc-connect:8083
+```
+
+注册采用 `snapshot.mode=no_data`，不全量重发已同步记录，历史待下载/待同步记录由现有扫描补偿处理。确认 connector 正常后，通过现有发布流程重建并重启 crawler、全部下载器及所有正在运行的 `syncer`/`syncer-*` 实例；不要让同一范围的新旧下载器、同步器长期并行运行。验证新增记录、业务更新、下载回写均能到达原业务 topic，并检查同步 ACK/下载心跳没有产生业务消息循环。暂停并恢复 Connect 后应从内部 offset topic 续接；停机超过 oplog 保留窗口时需检查 connector 状态并恢复采集，期间 Mongo 补偿继续处理当前待处理状态。不要删除内部 topic 来重置正常位点。
 
 模板与集合的别名映射由 `app/records/collection_routes.py` 查询 `public.ai_collect_template_alias`，供采集、下载和同步共用。表结构由部署迁移维护，业务映射单独配置。映射以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行的下载和同步启停，不影响采集写入。模板存在映射时不再回退到同名集合，禁用映射也不会触发回退。
 模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 organization 或 filing。修改路由在服务刷新路由缓存后生效，已开始的记录继续完成。
@@ -543,7 +566,8 @@ class MySiteAdapter(BaseSiteAdapter):
 智能采集首页切换到「Google 搜索」，输入关键词、页数（默认 3 页，最多 100 页），
 选择是否保存详情页原文后开始采集。该入口使用确定性的模板和适配器，不执行 AI 模板生成。
 首次创建任务时，将 `app/web/collection_sources/google_search/` 下的 `template.yaml`
-及 `adapter.py` 发布为 `google_search@v1.0`；已有版本不自动覆盖。
+及 `adapter.py` 发布为 `google_search@v1.1`；已有版本不自动覆盖。`v1.1` 修复服务器上
+`curl_cffi` 的 `CONNECT_TO` 原生参数兼容问题，旧任务仍保留原版本。
 
 `POST /api/v1/ai/google-search/tasks` 接受 `query`、`language`（默认 `zh-CN`）、
 `max_pages` 和 `fetch_details`（默认 `true`），返回普通采集任务。

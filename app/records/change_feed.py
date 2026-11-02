@@ -37,7 +37,8 @@ def _payload(value: Any) -> dict[str, Any]:
         value = json.loads(value)
     if not isinstance(value, dict):
         return {}
-    return value.get("payload", {}) if "schema" in value else value
+    value = value.get("payload") if "schema" in value else value
+    return value if isinstance(value, dict) else {}
 
 
 def _business_change(event: dict[str, Any]) -> bool:
@@ -48,6 +49,8 @@ def _business_change(event: dict[str, Any]) -> bool:
     if event["op"] != "u" or not description:
         # Mongo replace operations have no updateDescription.
         return True
+    if not isinstance(description, dict):
+        raise ValueError("Invalid update description")
     updated = description.get("updatedFields") or {}
     if isinstance(updated, str):
         updated = json.loads(updated)
@@ -74,14 +77,17 @@ class MongoChangeFeed(MongoClient):
         scope = json.dumps([mongo_cdc_topic_prefix(), settings.db_name, data_type, template_name])
         self.group_id = f"spider-mongo-cdc-{role}-{hashlib.sha256(scope.encode()).hexdigest()[:16]}"
         self._consumer: AIOKafkaConsumer | None = None
+        self._startup: asyncio.Task | None = None
         self._collections: tuple[str, ...] = ()
         self._retry_at = 0.0
+        self.has_more = False
 
     async def receive(self, *, collections: list[str], limit: int) -> list[dict[str, Any]]:
+        self.has_more = False
         if not collections or limit <= 0 or monotonic() < self._retry_at:
             return []
         try:
-            # Kafka startup and Mongo reads must not hold up compensation scans.
+            # Kafka polling and Mongo reads must not hold up compensation scans.
             return await asyncio.wait_for(self._receive(collections, limit), timeout=2)
         except Exception as exc:
             logger.warning(
@@ -101,11 +107,21 @@ class MongoChangeFeed(MongoClient):
                 key_deserializer=lambda value: json.loads(value) if value else None,
             ))
             self._subscribe(names)
-            await self._consumer.start()
+            # Group assignment can take several seconds. Start in the background
+            # so normal Kafka rebalances do not delay Mongo compensation.
+            self._startup = asyncio.create_task(
+                asyncio.wait_for(self._consumer.start(), timeout=30),
+            )
         elif names != self._collections:
             self._subscribe(names)
+        if self._startup is not None:
+            if not self._startup.done():
+                return []
+            await self._startup
+            self._startup = None
 
         batches = await self._consumer.getmany(timeout_ms=100, max_records=limit)
+        self.has_more = sum(len(messages) for messages in batches.values()) >= limit
         ids: dict[str, list[Any]] = defaultdict(list)
         offsets = {}
         for partition, messages in batches.items():
@@ -113,6 +129,8 @@ class MongoChangeFeed(MongoClient):
                 try:
                     event = _payload(message.value)
                     source = event.get("source") or {}
+                    if not isinstance(source, dict):
+                        raise ValueError("Invalid change source")
                     collection = source.get("collection")
                     if source.get("db") != settings.db_name or collection not in names:
                         continue
@@ -155,6 +173,10 @@ class MongoChangeFeed(MongoClient):
         self._collections = names
 
     async def _disconnect(self) -> None:
+        startup, self._startup = self._startup, None
+        if startup is not None:
+            startup.cancel()
+            await asyncio.gather(startup, return_exceptions=True)
         consumer, self._consumer = self._consumer, None
         if consumer is not None:
             try:

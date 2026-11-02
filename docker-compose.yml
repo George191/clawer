@@ -3,8 +3,8 @@
 #
 #  App Services:
 #    1. crawler     — 采集：爬取数据，保存到 MongoDB
-#    2. downloader  — 下载：消费 Redis 记录快照，MongoDB 补偿，资源写入 MinIO
-#    3. syncer      — 同步：低频扫描 MongoDB，补偿直发 Kafka 遗漏的记录
+#    2. downloader  — 下载：消费 Mongo CDC，MongoDB 补偿，资源写入 MinIO
+#    3. syncer      — 同步：消费 Mongo CDC 并发送业务 Kafka 消息，MongoDB 补偿
 #    4. web         — Web 管理面板 (FastAPI)
 #
 #  Infrastructure connections are loaded from .env.
@@ -16,6 +16,22 @@
 # ====================================================================
 
 services:
+  # Explicitly enabled during the Mongo CDC migration; brokers/Mongo remain external.
+  mongo-cdc-connect:
+    image: quay.io/debezium/connect:3.4
+    profiles: ["mongo-cdc"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:8083:8083"
+    volumes:
+      - ./docker/mongo-cdc-connect.sh:/mongo-cdc-connect.sh:ro
+      - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
+    entrypoint: ["bash", "/mongo-cdc-connect.sh"]
+    networks:
+      - asiral-helio
+
   # ════════════════════════════════════════════════════════════
   # External infrastructure is reached through the IPs or hostnames in .env.
   # ════════════════════════════════════════════════════════════

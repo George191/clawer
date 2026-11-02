@@ -127,7 +127,7 @@ class DownloadWorker:
                     next_scan = loop.time() + max(self._poll_interval, 0.5)
                 if self._downloads:
                     await asyncio.wait(self._downloads, timeout=0.5, return_when=asyncio.FIRST_COMPLETED)
-                else:
+                elif not self._changes.has_more:
                     await asyncio.sleep(0.5)
         finally:
             await self._cancel_downloads()

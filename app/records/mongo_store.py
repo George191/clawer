@@ -303,6 +303,9 @@ class MongoRecordStore(MongoClient, RecordStore):
                 inserted_count += 1
 
             if not existing or business_changed or template_changed:
+                # Mongo dates have millisecond precision; distinguish business
+                # writes even when timestamps and download versions collide.
+                final_record["_meta"]["write_token"] = uuid.uuid4().hex
                 owner = final_record["_meta"].get("search_params", {})
                 task_id = str(owner.get("__workspace_task_id") or "")
                 run_id = str(owner.get("__workspace_run_id") or "")
@@ -374,6 +377,7 @@ class MongoRecordStore(MongoClient, RecordStore):
             **updates,
             "_meta.updated_at": datetime.now(timezone.utc),
             "_meta.sync_status": "pending",
+            "_meta.write_token": uuid.uuid4().hex,
         }
 
         await collection.update_one(
@@ -430,6 +434,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         *,
         updated_at: datetime | None = None,
         download_version: int | None = None,
+        write_token: str | None = None,
     ) -> bool:
         # Acknowledging a sync must not wait for index creation either.
         await self._ensure_connection()
@@ -439,6 +444,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         set_fields: dict[str, Any] = {"_meta.sync_status": sync_status}
         if sync_status == "synced":
             query["_meta.sync_status"] = {"$ne": "synced"}
+            query["_meta.write_token"] = write_token
             # Acknowledge only the version sent to Kafka, never a concurrent update.
             if updated_at is not None:
                 query["_meta.updated_at"] = updated_at
@@ -565,6 +571,7 @@ class MongoRecordStore(MongoClient, RecordStore):
         collection = await self._get_collection(name)
         query = {
             "_meta.record_id": meta["record_id"],
+            "_meta.write_token": meta.get("write_token"),
             "_meta.updated_at": meta.get("updated_at"),
             "_meta.download_version": (
                 meta["download_version"] if meta.get("download_version")

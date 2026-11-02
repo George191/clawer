@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from app.config.settings import settings
@@ -59,25 +58,22 @@ class RecordPublisher(KafkaClient):
         """Send persisted snapshots and acknowledge only their stored versions."""
         semaphore = asyncio.Semaphore(concurrency)
         completed: list[tuple[dict[str, Any], bool]] = []
-        progress_by_run: dict[tuple[str, str], dict[str, int]] = {}
-        started = monotonic()
+        progress_by_run: dict[tuple[str, str], dict[str, Any]] = {}
 
         async def write_progress(*, finished: bool = False) -> None:
-            elapsed = max(monotonic() - started, 0.001)
             for (task_id, run_id), progress in list(progress_by_run.items()):
-                total, confirmed = progress["total"], progress["confirmed"]
-                filled = confirmed * 22 // total
-                bar = "[" + "█" * filled + "░" * (22 - filled) + "]"
-                status = "complete" if confirmed == total else "pending retry" if finished else "syncing"
+                if not progress.get("record_id"):
+                    continue
+                status = progress["status"]
+                if finished and progress["confirmed"] < progress["total"] and status != "failed":
+                    status = "pending_retry"
                 try:
                     # Progress storage must not hold up publishing when unavailable.
                     await asyncio.wait_for(
                         ai_collect_store.write_task_log(
                             task_id, run_id, "Syncer", logging.INFO,
-                            "sync progress:\n  %s %d%% | batch confirmed=%d/%d Kafka ACK=%d "
-                            "pending=%d | %.1f records/s %.1fs | %s; RDS/ODS consume asynchronously",
-                            bar, confirmed * 100 // total, confirmed, total, progress["sent"],
-                            total - confirmed, confirmed / elapsed, elapsed, status,
+                            "sync progress: record_id=%s topic=%s status=%s",
+                            progress["record_id"], progress["topic"], status,
                             progress_prefix="sync progress:",
                         ),
                         timeout=SYNC_PROGRESS_INTERVAL_SECONDS,
@@ -102,22 +98,28 @@ class RecordPublisher(KafkaClient):
             run_id = str(owner.get("__workspace_run_id") or "")
             progress = None
             if task_id and run_id:
-                progress = progress_by_run.setdefault((task_id, run_id), {"total": 0, "sent": 0, "confirmed": 0})
+                progress = progress_by_run.setdefault((task_id, run_id), {"total": 0, "confirmed": 0})
                 progress["total"] += 1
+            topic = f"{settings.kafka_topic}-{meta['data_type']}"
             async with semaphore:
+                if progress is not None:
+                    progress.update(record_id=meta["record_id"], topic=topic, status="syncing")
                 try:
-                    await self.send_record(record, topic=f"{settings.kafka_topic}-{meta['data_type']}")
+                    await self.send_record(record, topic=topic)
                     if progress is not None:
-                        progress["sent"] += 1
+                        progress.update(record_id=meta["record_id"], topic=topic, status="sent")
                     acknowledged = await storage.update_sync_status(
                         meta["template"], meta["data_type"], meta["record_id"], "synced",
                         updated_at=meta["updated_at"], download_version=meta.get("download_version", 0),
+                        write_token=meta.get("write_token"),
                     )
                     completed.append((record, acknowledged))
                     if progress is not None and acknowledged:
                         progress["confirmed"] += 1
                 except Exception:
-                    logger.exception("RecordPublisher: sync failed for %s", meta["record_id"])
+                    if progress is not None:
+                        progress.update(record_id=meta["record_id"], topic=topic, status="failed")
+                    logger.exception("RecordPublisher: sync failed for record_id=%s topic=%s", meta["record_id"], topic)
 
         batch = asyncio.gather(*(sync(record) for record in records))
         reporter = asyncio.create_task(report_progress())
