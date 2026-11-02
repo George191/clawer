@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { landPolygons } from './earthLand';
 import { createEarthSurface } from './EarthSurface';
+import { AUTH_ANIMATION_PERIOD, AUTH_ANGULAR_SPEED, AUTH_EARTH_ANGULAR_SPEED } from './AuthAnimation';
 
 type Point = { x: number; y: number; z: number };
 type Relay = { position: Point; target: Point; receiving: boolean; scale: number; angle: number; signal: number; opacity: number };
@@ -82,7 +83,9 @@ export default function SpaceBackground() {
       const radius = Math.min(width * .15, height * .21, 230);
       const cx = width * .28 + Math.max(0, Math.min(20, (1280 - width) * .08));
       const cy = height * .36;
-      const rotation = -.55 + time * .035;
+      const phase = time * AUTH_ANGULAR_SPEED;
+      const cycle = time / AUTH_ANIMATION_PERIOD;
+      const rotation = -.55 + time * AUTH_EARTH_ANGULAR_SPEED;
       const cos = Math.cos(rotation);
       const sin = Math.sin(rotation);
 
@@ -120,10 +123,10 @@ export default function SpaceBackground() {
       const starCount = Math.min(stars.length, Math.max(320, Math.round(width * height / 4000)));
       for (let i = 0; i < starCount; i++) {
         const star = stars[i];
-        const x = (star.x * width + Math.sin(time * .025 + i) * 4) % width;
+        const x = (star.x * width + Math.sin(phase + i) * 4) % width;
         const y = star.y * height;
         const quietArea = x > width * .6 || y > height * .6;
-        const alpha = (.28 + .15 * Math.sin(time * .5 + i)) * (quietArea ? .5 : 1);
+        const alpha = (.28 + .15 * Math.sin(phase * 6 + i)) * (quietArea ? .5 : 1);
         circle(x, y, star.radius, `rgba(171,211,239,${alpha})`);
         if (i % 29 === 0 && !quietArea) {
           const glow = ctx.createRadialGradient(x, y, 0, x, y, 7);
@@ -135,12 +138,12 @@ export default function SpaceBackground() {
 
       for (let i = 0; i < dust.length; i++) {
         const particle = dust[i];
-        const x = cx + radius * (.55 + particle.x * 2.55) + Math.sin(time * .04 + i) * 5;
-        const y = cy + radius * (particle.y * 1.4 - .22) + Math.cos(time * .035 + i) * 3;
+        const x = cx + radius * (.55 + particle.x * 2.55) + Math.sin(phase + i) * 5;
+        const y = cy + radius * (particle.y * 1.4 - .22) + Math.cos(phase + i) * 3;
         const quietArea = x > width * .56 || y > height * .58;
         const alpha = (.07 + particle.depth * .2) * (quietArea ? .25 : 1);
         circle(x, y, i % 13 === 0 ? 1.25 : .55, `rgba(104,195,222,${alpha})`);
-        const farX = width * (.65 + particle.x * .42) + Math.sin(time * .03 + i) * 4;
+        const farX = width * (.65 + particle.x * .42) + Math.sin(phase + i) * 4;
         const farY = height * (.43 + particle.y * .53);
         circle(farX, farY, i % 17 === 0 ? 1.2 : .65, `rgba(123,202,231,${.05 + particle.depth * .16})`);
       }
@@ -152,7 +155,7 @@ export default function SpaceBackground() {
         nebula(clusterX, clusterY, spread * 1.6, spread, '76,114,163');
         for (let i = 0; i < dust.length; i++) {
           const particle = dust[i];
-          const x = clusterX + particle.x * spread * 1.25 + Math.sin(time * .025 + i) * 2;
+          const x = clusterX + particle.x * spread * 1.25 + Math.sin(phase + i) * 2;
           const y = clusterY + particle.y * spread * .7;
           const alpha = .05 + particle.depth * .3;
           circle(x, y, i % 23 === 0 ? 1.15 : .55, `rgba(150,195,232,${alpha})`);
@@ -198,8 +201,8 @@ export default function SpaceBackground() {
         };
       }
 
-      const orbit = .7 + time * Math.PI * 2 / 72;
-      const communication = (time / 6) % 1;
+      const orbit = .7 + phase;
+      const communication = (cycle * 12) % 1;
       const sendSignal = communication < .5 ? pulseEnvelope(communication * 2) : 0;
       const receiveSignal = communication >= .5 ? pulseEnvelope((communication - .5) * 2) : 0;
       const relays: Relay[] = [
@@ -237,11 +240,11 @@ export default function SpaceBackground() {
           z: Math.sin(phase),
         });
         orbitPaths.push(wideOrbit);
-        const phase = time * Math.PI * 2 / 48;
-        const position = wideOrbit(phase);
-        const vx = (end.x - start.x) * .5 * Math.sin(phase) - width * .18 * Math.cos(phase);
-        const vy = halfY * Math.sin(phase) - bow * Math.cos(phase);
-        relays.push({ position, target: orbitPoint(phase, true), receiving: false, scale: .58 * perspective(position), angle: Math.atan2(vy, vx) + Math.PI * .5 + Math.sin(phase * 2) * .06, signal: .3 + sendSignal * .4, opacity: .45 });
+        const widePhase = time * Math.PI * 2 / 48;
+        const position = wideOrbit(widePhase);
+        const vx = (end.x - start.x) * .5 * Math.sin(widePhase) - width * .18 * Math.cos(widePhase);
+        const vy = halfY * Math.sin(widePhase) - bow * Math.cos(widePhase);
+        relays.push({ position, target: orbitPoint(widePhase, true), receiving: false, scale: .58 * perspective(position), angle: Math.atan2(vy, vx) + Math.PI * .5 + Math.sin(widePhase * 2) * .06, signal: .3 + sendSignal * .4, opacity: .45 });
       }
 
       function drawOrbits(front: boolean) {
@@ -342,7 +345,7 @@ export default function SpaceBackground() {
         ctx.fill();
 
         for (let i = 0; i < 3; i++) {
-          const phase = (time * .38 + i / 3) % 1;
+          const phase = (cycle * 27 + i / 3) % 1;
           ctx.beginPath();
           ctx.ellipse(target.x, target.y, radius * (.04 + phase * .23), radius * (.02 + phase * .075), -.35, 0, Math.PI * 2);
           ctx.strokeStyle = `rgba(${color},${pulseEnvelope(phase) * .4})`;
@@ -354,7 +357,7 @@ export default function SpaceBackground() {
         const start = receiving ? target : position;
         const end = receiving ? position : target;
         for (let i = 0; i < 6; i++) {
-          const progress = (time * .44 + i / 6) % 1;
+          const progress = (cycle * 32 + i / 6) % 1;
           const envelope = pulseEnvelope(progress) * signal;
           for (let trail = 0; trail < 3; trail++) {
             const step = progress - trail * .025;
@@ -376,7 +379,7 @@ export default function SpaceBackground() {
         ctx.scale(scale, scale);
         if (receiving && signal > 0) {
           for (let echo = 0; echo < 2; echo++) {
-            const pulse = (time / 1.8 + echo * .5) % 1;
+            const pulse = (cycle * 40 + echo * .5) % 1;
             const growth = .04 + (1 - (1 - pulse) ** 2) * 1.46;
             const alpha = pulseEnvelope(pulse) * signal;
             ctx.save();
@@ -402,7 +405,7 @@ export default function SpaceBackground() {
         }
         ctx.save();
         const signalAlpha = ctx.globalAlpha * signal;
-        const search = (time / 1.5) % 1;
+        const search = (cycle * 48) % 1;
         const radioColor = receiving ? '#9bffda' : '#9ddfff';
         ctx.globalAlpha = signalAlpha * (.45 + pulseEnvelope(search) * .55);
         circle(28, -23, 1.8, radioColor, ctx);

@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { AUTH_ANIMATION_PERIOD, AUTH_ANGULAR_SPEED } from './AuthAnimation';
 import { createCinematicEarth } from './CinematicEarth';
 import { SMALL_ORBIT_LANES, planSmallOrbitPhases } from './CinematicOrbits';
 import { createCinematicScan } from './CinematicScan';
@@ -35,7 +36,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     let elapsed = 0;
     let lastTime = performance.now();
     let lastPaint = 0;
-    const flybyPeriod = 72;
+    const flybyPeriod = AUTH_ANIMATION_PERIOD;
     let flybyStartMean = 0;
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
     const scene = new THREE.Scene();
@@ -316,6 +317,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
     }
     function paint(time: number, renderFrame = true) {
       if (disposed || !prepared) return;
+      const phase = (time % AUTH_ANIMATION_PERIOD) * AUTH_ANGULAR_SPEED;
       earth.update(time);
       const communication = (time / 6) % 1;
       const signals = [communication < .5 ? Math.sin(communication * Math.PI * 2) ** 2 : 0, communication >= .5 ? Math.sin((communication - .5) * Math.PI * 2) ** 2 : 0];
@@ -324,7 +326,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         model.position.copy(orbitPoint(lane.phase + time * lane.angularSpeed, index));
         model.up.copy(laneAxes[index].normal);
         model.lookAt(earth.group.position);
-        model.rotateZ(Math.sin(time * .05 + index) * .1);
+        model.rotateZ(Math.sin(phase + index) * .1);
         updateCinematicSatellite(model, time);
       });
 
@@ -357,7 +359,7 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
       const flybyAlpha = renderFrame ? appearances[models.length].alpha : 1;
       particleShields[models.length].update(time + 2.6, (.8 + Math.sqrt(signals[0]) * .2) * flybyAlpha);
       const physicalWidth = 8 * flyby.scale.x;
-      stars.rotation.y = time * .0003;
+      stars.rotation.y = Math.sin(phase) * .0035;
       if (!renderFrame) return;
 
       // Keep satellites visible through the form glass, using the same Earth depth.
@@ -496,7 +498,8 @@ export default function CinematicSpace({ onUnavailable, onReady }: { onUnavailab
         }
       }
       arrangeSmallOrbits(openingTime, openingPhase);
-      appearances[models.length].revealAt = openingTime + 30 + Math.random() * 12;
+      appearances[models.length].revealAt = openingTime;
+      appearances[models.length].alpha = 1;
       paint(openingTime, false);
       let flybyChosen = false;
       for (let attempt = 0; attempt < 32; attempt++) {

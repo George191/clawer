@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { AUTH_EARTH_ANGULAR_SPEED } from './AuthAnimation';
 
 const vertexShader = `
   varying vec2 vUv;
@@ -180,9 +181,11 @@ export function createCinematicEarth(
     ready,
     update(time: number) {
       if (disposed) return;
-      surface.rotation.y = -.55 + time * .008;
-      cloudLayer.rotation.y = -.55 + time * .00864;
-      cloudOffset.value = -time * .00064 / (Math.PI * 2);
+      const phase = (time * AUTH_EARTH_ANGULAR_SPEED) % (Math.PI * 2);
+      const cloudDrift = Math.sin(phase) * .08;
+      surface.rotation.y = -.55 + phase;
+      cloudLayer.rotation.y = surface.rotation.y + cloudDrift;
+      cloudOffset.value = -cloudDrift / (Math.PI * 2);
     },
     dispose() {
       if (disposed) return;

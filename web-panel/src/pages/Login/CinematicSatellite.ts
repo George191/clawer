@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { AUTH_ANGULAR_SPEED } from './AuthAnimation';
 
 type Position = [number, number, number];
 
@@ -405,10 +406,11 @@ export function createCinematicSatellite(): THREE.Group {
 }
 
 export function updateCinematicSatellite(group: THREE.Group, time: number) {
+  const phase = time * AUTH_ANGULAR_SPEED;
   const wings = group.userData.wings as THREE.Group[] | undefined;
-  wings?.forEach(wing => { wing.rotation.x = .04 + Math.sin(time * .12) * .018; });
+  wings?.forEach(wing => { wing.rotation.x = .04 + Math.sin(phase) * .018; });
   const dish = group.userData.dish as THREE.Group | undefined;
-  if (dish) dish.rotation.y = .12 + Math.sin(time * .08) * .025;
+  if (dish) dish.rotation.y = .12 + Math.sin(phase) * .025;
 }
 
 export function disposeCinematicSatellite(group: THREE.Group) {

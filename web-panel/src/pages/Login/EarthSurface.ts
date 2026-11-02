@@ -99,7 +99,7 @@ export function createEarthSurface(url: string, onLoad: () => void, cloudUrl?: s
     draw(ctx: CanvasRenderingContext2D, cx: number, cy: number, radius: number, rotation: number): boolean {
       if (disposed || !texture || !output || !context) return false;
       const shift = ((rotation / TAU * textureWidth) % textureWidth + textureWidth) % textureWidth;
-      const cloudShift = ((rotation * 1.03 / TAU * textureWidth) % textureWidth + textureWidth) % textureWidth;
+      const cloudShift = shift;
       const pixels = output.data;
       for (let i = 0; i < count; i++) {
         let column = columns[i] - shift;

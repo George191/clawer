@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import { AUTH_ANIMATION_PERIOD, AUTH_ANGULAR_SPEED } from './AuthAnimation';
 
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const X_AXIS = new THREE.Vector3(1, 0, 0);
 const MAX_RINGS = 256;
 const POINTS_PER_RING = 64;
+// Integer shader harmonics close every 72 seconds.
 const coreVertex = `
   varying vec2 vUv;
   void main() {
@@ -17,7 +19,7 @@ const coreFragment = `
   varying vec2 vUv;
   void main() {
     float distance = vUv.y * beamLength;
-    float band = abs(fract((distance + time * 1.2) / 0.65 + 0.5) - 0.5) * 0.65;
+    float band = abs(fract(distance / 0.65 + time * 133.0 / 6.283185307179586 + 0.5) - 0.5) * 0.65;
     float pixel = max(fwidth(distance), 0.001);
     float flow = (1.0 - smoothstep(0.055 - pixel * 0.5, 0.055 + pixel * 0.5, band))
       * (1.0 - smoothstep(0.22, 0.55, pixel));
@@ -27,11 +29,11 @@ const coreFragment = `
   }
 `;
 const particleVertex = `
-  uniform float time, strength, beamLength, beamRadius, viewportHeight, propagationSpeed;
+  uniform float time, strength, beamLength, beamRadius, viewportHeight, propagationCycles;
   attribute float aRing, aAngle, aSeed;
   varying float vAlpha;
   void main() {
-    float distance = (aRing + fract(time * propagationSpeed / 0.65)) * 0.65;
+    float distance = (aRing + fract(time * propagationCycles / 6.283185307179586)) * 0.65;
     float u = distance / beamLength;
     vAlpha = 0.0;
     if (u <= 0.0 || u >= 1.0) {
@@ -40,8 +42,8 @@ const particleVertex = `
       return;
     }
     // The pattern depends on physical distance, never the recycled ring slot.
-    float angle = aAngle + distance * 0.12 + sin(time * 0.5 + aSeed * 6.2831853) * 0.025;
-    float radial = beamRadius * pow(u, 1.6) * (1.0 + sin(time * 0.8 + aSeed * 6.2831853) * 0.004);
+    float angle = aAngle + distance * 0.12 + sin(time * 6.0 + aSeed * 6.2831853) * 0.025;
+    float radial = beamRadius * pow(u, 1.6) * (1.0 + sin(time * 9.0 + aSeed * 6.2831853) * 0.004);
     vec4 point = modelViewMatrix * vec4(cos(angle) * radial, distance, sin(angle) * radial, 1.0);
     float fade = smoothstep(0.0, 0.045, u) * (1.0 - smoothstep(0.86, 1.0, u));
     float scale = length(modelMatrix[0].xyz);
@@ -52,7 +54,7 @@ const particleVertex = `
     gl_PointSize = max(pixels, mix(1.0, 2.0, readable));
     float area = min(1.0, pixels * pixels);
     float coverage = mix(area, max(area, 0.55), readable);
-    float flicker = 0.7 + 0.3 * pow(sin(time * 1.8 + aSeed * 6.2831853), 2.0);
+    float flicker = 0.7 + 0.3 * pow(sin(time * 21.0 + aSeed * 6.2831853), 2.0);
     vAlpha = min(1.0, strength * fade * flicker * coverage * 1.4);
     gl_Position = projectionMatrix * point;
   }
@@ -81,7 +83,7 @@ const ringFragment = `
     float angle = atan(position.y, position.x + 0.0000001) / 6.2831853 + 0.5;
     float rings = 0.0, cores = 0.0;
     for (int i = 0; i < 4; i++) {
-      float phase = fract(time * 0.32 + float(i) / 4.0);
+      float phase = fract(time * 23.0 / 6.283185307179586 + float(i) / 4.0);
       float envelope = smoothstep(0.0, 0.08, phase) * (1.0 - smoothstep(0.72, 1.0, phase));
       float ringRadius = 0.04 + phase * 0.92;
       float dr = r - ringRadius;
@@ -94,7 +96,7 @@ const ringFragment = `
       rings += (softness * (1.0 - unresolved) + outline) * envelope;
       cores += core * envelope;
     }
-    float contact = exp(-r * r * 85.0) * (0.22 + 0.04 * sin(time * 3.0));
+    float contact = exp(-r * r * 85.0) * (0.22 + 0.04 * sin(time * 34.0));
     float edge = 1.0 - smoothstep(0.92, 1.0, r);
     gl_FragColor = vec4(color * vec3(1.0, 1.0, 1.4) + vec3(0.025, 0.12, 0.5) * min(cores, 1.0), min((rings * 1.05 + contact) * edge * strength, 0.85));
     #include <tonemapping_fragment>
@@ -145,7 +147,7 @@ export function createCinematicScan(color: number, propagationSpeed = 0.6): {
     blending: THREE.AdditiveBlending, toneMapped: false,
   });
   const particleMaterial = new THREE.ShaderMaterial({
-    uniforms: { color: { value: tint }, time: { value: 0 }, strength: { value: 0 }, beamLength: { value: 1 }, beamRadius: { value: 0.5 }, viewportHeight: { value: 1 }, propagationSpeed: { value: propagationSpeed } },
+    uniforms: { color: { value: tint }, time: { value: 0 }, strength: { value: 0 }, beamLength: { value: 1 }, beamRadius: { value: 0.5 }, viewportHeight: { value: 1 }, propagationCycles: { value: Math.round(propagationSpeed * AUTH_ANIMATION_PERIOD / 0.65) } },
     vertexShader: particleVertex, fragmentShader: particleFragment,
     transparent: true, depthTest: true, depthWrite: false, blending: THREE.AdditiveBlending,
   });
@@ -211,7 +213,7 @@ export function createCinematicScan(color: number, propagationSpeed = 0.6): {
         cachedSurfaceRadius = surface?.radius;
       }
       for (const material of materials) {
-        material.uniforms.time.value = time;
+        material.uniforms.time.value = (time % AUTH_ANIMATION_PERIOD) * AUTH_ANGULAR_SPEED;
         material.uniforms.strength.value = strength;
       }
     },

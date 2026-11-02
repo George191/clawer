@@ -1,10 +1,11 @@
 import * as THREE from 'three';
+import { AUTH_SMALL_ORBIT_ANGULAR_SPEED } from './AuthAnimation';
 
 // Equal radii and speeds; distinct planes include a counter-travelling pass.
 export const SMALL_ORBIT_LANES = [
-  { radiusFactor: 1.10, inclination: -.20, tilt: 1.10, phase: 5.884, angularSpeed: .0120, scale: .075 },
-  { radiusFactor: 1.10, inclination: -.60, tilt: .25, phase: 1.553, angularSpeed: .0120, scale: .050 },
-  { radiusFactor: 1.10, inclination: 2.25, tilt: 2.85, phase: 4.531, angularSpeed: .0120, scale: .048 },
+  { radiusFactor: 1.10, inclination: -.20, tilt: 1.10, phase: 5.884, angularSpeed: AUTH_SMALL_ORBIT_ANGULAR_SPEED, scale: .075 },
+  { radiusFactor: 1.10, inclination: -.60, tilt: .25, phase: 1.553, angularSpeed: AUTH_SMALL_ORBIT_ANGULAR_SPEED, scale: .050 },
+  { radiusFactor: 1.10, inclination: 2.25, tilt: 2.85, phase: 4.531, angularSpeed: AUTH_SMALL_ORBIT_ANGULAR_SPEED, scale: .048 },
 ];
 
 /** Tile each orbit's visible arc over one common period, with overlap at handoffs. */
