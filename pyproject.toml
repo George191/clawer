@@ -5,13 +5,14 @@ description = "Google Patents 专利采集平台"
 requires-python = ">=3.10"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["app"]
 asyncio_mode = "auto"
 python_files = ["test_*.py"]
 addopts = [
     "-v",
     "--strict-markers",
     "--tb=short",
+    "--import-mode=importlib",
 ]
 markers = [
     "unit: Unit tests",

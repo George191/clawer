@@ -2,6 +2,8 @@
 .agents
 .codex
 .pytest_cache
+**/tests
+**/conftest.py
 .ruff_cache
 .venv
 .vscode

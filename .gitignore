@@ -3,8 +3,6 @@
 *.log
 *.docx
 
-**/tests/
-
 .venv/
 .vscode/
 .trae/
