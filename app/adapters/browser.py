@@ -27,6 +27,7 @@ class BrowserSiteAdapter(BaseSiteAdapter):
     browser_wait_selector: str | None = None
     browser_wait_timeout_seconds: float | None = None
     browser_viewport = {"width": 1440, "height": 1000}
+    browser_service_workers = "allow"
     browser_max_attempts = 3
 
     def __init__(self, base_url, http_client=None, **kwargs):
@@ -69,6 +70,7 @@ class BrowserSiteAdapter(BaseSiteAdapter):
                 viewport=self.browser_viewport,
                 user_agent=settings.http_user_agent,
                 ignore_https_errors=not settings.http_verify_ssl,
+                service_workers=self.browser_service_workers,
             ))
             self._browser_context.set_default_timeout(
                 max(1, int(settings.http_request_timeout * 1000))

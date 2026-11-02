@@ -385,6 +385,14 @@ export const fetchWorkspaceTaskLogRuns = (
 export const createWorkspaceTask = (data: WorkspaceTaskPayload): Promise<WorkspaceTask> =>
   client.post('/ai/workspace/tasks', data).then((r) => r.data);
 
+export const createGoogleSearchTask = (data: {
+  query: string;
+  language: string;
+  max_pages: number;
+  fetch_details: boolean;
+}): Promise<WorkspaceTask> =>
+  client.post('/ai/google-search/tasks', data).then((r) => r.data);
+
 export const uploadWorkspaceBatchInput = (
   file: File,
   templateName: string,

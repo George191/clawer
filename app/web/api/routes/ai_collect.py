@@ -12,6 +12,7 @@ from app.web.agents.template import template_agent
 from app.web.api.models.tasks import TaskAction, WorkspaceTaskRequest
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.browser_renderer import browser_renderer
+from app.web.services.google_search import GoogleSearchRequest, create_google_search_task
 from app.web.services.task_runs import delete_run, run_action
 
 router = APIRouter(prefix="/ai", tags=["ai-collect"])
@@ -245,6 +246,11 @@ async def workspace_task_log_run(task_id: UUID, run_id: UUID) -> dict[str, Any]:
 @router.post("/workspace/tasks")
 async def create_workspace_task(payload: WorkspaceTaskRequest) -> dict[str, Any]:
     return await ai_collect_store.create_task(payload.model_dump())
+
+
+@router.post("/google-search/tasks", status_code=201)
+async def create_google_search(payload: GoogleSearchRequest) -> dict[str, Any]:
+    return await create_google_search_task(payload)
 
 
 @router.post("/workspace/batch-inputs")

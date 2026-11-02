@@ -538,6 +538,30 @@ class MySiteAdapter(BaseSiteAdapter):
 
 已发布执行从 MinIO 加载适配器，模板中的 `adapter: my_site` 绑定产物内对应注册名。只有模板未声明爬虫适配器时才使用通用采集逻辑；声明了但无法加载时明确报错。已有本地模块仅保留兼容加载。
 
+### Google 搜索采集
+
+智能采集首页切换到「Google 搜索」，输入关键词、页数（默认 3 页，最多 100 页），
+选择是否保存详情页原文后开始采集。该入口使用确定性的模板和适配器，不执行 AI 模板生成。
+首次创建任务时，将 `app/web/collection_sources/google_search/` 下的 `template.yaml`
+及 `adapter.py` 发布为 `google_search@v1.0`；已有版本不自动覆盖。
+
+`POST /api/v1/ai/google-search/tasks` 接受 `query`、`language`（默认 `zh-CN`）、
+`max_pages` 和 `fetch_details`（默认 `true`），返回普通采集任务。
+创建后通过已有任务操作接口启动，前端自动完成这一步；启动失败可在任务面板重试。
+
+创建任务时注册禁用下游的集合路由，复用现有「允许 MongoDB 写入、禁用下游消费」机制，
+不自动改动已存在的冲突路由。MongoDB 集合为 `search_result_google_search`，包含 `kind=list_page` 的列表页记录和
+`kind=result` 的搜索结果记录，按查询、语言、记录种类和 URL 去重。
+结果提取标题、链接、摘要等字段，完整列表页保留未结构化的其他区域信息；
+列表页保存完整渲染 DOM，详情页通过静态 HTTP 保存服务器返回的原始 HTML 字节，不执行详情站点脚本。
+两类页面原文均使用现有资源存储保存到 MinIO，MongoDB 保存原文路径和抓取状态。
+详情失败保留搜索结果及错误信息；Google 验证码、同意页或无法识别的页面明确报错。
+页数是采集上限，结果结束时提前停止。
+
+部署需更新 Web、前端及 Crawler（使用本来源禁用 Service Workers 的浏览器上下文选项）。
+Web 和 Crawler 均需配置现有 MongoDB、MinIO 及 Playwright/Chromium 运行环境。
+本入口完成搜索采集入 MongoDB，不新增 `search_result` 的同步或 ETL 服务。
+
 ## 配置
 
 采集适配器直接输出规范字段：按明确映射移除已消费的原始别名，保留未映射的独有字段。对象和数组保持业务结构；存储、Kafka、RDS 与采购 ODS 直接读取同一套顶层字段，不再转换历史容器或保留原始字段映射表。

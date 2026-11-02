@@ -55,10 +55,12 @@ import {
   type FieldDef,
   type UrlPreflightResponse,
   type WorkspaceTask,
+  createGoogleSearchTask,
   dryRun as dryRunApi,
   generateTemplate as generateTemplateApi,
   preflightUrl,
   releaseWorkspaceTemplate,
+  runWorkspaceTaskAction,
   uploadWorkspaceBatchInput,
 } from '@/services/aiApi';
 import workspacePalette from './palette';
@@ -1157,6 +1159,12 @@ const AICollect: React.FC = () => {
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
   const [url, setUrl] = useState('');
   const [intent, setIntent] = useState('');
+  const [collectionSource, setCollectionSource] = useState<'site' | 'google'>('site');
+  const [googleQuery, setGoogleQuery] = useState('');
+  const [googleMaxPages, setGoogleMaxPages] = useState(3);
+  const [googleFetchDetails, setGoogleFetchDetails] = useState(true);
+  const [googleSearchLoading, setGoogleSearchLoading] = useState(false);
+  const googleSearchSubmittingRef = useRef(false);
   const [renderMode, setRenderMode] = useState('agent');
   const [maxPages, setMaxPages] = useState(20);
   const [scheduleMode, setScheduleMode] = useState('cron');
@@ -3263,6 +3271,40 @@ const AICollect: React.FC = () => {
     setShowAnalysisTiming(true);
   }, [adapterBuildPlan.length, clearAdapterTypingTimer, sendAnalyzeSocketMessage]);
 
+  const handleGoogleSearch = useCallback(async () => {
+    const query = googleQuery.trim();
+    if (!query || googleSearchSubmittingRef.current) return;
+    googleSearchSubmittingRef.current = true;
+    setGoogleSearchLoading(true);
+    try {
+      const task = await createGoogleSearchTask({
+        query,
+        language: 'zh-CN',
+        max_pages: googleMaxPages,
+        fetch_details: googleFetchDetails,
+      });
+      setWorkspaceTaskFocus(task);
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('panel', 'tasks');
+      setSearchParams(nextParams);
+      setGoogleQuery('');
+      try {
+        const startedTask = await runWorkspaceTaskAction(task.id, 'start');
+        setWorkspaceTaskFocus(startedTask);
+        message.success('Google 搜索采集已启动，可在任务面板查看进度');
+      } catch (error) {
+        message.warning('任务已创建，但启动失败，请在任务面板重试启动');
+        console.error('Failed to start Google search task', task.id, error);
+      }
+    } catch (error) {
+      message.error('Google 搜索任务创建失败，请稍后重试');
+      console.error('Failed to create Google search task', error);
+    } finally {
+      googleSearchSubmittingRef.current = false;
+      setGoogleSearchLoading(false);
+    }
+  }, [googleFetchDetails, googleMaxPages, googleQuery, message, searchParams, setSearchParams]);
+
   const renderMissionPanel = (variant: 'hero' | 'compact') => {
     if (variant === 'hero') {
       return (
@@ -3271,6 +3313,81 @@ const AICollect: React.FC = () => {
             <h1 className="ai-prompt-title">嗨，<span className="ai-prompt-name">{currentUserName}</span>，又有新灵感了吗？</h1>
           </div>
 
+          <Segmented
+            className="ai-collection-source"
+            value={collectionSource}
+            disabled={preflightLoading || googleSearchLoading}
+            onChange={(value) => setCollectionSource(value as 'site' | 'google')}
+            options={[
+              { label: '站点采集', value: 'site', icon: <GlobalOutlined /> },
+              { label: 'Google 搜索', value: 'google', icon: <SearchOutlined /> },
+            ]}
+          />
+
+          {collectionSource === 'google' ? (
+            <form
+              className="ai-google-search-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleGoogleSearch();
+              }}
+            >
+              <div className="ai-prompt-shell">
+                <span className="ai-prompt-leading-icon" aria-hidden="true"><SearchOutlined /></span>
+                <Input
+                  className="ai-prompt-input"
+                  aria-label="Google 搜索关键词"
+                  value={googleQuery}
+                  maxLength={2000}
+                  disabled={googleSearchLoading}
+                  onChange={(event) => setGoogleQuery(event.target.value)}
+                  placeholder="输入 Google 搜索关键词，例如：卫星通信 最新进展"
+                />
+                <Button
+                  className="ai-prompt-icon"
+                  shape="circle"
+                  htmlType="submit"
+                  icon={<SearchOutlined />}
+                  aria-label="开始 Google 搜索采集"
+                  loading={googleSearchLoading}
+                  disabled={!googleQuery.trim()}
+                />
+              </div>
+              <div className="ai-google-search-options">
+                <label>
+                  <span>搜索页数</span>
+                  <InputNumber
+                    aria-label="Google 搜索页数"
+                    min={1}
+                    max={100}
+                    precision={0}
+                    value={googleMaxPages}
+                    disabled={googleSearchLoading}
+                    onChange={(value) => setGoogleMaxPages(value ?? 3)}
+                  />
+                </label>
+                <label>
+                  <span>保存详情页原文</span>
+                  <Switch
+                    aria-label="保存详情页原文"
+                    size="small"
+                    checked={googleFetchDetails}
+                    disabled={googleSearchLoading}
+                    onChange={setGoogleFetchDetails}
+                  />
+                </label>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={googleSearchLoading}
+                  disabled={!googleQuery.trim()}
+                >开始采集</Button>
+              </div>
+              <Text type="secondary" className="ai-google-search-note">
+                保存搜索结果的标题、链接、摘要等列表信息及页面原文，可在任务面板查看采集进度。
+              </Text>
+            </form>
+          ) : (
           <div className={`ai-prompt-shell ${preflightLoading ? 'is-preflighting' : ''}`}>
             <span className="ai-prompt-leading-icon" aria-hidden="true">
               <GlobalOutlined />
@@ -3294,6 +3411,7 @@ const AICollect: React.FC = () => {
             ) : null}
             <Button className="ai-prompt-icon" shape="circle" icon={<AudioOutlined />} aria-label="语音输入" disabled />
           </div>
+          )}
         </section>
       );
     }
@@ -8249,6 +8367,35 @@ const AICollect: React.FC = () => {
           .ai-prompt-copy {
             text-align: center;
             padding-left: 0;
+          }
+          .ai-collection-source {
+            align-self: center;
+          }
+          .ai-google-search-form {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          }
+          .ai-google-search-options {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px 24px;
+          }
+          .ai-google-search-options label {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+            color: ${aura.muted};
+          }
+          .ai-google-search-options .ant-input-number {
+            width: 72px;
+          }
+          .ai-google-search-note {
+            text-align: center;
+            font-size: 12px;
           }
           .ai-prompt-title {
             margin: 0;
