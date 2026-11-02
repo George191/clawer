@@ -510,6 +510,7 @@ class HttpClient:
         adapter_name: str | None = None,
         rotate_proxy: bool = False,
         return_response: bool = False,
+        reuse_session: bool = False,
     ) -> str | DownloadResponse:
         """请求页面并返回文本内容。
 
@@ -522,12 +523,16 @@ class HttpClient:
             page: 当前页码，用于日志记录。
             attempt: 当前尝试次数，用于日志记录。
             no_timeout: 不设置连接或响应超时，仅用于交互式网站预检。
+            reuse_session: 显式复用当前协程的连接；响应 Cookie 不跨请求保留。
 
         Returns:
             响应文本。
         """
         config = config or RequestConfig()
         force_direct = force_direct or config.force_direct
+        # Cached download clients have the normal request timeout. Interactive
+        # no-timeout requests retain their original dedicated-session path.
+        reuse_session = reuse_session and not no_timeout
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)
@@ -582,18 +587,23 @@ class HttpClient:
 
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
-        # Each page request owns its session; close it without an unbounded
-        # async-context exit or wait_for cancellation handshake.
+        # Default page requests retain their original dedicated session.
         if asyncio.current_task() in self._download_cleanup_blocked:
             raise DownloadCleanupError(url, message="Previous HTTP cleanup unconfirmed; no new request started")
         client = None
         cancelled = False
+        completed = False
         async def _do_request() -> str:
             nonlocal client
-            client = await self._create_client(
-                proxy_url, no_timeout=no_timeout, pre_proxy_url=pre_proxy_url,
-            )
+            if reuse_session:
+                client = await self._get_download_client(task_id, proxy_url, pre_proxy_url)
+            else:
+                client = await self._create_client(
+                    proxy_url, no_timeout=no_timeout, pre_proxy_url=pre_proxy_url,
+                )
             try:
+                if reuse_session:
+                    client.cookies.clear()
                 request_kwargs = dict(
                     method=config.method,
                     url=url,
@@ -648,6 +658,8 @@ class HttpClient:
                     task_id=task_id,
                 )
 
+                if reuse_session:
+                    client.cookies.clear()
                 if return_response:
                     return DownloadResponse(
                         source_url=url,
@@ -679,7 +691,13 @@ class HttpClient:
             )
             if not ready:
                 raise asyncio.TimeoutError("Page request exceeded its time budget")
-            return request_task.result()
+            response = request_task.result()
+            completed = True
+            return response
+        except DownloadCleanupError:
+            if reuse_session:
+                self._download_cleanup_blocked.add(asyncio.current_task())
+            raise
         except asyncio.CancelledError:
             cancelled = True
             raise
@@ -689,8 +707,10 @@ class HttpClient:
             if not request_task.done():
                 request_task.cancel()
             cleanup_tasks = set()
-            if client is not None:
-                close_task = asyncio.ensure_future(client.close())
+            if client is not None and (not reuse_session or not completed):
+                close_task = asyncio.ensure_future(
+                    self._discard_download_client(task_id) if reuse_session else client.close()
+                )
                 cleanup_tasks.add(close_task)
                 operations.add(close_task)
             try:
