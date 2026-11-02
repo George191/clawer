@@ -1,4 +1,4 @@
-"""同步服务入口 — 独立进程运行 SyncWorker 将新增或修改记录推送至 Kafka。
+"""同步服务入口 — 消费 Mongo CDC 通知并扫描补偿，将待同步记录推送至 Kafka。
 
 默认按每条记录的 data_type 发送到 <SPIDER_KAFKA_TOPIC>-<type>。
 

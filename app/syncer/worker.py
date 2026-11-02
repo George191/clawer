@@ -2,7 +2,7 @@
 
 工作流程
 --------
-1. 低频扫描 MongoDB，同步下载回写，并补偿采集直发 Kafka 时遗漏的记录
+1. 消费 MongoDB CDC 通知，并通过低频扫描补偿遗漏的待同步记录
 2. 按记录 data_type 将记录推送至对应 Kafka 主题
 3. Kafka ACK 后，将对应版本的 sync_status 标为 synced（RDS/ODS 另行异步消费）
 
@@ -21,6 +21,7 @@ from time import monotonic
 
 from app.config.settings import settings
 from app.logger import get_logger
+from app.records.change_feed import MongoChangeFeed
 from app.records.collection_routes import collection_route_store
 from app.records.mongo_store import MongoRecordStore
 from app.syncer.publisher import RecordPublisher
@@ -47,6 +48,9 @@ class SyncWorker:
         self._concurrency = concurrency
         self._kafka: RecordPublisher | None = None
         self._mongo = MongoRecordStore()
+        self._changes = MongoChangeFeed(
+            role="syncer", data_type=data_type, template_name=template_name,
+        )
         self._running = False
         self._collection_cursor = 0
         self._collection_names: list[str] = []
@@ -65,17 +69,28 @@ class SyncWorker:
             self._topic if self._data_type else f"{settings.kafka_topic}-*",
         )
 
+        next_scan = 0.0
         while self._running:
             try:
-                count = await self._process_batch()
-                if count < self._batch_size:
-                    await asyncio.sleep(max(self._poll_interval, 0.5))
+                records = await self._changes.receive(
+                    collections=await self._get_collection_names(), limit=self._batch_size,
+                )
+                if records:
+                    await self._process_batch(records)
             except Exception:
-                logger.exception("SyncWorker loop error")
-                await asyncio.sleep(max(self._poll_interval, 0.5))
+                logger.exception("SyncWorker CDC failed; Mongo scan will compensate")
+            if monotonic() >= next_scan:
+                try:
+                    count = await self._process_batch()
+                    next_scan = monotonic() + (max(self._poll_interval, 0.5) if count < self._batch_size else 0)
+                except Exception:
+                    logger.exception("SyncWorker recovery failed")
+                    next_scan = monotonic() + max(self._poll_interval, 0.5)
+            await asyncio.sleep(0.5)
 
-    async def _process_batch(self) -> int:
-        ready = await self._read_ready_records()
+    async def _process_batch(self, ready: list[dict] | None = None) -> int:
+        if ready is None:
+            ready = await self._read_ready_records()
         if not ready:
             return 0
 
@@ -122,6 +137,7 @@ class SyncWorker:
 
     async def stop(self) -> None:
         self._running = False
+        await self._changes.close()
         if self._kafka:
             await self._kafka.close()
         await self._mongo.close()
