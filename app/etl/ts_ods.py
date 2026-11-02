@@ -5,7 +5,6 @@ import inspect
 import json
 import re
 from datetime import datetime, timezone
-from functools import partial
 from typing import Any
 
 from sqlalchemy import text
@@ -34,6 +33,8 @@ from app.logger import get_logger
 logger = get_logger(__name__)
 _ODS_WRITE_MAX_ATTEMPTS = 3
 _ODS_WRITE_RETRY_WAIT = 0.5
+_ODS_BATCH_MAX_ROWS = 50
+_ODS_BATCH_MAX_BYTES = 4 * 1024 * 1024
 
 
 class TsOds(ETLBase):
@@ -97,26 +98,28 @@ class TsOds(ETLBase):
         return await self._process_ods_record(message, table)
 
     async def _dispatch_batch(self, messages, owner, partition):
-        # Only strict one-input/one-output financial facts can share this path.
-        if not 2 <= len(messages) <= 50:
+        # Batch only homogeneous inputs with one output retaining its identity.
+        if not 2 <= len(messages) <= _ODS_BATCH_MAX_ROWS:
             return None
         try:
-            if self._table_name and self._table_name != "financial_fact":
-                return None
             inputs = [message.value for message in messages]
             if any(not isinstance(message, dict)
-                   or message.get("data_type") != "financial_fact"
-                   or message.get("data_source") != "financial_fact_sec_edgar"
+                   or not message.get("data_source")
                    or not message.get("record_id") for message in inputs):
+                return None
+            table = validate_table_name(inputs[0].get("data_type"))
+            data_source = inputs[0]["data_source"]
+            if (self._table_name and self._table_name != table
+                    or any(message.get("data_type") != table
+                           or message["data_source"] != data_source for message in inputs)):
                 return None
             def identity(row):
                 return tuple(row[key] for key in ("record_id", "data_source", "data_type"))
             identities = [identity(message) for message in inputs]
             if len(set(identities)) != len(identities):
                 return None
-            data_source = inputs[0]["data_source"]
             module = await get_source_module(data_source, export="NORMALIZERS")
-            normalizer = getattr(module, "NORMALIZERS", {}).get("financial_fact") or get_normalizer("financial_fact", data_source)
+            normalizer = getattr(module, "NORMALIZERS", {}).get(table) or get_normalizer(table, data_source)
             if normalizer is None:
                 return None
             fields = getattr(module, "ODS_FIELDS", {})
@@ -125,7 +128,7 @@ class TsOds(ETLBase):
             total_bytes = 0
             for message in inputs:
                 total_bytes += len(json.dumps(message, ensure_ascii=False, default=str).encode("utf8"))
-                if total_bytes > 4 * 1024 * 1024:
+                if total_bytes > _ODS_BATCH_MAX_BYTES:
                     return None
                 raw_data = {**message.get("raw_data", message), "data_source": message["data_source"]}
                 raw_meta = extract_meta(raw_data)
@@ -145,7 +148,7 @@ class TsOds(ETLBase):
                 }
                 payload = await self._prepare_payload(normalized, source, fields, now)
                 total_bytes += len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf8"))
-                if (total_bytes > 4 * 1024 * 1024 or identity(payload) != identity(source)
+                if (total_bytes > _ODS_BATCH_MAX_BYTES or identity(payload) != identity(source)
                         or (prepared and payload.keys() != prepared[0].keys())):
                     return None
                 prepared.append(payload)
@@ -165,7 +168,7 @@ class TsOds(ETLBase):
             source_sql = (
                 "SELECT src.record_id, src.data_source, src.data_type, src.raw_data->'_meta' AS meta, "
                 "src.kafka_topic,src.kafka_partition,src.kafka_offset "
-                "FROM ts_rds.rds_financial_fact AS src JOIN (VALUES " + values + ") "
+                f"FROM ts_rds.rds_{table} AS src JOIN (VALUES " + values + ") "
                 "AS incoming(record_id, data_source, data_type) "
                 "USING (record_id, data_source, data_type) "
                 "ORDER BY src.record_id, src.data_source, src.data_type FOR SHARE OF src"
@@ -175,28 +178,28 @@ class TsOds(ETLBase):
                 rows = (await session.execute(text(source_sql), parameters)).mappings().all()
                 current = {identity(row): row for row in rows}
                 if len(current) != len(identities) or current.keys() != set(identities):
-                    raise ValueError("ODS financial batch source RDS row is missing")
+                    raise ValueError("ODS batch source RDS row is missing")
                 eligible = []
                 for source, payload in zip(sources, prepared, strict=True):
                     if source_revision_current(source, current[identity(source)]):
                         eligible.append(payload)
                 if not self._batch_owned(owner, partition):
-                    raise RuntimeError("ODS financial batch assignment changed before commit")
+                    raise RuntimeError("ODS batch assignment changed before commit")
                 if eligible:
                     eligible.sort(key=identity)
-                    columns = {name: self._columns["financial_fact"][name] for name in eligible[0]}
-                    sql = current_insert_sql("ods", "financial_fact", columns, row_count=len(eligible))
+                    columns = {name: self._columns[table][name] for name in eligible[0]}
+                    sql = current_insert_sql("ods", table, columns, row_count=len(eligible))
                     parameters = ({f"{key}_{index}": value for index, payload in enumerate(eligible) for key, value in payload.items()}
                                   if len(eligible) > 1 else eligible[0])
                     rows = (await session.execute(text(sql), parameters)).mappings().all()
                     results = {identity(row): dict(row) for row in rows}
                     if len(results) != len(eligible) or results.keys() != {identity(payload) for payload in eligible}:
-                        raise ValueError("Unexpected ODS financial batch RETURNING identities")
+                        raise ValueError("Unexpected ODS batch RETURNING identities")
                 if not self._batch_owned(owner, partition):
-                    raise RuntimeError("ODS financial batch assignment changed before commit")
+                    raise RuntimeError("ODS batch assignment changed before commit")
         except Exception:
             # Includes uncertain COMMIT ACKs; close the session before replay.
-            logger.exception("%s ODS financial batch failed; using single-record path", self._log_prefix)
+            logger.exception("%s ODS batch failed; using single-record path", self._log_prefix)
             return None
         try:
             for payload in prepared:
@@ -206,7 +209,7 @@ class TsOds(ETLBase):
                 if result is not None:
                     await self._emit(result, record_id=payload["record_id"], data_source=payload["data_source"], data_type=payload["data_type"])
         except Exception:
-            logger.exception("%s ODS financial batch output failed; replaying input batch", self._log_prefix)
+            logger.exception("%s ODS batch output failed; replaying input batch", self._log_prefix)
             return False
         return True
 
@@ -225,8 +228,15 @@ class TsOds(ETLBase):
     async def _prepare_payload(self, normalized, source, fields, now) -> dict[str, Any]:
         if not isinstance(normalized, dict):
             raise ValueError("Normalizer must return a dictionary or list of dictionaries")
-        output_table = normalized.get("data_type") or source["data_type"]
-        normalized_record_id = normalized.get("record_id") or source["record_id"]
+        output_table = normalized.get("data_type")
+        if output_table is None or output_table == "":
+            output_table = source["data_type"]
+        validate_table_name(output_table)
+        normalized_record_id = normalized.get("record_id")
+        if normalized_record_id is None or normalized_record_id == "":
+            normalized_record_id = source["record_id"]
+        if not isinstance(normalized_record_id, str) or not normalized_record_id.strip():
+            raise ValueError("ODS output record_id must be a non-empty string")
         await self._ensure_type(output_table, fields.get(output_table))
         columns = self._columns[output_table]
         unknown = normalized.keys() - columns.keys()
@@ -247,91 +257,53 @@ class TsOds(ETLBase):
                 payload[name] = converted
         return payload
 
-    async def _write_filing_outputs(self, normalized_records, source, fields, now):
-        # One input/source lock only. Never batch different filing inputs.
-        if source["data_type"] != "filing" or source["data_source"] != "filing_sec_edgar":
-            return None
-        if not 2 <= len(normalized_records) <= 50:
-            return None
-        try:
-            prepared = []
-            total_bytes = 0
-            for normalized in normalized_records:
-                if not isinstance(normalized, dict) or (normalized.get("data_type") or "filing") not in {"filing", "filing_document"}:
-                    return None
-                payload = await self._prepare_payload(normalized, source, fields, now)
-                total_bytes += len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf8"))
-                if total_bytes > 4 * 1024 * 1024:
-                    return None
-                prepared.append(payload)
-            # Stable complete target-identity ordering; duplicate identities keep
-            # their original relative order. Restore original emission order below.
-            order = sorted(range(len(prepared)), key=lambda i: (
-                prepared[i]["data_type"], str(prepared[i]["record_id"]),
-                prepared[i]["data_source"], prepared[i]["data_type"],
-            ))
-            results = [None] * len(prepared)
-            async with self._pg.session() as session:
-                if not await self._source_is_current(session, source):
-                    return []
-                for index in order:
-                    payload = prepared[index]
-                    table = payload["data_type"]
-                    columns = {name: self._columns[table][name] for name in payload}
-                    sql = current_insert_sql("ods", table, columns)
-                    row = (await session.execute(text(sql), payload)).mappings().first()
-                    results[index] = dict(row) if row else None
-            return [(row, payload) for row, payload in zip(results, prepared, strict=True) if row is not None]
-        except Exception:
-            # Includes an uncertain COMMIT ACK. Emit nothing from this attempt;
-            # only after session cleanup may the original idempotent path replay.
-            logger.exception("%s Filing transaction attempt failed; using original per-output path", self._log_prefix)
-            return None
-
-    async def _write_current(
-        self,
-        *,
-        table: str,
-        payload: dict[str, Any],
-        source: dict[str, Any],
-    ) -> dict[str, Any] | None:
-        """单条 ODS 入库，带可重试错误重试与显式事务语义。
-
-        session() 上下文已提供 commit/rollback：成功提交、异常回滚。
-        此处在连接级瞬时错误（InterfaceError/OperationalError）上做有限重试，
-        schema 级错误由上层 _execute_with_table_recovery 处理。
-        """
-        columns = {name: self._columns[table][name] for name in payload}
-        current_sql = current_insert_sql("ods", table, columns)
-        last_error: Exception | None = None
-
+    async def _write_outputs(
+        self, prepared: list[dict[str, Any]], source: dict[str, Any],
+    ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+        """Commit all outputs of one source revision together, then allow emission."""
+        # Stable target lock order; duplicate identities retain their input order.
+        # Results below retain the normalizer's original output order.
+        order = sorted(range(len(prepared)), key=lambda i: (
+            prepared[i]["data_type"], str(prepared[i]["record_id"]), prepared[i]["data_source"],
+        ))
+        statements = [text(current_insert_sql(
+            "ods", payload["data_type"],
+            {name: self._columns[payload["data_type"]][name] for name in payload},
+        )) for payload in prepared]
         for attempt in range(_ODS_WRITE_MAX_ATTEMPTS):
+            failed_payload = None
             try:
+                results: dict[int, dict[str, Any]] = {}
                 async with self._pg.session() as session:
                     if not await self._source_is_current(session, source):
-                        return None
-                    result = await session.execute(text(current_sql), payload)
-                    current_row = result.mappings().first()
-                    if attempt > 0:
-                        logger.info(
-                            "%s ODS write recovered on attempt %d/%d table=%s",
-                            self._log_prefix, attempt + 1, _ODS_WRITE_MAX_ATTEMPTS, table,
-                        )
-                    return dict(current_row) if current_row else None
-            except (InterfaceError, OperationalError) as exc:
-                last_error = exc
-                if attempt < _ODS_WRITE_MAX_ATTEMPTS - 1:
-                    delay = _ODS_WRITE_RETRY_WAIT * (2 ** attempt)
-                    logger.warning(
-                        "%s ODS write retry %d/%d table=%s record_id=%s error=%s",
-                        self._log_prefix, attempt + 1, _ODS_WRITE_MAX_ATTEMPTS,
-                        table, payload.get("record_id"), exc,
-                    )
-                    await asyncio.sleep(delay)
+                        return []
+                    for index in order:
+                        failed_payload = prepared[index]
+                        row = (await session.execute(statements[index], failed_payload)).mappings().first()
+                        if row is None:
+                            raise ValueError("ODS upsert returned no record")
+                        results[index] = dict(row)
+                return [(results[index], payload) for index, payload in enumerate(prepared)]
+            except Exception as exc:
+                if attempt == _ODS_WRITE_MAX_ATTEMPTS - 1:
+                    raise
+                # The session has rolled back before repair or retry. Never
+                # fall back to committing outputs separately.
+                if failed_payload is not None and self._is_recoverable_table_error(exc):
+                    table = failed_payload["data_type"]
+                    await self._recover_registered_table(table)
+                    await self._ensure_partitions_for_payload(table, failed_payload)
                     continue
-                raise
-        # 理论不可达，防御性抛出
-        raise last_error if last_error else RuntimeError("ODS write exhausted retries")
+                if not isinstance(exc, InterfaceError | OperationalError):
+                    raise
+                delay = _ODS_WRITE_RETRY_WAIT * (2 ** attempt)
+                logger.warning(
+                    "%s ODS transaction retry %d/%d source=%s record_id=%s error=%s",
+                    self._log_prefix, attempt + 1, _ODS_WRITE_MAX_ATTEMPTS,
+                    source["data_source"], source["record_id"], exc,
+                )
+                await asyncio.sleep(delay)
+        raise RuntimeError("ODS write exhausted retries")
 
     async def _process_ods_record(self, message: dict[str, Any], table: str) -> bool:
         try:
@@ -354,25 +326,14 @@ class TsOds(ETLBase):
             if not isinstance(normalized_records, list) or not normalized_records:
                 raise ValueError(f"Normalizer returned no records: {table}:{data_source}")
             now = datetime.now(timezone.utc)
-            emitted_records = None
             source = {
                 "record_id": record_id, "data_source": data_source, "data_type": table,
                 "meta": raw_data.get("_meta") or {},
                 "position": {name: message.get(name) for name in POSITION_COLUMNS},
             }
-            if table == "filing" and data_source == "filing_sec_edgar":
-                emitted_records = await self._write_filing_outputs(normalized_records, source, fields, now)
-            if emitted_records is None:
-                emitted_records = []
-                for normalized in normalized_records:
-                    payload = await self._prepare_payload(normalized, source, fields, now)
-                    output_table = payload["data_type"]
-                    result = await self._execute_with_table_recovery(
-                        output_table, partial(self._write_current, table=output_table, payload=payload, source=source),
-                        payload=payload,
-                    )
-                    if result is not None:
-                        emitted_records.append((result, payload))
+            prepared = [await self._prepare_payload(normalized, source, fields, now)
+                        for normalized in normalized_records]
+            emitted_records = await self._write_outputs(prepared, source)
             for result, payload in emitted_records:
                 await self._emit(
                     result, record_id=payload["record_id"], data_source=data_source,

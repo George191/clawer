@@ -32,7 +32,8 @@ from typing import Any
 from sqlalchemy import text
 
 from app.config.settings import settings
-from app.etl.base import ETLBase
+from app.etl.base import ETLBase, extract_meta
+from app.etl.schema.catalogs import validate_table_name
 from app.etl.source_fences import current_ods_revision, source_snapshot_current, source_snapshot_revision
 from app.logger import get_logger
 
@@ -128,6 +129,17 @@ class TsDwd(ETLBase):
     _consumer_group = settings.etl_dwd_consumer_group
     _producer_topic = settings.etl_graph_topic
     _producer_client_id = "etl-ts-dwd-producer"
+
+    async def _dispatch(self, message: dict[str, Any]) -> bool:
+        data_type = extract_meta(message).get("data_type") or message.get("data_type")
+        try:
+            validate_table_name(data_type)
+        except ValueError:
+            logger.exception("%s Invalid business data_type", self._log_prefix)
+            return False
+        if data_type not in self._handlers:
+            return True
+        return await super()._dispatch(message)
 
     # =================================================================
     #  公共参数构建 — 消除重复

@@ -28,6 +28,7 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.schema.catalogs import validate_table_name
 from app.etl.schema.registry import get_registered_ddl, save_registered_ddl
 from app.etl.tasks import get_tasks
 from app.etl.source_fences import source_snapshot_revision
@@ -94,7 +95,12 @@ class TsTask(ETLBase):
 
     async def _dispatch(self, message: dict[str, Any]) -> bool:
         data_type = extract_meta(message).get("data_type") or message.get("data_type")
-        if data_type and data_type not in self._handlers:
+        try:
+            validate_table_name(data_type)
+        except ValueError:
+            logger.exception("%s Invalid business data_type", self._log_prefix)
+            return False
+        if data_type not in self._handlers:
             return True
         return await super()._dispatch(message)
 
