@@ -227,6 +227,7 @@ export interface WorkspaceTaskLog {
 
 export interface WorkspaceTaskLogPage {
   items: WorkspaceTaskLog[];
+  notifications?: WorkspaceTaskLog[];
   has_more: boolean;
   next_before_id: string | null;
 }

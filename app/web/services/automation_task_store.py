@@ -16,6 +16,18 @@ from app.storage.postgres_client import get_pg_client
 from app.utils.runtime_control import get_workspace_run
 from app.web.services.task_events import publish_task_change, publish_task_log, publish_task_run
 
+SYNC_NOTIFICATION_PATTERN = (
+    r"^(?:\[[^\r\n]*: [A-Z]+/Syncer\] |(?:\[[^\r\n]*: [A-Z]+/[A-Za-z0-9_.:-]+\] )?"
+    r"(?:RecordPublisher:|sync progress:|Kafka publish acknowledged:|SyncWorker[: ]|"
+    r"Sent [0-9]+/[0-9]+ records to Kafka|Failed to send (?:Kafka message|record):|Failed to connect to Kafka:|"
+    r"Kafka not ready |Topic [^[:space:]]+ not found, waiting for auto-creation|Connected to Kafka:|Kafka producer closed))"
+)
+DOWNLOAD_NOTIFICATION_PATTERN = (
+    r"^(?:\[[^\r\n]*: [A-Z]+/Downloader\] |(?:\[[^\r\n]*: [A-Z]+/[A-Za-z0-9_.:-]+\] )?"
+    r"(?:DownloadWorker[: ]|DownloadWorker failed|Download uploaded:|Downloading bytes:|Download completed|Download failed:|"
+    r"Download task log write failed:|download (?:progress|finished|stalled):|HTTP .* during download cancellation))"
+)
+
 
 class AutomationTaskStore:
     def __init__(self) -> None:
@@ -779,6 +791,7 @@ class AutomationTaskStore:
 
     async def get_task_logs(
         self, task_id: str, run_id: str, *, before_id: int | None = None, limit: int = 200,
+        include_notifications: bool = True,
     ) -> list[dict[str, Any]]:
         await self.initialize()
         return await self._pg.fetch_all(
@@ -791,6 +804,9 @@ class AutomationTaskStore:
                 WHERE log.task_id = CAST(:task_id AS uuid)
                   AND log.run_id = CAST(:run_id AS uuid)
                   AND task.deleted_at IS NULL
+                  AND (:include_notifications OR NOT (
+                      log.message ~ :sync_pattern OR log.message ~ :download_pattern
+                  ))
                   AND (CAST(:before_id AS bigint) IS NULL OR (log.created_at, log.id) < (
                       SELECT cursor.created_at, cursor.id
                       FROM public.automation_task_logs cursor
@@ -803,7 +819,33 @@ class AutomationTaskStore:
             ) run_logs
             ORDER BY created_at, id
             """,
-            {"task_id": task_id, "run_id": run_id, "before_id": before_id, "limit": limit},
+            {"task_id": task_id, "run_id": run_id, "before_id": before_id, "limit": limit,
+             "include_notifications": include_notifications,
+             "sync_pattern": SYNC_NOTIFICATION_PATTERN, "download_pattern": DOWNLOAD_NOTIFICATION_PATTERN},
+        )
+
+    async def get_task_notifications(self, task_id: str, run_id: str) -> list[dict[str, Any]]:
+        """Load each stage's current notice independently of log pagination."""
+        await self.initialize()
+        return await self._pg.fetch_all(
+            r"""
+            SELECT DISTINCT ON (kind, has_details) id, level, message, created_at, run_id::text AS run_id
+            FROM (
+                SELECT log.*, CASE WHEN log.message ~ :sync_pattern THEN 'sync' ELSE 'download' END AS kind,
+                       log.message ~ '(record_id|record)=' AS has_details,
+                       substring(log.message FROM '^\[([0-9-]{10} [0-9:]{8},[0-9]{3}):') AS event_time
+                FROM public.automation_task_logs log
+                JOIN public.automation_tasks task ON task.id = log.task_id
+                WHERE log.task_id = CAST(:task_id AS uuid)
+                  AND log.run_id = CAST(:run_id AS uuid) AND task.deleted_at IS NULL
+                  AND (log.message ~ :sync_pattern OR log.message ~ :download_pattern)
+            ) notices
+            ORDER BY kind, has_details,
+                     COALESCE(event_time, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS,MS')) DESC,
+                     id DESC
+            """,
+            {"task_id": task_id, "run_id": run_id,
+             "sync_pattern": SYNC_NOTIFICATION_PATTERN, "download_pattern": DOWNLOAD_NOTIFICATION_PATTERN},
         )
 
     async def get_task_log_runs(

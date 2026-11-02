@@ -60,6 +60,7 @@ import {
 import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
+import { isOlderWorkerNotice, latestWorkerNotice, parseWorkerNotice, workerNoticeStatusLabel } from './workerNotices';
 import type {
   CollectTask,
   TaskStatus,
@@ -580,6 +581,7 @@ const mergeTaskLogRuns = (
 const mergeTaskLog = (logs: TaskLog[], incoming: TaskLog): TaskLog[] => {
   const index = logs.findIndex((log) => String(log.id) === String(incoming.id));
   if (index < 0) return [...logs, incoming].slice(-200);
+  if (isOlderWorkerNotice(incoming, logs[index])) return logs;
   if (logs[index].message === incoming.message && logs[index].id === incoming.id) return logs;
   return logs.map((log, position) => (position === index ? incoming : log));
 };
@@ -587,6 +589,8 @@ const mergeTaskLog = (logs: TaskLog[], incoming: TaskLog): TaskLog[] => {
 const mergeTaskLogs = (logs: TaskLog[], incoming: TaskLog[]): TaskLog[] => {
   const merged = new Map<string, TaskLog>();
   for (const log of [...logs, ...incoming]) {
+    const existing = merged.get(String(log.id));
+    if (existing && isOlderWorkerNotice(log, existing)) continue;
     merged.set(String(log.id), log);
   }
   return [...merged.values()].sort((left, right) => {
@@ -1846,7 +1850,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         if (!current || current.taskId !== taskId || current.runId !== runId) return current;
         return {
           ...current,
-          logs: mergeTaskLogs(page.items.map((log) => ({
+          logs: mergeTaskLogs([...page.items, ...(page.notifications ?? [])].map((log) => ({
             id: log.id,
             createdAt: log.created_at,
             time: formatDateTime(log.created_at),
@@ -1860,7 +1864,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       });
     } catch (error) {
       console.error('Failed to load task run logs', error);
-      if (isCurrentRequest()) setTaskLogsError('执行日志加载失败');
+      if (isCurrentRequest()) setTaskLogsError('Unable to load execution logs.');
     } finally {
       if (isCurrentRequest()) {
         taskLogsLoadingRef.current = false;
@@ -3228,12 +3232,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
 
     const { runtime, display } = selectedTask;
     const writeCount = getTaskWriteCount(runtime);
-    const selectedRunLogs = selectedTaskLogs?.taskId === selectedTask.key
+    const selectedRunEvents = selectedTaskLogs?.taskId === selectedTask.key
       && selectedTaskLogs.runId === selectedLogRunId
-      ? selectedTaskLogs.logs.filter((log) => log.level === 'warn'
-        || !/^(?:RecordPublisher: sent →|sync progress:)/.test(log.message.replace(consoleLogPrefixPattern, '')))
+      ? selectedTaskLogs.logs
       : [];
-    const selectedLogRun = runtime.logRuns.find((run) => run.id === (selectedTaskLogRunId ?? latestTaskLogRunId))
+    const selectedRunLogs = selectedRunEvents.filter((log) => !parseWorkerNotice(log));
+    const syncNotice = latestWorkerNotice(selectedRunEvents, selectedLogRunId, 'sync');
+    const downloadNotice = latestWorkerNotice(selectedRunEvents, selectedLogRunId, 'download');
+    const selectedLogRun = runtime.logRuns.find((run) => run.id === selectedLogRunId)
       ?? null;
     const syncedRecordCount = selectedLogRun?.synced_records == null ? '--' : formatCompactNumber(selectedLogRun.synced_records);
     const syncRunning = selectedLogRun?.id === runtime.currentRunId && runtime.syncState === 'running';
@@ -3437,7 +3443,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           <div className="workspace-dock-log-panel">
             <div className="workspace-dock-history-head">
               <div className="workspace-dock-log-caption">
-                日志
+                Logs
                 {logRunOptions.length ? (
                   <span
                     className="workspace-dock-log-run-trigger"
@@ -3476,7 +3482,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                         void handleTaskLogRunChange(runId);
                       }}
                       onPopupScroll={(event) => void handleTaskLogRunPopupScroll(event)}
-                      aria-label="选择执行批次"
+                      aria-label="Select execution run"
                     />
                   </span>
                 ) : null}
@@ -3489,9 +3495,24 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 <span className="is-sync"><SyncOutlined spin={syncRunning} />{syncedRecordCount}</span>
               </div>
             </div>
-            <div className="workspace-dock-sync-notice" role="status">
-              <span><SyncOutlined spin={syncRunning} />数据推送</span>
-              <span>同步总数 <strong>{syncedRecordCount}</strong></span>
+            <div className="workspace-dock-worker-notice workspace-dock-sync-notice" role="status" aria-live="polite">
+              <span><SyncOutlined spin={syncRunning && syncNotice?.status === 'syncing'} />Data push</span>
+              <span className="workspace-dock-worker-notice-detail" title={syncNotice?.recordId ? `${syncNotice.recordId} → ${syncNotice.topic ?? 'Topic unavailable'}` : undefined}>
+                {syncNotice?.recordId ? <><code>{syncNotice.recordId}</code><span>→</span><code>{syncNotice.topic ?? 'Topic unavailable'}</code></> : syncNotice ? 'Record details unavailable' : 'Waiting for updates'}
+              </span>
+              <span>{syncNotice ? workerNoticeStatusLabel(syncNotice.status) : 'Waiting'}</span>
+              <span>Total <strong>{syncedRecordCount}</strong></span>
+            </div>
+            <div className="workspace-dock-worker-notice workspace-dock-download-notice" role="status" aria-live="polite">
+              <span><DownloadOutlined />Download</span>
+              <span className="workspace-dock-worker-notice-detail" title={downloadNotice?.recordId}>
+                {downloadNotice?.recordId ? <code>{downloadNotice.recordId}</code> : downloadNotice ? 'Record details unavailable' : 'Waiting for updates'}
+              </span>
+              <span>Items <strong>{downloadNotice?.itemsCompleted ?? '--'}/{downloadNotice?.itemsTotal ?? '--'}</strong></span>
+              {(downloadNotice?.itemsMissing ?? 0) > 0 ? <span>Missing {downloadNotice?.itemsMissing}</span> : null}
+              {(downloadNotice?.itemsFailed ?? 0) > 0 ? <span>Failed {downloadNotice?.itemsFailed}</span> : null}
+              <span>{downloadNotice ? workerNoticeStatusLabel(downloadNotice.status) : 'Waiting'}</span>
+              <span>Run records <strong>{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)}</strong></span>
             </div>
             <div className="workspace-dock-log-list is-detail" key={`${selectedTask.key}-${selectedLogRunId}`} onScroll={handleTaskLogsScroll}>
               {selectedRunLogs.slice().reverse().map((log) => (
@@ -3500,13 +3521,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </div>
               ))}
               <div className="workspace-dock-log-row" role={taskLogsError ? 'alert' : 'status'}>
-                {taskLogsLoading ? '正在加载执行日志…' : taskLogsError ? (
-                  <>{taskLogsError} <Button type="link" size="small" onClick={loadMoreTaskLogs}>重试</Button></>
+                {taskLogsLoading ? 'Loading execution logs…' : taskLogsError ? (
+                  <>{taskLogsError} <Button type="link" size="small" onClick={loadMoreTaskLogs}>Retry</Button></>
                 ) : selectedTaskLogs?.hasMore ? (
-                  <Button type="link" size="small" onClick={loadMoreTaskLogs}>加载更早日志</Button>
-                ) : selectedTaskLogs?.logs.length ? (
-                  <span className="workspace-dock-log-end">已加载全部执行日志</span>
-                ) : '暂无执行日志'}
+                  <Button type="link" size="small" onClick={loadMoreTaskLogs}>Load earlier logs</Button>
+                ) : selectedRunLogs.length ? (
+                  <span className="workspace-dock-log-end">All execution logs loaded</span>
+                ) : 'No execution logs'}
               </div>
             </div>
           </div>
@@ -4946,25 +4967,43 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-history-bars span.is-current {
           background: rgba(138, 180, 255, 0.42);
         }
-        .workspace-dock-sync-notice {
+        .workspace-dock-worker-notice {
           display: flex;
           flex-shrink: 0;
           align-items: center;
           justify-content: space-between;
-          gap: 12px;
-          margin-top: 10px;
-          padding: 8px 10px;
-          border: 1px solid ${aura.border};
-          border-radius: 6px;
-          background: ${aura.accentSoft};
-          color: ${aura.accent};
-          font-size: 11px;
+          gap: 7px;
+          min-height: 22px;
+          margin-top: 5px;
+          padding: 3px 6px;
+          border: 1px solid rgba(246, 195, 91, 0.28);
+          border-radius: 4px;
+          background: rgba(246, 195, 91, 0.08);
+          color: ${aura.warning};
+          font-size: 9px;
+          line-height: 14px;
         }
-        .workspace-dock-sync-notice > span {
+        .workspace-dock-worker-notice > span {
           display: inline-flex;
           align-items: center;
-          gap: 6px;
+          gap: 4px;
           white-space: nowrap;
+        }
+        .workspace-dock-worker-notice .workspace-dock-worker-notice-detail {
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+        }
+        .workspace-dock-worker-notice-detail code {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          font-size: inherit;
+        }
+        .workspace-dock-download-notice {
+          border-color: rgba(101, 213, 163, 0.25);
+          background: rgba(101, 213, 163, 0.07);
+          color: ${aura.success};
         }
         .workspace-dock-log-list {
           margin-top: 10px;

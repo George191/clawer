@@ -219,12 +219,14 @@ async def workspace_task_logs(
     limit: int = Query(default=200, ge=1, le=500),
 ) -> dict[str, Any]:
     logs = await ai_collect_store.get_task_logs(
-        str(task_id), str(run_id), before_id=before_id, limit=limit + 1,
+        str(task_id), str(run_id), before_id=before_id, limit=limit + 1, include_notifications=False,
     )
+    notifications = await ai_collect_store.get_task_notifications(str(task_id), str(run_id)) if before_id is None else []
     has_more = len(logs) > limit
     items = logs[-limit:]
     return {
         "items": items,
+        "notifications": notifications,
         "has_more": has_more,
         "next_before_id": str(items[0]["id"]) if has_more else None,
     }

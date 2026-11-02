@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
-from time import perf_counter, time
+from time import perf_counter
 from typing import Any
 from urllib.parse import unquote
 
@@ -33,6 +33,7 @@ from app.utils.path import get_nested_value
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
+DOWNLOAD_PROGRESS_INTERVAL_SECONDS = 2
 
 NOT_FOUND_ASSET = {
     "url": "",
@@ -237,14 +238,48 @@ class DownloadWorker:
         task_id = str(owner.get("__workspace_task_id") or "")
         run_id = str(owner.get("__workspace_run_id") or "")
         started_at = perf_counter()
-        message: str | None = None
-        message_args: tuple[Any, ...] = ()
-        level = logging.INFO
-        created_at = None
+        items_total = 0
+        downloaded_count = 0
+        reused_count = 0
+        not_found_count = 0
+        failed = 0
+        processed = 0
+        status = "preparing"
+        last_notified = 0.0
+
+        async def notify(*, force: bool = False) -> None:
+            nonlocal last_notified
+            if not task_id or not run_id:
+                return
+            if not force and perf_counter() - last_notified < DOWNLOAD_PROGRESS_INTERVAL_SECONDS:
+                return
+            try:
+                await asyncio.wait_for(
+                    ai_collect_store.write_task_log(
+                        task_id, run_id, "Downloader", logging.INFO,
+                        "download progress: record_id=%s items_completed=%d items_total=%d status=%s "
+                        "items_downloaded=%d items_reused=%d items_missing=%d items_failed=%d items_processed=%d",
+                        record_id, downloaded_count + reused_count, items_total, status,
+                        downloaded_count, reused_count, not_found_count, failed, processed,
+                        progress_prefix="download progress:",
+                    ),
+                    timeout=DOWNLOAD_PROGRESS_INTERVAL_SECONDS,
+                )
+            except Exception:
+                logger.warning(
+                    "Download progress notification failed: task=%s run=%s record=%s",
+                    task_id, run_id, record_id, exc_info=True,
+                    extra={"skip_task_log_capture": True},
+                )
+            finally:
+                last_notified = perf_counter()
+
         try:
+            await notify(force=True)
             template = await self._load_template(template_name)
             if template is None:
-                await self._update_mongo(collection, record_id, {}, "no_assets", claim_token)
+                completed = await self._update_mongo(collection, record_id, {}, "no_assets", claim_token)
+                status = "no_assets" if completed else "claim_lost"
                 return
 
             items = self._download_template_fields(record, template.download)
@@ -254,15 +289,15 @@ class DownloadWorker:
             if adapter is not None:
                 items.extend(adapter(record, template, self._filename))
 
+            items_total = len(items)
             if not items:
-                await self._update_mongo(collection, record_id, {}, "no_assets", claim_token)
+                completed = await self._update_mongo(collection, record_id, {}, "no_assets", claim_token)
+                status = "no_assets" if completed else "claim_lost"
                 return
 
             updates: dict[str, Any] = {}
-            downloaded_count = 0
-            reused_count = 0
-            not_found_count = 0
-            failed = 0
+            status = "downloading"
+            await notify(force=True)
             downloaded_urls = {
                 item.url: path for item in items
                 if (path := self._existing_path(record, item.asset_key))
@@ -272,6 +307,8 @@ class DownloadWorker:
                 if existing:
                     updates[item.asset_key] = existing
                     reused_count += 1
+                    processed += 1
+                    await notify()
                     continue
                 try:
                     path = await self._download_item(
@@ -286,6 +323,8 @@ class DownloadWorker:
                         exc,
                     )
                     failed += 1
+                    processed += 1
+                    await notify()
                     continue
                 updates[item.asset_key] = path if path else dict(NOT_FOUND_ASSET)
                 if path:
@@ -293,6 +332,8 @@ class DownloadWorker:
                     downloaded_count += 1
                 else:
                     not_found_count += 1
+                processed += 1
+                await notify()
 
             completed = await self._update_mongo(
                 collection, record_id, updates,
@@ -300,22 +341,23 @@ class DownloadWorker:
                 claim_token,
             )
             if completed:
-                message = (
+                status = "failed" if failed else "complete"
+                logger.log(
+                    logging.WARNING if failed else logging.DEBUG,
                     "DownloadWorker: record completed | collection=%s template=%s datatype=%s record=%s status=%s "
-                    "| downloaded=%d reused=%d not_found=%d failed=%d elapsed=%.2fs"
-                )
-                message_args = (
+                    "| downloaded=%d reused=%d not_found=%d failed=%d elapsed=%.2fs",
                     collection, template_name, data_type, record_id,
                     "failed" if failed else "downloaded",
                     downloaded_count, reused_count, not_found_count, failed,
                     perf_counter() - started_at,
+                    extra={"skip_task_log_capture": not failed},
                 )
             else:
-                message = "DownloadWorker: result not saved; claim no longer matches | collection=%s record=%s"
-                message_args = (collection, record_id)
-                level = logging.WARNING
-            created_at = time()
-            logger.log(level, message, *message_args)
+                status = "claim_lost"
+                logger.warning(
+                    "DownloadWorker: result not saved; claim no longer matches | collection=%s record=%s",
+                    collection, record_id,
+                )
             if completed and not failed and task_id and run_id:
                 try:
                     await ai_collect_store.increment_run_stats(task_id, run_id, downloaded=1)
@@ -324,12 +366,12 @@ class DownloadWorker:
                         "Download completed but batch counter update failed: task=%s run=%s record=%s",
                         task_id, run_id, record_id,
                     )
+        except asyncio.CancelledError:
+            status = "cancelled"
+            raise
         except Exception as exc:
-            message = "DownloadWorker failed for %s | error=%s: %s"
-            message_args = (record_id, type(exc).__name__, exc)
-            level = logging.ERROR
-            created_at = time()
-            logger.log(level, message, *message_args)
+            status = "failed"
+            logger.error("DownloadWorker failed for %s | error=%s: %s", record_id, type(exc).__name__, exc)
             heartbeat = self._claim_heartbeats.get(asyncio.current_task())
             if heartbeat is not None:
                 heartbeat.cancel()
@@ -337,17 +379,7 @@ class DownloadWorker:
                 collection, record_id, "failed", claim_token=claim_token,
             )
         finally:
-            if message is not None and task_id and run_id:
-                try:
-                    await ai_collect_store.write_task_log(
-                        task_id, run_id, "Downloader", level, message, *message_args,
-                        created_at=created_at,
-                    )
-                except Exception:
-                    logger.exception(
-                        "Download task log write failed: task=%s run=%s record=%s",
-                        task_id, run_id, record_id,
-                    )
+            await notify(force=True)
 
     def _download_template_fields(
         self,
@@ -460,11 +492,12 @@ class DownloadWorker:
             f"{record_id}/{filename}",
             content_type,
         )
-        logger.info(
+        logger.debug(
             "Download uploaded: %s | template=%s datatype=%s record=%s "
             "| bytes=%d elapsed=%.2fs | stored=%s",
             item.url, template_name, data_type, record_id,
             len(response_data), perf_counter() - started_at, path,
+            extra={"skip_task_log_capture": True},
         )
         return path
 

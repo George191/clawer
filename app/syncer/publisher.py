@@ -65,7 +65,7 @@ class RecordPublisher(KafkaClient):
                 if not progress.get("record_id"):
                     continue
                 status = progress["status"]
-                if finished and progress["confirmed"] < progress["total"] and status != "failed":
+                if finished and status == "syncing":
                     status = "pending_retry"
                 try:
                     # Progress storage must not hold up publishing when unavailable.
@@ -98,14 +98,15 @@ class RecordPublisher(KafkaClient):
             run_id = str(owner.get("__workspace_run_id") or "")
             progress = None
             if task_id and run_id:
-                progress = progress_by_run.setdefault((task_id, run_id), {"total": 0, "confirmed": 0})
-                progress["total"] += 1
+                progress = progress_by_run.setdefault((task_id, run_id), {})
             topic = f"{settings.kafka_topic}-{meta['data_type']}"
             async with semaphore:
+                published = False
                 if progress is not None:
                     progress.update(record_id=meta["record_id"], topic=topic, status="syncing")
                 try:
                     await self.send_record(record, topic=topic)
+                    published = True
                     if progress is not None:
                         progress.update(record_id=meta["record_id"], topic=topic, status="sent")
                     acknowledged = await storage.update_sync_status(
@@ -114,11 +115,13 @@ class RecordPublisher(KafkaClient):
                         write_token=meta.get("write_token"),
                     )
                     completed.append((record, acknowledged))
-                    if progress is not None and acknowledged:
-                        progress["confirmed"] += 1
+                    if progress is not None:
+                        progress.update(record_id=meta["record_id"], topic=topic,
+                                        status="sent" if acknowledged else "pending_retry")
                 except Exception:
                     if progress is not None:
-                        progress.update(record_id=meta["record_id"], topic=topic, status="failed")
+                        progress.update(record_id=meta["record_id"], topic=topic,
+                                        status="pending_retry" if published else "failed")
                     logger.exception("RecordPublisher: sync failed for record_id=%s topic=%s", meta["record_id"], topic)
 
         batch = asyncio.gather(*(sync(record) for record in records))
