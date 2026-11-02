@@ -30,7 +30,13 @@ from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, ConsumerRebalanceListen
 from aiokafka.errors import KafkaConnectionError, NodeNotReadyError, RequestTimedOutError
 from sqlalchemy import text
 
-from app.base.kafka import build_consumer_kwargs, build_producer_kwargs, get_brokers
+from app.base.kafka import (
+    build_consumer_kwargs,
+    build_producer_kwargs,
+    consumer_subscription_pattern,
+    consumer_subscription_topics,
+    get_brokers,
+)
 from app.config.settings import settings
 from app.etl.schema.layout import partition_bounds, schema_name_for
 from app.etl.schema.registry import (
@@ -742,10 +748,12 @@ class ETLBase:
     #  Kafka 消费者 & 恢复器
     # =================================================================
     async def _connect_consumer(self) -> None:
+        topics = [] if self._consumer_pattern else consumer_subscription_topics(self._consumer_topics)
+        pattern = consumer_subscription_pattern(self._consumer_pattern) if self._consumer_pattern else ""
         for attempt in range(KAFKA_MAX_RETRY):
             try:
                 self._consumer = AIOKafkaConsumer(
-                    *self._consumer_topics,
+                    *topics,
                     **build_consumer_kwargs(
                         group_id=self._consumer_group,
                         request_timeout_ms=40000,
@@ -756,12 +764,12 @@ class ETLBase:
                 )
                 if self._consumer_pattern:
                     self._consumer.subscribe(
-                        pattern=self._consumer_pattern, listener=_OffsetRestoreListener(self),
+                        pattern=pattern, listener=_OffsetRestoreListener(self),
                     )
                 await self._consumer.start()
                 logger.info(
                     "%s Kafka consumer connected: topics=%s group=%s",
-                    self._log_prefix, self._consumer_pattern or self._consumer_topics, self._consumer_group,
+                    self._log_prefix, pattern or topics, self._consumer_group,
                 )
                 if not self._consumer_pattern:
                     await self._resume_from_redis()
@@ -779,6 +787,7 @@ class ETLBase:
 
     async def _resume_from_redis(self, assigned=None) -> None:
         assigned = self._consumer.assignment() if assigned is None else assigned
+        assigned = {tp for tp in assigned if tp.topic not in settings.kafka_paused_topics}
         for topic in {tp.topic for tp in assigned}:
             saved = await _OFFSET_MANAGER.load_offsets(self._consumer_group, topic)
 
@@ -801,6 +810,7 @@ class ETLBase:
 
     async def resume(self, offset: int, partition: int = 0, topic: str = "") -> None:
         topic = topic or self._consumer_topics[0]
+        consumer_subscription_topics([topic])
         tp = TopicPartition(topic, partition)
         self._consumer.seek(tp, offset)
         await _OFFSET_MANAGER.reset_offsets(self._consumer_group, topic)

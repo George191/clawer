@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 import ssl
 from typing import Any
 
@@ -21,6 +22,22 @@ from app.config.settings import settings
 
 KAFKA_MAX_MESSAGE_BYTES = 4 * 1024 * 1024
 KAFKA_PRODUCER_MAX_MESSAGE_BYTES = 16 * 1024 * 1024
+
+
+def consumer_subscription_pattern(pattern: str) -> str:
+    """Exclude exact maintenance topics without advancing their consumer offsets."""
+    if not settings.kafka_paused_topics:
+        return pattern
+    paused = "|".join(re.escape(topic) for topic in settings.kafka_paused_topics)
+    return rf"^(?!(?:{paused})\Z)(?:{pattern})"
+
+
+def consumer_subscription_topics(topics: list[str]) -> list[str]:
+    """Reject an empty static subscription instead of silently consuming nothing."""
+    active = [topic for topic in topics if topic not in settings.kafka_paused_topics]
+    if not active:
+        raise ValueError("No active Kafka subscription topics; check the maintenance topic list")
+    return active
 
 
 def get_brokers(bootstrap_servers: str | None = None) -> list[str]:

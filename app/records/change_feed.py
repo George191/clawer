@@ -14,7 +14,7 @@ from aiokafka import AIOKafkaConsumer
 from bson.codec_options import CodecOptions
 from bson.json_util import loads
 
-from app.base.kafka import build_consumer_kwargs
+from app.base.kafka import build_consumer_kwargs, consumer_subscription_pattern
 from app.config.settings import settings
 from app.logger import get_logger
 from app.storage.mongo_client import MongoClient
@@ -203,7 +203,7 @@ class MongoChangeFeed(MongoClient):
     def _subscribe(self, names: tuple[str, ...]) -> None:
         prefix = re.escape(f"{mongo_cdc_topic_prefix()}.{settings.db_name}.")
         collections = "|".join(re.escape(name) for name in names)
-        self._consumer.subscribe(pattern=rf"^{prefix}(?:{collections})$")
+        self._consumer.subscribe(pattern=consumer_subscription_pattern(rf"^{prefix}(?:{collections})$"))
         self._collections = names
 
     async def _disconnect(self) -> None:

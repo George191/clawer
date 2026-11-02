@@ -9,7 +9,7 @@ import re
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import ProducerFenced
 
-from app.base.kafka import build_consumer_kwargs, build_producer_kwargs
+from app.base.kafka import build_consumer_kwargs, build_producer_kwargs, consumer_subscription_pattern
 from app.config.settings import settings
 from app.etl.cdc import cdc_schemas, committed_row, row_outputs
 from app.logger import get_logger, setup_service_logging
@@ -62,7 +62,9 @@ class PostgresSyncWorker:
         ))
         schemas = "|".join(re.escape(schema) for schema in cdc_schemas())
         self._consumer.subscribe(
-            pattern=rf"^{re.escape(self._identity['prefix'])}\.(?:{schemas})\.[a-z][a-z0-9_]*$",
+            pattern=consumer_subscription_pattern(
+                rf"^{re.escape(self._identity['prefix'])}\.(?:{schemas})\.[a-z][a-z0-9_]*$",
+            ),
         )
         self._running = True
         try:

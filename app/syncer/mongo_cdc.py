@@ -71,15 +71,16 @@ def register_connector(connect_url: str, config: dict[str, str], *, name: str | 
         deadline = time.monotonic() + 60
         while True:
             response = client.get(f"{path}/status")
-            if response.is_error:
+            if response.is_error and response.status_code != 404:
                 raise SetupError(f"Could not read connector status (HTTP {response.status_code})")
-            status = response.json()
-            states = [status.get("connector", {}).get("state")]
-            states.extend(task.get("state") for task in status.get("tasks", []))
-            if "FAILED" in states:
-                raise SetupError("Mongo CDC connector failed; inspect protected Kafka Connect logs")
-            if len(states) > 1 and all(state == "RUNNING" for state in states):
-                return
+            if response.status_code != 404:
+                status = response.json()
+                states = [status.get("connector", {}).get("state")]
+                states.extend(task.get("state") for task in status.get("tasks", []))
+                if "FAILED" in states:
+                    raise SetupError("Mongo CDC connector failed; inspect protected Kafka Connect logs")
+                if len(states) > 1 and all(state == "RUNNING" for state in states):
+                    return
             if time.monotonic() >= deadline:
                 raise SetupError("Mongo CDC connector did not become RUNNING within 60 seconds")
             time.sleep(2)

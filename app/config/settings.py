@@ -122,6 +122,9 @@ class AppSettings(BaseSettings):
     kafka_client_id: str = Field(default="", description="Kafka客户端ID")
     kafka_enable_idempotence: bool = Field(default=True, description="是否启用幂等生产者")
     kafka_ssl_cafile: str = Field(default="", description="Kafka TLS CA 文件，留空使用系统信任库")
+    kafka_paused_topics: list[str] = Field(
+        default_factory=list, description="临时维护时排除订阅的精确 topic 名；JSON 数组，重启消费者生效",
+    )
     cdc_connect_url: str = Field(default="", description="Kafka Connect 管理地址，留空时不进行运行状态查询")
     pg_cdc_url: str = Field(default="", description="专用 Postgres CDC 复制账号连接串，留空复用 PG_URL")
     etl_output_mode: Literal["debezium", "direct"] = Field(
