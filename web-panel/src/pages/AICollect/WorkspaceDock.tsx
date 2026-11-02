@@ -3495,7 +3495,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 <span className="is-updated">~{selectedLogRun?.updated_records ?? '--'}</span>
                 <span className="is-deleted">-{selectedLogRun?.deleted_records ?? '--'}</span>
                 <span className="is-download"><DownloadOutlined />{selectedLogRun?.downloaded_records == null ? '--' : formatCompactNumber(selectedLogRun.downloaded_records)}</span>
-                <span className="is-sync"><SyncOutlined spin={syncRunning} />{syncedRecordCount}</span>
+                <span className="is-sync"><SyncOutlined />{syncedRecordCount}</span>
               </div>
             </div>
             <div className="workspace-dock-worker-notice workspace-dock-sync-notice" role="status" aria-live="polite">
