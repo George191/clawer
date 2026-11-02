@@ -15,7 +15,7 @@ from app.web.services.ai_collect_store import ai_collect_store
 
 SOURCE_DIR = Path(__file__).resolve().parent.parent / "collection_sources" / "google_search"
 TEMPLATE_NAME = "google_search"
-TEMPLATE_VERSION = "v1.0"
+TEMPLATE_VERSION = "v1.1"
 
 
 class GoogleSearchRequest(BaseModel):

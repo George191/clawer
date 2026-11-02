@@ -52,7 +52,8 @@ class TaskLogCapture(logging.Handler):
             logger.addHandler(self)
 
     def emit(self, record: logging.LogRecord) -> None:
-        if _writing_task_logs.get() or self._loop is None or self._queue is None:
+        if (_writing_task_logs.get() or getattr(record, "skip_task_log_capture", False)
+                or self._loop is None or self._queue is None):
             return
         try:
             item = self._log_item(record)

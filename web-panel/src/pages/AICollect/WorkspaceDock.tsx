@@ -612,7 +612,7 @@ const getTaskWriteCount = (runtime: TaskRuntimeItem): number | null => {
 const consoleLogPrefixPattern = /^(\[)(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})(:\s*)([A-Z]+)(\/)([^\]]+)(\])(\s*)/;
 
 const renderDownloadLogText = (message: string): React.ReactNode => {
-  if (!/download (?:progress|finished):/.test(message)) return message;
+  if (!/(?:download (?:progress|finished)|sync progress):/.test(message)) return message;
   return message.split(/(\[[█░]+\])/g).map((part, index) => {
     if (!/^\[[█░]+\]$/.test(part)) return part;
     const cells = part.slice(1, -1);
@@ -3497,7 +3497,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   <>{taskLogsError} <Button type="link" size="small" onClick={loadMoreTaskLogs}>重试</Button></>
                 ) : selectedTaskLogs?.hasMore ? (
                   <Button type="link" size="small" onClick={loadMoreTaskLogs}>加载更早日志</Button>
-                ) : selectedRunLogs.length ? '已加载全部执行日志' : '暂无执行日志'}
+                ) : selectedRunLogs.length ? (
+                  <span className="workspace-dock-log-end">已加载全部执行日志</span>
+                ) : '暂无执行日志'}
               </div>
             </div>
           </div>
@@ -4965,6 +4967,21 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
           white-space: pre-wrap;
           word-break: break-word;
+        }
+        .workspace-dock-log-end {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-top: 8px;
+          color: rgba(255, 255, 255, 0.32);
+          font-size: 9px;
+          white-space: nowrap;
+        }
+        .workspace-dock-log-end::before,
+        .workspace-dock-log-end::after {
+          content: '';
+          flex: 1;
+          border-top: 1px solid rgba(255, 255, 255, 0.12);
         }
         .workspace-dock-download-bar {
           display: inline-flex;

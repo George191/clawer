@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from app.config.settings import settings
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 SYNC_TIMEOUT_SECONDS = 30
+SYNC_PROGRESS_INTERVAL_SECONDS = 2
 
 
 class RecordPublisher(KafkaClient):
@@ -46,7 +48,10 @@ class RecordPublisher(KafkaClient):
             },
         }
         await self.send(message, key=message_key, topic=target_topic)
-        logger.info("RecordPublisher: sent → %s record_id=%s", target_topic, message_key)
+        logger.debug(
+            "RecordPublisher: sent → %s record_id=%s", target_topic, message_key,
+            extra={"skip_task_log_capture": True},
+        )
 
     async def sync_records(
         self, records: list[dict[str, Any]], storage: MongoRecordStore, *, concurrency: int = 10,
@@ -54,6 +59,36 @@ class RecordPublisher(KafkaClient):
         """Send persisted snapshots and acknowledge only their stored versions."""
         semaphore = asyncio.Semaphore(concurrency)
         completed: list[tuple[dict[str, Any], bool]] = []
+        progress_by_run: dict[tuple[str, str], dict[str, int]] = {}
+        started = monotonic()
+
+        async def write_progress(*, finished: bool = False) -> None:
+            elapsed = max(monotonic() - started, 0.001)
+            for (task_id, run_id), progress in list(progress_by_run.items()):
+                total, confirmed = progress["total"], progress["confirmed"]
+                filled = confirmed * 22 // total
+                bar = "[" + "█" * filled + "░" * (22 - filled) + "]"
+                status = "complete" if confirmed == total else "pending retry" if finished else "syncing"
+                try:
+                    # Progress storage must not hold up publishing when unavailable.
+                    await asyncio.wait_for(
+                        ai_collect_store.write_task_log(
+                            task_id, run_id, "Syncer", logging.INFO,
+                            "sync progress:\n  %s %d%% | batch confirmed=%d/%d Kafka ACK=%d "
+                            "pending=%d | %.1f records/s %.1fs | %s; RDS/ODS consume asynchronously",
+                            bar, confirmed * 100 // total, confirmed, total, progress["sent"],
+                            total - confirmed, confirmed / elapsed, elapsed, status,
+                            progress_prefix="sync progress:",
+                        ),
+                        timeout=SYNC_PROGRESS_INTERVAL_SECONDS,
+                    )
+                except Exception:
+                    logger.exception("RecordPublisher: progress logging failed for task=%s run=%s", task_id, run_id)
+
+        async def report_progress() -> None:
+            while True:
+                await write_progress()
+                await asyncio.sleep(SYNC_PROGRESS_INTERVAL_SECONDS)
 
         async def sync(record: dict[str, Any]) -> None:
             meta = record.get("_meta") or {}
@@ -62,23 +97,39 @@ class RecordPublisher(KafkaClient):
             if not all(meta.get(field) for field in ("record_id", "template", "data_type", "updated_at")):
                 logger.warning("RecordPublisher: skipped record without sync metadata")
                 return
+            owner = meta.get("search_params") or {}
+            task_id = str(owner.get("__workspace_task_id") or "")
+            run_id = str(owner.get("__workspace_run_id") or "")
+            progress = None
+            if task_id and run_id:
+                progress = progress_by_run.setdefault((task_id, run_id), {"total": 0, "sent": 0, "confirmed": 0})
+                progress["total"] += 1
             async with semaphore:
                 try:
                     await self.send_record(record, topic=f"{settings.kafka_topic}-{meta['data_type']}")
+                    if progress is not None:
+                        progress["sent"] += 1
                     acknowledged = await storage.update_sync_status(
                         meta["template"], meta["data_type"], meta["record_id"], "synced",
                         updated_at=meta["updated_at"], download_version=meta.get("download_version", 0),
                     )
                     completed.append((record, acknowledged))
+                    if progress is not None and acknowledged:
+                        progress["confirmed"] += 1
                 except Exception:
                     logger.exception("RecordPublisher: sync failed for %s", meta["record_id"])
 
+        batch = asyncio.gather(*(sync(record) for record in records))
+        reporter = asyncio.create_task(report_progress())
         try:
             await asyncio.wait_for(
-                asyncio.gather(*(sync(record) for record in records)), timeout=SYNC_TIMEOUT_SECONDS,
+                batch, timeout=SYNC_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
             logger.warning("RecordPublisher: sync batch timed out; Mongo will compensate pending records")
+        finally:
+            reporter.cancel()
+            await asyncio.gather(reporter, return_exceptions=True)
 
         synced_by_run: dict[tuple[str, str], int] = {}
         for record, acknowledged in completed:
@@ -93,14 +144,13 @@ class RecordPublisher(KafkaClient):
         for (task_id, run_id), count in synced_by_run.items():
             try:
                 await ai_collect_store.increment_run_stats(task_id, run_id, synced=count)
-                await ai_collect_store.write_task_log(
-                    task_id, run_id, "Syncer", logging.INFO,
-                    "Kafka publish acknowledged: records=%d batch_records=%d; RDS/ODS consume asynchronously",
-                    count, len(records),
-                )
             except Exception:
                 logger.exception("RecordPublisher: sync statistics failed for task=%s run=%s", task_id, run_id)
-        logger.info("RecordPublisher: Kafka acknowledged %d/%d records", len(completed), len(records))
+        await write_progress(finished=True)
+        logger.info(
+            "RecordPublisher: Kafka acknowledged %d/%d records", len(completed), len(records),
+            extra={"skip_task_log_capture": True},
+        )
         return len(completed)
 
     async def send_records(

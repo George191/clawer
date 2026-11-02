@@ -8,6 +8,8 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import text
+
 from app.logger.task_format import format_task_log_message, task_log_time
 from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
@@ -70,12 +72,14 @@ class AutomationTaskStore:
         *args: Any,
         created_at: datetime | float | None = None,
         log_id: int | None = None,
+        progress_prefix: str | None = None,
     ) -> list[dict[str, Any]]:
         """Write an execution event using one UTC display and storage format.
 
         Pass the event time when capturing an existing LogRecord. An explicit
         owner is required so background workers never fall back to a newer run.
         ``log_id`` replaces a live progress row without incrementing log_count.
+        ``progress_prefix`` finds the same row across worker processes and batches.
         """
         if not task_id or not run_id or not executor:
             raise ValueError("Task logs require task_id, run_id and executor")
@@ -92,12 +96,72 @@ class AutomationTaskStore:
             task_id, run_id, log_id, stored_level, formatted,
         ):
             return [{"id": log_id}]
+        if progress_prefix:
+            return await self._write_progress_log(
+                task_id, run_id, stored_level, formatted, event_time,
+                f"/{executor}] {progress_prefix}",
+            )
         return await self._append_task_logs(task_id, [{
             "run_id": run_id,
             "level": stored_level,
             "message": formatted,
             "created_at": event_time,
         }])
+
+    async def _write_progress_log(
+        self, task_id: str, run_id: str, level: str, message: str,
+        created_at: datetime, progress_prefix: str,
+    ) -> list[dict[str, Any]]:
+        await self.initialize()
+        params = {
+            "task_id": task_id, "run_id": run_id, "level": level,
+            "message": message, "created_at": created_at, "progress_prefix": progress_prefix,
+        }
+        async with self._pg.locked_transaction(f"task-progress:{task_id}:{run_id}:{progress_prefix}") as session:
+            result = await session.execute(text("""
+                SELECT id FROM public.automation_task_logs
+                WHERE task_id = CAST(:task_id AS uuid)
+                  AND run_id = CAST(:run_id AS uuid)
+                  AND strpos(message, :progress_prefix) > 0
+                ORDER BY id LIMIT 1
+            """), params)
+            existing = result.mappings().first()
+            if existing:
+                params["log_id"] = existing["id"]
+                result = await session.execute(text("""
+                    UPDATE public.automation_task_logs
+                    SET level = :level, message = :message
+                    WHERE id = :log_id
+                      AND task_id = CAST(:task_id AS uuid)
+                      AND run_id = CAST(:run_id AS uuid)
+                    RETURNING id, run_id::text AS run_id, level, message, created_at
+                """), params)
+            else:
+                result = await session.execute(text("""
+                    WITH inserted AS (
+                        INSERT INTO public.automation_task_logs
+                            (task_id, run_id, level, message, created_at)
+                        SELECT task.id, run.id, :level, :message, :created_at
+                        FROM public.automation_tasks task
+                        JOIN public.automation_task_runs run ON run.task_id = task.id
+                        WHERE task.id = CAST(:task_id AS uuid)
+                          AND run.id = CAST(:run_id AS uuid)
+                          AND task.deleted_at IS NULL
+                        RETURNING id, run_id, level, message, created_at
+                    ), counted AS (
+                        UPDATE public.automation_task_runs run
+                        SET log_count = run.log_count + 1
+                        WHERE run.id IN (SELECT run_id FROM inserted)
+                        RETURNING run.id
+                    )
+                    SELECT id, run_id::text AS run_id, level, message, created_at FROM inserted
+                """), params)
+            row = result.mappings().first()
+        if row is None:
+            return []
+        log = dict(row)
+        await publish_task_log(task_id, log)
+        return [log]
 
     async def _append_task_logs(
         self,
