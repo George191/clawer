@@ -39,6 +39,12 @@
 .sp-login-form-wrap .ant-input-affix-wrapper:hover { background: rgba(8,12,19,.9); }
 .sp-login-form-wrap .ant-input-affix-wrapper-focused { border-color: #018bff; box-shadow: 0 0 0 2px rgba(1,139,255,.12), 0 0 22px rgba(1,139,255,.08); }
 .sp-login-form-wrap .ant-input { background: transparent; }.sp-login-form-wrap .ant-input-prefix { color: #6f8198; margin-right: 10px; }
+/* Override the browser autofill fill and Ant Design's important focus shadow reset. */
+.sp-login .sp-login-form-wrap input.ant-input:is(:autofill, :-webkit-autofill) {
+  box-shadow: 0 0 0 1000px #0c0f15 inset !important;
+  -webkit-text-fill-color: #f5f7fb;
+  caret-color: #f5f7fb;
+}
 .sp-login-form-wrap .ant-btn-primary { height: 46px; border-radius: 6px; font-weight: 650; letter-spacing: .025em; box-shadow: 0 8px 28px rgba(1,139,255,.2); }
 .sp-login-options { display: flex; justify-content: space-between; margin: -4px 0 22px; color: #94a3b8; font-size: 13px; }
 .sp-login-options a { color: #8ab4ff; }
