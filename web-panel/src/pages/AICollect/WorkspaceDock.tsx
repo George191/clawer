@@ -4971,7 +4971,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           border-radius: 4px;
           background: rgba(246, 195, 91, 0.08);
           color: ${aura.warning};
-          font-size: 10px;
+          font-size: 9px;
           font-weight: 400;
           line-height: 14px;
           letter-spacing: normal;
@@ -5045,8 +5045,8 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-log-row {
           display: block;
           color: ${aura.muted};
-          font-size: 11px;
-          line-height: 16px;
+          font-size: 10px;
+          line-height: 1.45;
         }
         .workspace-dock-log-row code {
           display: block;
@@ -5064,7 +5064,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           gap: 10px;
           margin-top: 8px;
           color: rgba(255, 255, 255, 0.32);
-          font-size: 10px;
+          font-size: 9px;
           white-space: nowrap;
         }
         .workspace-dock-log-end::before,
