@@ -14,7 +14,6 @@ from app.base.http import DownloadError, DownloadResponse
 from app.config.settings import settings
 from app.downloader.adapters import (
     DownloadItem,
-    get_download_adapter,
     get_download_response_validator,
     resolve_download_record,
 )
@@ -28,13 +27,12 @@ from app.records.collection_routes import collection_route_store
 from app.records.download_resources import (
     decode_manifest,
     decode_plan,
+    download_items,
     encode_manifest,
     encode_plan,
     item_fingerprint,
-    resource_filename,
     resource_manifest,
     source_fingerprint,
-    template_download_items,
 )
 from app.records.mongo_store import MongoRecordStore
 from app.utils.path import get_nested_value
@@ -421,21 +419,11 @@ class DownloadWorker:
         finally:
             await notify(force=True)
 
-    def _download_template_fields(
-        self,
-        record: dict[str, Any],
-        configs: list[Any],
-    ) -> list[DownloadItem]:
-        return template_download_items(record, configs)
-
     def _plan_download(
         self, record: dict[str, Any], template: SiteTemplate, template_name: str, data_type: str,
     ) -> tuple[list[DownloadItem], dict[str, str]]:
         """Generate resource inputs through the same template and adapter contract."""
-        items = self._download_template_fields(record, template.download)
-        adapter = get_download_adapter(record, template_name=template_name, data_type=data_type)
-        if adapter is not None:
-            items.extend(adapter(record, template, self._filename))
+        items = download_items(record, template, template_name, data_type)
         return items, resource_manifest(items)
 
     async def _download_item(
@@ -542,10 +530,6 @@ class DownloadWorker:
         if isinstance(value, dict):
             value = value.get("url")
         return str(value).strip() if isinstance(value, str) else ""
-
-    @staticmethod
-    def _filename(url: str, suffix: str = "") -> str:
-        return resource_filename(url, suffix)
 
     async def stop(self) -> None:
         self._running = False

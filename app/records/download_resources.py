@@ -12,7 +12,7 @@ from urllib.parse import unquote
 
 from bson.json_util import default as bson_json_default
 
-from app.downloader.adapters import DownloadItem, get_download_adapter
+from app.downloader.adapters import DownloadItem, get_download_adapter, news
 from app.utils.download_paths import iter_download_nodes, iter_download_values
 from app.utils.path import get_nested_value
 
@@ -66,6 +66,7 @@ def template_download_items(record: dict[str, Any], configs: list[Any]) -> list[
                         version = get_nested_value(entry if isinstance(entry, dict) else node, version_selector) if version_selector else None
                         items.append(DownloadItem(
                             url=url, filename=resource_filename(url, suffix), asset_key=key, version=version,
+                            attachment=getattr(config, "asset_type", None) == "attachment",
                         ))
     return items
 
@@ -75,7 +76,11 @@ def download_items(record: dict[str, Any], template: Any, template_name: str, da
     items = template_download_items(record, template.download)
     adapter = get_download_adapter(record, template_name=template_name, data_type=data_type)
     if adapter is not None:
-        items.extend(adapter(record, template, resource_filename))
+        additional = adapter(record, template, resource_filename)
+        if adapter is news.download and items:
+            declared = {(item.asset_key, source_fingerprint(item)) for item in items}
+            additional = [item for item in additional if (item.asset_key, source_fingerprint(item)) not in declared]
+        items.extend(additional)
     return items
 
 
