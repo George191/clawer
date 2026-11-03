@@ -3720,10 +3720,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: ${aura.subtle};
           font-size: 12px;
         }
-        .workspace-dock-toolbar .ant-segmented-item-selected {
+        .workspace-dock-toolbar .ant-segmented-item:has(.ant-segmented-item-input:checked) {
           background: rgba(138, 180, 255, 0.14);
           color: ${aura.text};
           box-shadow: none;
+        }
+        .workspace-dock-toolbar .ant-segmented-thumb {
+          opacity: 0;
         }
         .workspace-dock-body {
           flex: 1;
