@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons';
 import { fetchLayers, fetchLayerTables } from '@/services/api';
 import type { LayerNode, LayerTable } from '@/services/types';
+import SearchEngineIcon, { inferSearchEngine } from '@/components/SearchEngineIcon';
 
 const { Text } = Typography;
 
@@ -123,6 +124,7 @@ const LayerTree: React.FC<LayerTreeProps> = ({ onInsertTable, onDoubleClickTable
         isLeaf: false,
         children: filteredTables.map((table) => {
           const fullRef = `${layer.key}.${table.name}`;
+          const searchEngine = inferSearchEngine(table.name);
           return {
             key: fullRef,
             title: (
@@ -132,7 +134,9 @@ const LayerTree: React.FC<LayerTreeProps> = ({ onInsertTable, onDoubleClickTable
                 </span>
               </Dropdown>
             ),
-            icon: <TableOutlined style={{ fontSize: 11 }} />,
+            icon: searchEngine
+              ? <SearchEngineIcon engine={searchEngine} style={{ width: 11, height: 11 }} />
+              : <TableOutlined style={{ fontSize: 11 }} />,
             isLeaf: true,
             selectable: true,
           };

@@ -430,7 +430,7 @@ const AutomationCenter: React.FC = () => {
           onChange={changeDataType}
           className="automation-data-type-select"
           popupClassName="automation-filter-dropdown"
-          options={dataTypes.map((value) => ({ value, label: <span className="automation-filter-option"><TemplateGlyph kind={inferSiteKind(value)} /><span>{value}</span></span> }))}
+          options={dataTypes.map((value) => ({ value, label: <span className="automation-filter-option"><TemplateGlyph kind={inferSiteKind(value)} /><span>{value === 'search_result' ? '搜索结果' : value}</span></span> }))}
         />}
         <Input allowClear value={keyword} onChange={(event) => setKeyword(event.target.value)} prefix={<SearchOutlined />} placeholder={section === 'schedules' ? 'Search schedules or tasks' : 'Search name, type, or owner'} className="automation-search" />
         {section !== 'runs' && <Button icon={<PlusOutlined />} onClick={openCreate}>{section === 'schedules' ? 'New Schedule' : 'New Record'}</Button>}

@@ -4,6 +4,16 @@ import type { ProductDomain } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+export type SearchEngine = 'duckduckgo' | 'google' | 'bing' | 'brave';
+
+export interface SearchTaskRequest {
+  engine: SearchEngine;
+  query: string;
+  language: string;
+  max_pages: number;
+  fetch_details: boolean;
+}
+
 export interface FieldDef {
   name: string;
   selector: string;
@@ -386,12 +396,10 @@ export const fetchWorkspaceTaskLogRuns = (
 export const createWorkspaceTask = (data: WorkspaceTaskPayload): Promise<WorkspaceTask> =>
   client.post('/ai/workspace/tasks', data).then((r) => r.data);
 
-export const createGoogleSearchTask = (data: {
-  query: string;
-  language: string;
-  max_pages: number;
-  fetch_details: boolean;
-}): Promise<WorkspaceTask> =>
+export const createSearchTask = (data: SearchTaskRequest): Promise<WorkspaceTask> =>
+  client.post('/ai/search/tasks', data).then((r) => r.data);
+
+export const createGoogleSearchTask = (data: Omit<SearchTaskRequest, 'engine'>): Promise<WorkspaceTask> =>
   client.post('/ai/google-search/tasks', data).then((r) => r.data);
 
 export const uploadWorkspaceBatchInput = (

@@ -10,6 +10,8 @@ openpyxl>=3.1
 websockets>=12
 anyio>=4.3
 playwright>=1.55,<2
+ddgs==9.16.1
+primp==2.0.1
 
 # Standard FastAPI backend modules (auth, tenancy, RAG and structured logging).
 pydantic>=2.12.5

@@ -12,4 +12,6 @@ openpyxl>=3.1
 pandas>=2.0
 paramiko>=3.4
 playwright>=1.55,<2
+ddgs==9.16.1
+primp==2.0.1
 twscrape==0.20.1

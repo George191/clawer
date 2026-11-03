@@ -10,6 +10,7 @@ import {
 import { Button, Empty, Input, Spin, theme } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import SearchEngineIcon, { inferSearchEngine } from '@/components/SearchEngineIcon';
 import { fetchLayers, fetchLayerTables } from '@/services/api';
 import type { LayerNode, LayerTable } from '@/services/types';
 import '../ProductWorkspace/workspace.css';
@@ -224,6 +225,7 @@ const DataLake: React.FC = () => {
               <div className="asset-list" role="listbox" aria-label="数据资产">
                 {visibleTables.map((table) => {
                   const selected = table.name === selectedTableName;
+                  const searchEngine = inferSearchEngine(table.name);
                   return (
                     <button
                       type="button"
@@ -234,7 +236,7 @@ const DataLake: React.FC = () => {
                       onClick={() => setSelectedTableName(table.name)}
                     >
                       <span className="asset-row__name">
-                        <span className="asset-row__icon"><TableOutlined /></span>
+                        <span className="asset-row__icon">{searchEngine ? <SearchEngineIcon engine={searchEngine} /> : <TableOutlined />}</span>
                         <span><strong>{table.name}</strong><small>{selectedLayerKey}.{table.name}</small></span>
                       </span>
                       <span>{formatRows(table.rowCount)}</span>

@@ -58,6 +58,7 @@ import {
   type WorkspaceTemplate,
 } from '@/services/aiApi';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import SearchEngineIcon, { inferSearchEngine, searchEngineLabels } from '@/components/SearchEngineIcon';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import { isOlderWorkerNotice, latestWorkerNotice, parseWorkerNotice, workerNoticeStatusLabel } from './workerNotices';
@@ -121,7 +122,7 @@ type TaskLogLevel = 'info' | 'ok' | 'warn';
 type SiteKind = 'acticle' | 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic'
   | 'satellite' | 'constellation' | 'orbital' | 'debris' | 'debrisevents' | 'frequency'
   | 'launchinfo' | 'launchsites' | 'launchvehicles' | 'groundstations' | 'organizations' | 'vulnerability'
-  | 'account' | 'company' | 'filing' | 'financial_fact';
+  | 'account' | 'company' | 'filing' | 'financial_fact' | 'search_result';
 
 interface TemplateDraft {
   adapter: string;
@@ -782,6 +783,7 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
   company: { icon: <BankOutlined />, label: '公司', tint: '#AFB9ED' },
   filing: { icon: <FileTextOutlined />, label: '申报文件', tint: '#9AD8B2' },
   financial_fact: { icon: <LineChartOutlined />, label: '财务指标', tint: '#E4CB86' },
+  search_result: { icon: <SearchOutlined />, label: '搜索结果', tint: '#81D8D0' },
   system: { icon: <SettingOutlined />, label: '系统', tint: '#A0AEC0' },
   generic: { icon: <CodeOutlined />, label: '通用', tint: '#A0AEC0' },
 };
@@ -1049,6 +1051,7 @@ const templateKindHints: Record<string, SiteKind> = {
 };
 
 export const inferSiteKind = (value: string, fallback?: string): SiteKind => {
+  if (inferSearchEngine(value)) return 'search_result';
   const text = value.replace(/@.*$/, '').trim().toLowerCase();
   // Layer tables carry warehouse prefixes and partition suffixes
   // (ods_contract_p31); strip them so hints/SiteKind lookup still hits.
@@ -1089,6 +1092,15 @@ const deriveBrandFromKey = (value: string) => {
 
 const resolveSiteProfile = (value: string, dataType?: string): SiteProfile => {
   const normalized = value.replace(/@.*$/, '').trim().toLowerCase();
+  const searchEngine = inferSearchEngine(normalized);
+  if (searchEngine) {
+    return {
+      kind: 'search_result',
+      brand: searchEngineLabels[searchEngine],
+      logo: <SearchEngineIcon engine={searchEngine} />,
+      hue: searchEngine === 'duckduckgo' ? '#DE5833' : searchEngine === 'bing' ? '#008373' : searchEngine === 'brave' ? '#FB542B' : '#4285F4',
+    };
+  }
   const exact = siteProfileRegistry[normalized];
   const kind = inferSiteKind(dataType || '', normalized);
   if (Object.prototype.hasOwnProperty.call(siteProfileRegistry, normalized)) return { ...exact, kind };
@@ -1247,30 +1259,36 @@ const formatIncrementalSummary = (_draft: TaskComposerDraft) => '增量采集：
 
 const stripDecorativeSuffix = (value: string) => value.replace(/\s+[^\u4E00-\u9FFFa-zA-Z0-9]+$/g, '');
 
-export const TemplateGlyph: React.FC<{ kind: SiteKind; className?: string }> = ({ kind, className }) => (
-  <span
-    className={`workspace-glyph ${className ?? ''}`}
-    aria-hidden="true"
-    style={{ color: siteKindMeta[kind].tint }}
-  >
-    {siteKindMeta[kind].icon}
-  </span>
-);
+export const TemplateGlyph: React.FC<{ kind: SiteKind; className?: string; source?: string }> = ({ kind, className, source }) => {
+  const searchEngine = inferSearchEngine(source ?? '');
+  return (
+    <span
+      className={`workspace-glyph ${className ?? ''}`}
+      aria-hidden="true"
+      style={{ color: siteKindMeta[kind].tint }}
+    >
+      {siteKindMeta[searchEngine ? 'search_result' : kind].icon}
+    </span>
+  );
+};
 
-const TaskPulseGlyph: React.FC<{ kind: SiteKind; active?: boolean; className?: string }> = ({ kind, active = false, className }) => (
-  <span
-    className={`workspace-glyph workspace-task-glyph ${active ? 'is-active' : ''} ${className ?? ''}`}
-    aria-hidden="true"
-    style={{ color: siteKindMeta[kind].tint }}
-  >
-    {siteKindMeta[kind].icon}
-    <i />
-  </span>
-);
+const TaskPulseGlyph: React.FC<{ kind: SiteKind; active?: boolean; className?: string; source?: string }> = ({ kind, active = false, className, source }) => {
+  const searchEngine = inferSearchEngine(source ?? '');
+  return (
+    <span
+      className={`workspace-glyph workspace-task-glyph ${active ? 'is-active' : ''} ${className ?? ''}`}
+      aria-hidden="true"
+      style={{ color: siteKindMeta[kind].tint }}
+    >
+      {siteKindMeta[searchEngine ? 'search_result' : kind].icon}
+      <i />
+    </span>
+  );
+};
 
 const SiteLogoMark: React.FC<{ site: SiteProfile; faviconUrl?: string }> = ({ site, faviconUrl }) => {
   const [failedSource, setFailedSource] = useState('');
-  const source = React.isValidElement(site.logo) ? undefined : faviconUrl || site.faviconUrl;
+  const source = faviconUrl || site.faviconUrl;
   return (
     <i className="workspace-dock-meta-logo" style={{ '--brand-hue': site.hue } as React.CSSProperties} aria-hidden="true">
       {source && source !== failedSource
@@ -2406,7 +2424,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   <div className="workspace-dock-card-titleline">
                     <span className="workspace-dock-card-title-leading">
                       <span className="workspace-dock-card-icon">
-                        <TemplateGlyph kind={inferSiteKind(item.dataType || '', item.name)} />
+                        <TemplateGlyph kind={inferSiteKind(item.dataType || '', item.name)} source={item.name} />
                       </span>
                       <Text strong>{item.title}</Text>
                     </span>
@@ -2485,7 +2503,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         <div className="workspace-dock-card-row">
           <div className="workspace-dock-card-main">
             <span className="workspace-dock-card-icon">
-              <TaskPulseGlyph kind={item.site.kind} active={item.display.isRunning} />
+              <TaskPulseGlyph kind={item.site.kind} active={item.display.isRunning} source={item.template} />
             </span>
             <div className="workspace-dock-card-copy">
               <div className="workspace-dock-card-titleline">
@@ -2559,7 +2577,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       <section className="workspace-dock-detail is-task-composer">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
-            <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={composerKind} /></span>
+            <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={composerKind} source={matchedTemplate?.name} /></span>
             <div>
               <Text strong className="workspace-dock-detail-title">新建任务</Text>
               <Text type="secondary">{matchedTemplate ? matchedTemplate.title : '配置任务模板与运行方式'}</Text>
@@ -2787,7 +2805,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       <section className="workspace-dock-detail is-task-composer">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
-            <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={composerKind} /></span>
+            <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={composerKind} source={matchedTemplate?.name} /></span>
             <div>
               <Text strong className="workspace-dock-detail-title">New Task</Text>
               <Text type="secondary">{matchedTemplate ? matchedTemplate.title : 'Create a task from a template version.'}</Text>
@@ -3091,7 +3109,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       <section className="workspace-dock-detail">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
-            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={inferSiteKind(selectedTemplate.dataType || '', selectedTemplate.name)} /></span>
+            <span className="workspace-dock-detail-icon"><TemplateGlyph kind={inferSiteKind(selectedTemplate.dataType || '', selectedTemplate.name)} source={selectedTemplate.name} /></span>
             <div>
               <Text strong className="workspace-dock-detail-title">{selectedTemplate.title}</Text>
               <Text type="secondary">{selectedTemplate.name}</Text>
@@ -3260,7 +3278,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
       <section className="workspace-dock-detail is-task-log-only">
         <div className="workspace-dock-detail-head">
           <div className="workspace-dock-detail-leading">
-            <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={selectedTask.site.kind} active={display.isRunning} /></span>
+            <span className="workspace-dock-detail-icon"><TaskPulseGlyph kind={selectedTask.site.kind} active={display.isRunning} source={selectedTask.template} /></span>
             <div>
               <Text strong className="workspace-dock-detail-title">{selectedTask.name}</Text>
               <Text type="secondary">{selectedTask.template}</Text>

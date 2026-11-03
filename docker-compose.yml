@@ -100,7 +100,7 @@ services:
       - asiral-helio
 
   # ── 2. Downloader — 下载服务 ──────────────────────────────
-  scheduler-worker:
+  scheduler-worker: &scheduler-worker
     build:
       context: .
       dockerfile: docker/crawler.Dockerfile
@@ -118,6 +118,11 @@ services:
       retries: 3
     networks:
       - asiral-helio
+
+  search-worker:
+    <<: *scheduler-worker
+    container_name: search-worker
+    command: celery -A app.scheduler.celery_app worker --loglevel=info --concurrency=1 --queues=web-search
 
   downloader:
     build:
@@ -204,6 +209,11 @@ services:
     <<: *syncer
     container_name: syncer-tweet
     command: ["python", "-m", "app.syncer.main", "--data-type", "tweet", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
+
+  syncer-search-result:
+    <<: *syncer
+    container_name: syncer-search-result
+    command: ["python", "-m", "app.syncer.main", "--data-type", "search_result", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
 
   syncer-constellation:
     <<: *syncer

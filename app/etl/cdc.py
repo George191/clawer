@@ -83,7 +83,38 @@ def committed_row(envelope: dict[str, Any]) -> tuple[str, str, dict[str, Any]] |
         return None
     if not isinstance(payload, dict):
         raise ValueError("Invalid PostgreSQL CDC payload")
-    if payload.get("op") in {"d", "t"}:
+    if payload.get("op") == "d":
+        source = payload.get("source") or {}
+        schema = envelope.get("schema") or {}
+        before_schema = next((field for field in schema.get("fields", [])
+                              if field.get("field") == "before"), None)
+        before = payload.get("before")
+        if (isinstance(source, dict)
+                and (source.get("schema"), source.get("table")) in {
+                    ("ts_rds", "rds_search_result"), ("ts_ods", "ods_search_result"),
+                }
+                and isinstance(source.get("lsn"), int) and not isinstance(source["lsn"], bool)
+                and source["lsn"] >= 0
+                and schema.get("type") == "struct" and payload.get("after") is None
+                and isinstance(before_schema, dict) and before_schema.get("type") == "struct"
+                and {"record_id", "data_source", "data_type"}.issubset({
+                    field.get("field") for field in before_schema.get("fields", [])
+                    if field.get("type") == "string"
+                })
+                and isinstance(before, dict)):
+            row = decode_value(before, before_schema)
+            if (isinstance(row.get("record_id"), str) and row["record_id"].strip()
+                    and row.get("data_type") == "search_result"
+                    and row.get("data_source") in {
+                        "search_result_google_search", "search_result_duckduckgo_search",
+                        "search_result_bing_search", "search_result_brave_search",
+                    }):
+                # Explicit search maintenance deletes every persisted layer itself.
+                # ACK its CDC notification without emitting an after-image upsert;
+                # this does not make Mongo deletes cascade into PostgreSQL.
+                return None
+        raise ValueError("Physical deletion has no ETL contract; use business soft deletion")
+    if payload.get("op") == "t":
         raise ValueError("Physical deletion has no ETL contract; use business soft deletion")
     if payload.get("op") not in {"c", "u", "r"}:
         return None

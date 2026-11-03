@@ -46,6 +46,7 @@ import {
 } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
+import SearchEngineIcon, { searchEngineLabels } from '@/components/SearchEngineIcon';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { formatWorkspaceScheduleLabel } from '@/services/taskSchedule';
 import {
@@ -53,9 +54,10 @@ import {
   type BrowserAnalysisEvent,
   type DryRunResponse,
   type FieldDef,
+  type SearchEngine,
   type UrlPreflightResponse,
   type WorkspaceTask,
-  createGoogleSearchTask,
+  createSearchTask,
   dryRun as dryRunApi,
   generateTemplate as generateTemplateApi,
   preflightUrl,
@@ -1159,12 +1161,14 @@ const AICollect: React.FC = () => {
   const [runStatus, setRunStatus] = useState<RunStatus>('idle');
   const [url, setUrl] = useState('');
   const [intent, setIntent] = useState('');
-  const [collectionSource, setCollectionSource] = useState<'site' | 'google'>('site');
-  const [googleQuery, setGoogleQuery] = useState('');
-  const [googleMaxPages, setGoogleMaxPages] = useState(3);
-  const [googleFetchDetails, setGoogleFetchDetails] = useState(true);
-  const [googleSearchLoading, setGoogleSearchLoading] = useState(false);
-  const googleSearchSubmittingRef = useRef(false);
+  const [collectionSource, setCollectionSource] = useState<'site' | 'search'>('site');
+  const [searchEngine, setSearchEngine] = useState<SearchEngine>('brave');
+  const [searchLanguage, setSearchLanguage] = useState('zh-CN');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMaxPages, setSearchMaxPages] = useState(1);
+  const [searchFetchDetails, setSearchFetchDetails] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchSubmittingRef = useRef(false);
   const [renderMode, setRenderMode] = useState('agent');
   const [maxPages, setMaxPages] = useState(20);
   const [scheduleMode, setScheduleMode] = useState('cron');
@@ -3271,39 +3275,41 @@ const AICollect: React.FC = () => {
     setShowAnalysisTiming(true);
   }, [adapterBuildPlan.length, clearAdapterTypingTimer, sendAnalyzeSocketMessage]);
 
-  const handleGoogleSearch = useCallback(async () => {
-    const query = googleQuery.trim();
-    if (!query || googleSearchSubmittingRef.current) return;
-    googleSearchSubmittingRef.current = true;
-    setGoogleSearchLoading(true);
+  const handleSearch = useCallback(async () => {
+    const query = searchQuery.trim();
+    if (!query || searchSubmittingRef.current) return;
+    const engineLabel = searchEngineLabels[searchEngine];
+    searchSubmittingRef.current = true;
+    setSearchLoading(true);
     try {
-      const task = await createGoogleSearchTask({
+      const task = await createSearchTask({
+        engine: searchEngine,
         query,
-        language: 'zh-CN',
-        max_pages: googleMaxPages,
-        fetch_details: googleFetchDetails,
+        language: searchLanguage,
+        max_pages: searchMaxPages,
+        fetch_details: searchFetchDetails,
       });
       setWorkspaceTaskFocus(task);
       const nextParams = new URLSearchParams(searchParams);
       nextParams.set('panel', 'tasks');
       setSearchParams(nextParams);
-      setGoogleQuery('');
+      setSearchQuery('');
       try {
         const startedTask = await runWorkspaceTaskAction(task.id, 'start');
         setWorkspaceTaskFocus(startedTask);
-        message.success('Google 搜索采集已启动，可在任务面板查看进度');
+        message.success(`${engineLabel} 搜索采集已启动，可在任务面板查看进度`);
       } catch (error) {
         message.warning('任务已创建，但启动失败，请在任务面板重试启动');
-        console.error('Failed to start Google search task', task.id, error);
+        console.error(`Failed to start ${engineLabel} search task`, task.id, error);
       }
     } catch (error) {
-      message.error('Google 搜索任务创建失败，请稍后重试');
-      console.error('Failed to create Google search task', error);
+      message.error(`${engineLabel} 搜索任务创建失败，请稍后重试`);
+      console.error(`Failed to create ${engineLabel} search task`, error);
     } finally {
-      googleSearchSubmittingRef.current = false;
-      setGoogleSearchLoading(false);
+      searchSubmittingRef.current = false;
+      setSearchLoading(false);
     }
-  }, [googleFetchDetails, googleMaxPages, googleQuery, message, searchParams, setSearchParams]);
+  }, [searchEngine, searchLanguage, searchFetchDetails, searchMaxPages, searchQuery, message, searchParams, setSearchParams]);
 
   const renderMissionPanel = (variant: 'hero' | 'compact') => {
     if (variant === 'hero') {
@@ -3316,54 +3322,82 @@ const AICollect: React.FC = () => {
           <Segmented
             className="ai-collection-source"
             value={collectionSource}
-            disabled={preflightLoading || googleSearchLoading}
-            onChange={(value) => setCollectionSource(value as 'site' | 'google')}
+            disabled={preflightLoading || searchLoading}
+            onChange={(value) => setCollectionSource(value as 'site' | 'search')}
             options={[
               { label: '站点采集', value: 'site', icon: <GlobalOutlined /> },
-              { label: 'Google 搜索', value: 'google', icon: <SearchOutlined /> },
+              { label: '网页搜索', value: 'search', icon: <SearchOutlined /> },
             ]}
           />
 
-          {collectionSource === 'google' ? (
+          {collectionSource === 'search' ? (
             <form
-              className="ai-google-search-form"
+              className="ai-web-search-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                void handleGoogleSearch();
+                void handleSearch();
               }}
             >
               <div className="ai-prompt-shell">
-                <span className="ai-prompt-leading-icon" aria-hidden="true"><SearchOutlined /></span>
+                <span className="ai-prompt-leading-icon" aria-hidden="true"><SearchEngineIcon engine={searchEngine} style={{ width: 18, height: 18 }} /></span>
                 <Input
                   className="ai-prompt-input"
-                  aria-label="Google 搜索关键词"
-                  value={googleQuery}
+                  aria-label={`${searchEngineLabels[searchEngine]} 搜索关键词`}
+                  value={searchQuery}
                   maxLength={2000}
-                  disabled={googleSearchLoading}
-                  onChange={(event) => setGoogleQuery(event.target.value)}
-                  placeholder="输入 Google 搜索关键词，例如：卫星通信 最新进展"
+                  disabled={searchLoading}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder={`输入 ${searchEngineLabels[searchEngine]} 搜索关键词，例如：卫星通信 最新进展`}
                 />
                 <Button
                   className="ai-prompt-icon"
                   shape="circle"
                   htmlType="submit"
                   icon={<SearchOutlined />}
-                  aria-label="开始 Google 搜索采集"
-                  loading={googleSearchLoading}
-                  disabled={!googleQuery.trim()}
+                  aria-label={`开始 ${searchEngineLabels[searchEngine]} 搜索采集`}
+                  loading={searchLoading}
+                  disabled={!searchQuery.trim()}
                 />
               </div>
-              <div className="ai-google-search-options">
+              <div className="ai-web-search-options">
+                <label>
+                  <span>搜索引擎</span>
+                  <Select<SearchEngine>
+                    aria-label="搜索引擎"
+                    value={searchEngine}
+                    disabled={searchLoading}
+                    onChange={setSearchEngine}
+                    style={{ width: 190 }}
+                    options={(['brave', 'bing', 'duckduckgo', 'google'] as const).map((engine) => ({
+                      value: engine,
+                      label: <Space size={8}><SearchEngineIcon engine={engine} />{engine === 'bing' ? 'Bing（Edge 默认）' : searchEngineLabels[engine]}</Space>,
+                    }))}
+                  />
+                </label>
+                <label>
+                  <span>搜索语言</span>
+                  <Select
+                    aria-label="搜索语言"
+                    value={searchLanguage}
+                    disabled={searchLoading}
+                    onChange={setSearchLanguage}
+                    style={{ width: 112 }}
+                    options={[
+                      { value: 'zh-CN', label: '简体中文' },
+                      { value: 'en-US', label: 'English' },
+                    ]}
+                  />
+                </label>
                 <label>
                   <span>搜索页数</span>
                   <InputNumber
-                    aria-label="Google 搜索页数"
+                    aria-label="搜索页数"
                     min={1}
                     max={100}
                     precision={0}
-                    value={googleMaxPages}
-                    disabled={googleSearchLoading}
-                    onChange={(value) => setGoogleMaxPages(value ?? 3)}
+                    value={searchMaxPages}
+                    disabled={searchLoading}
+                    onChange={(value) => setSearchMaxPages(value ?? 1)}
                   />
                 </label>
                 <label>
@@ -3371,20 +3405,22 @@ const AICollect: React.FC = () => {
                   <Switch
                     aria-label="保存详情页原文"
                     size="small"
-                    checked={googleFetchDetails}
-                    disabled={googleSearchLoading}
-                    onChange={setGoogleFetchDetails}
+                    checked={searchFetchDetails}
+                    disabled={searchLoading}
+                    onChange={setSearchFetchDetails}
                   />
                 </label>
                 <Button
                   type="primary"
                   htmlType="submit"
-                  loading={googleSearchLoading}
-                  disabled={!googleQuery.trim()}
+                  loading={searchLoading}
+                  disabled={!searchQuery.trim()}
                 >开始采集</Button>
               </div>
-              <Text type="secondary" className="ai-google-search-note">
-                保存搜索结果的标题、链接、摘要等列表信息及页面原文，可在任务面板查看采集进度。
+              <Text type="secondary" className="ai-web-search-note">
+                由 {searchEngineLabels[searchEngine]} 搜索，保存标题、链接、摘要等列表信息及页面原文，可在任务面板查看采集进度。
+                默认采集 1 页，更多页可能触发搜索引擎验证，可在页数中显式选择。
+                {searchEngine !== 'google' && '语言仅记录查询偏好，不限定结果语言或地区。'}
               </Text>
             </form>
           ) : (
@@ -8371,29 +8407,29 @@ const AICollect: React.FC = () => {
           .ai-collection-source {
             align-self: center;
           }
-          .ai-google-search-form {
+          .ai-web-search-form {
             display: flex;
             flex-direction: column;
             gap: 16px;
           }
-          .ai-google-search-options {
+          .ai-web-search-options {
             display: flex;
             justify-content: center;
             align-items: center;
             flex-wrap: wrap;
             gap: 16px 24px;
           }
-          .ai-google-search-options label {
+          .ai-web-search-options label {
             display: inline-flex;
             align-items: center;
             gap: 10px;
             font-size: 13px;
             color: ${aura.muted};
           }
-          .ai-google-search-options .ant-input-number {
+          .ai-web-search-options .ant-input-number {
             width: 72px;
           }
-          .ai-google-search-note {
+          .ai-web-search-note {
             text-align: center;
             font-size: 12px;
           }
