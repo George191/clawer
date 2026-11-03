@@ -12,6 +12,7 @@ export interface SearchTaskRequest {
   language: string;
   max_pages: number;
   fetch_details: boolean;
+  proxy_url?: string;
 }
 
 export interface FieldDef {
@@ -353,8 +354,8 @@ export const generateAdapter = (
 export const fetchPlatformOverview = (): Promise<PlatformOverview> =>
   client.get('/ai/platform/overview').then((r) => r.data);
 
-export const fetchWorkspaceTemplates = (): Promise<WorkspaceTemplate[]> =>
-  client.get('/ai/workspace/templates').then((r) => r.data.items);
+export const fetchWorkspaceTemplates = (includeDefinitions = true): Promise<WorkspaceTemplate[]> =>
+  client.get('/ai/workspace/templates', { params: { include_definitions: includeDefinitions } }).then((r) => r.data.items);
 
 export const updateWorkspaceTemplate = (
   templateId: string,

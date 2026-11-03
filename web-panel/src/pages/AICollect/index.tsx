@@ -3370,7 +3370,7 @@ const AICollect: React.FC = () => {
                     style={{ width: 190 }}
                     options={(['brave', 'bing', 'duckduckgo', 'google'] as const).map((engine) => ({
                       value: engine,
-                      label: <Space size={8}><SearchEngineIcon engine={engine} />{engine === 'bing' ? 'Bing（Edge 默认）' : searchEngineLabels[engine]}</Space>,
+                      label: <Space size={8}><SearchEngineIcon engine={engine} />{engine === 'bing' ? 'Bing（Edge 默认）' : engine === 'google' ? 'Google（固定前端）' : searchEngineLabels[engine]}</Space>,
                     }))}
                   />
                 </label>
@@ -3418,7 +3418,9 @@ const AICollect: React.FC = () => {
                 >开始采集</Button>
               </div>
               <Text type="secondary" className="ai-web-search-note">
-                由 {searchEngineLabels[searchEngine]} 搜索，保存标题、链接、摘要等列表信息及页面原文，可在任务面板查看采集进度。
+                {searchEngine === 'google'
+                  ? '通过固定 SearXNG 前端查询，仅接收 Google 结果；保存前端列表原文及目标详情原文，可在任务面板查看采集进度。'
+                  : `由 ${searchEngineLabels[searchEngine]} 搜索，保存标题、链接、摘要等列表信息及页面原文，可在任务面板查看采集进度。`}
                 默认采集 1 页，更多页可能触发搜索引擎验证，可在页数中显式选择。
                 {searchEngine !== 'google' && '语言仅记录查询偏好，不限定结果语言或地区。'}
               </Text>

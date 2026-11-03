@@ -988,7 +988,7 @@ const templateKindHints: Record<string, SiteKind> = {
   blacksky_press: 'news',
   breakingdefense: 'news',
   clearspace: 'news',
-  cve_project: 'vulnerability',
+  cve: 'vulnerability',
   ddlregistry: 'system',
   defenseone: 'news',
   esa_discos_fragmentations: 'debrisevents',
