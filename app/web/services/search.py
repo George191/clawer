@@ -9,7 +9,6 @@ from pydantic import Field
 
 from app.config.settings import settings
 from app.models.template import PaginationType, SiteTemplate
-from app.storage.minio_client import get_business_metadata_minio_client
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.tasks import WorkspaceTaskRequest
 from app.web.services.ai_collect_store import ai_collect_store
@@ -29,22 +28,14 @@ class SearchRequest(GoogleSearchRequest):
     max_pages: int = Field(default=1, ge=1, le=100)
 
 
-def _icon_path(engine: str) -> Path:
-    root = Path(__file__).resolve().parents[3]
-    for folder in (root / "static", root / "web-panel" / "public"):
-        path = folder / "search" / f"{engine}.svg"
-        if path.is_file():
-            return path
-    raise RuntimeError(f"Missing bundled search icon: {engine}")
-
-
 async def ensure_search_icon(template: dict[str, Any], engine: str) -> None:
     if template.get("icon"):
         return
-    key = f"collection/templates/{template['name']}/{template['version']}/icon.svg"
-    await get_business_metadata_minio_client().upload_bytes_to_key(
-        _icon_path(engine).read_bytes(), key, "image/svg+xml",
+    key = await ai_collect_store._upload_favicon(
+        template["name"], template["version"], f"https://{ENGINES[engine]['domain']}/favicon.ico",
     )
+    if not key:
+        raise RuntimeError(f"Unable to upload search icon: {engine}")
     await get_pg_client().execute(
         """
         UPDATE public.ai_collect_templates SET icon = :icon
@@ -59,8 +50,9 @@ async def create_search_task(payload: SearchRequest) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail="搜索采集需要配置 MongoDB")
     if not settings.minio_endpoint or not settings.minio_bucket:
         raise HTTPException(status_code=503, detail="搜索页面原文保存需要配置 MinIO")
-    if not settings.proxy_pre_proxy_url:
-        raise HTTPException(status_code=503, detail="搜索采集需要配置固定前置代理")
+    proxy_url = payload.proxy_url.strip()
+    if not proxy_url and not settings.proxy_pre_proxy_url:
+        raise HTTPException(status_code=503, detail="搜索采集需要通过任务参数 proxy_url 指定代理或配置默认前置代理")
 
     engine = ENGINES[payload.engine]
     name, version = engine["name"], engine["version"]
@@ -70,6 +62,7 @@ async def create_search_task(payload: SearchRequest) -> dict[str, Any]:
         template = await ai_collect_store.release_template({
             **engine,
             "status": "active",
+            "favicon_url": f"https://{engine['domain']}/favicon.ico",
             "yaml_content": (source / "template.yaml").read_text(encoding="utf-8"),
             "adapter_code": (source / "adapter.py").read_text(encoding="utf-8"),
             "description": f"保存 {engine['title']}结果、完整列表页面及详情页面原文。",
@@ -82,8 +75,12 @@ async def create_search_task(payload: SearchRequest) -> dict[str, Any]:
         "max_pages": str(payload.max_pages),
         "fetch_details": str(payload.fetch_details).lower(),
     }
+    if proxy_url:
+        parameters["proxy_url"] = proxy_url
     try:
         definition = SiteTemplate(**yaml.safe_load(template["yaml_content"]))
+        if proxy_url and "proxy_url" not in {param.name for param in definition.params}:
+            raise HTTPException(status_code=409, detail="搜索模板不支持任务代理，请重新发布包含 proxy_url 的模板及适配器")
         if (
             template.get("status") != "active"
             or definition.name != name
