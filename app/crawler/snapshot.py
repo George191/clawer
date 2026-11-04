@@ -69,6 +69,20 @@ class SnapshotStore:
             metadata, sort_keys=True, ensure_ascii=False,
         )
 
+    async def get_state(self, identity: str) -> dict[str, Any] | None:
+        """Read a source cursor from the last successful crawl."""
+        field = f"state:{_fingerprint(identity)}"
+        raw = await self._checkpoint_store.run_redis_operation(
+            lambda redis: redis.hget(self.key, field)
+        )
+        return json.loads(raw) if raw else None
+
+    async def set_state(self, identity: str, value: dict[str, Any]) -> None:
+        """Stage a source cursor for the same commit as its record fingerprints."""
+        self._pending[f"state:{_fingerprint(identity)}"] = json.dumps(
+            value, sort_keys=True, ensure_ascii=False,
+        )
+
     async def filter_records(
         self, records: list[dict[str, Any]], dedup_fields: list[str],
     ) -> list[dict[str, Any]]:

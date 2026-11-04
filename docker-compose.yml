@@ -17,8 +17,9 @@
 
 services:
   # Explicitly enabled during the Mongo CDC migration; brokers/Mongo remain external.
-  mongo-cdc-connect:
+  mongo-cdc-syncer:
     image: quay.io/debezium/connect:3.4
+    container_name: mongo-cdc-syncer
     restart: unless-stopped
     env_file:
       - .env
@@ -29,7 +30,9 @@ services:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
     entrypoint: ["bash", "/mongo-cdc-connect.sh"]
     networks:
-      - asiral-helio
+      asiral-helio:
+        aliases:
+          - mongo-cdc-connect
 
   postgres-cdc-syncer:
     build:

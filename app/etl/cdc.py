@@ -52,6 +52,12 @@ def decode_value(value: Any, schema: dict[str, Any]) -> Any:
     if name in {"io.debezium.data.geometry.Geometry", "io.debezium.data.geometry.Geography"}:
         return _geometry(value)
     if name in {"org.apache.kafka.connect.data.Date", "io.debezium.time.Date"}:
+        if name == "io.debezium.time.Date":
+            # Older Debezium versions use a negative day sentinel for positive infinity.
+            if value in {-2147472692, 2146033979}:
+                return date.max.isoformat()
+            if value == -2147472691:
+                return date.min.isoformat()
         return (date(1970, 1, 1) + timedelta(days=value)).isoformat()
     if name == "org.apache.kafka.connect.data.Timestamp":
         return (datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(milliseconds=value)).isoformat()

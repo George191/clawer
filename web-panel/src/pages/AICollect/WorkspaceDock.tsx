@@ -3526,7 +3526,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               <span>
                 <svg className={`workspace-dock-download-icon${downloadRunning ? ' is-active' : ''}`} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
                   <path className="workspace-dock-download-arrow" d="M8 2v8M4.5 6.5 8 10l3.5-3.5" />
-                  <path d="M3 11.5V14h10v-2.5" />
+                  <path d="M1.5 11.5V14h13v-2.5" />
                 </svg>
                 Download
               </span>

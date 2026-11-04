@@ -10,8 +10,10 @@ from html import unescape
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from lxml import html
+from lxml.etree import ParserError, XMLSyntaxError
 
 from app.adapters.utils.news import NewsBaseAdapter, assets
+from app.base.http import ResponseValidationError
 from app.crawler.incremental import TimeWatermark, filter_records_by_watermark
 from app.parser.template_parser import TemplateParser
 from app.utils.path import get_nested_value
@@ -113,15 +115,18 @@ def article_metadata(tree) -> dict:
 
 
 def validate_json_response(content: str, template) -> str:
-    payload = json.loads(content)
+    try:
+        payload = json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ResponseValidationError(f"Invalid news API JSON response: {error}") from error
     rows = get_nested_value(payload, template.json_item_path)
     if not isinstance(rows, list):
-        raise ValueError(f"News API response has no {template.json_item_path} array")
+        raise ResponseValidationError(f"News API response has no {template.json_item_path} array")
     for row in rows:
         for field in template.list_fields:
             value = get_nested_value(row, field.selector)
             if field.required and (value is None or value == ""):
-                raise ValueError(f"News API record is missing required field: {field.name}")
+                raise ResponseValidationError(f"News API record is missing required field: {field.name}")
     return content
 
 
@@ -210,24 +215,42 @@ class HtmlNewsAdapter(NewsBaseAdapter):
             if record.get("requires_subscription"):
                 record["content_status"] = "subscription_required"
                 return
-            async with semaphore:
-                content = await self._client.request_page(
-                    record["url"],
-                    self._template.detail_request,
-                    anti_crawl_enabled=self._template.effective_anti_crawl_enabled,
-                    adapter_name=self.adapter_name,
-                )
-                self.parse_detail(record, content)
-                await self.resolve_detail_metadata(record)
-            prepare_record(record, self._base_url)
-            if not record.get(self._template.incremental.field):
-                raise ValueError(f"No absolute incremental timestamp for {record['url']}")
-            if not record.get("content_html"):
-                raise ValueError(f"Article body selector returned no content: {record['url']}")
-            record["content_status"] = "public"
-            finish_news(record)
+            try:
+                async with semaphore:
+                    content = await self._client.request_page(
+                        record["url"],
+                        self._template.detail_request,
+                        anti_crawl_enabled=self._template.effective_anti_crawl_enabled,
+                        adapter_name=self.adapter_name,
+                    )
+                    try:
+                        self.parse_detail(record, content)
+                    except (ParserError, XMLSyntaxError) as error:
+                        raise ResponseValidationError(
+                            f"Invalid news detail response for {record['url']}: {error}"
+                        ) from error
+                    await self.resolve_detail_metadata(record)
+                prepare_record(record, self._base_url)
+                if not record.get(self._template.incremental.field):
+                    raise ResponseValidationError(f"No absolute incremental timestamp for {record['url']}")
+                if not record.get("content_html"):
+                    raise ResponseValidationError(f"Article body selector returned no content: {record['url']}")
+                record["content_status"] = "public"
+                finish_news(record)
+            except ResponseValidationError as error:
+                await self._client.mark_last_proxy_failed(adapter_name=self.adapter_name)
+                error.proxy_failure_marked = True
+                raise
 
-        await asyncio.gather(*(enrich(r) for r in eligible))
+        tasks = [asyncio.create_task(enrich(record)) for record in eligible]
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
         return records
 
 

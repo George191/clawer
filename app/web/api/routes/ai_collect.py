@@ -13,6 +13,7 @@ from app.web.api.models.tasks import TaskAction, WorkspaceTaskRequest
 from app.web.services.ai_collect_store import ai_collect_store
 from app.web.services.browser_renderer import browser_renderer
 from app.web.services.google_search import GoogleSearchRequest, create_google_search_task
+from app.web.services.search import SearchRequest, create_search_task
 from app.web.services.task_runs import delete_run, run_action
 
 router = APIRouter(prefix="/ai", tags=["ai-collect"])
@@ -177,7 +178,9 @@ async def generate_adapter(payload: AdapterRequest) -> dict[str, Any]:
 
 
 @router.get("/workspace/templates")
-async def workspace_templates() -> dict[str, Any]:
+async def workspace_templates(include_definitions: bool = True) -> dict[str, Any]:
+    if not include_definitions:
+        return {"items": await ai_collect_store.list_templates()}
     return {"items": await ai_collect_store.list_template_definitions(include_adapter_code=True)}
 
 
@@ -253,6 +256,11 @@ async def create_workspace_task(payload: WorkspaceTaskRequest) -> dict[str, Any]
 @router.post("/google-search/tasks", status_code=201)
 async def create_google_search(payload: GoogleSearchRequest) -> dict[str, Any]:
     return await create_google_search_task(payload)
+
+
+@router.post("/search/tasks", status_code=201)
+async def create_search(payload: SearchRequest) -> dict[str, Any]:
+    return await create_search_task(payload)
 
 
 @router.post("/workspace/batch-inputs")

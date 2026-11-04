@@ -203,6 +203,8 @@ SPIDER_CELERY_CONCURRENCY=5
 SPIDER_CELERY_WORKER_REPLICAS=6
 ```
 
+单实例部署可在 Compose override 中为 `crawler` 设置 `container_name: clawer-crawler`，去掉自动生成的实例编号；多副本部署不设置固定容器名。
+
 Compose 仅开放 Nginx 入口；生产环境仍应配置 HTTPS。启动前必须确保
 容器网络能够访问 `.env` 中配置的所有外部服务地址。
 
@@ -288,9 +290,9 @@ Connect 复用 `SPIDER_KAFKA_BROKERS`、`SPIDER_KAFKA_TOPIC` 及已有 Kafka SAS
 先启动 Connect、构建新版 Syncer 镜像，再注册 connector；注册命令仅在 connector 和任务都为 `RUNNING` 后成功退出，不输出连接密码或服务端错误正文：
 
 ```bash
-docker compose up -d mongo-cdc-connect
+docker compose up -d mongo-cdc-syncer
 docker compose build syncer
-docker compose run --rm --no-deps syncer python -m app.syncer.mongo_cdc --connect-url http://mongo-cdc-connect:8083
+docker compose run --rm --no-deps syncer python -m app.syncer.mongo_cdc --connect-url http://mongo-cdc-syncer:8083
 ```
 
 注册采用 `snapshot.mode=no_data`，不全量重发已同步记录，历史待下载/待同步记录由现有扫描补偿处理。确认 connector 正常后，通过现有发布流程重建并重启 crawler、`downloader` 和 `syncer`。从分类型部署切换时，先停止旧的分类型或定向下载器、同步器，再启动通用实例，避免同一范围重复处理。验证新增记录、业务更新、下载回写均能到达原业务 topic，并检查同步 ACK/下载心跳没有产生业务消息循环。暂停并恢复 Connect 后应从内部 offset topic 续接；停机超过 oplog 保留窗口时需检查 connector 状态并恢复采集，期间 Mongo 补偿继续处理当前待处理状态。不要删除内部 topic 来重置正常位点。
@@ -302,7 +304,7 @@ docker compose build syncer rds-worker ods-worker task-worker
 docker compose run --rm --no-deps rds-worker python -m app.etl.main --init-schema
 docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --prepare
 docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --check
-docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --connect-url http://mongo-cdc-connect:8083
+docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --connect-url http://mongo-cdc-syncer:8083
 docker compose up -d postgres-cdc-syncer
 ```
 

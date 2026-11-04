@@ -32,7 +32,7 @@ property key.converter.schemas.enable false
 property value.converter.schemas.enable false
 property plugin.path "${KAFKA_CONNECT_PLUGINS_DIR:-/kafka/connect}"
 property listeners http://0.0.0.0:8083
-property rest.advertised.host.name mongo-cdc-connect
+property rest.advertised.host.name mongo-cdc-syncer
 property rest.advertised.port 8083
 property producer.max.request.size 16777216
 

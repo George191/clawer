@@ -27,6 +27,7 @@ def dispatch_run(task: dict) -> None:
             "app.scheduler.tasks.workspace.crawl_template",
             args=[str(task["id"]), task["template_name"], task.get("parameters") or {}],
             task_id=str(task["celery_task_id"]),
+            queue="web-search" if task["template_name"] in {"duckduckgo_search", "google_search", "bing_search", "brave_search"} else "celery",
             retry=True,
             retry_policy={"interval_start": 0, "interval_step": 0, "interval_max": 0},
         )
