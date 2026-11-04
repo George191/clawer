@@ -3552,7 +3552,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   <Button type="link" size="small" onClick={loadMoreTaskLogs}>Load earlier logs</Button>
                 ) : selectedRunLogs.length ? (
                   <span className="workspace-dock-log-end">All execution logs loaded</span>
-                ) : 'No execution logs'}
+                ) : (
+                  <span className="workspace-dock-log-end">No execution logs</span>
+                )}
               </div>
             </div>
           </div>
