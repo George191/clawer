@@ -21,7 +21,7 @@ from time import monotonic
 
 from app.config.settings import settings
 from app.logger import get_logger
-from app.records.change_feed import MongoChangeFeed
+from app.records.change_feed import MongoChangeFeed, mongo_cdc_topic_prefix
 from app.records.collection_routes import collection_route_store
 from app.records.mongo_store import MongoRecordStore
 from app.syncer.publisher import RecordPublisher
@@ -116,8 +116,11 @@ class SyncWorker:
             routes = await collection_route_store.list_by_data_type(
                 self._data_type, self._template_name,
             )
+            paused = set(settings.kafka_paused_topics)
             self._collection_names = list(dict.fromkeys(
                 route["collection_name"] for route in routes
+                if f"{settings.kafka_topic}-{route['data_type']}" not in paused
+                and f"{mongo_cdc_topic_prefix()}.{settings.db_name}.{route['collection_name']}" not in paused
             ))
             self._routes_refreshed_at = monotonic()
         return self._collection_names

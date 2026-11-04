@@ -54,6 +54,8 @@ async def request_source_snapshot(
     if response.status_code == 304:
         if not previous.get("hash"):
             raise ValueError("Source returned 304 without a committed content fingerprint")
+        # A failed parse may have staged another response before this retry.
+        await store.set_metadata(identity, previous)
         logger.info("Incremental source unchanged: HTTP 304")
         return None
     if response.status_code != 200:

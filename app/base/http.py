@@ -14,6 +14,12 @@ class DownloadCleanupError(DownloadError):
     """Transport cleanup is unconfirmed; this run must stop without retrying."""
 
 
+class ResponseValidationError(ValueError):
+    """A fetched response could not be parsed or failed source validation."""
+
+    proxy_failure_marked = False
+
+
 @dataclass(frozen=True, slots=True)
 class DownloadResponse:
     source_url: str

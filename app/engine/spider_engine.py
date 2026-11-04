@@ -24,8 +24,10 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
+from lxml.etree import ParserError, XMLSyntaxError
+
 from app.adapters import BaseSiteAdapter, get_adapter
-from app.base.http import DownloadCleanupError
+from app.base.http import DownloadCleanupError, DownloadError, ResponseValidationError
 from app.config.settings import settings
 from app.crawler.incremental import (
     FilteredRecords,
@@ -402,6 +404,7 @@ class SpiderEngine:
             records: list[dict[str, Any]] = []  # 防止 skip 路径下未定义
             filtered = FilteredRecords([], None, 0, False)
 
+            response_failures = 0
             for attempt in self._retry_loop():
                 try:
                     adapter._snapshot_page_unchanged = False
@@ -421,9 +424,14 @@ class SpiderEngine:
                         adapter_name=template.adapter,
                         page=current_page, attempt=attempt
                     )
-                    records = await adapter.parse_list_response(current_page, html)
-                    if records is None:
-                        records = self._parser.parse_list(html, template.list_fields)
+                    try:
+                        records = await adapter.parse_list_response(current_page, html)
+                        if records is None:
+                            records = self._parser.parse_list(html, template.list_fields)
+                    except ResponseValidationError:
+                        raise
+                    except (ValueError, KeyError, ParserError, XMLSyntaxError) as error:
+                        raise ResponseValidationError(str(error)) from error
                     records = await adapter.normalize_list_records(current_page, records)
 
                     watermark = template._crawl_context.get("incremental_watermark")
@@ -499,7 +507,18 @@ class SpiderEngine:
                 except DownloadCleanupError:
                     raise
                 except Exception as e:
-                    if is_retryable_connection_error(e):
+                    if isinstance(e, ResponseValidationError) or (
+                        isinstance(e, DownloadError) and e.status_code == 200
+                    ):
+                        response_failures += 1
+                        if await self._retry_invalid_response(
+                            template, current_page, e, response_failures,
+                        ):
+                            continue
+                        result.error = e.__cause__ or e
+                        result.errors.append(f"List page {current_page}: {e}")
+                        return all_records
+                    if self._is_retryable_request_error(e):
                         logger.warning(
                             "[%s] Page %d connection failed (attempt %d): %s",
                             template.name, current_page, attempt + 1, e,
@@ -661,7 +680,7 @@ class SpiderEngine:
             await adapter.on_records_saved(
                 page1_task_id,
                 page1,
-                1,
+                page1 - template.list_pagination.start_page + 1 if template.list_pagination else 1,
                 dynamic_pages,
                 len(records1),
                 saved_count,
@@ -706,7 +725,7 @@ class SpiderEngine:
                     await progress_callback(batch[0], result)
                 should_stop, aborted = await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
-                    start_page, dynamic_pages, result, all_records, progress_callback
+                    dynamic_pages, result, all_records, progress_callback
                 )
                 if aborted or should_stop:
                     break
@@ -719,7 +738,7 @@ class SpiderEngine:
                     await progress_callback(batch[0], result)
                 should_stop, aborted = await self._fetch_and_process_batch(
                     template, batch, adapter, results_per_page, item_path,
-                    start_page, dynamic_pages, result, all_records, progress_callback
+                    dynamic_pages, result, all_records, progress_callback
                 )
                 if aborted or should_stop:
                     break
@@ -747,6 +766,7 @@ class SpiderEngine:
         records: list[dict[str, Any]] = []
         total_records: int | None = None
         total_pages_from_api: int | None = None
+        response_failures = 0
 
         for attempt in self._retry_loop():
             try:
@@ -775,18 +795,17 @@ class SpiderEngine:
                     page=page, attempt=attempt
                 )
 
-                if not text:
-                    logger.warning(
-                        "[Page %d attempt %d] Empty response received",
-                        page, attempt
+                try:
+                    if not text:
+                        raise ValueError("Empty response")
+                    json_data = json.loads(text)
+                    records = self._parser.parse_list_json(
+                        json_data, item_path, template.list_fields
                     )
-                    raise ValueError("Empty response")
-
-                json_data = json.loads(text)
-
-                records = self._parser.parse_list_json(
-                    json_data, item_path, template.list_fields
-                )
+                except ResponseValidationError:
+                    raise
+                except (ValueError, KeyError, ParserError, XMLSyntaxError) as error:
+                    raise ResponseValidationError(str(error)) from error
                 records = await adapter.normalize_list_records(page, records)
                 watermark = template._crawl_context.get("incremental_watermark")
                 if isinstance(watermark, TimeWatermark) and watermark.enabled:
@@ -828,38 +847,19 @@ class SpiderEngine:
                 page_succeeded = True
                 break
 
-            except json.JSONDecodeError as e:
-                await self._client.mark_last_proxy_failed(template.adapter)
-                adapter_action = await adapter.on_error(e, page, attempt)
-                if adapter_action == "abort":
-                    result.error = e
-                    result.errors.append(f"List page {page}: {e}")
-                    return page, [], None, None, True
-                if adapter_action == "stop":
-                    page_skipped = True
-                    page_succeeded = True
-                    break
-                if adapter_action == "reset_session":
-                    await adapter.on_before_crawl(template)
-                elif adapter_action == "skip":
-                    page_skipped = True
-                    page_succeeded = True
-                    break
-                elif adapter_action == "rotate_proxy":
-                    await self._client.mark_last_proxy_failed(
-                        adapter_name=template.adapter,
-                    )
-                    logger.info(
-                        "[%s] Page %d rotating proxy after adapter request (attempt %d)",
-                        template.name, page, attempt + 1,
-                    )
-                    await check_control_state()
-                    continue
-
             except DownloadCleanupError:
                 raise
             except Exception as e:
-                if is_retryable_connection_error(e):
+                if isinstance(e, ResponseValidationError) or (
+                    isinstance(e, DownloadError) and e.status_code == 200
+                ):
+                    response_failures += 1
+                    if await self._retry_invalid_response(template, page, e, response_failures):
+                        continue
+                    result.error = e.__cause__ or e
+                    result.errors.append(f"List page {page}: {e}")
+                    return page, [], None, None, True
+                if self._is_retryable_request_error(e):
                     logger.warning(
                         "[%s] Page %d connection failed (attempt %d): %s",
                         template.name, page, attempt + 1, e,
@@ -911,7 +911,6 @@ class SpiderEngine:
         adapter: Any,
         results_per_page: int,
         item_path: str,
-        start_page: int,
         dynamic_pages: int | float,
         result: CrawlResult,
         all_records: list[dict],
@@ -976,7 +975,7 @@ class SpiderEngine:
                 await adapter.on_records_saved(
                     page_task_id,
                     p,
-                    p - start_page + 1,
+                    p - template.list_pagination.start_page + 1,
                     dynamic_pages,
                     len(records),
                     saved_count,
@@ -984,20 +983,6 @@ class SpiderEngine:
                     result.inserted_records - inserted_before,
                     result.updated_records - updated_before,
                 )
-
-            logger.info(
-                "task=%s batch=%s/%s page=%d/%s: found %d records, saved %d (inserted: %d, updated: %d, cumulative saved: %d)",
-                page_task_id,
-                template._crawl_context.get("batch_index", 1),
-                template._crawl_context.get("batch_count", 1),
-                p - start_page + 1,
-                dynamic_pages,
-                len(records),
-                saved_count,
-                result.inserted_records - inserted_before,
-                result.updated_records - updated_before,
-                result.saved_records,
-            )
 
             result.pages_processed += 1
             if progress_callback is not None:
@@ -1022,6 +1007,27 @@ class SpiderEngine:
                 should_stop = True
 
         return should_stop, False
+
+    async def _retry_invalid_response(
+        self, template: SiteTemplate, page: int, error: Exception, failures: int,
+    ) -> bool:
+        logger.warning(
+            "[%s] Page %d response validation failed (%d/3): %s",
+            template.name, page, failures, error,
+        )
+        if failures >= 3:
+            return False
+        if not getattr(error, "proxy_failure_marked", False):
+            await self._client.mark_last_proxy_failed(adapter_name=template.adapter)
+        await controlled_sleep(min(2 ** (failures - 1), 30))
+        return True
+
+    @staticmethod
+    def _is_retryable_request_error(error: Exception) -> bool:
+        return is_retryable_connection_error(error) or (
+            isinstance(error, DownloadError)
+            and error.status_code in (None, 0, 200, 202, *settings.http_retry_on_statuses)
+        )
 
     @staticmethod
     def _retry_loop():

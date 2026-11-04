@@ -31,10 +31,11 @@ services:
     networks:
       - asiral-helio
 
-  postgres-syncer:
+  postgres-cdc-syncer:
     build:
       context: .
       dockerfile: docker/syncer.Dockerfile
+    container_name: postgres-cdc-syncer
     restart: unless-stopped
     env_file:
       - .env
@@ -140,7 +141,7 @@ services:
       - asiral-helio
 
   # ── 3. Syncer — Kafka 同步服务 ────────────────────────────
-  syncer: &syncer
+  syncer:
     build:
       context: .
       dockerfile: docker/syncer.Dockerfile
@@ -151,135 +152,9 @@ services:
     working_dir: /app
     volumes:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro
-    command: ["python", "-m", "app.syncer.main", "--data-type", "news", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
+    command: ["python", "-m", "app.syncer.main", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
     networks:
       - asiral-helio
-
-  syncer-acticle:
-    <<: *syncer
-    container_name: syncer-acticle
-    command: ["python", "-m", "app.syncer.main", "--data-type", "acticle", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-patent:
-    <<: *syncer
-    container_name: syncer-patent
-    command: ["python", "-m", "app.syncer.main", "--data-type", "patent", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-navwarn:
-    <<: *syncer
-    container_name: syncer-navwarn
-    command: ["python", "-m", "app.syncer.main", "--data-type", "navwarn", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-intelligence:
-    <<: *syncer
-    container_name: syncer-intelligence
-    command: ["python", "-m", "app.syncer.main", "--data-type", "intelligence", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-organization:
-    <<: *syncer
-    container_name: syncer-organization
-    command: ["python", "-m", "app.syncer.main", "--data-type", "organization", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-financial-fact:
-    <<: *syncer
-    container_name: syncer-financial-fact
-    command: ["python", "-m", "app.syncer.main", "--data-type", "financial_fact", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-filing:
-    <<: *syncer
-    container_name: syncer-filing
-    command: ["python", "-m", "app.syncer.main", "--data-type", "filing", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-contract:
-    <<: *syncer
-    container_name: syncer-contract
-    command: ["python", "-m", "app.syncer.main", "--data-type", "contract", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-tender:
-    <<: *syncer
-    container_name: syncer-tender
-    command: ["python", "-m", "app.syncer.main", "--data-type", "tender", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-account:
-    <<: *syncer
-    container_name: syncer-account
-    command: ["python", "-m", "app.syncer.main", "--data-type", "account", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-tweet:
-    <<: *syncer
-    container_name: syncer-tweet
-    command: ["python", "-m", "app.syncer.main", "--data-type", "tweet", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-search-result:
-    <<: *syncer
-    container_name: syncer-search-result
-    command: ["python", "-m", "app.syncer.main", "--data-type", "search_result", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-constellation:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-constellation
-    command: ["python", "-m", "app.syncer.main", "--data-type", "constellation", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-vulnerability:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-vulnerability
-    command: ["python", "-m", "app.syncer.main", "--data-type", "vulnerability", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-debrisevents:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-debrisevents
-    command: ["python", "-m", "app.syncer.main", "--data-type", "debrisevents", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-debris:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-debris
-    command: ["python", "-m", "app.syncer.main", "--data-type", "debris", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-launchvehicles:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-launchvehicles
-    command: ["python", "-m", "app.syncer.main", "--data-type", "launchvehicles", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-frequency:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-frequency
-    command: ["python", "-m", "app.syncer.main", "--data-type", "frequency", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-groundstations:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-groundstations
-    command: ["python", "-m", "app.syncer.main", "--data-type", "groundstations", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-launchinfo:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-launchinfo
-    command: ["python", "-m", "app.syncer.main", "--data-type", "launchinfo", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-satellite:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-satellite
-    command: ["python", "-m", "app.syncer.main", "--data-type", "satellite", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-launchsites:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-launchsites
-    command: ["python", "-m", "app.syncer.main", "--data-type", "launchsites", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
-
-  syncer-orbital:
-    <<: *syncer
-    profiles: ["catalog-sync"]
-    container_name: syncer-orbital
-    command: ["python", "-m", "app.syncer.main", "--data-type", "orbital", "--batch", "50", "--concurrency", "10", "--poll", "60", "--startup-delay", "15"]
 
   # ── 4. Web — FastAPI 管理面板 ─────────────────────────────
   web:

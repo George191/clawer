@@ -123,7 +123,7 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 | Web API | `uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload` | FastAPI 管理后端 |
 | Web Panel | `npm run dev` in `web-panel/` | React 管理界面 |
 
-下载器按 PostgreSQL 模板分组并关联 `public.ai_collect_template_alias`，以映射的业务 `data_type` 筛选实际集合；未配置映射的已注册模板按 `数据类型_网站或端点标识` 生成集合名。通过独立消费组接收 Debezium Mongo CDC 事件，读取 MongoDB 当前待下载记录并原子认领；采集器不再主动投递 Redis 下载快照。MongoDB 默认每 60 秒扫描补偿待下载记录，集合路由在补偿间隔内缓存。不传 `--datatype` 时处理所有已启用路由，也可与 `--template` 同用；`--template` 支持父模板名和实际集合名：
+下载器按 PostgreSQL 模板分组并关联 `public.ai_collect_template_alias`，以映射的业务 `data_type` 筛选实际集合；未配置映射的已注册模板按 `数据类型_网站或端点标识` 生成集合名。通过独立消费组接收 Debezium Mongo CDC 事件，读取 MongoDB 当前待下载记录并原子认领；采集器不再主动投递 Redis 下载快照。MongoDB 默认每 60 秒扫描补偿待下载记录，集合路由在补偿间隔内缓存。标准 Compose 仅运行一个 `downloader`，不传 `--datatype`，定期刷新并处理所有已启用路由；新增业务类型无需增加下载容器。`--datatype` 与 `--template` 保留供手动排障，指定范围前应停掉覆盖同一范围的通用下载器；`--template` 支持父模板名和实际集合名：
 
 ```bash
 python -m app.downloader.main --datatype news
@@ -255,8 +255,10 @@ npm run dev
 
 ## Syncer
 
-Compose 为 news、patent、navwarn、intelligence、organization、financial_fact、filing、account、tweet
-分别启动独立 Syncer 容器。原 `syncer` 服务负责 news，其余服务为 `syncer-<类型>`（服务名中的下划线改为连字符）。
+Compose 仅运行一个通用 `syncer`，启动时不限定 `data_type` 或模板，统一处理所有已启用集合路由。
+Worker 每 10 秒刷新已发布模板及路由，新增或启用业务类型会自动纳入消费，无需新增 `syncer-<类型>` 容器。
+下载器和同步器的 CDC 消费与 MongoDB 补偿扫描均排除维护暂停的来源 Topic 和业务输出 Topic，统一实例不会绕过既有暂停范围。
+独立的 `postgres-cdc-syncer` 负责 PostgreSQL CDC 转发，与 MongoDB 到 Kafka 的 `syncer` 职责不同。
 每批最多处理 50 条，进程内最多 10 个协程同时发送及回写状态；Kafka 中每条记录仍是独立消息。
 仅发送成功后标记对应版本为 synced，失败记录保留待重试。
 采集记录落库即标记为 pending，Syncer 查询不依赖下载状态；每条记录下载处理完成后立即原子回写资源、下载状态、更新时间并重置为 pending，不等待同批其他记录。业务写入生成唯一 write_token，下载回写同时递增 download_version；同步确认匹配发送时的 write_token、updated_at 和下载版本，避免同一毫秒内的新业务内容或下载更新被旧同步确认覆盖。历史记录没有 write_token 时仍可同步；旧快照不会确认后来生成新 token 的版本。下载认领也检查相同业务写入标记。
@@ -271,7 +273,7 @@ MongoDB 与 PostgreSQL 的出站统一由 Debezium Connect 捕获，Python Worke
 
 资源下载按模板 `download` 与适配器生成的下载项比较输入签名，普通标题等业务字段更新不重下文件；URL、资源版本、目标资源字段等输入变化时失效对应旧路径并重新排队。纯输入计划随记录冻结到 `_meta.download_plan`，同名模板发布新版本不会改写旧任务；缓存按 `SPIDER_DOWNLOAD_TEMPLATE_CACHE_SECONDS` 刷新，摘要不匹配时立即验证。模板可声明 `version_selector`，适配器可提供 `DownloadItem.version`；同 URL 内容变化而来源未提供版本信息时，系统无法自动判断。历史无签名的文件会安全重验一次；无冻结计划且无法验证历史摘要的记录会明确失败并要求重新采集，不会无限挂起或假报完成。下载认领、资源输入和对象路径均隔离旧版本，业务 ACK 仍使用 `write_token` 与下载版本检查。并发资源更新使用 CAS，仅冲突记录重读，资源变化路径会增加单条数据库请求，不能把离线微基准当成实际数据库吞吐。
 
-PG 各实际已实现层的 current 表写入经 WAL → Debezium → 原始 CDC topic → `postgres-syncer` → 原业务 topic。relay 在同一 Kafka 事务中发送输出与提交源位点，下游消费者使用 `read_committed`；这不等于数据库、算法调用及所有外部系统之间具备端到端 exactly-once。RDS/ODS/TASK/DWD 已存在的业务逻辑保留；DWS/DIM 没有业务 handler、ADS 没有 worker 的部分不被宣称为已实现功能。PG 适配使用事件本身的完整 `after`，不回读最新数据库冒充历史快照；JSONB、金额、微秒时间和空间字段按 Connect schema 解析。缺失 TOAST 数据或无契约的物理删除会阻止位点推进并报告错误，业务软删除仍正常传播。
+PG 各实际已实现层的 current 表写入经 WAL → Debezium → 原始 CDC topic → `postgres-cdc-syncer` → 原业务 topic。relay 在同一 Kafka 事务中发送输出与提交源位点，下游消费者使用 `read_committed`；这不等于数据库、算法调用及所有外部系统之间具备端到端 exactly-once。RDS/ODS/TASK/DWD 已存在的业务逻辑保留；DWS/DIM 没有业务 handler、ADS 没有 worker 的部分不被宣称为已实现功能。PG 适配使用事件本身的完整 `after`，不回读最新数据库冒充历史快照；JSONB、金额、微秒时间和空间字段按 Connect schema 解析。缺失 TOAST 数据或无契约的物理删除会阻止位点推进并报告错误，业务软删除仍正常传播。
 
 工作台在 CDC 模式下拒绝 current 表的物理行删除，防止一个受支持的 UI 操作把 relay 卡在无删除契约的事件上；应通过业务软删除表达失效。普通历史/自定义 schema 继续使用既有主键及权限校验。直接在数据库执行破坏性操作仍需遵守迁移/恢复流程。
 
@@ -291,7 +293,7 @@ docker compose build syncer
 docker compose run --rm --no-deps syncer python -m app.syncer.mongo_cdc --connect-url http://mongo-cdc-connect:8083
 ```
 
-注册采用 `snapshot.mode=no_data`，不全量重发已同步记录，历史待下载/待同步记录由现有扫描补偿处理。确认 connector 正常后，通过现有发布流程重建并重启 crawler、全部下载器及所有正在运行的 `syncer`/`syncer-*` 实例；不要让同一范围的新旧下载器、同步器长期并行运行。验证新增记录、业务更新、下载回写均能到达原业务 topic，并检查同步 ACK/下载心跳没有产生业务消息循环。暂停并恢复 Connect 后应从内部 offset topic 续接；停机超过 oplog 保留窗口时需检查 connector 状态并恢复采集，期间 Mongo 补偿继续处理当前待处理状态。不要删除内部 topic 来重置正常位点。
+注册采用 `snapshot.mode=no_data`，不全量重发已同步记录，历史待下载/待同步记录由现有扫描补偿处理。确认 connector 正常后，通过现有发布流程重建并重启 crawler、`downloader` 和 `syncer`。从分类型部署切换时，先停止旧的分类型或定向下载器、同步器，再启动通用实例，避免同一范围重复处理。验证新增记录、业务更新、下载回写均能到达原业务 topic，并检查同步 ACK/下载心跳没有产生业务消息循环。暂停并恢复 Connect 后应从内部 offset topic 续接；停机超过 oplog 保留窗口时需检查 connector 状态并恢复采集，期间 Mongo 补偿继续处理当前待处理状态。不要删除内部 topic 来重置正常位点。
 
 PG 首次切换须先暂停 ETL 写入并排空旧发送路径，按以下顺序准备。`--prepare` 会修改 publication、REPLICA IDENTITY 与 lineage 列，须在部署环境审阅执行；`--check` 只读，不能与 `--prepare` 同用。准备阶段使用 `SPIDER_PG_URL` 指定的部署 owner/DBA 身份，须具备表迁移及 schema publication 创建权限；准备完成后恢复普通应用凭据，不要给长期复制账号追加 DDL 管理权限。检查、注册由 `SPIDER_PG_CDC_URL` 指定的独立复制账号执行，ETL 应用账号无需持有复制权限。连接串使用完整 SQLAlchemy asyncpg URL，目标数据库须与应用相同。
 
@@ -301,7 +303,7 @@ docker compose run --rm --no-deps rds-worker python -m app.etl.main --init-schem
 docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --prepare
 docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --check
 docker compose run --rm --no-deps syncer python -m app.syncer.postgres_cdc --connect-url http://mongo-cdc-connect:8083
-docker compose up -d postgres-syncer
+docker compose up -d postgres-cdc-syncer
 ```
 
 确认 PG connector/task 为 RUNNING 且 slot 位点有效后再启动 ETL。`SPIDER_ETL_OUTPUT_MODE=debezium` 为默认模式；未具备 publication/slot 时 ETL 会拒绝消费输入，避免先写库而没有变更捕获。默认 `no_data` 只接续注册后的变化，首次注册前的历史数据必须单独回填，不能依赖不存在的旧 slot 补回；若需初始快照可显式选择 `--snapshot-mode initial`，先估算数据库和 Kafka 负载。原始 PG topic 为 `${SPIDER_KAFKA_TOPIC}-postgres-cdc.<schema>.<table>`，不要删除内部位点 topic 或直接重置复制槽。复制槽保留 WAL，须对保留字节、未确认字节及磁盘空间设置部署环境告警。
@@ -334,7 +336,7 @@ ES 默认文档身份使用业务三元组，迁移旧 `record_id` 索引时须�
 
 投产前仍须在测试/预生产环境验证：真实 TLS/ACL、PG15+ publication/新分区、RI FULL/大 JSONB、Kafka 事务中止与重启、Mongo 断线与 oplog 窗口、旧下载结果/并发采集、ES 回填与 alias 回滚；并测端到端 P50/P95/P99、稳定/峰值吞吐、数据库读写/WAL 与 Kafka lag。当前尚无用户确认的容量或延迟目标，也无联调环境，因此真实环境性能与生产验收不能标为通过。
 
-模板与集合的别名映射由 `app/records/collection_routes.py` 查询 `public.ai_collect_template_alias`，供采集、下载和同步共用。表结构由部署迁移维护，业务映射单独配置。映射以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制按类型运行的下载和同步启停，不影响采集写入。模板存在映射时不再回退到同名集合，禁用映射也不会触发回退。
+模板与集合的别名映射由 `app/records/collection_routes.py` 查询 `public.ai_collect_template_alias`，供采集、下载和同步共用。表结构由部署迁移维护，业务映射单独配置。映射以 `template_name` 关联已注册模板，`data_type` 表示该集合的业务类型，`collection_name` 表示实际 MongoDB 集合，`enabled` 控制下载和同步启停，不影响采集写入。模板存在映射时不再回退到同名集合，禁用映射也不会触发回退。
 模板版本沿用 active 优先、更新时间倒序的选择规则；先关联路由再筛选业务类型，因此 SEC 父模板的类型无需改成 organization 或 filing。修改路由在服务刷新路由缓存后生效，已开始的记录继续完成。
 模板的 `download[].collection` 使用实际集合名，变更实际集合时应一并更新对应下载配置。
 
@@ -344,7 +346,7 @@ ES 默认文档身份使用业务三元组，迁移旧 `record_id` 索引时须�
 
 NVD 采集模板 `nvd` / `nvd_feed` 通过别名分别写入 `nvd_vulnerability` / `nvd_feed_vulnerability`；两者的业务类型均为 `vulnerability`。模板标识与物理集合独立，模板改名通过显式路由保留既有集合、记录身份和下游来源。实际集合改名时需同时迁移记录的 `_meta.template`，保留记录 ID、业务内容、下载/同步状态及索引；已有下游数据还需核对 `data_source` 和原始记录元数据，不能仅重放造成来源重复。
 
-例如禁止按类型运行的下载器与 Syncer 处理 SEC 财报集合：
+例如禁止下载器与 Syncer 处理 SEC 财报集合：
 
 ```sql
 UPDATE public.ai_collect_template_alias
@@ -352,7 +354,7 @@ SET enabled = false, updated_at = now()
 WHERE template_name = 'sec_edgar' AND data_type = 'filing';
 ```
 
-重新启用时将 `enabled` 设为 `true`。Syncer 接受任意合法类型名，RDS/ODS 不再为每个类型新增 handler。
+重新启用时将 `enabled` 设为 `true`。通用 Syncer 会在路由刷新后接管该集合；RDS/ODS 不再为每个类型新增 handler。手动排障时仍可限定任意合法类型：
 
 ```bash
 python -m app.syncer.main --data-type financial_fact --batch 50 --concurrency 10
@@ -360,17 +362,17 @@ python -m app.syncer.main --data-type financial_fact --batch 50 --concurrency 10
 
 指定类型后发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 `spider-crawler-financial_fact`。
 不传 `--data-type` 时扫描全部类型，按每条记录的 `_meta.data_type` 自动发送到 `${SPIDER_KAFKA_TOPIC}-<类型>`，例如 organization 和 filing 分别发送到 `-organization` 和 `-filing`；缺少 `_meta.data_type` 的记录保留待处理，不发送到公共 topic。
-同一范围只运行一个 Syncer 实例，勿同时运行全类型旧实例和新的分类型实例，以免重复发送。
+同一范围只运行一个 Syncer 实例；手动运行分类型或定向实例前，应停止覆盖该范围的通用实例，以免重复发送。
 
-新增来源可复用通用模式，不需要增加 Compose 的类型服务：
+Compose 默认使用以下通用模式，新增来源或业务类型无需增加容器：
 
 ```bash
 python -m app.syncer.main
 ```
 
-该模式轮询已发布模板与集合路由；使用它时先停同范围的分类型 Syncer。现有 Compose 保留按已知类型分工的部署方式，不会自动为新类型增加进程。大批历史积压可能延后其他集合；需要单独处理新来源时可使用 `--template <模板或集合名>`。
+该模式定期刷新已发布模板与已启用集合路由，并更新 CDC 订阅；新增业务类型自动按记录的 `_meta.data_type` 发送到对应 topic。禁用路由仍不会被处理。大批历史积压可能延后其他集合；需要单独排障时可使用 `--template <模板或集合名>`。
 
-切换前创建上述类型 topic（分区及副本数按集群配置），停止旧 Syncer，先更新 RDS Worker，再启动分类型 Syncer。
+切换前创建上述类型 topic（分区及副本数按集群配置），停止旧 Syncer，先更新 RDS Worker，再启动通用 Syncer。
 RDS 使用一个正则订阅 Consumer 接收旧 `SPIDER_ETL_RAW_TOPIC` 和 `${SPIDER_KAFKA_TOPIC}-<类型>`；ODS 正则订阅 `${SPIDER_ETL_RDS_TOPIC}-<类型>`。新 topic 无需修改类型列表，分区分配时恢复该分区的 offset，写入成功后再提交。消费组保持原配置；需要并行消费时按 Kafka 分区扩容同组实例。
 
 SAM 两个 MongoDB 集合分别写入 `ts_rds.rds_contract`（`sam_gov_awards`）和
@@ -381,7 +383,7 @@ SAM 两个 MongoDB 集合分别写入 `ts_rds.rds_contract`（`sam_gov_awards`�
 RDS/ODS 在首次处理数据时按统一字段定义自动注册、建表和创建分区，无需单独运行来源注册脚本。
 部署时先创建 `${SPIDER_KAFKA_TOPIC}-contract`、`${SPIDER_KAFKA_TOPIC}-tender`、
 `${SPIDER_ETL_RDS_TOPIC}-contract` 和 `${SPIDER_ETL_RDS_TOPIC}-tender` topic，
-再更新 ODS、RDS、`syncer-contract` 和 `syncer-tender` 服务。
+再更新 ODS、RDS 和通用 `syncer` 服务。
 从旧版本切换前，停止 SAM 采购公告采集与同步，用旧版 RDS/ODS 排空其在途 `contract` 消息。
 将已发布 `sam_gov_opportunities` 的 MinIO YAML、`public.ai_collect_templates.data_type`，
 以及该集合的 `public.ai_collect_template_alias.data_type`（如有）统一改为 `tender`；
@@ -405,7 +407,7 @@ USAspending 合同模板为 `usaspending`，使用免 Key 的官方批量 CSV �
 标准字段提取后，其余业务字段保存在 ODS 的 `attributes`；不确定日期保留原文，未声明单位的数值不换算。
 
 公司与组织统一写入 `ts_rds.rds_organization` 和 `ts_ods.ods_organization`，ODS 保留 CIK、证券代码、交易所及原公司字段。
-采集、Mongo、Syncer 和 RDS/ODS 的业务类型统一为 `organization`，使用 `syncer-organization`、`spider-crawler-organization`、`etl-rds-organization`。
+采集、Mongo、Syncer 和 RDS/ODS 的业务类型统一为 `organization`，由通用 `syncer` 发送至 `spider-crawler-organization`，RDS 输出至 `etl-rds-organization`。
 SEC 组织的集合名和 `data_source` 为 `sec_edgar_company`；GCAT 组织集合和来源为 `organization_jonathan`。
 SEC 的 companyfacts 接口由发布的采集适配器单独请求、展开观测值，直接写入 `sec_edgar_financial_fact`。组织采集与仓储不再接收或拆分 facts；事实身份与去重规则也随 SEC 适配器发布。`financial_fact` 单独经过 Syncer、RDS、ODS，修订标记等业务派生由其 normalizer 完成。
 GCAT 模板技术标识 `jonathan_organizations` 保持不变。
@@ -424,7 +426,7 @@ GCAT 模板技术标识 `jonathan_organizations` 保持不变。
 
 部署时先暂停相关采集、下载、Syncer、旧 RDS 和旧 ODS，再启动新版进程。
 为每个新增类型创建 `${SPIDER_KAFKA_TOPIC}-<类型>` 与 `${SPIDER_ETL_RDS_TOPIC}-<类型>` topic 后，
-启动对应 Syncer，例如 `python -m app.syncer.main --data-type satellite`。
+启动通用 Syncer：`python -m app.syncer.main`；手动排障时可用 `--data-type satellite` 限定范围。
 组织改名时的历史记录按原身份置为待同步，从 `organization` topic 重放。
 
 目录表通过共同业务标识直接 JOIN，多值标识保留为本记录的 JSONB 数组，不维护关系表或待解析表。

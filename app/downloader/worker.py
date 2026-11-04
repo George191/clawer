@@ -22,7 +22,7 @@ from app.engine.template_loader import TemplateLoader
 from app.logger import get_logger
 from app.models.template import SiteTemplate
 from app.records.asset_store import AssetStore
-from app.records.change_feed import MongoChangeFeed
+from app.records.change_feed import MongoChangeFeed, mongo_cdc_topic_prefix
 from app.records.collection_routes import collection_route_store
 from app.records.download_resources import (
     decode_manifest,
@@ -179,6 +179,12 @@ class DownloadWorker:
         routes = await collection_route_store.list_by_data_type(
             self._data_type, self._template_name,
         )
+        paused = set(settings.kafka_paused_topics)
+        routes = [
+            route for route in routes
+            if f"{mongo_cdc_topic_prefix()}.{settings.db_name}.{route['collection_name']}" not in paused
+            and f"{settings.kafka_topic}-{route['data_type']}" not in paused
+        ]
         self._collection_routes = {route["collection_name"]: route for route in routes}
         self._routes_refreshed_at = now
         self._collections = tuple(self._collection_routes)
