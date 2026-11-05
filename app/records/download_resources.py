@@ -223,5 +223,6 @@ def prepare_download_state(
         meta.pop("download_claim_token", None)
         meta.pop("download_claimed_at", None)
         meta.pop("download_error", None)
+        meta.pop("download_retry_at", None)
         return True
     return False

@@ -3,7 +3,7 @@
 功能
 ----
 - 记录 CRUD：支持单条/批量保存、去重（按 record_id）
-- 下载状态管理：pending → downloaded / no_assets / failed
+- 下载状态管理：pending → downloading → downloaded / no_assets，异常返回 pending
 - 同步状态管理：pending → synced
 - 查询接口：按 sample_id / download_status 筛选记录
 - 索引自动创建：record_id 唯一索引、download_status/sync_status 查询索引
@@ -40,7 +40,7 @@ logger = get_logger(__name__)
 
 _DOWNLOAD_META_FIELDS = frozenset({
     "download_status", "download_version", "download_attempts", "download_inputs", "downloaded_inputs", "download_plan",
-    "download_claim_token", "download_claimed_at",
+    "download_claim_token", "download_claimed_at", "download_retry_at", "download_error",
 })
 
 
@@ -101,6 +101,7 @@ def _record_update(
                 paths.append(path)
         update["$unset"] = dict.fromkeys([
             *paths, "_meta.download_claim_token", "_meta.download_claimed_at", "_meta.download_error",
+            "_meta.download_retry_at",
         ], "")
     if not fields:
         update.pop("$set")
@@ -592,6 +593,7 @@ class MongoRecordStore(MongoClient, RecordStore):
                     set_fields["assets"] = record["assets"]
                 unset_fields = dict.fromkeys((
                     "_meta.download_claim_token", "_meta.download_claimed_at", "_meta.download_error",
+                    "_meta.download_retry_at",
                 ), "")
             query = {
                 "_meta.record_id": record_id, "_meta.write_token": meta.get("write_token"),
@@ -619,6 +621,11 @@ class MongoRecordStore(MongoClient, RecordStore):
         collection = await self._get_collection(template_name)
         fields_to_unset = {
             "_meta.download_claim_token": "",
+            "_meta.download_claimed_at": "",
+            **dict.fromkeys((
+                field for field in ("_meta.download_retry_at", "_meta.download_error")
+                if field not in updates
+            ), ""),
             **dict.fromkeys(unset_fields or (), ""),
         }
         query = {"_meta.record_id": record_id}
@@ -780,7 +787,13 @@ class MongoRecordStore(MongoClient, RecordStore):
 
     @staticmethod
     def _download_claim_filter() -> dict[str, Any]:
-        return {"_meta.download_status": "pending"}
+        return {
+            "_meta.download_status": "pending",
+            "$or": [
+                {"_meta.download_retry_at": None},
+                {"_meta.download_retry_at": {"$lte": datetime.now(timezone.utc)}},
+            ],
+        }
 
     async def claim_download(self, record: dict[str, Any]) -> dict[str, Any] | None:
         """Claim a delivered snapshot only while its persisted version is current."""

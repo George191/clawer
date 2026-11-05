@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from time import perf_counter
@@ -10,7 +11,7 @@ from typing import Any
 
 import filetype
 
-from app.base.http import DownloadError, DownloadResponse
+from app.base.http import DownloadError
 from app.config.settings import settings
 from app.downloader.adapters import (
     DownloadItem,
@@ -258,9 +259,11 @@ class DownloadWorker:
         reused_count = 0
         not_found_count = 0
         failed = 0
+        errors: list[str] = []
         processed = 0
         status = "preparing"
         last_notified = 0.0
+        writing_result = False
 
         async def notify(*, force: bool = False) -> None:
             nonlocal last_notified
@@ -293,7 +296,10 @@ class DownloadWorker:
             await notify(force=True)
             template = await self._load_template(template_name)
             if template is None:
-                await self._mongo.release_download_claim(collection, record_id, claim_token)
+                writing_result = True
+                await self._update_mongo(collection, record_id, self._retry_updates(
+                    "Download template unavailable",
+                ), "pending", claim_token)
                 status = "pending_retry"
                 return
 
@@ -307,14 +313,18 @@ class DownloadWorker:
                 if template is not None:
                     items, manifest = self._plan_download(record, template, template_name, data_type)
                 if template is None:
-                    await self._mongo.release_download_claim(collection, record_id, claim_token)
+                    writing_result = True
+                    await self._update_mongo(collection, record_id, self._retry_updates(
+                        "Download template unavailable",
+                    ), "pending", claim_token)
                     status = "pending_retry"
                     return
             if "download_inputs" in meta and manifest != decode_manifest(meta["download_inputs"]):
-                await self._update_mongo(collection, record_id, {
-                    "_meta.download_error": "Resource plan does not match saved inputs; recrawl required",
-                }, "failed", claim_token)
-                status = "failed"
+                writing_result = True
+                await self._update_mongo(collection, record_id, self._retry_updates(
+                    "Resource plan does not match saved inputs; recrawl required",
+                ), "pending", claim_token)
+                status = "pending_retry"
                 logger.error("Download resource plan cannot be verified; recrawl required: %s", record_id)
                 return
             items_total = len(items)
@@ -322,6 +332,7 @@ class DownloadWorker:
             stale_assets = set(decode_manifest(meta.get("download_inputs"))) - set(manifest)
             stale_assets.update(key for key, fingerprint in manifest.items() if completed_inputs.get(key) != fingerprint)
             if not items:
+                writing_result = True
                 completed = await self._update_mongo(collection, record_id, {
                     "_meta.download_inputs": [], "_meta.downloaded_inputs": [], "_meta.download_plan": [],
                 }, "no_assets", claim_token, unset_fields=stale_assets)
@@ -340,6 +351,15 @@ class DownloadWorker:
             for item in items:
                 fingerprint = item_fingerprint(item)
                 source = source_fingerprint(item)
+                previous = get_nested_value(record, item.asset_key)
+                if (completed_inputs.get(item.asset_key) == fingerprint
+                        and isinstance(previous, dict) and previous.get("status_code") == 404):
+                    updates[item.asset_key] = previous
+                    verified_inputs[item.asset_key] = fingerprint
+                    not_found_count += 1
+                    processed += 1
+                    await notify()
+                    continue
                 existing = downloaded_urls.get(source)
                 if existing:
                     updates[item.asset_key] = existing
@@ -361,6 +381,7 @@ class DownloadWorker:
                         exc,
                     )
                     failed += 1
+                    errors.append(f"{type(exc).__name__}: {exc}")
                     processed += 1
                     await notify()
                     continue
@@ -379,19 +400,23 @@ class DownloadWorker:
                 "_meta.download_plan": encode_plan(items),
                 "_meta.downloaded_inputs": encode_manifest(verified_inputs),
             })
+            download_status = "pending" if failed else "downloaded"
+            if failed:
+                updates.update(self._retry_updates("; ".join(errors)))
+            writing_result = True
             completed = await self._update_mongo(
                 collection, record_id, updates,
-                "failed" if failed else "downloaded",
+                download_status,
                 claim_token, unset_fields=stale_assets - set(updates),
             )
             if completed:
-                status = "failed" if failed else "complete"
+                status = "pending_retry" if failed else "complete"
                 logger.log(
                     logging.WARNING if failed else logging.DEBUG,
                     "DownloadWorker: record completed | collection=%s template=%s datatype=%s record=%s status=%s "
                     "| downloaded=%d reused=%d not_found=%d failed=%d elapsed=%.2fs",
                     collection, template_name, data_type, record_id,
-                    "failed" if failed else "downloaded",
+                    download_status,
                     downloaded_count, reused_count, not_found_count, failed,
                     perf_counter() - started_at,
                     extra={"skip_task_log_capture": not failed},
@@ -414,13 +439,17 @@ class DownloadWorker:
             status = "cancelled"
             raise
         except Exception as exc:
-            status = "failed"
+            # A result write may already have committed. Let the persisted state
+            # or the expired claim drive recovery instead of overwriting it.
+            if writing_result:
+                status = "pending_retry"
+                raise
+            status = "pending_retry"
             logger.error("DownloadWorker failed for %s | error=%s: %s", record_id, type(exc).__name__, exc)
-            heartbeat = self._claim_heartbeats.get(asyncio.current_task())
-            if heartbeat is not None:
-                heartbeat.cancel()
-            await self._mongo.update_file_status(
-                collection, record_id, "failed", claim_token=claim_token,
+            error = f"{type(exc).__name__}: {exc}"
+            await self._update_mongo(
+                collection, record_id,
+                self._retry_updates(error), "pending", claim_token,
             )
         finally:
             await notify(force=True)
@@ -432,6 +461,12 @@ class DownloadWorker:
         items = download_items(record, template, template_name, data_type)
         return items, resource_manifest(items)
 
+    def _retry_updates(self, error: str) -> dict[str, Any]:
+        return {
+            "_meta.download_retry_at": datetime.now(timezone.utc) + timedelta(seconds=max(self._poll_interval, 0.5)),
+            "_meta.download_error": error,
+        }
+
     async def _download_item(
         self,
         item: DownloadItem,
@@ -441,30 +476,12 @@ class DownloadWorker:
         use_proxy: bool,
     ) -> str | None:
         started_at = perf_counter()
-        response: DownloadResponse | None = None
-        for attempt in range(5):
-            try:
-                response = await self._http.download_response(item.url, use_proxy=use_proxy)
-                break
-            except Exception as exc:
-                status_code = HttpClient._error_status_code(exc)
-                if status_code == 404:
-                    return None
-                if status_code and status_code >= 400 and status_code not in settings.http_retry_on_statuses:
-                    raise
-                logger.warning(
-                    "DownloadWorker: retry %d/5 for %s | error=%s: %s | status=%s",
-                    attempt + 1,
-                    item.url,
-                    type(exc).__name__,
-                    exc,
-                    status_code or 0,
-                )
-                if attempt == 4:
-                    raise
-                await asyncio.sleep(min(2 ** attempt, 8))
-        if response is None:
-            return None
+        try:
+            response = await self._http.download_response(item.url, use_proxy=use_proxy)
+        except Exception as exc:
+            if HttpClient._error_status_code(exc) == 404:
+                return None
+            raise
         response_data = response.data
         content_type = response.content_type or "application/octet-stream"
         filename = item.filename
@@ -481,7 +498,7 @@ class DownloadWorker:
             response_data,
             template_name,
             data_type,
-            f"{record_id}/{source_fingerprint(item)}/{filename}",
+            f"{record_id}/{source_fingerprint(item)}/{hashlib.sha256(response_data).hexdigest()}/{filename}",
             content_type,
         )
         logger.debug(

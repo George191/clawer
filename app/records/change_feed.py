@@ -26,6 +26,7 @@ MONGO_CDC_GROUP_PREFIX = "spider-mongo-cdc-"
 _CONTROL_FIELDS = frozenset({
     "_meta.sync_status", "_meta.synced_at", "_meta.download_status",
     "_meta.download_claim_token", "_meta.download_claimed_at", "_meta.download_attempts",
+    "_meta.download_retry_at",
 })
 
 
@@ -182,7 +183,10 @@ class MongoChangeFeed(MongoClient):
         if ids:
             await self._ensure_connection()
             status_filter = (
-                {"_meta.download_status": "pending"} if self._role == "downloader"
+                {
+                    "_meta.download_status": "pending",
+                    "_meta.download_retry_at": None,
+                } if self._role == "downloader"
                 else {"_meta.sync_status": {"$ne": "synced"}}
             )
             for name, document_ids in ids.items():

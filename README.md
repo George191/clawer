@@ -131,7 +131,9 @@ python -m app.downloader.main --template ssc_news --datatype=news
 python -m app.downloader.main --template sec_edgar --datatype filing
 ```
 
-下载并发使用 `SPIDER_DOWNLOAD_ASSET_CONCURRENCY`（默认 64），实际同时处理记录数不超过 `--batch`；完成一条即补充下一条，不等待整批中最慢的下载，每条记录内的资源仍依次下载。仅领取 `pending` 记录，认领须匹配 MongoDB 当前版本。活动下载每 60 秒续租，超过 5 分钟无心跳的 `downloading` 在低频补偿时恢复为 `pending`；旧认领令牌不能回写结果。正常取消会释放认领，记录结束时释放对应的 HTTP 会话和代理租约。升级时重启所有下载器，避免无心跳的旧版进程与新版回收同时运行。
+下载并发使用 `SPIDER_DOWNLOAD_ASSET_CONCURRENCY`（默认 64），实际同时处理记录数不超过 `--batch`；完成一条即补充下一条，不等待整批中最慢的下载，每条记录内的资源仍依次下载。仅领取到期的 `pending` 记录，认领须匹配 MongoDB 当前版本。活动下载每 60 秒续租，超过 5 分钟无心跳的 `downloading` 在低频补偿时恢复为 `pending`；旧认领令牌不能回写结果。正常取消会释放认领，记录结束时释放对应的 HTTP 会话和代理租约。升级时重启所有下载器，避免无心跳的旧版进程与新版回收同时运行。
+
+每轮每个资源只尝试一次，异常后立即继续下一个资源，不在任务内连续重试或等待。未完成记录保留为 `pending`，持久化错误及下一次可领取时间，至少等待一个 `--poll` 间隔（默认 60 秒）后由补偿扫描再次触发；CDC 不直接重新领取失败任务，不再写入永久失败状态。已成功资源及明确的 HTTP 404 缺失标记会保留，后续只处理未完成资源；404 沿用明确缺失并完成的语义。结果回写失败时保留 Mongo 状态或过期认领作为恢复依据。新上传对象路径包含内容 SHA-256，避免失效 worker 的迟到上传覆盖已发布文件，已有资源路径继续兼容。
 
 ## 外部基础设施
 
@@ -273,7 +275,7 @@ MongoDB `pending` 状态保留为补偿依据：Syncer 默认每 60 秒扫描一
 
 MongoDB 与 PostgreSQL 的出站统一由 Debezium Connect 捕获，Python Worker 保留采集、下载、标准化及算法职责。Mongo 必须为支持 Change Streams 的副本集或分片集群；账号需要目标数据库的读取及 `changeStream` 权限，Connect 必须能访问拓扑公布的全部节点。Postgres 使用 `pgoutput`，本实现要求 PostgreSQL 15+、`wal_level=logical`、发布表完整行镜像和持久复制槽。部署使用 Debezium Connect 3.4，参见 [MongoDB 文档](https://debezium.io/documentation/reference/3.4/connectors/mongodb.html)及 [PostgreSQL 文档](https://debezium.io/documentation/reference/3.4/connectors/postgresql.html)。
 
-资源下载按模板 `download` 与适配器生成的下载项比较输入签名，普通标题等业务字段更新不重下文件；URL、资源版本、目标资源字段等输入变化时失效对应旧路径并重新排队。纯输入计划随记录冻结到 `_meta.download_plan`，同名模板发布新版本不会改写旧任务；缓存按 `SPIDER_DOWNLOAD_TEMPLATE_CACHE_SECONDS` 刷新，摘要不匹配时立即验证。模板可声明 `version_selector`，适配器可提供 `DownloadItem.version`；同 URL 内容变化而来源未提供版本信息时，系统无法自动判断。历史无签名的文件会安全重验一次；无冻结计划且无法验证历史摘要的记录会明确失败并要求重新采集，不会无限挂起或假报完成。下载认领、资源输入和对象路径均隔离旧版本，业务 ACK 仍使用 `write_token` 与下载版本检查。并发资源更新使用 CAS，仅冲突记录重读，资源变化路径会增加单条数据库请求，不能把离线微基准当成实际数据库吞吐。
+资源下载按模板 `download` 与适配器生成的下载项比较输入签名，普通标题等业务字段更新不重下文件；URL、资源版本、目标资源字段等输入变化时失效对应旧路径并重新排队。纯输入计划随记录冻结到 `_meta.download_plan`，同名模板发布新版本不会改写旧任务；缓存按 `SPIDER_DOWNLOAD_TEMPLATE_CACHE_SECONDS` 刷新，摘要不匹配时立即验证。模板可声明 `version_selector`，适配器可提供 `DownloadItem.version`；同 URL 内容变化而来源未提供版本信息时，系统无法自动判断。历史无签名的文件会安全重验一次；无冻结计划且无法验证历史摘要的记录会保留错误并由补扫持续触发，直到输入修复或重新采集，不会假报完成。下载认领、资源输入和对象路径均隔离旧版本，业务 ACK 仍使用 `write_token` 与下载版本检查。并发资源更新使用 CAS，仅冲突记录重读，资源变化路径会增加单条数据库请求，不能把离线微基准当成实际数据库吞吐。
 
 PG 各实际已实现层的 current 表写入经 WAL → Debezium → 原始 CDC topic → `postgres-cdc-syncer` → 原业务 topic。relay 在同一 Kafka 事务中发送输出与提交源位点，下游消费者使用 `read_committed`；这不等于数据库、算法调用及所有外部系统之间具备端到端 exactly-once。RDS/ODS/TASK/DWD 已存在的业务逻辑保留；DWS/DIM 没有业务 handler、ADS 没有 worker 的部分不被宣称为已实现功能。PG 适配使用事件本身的完整 `after`，不回读最新数据库冒充历史快照；JSONB、金额、微秒时间和空间字段按 Connect schema 解析。缺失 TOAST 数据或无契约的物理删除会阻止位点推进并报告错误，业务软删除仍正常传播。
 
