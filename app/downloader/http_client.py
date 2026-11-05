@@ -21,7 +21,7 @@ import weakref
 from io import BytesIO
 from urllib.parse import urlsplit, urlunsplit
 
-from curl_cffi import CurlECode, CurlOpt
+from curl_cffi import CurlECode, CurlError, CurlOpt
 from curl_cffi import requests as curl_requests
 from curl_cffi.requests.exceptions import HTTPError, ProxyError, RequestException
 
@@ -146,30 +146,28 @@ def _init_anti_crawl(*, use_proxy: bool = True):
 
 class _ResponseHeaderSession(curl_requests.AsyncSession):
     def _parse_response(self, curl, buffer, header_buffer, *args, **kwargs):
+        transport_error = sys.exc_info()[1]
+        original_header_buffer = header_buffer
         # curl accepts lone CR in header values; splitlines() treats it as a new header.
         raw_headers = header_buffer.getvalue()
         normalized = re.sub(rb"\r(?!\n)", b" ", raw_headers)
         if normalized != raw_headers:
             header_buffer = BytesIO(normalized)
-        # curl may leave partial headers after a transport failure. Keep those
-        # failures retryable instead of leaking Headers' ValueError/IndexError.
-        has_header = False
-        malformed = False
-        for line in normalized.splitlines():
-            if not line.strip():
-                continue
-            if line.startswith(b"HTTP/"):
-                has_header = False
-                malformed = False
-            elif line.startswith((b" ", b"\t")):
-                if not has_header:
-                    raise RequestException("Invalid HTTP response header", CurlECode.WEIRD_SERVER_REPLY)
-            else:
-                has_header = True
-                malformed = malformed or b":" not in line
-        if malformed:
-            raise RequestException("Invalid HTTP response header", CurlECode.WEIRD_SERVER_REPLY)
-        return super()._parse_response(curl, buffer, header_buffer, *args, **kwargs)
+        try:
+            return super()._parse_response(curl, buffer, header_buffer, *args, **kwargs)
+        except (ValueError, IndexError) as error:
+            if isinstance(transport_error, CurlError):
+                # Let curl_cffi wrap the original transport error with its code,
+                # message and response status, even when its headers are partial.
+                # Streaming requests parse this same buffer again in the caller.
+                original_header_buffer.seek(0)
+                original_header_buffer.truncate()
+                return super()._parse_response(
+                    curl, buffer, original_header_buffer, *args, **kwargs,
+                )
+            raise RequestException(
+                f"{type(error).__name__}: {error}", CurlECode.WEIRD_SERVER_REPLY,
+            ) from error
 
 
 class HttpClient:
