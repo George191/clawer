@@ -86,6 +86,13 @@ class EtlLayers:
         async with self.session() as session:
             result = await session.execute(text("""
                 SELECT c.relname AS name, c.relkind = 'p' AS partitioned,
+                       (SELECT CASE WHEN count(DISTINCT a.data_type) = 1
+                                    THEN min(a.data_type) END
+                        FROM public.ai_collect_template_alias a
+                        WHERE regexp_replace(regexp_replace(c.relname,
+                                  '^(rds|ods|raw|dwd|dws|dim|ads|stg|etl|tmp|dw|dm|task)_', ''),
+                                  '_p[0-9]{1,3}$', '')
+                              IN (a.collection_name, a.template_name)) AS data_type,
                        obj_description(c.oid, 'pg_class') AS description,
                        COALESCE((SELECT sum(GREATEST(0, s.n_live_tup))
                          FROM pg_stat_all_tables s
@@ -99,7 +106,7 @@ class EtlLayers:
                   AND NOT c.relispartition ORDER BY c.relname
             """), {"schema": schema})
             rows = result.mappings().all()
-        return [{"name": row["name"], "schemaName": schema,
+        return [{"name": row["name"], "schemaName": schema, "dataType": row["data_type"] or "",
                  "tableRole": "history" if schema.endswith("_hist") else "current",
                  "partitioned": row["partitioned"], "rowCount": int(row["rows"]),
                  "size": row["size"], "updatedAt": "", "description": row["description"] or "",

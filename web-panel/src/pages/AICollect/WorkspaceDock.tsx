@@ -36,7 +36,6 @@ import {
   UploadOutlined,
   UserOutlined,
   WarningOutlined,
-  WechatOutlined,
   WifiOutlined,
 } from '@ant-design/icons';
 import {
@@ -58,7 +57,7 @@ import {
   type WorkspaceTemplate,
 } from '@/services/aiApi';
 import { useWebSocket } from '@/hooks/useWebSocket';
-import SearchEngineIcon, { inferSearchEngine, searchEngineLabels } from '@/components/SearchEngineIcon';
+import { inferSearchEngine, searchEngineLabels } from '@/components/SearchEngineIcon';
 import workspacePalette from './palette';
 import { ReleaseArchiveIcon, ReleaseDraftIcon } from './releaseIcons';
 import { isOlderWorkerNotice, latestWorkerNotice, parseWorkerNotice, workerNoticeStatusLabel } from './workerNotices';
@@ -179,7 +178,6 @@ interface TaskRow extends DockTask {
 interface SiteProfile {
   kind: SiteKind;
   brand: string;
-  logo: React.ReactNode;
   hue: string;
   faviconUrl?: string;
 }
@@ -789,16 +787,16 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
 };
 
 const siteProfileRegistry: Record<string, SiteProfile> = {
-  acticle_wechat: { kind: 'acticle', brand: 'WeChat', logo: <WechatOutlined style={{ color: '#07C160', fontSize: 14 }} />, hue: '#07C160' },
-  wechat_acticle: { kind: 'acticle', brand: 'WeChat', logo: <WechatOutlined style={{ color: '#07C160', fontSize: 14 }} />, hue: '#07C160' },
-  twitter: { kind: 'social_media', brand: 'X / Twitter', logo: 'X', hue: '#75CBFF' },
-  google_patent_contract: { kind: 'patent', brand: 'Google Patent', logo: 'GP', hue: '#7BA8FF' },
-  sealagom_navwarn_contract: { kind: 'warning', brand: 'Navwarn', logo: 'NW', hue: '#66D5A3' },
-  zdopen_notice_contract: { kind: 'news', brand: 'ZD Open', logo: 'ZD', hue: '#B08CFF' },
-  pdf_document_extract: { kind: 'intelligence', brand: 'PDF Source', logo: 'PD', hue: '#7DD3FC' },
-  quality_missing_scan: { kind: 'signal', brand: 'Quality Gate', logo: 'QG', hue: '#62D6C8' },
-  legacy_notice_parser: { kind: 'news', brand: 'Legacy Notice', logo: 'LN', hue: '#94A3B8' },
-  market_data_contract: { kind: 'intelligence', brand: 'Market Data', logo: 'MD', hue: '#5FA8FF' },
+  acticle_wechat: { kind: 'acticle', brand: 'WeChat', hue: '#07C160' },
+  wechat_acticle: { kind: 'acticle', brand: 'WeChat', hue: '#07C160' },
+  twitter: { kind: 'social_media', brand: 'X / Twitter', hue: '#75CBFF' },
+  google_patent_contract: { kind: 'patent', brand: 'Google Patent', hue: '#7BA8FF' },
+  sealagom_navwarn_contract: { kind: 'warning', brand: 'Navwarn', hue: '#66D5A3' },
+  zdopen_notice_contract: { kind: 'news', brand: 'ZD Open', hue: '#B08CFF' },
+  pdf_document_extract: { kind: 'intelligence', brand: 'PDF Source', hue: '#7DD3FC' },
+  quality_missing_scan: { kind: 'signal', brand: 'Quality Gate', hue: '#62D6C8' },
+  legacy_notice_parser: { kind: 'news', brand: 'Legacy Notice', hue: '#94A3B8' },
+  market_data_contract: { kind: 'intelligence', brand: 'Market Data', hue: '#5FA8FF' },
 };
 
 const parseCompactNumber = (value: string) => {
@@ -982,86 +980,17 @@ const toAvatarLabel = (value: string) => {
   return initials || 'AI';
 };
 
-const templateKindHints: Record<string, SiteKind> = {
-  arstechnica: 'news',
-  blacksky_posts: 'news',
-  blacksky_press: 'news',
-  breakingdefense: 'news',
-  clearspace: 'news',
-  cve: 'vulnerability',
-  ddlregistry: 'system',
-  defenseone: 'news',
-  esa_discos_fragmentations: 'debrisevents',
-  esa_discos_launch_vehicles: 'launchvehicles',
-  findgs: 'groundstations',
-  gunter_launch: 'launchinfo',
-  in_the_sky: 'satellite',
-  itu_wic: 'frequency',
-  jonathan_platforms: 'launchsites',
-  jonathan_points: 'launchsites',
-  jonathan_sites: 'launchsites',
-  keeptrack: 'satellite',
-  launch_nro: 'launchinfo',
-  launch_nssl: 'launchinfo',
-  launch_ussf: 'launchinfo',
-  mike_mccants: 'orbital',
-  nanosats: 'satellite',
-  navwarn: 'warning',
-  newspace: 'constellation',
-  nga: 'warning',
-  nvd: 'vulnerability',
-  nvd_api: 'vulnerability',
-  nvd_feed: 'vulnerability',
-  organization: 'organizations',
-  planet: 'intelligence',
-  planet_investors: 'news',
-  planet_pulse: 'news',
-  russianspaceweb: 'news',
-  sam_gov_awards: 'contract',
-  sam_gov_opportunities: 'contract',
-  satblog: 'news',
-  satellite_today: 'news',
-  satnogs_satellites: 'satellite',
-  satnogs_transmitters: 'frequency',
-  sealagom: 'warning',
-  sec_edgar: 'financial_report',
-  social_account: 'social_media',
-  social_content: 'social_media',
-  social_content_hashtag: 'social_media',
-  social_hashtag: 'social_media',
-  social_interaction: 'social_media',
-  space_com: 'news',
-  space_launch_now: 'launchinfo',
-  space_launch_now_launches: 'launchinfo',
-  spacedaily: 'news',
-  spaceflightnow: 'news',
-  ssc_press: 'news',
-  starlink: 'groundstations',
-  stk: 'satellite',
-  thespacedevs: 'news',
-  tweet: 'social_media',
-  twitter: 'social_media',
-  unseenlabs: 'news',
-  usaspending: 'contract',
-  wikipedia_nro: 'launchinfo',
-  wikipedia_nssl: 'launchinfo',
-  wikipedia_usa: 'satellite',
-  wikipedia_ussf: 'launchinfo',
-  xingditansuo: 'constellation',
-};
-
 export const inferSiteKind = (value: string, fallback?: string): SiteKind => {
   if (inferSearchEngine(value)) return 'search_result';
   const text = value.replace(/@.*$/, '').trim().toLowerCase();
   // Layer tables carry warehouse prefixes and partition suffixes
-  // (ods_contract_p31); strip them so hints/SiteKind lookup still hits.
+  // (ods_contract_p31); strip them so the data type lookup still hits.
   const stripped = text
     .replace(/^(ods|raw|dwd|dim|ads|stg|etl|tmp|dw|dm)_/, '')
     .replace(/_p\d{1,3}$/, '');
   if (text === 'other') return 'generic';
   for (const key of [text, stripped]) {
     if (Object.prototype.hasOwnProperty.call(siteKindMeta, key)) return key as SiteKind;
-    if (Object.prototype.hasOwnProperty.call(templateKindHints, key)) return templateKindHints[key];
     if (Object.prototype.hasOwnProperty.call(siteProfileRegistry, key)) return siteProfileRegistry[key].kind;
     const namedKind = (Object.keys(siteKindMeta) as SiteKind[]).find((kind) => (
       key.startsWith(`${kind}_`) || key.endsWith(`_${kind}`)
@@ -1086,8 +1015,7 @@ const deriveBrandFromKey = (value: string) => {
     .filter(Boolean);
   const words = normalized.slice(0, 2).map((part) => part.charAt(0).toUpperCase() + part.slice(1));
   const brand = words.join(' ') || 'Source';
-  const logo = words.map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'SC';
-  return { brand, logo };
+  return { brand };
 };
 
 const resolveSiteProfile = (value: string, dataType?: string): SiteProfile => {
@@ -1097,7 +1025,6 @@ const resolveSiteProfile = (value: string, dataType?: string): SiteProfile => {
     return {
       kind: 'search_result',
       brand: searchEngineLabels[searchEngine],
-      logo: <SearchEngineIcon engine={searchEngine} />,
       hue: searchEngine === 'duckduckgo' ? '#DE5833' : searchEngine === 'bing' ? '#008373' : searchEngine === 'brave' ? '#FB542B' : '#4285F4',
     };
   }
@@ -1109,7 +1036,6 @@ const resolveSiteProfile = (value: string, dataType?: string): SiteProfile => {
   return {
     kind,
     brand: derived.brand,
-    logo: derived.logo,
     hue: siteKindMeta[kind].tint,
   };
 };
@@ -1288,12 +1214,12 @@ const TaskPulseGlyph: React.FC<{ kind: SiteKind; active?: boolean; className?: s
 
 const SiteLogoMark: React.FC<{ site: SiteProfile; faviconUrl?: string }> = ({ site, faviconUrl }) => {
   const [failedSource, setFailedSource] = useState('');
-  const source = faviconUrl || site.faviconUrl;
+  const source = faviconUrl ?? site.faviconUrl;
   return (
     <i className="workspace-dock-meta-logo" style={{ '--brand-hue': site.hue } as React.CSSProperties} aria-hidden="true">
       {source && source !== failedSource
         ? <img src={source} alt="" referrerPolicy="no-referrer" onError={() => setFailedSource(source)} />
-        : site.logo}
+        : <CodeOutlined style={{ color: aura.subtle, fontSize: 14 }} />}
     </i>
   );
 };
@@ -1453,7 +1379,6 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           ? {
             ...mappedTask,
             dataType: mappedTask.dataType ?? task.dataType,
-            faviconUrl: mappedTask.faviconUrl ?? task.faviconUrl,
           }
           : task))
         : [mappedTask, ...current]
@@ -1716,7 +1641,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
     const template = templates.find((candidate) => `${candidate.name}@${candidate.version}` === item.template);
     const dataType = item.dataType?.trim() || template?.dataType?.trim() || '';
     const site: SiteProfile = item.taskType === 'celery'
-      ? { kind: 'system', brand: 'System', logo: <SettingOutlined />, hue: siteKindMeta.system.tint }
+      ? { kind: 'system', brand: 'System', hue: siteKindMeta.system.tint }
       : resolveSiteProfile(item.template, dataType);
     return {
       ...item,
@@ -1726,7 +1651,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         ? site
         : {
           ...site,
-          faviconUrl: item.faviconUrl || template?.faviconUrl,
+          faviconUrl: item.faviconUrl ?? template?.faviconUrl,
         },
       display: getTaskDisplay(runtime),
     };

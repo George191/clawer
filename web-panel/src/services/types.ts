@@ -72,6 +72,7 @@ export interface LayerNode {
 
 export interface LayerTable {
   name: string;
+  dataType?: string;
   schemaName?: string;
   tableRole?: 'current' | 'history';
   partitioned?: boolean;
