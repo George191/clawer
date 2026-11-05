@@ -344,6 +344,7 @@ async def _crawl_template(
                 "task_id": task_id,
                 "workspace_task_id": task_id,
                 "workspace_run_id": run_id,
+                "checkpoint_root": checkpoint_store.root,
                 "batch_index": batch_index + 1,
                 "batch_count": batch_count,
                 "incremental_watermark": incremental_watermark,

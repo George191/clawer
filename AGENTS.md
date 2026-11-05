@@ -13,6 +13,11 @@ When instructions conflict, follow them in this order:
 1. Task-specific human instructions
 2. General behavioral guidance in this file
 
+## Bulk Data Migration Execution
+
+- Use **6 separate OS worker processes** and a **batch size limit of 3,000** for subsequent bulk data migrations.
+- Resume committed checkpoints and preserve existing journals when changing the execution layout. Keep worker ranges disjoint and verify complete coverage.
+
 ## 1. Think Before Coding
 
 **Do not assume. Do not hide confusion. Surface tradeoffs.**

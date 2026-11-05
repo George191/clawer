@@ -53,11 +53,13 @@ class PageCheckpointStore:
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
         self.task_id = task_id
         self.namespace = namespace
-        self.key = (
-            f"checkpoint:{task_id}"
+        self.root = (
+            f"checkpoint:{namespace}:{task_id}"
             if task_id
             else f"checkpoint:{namespace}:{digest}"
         )
+        self.key = f"{self.root}:progress" if task_id else self.root
+        self.watermark_key = f"{self.root}:watermark" if task_id else None
         self._connection = RedisClient(
             settings.checkpoint_redis_url,
             client=redis_client,
@@ -113,10 +115,7 @@ class PageCheckpointStore:
             pipeline.hset(self.key, "page", str(page))
             if batch_index is not None:
                 pipeline.hset(self.key, "batch_index", str(batch_index))
-            if self.task_id:
-                pipeline.hset(self.key, "task_id", self.task_id)
-                pipeline.hset(self.key, "template", self.namespace)
-            else:
+            if not self.task_id:
                 pipeline.expire(self.key, CHECKPOINT_TTL_SECONDS)
             await pipeline.execute()
 
@@ -146,8 +145,16 @@ class PageCheckpointStore:
             return None
 
     async def load_watermark(self) -> str | None:
+        async def read_watermark(redis: Any) -> Any:
+            if self.watermark_key:
+                raw = await redis.get(self.watermark_key)
+                if raw is None:
+                    raw = await redis.hget(f"checkpoint:{self.task_id}", "watermark")
+                return raw
+            return await redis.hget(self.key, "watermark")
+
         try:
-            raw = await self._run_redis_operation(lambda redis: redis.hget(self.key, "watermark"))
+            raw = await self._run_redis_operation(read_watermark)
             return str(raw) if raw else None
         except Exception as exc:
             if self.task_id:
@@ -157,18 +164,18 @@ class PageCheckpointStore:
             return None
 
     async def complete(self, watermark: str | None) -> bool:
-        """Remove active recovery fields and retain only a successful watermark."""
+        """Remove page recovery fields and publish a successful watermark."""
         async def complete_checkpoint(redis: Any) -> bool:
-            if not watermark:
+            if not watermark and not self.task_id:
                 await redis.delete(self.key)
                 return True
             pipeline = redis.pipeline(transaction=True)
             pipeline.hdel(self.key, "page", "batch_index")
-            pipeline.hset(self.key, "watermark", watermark)
-            if self.task_id:
-                pipeline.hset(self.key, "task_id", self.task_id)
-                pipeline.hset(self.key, "template", self.namespace)
+            if self.watermark_key:
+                if watermark:
+                    pipeline.set(self.watermark_key, watermark)
             else:
+                pipeline.hset(self.key, "watermark", watermark)
                 pipeline.expire(self.key, CHECKPOINT_TTL_SECONDS)
             await pipeline.execute()
             return True

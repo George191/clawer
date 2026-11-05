@@ -40,7 +40,11 @@ class SnapshotStore:
 
     def __init__(self, checkpoint_store: PageCheckpointStore) -> None:
         self._checkpoint_store = checkpoint_store
-        self.key = f"incremental_snapshot:{checkpoint_store.task_id or checkpoint_store.key}"
+        self.key = (
+            f"{checkpoint_store.root}:snapshot"
+            if checkpoint_store.task_id
+            else f"incremental_snapshot:{checkpoint_store.key}"
+        )
         self._pending: dict[str, str] = {}
 
     async def changed(self, identity: str, content: Any) -> bool:
