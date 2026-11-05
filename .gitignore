@@ -10,6 +10,7 @@
 .codex/
 .pytest_cache/
 
+output/
 docs/
 scripts/
 outputs/
