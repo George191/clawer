@@ -41,6 +41,7 @@ from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
 DOWNLOAD_PROGRESS_INTERVAL_SECONDS = 2
+IDLE_COLLECTION_SCAN_INTERVAL_SECONDS = 600
 
 NOT_FOUND_ASSET = {
     "url": "",
@@ -81,6 +82,7 @@ class DownloadWorker:
         self._collections: tuple[str, ...] | None = None
         self._routes_refreshed_at = 0.0
         self._next_claim_recovery = 0.0
+        self._idle_collections: dict[str, float] = {}
 
     async def run(self) -> None:
         self._running = True
@@ -118,6 +120,7 @@ class DownloadWorker:
                             logger.exception("DownloadWorker: CDC unavailable; continuing Mongo recovery")
                             records = []
                         for record in records:
+                            self._idle_collections.pop((record.get("_meta") or {}).get("template"), None)
                             claimed = await self._mongo.claim_download(record)
                             if claimed is not None:
                                 self._downloads.add(asyncio.create_task(self._run_download(claimed)))
@@ -149,13 +152,16 @@ class DownloadWorker:
         """Read and claim the next pending Mongo records."""
         collections = await self._target_collections()
         now = asyncio.get_running_loop().time()
+        collections = tuple(
+            name for name in collections if now >= self._idle_collections.get(name, 0)
+        )
+        if not collections:
+            return []
         if now >= self._next_claim_recovery:
             stale_before = datetime.now(timezone.utc) - timedelta(minutes=5)
             for collection in collections:
                 await self._mongo.recover_stale_downloads(collection, stale_before)
             self._next_claim_recovery = now + max(self._poll_interval, 1)
-        if not collections:
-            return []
         start = self._collection_cursor % len(collections)
         collections = collections[start:] + collections[:start]
         self._collection_cursor += 1
@@ -167,9 +173,16 @@ class DownloadWorker:
                 break
             count = len(collections) - index
             limit = (remaining + count - 1) // count
-            records.extend(await self._mongo.get_pending_downloads(
+            pending = await self._mongo.get_pending_downloads(
                 template_name=collection, limit=limit, before=before,
-            ))
+            )
+            records.extend(pending)
+            if pending or await self._mongo.has_unfinished_downloads(collection):
+                self._idle_collections.pop(collection, None)
+            else:
+                self._idle_collections[collection] = (
+                    asyncio.get_running_loop().time() + IDLE_COLLECTION_SCAN_INTERVAL_SECONDS
+                )
         return records
 
     async def _target_collections(self) -> tuple[str, ...]:

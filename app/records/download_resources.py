@@ -219,7 +219,7 @@ def prepare_download_state(
         stale = {key for key in previous | verified if verified.get(key) != desired.get(key) or key not in desired}
         invalidate_assets(record, stale)
         meta["downloaded_inputs"] = encode_manifest({key: value for key, value in verified.items() if desired.get(key) == value})
-        meta["download_status"] = "pending"
+        meta["download_status"] = "no_assets" if not existing and not desired and not record.get("assets") else "pending"
         meta.pop("download_claim_token", None)
         meta.pop("download_claimed_at", None)
         meta.pop("download_error", None)

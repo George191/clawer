@@ -785,6 +785,14 @@ class MongoRecordStore(MongoClient, RecordStore):
                     return results
             return results
 
+    async def has_unfinished_downloads(self, template_name: str) -> bool:
+        """Check for queued or claimed work without excluding future retries."""
+        collection = await self._get_collection(template_name)
+        return await collection.find_one(
+            {"_meta.download_status": {"$in": ["pending", "downloading"]}},
+            {"_id": 1},
+        ) is not None
+
     @staticmethod
     def _download_claim_filter() -> dict[str, Any]:
         return {
