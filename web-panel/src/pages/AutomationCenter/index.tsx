@@ -111,6 +111,13 @@ const AutomationCenter: React.FC = () => {
   const tableCardRef = useRef<HTMLDivElement>(null);
   const [tableBodyHeight, setTableBodyHeight] = useState(240);
 
+  useEffect(() => {
+    if (requestedDomain === domain) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('domain', domain);
+    setSearchParams(next, { replace: true });
+  }, [domain, requestedDomain, searchParams, setSearchParams]);
+
   const { connected, send } = useWebSocket(AI_ANALYZE_WS_URL, {
     onMessage: (raw) => {
       const event = JSON.parse(raw);
@@ -170,7 +177,7 @@ const AutomationCenter: React.FC = () => {
 
   const changeSection = (value: string) => {
     setDetail(null);
-    navigate(`/automation/${value}${requestedDomain ? `?domain=${domain}` : ''}`);
+    navigate(`/automation/${value}?domain=${domain}`);
   };
   const changeDomain = (value: DomainFilter) => {
     const next = new URLSearchParams(searchParams);
@@ -413,7 +420,7 @@ const AutomationCenter: React.FC = () => {
       ]} />
       <Space wrap className="automation-filters">
         <Select<DomainFilter>
-          value={requestedDomain && (requestedDomain === 'all' || requestedDomain in domainMeta) ? domain : undefined}
+          value={domain}
           placeholder="Select domain"
           onChange={changeDomain}
           className="automation-domain-select"
