@@ -18,6 +18,13 @@ When instructions conflict, follow them in this order:
 - Use **6 separate OS worker processes** and a **batch size limit of 3,000** for subsequent bulk data migrations.
 - Resume committed checkpoints and preserve existing journals when changing the execution layout. Keep worker ranges disjoint and verify complete coverage.
 
+## Fix Root Causes; Keep Migration Code Out of Production Paths
+
+- Fix incorrect source data, producer behavior, or interface contracts at their origin. Do not accumulate historical-name branches, compatibility shims, or per-run exceptions to hide the underlying problem.
+- Keep one-time data repair and migration logic in standalone scripts. Do not add helpers such as `_source_dedup_guards`, migration transaction lookups, or run-specific state to shared production CDC/ETL code.
+- Do not preserve historical compatibility unless the user explicitly requests it. Prefer one current, correct behavior.
+- Any temporary production patch already introduced must have a concrete removal path, preserve unrelated changes, and be verified as removed. Do not leave cleanup as an indefinite follow-up or claim removal before checking the running server.
+
 ## 1. Think Before Coding
 
 **Do not assume. Do not hide confusion. Surface tradeoffs.**
