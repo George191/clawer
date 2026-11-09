@@ -88,13 +88,13 @@ def normalize_search_result(record: dict[str, Any]) -> dict[str, Any]:
             normalized[name] = safe_str(value)
     expected_engine = {
         "google_search": "google",
-        "search_result_google_search": "google",
+        "search_result_google": "google",
         "duckduckgo_search": "duckduckgo",
-        "search_result_duckduckgo_search": "duckduckgo",
+        "search_result_duckduckgo": "duckduckgo",
         "bing_search": "bing",
-        "search_result_bing_search": "bing",
+        "search_result_bing": "bing",
         "brave_search": "brave",
-        "search_result_brave_search": "brave",
+        "search_result_brave": "brave",
     }.get(normalized["data_source"])
     if expected_engine and normalized["source_engine"] not in (None, expected_engine):
         raise ValueError("Search engine does not match its business source")

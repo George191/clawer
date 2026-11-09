@@ -98,7 +98,7 @@ class TsOds(ETLBase):
         return await self._process_ods_record(message, table)
 
     async def _dispatch_batch(self, messages, owner, partition):
-        # Batch only homogeneous inputs with one output retaining its identity.
+        # Filing fan-out is temporarily batched while its migration backlog drains.
         if not 2 <= len(messages) <= _ODS_BATCH_MAX_ROWS:
             return None
         try:
@@ -109,6 +109,7 @@ class TsOds(ETLBase):
                 return None
             table = validate_table_name(inputs[0].get("data_type"))
             data_source = inputs[0]["data_source"]
+            filing_batch = table == "filing" and data_source == "filing_sec_edgar"
             if (self._table_name and self._table_name != table
                     or any(message.get("data_type") != table
                            or message["data_source"] != data_source for message in inputs)):
@@ -124,7 +125,7 @@ class TsOds(ETLBase):
                 return None
             fields = getattr(module, "ODS_FIELDS", {})
             now = datetime.now(timezone.utc)
-            prepared, sources = [], []
+            prepared, sources, source_outputs = [], [], []
             total_bytes = 0
             for message in inputs:
                 total_bytes += len(json.dumps(message, ensure_ascii=False, default=str).encode("utf8"))
@@ -139,20 +140,39 @@ class TsOds(ETLBase):
                     normalized = await normalized
                 if isinstance(normalized, list) and len(normalized) == 1:
                     normalized = normalized[0]
-                if not isinstance(normalized, dict):
+                if filing_batch and isinstance(normalized, list) and normalized:
+                    normalized_records = normalized
+                elif isinstance(normalized, dict):
+                    normalized_records = [normalized]
+                else:
                     return None
                 source = {
                     **{name: message[name] for name in ("record_id", "data_source", "data_type")},
                     "meta": raw_data.get("_meta") or {},
                     "position": {name: message.get(name) for name in POSITION_COLUMNS},
                 }
-                payload = await self._prepare_payload(normalized, source, fields, now)
-                total_bytes += len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf8"))
-                if (total_bytes > _ODS_BATCH_MAX_BYTES or identity(payload) != identity(source)
-                        or (prepared and payload.keys() != prepared[0].keys())):
+                outputs = []
+                for normalized_record in normalized_records:
+                    payload = await self._prepare_payload(normalized_record, source, fields, now)
+                    total_bytes += len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf8"))
+                    if total_bytes > _ODS_BATCH_MAX_BYTES:
+                        return None
+                    if filing_batch:
+                        if payload["data_type"] not in {"filing", "filing_document"}:
+                            return None
+                    elif (identity(payload) != identity(source)
+                          or (prepared and payload.keys() != prepared[0].keys())):
+                        return None
+                    outputs.append(payload)
+                if (filing_batch and (identity(outputs[0]) != identity(source)
+                                      or any(payload["data_type"] != "filing_document" for payload in outputs[1:]))):
                     return None
-                prepared.append(payload)
+                prepared.extend(outputs)
                 sources.append(source)
+                source_outputs.append(outputs)
+            # Shared document identities require the original sequential semantics.
+            if len({identity(payload) for payload in prepared}) != len(prepared):
+                return None
             if not self._batch_owned(owner, partition):
                 return False
             ordered = sorted(sources, key=identity)
@@ -180,19 +200,29 @@ class TsOds(ETLBase):
                 if len(current) != len(identities) or current.keys() != set(identities):
                     raise ValueError("ODS batch source RDS row is missing")
                 eligible = []
-                for source, payload in zip(sources, prepared, strict=True):
+                for source, outputs in zip(sources, source_outputs, strict=True):
                     if source_revision_current(source, current[identity(source)]):
-                        eligible.append(payload)
+                        eligible.extend(outputs)
                 if not self._batch_owned(owner, partition):
                     raise RuntimeError("ODS batch assignment changed before commit")
                 if eligible:
                     eligible.sort(key=identity)
-                    columns = {name: self._columns[table][name] for name in eligible[0]}
-                    sql = current_insert_sql("ods", table, columns, row_count=len(eligible))
-                    parameters = ({f"{key}_{index}": value for index, payload in enumerate(eligible) for key, value in payload.items()}
-                                  if len(eligible) > 1 else eligible[0])
-                    rows = (await session.execute(text(sql), parameters)).mappings().all()
-                    results = {identity(row): dict(row) for row in rows}
+                    groups = {}
+                    for payload in eligible:
+                        key = (payload["data_type"], tuple(sorted(payload)) if filing_batch else tuple(payload))
+                        groups.setdefault(key, []).append(payload)
+                    for (output_table, names), payloads in sorted(groups.items()):
+                        columns = {name: self._columns[output_table][name] for name in names}
+                        for start in range(0, len(payloads), _ODS_BATCH_MAX_ROWS):
+                            batch = payloads[start:start + _ODS_BATCH_MAX_ROWS]
+                            sql = current_insert_sql("ods", output_table, columns, row_count=len(batch))
+                            parameters = ({f"{key}_{index}": value for index, payload in enumerate(batch) for key, value in payload.items()}
+                                          if len(batch) > 1 else batch[0])
+                            rows = (await session.execute(text(sql), parameters)).mappings().all()
+                            batch_results = {identity(row): dict(row) for row in rows}
+                            if len(batch_results) != len(batch) or batch_results.keys() != {identity(payload) for payload in batch}:
+                                raise ValueError("Unexpected ODS batch RETURNING identities")
+                            results.update(batch_results)
                     if len(results) != len(eligible) or results.keys() != {identity(payload) for payload in eligible}:
                         raise ValueError("Unexpected ODS batch RETURNING identities")
                 if not self._batch_owned(owner, partition):
@@ -211,6 +241,10 @@ class TsOds(ETLBase):
         except Exception:
             logger.exception("%s ODS batch output failed; replaying input batch", self._log_prefix)
             return False
+        if filing_batch and not getattr(self, "_filing_batch_logged", False):
+            logger.info("%s Temporary filing batch active inputs=%d outputs=%d bytes=%d",
+                        self._log_prefix, len(inputs), len(results), total_bytes)
+            self._filing_batch_logged = True
         return True
 
     async def _source_is_current(self, session, source: dict[str, Any]) -> bool:
