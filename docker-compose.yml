@@ -76,9 +76,9 @@ services:
     working_dir: /app
     volumes:
       - crawler-incremental-data:/app/data/incremental
-    command: celery -A app.scheduler.celery_app worker --loglevel=info --concurrency=${SPIDER_CELERY_CONCURRENCY:-5}
+    command: celery -A app.scheduler.celery_app worker --loglevel=info --concurrency=${SPIDER_CELERY_CONCURRENCY:?SPIDER_CELERY_CONCURRENCY must be set in .env}
     deploy:
-      replicas: ${SPIDER_CELERY_WORKER_REPLICAS:-1}
+      replicas: ${SPIDER_CELERY_WORKER_REPLICAS:?SPIDER_CELERY_WORKER_REPLICAS must be set in .env}
     healthcheck:
       test: ["CMD-SHELL", "celery -A app.scheduler.celery_app inspect ping --destination celery@$$HOSTNAME --timeout 5"]
       interval: 60s
@@ -195,7 +195,7 @@ services:
       web:
         condition: service_healthy
     ports:
-      - "${SPIDER_HTTP_PORT:-80}:80"
+      - "${SPIDER_HTTP_PORT:?SPIDER_HTTP_PORT must be set in .env}:80"
     volumes:
       - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
     healthcheck:
