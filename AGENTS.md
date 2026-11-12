@@ -13,6 +13,12 @@ When instructions conflict, follow them in this order:
 1. Task-specific human instructions
 2. General behavioral guidance in this file
 
+## MinIO Adapter and Template Fixes
+
+- Apply adapter and template fixes in place within the existing version; do not create new versions or version directories. Templates use `v1.0`; preserve both actively used `google_patent` versions, `v1.0` and `v1.1`, and their task bindings.
+- Use only `template.yaml` and `adapter.py` within each template's existing version directory. Overwrite these objects in place; do not create additional versions, suffixed filenames, or backup copies in MinIO, locally, or on the server.
+- Keep standardized database template/adapter object references unchanged during subsequent fixes. Record verification hashes only, without saving artifact copies, and verify the published objects after each fix.
+
 ## Bulk Data Migration Execution
 
 - Use **6 separate OS worker processes** and a **batch size limit of 3,000** for subsequent bulk data migrations.

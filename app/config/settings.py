@@ -146,14 +146,14 @@ class AppSettings(BaseSettings):
     # ── Anti-Crawl Intelligence Layer (反爬智能层) ────────────────────────────
     anti_crawl_enabled: bool = Field(default=False, description="是否启用反爬智能层")
 
-    # Tunnel Proxy (隧道代理，优先于代理池)
+    # 前置代理：所有采集请求必经；模板开关只决定是否叠加出口代理池。
     tunnel_proxy_url: str = Field(
         default="", 
-        description="隧道代理URL, 格式: http://user:pass@host:port, 配置后优先使用"
+        description="未单独配置前置代理时使用的前置入口URL"
     )
     proxy_pre_proxy_url: str = Field(
         default="",
-        description="代理池前置代理URL, 例如 socks5h://127.0.0.1:1080",
+        description="所有采集请求必经的前置代理URL, 例如 socks5h://127.0.0.1:1080",
     )
 
     # Proxy Pool

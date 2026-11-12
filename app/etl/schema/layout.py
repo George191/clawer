@@ -74,7 +74,9 @@ def default_table_layout(
     partition_count: int | None = None
 
     definition = TABLE_DEFINITIONS.get(layer, {}).get(logical_table)
-    if role == "current" and (definition or layer in {"rds", "ods"}):
+    if role == "current" and (definition or layer in {"rds", "ods"}) and (
+        not definition or definition.get("storage") != "timescale"
+    ):
         partition_type = "hash"
         partition_column = (
             ", ".join(definition["partition_columns"])

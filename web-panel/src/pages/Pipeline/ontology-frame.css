@@ -1,0 +1,29 @@
+.flow-console.flow-console--ontology{--ontology-bg:#171b21;--ontology-panel:#1d222a;--ontology-border:#394351;--ontology-text:#e4e9f0;--ontology-muted:#a6b3c4;--ontology-control-border:#61748a;display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;height:100%;padding:0;overflow:hidden;background:var(--ontology-bg);color:var(--ontology-text);font-size:13px;line-height:1.4;animation:none}
+.flow-console--ontology>.flow-core{display:flex;flex:1;min-width:0;min-height:0;width:100%;max-width:none;height:auto;overflow:hidden;margin:0;padding:0}
+.flow-domain-nav{display:flex;align-items:center;gap:26px;flex:none;min-height:51px;padding:0 20px;border-bottom:1px solid var(--ontology-border);background:#1d222a;overflow-x:auto}
+.flow-domain-brand,.flow-domain-links button{display:flex;align-items:center;gap:8px;flex:none;border:0;background:none;color:var(--ontology-muted);font:inherit;cursor:pointer}
+.flow-domain-brand{padding:12px 0;color:var(--ontology-text);font-size:15px;font-weight:650;white-space:nowrap}
+.flow-domain-brand>.anticon{color:#70b7ff;font-size:19px}.flow-domain-brand small{margin-left:8px;padding-left:13px;border-left:1px solid var(--ontology-border);color:var(--ontology-muted);font-size:11px;font-weight:400}
+.flow-domain-links{display:flex;align-self:stretch;gap:6px}.flow-domain-links button{position:relative;padding:0 13px;font-size:12px;white-space:nowrap}.flow-domain-links button:hover{color:var(--ontology-text);background:#272e38}.flow-domain-links button.is-active{color:#8bc5ff}.flow-domain-links button.is-active:after{position:absolute;right:12px;bottom:0;left:12px;height:2px;background:#72b8ff;content:''}
+.flow-console--ontology button:focus-visible,.flow-console--ontology a:focus-visible{outline:2px solid #83b5eb;outline-offset:2px}
+.flow-ontology-runtime{flex:1;min-width:0;padding:30px 36px;overflow:auto}.flow-ontology-page-heading>span{font-size:10px;letter-spacing:.13em;color:#92a3b8}.flow-ontology-page-heading h1{margin:9px 0;color:var(--ontology-text);font-size:25px;font-weight:600}.flow-ontology-page-heading p{margin:0 0 25px;color:var(--ontology-muted);font-size:12px}.flow-ontology-message{padding:25px;border:1px solid var(--ontology-border);border-radius:6px;color:var(--ontology-muted)}
+.flow-ontology-runtime .cdc-status-panel{margin-top:0;border-color:var(--ontology-border);background:var(--ontology-panel)}
+@media(max-width:760px){.flow-domain-nav{gap:14px;padding:0 12px}.flow-domain-brand small{display:none}.flow-domain-links button{padding:0 10px}.flow-ontology-runtime{padding:20px 16px}}
+
+.flow-console--ontology .flow-domain-links button:focus-visible { outline-offset: -4px; }
+.flow-console--ontology .flow-domain-nav { max-width: 100%; overscroll-behavior-x: contain; scroll-padding-inline: 16px; }
+.flow-console--ontology .ant-input-affix-wrapper { border-color: var(--ontology-control-border); }
+.flow-console--ontology .ant-input-affix-wrapper-focused { box-shadow: 0 0 0 2px #83b5eb33; }
+.flow-console--ontology .flow-ontology-runtime { overscroll-behavior: contain; scroll-padding: 16px; }
+@media (max-width: 640px), (pointer: coarse) {
+  .flow-console--ontology .flow-domain-links button { min-height: 44px; }
+  .flow-console--ontology .flow-ontology-runtime .ant-btn { min-height: 44px; }
+}
+@media (forced-colors: active) {
+  .flow-console--ontology button:focus-visible,
+  .flow-console--ontology a:focus-visible,
+  .flow-console--ontology input:focus-visible { outline: 2px solid Highlight; }
+}
+
+@media(max-width:1000px){.flow-platform-shell .ant-layout-header{gap:12px}.flow-platform-shell .header-shortcut-button{min-width:36px;padding:0 9px!important}.flow-platform-shell .header-shortcut-button>span:last-child{display:none!important}.flow-platform-shell .ant-layout-header img[alt="Astral Helio"]{max-width:126px;height:auto!important;max-height:28px}}
+@media(max-width:640px){.flow-platform-shell .ant-layout-header{padding:0 12px!important}.flow-platform-shell .header-shortcut-button{min-width:36px;min-height:40px;padding:0 8px!important}.flow-platform-shell [aria-label="Open account menu"]{min-width:40px;min-height:40px}}

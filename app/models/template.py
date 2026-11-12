@@ -109,7 +109,7 @@ class RequestConfig(BaseModel):
     encoding: str | None = Field(default=None, description="页面编码, 留空则自动检测")
     force_direct: bool = Field(
         default=False,
-        description="Bypass configured tunnel and pool proxies for this request",
+        description="Legacy preflight flag; collection proxy routing follows anti_crawl_enabled",
     )
 
 
@@ -164,7 +164,8 @@ class SiteTemplate(BaseModel):
     anti_crawl_enabled: bool | None = Field(
         default=None,
         description=(
-            "是否为此模板启用反爬功能（代理池、请求延迟、身份轮换等）。"
+            "是否为此模板启用动态出口代理池；所有采集请求始终经过前置代理。"
+            "页面、详情、资源下载和浏览器使用同一模式。"
             "None 表示回退到全局配置 SPIDER_ANTI_CRAWL_ENABLED，"
             "布尔值则覆盖全局配置。优先级：模板 > 全局 > False"
         ),
@@ -173,8 +174,8 @@ class SiteTemplate(BaseModel):
     download_use_proxy: bool | None = Field(
         default=None,
         description=(
-            "资源下载是否使用代理。None 回退到全局 "
-            "SPIDER_DOWNLOAD_USE_PROXY，布尔值覆盖全局配置。"
+            "保留已有配置值；页面与资源下载的出口代理模式统一由 "
+            "anti_crawl_enabled 决定。"
         ),
     )
 
@@ -259,11 +260,8 @@ class SiteTemplate(BaseModel):
 
     @property
     def effective_download_use_proxy(self) -> bool:
-        """解析模板级资源下载代理开关。"""
-        if self.download_use_proxy is not None:
-            return self.download_use_proxy
-        from app.config.settings import settings
-        return settings.download_use_proxy
+        """资源下载与页面统一使用模板的代理模式。"""
+        return self.effective_anti_crawl_enabled
 
     @staticmethod
     def _replace_params(text: str, params: dict[str, str | None]) -> str:

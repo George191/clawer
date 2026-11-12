@@ -82,13 +82,10 @@ class AICollectStore(AutomationTaskStore):
             allow_redirects=True,
         ) as client:
             for row in rows:
-                safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row["name"])).strip("._") or "template"
-                safe_version = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(row["version"])).strip("._") or "v1"
-                object_prefix = f"collection/templates/{safe_name}/{safe_version}"
+                object_prefix = self._artifact_prefix(str(row["name"]), str(row["version"]))
                 template_key = str(row.get("template") or f"{object_prefix}/template.yaml")
                 template_bytes = template_content_by_name.get(str(row["name"]))
                 if template_bytes is not None:
-                    template_key = f"{object_prefix}/template.yaml"
                     await minio.upload_bytes_to_key(template_bytes, template_key, "application/yaml")
                 raw = templates_by_name.get(str(row["name"]), {})
                 resolved_base_url = self._resolved_template_base_url(raw)
@@ -205,8 +202,11 @@ class AICollectStore(AutomationTaskStore):
             return "other"
         return str(raw.get("data_type") or "other").strip().lower() or "other"
 
-    async def _upload_template_yaml(self, name: str, version: str, yaml_content: str) -> str:
-        object_key = f"{self._artifact_prefix(name, version)}/template.yaml"
+    async def _upload_template_yaml(
+        self, name: str, version: str, yaml_content: str, object_key: str = "",
+    ) -> str:
+        prefix = self._artifact_prefix(name, version)
+        object_key = object_key or f"{prefix}/template.yaml"
         await get_business_metadata_minio_client().upload_bytes_to_key(
             yaml_content.encode("utf-8"),
             object_key,
@@ -214,11 +214,14 @@ class AICollectStore(AutomationTaskStore):
         )
         return object_key
 
-    async def _upload_adapter_code(self, name: str, version: str, adapter_code: str) -> str:
+    async def _upload_adapter_code(
+        self, name: str, version: str, adapter_code: str, object_key: str = "",
+    ) -> str:
         from app.adapters.runtime import validate_extension_source
 
+        prefix = self._artifact_prefix(name, version)
         validate_extension_source(adapter_code)
-        object_key = f"{self._artifact_prefix(name, version)}/adapter.py"
+        object_key = object_key or f"{prefix}/adapter.py"
         await get_business_metadata_minio_client().upload_bytes_to_key(
             adapter_code.encode("utf-8"),
             object_key,
@@ -419,7 +422,7 @@ class AICollectStore(AutomationTaskStore):
     async def update_template(self, template_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         await self.initialize()
         current = await self._pg.fetch_one(
-            "SELECT name, version FROM public.ai_collect_templates WHERE id = CAST(:id AS uuid)",
+            "SELECT name, version, template, adapter FROM public.ai_collect_templates WHERE id = CAST(:id AS uuid)",
             {"id": template_id},
         )
         if current is None:
@@ -428,12 +431,16 @@ class AICollectStore(AutomationTaskStore):
             str(current["name"]),
             str(current["version"]),
             str(payload["yaml_content"]),
+            str(current.get("template") or ""),
         )
         data_type = self._template_data_type(str(payload["yaml_content"]))
         adapter_code = str(payload.get("adapter_code") or "")
         adapter_key = (
-            await self._upload_adapter_code(str(current["name"]), str(current["version"]), adapter_code)
-            if adapter_code else str(payload.get("adapter") or "")
+            await self._upload_adapter_code(
+                str(current["name"]), str(current["version"]), adapter_code,
+                str(current.get("adapter") or ""),
+            )
+            if adapter_code else str(current.get("adapter") or "")
         )
         row = await self._pg.fetch_one(
             """
@@ -464,26 +471,37 @@ class AICollectStore(AutomationTaskStore):
 
     async def release_template(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self.initialize()
+        versions = await self._pg.fetch_all(
+            "SELECT version, template, adapter, icon FROM public.ai_collect_templates WHERE name = :name",
+            {"name": payload["name"]},
+        )
+        existing = next((row for row in versions if row["version"] == payload["version"]), None)
+        if existing is None:
+            if versions:
+                raise ValueError("Update an existing template version in place; additional versions are not allowed")
+            if payload["version"] != "v1.0":
+                raise ValueError("New templates only support v1.0")
+            existing = {}
         template_key = await self._upload_template_yaml(
             str(payload["name"]),
             str(payload["version"]),
             str(payload["yaml_content"]),
+            str(existing.get("template") or ""),
         )
         data_type = self._template_data_type(str(payload["yaml_content"]))
         adapter_code = str(payload.get("adapter_code") or "")
         adapter_key = (
-            await self._upload_adapter_code(str(payload["name"]), str(payload["version"]), adapter_code)
-            if adapter_code else str(payload.get("adapter") or "")
-        )
-        existing = await self._pg.fetch_one(
-            "SELECT icon FROM public.ai_collect_templates WHERE name = :name AND version = :version",
-            {"name": payload["name"], "version": payload["version"]},
+            await self._upload_adapter_code(
+                str(payload["name"]), str(payload["version"]), adapter_code,
+                str(existing.get("adapter") or ""),
+            )
+            if adapter_code else str(existing.get("adapter") or payload.get("adapter") or "")
         )
         icon_key = await self._upload_favicon(
             str(payload["name"]),
             str(payload["version"]),
             str(payload.get("favicon_url") or ""),
-        ) or str(existing.get("icon") if existing else "")
+        ) or str(existing.get("icon") or "")
         row = await self._pg.fetch_one(
             """
             INSERT INTO public.ai_collect_templates

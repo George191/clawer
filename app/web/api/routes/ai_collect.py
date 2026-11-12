@@ -170,7 +170,7 @@ async def generate_adapter(payload: AdapterRequest) -> dict[str, Any]:
         "sample_items": analysis.get("sample_items") or [],
     })
     return {
-        "adapterId": result.adapter_name or f"{template_id}_adapter",
+        "adapterId": result.adapter_name or template_id,
         "code": result.adapter_code,
         "language": "python",
         "testResult": {"passed": not result.warnings, "sampleCount": 0},
@@ -194,7 +194,10 @@ async def update_workspace_template(template_id: str, payload: WorkspaceTemplate
 
 @router.post("/workspace/templates/release")
 async def release_workspace_template(payload: ReleaseRequest) -> dict[str, Any]:
-    template = await ai_collect_store.release_template(payload.model_dump(exclude={"task"}))
+    try:
+        template = await ai_collect_store.release_template(payload.model_dump(exclude={"task"}))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     task = None
     if payload.task is not None:
         task = await ai_collect_store.create_task(payload.task.model_dump())

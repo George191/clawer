@@ -4,6 +4,7 @@ from app.etl.schema.catalogs import CATALOG_ODS_COLUMNS, current_table_ddl
 from app.records.types import SYNC_DATA_TYPES
 
 CANONICAL_ODS_TABLES = frozenset({
+    "orbital",
     "filing", "filing_document", "financial_fact", "contract", "tender",
     "social_account", "social_content", "social_media", "social_hashtag", "social_interaction",
 })

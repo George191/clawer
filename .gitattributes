@@ -1,3 +1,4 @@
 data/* filter=lfs diff=lfs merge=lfs -text
 models/* filter=lfs diff=lfs merge=lfs -text
 docker/mongo-cdc-connect.sh text eol=lf
+extensions/sgp4/** text eol=lf

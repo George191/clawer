@@ -18,6 +18,7 @@ import random
 import re
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
 from app.config.settings import settings
@@ -106,7 +107,7 @@ class ProxyPool:
     @property
     def enabled(self) -> bool:
         """代理池是否已启用且有注册的适配器。"""
-        return settings.anti_crawl_enabled and len(self._adapters) > 0
+        return len(self._adapters) > 0
 
     @property
     def pool_size(self) -> int:
@@ -263,6 +264,7 @@ class ProxyPool:
         self,
         task_id: int,
         adapter_name: str | None = None,
+        exclude_proxy_url: str | None = None,
     ) -> str | None:
         """为指定协程分配独立代理 IP。
 
@@ -272,6 +274,7 @@ class ProxyPool:
         Args:
             task_id: 协程标识（asyncio.Task id）。
             adapter_name: 当前模板适配器名称。
+            exclude_proxy_url: 本次重试不能再次使用的代理主机，忽略端口和协议。
 
         Returns:
             代理 URL 字符串，如果无可用代理则返回 None。
@@ -279,6 +282,7 @@ class ProxyPool:
         if not self.enabled:
             return None
 
+        excluded_host = urlsplit(exclude_proxy_url).hostname if exclude_proxy_url else None
         async with self._lease_lock:
             await self.ensure_loaded()
             # 如果该协程已有租约且代理健康，直接返回
@@ -288,6 +292,7 @@ class ProxyPool:
                 if (
                     leased in self._healthy
                     and adapter_name not in failed_adapters
+                    and (not excluded_host or urlsplit(leased.url).hostname != excluded_host)
                 ):
                     logger.debug("Task %d reusing leased proxy: %s", task_id, leased.url)
                     return leased.url
@@ -296,7 +301,7 @@ class ProxyPool:
                     del self._leases[task_id]
 
             # 分配新的独立代理
-            proxy = await self._allocate_unique_proxy(task_id, adapter_name)
+            proxy = await self._allocate_unique_proxy(task_id, adapter_name, exclude_proxy_url)
             if proxy:
                 self._leases[task_id] = proxy
                 proxy.last_used = time.time()
@@ -320,6 +325,7 @@ class ProxyPool:
         self,
         task_id: int,
         adapter_name: str | None = None,
+        exclude_proxy_url: str | None = None,
     ) -> ProxyInfo | None:
         """为协程分配一个未被其他协程使用的代理。
 
@@ -340,6 +346,7 @@ class ProxyPool:
             if not self._healthy:
                 return None
 
+        excluded_host = urlsplit(exclude_proxy_url).hostname if exclude_proxy_url else None
         # 收集已被其他协程持有的代理 URL
         in_use: set[str] = {
             p.url for tid, p in self._leases.items() if tid != task_id
@@ -350,6 +357,7 @@ class ProxyPool:
             p
             for p in self._healthy
             if adapter_name not in self._adapter_failures.get(p.url, set())
+            and (not excluded_host or urlsplit(p.url).hostname != excluded_host)
         ]
 
         if not candidates:
@@ -366,6 +374,7 @@ class ProxyPool:
                     p
                     for p in self._healthy
                     if adapter_name not in self._adapter_failures.get(p.url, set())
+                    and (not excluded_host or urlsplit(p.url).hostname != excluded_host)
                 ]
             elif adapter_name:
                 logger.warning(
@@ -375,7 +384,10 @@ class ProxyPool:
                 )
                 for failed_adapters in self._adapter_failures.values():
                     failed_adapters.discard(adapter_name)
-                candidates = list(self._healthy)
+                candidates = [
+                    p for p in self._healthy
+                    if not excluded_host or urlsplit(p.url).hostname != excluded_host
+                ]
 
         # 优先选择未被其他协程使用的健康代理
         available = [p for p in candidates if p.url not in in_use]

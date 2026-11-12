@@ -338,6 +338,12 @@ class MongoRecordStore(MongoClient, RecordStore):
         await self._ensure_indexes(collection, [(field, False) for field in adapter.extra_indexes])
         now = datetime.now(timezone.utc)
         records = await adapter.prepare_batch(records, now)
+        if route["data_type"] == "orbital":
+            from app.records.events import save_orbital_records
+
+            return await save_orbital_records(
+                self, collection, adapter, route, records, download_template,
+            )
         prepared_records: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         pending_docs: dict[str, dict[str, Any]] = {}
         pending_search_params: dict[str, dict[str, Any]] = {}

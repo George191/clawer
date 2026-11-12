@@ -184,11 +184,12 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     sections: [
       {
         key: 'lifecycle',
-        label: 'ETL Lifecycle',
+        label: 'Data workspace',
         children: [
-          { key: '/flow/layers', icon: <DatabaseOutlined />, label: 'Data Layers' },
+          { key: '/flow', icon: <SearchOutlined />, label: 'Discover' },
+          { key: '/flow/layers', icon: <DatabaseOutlined />, label: 'Schemas' },
           { key: '/flow/transforms', icon: <CodeOutlined />, label: 'Transforms' },
-          { key: '/flow/quality', icon: <ExperimentOutlined />, label: 'Quality Gates' },
+          { key: '/flow/runtime', icon: <ExperimentOutlined />, label: 'Runtime' },
           { key: '/flow/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
         ],
       },
@@ -691,7 +692,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   return (
-    <div style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: palette.appBg }}>
+    <div className={activeProjectKey === 'etl-pipeline' ? 'flow-platform-shell' : undefined} style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: palette.appBg }}>
       <Header
         style={{
           position: 'fixed',
@@ -802,6 +803,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 2, marginRight: 6, paddingRight: 8, borderRight: `1px solid ${palette.border}` }}>
             <Button
               type="text"
+              aria-label="Automation"
+              title="Automation"
               onClick={() => navigate('/automation/workflows')}
               className="header-shortcut-button"
               style={{ color: isAutomationSurface ? palette.text : palette.secondary, background: isAutomationSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}

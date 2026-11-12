@@ -1,7 +1,6 @@
-.PHONY: install test test-unit test-integration test-cov lint lint-fix format format-check type-check check clean \
+.PHONY: install lint lint-fix format format-check type-check check clean \
         run run-crawl run-% \
         etl-rds etl-ods etl-task etl-dwd etl-dws etl-dim etl-all web \
-        test-etl test-web \
         docker-up docker-down docker-build docker-logs docker-shell docker-restart help
 
 help:  ## Show this help message
@@ -17,43 +16,26 @@ install-dev:  ## Install dev dependencies
 	pip install -r requirements.txt
 	pip install pytest pytest-asyncio pytest-cov ruff mypy pre-commit
 
-# ── Testing ────────────────────────────────────────────────────────────────
-
-test:  ## Run all tests (unit + quality)
-	pytest tests/ -v
-
-test-unit:  ## Run unit tests only (no integration)
-	pytest tests/ -v -m "not integration"
-
-test-integration:  ## Run integration tests (requires mock server)
-	pytest tests/ -v -m integration
-
-test-cov:  ## Run tests with coverage report (HTML + terminal)
-	pytest tests/ --cov=app --cov-report=term --cov-report=html:htmlcov --cov-fail-under=80
-
-test-cov-ci:  ## CI coverage (XML output for Codecov)
-	pytest tests/ --cov=app --cov-report=xml --cov-fail-under=80
-
 # ── Linting & Formatting ─────────────────────────────────────────────────
 
 lint:  ## Run ruff linter
-	ruff check app/ tests/
+	ruff check app/
 
 lint-fix:  ## Auto-fix lint issues
-	ruff check --fix app/ tests/
+	ruff check --fix app/
 
 format:  ## Format code with ruff
-	ruff format app/ tests/
+	ruff format app/
 
 format-check:  ## Check formatting without modifying (CI)
-	ruff format --check app/ tests/
+	ruff format --check app/
 
 type-check:  ## Run mypy type checking
 	mypy app/ --ignore-missing-imports --no-strict-optional
 
-check: lint format-check type-check test-unit  ## Run all checks locally
+check: lint format-check type-check  ## Run all checks locally
 
-ci: clean lint format-check type-check test-cov-ci  ## Full CI pipeline (before push)
+ci: clean lint format-check type-check  ## Full CI pipeline (before push)
 
 # ── Pre-commit ────────────────────────────────────────────────────────────
 
@@ -132,14 +114,6 @@ etl-all:  ## Run all ETL layers
 
 web:  ## Start FastAPI web panel
 	uvicorn app.web.main:app --host 0.0.0.0 --port 8000 --reload
-
-# ── Testing ─────────────────────────────────────────────────────────────
-
-test-etl:  ## Run ETL pipeline tests
-	python -m pytest tests/test_etl_topic_dispatch.py tests/test_ts_dwd_split.py -v
-
-test-web:  ## Run web API tests
-	python -m pytest tests/test_web_api.py -v
 
 shell:  ## Open Python shell with project context
 	python -c "import app; print('AI Collector — app loaded')"

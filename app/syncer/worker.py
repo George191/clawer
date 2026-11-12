@@ -23,6 +23,7 @@ from app.config.settings import settings
 from app.logger import get_logger
 from app.records.change_feed import MongoChangeFeed, mongo_cdc_topic_prefix
 from app.records.collection_routes import collection_route_store
+from app.records.events import read_pending_events
 from app.records.mongo_store import MongoRecordStore
 from app.syncer.publisher import RecordPublisher
 
@@ -54,6 +55,7 @@ class SyncWorker:
         self._running = False
         self._collection_cursor = 0
         self._collection_names: list[str] = []
+        self._orbital_collection_names: set[str] = set()
         self._routes_refreshed_at: float | None = None
 
     async def run(self) -> None:
@@ -78,6 +80,8 @@ class SyncWorker:
                 )
                 if records:
                     await self._process_batch(records)
+                    if any((record.get("_meta") or {}).get("data_type") == "orbital" for record in records):
+                        next_scan = 0.0
                 backlog = self._changes.has_more
             except Exception:
                 logger.exception("SyncWorker CDC failed; Mongo scan will compensate")
@@ -93,6 +97,7 @@ class SyncWorker:
                 await asyncio.sleep(0.5)
 
     async def _process_batch(self, ready: list[dict] | None = None) -> int:
+        from_cdc = ready is not None
         if ready is None:
             ready = await self._read_ready_records()
         if not ready:
@@ -103,6 +108,10 @@ class SyncWorker:
         records = []
         for record in ready:
             data_type = (record.get("_meta") or {}).get("data_type")
+            # CDC reads the mutable current document. Only the journal scan owns
+            # orbital payloads, including when current happens to have event_id.
+            if from_cdc and data_type == "orbital":
+                continue
             if self._data_type and data_type != self._data_type:
                 logger.warning("SyncWorker: skipped record with type=%s (expected %s)", data_type, self._data_type)
                 continue
@@ -122,22 +131,33 @@ class SyncWorker:
                 if f"{settings.kafka_topic}-{route['data_type']}" not in paused
                 and f"{mongo_cdc_topic_prefix()}.{settings.db_name}.{route['collection_name']}" not in paused
             ))
+            self._orbital_collection_names = {
+                route["collection_name"] for route in routes if route["data_type"] == "orbital"
+            }
             self._routes_refreshed_at = monotonic()
         return self._collection_names
 
     async def _read_ready_records(self) -> list[dict]:
         names = await self._get_collection_names()
-        records = []
         before = datetime.now(timezone.utc) - timedelta(seconds=self._poll_interval)
+        records = await read_pending_events(
+            self._mongo, collections=[name for name in names if name in self._orbital_collection_names],
+            limit=self._batch_size, before=before,
+        )
+        if len(records) >= self._batch_size:
+            return records
         if names:
             start = self._collection_cursor % len(names)
             names = names[start:] + names[:start]
             self._collection_cursor = (start + 1) % len(names)
         for name in names:
-            records.extend(await self._mongo.get_ready_to_sync(
+            if name in self._orbital_collection_names:
+                continue
+            current = await self._mongo.get_ready_to_sync(
                 template_name=name, limit=self._batch_size - len(records),
                 before=before,
-            ))
+            )
+            records.extend(record for record in current if (record.get("_meta") or {}).get("data_type") != "orbital")
             if len(records) >= self._batch_size:
                 break
         return records

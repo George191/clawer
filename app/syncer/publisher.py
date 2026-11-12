@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.config.settings import settings
 from app.logger import get_logger
+from app.records.events import acknowledge_event, read_event
 from app.records.field_names import normalize_record_fields
 from app.records.values import require_canonical_record
 from app.storage.kafka_client import KafkaClient
@@ -33,7 +34,7 @@ class RecordPublisher(KafkaClient):
         require_canonical_record(record)
         meta = dict(record.get("_meta") or {})
         # Mongo stores dates at millisecond precision; direct sends must match it.
-        for field in ("created_at", "updated_at"):
+        for field in ("created_at", "updated_at", "event_observed_at"):
             if isinstance(value := meta.get(field), datetime):
                 meta[field] = value.replace(microsecond=value.microsecond // 1000 * 1000)
         record["_meta"] = meta
@@ -86,13 +87,23 @@ class RecordPublisher(KafkaClient):
                 await write_progress()
                 await asyncio.sleep(SYNC_PROGRESS_INTERVAL_SECONDS)
 
-        async def sync(record: dict[str, Any]) -> None:
+        async def sync(record: dict[str, Any]) -> bool:
             meta = record.get("_meta") or {}
+            if meta.get("data_type") == "orbital" and meta.get("event_id"):
+                try:
+                    record = await read_event(storage, meta["event_id"])
+                    meta = record["_meta"]
+                except Exception:
+                    logger.exception("RecordPublisher: durable orbital event lookup failed")
+                    return False
             if meta.get("sync_status") == "synced":
-                return
+                return True
+            if meta.get("data_type") == "orbital" and not meta.get("event_id"):
+                logger.error("RecordPublisher: orbital publishing requires a durable event")
+                return False
             if not all(meta.get(field) for field in ("record_id", "template", "data_type", "updated_at")):
                 logger.warning("RecordPublisher: skipped record without sync metadata")
-                return
+                return False
             owner = meta.get("search_params") or {}
             task_id = str(owner.get("__workspace_task_id") or "")
             run_id = str(owner.get("__workspace_run_id") or "")
@@ -109,22 +120,43 @@ class RecordPublisher(KafkaClient):
                     published = True
                     if progress is not None:
                         progress.update(record_id=meta["record_id"], topic=topic, status="sent")
-                    acknowledged = await storage.update_sync_status(
-                        meta["template"], meta["data_type"], meta["record_id"], "synced",
-                        updated_at=meta["updated_at"], download_version=meta.get("download_version", 0),
-                        write_token=meta.get("write_token"),
-                    )
+                    if meta.get("data_type") == "orbital":
+                        acknowledged = await acknowledge_event(storage, meta["event_id"])
+                    else:
+                        acknowledged = await storage.update_sync_status(
+                            meta["template"], meta["data_type"], meta["record_id"], "synced",
+                            updated_at=meta["updated_at"], download_version=meta.get("download_version", 0),
+                            write_token=meta.get("write_token"),
+                        )
                     completed.append((record, acknowledged))
                     if progress is not None:
                         progress.update(record_id=meta["record_id"], topic=topic,
                                         status="sent" if acknowledged else "pending_retry")
+                    return acknowledged
                 except Exception:
                     if progress is not None:
                         progress.update(record_id=meta["record_id"], topic=topic,
                                         status="pending_retry" if published else "failed")
                     logger.exception("RecordPublisher: sync failed for record_id=%s topic=%s", meta["record_id"], topic)
+                    return False
 
-        batch = asyncio.gather(*(sync(record) for record in records))
+        async def sync_fact(events: list[dict[str, Any]]) -> None:
+            for record in sorted(events, key=lambda value: value["_meta"]["event_sequence"]):
+                if not await sync(record):
+                    break
+
+        orbital_facts: dict[str, list[dict[str, Any]]] = {}
+        ordinary = []
+        for record in records:
+            meta = record.get("_meta") or {}
+            if meta.get("data_type") == "orbital" and meta.get("event_id"):
+                orbital_facts.setdefault(meta["record_id"], []).append(record)
+            else:
+                ordinary.append(record)
+        batch = asyncio.gather(
+            *(sync(record) for record in ordinary),
+            *(sync_fact(events) for events in orbital_facts.values()),
+        )
         reporter = asyncio.create_task(report_progress())
         try:
             await asyncio.wait_for(

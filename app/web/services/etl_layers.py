@@ -85,7 +85,7 @@ class EtlLayers:
         schema = resolve_schema(layer, table_role)
         async with self.session() as session:
             result = await session.execute(text("""
-                SELECT c.relname AS name, c.relkind = 'p' AS partitioned,
+                SELECT c.relname AS name, c.relkind = 'p' OR storage.has_children AS partitioned,
                        (SELECT CASE WHEN count(DISTINCT a.data_type) = 1
                                     THEN min(a.data_type) END
                         FROM public.ai_collect_template_alias a
@@ -94,14 +94,21 @@ class EtlLayers:
                                   '_p[0-9]{1,3}$', '')
                               IN (a.collection_name, a.template_name)) AS data_type,
                        obj_description(c.oid, 'pg_class') AS description,
-                       COALESCE((SELECT sum(GREATEST(0, s.n_live_tup))
-                         FROM pg_stat_all_tables s
-                         WHERE s.relid = c.oid OR s.relid IN
-                           (SELECT relid FROM pg_partition_tree(c.oid) WHERE isleaf)), 0) AS rows,
-                       pg_size_pretty(COALESCE((SELECT sum(pg_total_relation_size(relid))
-                         FROM pg_partition_tree(c.oid) WHERE isleaf),
-                         pg_total_relation_size(c.oid))) AS size
+                       storage.rows, storage.size
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                CROSS JOIN LATERAL (
+                    WITH RECURSIVE descendants(relid) AS (
+                        SELECT c.oid
+                        UNION
+                        SELECT i.inhrelid FROM pg_inherits i
+                        JOIN descendants d ON i.inhparent = d.relid
+                    )
+                    SELECT COALESCE(sum(CASE WHEN physical.relkind = 'p' THEN 0
+                                             ELSE GREATEST(0, pg_stat_get_live_tuples(d.relid)) END), 0) AS rows,
+                           pg_size_pretty(sum(pg_total_relation_size(d.relid))) AS size,
+                           bool_or(d.relid <> c.oid) AS has_children
+                    FROM descendants d JOIN pg_class physical ON physical.oid = d.relid
+                ) storage
                 WHERE n.nspname = :schema AND c.relkind IN ('r','p')
                   AND NOT c.relispartition ORDER BY c.relname
             """), {"schema": schema})
@@ -127,7 +134,9 @@ class EtlLayers:
             result = await session.execute(text("""
                 SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type,
                        NOT a.attnotnull AS nullable,
-                       COALESCE(a.attnum = ANY(i.indkey), false) AS primary
+                       COALESCE(array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts, false) AS primary,
+                       CASE WHEN array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts
+                            THEN array_position(i.indkey::smallint[], a.attnum) + 1 END AS "primaryPosition"
                 FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
                 JOIN pg_namespace n ON n.oid = c.relnamespace
                 LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
@@ -145,12 +154,20 @@ class EtlLayers:
         await self.columns(schema, table)
         async with self.session() as session:
             result = await session.execute(text("""
+                WITH RECURSIVE descendants(relid) AS (
+                    SELECT to_regclass(:qualified)
+                    UNION
+                    SELECT i.inhrelid FROM pg_inherits i
+                    JOIN descendants d ON i.inhparent = d.relid
+                )
                 SELECT c.relname AS name, n.nspname AS schema,
                        pg_get_expr(c.relpartbound,c.oid) AS bounds
-                FROM pg_partition_tree(to_regclass(:qualified)) t
+                FROM descendants t
                 JOIN pg_class c ON c.oid = t.relid
                 JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE t.isleaf AND t.level > 0 ORDER BY c.relname
+                WHERE t.relid <> to_regclass(:qualified)
+                  AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhparent = t.relid)
+                ORDER BY c.relname
             """), {"qualified": f'{quote_identifier(schema)}.{quote_identifier(table)}'})
             return [dict(row) for row in result.mappings()]
 
@@ -160,6 +177,8 @@ class EtlLayers:
         payload = payload or {}
         schema = resolve_schema(layer)
         columns = await self.columns(schema, table)
+        primary_columns = sorted((column for column in columns if column["primary"]),
+                                 key=lambda column: column["primaryPosition"])
         names = {column["name"] for column in columns}
         qualified = f'{quote_identifier(schema)}.{quote_identifier(table)}'
         target = qualified
@@ -209,14 +228,12 @@ class EtlLayers:
                     or sort["field"] not in names or sort.get("direction") not in {"asc", "desc"}):
                 raise HTTPException(400, "Invalid sort field or direction")
             order.append(f't.{quote_identifier(sort["field"])} {sort["direction"]}')
-        if not order:
-            order = [f't.{quote_identifier(column["name"])}' for column in columns if column["primary"]]
         predicate = " WHERE " + " AND ".join(f"({item})" for item in where) if where else ""
         ordering = " ORDER BY " + ", ".join(order) if order else ""
         async with self.session() as session:
-            # Do not scan a multi-million-row ingestion table just to open its preview.
-            total = (await session.execute(text(f"SELECT count(*) FROM (SELECT 1 FROM {target} t{predicate} LIMIT 10001) flow_count"), params)).scalar_one()
-            estimated = total > 10000
+            # Opening a preview must not scan or globally sort every partition.
+            total = (await session.execute(text(f"SELECT count(*) FROM (SELECT 1 FROM {target} t{predicate} LIMIT 10001) flow_count"), params)).scalar_one() if where else 0
+            estimated = not where or total > 10000
             if estimated:
                 plan = (await session.execute(text(f"EXPLAIN (FORMAT JSON) SELECT 1 FROM {target} t{predicate}"), params)).scalar_one()
                 if isinstance(plan, str):
@@ -224,9 +241,13 @@ class EtlLayers:
                 total = max(total, int(plan[0]["Plan"]["Plan Rows"]))
             result = await session.execute(text(f"SELECT t.* FROM {target} t{predicate}{ordering} LIMIT :limit OFFSET :offset"), params)
             rows = [dict(row) for row in result.mappings()]
+        if rows:
+            total = max(total, offset + len(rows))
+        elif offset == 0:
+            total, estimated = 0, False
         return {"columns": [column["name"] for column in columns], "rows": rows,
                 "rowCount": len(rows), "total": total, "totalEstimated": estimated,
-                "primaryKey": [column["name"] for column in columns if column["primary"]],
+                "primaryKey": [column["name"] for column in primary_columns],
                 "columnTypes": {column["name"]: column["type"] for column in columns},
                 "elapsed": round(perf_counter() - started, 4)}
 

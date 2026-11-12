@@ -1,0 +1,45 @@
+.flow-lineage{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;background:var(--ontology-bg);color:var(--ontology-text)}
+.flow-lineage-toolbar{display:flex;align-items:center;gap:14px;flex:none;padding:20px 26px;border-bottom:1px solid var(--ontology-border);background:var(--ontology-panel)}.flow-lineage-toolbar>div:first-child{flex:1}.flow-lineage-toolbar>div:first-child>span{color:var(--ontology-muted);font-size:12px;letter-spacing:.13em}.flow-lineage-toolbar h1{margin:4px 0 0;font-size:21px;font-weight:600;color:var(--ontology-text)}.flow-lineage-toolbar>.ant-input-affix-wrapper{width:240px;background:#171b21;border-color:var(--ontology-control-border)}
+.flow-lineage-notice{display:flex;align-items:center;gap:9px;flex:none;padding:11px 26px;border-bottom:1px solid var(--ontology-border);font-size:12px;color:var(--ontology-muted)}.flow-lineage-notice>.anticon{color:#76baff}.flow-lineage-body{position:relative;display:flex;flex:1;min-width:0;min-height:0}.flow-lineage-viewport{flex:1;min-width:0;overflow:auto;background-image:radial-gradient(#323e4c 1px,transparent 1px);background-size:20px 20px;background-position:10px 10px}.flow-lineage-stage{position:relative;min-width:100%;min-height:100%;margin:0 auto}.flow-lineage-stage-labels{position:absolute;top:25px;left:0;right:0;color:#8c9aaa;font-size:12px;letter-spacing:.1em}.flow-lineage-stage-labels>span{position:absolute;width:176px;border-bottom:1px solid #343c47;padding-bottom:13px}.flow-lineage-edges{position:absolute;inset:0;pointer-events:none}
+.flow-lineage-node{position:absolute;display:flex;align-items:center;gap:10px;width:176px;height:86px;padding:12px;border:1px solid #404a58;border-left:3px solid var(--schema-color);border-radius:5px;background:#212731;color:var(--ontology-text);text-align:left;cursor:pointer;box-shadow:0 3px 9px #0002;transition:border-color .16s,background .16s}.flow-lineage-node:hover,.flow-lineage-node.is-selected{border-color:var(--schema-color);background:#2a3240}.flow-lineage-node>.anticon{color:var(--schema-color);font-size:20px}.flow-lineage-node>span{display:grid;gap:4px;min-width:0}.flow-lineage-node strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:600}.flow-lineage-node small{overflow:hidden;text-overflow:ellipsis;color:#b0bdcd;font:12px/1.3 ui-monospace,monospace;white-space:nowrap}.flow-lineage-node em{color:#8e9cad;font-size:12px;font-style:normal}
+.flow-lineage-independent{position:absolute;top:463px;left:40px;right:40px;padding:15px 0;border-top:1px solid #343c47;font-size:13px;font-weight:600}.flow-lineage-independent>span{margin-left:12px;color:var(--ontology-muted);font-size:12px;font-weight:400}.flow-lineage-state{display:flex;flex:1;align-items:center;justify-content:center;gap:12px;padding:40px;color:var(--ontology-muted);font-size:13px}
+.flow-lineage-inspector{flex:0 0 280px;width:280px;padding:24px;border-left:1px solid var(--ontology-border);background:var(--ontology-panel);overflow-y:auto}.flow-lineage-inspector-eyebrow{font-size:12px;letter-spacing:.12em;color:var(--ontology-muted)}.flow-lineage-inspector h2{margin:14px 0 8px;font-size:20px;color:var(--ontology-text)}.flow-lineage-inspector code{color:#a7bbd2;font-size:12px;overflow-wrap:anywhere}.flow-lineage-inspector dl{display:grid;grid-template-columns:85px minmax(0,1fr);gap:16px 10px;margin:25px 0;font-size:12px}.flow-lineage-inspector dt{color:var(--ontology-muted)}.flow-lineage-inspector dd{margin:0;overflow-wrap:anywhere}.flow-lineage-close{display:block;margin-top:18px;padding:0;border:0;background:none;color:var(--ontology-muted);font-size:12px;cursor:pointer}
+@media(max-width:760px){.flow-lineage-toolbar{flex-wrap:wrap;padding:16px}.flow-lineage-toolbar>div:first-child{flex-basis:calc(100% - 90px)}.flow-lineage-toolbar>.ant-input-affix-wrapper{order:3;width:100%}.flow-lineage-notice{padding:11px 16px;line-height:1.6}.flow-lineage-body{position:relative}.flow-lineage-inspector{position:absolute;top:0;bottom:0;right:0;z-index:3;width:min(280px,90%)}.flow-lineage-independent>span{display:block;margin:7px 0 0}}
+@media(prefers-reduced-motion:reduce){.flow-lineage-edges circle{display:none}}
+
+.flow-lineage-viewport { overscroll-behavior: contain; scroll-padding: 24px; }
+.flow-lineage-node { line-height: 1.3; scroll-margin: 32px; }
+.flow-lineage-node:focus-visible { outline: 2px solid #83b5eb; outline-offset: 4px; }
+.flow-lineage-node em { font-size: 11px; }
+.flow-lineage-edges path[data-testid="ontology-lineage-edge"] { stroke-opacity: 1; }
+.flow-lineage-inspector { z-index: 5; overscroll-behavior: contain; scroll-padding: 16px; }
+.flow-lineage-inspector h2 { overflow-wrap: anywhere; }
+.flow-lineage-inspector .ant-btn { max-width: 100%; height: auto; min-height: 36px; white-space: normal; }
+.flow-lineage-canvas-tools { position: absolute; z-index: 4; bottom: 16px; left: 16px; display: flex; align-items: center; gap: 4px; max-width: calc(100% - 32px); padding: 4px; border: 1px solid #61748a; border-radius: 5px; background: #202832f5; box-shadow: 0 4px 16px #0004; }
+.flow-lineage-canvas-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 32px; min-height: 32px; padding: 6px 8px; border: 0; border-radius: 3px; background: transparent; color: #d1deee; font: inherit; font-size: 12px; cursor: pointer; }
+.flow-lineage-canvas-tools button:hover { background: #354457; }
+.flow-lineage-canvas-tools button:disabled { color: #8f9db0; cursor: default; opacity: .6; }
+.flow-lineage-zoom-label { min-width: 42px; padding: 0 4px; color: #b3c4d8; font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flow-lineage-node-relations { display: flex; flex-direction: column; gap: 6px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--ontology-border); }
+.flow-lineage-node-relations h3 { margin: 0 0 8px; color: #c7d5e6; font-size: 12px; font-weight: 600; }
+.flow-lineage-node-relations button { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; padding: 8px; border: 1px solid #46566b; border-radius: 4px; background: #26313f; color: #a9cef4; font: inherit; font-size: 12px; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.flow-lineage-node-relations button:hover { border-color: #7e9abb; background: #303e50; }
+@media (max-width: 640px), (pointer: coarse) {
+  .flow-lineage-toolbar .ant-btn,
+  .flow-lineage-toolbar .ant-input-affix-wrapper,
+  .flow-lineage-canvas-tools button,
+  .flow-lineage-inspector .ant-btn,
+  .flow-lineage-node-relations button,
+  .flow-lineage-close { min-height: 44px; }
+  .flow-lineage-canvas-tools button { min-width: 44px; padding: 6px; }
+  .flow-lineage-canvas-tools { gap: 2px; bottom: 12px; left: 12px; max-width: calc(100% - 24px); }
+  .flow-lineage-zoom-label { min-width: 38px; }
+}
+@media (max-height: 700px) {
+  .flow-lineage-toolbar { padding-top: 12px; padding-bottom: 12px; }
+  .flow-lineage-toolbar h1 { font-size: 20px; }
+  .flow-lineage-inspector { padding-top: 16px; }
+  .flow-lineage-inspector dl { gap: 12px 8px; margin: 20px 0; }
+}
+
+.flow-lineage-body{position:relative}.flow-lineage-extent{position:relative;flex:none}.flow-lineage-node-relations button>i{width:7px;height:7px;flex:none;border-radius:50%}.flow-lineage-node-relations p{color:var(--ontology-muted);font-size:12px}.flow-lineage-node-relations h3{margin:18px 0 8px;color:var(--ontology-text);font-size:12px;font-weight:600}

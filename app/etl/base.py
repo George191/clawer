@@ -241,12 +241,17 @@ class ETLBase:
 
     async def _ensure_cdc_identity(self, table_name: str) -> None:
         """Ensure complete CDC images before an existing table receives new writes."""
+        from app.syncer.postgres_cdc import cdc_table_enabled, ensure_table_publication
+
+        if not cdc_table_enabled(*table_name.split(".")):
+            return
         row = await self._pg.fetch_one(
             "SELECT relreplident FROM pg_class WHERE oid=to_regclass(:table_name)",
             {"table_name": table_name},
         )
         if row and row["relreplident"] != "f":
             await self._pg.execute(f"ALTER TABLE {table_name} REPLICA IDENTITY FULL")
+        await ensure_table_publication(self._pg, table_name)
 
     async def _create_partition(self, sql: str, table_name: str, table_role: str) -> None:
         """Publish a new partition only after its full-row identity is configured."""

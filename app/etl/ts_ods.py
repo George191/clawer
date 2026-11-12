@@ -15,6 +15,7 @@ from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
 from app.etl.normalizers import get_normalizer
 from app.etl.normalizers.base import safe_date, safe_datetime, safe_str
+from app.etl.orbital_history import ensure_history_schema, event_lineage, write_orbital_output
 from app.etl.schema.catalogs import (
     CATALOG_ODS_COLUMNS,
     current_insert_sql,
@@ -58,6 +59,8 @@ class TsOds(ETLBase):
         for table in CATALOG_ODS_COLUMNS:
             if not self._table_name or table == self._table_name:
                 await self._ensure_registered_table(table, "current", create_partitions=False)
+                if table == "orbital":
+                    await ensure_history_schema(self._pg)
 
     async def _ensure_type(self, table: str, fields: dict[str, str] | None) -> None:
         validate_table_name(table)
@@ -84,6 +87,8 @@ class TsOds(ETLBase):
                 self._pg, layer="ods", table=table, ddl_sql=ddl, updated_by="system:ods", allow_update=False,
             )
         await self._ensure_registered_table(table, "current")
+        if table == "orbital":
+            await ensure_history_schema(self._pg)
         self._columns[table] = dict(columns)
 
     async def _dispatch(self, message: dict[str, Any]) -> bool:
@@ -98,7 +103,6 @@ class TsOds(ETLBase):
         return await self._process_ods_record(message, table)
 
     async def _dispatch_batch(self, messages, owner, partition):
-        # Filing fan-out is temporarily batched while its migration backlog drains.
         if not 2 <= len(messages) <= _ODS_BATCH_MAX_ROWS:
             return None
         try:
@@ -108,8 +112,9 @@ class TsOds(ETLBase):
                    or not message.get("record_id") for message in inputs):
                 return None
             table = validate_table_name(inputs[0].get("data_type"))
+            if table == "orbital":
+                return None
             data_source = inputs[0]["data_source"]
-            filing_batch = table == "filing" and data_source == "filing_sec_edgar"
             if (self._table_name and self._table_name != table
                     or any(message.get("data_type") != table
                            or message["data_source"] != data_source for message in inputs)):
@@ -140,9 +145,7 @@ class TsOds(ETLBase):
                     normalized = await normalized
                 if isinstance(normalized, list) and len(normalized) == 1:
                     normalized = normalized[0]
-                if filing_batch and isinstance(normalized, list) and normalized:
-                    normalized_records = normalized
-                elif isinstance(normalized, dict):
+                if isinstance(normalized, dict):
                     normalized_records = [normalized]
                 else:
                     return None
@@ -157,16 +160,10 @@ class TsOds(ETLBase):
                     total_bytes += len(json.dumps(payload, ensure_ascii=False, default=str).encode("utf8"))
                     if total_bytes > _ODS_BATCH_MAX_BYTES:
                         return None
-                    if filing_batch:
-                        if payload["data_type"] not in {"filing", "filing_document"}:
-                            return None
-                    elif (identity(payload) != identity(source)
-                          or (prepared and payload.keys() != prepared[0].keys())):
+                    if (identity(payload) != identity(source)
+                            or (prepared and payload.keys() != prepared[0].keys())):
                         return None
                     outputs.append(payload)
-                if (filing_batch and (identity(outputs[0]) != identity(source)
-                                      or any(payload["data_type"] != "filing_document" for payload in outputs[1:]))):
-                    return None
                 prepared.extend(outputs)
                 sources.append(source)
                 source_outputs.append(outputs)
@@ -209,7 +206,7 @@ class TsOds(ETLBase):
                     eligible.sort(key=identity)
                     groups = {}
                     for payload in eligible:
-                        key = (payload["data_type"], tuple(sorted(payload)) if filing_batch else tuple(payload))
+                        key = (payload["data_type"], tuple(payload))
                         groups.setdefault(key, []).append(payload)
                     for (output_table, names), payloads in sorted(groups.items()):
                         columns = {name: self._columns[output_table][name] for name in names}
@@ -241,15 +238,19 @@ class TsOds(ETLBase):
         except Exception:
             logger.exception("%s ODS batch output failed; replaying input batch", self._log_prefix)
             return False
-        if filing_batch and not getattr(self, "_filing_batch_logged", False):
-            logger.info("%s Temporary filing batch active inputs=%d outputs=%d bytes=%d",
-                        self._log_prefix, len(inputs), len(results), total_bytes)
-            self._filing_batch_logged = True
         return True
 
     async def _source_is_current(self, session, source: dict[str, Any]) -> bool:
         source_table = source["data_type"]
         validate_table_name(source_table)
+        if source_table == "orbital":
+            row = (await session.execute(text(
+                "SELECT raw_data = CAST(:raw_data AS jsonb) AS identical FROM ts_rds.rds_orbital "
+                "WHERE record_id=:record_id AND data_source=:data_source AND data_type=:data_type FOR SHARE"
+            ), {**source, "raw_data": json.dumps(source["raw_data"], ensure_ascii=False, default=str)})).mappings().first()
+            if row is None or not row["identical"]:
+                raise ValueError("ODS orbital input differs from its immutable RDS event")
+            return True
         source_row = (await session.execute(text(
             f"SELECT raw_data->'_meta' AS meta,kafka_topic,kafka_partition,kafka_offset FROM ts_rds.rds_{source_table} "
             "WHERE record_id=:record_id AND data_source=:data_source "
@@ -273,6 +274,11 @@ class TsOds(ETLBase):
             raise ValueError("ODS output record_id must be a non-empty string")
         await self._ensure_type(output_table, fields.get(output_table))
         columns = self._columns[output_table]
+        if source["data_type"] == "orbital":
+            if output_table != "orbital":
+                raise ValueError("Orbital events must normalize to orbital")
+            normalized_record_id = source["meta"]["record_id"]
+            normalized = {**dict.fromkeys(columns), **normalized, **event_lineage(source["meta"])}
         unknown = normalized.keys() - columns.keys()
         if unknown:
             raise ValueError(f"Undeclared ODS fields for {output_table}: {sorted(unknown)}")
@@ -313,11 +319,16 @@ class TsOds(ETLBase):
                         return []
                     for index in order:
                         failed_payload = prepared[index]
+                        if source["data_type"] == "orbital":
+                            row = await write_orbital_output(session, failed_payload, self._columns["orbital"])
+                            if row is not None:
+                                results[index] = row
+                            continue
                         row = (await session.execute(statements[index], failed_payload)).mappings().first()
                         if row is None:
                             raise ValueError("ODS upsert returned no record")
                         results[index] = dict(row)
-                return [(results[index], payload) for index, payload in enumerate(prepared)]
+                return [(results[index], payload) for index, payload in enumerate(prepared) if index in results]
             except Exception as exc:
                 if attempt == _ODS_WRITE_MAX_ATTEMPTS - 1:
                     raise
@@ -326,6 +337,8 @@ class TsOds(ETLBase):
                 if failed_payload is not None and self._is_recoverable_table_error(exc):
                     table = failed_payload["data_type"]
                     await self._recover_registered_table(table)
+                    if table == "orbital":
+                        await ensure_history_schema(self._pg)
                     await self._ensure_partitions_for_payload(table, failed_payload)
                     continue
                 if not isinstance(exc, InterfaceError | OperationalError):
@@ -351,7 +364,12 @@ class TsOds(ETLBase):
             if normalizer is None:
                 raise ValueError(f"Missing normalizer: {table}:{data_source}")
             fields = getattr(module, "ODS_FIELDS", {})
-            raw_data = {**message.get("raw_data", message), "data_source": data_source}
+            event_raw = message.get("raw_data", message)
+            if table == "orbital":
+                lineage = event_lineage(event_raw.get("_meta") or {})
+                if lineage["source_event_id"] != record_id:
+                    raise ValueError("Orbital RDS identity must equal event_id")
+            raw_data = {**event_raw, "data_source": data_source}
             normalized_records = normalizer(raw_data)
             if inspect.isawaitable(normalized_records):
                 normalized_records = await normalized_records
@@ -364,6 +382,7 @@ class TsOds(ETLBase):
                 "record_id": record_id, "data_source": data_source, "data_type": table,
                 "meta": raw_data.get("_meta") or {},
                 "position": {name: message.get(name) for name in POSITION_COLUMNS},
+                "raw_data": event_raw,
             }
             prepared = [await self._prepare_payload(normalized, source, fields, now)
                         for normalized in normalized_records]

@@ -1,0 +1,3 @@
+comment = 'SGP4 Vallado C implementation with validated text TLE boundaries'
+default_version = '0.2'
+relocatable = true

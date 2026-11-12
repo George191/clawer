@@ -104,9 +104,12 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 保留虚拟列表移出 DOM 的行，未完成滚动时明确失败。详情请求使用
 `request_detail_page()`，与列表共用会话。
 
-基础版支持 GET、headers、cookies、params、直连和已配置的隧道代理；
-`force_direct` 强制直连，不支持 HTTP 代理池的前置代理链。默认最多尝试三次，
-配置及解析错误直接失败。Crawler 镜像包含 Playwright 和系统 Chromium，
+所有采集请求必须经过 `SPIDER_PROXY_PRE_PROXY_URL` 指定的前置代理，
+未单独配置时使用 `SPIDER_TUNNEL_PROXY_URL` 作为前置入口。
+模板 `anti_crawl_enabled` 是页面、详情、资源下载和浏览器的唯一出口模式开关：
+关闭时只经过前置代理，开启时再叠加动态出口代理池；`force_direct` 不改变模式。
+失败后立即重试，启用出口池时切换出口，前置或出口不可用时不回退直连。
+Crawler 镜像包含 Playwright 和系统 Chromium，
 部署这一基类需要重建 Crawler 镜像；仅更新 MinIO 站点源码不会安装运行依赖。
 
 `templates/satsearch.yaml` 是独立的 HTTP 地面站来源，保留 Find-GS 数据署名、

@@ -11,16 +11,16 @@ from app.adapters import BaseSiteAdapter
 from app.base.http import DownloadError
 from app.config.settings import settings
 from app.downloader.browser_runtime import BrowserRuntimeError, browser_launch_options
+from app.downloader.proxy_tunnel import ProxyTunnel
 from app.models.template import RequestConfig
-from app.utils.runtime_control import check_control_state, controlled_sleep
+from app.utils.runtime_control import check_control_state, controlled_sleep, get_crawl_proxy_mode
 
 
 class BrowserSiteAdapter(BaseSiteAdapter):
     """Keep one isolated browser session per crawl; subclasses supply DOM hooks.
 
-    Supports GET navigation, request headers/cookies/params, direct or configured
-    tunnel access, and bounded retries. Pool/pre-proxy chains are not browser
-    transports. Override prepare_list_page/prepare_detail_page for site actions;
+    Supports GET navigation, request headers/cookies/params and the collection
+    proxy policy. Override prepare_list_page/prepare_detail_page for site actions;
     returning text from a hook replaces the default, complete page HTML.
     """
 
@@ -28,7 +28,6 @@ class BrowserSiteAdapter(BaseSiteAdapter):
     browser_wait_timeout_seconds: float | None = None
     browser_viewport = {"width": 1440, "height": 1000}
     browser_service_workers = "allow"
-    browser_max_attempts = 3
 
     def __init__(self, base_url, http_client=None, **kwargs):
         super().__init__(base_url, http_client, **kwargs)
@@ -37,6 +36,7 @@ class BrowserSiteAdapter(BaseSiteAdapter):
         self._browser = None
         self._browser_context = None
         self._browser_proxy_url = None
+        self._browser_proxy = None
 
     async def _controlled(self, operation: Awaitable[Any]) -> Any:
         """Keep long navigation/selector waits responsive to task cancellation."""
@@ -52,18 +52,23 @@ class BrowserSiteAdapter(BaseSiteAdapter):
                 pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
 
-    async def _ensure_browser(self, proxy_url: str) -> None:
-        if self._browser_context is not None and self._browser_proxy_url == proxy_url:
+    async def _ensure_browser(self, proxy_url: str, pre_proxy_url: str | None = None) -> None:
+        route = (proxy_url, pre_proxy_url)
+        if self._browser_context is not None and self._browser_proxy_url == route:
             return
         await self.close()
         try:
             from playwright.async_api import async_playwright
 
             self._playwright = await self._controlled(async_playwright().start())
+            self._browser_proxy = ProxyTunnel(
+                proxy_url, pre_proxy_url, timeout=settings.http_request_timeout,
+            )
+            browser_proxy_url = await self._browser_proxy.start()
             options = browser_launch_options(
                 self._playwright,
                 timeout_ms=max(1, int(settings.http_request_timeout * 1000)),
-                proxy_url=proxy_url,
+                proxy_url=browser_proxy_url,
             )
             self._browser = await self._controlled(self._playwright.chromium.launch(**options))
             self._browser_context = await self._controlled(self._browser.new_context(
@@ -75,7 +80,7 @@ class BrowserSiteAdapter(BaseSiteAdapter):
             self._browser_context.set_default_timeout(
                 max(1, int(settings.http_request_timeout * 1000))
             )
-            self._browser_proxy_url = proxy_url
+            self._browser_proxy_url = route
         except asyncio.CancelledError:
             await self.close()
             raise
@@ -105,21 +110,20 @@ class BrowserSiteAdapter(BaseSiteAdapter):
         if config.params:
             query = [*parse_qsl(parsed.query, keep_blank_values=True), *config.params.items()]
             url = urlunsplit(parsed._replace(query=urlencode(query)))
-        force_direct = config.force_direct or kwargs.get("force_direct", False)
-        proxy_url = "" if force_direct else settings.tunnel_proxy_url
-        use_anti_crawl = kwargs.get("anti_crawl_enabled")
+        use_anti_crawl = get_crawl_proxy_mode()
+        if use_anti_crawl is None:
+            template = getattr(self, "_template", None)
+            use_anti_crawl = template.effective_anti_crawl_enabled if template is not None else kwargs.get("anti_crawl_enabled")
         if use_anti_crawl is None:
             use_anti_crawl = settings.anti_crawl_enabled
-        if not force_direct and not proxy_url and use_anti_crawl and (
-            settings.proxy_pool_api_urls or settings.proxy_pool_file
-        ):
-            raise BrowserRuntimeError(
-                "Browser transport does not support HTTP pool/pre-proxy chains; "
-                "configure a tunnel proxy or explicitly use direct access"
-            )
         async with self._browser_lock:
             await check_control_state()
-            await self._ensure_browser(proxy_url)
+            proxy_url, pre_proxy_url = await self._client._select_proxy(
+                use_anti_crawl,
+                rotate_proxy=bool(kwargs.get("rotate_proxy")) or kwargs.get("attempt", 0) > 0,
+                adapter_name=self.adapter_name,
+            )
+            await self._ensure_browser(proxy_url, pre_proxy_url)
             page = await self._controlled(self._browser_context.new_page())
             try:
                 await page.set_extra_http_headers(config.headers)
@@ -206,10 +210,10 @@ class BrowserSiteAdapter(BaseSiteAdapter):
         raise ValueError("Browser table scroll limit reached; refusing an incomplete snapshot")
 
     async def on_error(self, error, page, attempt):
-        if isinstance(error, BrowserRuntimeError | ValueError) or attempt + 1 >= self.browser_max_attempts:
+        if isinstance(error, BrowserRuntimeError | ValueError):
             return "abort"
         await self.close()
-        await controlled_sleep(min(settings.http_retry_backoff * 2 ** attempt, 10))
+        await check_control_state()
         return None
 
     async def close(self) -> None:
@@ -217,8 +221,10 @@ class BrowserSiteAdapter(BaseSiteAdapter):
         resources = (
             (self._browser_context, "close"), (self._browser, "close"),
             (self._playwright, "stop"),
+            (self._browser_proxy, "close"),
         )
         self._browser_context = self._browser = self._playwright = None
+        self._browser_proxy = None
         self._browser_proxy_url = None
         for resource, method in resources:
             if resource is not None:

@@ -13,7 +13,7 @@ from sqlalchemy.engine import make_url
 
 from app.config.settings import settings
 from app.etl.cdc import UNAVAILABLE_VALUE, cdc_schemas
-from app.etl.schema.catalogs import lineage_columns
+from app.etl.schema.catalogs import TABLE_DEFINITIONS, lineage_columns
 from app.storage.postgres_client import PostgresClient, _resolved_pg_url
 from app.syncer.mongo_cdc import SetupError, register_connector
 
@@ -28,6 +28,70 @@ ORDER BY n.nspname,c.relname
 
 def _lineage_schemas() -> list[str]:
     return [schema for schema in cdc_schemas() if lineage_columns(schema[3:])]
+
+
+def cdc_table_enabled(schema: str, table: str) -> bool:
+    layer = schema.removeprefix("ts_")
+    logical = table.removeprefix(layer + "_")
+    return TABLE_DEFINITIONS.get(layer, {}).get(logical, {}).get("storage") != "timescale"
+
+
+def _schema_publications() -> list[str]:
+    return [schema for schema in cdc_schemas() if schema != "ts_ods"]
+
+
+def _connector_tables() -> str:
+    patterns = []
+    for schema in cdc_schemas():
+        layer = schema[3:]
+        excluded = [re.escape(layer + "_" + table) for table, definition in TABLE_DEFINITIONS.get(layer, {}).items()
+                    if definition.get("storage") == "timescale"]
+        guard = rf"(?!(?:{'|'.join(excluded)})$)" if excluded else ""
+        patterns.append(rf"{schema}\.{guard}{layer}_[a-z][a-z0-9_]*")
+    return ",".join(patterns)
+
+
+_ODS_CURRENT_SQL = """
+SELECT DISTINCT n.nspname,c.relname
+FROM ts_meta.ddlregistry r
+JOIN pg_namespace n ON n.nspname=r.schema_name
+JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=r.table_name
+WHERE r.layer='ods' AND r.table_role='current' AND r.is_active
+AND n.nspname='ts_ods' AND c.relkind IN ('r','p') AND NOT c.relispartition
+ORDER BY n.nspname,c.relname
+"""
+
+
+def _ods_whitelist(rows):
+    return {(row["nspname"], row["relname"]) for row in rows
+            if cdc_table_enabled(row["nspname"], row["relname"])}
+
+
+def _publication_objects(tables):
+    objects = ["TABLES IN SCHEMA " + ", ".join(_identifier(schema) for schema in _schema_publications())]
+    if tables:
+        objects.append("TABLE " + ", ".join(f"{_identifier(schema)}.{_identifier(table)}" for schema, table in sorted(tables)))
+    return ", ".join(objects)
+
+
+async def ensure_table_publication(pg: PostgresClient, table_name: str) -> None:
+    """Publish a newly registered ODS current parent before its first write."""
+    schema, table = table_name.split(".")
+    if schema != "ts_ods" or not cdc_table_enabled(schema, table):
+        return
+    _identifier(schema); _identifier(table)
+    publication = postgres_cdc_identity()["publication"]
+    async with pg.session() as session:
+        await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:name,0))"), {"name": publication})
+        registered = _ods_whitelist((await session.execute(text(_ODS_CURRENT_SQL))).mappings().all())
+        if (schema, table) not in registered:
+            raise SetupError("ODS CDC table must be an active registered current parent")
+        covered = (await session.execute(text(
+            "SELECT 1 FROM pg_publication_rel r JOIN pg_publication p ON p.oid=r.prpubid "
+            "WHERE p.pubname=:publication AND r.prrelid=to_regclass(:table_name)"
+        ), {"publication": publication, "table_name": table_name})).first()
+        if not covered:
+            await session.execute(text(f"ALTER PUBLICATION {_identifier(publication)} ADD TABLE {_identifier(schema)}.{_identifier(table)}"))
 
 
 def _missing_lineage(rows):
@@ -73,8 +137,7 @@ def connector_config(*, snapshot_mode: str = "no_data") -> dict[str, str]:
         "publication.name": identity["publication"], "publication.autocreate.mode": "disabled",
         "publish.via.partition.root": "true", "snapshot.mode": snapshot_mode,
         "schema.include.list": ",".join(cdc_schemas()),
-        "table.include.list": ",".join(rf"ts_{layer}\.{layer}_[a-z][a-z0-9_]*"
-                                       for layer in (schema[3:] for schema in cdc_schemas())),
+        "table.include.list": _connector_tables(),
         "decimal.handling.mode": "string", "time.precision.mode": "adaptive_time_microseconds",
         "hstore.handling.mode": "json", "binary.handling.mode": "base64",
         "tombstones.on.delete": "false", "unavailable.value.placeholder": UNAVAILABLE_VALUE,
@@ -102,9 +165,10 @@ def _identifier(value: str) -> str:
 async def prepare_database(pg: PostgresClient) -> None:
     """Explicit migration: publish future ETL tables/partitions and full row images."""
     publication = _identifier(postgres_cdc_identity()["publication"])
-    schemas = ", ".join(_identifier(name) for name in cdc_schemas())
     async with pg.session() as session:
         await session.execute(text("SET LOCAL lock_timeout = '5s'"))
+        await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:name,0))"),
+                              {"name": postgres_cdc_identity()["publication"]})
         for schema in cdc_schemas():
             await session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_identifier(schema)}"))
         lineage = (await session.execute(text(_LINEAGE_TABLES_SQL), {"schemas": _lineage_schemas()})).mappings().all()
@@ -115,24 +179,37 @@ async def prepare_database(pg: PostgresClient) -> None:
         exists = (await session.execute(text(
             "SELECT 1 FROM pg_publication WHERE pubname=:name"
         ), {"name": postgres_cdc_identity()["publication"]})).first()
+        ods_tables = _ods_whitelist((await session.execute(text(_ODS_CURRENT_SQL))).mappings().all())
+        objects = _publication_objects(ods_tables)
         if exists:
-            await session.execute(text(f"ALTER PUBLICATION {publication} SET TABLES IN SCHEMA {schemas}"))
+            await session.execute(text(f"ALTER PUBLICATION {publication} SET {objects}"))
             await session.execute(text(f"ALTER PUBLICATION {publication} SET (publish_via_partition_root=true)"))
         else:
             await session.execute(text(
-                f"CREATE PUBLICATION {publication} FOR TABLES IN SCHEMA {schemas} "
+                f"CREATE PUBLICATION {publication} FOR {objects} "
                 "WITH (publish_via_partition_root=true)"
             ))
         # Parent and existing leaf partitions need FULL; future tables receive it
         # in ETLBase before any write/partition creation can become visible.
         rows = (await session.execute(text(
             "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "JOIN pg_class root ON root.oid=COALESCE(pg_partition_root(c.oid),c.oid) "
             "WHERE n.nspname=ANY(:schemas) AND c.relkind IN ('r','p') "
+            "AND (n.nspname<>'ts_ods' OR root.relname=ANY(:ods_tables)) "
             "AND c.relreplident <> 'f' ORDER BY n.nspname,c.relname"
-        ), {"schemas": list(cdc_schemas())})).mappings().all()
+        ), {"schemas": list(cdc_schemas()), "ods_tables": [table for _, table in ods_tables]})).mappings().all()
         for row in rows:
+            if not cdc_table_enabled(row['nspname'], row['relname']):
+                continue
             name = f"{_identifier(row['nspname'])}.{_identifier(row['relname'])}"
             await session.execute(text(f"ALTER TABLE {name} REPLICA IDENTITY FULL"))
+        if settings.pg_cdc_url:
+            reader = _identifier(make_url(settings.pg_cdc_url).username or "")
+            await session.execute(text(f"GRANT USAGE ON SCHEMA ts_meta TO {reader}"))
+            await session.execute(text(
+                "GRANT SELECT (layer,table_role,is_active,schema_name,table_name) "
+                f"ON ts_meta.ddlregistry TO {reader}"
+            ))
 
 
 async def check_database(
@@ -149,17 +226,21 @@ async def check_database(
     if server["wal_level"] != "logical" or (require_replication and not server["replication"]):
         raise SetupError("Postgres CDC requires wal_level=logical and a replication-enabled account")
     publication = await pg.fetch_one(
-        "SELECT pubviaroot FROM pg_publication WHERE pubname=:name",
+        "SELECT pubviaroot,puballtables FROM pg_publication WHERE pubname=:name",
         {"name": postgres_cdc_identity()["publication"]},
     )
-    if not publication or not publication["pubviaroot"]:
+    if not publication or not publication["pubviaroot"] or publication.get("puballtables"):
         raise SetupError("Prepare the CDC publication with publish_via_partition_root=true first")
+    expected = _ods_whitelist(await pg.fetch_all(_ODS_CURRENT_SQL))
     missing = await pg.fetch_all(
         "SELECT n.nspname,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+        "JOIN pg_class root ON root.oid=COALESCE(pg_partition_root(c.oid),c.oid) "
         "WHERE n.nspname=ANY(:schemas) AND c.relkind IN ('r','p') AND (c.relreplident<>'f' "
-        "OR NOT has_table_privilege(c.oid,'SELECT'))",
-        {"schemas": list(cdc_schemas())},
+        "OR NOT has_table_privilege(c.oid,'SELECT')) "
+        "AND (n.nspname<>'ts_ods' OR root.relname=ANY(:ods_tables))",
+        {"schemas": list(cdc_schemas()), "ods_tables": [table for _, table in expected]},
     )
+    missing = [row for row in missing if cdc_table_enabled(row['nspname'], row['relname'])]
     if missing:
         raise SetupError("ETL tables/partitions require REPLICA IDENTITY FULL and SELECT permission")
     covered = await pg.fetch_all(
@@ -168,8 +249,16 @@ async def check_database(
         "JOIN pg_namespace n ON n.oid=p.pnnspid WHERE pub.pubname=:name",
         {"name": postgres_cdc_identity()["publication"]},
     )
-    if set(cdc_schemas()) - {row["nspname"] for row in covered}:
-        raise SetupError("CDC publication must include all current ETL schemas and future tables")
+    if {row["nspname"] for row in covered} != set(_schema_publications()):
+        raise SetupError("CDC publication requires schema coverage outside ODS and explicit ODS current parents")
+    actual = await pg.fetch_all(
+        "SELECT n.nspname,c.relname FROM pg_publication_rel r "
+        "JOIN pg_publication p ON p.oid=r.prpubid JOIN pg_class c ON c.oid=r.prrelid "
+        "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE p.pubname=:name AND n.nspname='ts_ods'",
+        {"name": postgres_cdc_identity()["publication"]},
+    )
+    if {(row['nspname'], row['relname']) for row in actual} != expected:
+        raise SetupError("CDC publication ODS parents differ from registered non-Timescale current tables")
     lineage = await pg.fetch_all(_LINEAGE_TABLES_SQL, {"schemas": _lineage_schemas()})
     if next(_missing_lineage(lineage), None) is not None:
         raise SetupError("TASK/DWD source lineage columns are missing; run the owner preparation migration")

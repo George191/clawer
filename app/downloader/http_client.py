@@ -23,12 +23,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 from curl_cffi import CurlECode, CurlError, CurlOpt
 from curl_cffi import requests as curl_requests
-from curl_cffi.requests.exceptions import HTTPError, ProxyError, RequestException
+from curl_cffi.requests.exceptions import ProxyError, RequestException
 
 from app.base.http import DownloadCleanupError, DownloadError, DownloadResponse
 from app.config.settings import settings
 from app.logger import get_logger
 from app.models.template import RequestConfig
+from app.utils.runtime_control import get_crawl_proxy_mode
 
 logger = get_logger(__name__)
 
@@ -139,7 +140,7 @@ def _init_anti_crawl(*, use_proxy: bool = True):
         from app.anti_crawl.request_delayer import get_delayer
         _delayer = get_delayer()
         _rotator = get_identity_rotator()
-    if use_proxy and settings.anti_crawl_enabled and _proxy_pool is None:
+    if use_proxy and _proxy_pool is None:
         from app.anti_crawl.proxy_pool import get_proxy_pool
         _proxy_pool = get_proxy_pool()
 
@@ -186,6 +187,44 @@ class HttpClient:
         self._download_owners: dict[int, asyncio.Task] = {}
         self._download_cleanup_blocked: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
         self._download_pending_tasks: set[asyncio.Future] = set()
+        self._retrying_tasks: weakref.WeakSet[asyncio.Task] = weakref.WeakSet()
+
+    async def _select_proxy(
+        self, use_proxy: bool, rotate_proxy: bool = False, adapter_name: str | None = None,
+    ) -> tuple[str, str | None]:
+        front_proxy = settings.proxy_pre_proxy_url or settings.tunnel_proxy_url
+        if not front_proxy:
+            raise ProxyError("The front proxy is required for collection requests")
+        task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
+        if not use_proxy:
+            await self._release_proxy_lease(task_id)
+            proxy_url, pre_proxy_url = front_proxy, None
+        else:
+            _init_anti_crawl()
+            if _proxy_pool is None or not _proxy_pool.enabled:
+                raise ProxyError("The template requires a configured exit proxy pool")
+            exclude_proxy_url = None
+            if rotate_proxy:
+                exclude_proxy_url = self._last_proxy_urls.get(task_id) or self._leased_proxies.get(task_id)
+                await self._release_proxy_lease(task_id)
+                if exclude_proxy_url:
+                    self._last_proxy_urls[task_id] = exclude_proxy_url
+            lock = await self._get_lease_lock()
+            async with lock:
+                proxy_url = await _proxy_pool.lease_proxy(
+                    task_id, adapter_name, exclude_proxy_url=exclude_proxy_url,
+                )
+                if not proxy_url:
+                    raise ProxyError("The template requires an available exit proxy")
+                self._leased_proxies[task_id] = proxy_url
+                self._last_proxy_urls[task_id] = proxy_url
+            pre_proxy_url = front_proxy
+        logger.info(
+            "Collection proxy route: exit_pool=%s front_proxy=%s exit_proxy=%s",
+            use_proxy, self._safe_proxy_url(front_proxy),
+            self._safe_proxy_url(proxy_url) if use_proxy else "disabled",
+        )
+        return proxy_url, pre_proxy_url
 
     def _consume_download_task(self, task: asyncio.Future) -> None:
         self._download_pending_tasks.discard(task)
@@ -227,39 +266,6 @@ class HttpClient:
             return status_code
         response = getattr(error, "response", None)
         return getattr(response, "status_code", None) if response is not None else None
-
-    @classmethod
-    def _should_mark_proxy_failure(
-        cls,
-        error: Exception,
-        pre_proxy_url: str | None,
-    ) -> bool:
-        """Do not blame an exit proxy for an ambiguous jump-host failure."""
-        return not (pre_proxy_url and cls._error_status_code(error) is None)
-
-    @classmethod
-    def _is_download_transport_error(cls, error: Exception) -> bool:
-        # curl can report body/HTTP2 failures after receiving successful headers.
-        return isinstance(error, OSError) and not (
-            isinstance(error, HTTPError)
-            and (cls._error_status_code(error) or 0) >= 400
-        )
-
-    @classmethod
-    def _should_mark_download_proxy_failure(
-        cls,
-        error: Exception,
-        pre_proxy_url: str | None = None,
-    ) -> bool:
-        """Only remove a proxy for errors that indicate the route failed.
-
-        Origin HTTP responses and local validation failures do not prove that
-        the proxy failed. With a jump host, only an explicit proxy error can
-        be attributed to the exit proxy.
-        """
-        if isinstance(error, ProxyError):
-            return True
-        return not pre_proxy_url and cls._is_download_transport_error(error)
 
     async def _get_lease_lock(self) -> asyncio.Lock:
         if self._lease_lock is None:
@@ -318,12 +324,13 @@ class HttpClient:
             "headers": {"User-Agent": settings.http_user_agent},
             "verify": settings.http_verify_ssl,
             "allow_redirects": True,
+            "curl_options": {CurlOpt.NOPROXY: b""},
         }
         if settings.http_interface:
             session_kwargs["interface"] = settings.http_interface
             logger.debug("Binding to network interface: %s", settings.http_interface)
         if proxy_url and pre_proxy_url:
-            session_kwargs["curl_options"] = {CurlOpt.PRE_PROXY: pre_proxy_url}
+            session_kwargs["curl_options"][CurlOpt.PRE_PROXY] = pre_proxy_url
         if settings.http_debug_proxy_ip:
             _proxy_debug_logger.debug(
                 "session proxy=%s pre_proxy(jump)=%s interface=%s",
@@ -493,7 +500,7 @@ class HttpClient:
             page, attempt, method, url_display, tunnel_info, response.status_code, use_anti_crawl, task_id
         )
 
-        if _proxy_pool is not None and proxy_url:
+        if use_anti_crawl and _proxy_pool is not None and proxy_url:
             await _proxy_pool.mark_success(proxy_url)
 
     async def request_page(
@@ -517,7 +524,7 @@ class HttpClient:
             config: 请求配置。
             anti_crawl_enabled: 模板级反爬开关。None=使用全局配置, True/False=覆盖全局。
             adapter_name: 当前模板适配器名称，用于隔离代理失败记录。
-            force_direct: 强制绕过隧道代理和代理池，仅用于连接预检。
+            force_direct: 不改变采集代理模式；所有请求仍使用前置代理。
             page: 当前页码，用于日志记录。
             attempt: 当前尝试次数，用于日志记录。
             no_timeout: 不设置连接或响应超时，仅用于交互式网站预检。
@@ -527,7 +534,10 @@ class HttpClient:
             响应文本。
         """
         config = config or RequestConfig()
-        force_direct = force_direct or config.force_direct
+        task = asyncio.current_task()
+        retrying = attempt > 0 or rotate_proxy or task in self._retrying_tasks
+        if task is not None:
+            self._retrying_tasks.add(task)
         # Cached download clients have the normal request timeout. Interactive
         # no-timeout requests retain their original dedicated-session path.
         reuse_session = reuse_session and not no_timeout
@@ -542,6 +552,10 @@ class HttpClient:
             else settings.anti_crawl_enabled
         )
 
+        proxy_mode = get_crawl_proxy_mode()
+        if proxy_mode is not None:
+            use_anti_crawl = proxy_mode
+
         if use_anti_crawl:
             _init_anti_crawl()
         
@@ -553,35 +567,14 @@ class HttpClient:
             if anti_cookies:
                 for k, v in anti_cookies.items():
                     cookies.setdefault(k, v)
-        if _delayer is not None and _delayer.enabled and use_anti_crawl:
+        if _delayer is not None and _delayer.enabled and use_anti_crawl and not retrying:
             await _delayer.delay(url)
 
-        # ── 代理选择：隧道代理 > 协程独立代理 > 代理池 ──────────
-        proxy_url = None
-        pre_proxy_url = None
+        # The template controls the exit pool; the front proxy is mandatory.
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
-
-        if rotate_proxy and _proxy_pool is not None and _proxy_pool.enabled:
-            await self._release_proxy_lease(task_id)
-
-        if force_direct:
-            proxy_url = None
-        elif settings.tunnel_proxy_url and not (
-            rotate_proxy and _proxy_pool is not None and _proxy_pool.enabled
-        ):
-            proxy_url = settings.tunnel_proxy_url
-        elif _proxy_pool is not None and _proxy_pool.enabled and use_anti_crawl:
-            pre_proxy_url = settings.proxy_pre_proxy_url or None
-            lock = await self._get_lease_lock()
-            async with lock:
-                proxy_url = await _proxy_pool.lease_proxy(task_id, adapter_name)
-                if proxy_url:
-                    self._leased_proxies[task_id] = proxy_url
-
-        if proxy_url:
-            self._last_proxy_urls[task_id] = proxy_url
-        else:
-            self._last_proxy_urls.pop(task_id, None)
+        proxy_url, pre_proxy_url = await self._select_proxy(
+            use_anti_crawl, retrying, adapter_name,
+        )
 
         url_display = url if len(url) <= 150 else f"{url[:70]}...{url[-70:]}"
 
@@ -668,11 +661,11 @@ class HttpClient:
                     )
                 return response.text
 
-            except Exception as e:
+            except Exception:
                 if (
-                    _proxy_pool is not None
+                    use_anti_crawl
+                    and _proxy_pool is not None
                     and proxy_url
-                    and self._should_mark_proxy_failure(e, pre_proxy_url)
                 ):
                     await _proxy_pool.mark_failure(proxy_url, adapter_name)
                     await self._release_failed_proxy(task_id, proxy_url, adapter_name)
@@ -691,6 +684,8 @@ class HttpClient:
                 raise asyncio.TimeoutError("Page request exceeded its time budget")
             response = request_task.result()
             completed = True
+            if task is not None:
+                self._retrying_tasks.discard(task)
             return response
         except DownloadCleanupError:
             if reuse_session:
@@ -725,20 +720,13 @@ class HttpClient:
         proxy_url: str,
         adapter_name: str | None = None,
     ) -> None:
-        """释放失效的协程代理并尝试获取新代理。"""
+        """释放失效租约，保留实际失败的出口供下次请求排除。"""
         lock = await self._get_lease_lock()
         async with lock:
             if self._leased_proxies.get(task_id) == proxy_url:
                 del self._leased_proxies[task_id]
-                if self._last_proxy_urls.get(task_id) == proxy_url:
-                    del self._last_proxy_urls[task_id]
+                self._last_proxy_urls[task_id] = proxy_url
                 await _proxy_pool.release_proxy(task_id)
-                # 尝试为该协程分配新代理
-                if _proxy_pool is not None and _proxy_pool.enabled:
-                    new_proxy = await _proxy_pool.lease_proxy(task_id, adapter_name)
-                    if new_proxy:
-                        self._leased_proxies[task_id] = new_proxy
-                        logger.debug(f"[{new_proxy}] Replaced failed proxy {proxy_url} for task {task_id}")
 
     async def _release_proxy_lease(self, task_id: int) -> None:
         """Release a healthy lease before a retry that must rotate IP."""
@@ -758,7 +746,14 @@ class HttpClient:
         chunk_callback=None,
     ) -> DownloadResponse:
         config = config or RequestConfig()
-        effective_use_proxy = settings.download_use_proxy if use_proxy is None else use_proxy
+        task = asyncio.current_task()
+        retrying = task in self._retrying_tasks
+        if task is not None:
+            self._retrying_tasks.add(task)
+        effective_use_proxy = settings.anti_crawl_enabled if use_proxy is None else use_proxy
+        proxy_mode = get_crawl_proxy_mode()
+        if proxy_mode is not None:
+            effective_use_proxy = proxy_mode
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)
@@ -774,38 +769,11 @@ class HttpClient:
                 for k, v in anti_cookies.items():
                     cookies.setdefault(k, v)
 
-        if _delayer is not None and _delayer.enabled:
+        if _delayer is not None and _delayer.enabled and not retrying:
             await _delayer.delay(url)
 
-        # ── 代理选择：隧道代理 > 代理池 ──────────────────────────
-        proxy_url = None
-        pre_proxy_url = None
         task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
-
-        if effective_use_proxy:
-            if settings.tunnel_proxy_url:
-                proxy_url = settings.tunnel_proxy_url
-            elif _proxy_pool is not None and _proxy_pool.enabled:
-                pre_proxy_url = settings.proxy_pre_proxy_url or None
-                lock = await self._get_lease_lock()
-                async with lock:
-                    if task_id in self._leased_proxies:
-                        proxy_url = self._leased_proxies[task_id]
-                    else:
-                        proxy_url = await _proxy_pool.lease_proxy(task_id)
-                        if proxy_url:
-                            self._leased_proxies[task_id] = proxy_url
-
-        if proxy_url:
-            self._last_proxy_urls[task_id] = proxy_url
-        else:
-            self._last_proxy_urls.pop(task_id, None)
-            if (
-                effective_use_proxy
-                and _proxy_pool is not None
-                and _proxy_pool.enabled
-            ):
-                raise DownloadError(url, message="Download proxy unavailable")
+        proxy_url, pre_proxy_url = await self._select_proxy(effective_use_proxy, rotate_proxy=retrying)
         logger.debug(
             "Downloading bytes: %s with proxy: %s",
             url,
@@ -924,7 +892,7 @@ class HttpClient:
                 if chunk_callback is not None:
                     chunk_callback(data)
 
-            if _proxy_pool is not None and proxy_url:
+            if effective_use_proxy and _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
 
             result = DownloadResponse(
@@ -935,15 +903,17 @@ class HttpClient:
                 data=data,
             )
             completed = True
+            if task is not None:
+                self._retrying_tasks.discard(task)
             return result
         except asyncio.CancelledError:
             cancelled = True
             raise
-        except Exception as e:
+        except Exception:
             proxy_failed = (
-                _proxy_pool is not None
+                effective_use_proxy
+                and _proxy_pool is not None
                 and proxy_url
-                and self._should_mark_download_proxy_failure(e, pre_proxy_url)
             )
             if proxy_failed:
                 await _proxy_pool.mark_failure(proxy_url)
@@ -1043,6 +1013,7 @@ class HttpClient:
                 cleanup_tasks.add(asyncio.ensure_future(_proxy_pool.release_proxy(task_id)))
         self._leased_proxies.clear()
         self._last_proxy_urls.clear()
+        self._retrying_tasks.clear()
         try:
             await self._finish_download_tasks(0, tasks | cleanup_tasks, cleanup_tasks=cleanup_tasks)
         except BaseException:
@@ -1053,6 +1024,8 @@ class HttpClient:
         """Release the proxy lease owned by the current download task."""
         task = asyncio.current_task()
         task_id = id(task) if task else 0
+        if task is not None:
+            self._retrying_tasks.discard(task)
         await self._discard_download_client(task_id)
         lock = await self._get_lease_lock()
         async with lock:
@@ -1063,7 +1036,10 @@ class HttpClient:
 
     async def mark_last_proxy_failed(self, adapter_name: str | None = None) -> None:
         """标记最后使用的代理为失败并释放协程租约，这样下次请求会使用新代理。"""
-        task_id = id(asyncio.current_task()) if asyncio.current_task() else 0
+        task = asyncio.current_task()
+        if task is not None:
+            self._retrying_tasks.add(task)
+        task_id = id(task) if task else 0
         proxy_url = self._last_proxy_urls.get(task_id)
         if proxy_url and _proxy_pool is not None and _proxy_pool.enabled:
             await _proxy_pool.mark_failure(proxy_url, adapter_name)

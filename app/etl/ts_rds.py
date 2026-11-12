@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from app.config.settings import settings
 from app.etl.base import ETLBase, extract_meta
+from app.etl.orbital_history import event_lineage, immutable_event_payload
 from app.etl.schema.baselines import RDS_CURRENT_BASELINE_DDLS
 from app.etl.schema.catalogs import (
     current_insert_sql,
@@ -91,6 +92,14 @@ class TsRds(ETLBase):
             await session.execute(text("SET LOCAL TIME ZONE 'UTC'"))
             result = await session.execute(text(current_sql), payload)
             current_row = result.mappings().first()
+            if table == "orbital" and current_row is None:
+                existing = (await session.execute(text(
+                    "SELECT *, raw_data = CAST(:raw_data AS jsonb) AS identical FROM ts_rds.rds_orbital "
+                    "WHERE record_id=:record_id AND data_source=:data_source AND data_type=:data_type FOR SHARE"
+                ), payload)).mappings().first()
+                if existing is None or not existing["identical"]:
+                    raise ValueError("Orbital event_id reused with a different immutable payload")
+                return {key: value for key, value in existing.items() if key != "identical"}
             if current_row is None:
                 await self._check_skipped_stream(session, table, payload)
             return dict(current_row) if current_row else None
@@ -119,6 +128,10 @@ class TsRds(ETLBase):
             raise ValueError("RDS input identity is missing")
 
         raw_data = dict(message)
+        if table == "orbital":
+            record_id = event_lineage(message.get("_meta") or {})["source_event_id"]
+            # Delivery positions are mutable transport data, not event content.
+            raw_data = immutable_event_payload(raw_data)
         kafka_meta = message.get("_kafka_meta", {}) or {}
         now = datetime.now(timezone.utc)
         payload = {
@@ -147,6 +160,8 @@ class TsRds(ETLBase):
                 if message.value is None:
                     return None
                 candidate = extract_meta(message.value).get("data_type")
+                if candidate == "orbital":
+                    return None
                 validate_table_name(candidate)
                 if table is not None and candidate != table:
                     return None

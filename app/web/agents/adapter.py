@@ -132,7 +132,7 @@ class AdapterAgent(BaseAgent):
         return AdapterResult(
             adapter_code=code,
             warnings=warnings,
-            adapter_name=f"{template_name}_adapter",
+            adapter_name=template_name,
         )
 
     @staticmethod

@@ -48,7 +48,12 @@ from app.records.field_names import normalize_record_fields
 from app.records.file_store import FileRecordStore
 from app.utils.connection_errors import is_retryable_connection_error
 from app.utils.path import get_nested_value
-from app.utils.runtime_control import check_control_state, controlled_sleep
+from app.utils.runtime_control import (
+    check_control_state,
+    controlled_sleep,
+    reset_crawl_proxy_mode,
+    set_crawl_proxy_mode,
+)
 
 logger = get_logger(__name__)
 
@@ -261,7 +266,7 @@ class SpiderEngine:
         if filtered.records:
             records_to_save = filtered.records
             snapshot_store = template._crawl_context.get("snapshot_store")
-            if snapshot_store is not None:
+            if snapshot_store is not None and template.data_type != "orbital":
                 records_to_save = await snapshot_store.filter_records(
                     records_to_save, template.dedup_fields
                 )
@@ -289,6 +294,7 @@ class SpiderEngine:
             template.name, template.data_type, retain_records=self._retain_records,
         )
         template._crawl_context["_crawl_result"] = result
+        proxy_token = set_crawl_proxy_mode(template.effective_anti_crawl_enabled)
 
         logger.info(
             "Starting crawl: template=%s, data_type=%s, response_type=%s%s",
@@ -331,6 +337,8 @@ class SpiderEngine:
             logger.error("Crawl failed for template %s: %s", template.name, e)
             result.error = e
             result.errors.append(str(e))
+        finally:
+            reset_crawl_proxy_mode(proxy_token)
 
         logger.info(
             "Crawl complete: template=%s, records=%d, errors=%d",
@@ -356,13 +364,15 @@ class SpiderEngine:
                     await adapter.on_before_crawl(template)
                     break
                 except Exception as error:
-                    if not is_retryable_connection_error(error):
+                    if not self._is_retryable_request_error(error):
                         raise
                     logger.warning(
                         "[%s] Crawl initialization connection failed (attempt %d): %s",
                         template.name, attempt + 1, error,
                     )
-                    await controlled_sleep(min(2 ** min(attempt, 5), 30))
+                    if not getattr(error, "proxy_failure_marked", False):
+                        await self._client.mark_last_proxy_failed(adapter_name=template.adapter)
+                    await check_control_state()
             if template.response_type == ResponseType.JSON:
                 return await self._crawl_list_pages_json(
                     template, result, resume_page, progress_callback, adapter=adapter
@@ -523,7 +533,7 @@ class SpiderEngine:
                             "[%s] Page %d connection failed (attempt %d): %s",
                             template.name, current_page, attempt + 1, e,
                         )
-                        await controlled_sleep(min(2 ** min(attempt, 5), 30))
+                        await check_control_state()
                         continue
                     adapter_action = await adapter.on_error(e, current_page, attempt)
 
@@ -864,7 +874,7 @@ class SpiderEngine:
                         "[%s] Page %d connection failed (attempt %d): %s",
                         template.name, page, attempt + 1, e,
                     )
-                    await controlled_sleep(min(2 ** min(attempt, 5), 30))
+                    await check_control_state()
                     continue
 
                 adapter_action = await adapter.on_error(e, page, attempt)
@@ -1012,21 +1022,25 @@ class SpiderEngine:
         self, template: SiteTemplate, page: int, error: Exception, failures: int,
     ) -> bool:
         logger.warning(
-            "[%s] Page %d response validation failed (%d/3): %s",
+            "[%s] Page %d response validation failed (attempt %d): %s",
             template.name, page, failures, error,
         )
-        if failures >= 3:
-            return False
         if not getattr(error, "proxy_failure_marked", False):
             await self._client.mark_last_proxy_failed(adapter_name=template.adapter)
-        await controlled_sleep(min(2 ** (failures - 1), 30))
+        await check_control_state()
         return True
 
     @staticmethod
     def _is_retryable_request_error(error: Exception) -> bool:
-        return is_retryable_connection_error(error) or (
-            isinstance(error, DownloadError)
-            and error.status_code in (None, 0, 200, 202, *settings.http_retry_on_statuses)
+        if isinstance(error, DownloadCleanupError):
+            return False
+        if is_retryable_connection_error(error):
+            return True
+        status_code = HttpClient._error_status_code(error)
+        return (
+            status_code in settings.http_retry_on_statuses
+            or status_code is not None and 500 <= status_code < 600
+            or isinstance(error, DownloadError) and status_code in (None, 0, 200, 202)
         )
 
     @staticmethod

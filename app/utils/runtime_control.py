@@ -12,6 +12,19 @@ _control_checkpoint: ContextVar[ControlCheckpoint | None] = ContextVar(
 _workspace_run: ContextVar[tuple[str, str, str | None] | None] = ContextVar(
     "workspace_run", default=None
 )
+_crawl_proxy_mode: ContextVar[bool | None] = ContextVar("crawl_proxy_mode", default=None)
+
+
+def set_crawl_proxy_mode(use_exit_pool: bool) -> Token:
+    return _crawl_proxy_mode.set(use_exit_pool)
+
+
+def get_crawl_proxy_mode() -> bool | None:
+    return _crawl_proxy_mode.get()
+
+
+def reset_crawl_proxy_mode(token: Token) -> None:
+    _crawl_proxy_mode.reset(token)
 
 
 def set_workspace_run(task_id: str, run_id: str, celery_task_id: str | None = None) -> Token:

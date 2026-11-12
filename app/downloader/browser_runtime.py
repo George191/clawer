@@ -78,6 +78,9 @@ def browser_launch_options(
         options["channel"] = ai_settings.browser_channel.strip()
 
     args = ["--disable-dev-shm-usage"]
+    if proxy_url:
+        args.extend(["--proxy-bypass-list=<-loopback>", "--disable-quic",
+                     "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
     if ai_settings.browser_no_sandbox or (
         os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() == 0
     ):

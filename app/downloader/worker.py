@@ -11,7 +11,7 @@ from typing import Any
 
 import filetype
 
-from app.base.http import DownloadError
+from app.base.http import DownloadCleanupError, DownloadError
 from app.config.settings import settings
 from app.downloader.adapters import (
     DownloadItem,
@@ -37,6 +37,7 @@ from app.records.download_resources import (
 )
 from app.records.mongo_store import MongoRecordStore
 from app.utils.path import get_nested_value
+from app.utils.runtime_control import check_control_state
 from app.web.services.ai_collect_store import ai_collect_store
 
 logger = get_logger(__name__)
@@ -489,12 +490,28 @@ class DownloadWorker:
         use_proxy: bool,
     ) -> str | None:
         started_at = perf_counter()
-        try:
-            response = await self._http.download_response(item.url, use_proxy=use_proxy)
-        except Exception as exc:
-            if HttpClient._error_status_code(exc) == 404:
-                return None
-            raise
+        attempt = 0
+        while True:
+            await check_control_state()
+            try:
+                response = await self._http.download_response(item.url, use_proxy=use_proxy)
+                validator = get_download_response_validator(template_name)
+                if validator is not None:
+                    validator(item, response)
+                if item.attachment and (response.content_type or "").startswith("text/html"):
+                    raise DownloadError(item.url, response.status_code, "attachment is HTML")
+                break
+            except DownloadCleanupError:
+                raise
+            except Exception as exc:
+                if HttpClient._error_status_code(exc) == 404:
+                    return None
+                attempt += 1
+                await self._http.mark_last_proxy_failed()
+                logger.warning(
+                    "Download failed: %s | attempt=%d error=%s: %s; retrying immediately",
+                    item.url, attempt, type(exc).__name__, exc,
+                )
         response_data = response.data
         content_type = response.content_type or "application/octet-stream"
         filename = item.filename
@@ -502,11 +519,6 @@ class DownloadWorker:
         if detected_type is not None:
             content_type = detected_type.mime
             filename += f".{detected_type.extension}"
-        validator = get_download_response_validator(template_name)
-        if validator is not None:
-            validator(item, response)
-        if item.attachment and content_type.startswith("text/html"):
-            raise DownloadError(item.url, response.status_code, "attachment is HTML")
         path = await self._minio.upload_bytes(
             response_data,
             template_name,

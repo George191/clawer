@@ -13,6 +13,7 @@ class _TableDefinition(TypedDict):
 
 
 class TableDefinition(_TableDefinition, total=False):
+    storage: str
     checks: tuple[str, ...]
     indexes: tuple[tuple[str, str, str | None, str], ...]
 
@@ -506,6 +507,10 @@ _CATALOG_FIELDS: dict[str, dict[str, str]] = {
     },
     "orbital": {
         **_SPACE_COMMON_COLUMNS,
+        "source_event_id": "TEXT NOT NULL",
+        "source_revision": "BIGINT NOT NULL",
+        "source_observed_at": "TIMESTAMPTZ NOT NULL",
+        "etl_version": "TEXT NOT NULL",
         "name": "TEXT",
         "norad_id": "BIGINT",
         "cospar_id": "TEXT",
@@ -765,6 +770,12 @@ TABLE_DEFINITIONS: dict[str, dict[str, TableDefinition]] = {
     },
 }
 
+TABLE_DEFINITIONS["ods"]["orbital"].update(
+    storage="timescale",
+    primary_key=("source_observed_at", "source_event_id", "etl_version"),
+    partition_columns=(),
+)
+
 CATALOG_ODS_COLUMNS: dict[str, dict[str, str]] = {
     table: TABLE_DEFINITIONS["ods"][table]["columns"] for table in _CATALOG_FIELDS
 }
@@ -788,9 +799,12 @@ def current_table_ddl(
     columns = columns or table_columns(layer, logical_table)
     table_ref = f"ts_{layer}.{layer}_{logical_table}"
     body = [f'    "{name}" {sql_type}' for name, sql_type in columns.items()]
-    body.append(f"    PRIMARY KEY ({', '.join(RECORD_IDENTITY_COLUMNS)})")
+    body.append(f"    PRIMARY KEY ({', '.join(definition.get('primary_key', RECORD_IDENTITY_COLUMNS))})")
     ddl = (f"CREATE TABLE IF NOT EXISTS {table_ref} (\n" + ",\n".join(body)
-           + f"\n) PARTITION BY HASH ({', '.join(RECORD_IDENTITY_COLUMNS)});")
+           + "\n)")
+    if definition.get("storage") != "timescale":
+        ddl += f" PARTITION BY HASH ({', '.join(RECORD_IDENTITY_COLUMNS)})"
+    ddl += ";"
     indexes = definition.get("indexes", (
         (f"idx_{layer}_{logical_table}_data_source", "data_source", None, "btree"),
         (f"idx_{layer}_{logical_table}_updated_at", "updated_at DESC", None, "btree"),
@@ -798,7 +812,21 @@ def current_table_ddl(
     for name, expression, predicate, method in indexes:
         ddl += (f"\nCREATE INDEX IF NOT EXISTS {name} ON {table_ref} USING {method} ({expression})"
                 + (f" WHERE {predicate}" if predicate else "") + ";")
-    ddl += f"\nALTER TABLE {table_ref} REPLICA IDENTITY FULL;"
+    if definition.get("storage") == "timescale":
+        # Existing native partitions require a verified standalone shadow migration.
+        ddl = (
+            "DO $$ BEGIN IF to_regclass('ts_ods.ods_orbital') IS NOT NULL AND NOT EXISTS ("
+            "SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_schema='ts_ods' "
+            "AND hypertable_name='ods_orbital') THEN RAISE EXCEPTION "
+            "'Existing ods_orbital requires standalone Timescale migration'; END IF; END $$;\n"
+            + ddl
+            + f"\nSELECT create_hypertable('{table_ref}', "
+              "by_range('source_observed_at', INTERVAL '1 month'), if_not_exists => TRUE);"
+            + f"\nCREATE INDEX IF NOT EXISTS idx_orbital_fact_revision ON {table_ref} "
+              "(record_id,data_source,data_type,etl_version,source_revision DESC);"
+        )
+    else:
+        ddl += f"\nALTER TABLE {table_ref} REPLICA IDENTITY FULL;"
     return ddl
 
 
@@ -832,7 +860,17 @@ def current_insert_sql(
     )
     alias = " AS target" if layer == "rds" else ""
     guard = ""
-    if layer == "rds":
+    if table == "orbital" and layer == "rds":
+        return (
+            f"INSERT INTO ts_rds.rds_orbital ({names}) VALUES {', '.join(rows)}\n"
+            "ON CONFLICT (record_id, data_source, data_type) DO NOTHING RETURNING *"
+        )
+    if table == "orbital" and layer == "ods":
+        return (
+            f"INSERT INTO ts_ods.ods_orbital ({names}) VALUES {', '.join(rows)}\n"
+            "ON CONFLICT (source_observed_at, source_event_id, etl_version) DO NOTHING RETURNING *"
+        )
+    elif layer == "rds":
         def version(alias: str) -> str:
             return (
                 f"(COALESCE(({alias}.raw_data->'_meta'->>'updated_at')::timestamptz, '-infinity'::timestamptz), "

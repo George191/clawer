@@ -18,7 +18,10 @@ from app.downloader.browser_runtime import (
     browser_launch_options,
     browser_proxy_config,
 )
+from app.downloader.http_client import HttpClient
+from app.downloader.proxy_tunnel import ProxyTunnel
 from app.logger import get_logger
+from app.utils.runtime_control import get_crawl_proxy_mode
 
 logger = get_logger(__name__)
 
@@ -114,7 +117,7 @@ class BrowserRenderer:
     def _render_sync(
         self,
         url: str,
-        use_proxy: bool,
+        proxy_url: str,
         viewport_width: int,
         viewport_height: int,
         on_event: Callable[[dict[str, object]], None] | None,
@@ -151,7 +154,7 @@ class BrowserRenderer:
             launch_kwargs = browser_launch_options(
                 playwright,
                 timeout_ms=max(1, int(ai_settings.page_fetch_timeout * 1000)),
-                proxy_url=settings.tunnel_proxy_url if use_proxy else "",
+                proxy_url=proxy_url,
             )
             browser = playwright.chromium.launch(**launch_kwargs)
             page = None
@@ -358,14 +361,31 @@ class BrowserRenderer:
             raise BrowserRuntimeError("Browser rendering is disabled by SPIDER_AI_BROWSER_ENABLED")
         safe_viewport_width = max(320, min(int(viewport_width), 3840))
         safe_viewport_height = max(240, min(int(viewport_height), 3840))
-        return await asyncio.to_thread(
-            self._render_sync,
-            url,
-            use_proxy,
-            safe_viewport_width,
-            safe_viewport_height,
-            on_event,
-        )
+        mode = get_crawl_proxy_mode()
+        if mode is None:
+            mode = use_proxy
+        client = HttpClient()
+        tunnel = None
+        operation = None
+        try:
+            proxy_url, pre_proxy_url = await client._select_proxy(mode)
+            tunnel = ProxyTunnel(proxy_url, pre_proxy_url, timeout=ai_settings.page_fetch_timeout)
+            browser_proxy_url = await tunnel.start()
+            operation = asyncio.create_task(asyncio.to_thread(
+                self._render_sync,
+                url,
+                browser_proxy_url,
+                safe_viewport_width,
+                safe_viewport_height,
+                on_event,
+            ))
+            return await asyncio.shield(operation)
+        finally:
+            if tunnel is not None:
+                await tunnel.close()
+            if operation is not None and not operation.done():
+                await asyncio.gather(operation, return_exceptions=True)
+            await client.close()
 
 
 browser_renderer = BrowserRenderer()

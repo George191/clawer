@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from curl_cffi import CurlOpt
 from curl_cffi import requests as curl_requests
+from curl_cffi.requests.exceptions import ProxyError
 
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
+from app.config.settings import settings
 from app.logger import get_adapter_logger
-from app.utils.runtime_control import controlled_sleep
+from app.utils.runtime_control import check_control_state
 
 logger = get_adapter_logger(__name__, "zdopen_api", "proxy")
 
@@ -22,7 +25,6 @@ DEFAULT_ZDPEN_API_URL = "http://www.zdopen.com/FreeProxy/Get/"
 # 错误码 12012: 上一个客户端IP仍在提取中，跳过当前源并尝试其他源
 ERROR_CODE_IP_IN_USE = "12012"
 ERROR_CODE_RATE_LIMIT = "12002"
-RATE_LIMIT_WAIT_SECONDS = 1
 
 
 class ZdopenAPIAdapter(ProxySourceAdapter):
@@ -93,9 +95,14 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
         """每次创建新的 HTTP 客户端（不跨 event loop 缓存，避免 run_async 新 loop 下旧 session 挂起）。"""
         await self._close_client()
         timeout = self._config.get("timeout", 10)
+        front_proxy = settings.proxy_pre_proxy_url or settings.tunnel_proxy_url
+        if not front_proxy:
+            raise ProxyError("The front proxy is required to fetch exit proxies")
         self._http_client = curl_requests.AsyncSession(
             timeout=timeout,
             impersonate="chrome120",
+            proxy=front_proxy,
+            curl_options={CurlOpt.NOPROXY: b""},
         )
         return self._http_client
 
@@ -129,11 +136,10 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
             code = data.get("code", "")
             if code == ERROR_CODE_RATE_LIMIT:
                 logger.warning(
-                    "ZdopenAPI rate limited: code=%s; retrying in %ds",
+                    "ZdopenAPI rate limited: code=%s; retrying immediately",
                     code,
-                    RATE_LIMIT_WAIT_SECONDS,
                 )
-                await controlled_sleep(RATE_LIMIT_WAIT_SECONDS)
+                await check_control_state()
                 continue
 
             if code == ERROR_CODE_IP_IN_USE:
