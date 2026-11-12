@@ -234,3 +234,7 @@
   .flow-ontology__inspector-heading > div { margin-top: 8px; }
   .flow-ontology__inspector-footer { padding: 12px 20px; }
 }
+
+/* On narrow screens the modal preview uses the workspace height, not the card pane height. */
+@media(max-width:900px){.flow-ontology__preview-backdrop{position:fixed;inset:52px 0 0;z-index:104}.flow-ontology__inspector{position:fixed;top:52px;bottom:0;right:0;z-index:105;width:340px;max-width:100vw}}
+@media(max-width:640px){.flow-ontology__inspector{width:100vw}}
