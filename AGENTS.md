@@ -13,6 +13,14 @@ When instructions conflict, follow them in this order:
 1. Task-specific human instructions
 2. General behavioral guidance in this file
 
+## Git-Based Code Deployment
+
+- Code changes must follow `git add` → `git commit` → `git push` → server `git pull` → restart the affected containers.
+- Update server code through Git only. Do not deploy by copying source files, using `docker cp`, or editing application code directly on the server.
+- After pulling, rebuild images that contain the changed code before restarting the corresponding containers. Preserve existing deployment environment, mounts, host mappings, and unrelated services.
+- Check the server working tree before pulling. Reconcile only verified changes belonging to the current task; do not overwrite unrelated local changes.
+- Verify the pushed commit, server commit, and deployed source after the update.
+
 ## MinIO Adapter and Template Fixes
 
 - Apply adapter and template fixes in place within the existing version; do not create new versions or version directories. Templates use `v1.0`; preserve both actively used `google_patent` versions, `v1.0` and `v1.1`, and their task bindings.
