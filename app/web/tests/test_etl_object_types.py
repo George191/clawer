@@ -152,7 +152,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         fields = [column("id", "bigint", True, 2, False, "Record identifier"),
                   column("tenant", "uuid", True, 1, False),
                   column("name", "character varying(80)", comment="Display text only")]
-        instance, session = service(Result(scalar=False), Result([summary()]), Result([]), Result(fields))
+        instance, session = service(Result(scalar=False), Result([summary()]), Result([]), Result(scalar=True), Result([]), Result(fields))
         result = await instance.preview("ods", "objects")
         self.assertEqual(result["primaryKey"], ["tenant", "id"])
         self.assertIsNone(result["titleProperty"])
@@ -167,7 +167,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         links = [foreign(columns=["owner_a", "owner_b"], referenced=["key_b", "key_a"]),
                  foreign("fk_second"), foreign("fk_incoming", "ts_rds", "owners", "ts_ods", "objects"),
                  foreign("fk_self", "ts_ods", "objects", "ts_ods", "objects")]
-        instance, _ = service(Result(scalar=True), Result([summary(properties_count=0)]), Result(links))
+        instance, _ = service(Result(scalar=True), Result([summary(properties_count=0)]), Result(links), Result(scalar=True), Result([]))
         result = await instance.preview("ts_ods", "objects")
         linked = {item["id"]: item for item in result["linkedObjectTypes"]}
         self.assertEqual(len(linked), 2)
@@ -184,10 +184,10 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
                  foreign("meta_out", target_schema="ts_meta"),
                  foreign("meta_history_out", target_schema="ts_meta_hist"),
                  foreign("system_out", target_schema="pg_catalog"), foreign()]
-        instance, session = service(Result(scalar=False), Result([summary(properties_count=0)]), Result(links))
+        instance, session = service(Result(scalar=False), Result([summary(properties_count=0)]), Result(links), Result(scalar=True), Result([]))
         result = await instance.preview("ts_ods", "objects")
         self.assertEqual([item["id"] for item in result["linkedObjectTypes"]], ["ts_rds.owners"])
-        sql = session.calls[-1][0]
+        sql = next(sql for sql, _ in session.calls if "FROM pg_constraint" in sql)
         for side, table in (("sn", "sc"), ("tn", "tc")):
             self.assertIn(f"{side}.nspname <> 'ts_meta'", sql)
             self.assertIn(f"{side}.nspname <> 'ts_meta_hist'", sql)
@@ -205,11 +205,11 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all('"ts_ods"."missing"' not in sql for sql, _ in session.calls))
 
     async def test_zero_property_table_is_valid_and_does_not_invent_a_title_or_primary_key(self):
-        instance, session = service(Result(scalar=False), Result([summary(properties_count=0)]), Result([]))
+        instance, session = service(Result(scalar=False), Result([summary(properties_count=0)]), Result([]), Result(scalar=True), Result([]))
         result = await instance.preview("ts_ods", "objects")
         self.assertEqual(result["properties"], [])
         self.assertEqual(result["primaryKey"], [])
-        self.assertEqual(len(session.calls), 3)
+        self.assertEqual(len(session.calls), 5)
 
     async def test_existing_data_contract_remains_unchanged_after_column_comments_are_added(self):
         fields = [column("id", "bigint", True, 1, False, "Identifier comment"), column("name")]
@@ -243,7 +243,7 @@ class ObjectRouteTests(unittest.TestCase):
         self.client = TestClient(self.app)
 
     def test_catalog_and_preview_routes_reuse_signed_in_policy_and_exact_service_contract(self):
-        instance, _ = service(Result([]), Result(scalar=False), Result([summary(properties_count=0)]), Result([]))
+        instance, _ = service(Result([]), Result(scalar=False), Result([summary(properties_count=0)]), Result([]), Result(scalar=True), Result([]))
         with patch.object(etl, "get_etl_layers", return_value=instance):
             response = self.client.get("/api/v1/etl/object-types?limit=100&offset=0")
             self.assertEqual(response.status_code, 200)

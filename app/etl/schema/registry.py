@@ -8,6 +8,7 @@ from sqlalchemy import text
 
 from app.etl.schema.baselines import CANONICAL_ODS_TABLES, baseline_current_ddls
 from app.etl.schema.ddl import build_current_ddl, ddl_checksum
+from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL
 from app.etl.schema.layout import (
     default_table_layout,
     logical_table_name,
@@ -178,7 +179,7 @@ async def ensure_ddlregistry_table(pg: PostgresClient) -> None:
 
     table_name = _ddlregistry_table_name()
     await _ensure_postgis_extension(pg)
-    await pg.init_schema([_ddlregistry_bootstrap_sql()])
+    await pg.init_schema([_ddlregistry_bootstrap_sql(), OBJECT_RELATIONS_DDL])
     row = await pg.fetch_one(
         "SELECT to_regclass(:table_name) AS table_name",
         {"table_name": table_name},

@@ -132,6 +132,13 @@ export interface EtlLinkedObjectType {
     columns: string[];
     referencedColumns: string[];
   }>;
+  relationships: Array<EtlLinkedObjectType['constraints'][number] & {
+    sourceKind: 'foreign_key' | 'logical';
+    relationshipKind: string;
+    cardinality: 'one_to_one' | 'one_to_many' | 'many_to_one' | 'many_to_many' | null;
+    description: string;
+    provenance: string;
+  }>;
 }
 
 export interface EtlObjectPreview extends EtlObjectType {

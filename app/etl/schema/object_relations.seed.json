@@ -1,0 +1,74 @@
+[
+  {
+    "name": "sec_edgar_organization_filings",
+    "source_schema": "ts_ods",
+    "source_table": "ods_organization",
+    "source_fields": [
+      "cik"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_filing",
+    "target_fields": [
+      "cik"
+    ],
+    "relationship_kind": "has_filings",
+    "cardinality": "one_to_many",
+    "description": "Company filings linked by CIK.",
+    "provenance": "Declared SEC EDGAR CIK contract; app/etl/normalizers/organization.py:cik; app/etl/normalizers/filing.py:cik. Physical columns verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "sec_edgar_organization_financial_facts",
+    "source_schema": "ts_ods",
+    "source_table": "ods_organization",
+    "source_fields": [
+      "cik"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_financial_fact",
+    "target_fields": [
+      "cik"
+    ],
+    "relationship_kind": "has_financial_facts",
+    "cardinality": "one_to_many",
+    "description": "Company financial facts linked by CIK.",
+    "provenance": "Declared SEC EDGAR CIK contract; app/etl/normalizers/organization.py:cik; app/etl/normalizers/financial_fact.py:cik. Physical columns verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "sec_edgar_filing_documents",
+    "source_schema": "ts_ods",
+    "source_table": "ods_filing",
+    "source_fields": [
+      "accession_number"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_filing_document",
+    "target_fields": [
+      "accession_number"
+    ],
+    "relationship_kind": "has_documents",
+    "cardinality": "one_to_many",
+    "description": "Filing document attachments linked by accession number.",
+    "provenance": "Declared SEC EDGAR accession contract; app/etl/normalizers/filing.py:accession_number; app/etl/normalizers/filing_document.py:accession_number. Physical columns verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "sec_edgar_filing_reported_facts",
+    "source_schema": "ts_ods",
+    "source_table": "ods_filing",
+    "source_fields": [
+      "accession_number"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_financial_fact",
+    "target_fields": [
+      "accn"
+    ],
+    "relationship_kind": "has_reported_facts",
+    "cardinality": "one_to_many",
+    "description": "Reported financial facts linked to their filing accession number.",
+    "provenance": "Declared SEC EDGAR accession contract; app/etl/normalizers/filing.py:accession_number; app/etl/normalizers/financial_fact.py:accn. Physical columns verified before apply.",
+    "enabled": true
+  }
+]

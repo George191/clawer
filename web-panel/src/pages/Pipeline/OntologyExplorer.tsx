@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Modal, Select } from '@/components/ui';
 import {
   ApartmentOutlined, AppstoreOutlined, ArrowLeftOutlined, ArrowRightOutlined, BarsOutlined,
-  ClockCircleOutlined, CloseOutlined, DatabaseOutlined, EyeOutlined, InfoCircleOutlined,
+  CloseOutlined, DatabaseOutlined, EyeOutlined, InfoCircleOutlined,
   PlusOutlined, ReloadOutlined, SearchOutlined, StarFilled, StarOutlined, TableOutlined,
 } from '@/components/ui/icons';
 import { fetchCurrentUserContext, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers } from '../../services/api';
@@ -30,7 +30,14 @@ const accentStyle = (id: string) => ({ '--asset-color': schemaColor(id) } as Rea
 const number = (value: number) => value.toLocaleString('en-US');
 function PropertyIcon({ type }: { type: string }) {
   const value = type.toLowerCase();
-  return <span className="flow-ontology__property-icon" title={type} aria-hidden="true">{/date|time|interval/.test(value) ? <ClockCircleOutlined /> : /int|numeric|decimal|float|double|real|money/.test(value) ? '123' : /bool/.test(value) ? '✓' : /json/.test(value) ? '{}' : '“”'}</span>;
+  const glyph = /^(date|time|timestamp|interval)(\s|\(|$)/.test(value)
+    ? <><circle cx="8" cy="8" r="6" /><path d="M8 4v4l2.5 1.5" /></>
+    : /^(smallint|int[248]?|integer|bigint|numeric|decimal|real|double precision|float[48]?|smallserial|serial|bigserial|money)\b/.test(value)
+      ? <text x="8" y="11" textAnchor="middle" fontFamily="Arial, sans-serif" fontSize="9.5" fill="currentColor" stroke="none">123</text>
+      : /^bool/.test(value) ? <path d="m3 8 3.2 3.2L13 4.5" />
+        : /^json/.test(value) ? <path d="M6 2.5H5v3L3.5 8 5 10.5v3h1m4-11h1v3L12.5 8 11 10.5v3h-1" />
+          : <path fill="currentColor" stroke="none" d="M2 4h5v4c0 2.1-1.4 3.5-4 4l-.5-1.3C4 10.2 4.7 9.4 4.7 8H2V4Zm7 0h5v4c0 2.1-1.4 3.5-4 4l-.5-1.3c1.5-.5 2.2-1.3 2.2-2.7H9V4Z" />;
+  return <span className="flow-ontology__property-icon" title={type} aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" focusable="false">{glyph}</svg></span>;
 }
 
 export function schemaColor(key: string): string {
@@ -255,7 +262,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             <div className="flow-ontology__property-list">{visibleProperties.map((property) => <div className="flow-ontology__property-row" key={property.name} title={`${property.type}${property.nullable ? ' · Nullable' : ' · Required'}${property.comment ? ` · ${property.comment}` : ''}`}><PropertyIcon type={property.type} /><span className="flow-ontology__property-name">{property.displayName}</span>{data.titleProperty === property.name && <span className="flow-ontology__property-badge is-title">Title</span>}{property.primaryKey && <span className="flow-ontology__property-badge is-primary">Primary key</span>}</div>)}</div>
             {!data.properties.length && <p className="flow-ontology__muted">No properties defined.</p>}
           </section>
-          <section className="flow-ontology__preview-section"><header><h3>Linked object types <small>({number(data.linkedObjectTypes.length)})</small></h3></header><div className="flow-ontology__linked-list">{data.linkedObjectTypes.map((linked) => <button type="button" className="flow-ontology__linked-row" key={linked.id} style={accentStyle(linked.id)} title={`${linked.id} · ${linked.direction} foreign-key relationships · ${linked.constraints.map((constraint) => constraint.name).join(', ')}`} onClick={() => selectObject(linked)}><span className="flow-ontology__linked-icon"><TableOutlined /></span><span>{linked.displayName}</span></button>)}</div>{!data.linkedObjectTypes.length && <p className="flow-ontology__muted">No foreign-key relationships defined.</p>}</section>
+          <section className="flow-ontology__preview-section"><header><h3>Linked object types <small>({number(data.linkedObjectTypes.length)})</small></h3></header><div className="flow-ontology__linked-list">{data.linkedObjectTypes.map((linked) => <button type="button" className="flow-ontology__linked-row" key={linked.id} style={accentStyle(linked.id)} title={`${linked.id} · ${linked.direction}\n${linked.relationships.map((relation) => `${relation.sourceKind === 'logical' ? 'Logical relationship' : 'Foreign key'}: ${relation.sourceSchema}.${relation.sourceTable} (${relation.columns.join(', ')}) → ${relation.targetSchema}.${relation.targetTable} (${relation.referencedColumns.join(', ')})${relation.cardinality ? ` · ${relation.cardinality.replace(/_/g, ' ')}` : ''}${relation.description ? ` · ${relation.description}` : ''}`).join('\n')}`} onClick={() => selectObject(linked)}><span className="flow-ontology__linked-icon"><TableOutlined /></span><span>{linked.displayName}</span></button>)}</div>{!data.linkedObjectTypes.length && <p className="flow-ontology__muted">No relationships defined.</p>}</section>
         </>}
       </div>
       <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>

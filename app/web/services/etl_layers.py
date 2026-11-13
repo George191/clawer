@@ -13,6 +13,11 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from app.etl.schema.object_relations import (
+    ObjectRelationsNotInitialized,
+    merge_object_relations,
+    read_object_relations,
+)
 from app.storage.postgres_client import get_pg_client
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
@@ -266,27 +271,38 @@ class EtlLayers:
                 ORDER BY sn.nspname, sc.relname, con.conname, con.oid
             """), {"oid": row["oid"]})
             foreign_keys = [dict(item) for item in result.mappings()]
+            try:
+                logical = await read_object_relations(session, schema, table)
+            except ObjectRelationsNotInitialized as exc:
+                raise HTTPException(503, str(exc)) from exc
         columns = await self.columns(schema, table) if row["properties_count"] else []
         linked: dict[str, dict[str, Any]] = {}
-        for foreign in foreign_keys:
-            if any(not foreign[f"{side}_schema"].startswith("ts_") or
-                   foreign[f"{side}_schema"] in {"ts_meta", "ts_meta_hist"}
-                   for side in ("source", "target")):
-                continue
-            for direction, side, peer in (("outgoing", "source", "target"), ("incoming", "target", "source")):
-                if (foreign[f"{side}_schema"], foreign[f"{side}_table"]) != (schema, table):
+        for collection, relations in (("constraints", foreign_keys),
+                ("relationships", merge_object_relations(foreign_keys, logical))):
+            for relation in relations:
+                if any(not relation[f"{side}_schema"].startswith("ts_") or
+                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist"}
+                       for side in ("source", "target")):
                     continue
-                peer_schema, peer_table = foreign[f"{peer}_schema"], foreign[f"{peer}_table"]
-                identifier = f"{peer_schema}.{peer_table}"
-                item = linked.setdefault(identifier, {"id": identifier, "schema": peer_schema,
-                    "table": peer_table, "name": peer_table, "displayName": peer_table,
-                    "direction": direction, "constraints": []})
-                if item["direction"] != direction:
-                    item["direction"] = "both"
-                item["constraints"].append({"name": foreign["name"], "direction": direction,
-                    "sourceSchema": foreign["source_schema"], "sourceTable": foreign["source_table"],
-                    "targetSchema": foreign["target_schema"], "targetTable": foreign["target_table"],
-                    "columns": list(foreign["columns"]), "referencedColumns": list(foreign["referenced_columns"])})
+                for direction, side, peer in (("outgoing", "source", "target"), ("incoming", "target", "source")):
+                    if (relation[f"{side}_schema"], relation[f"{side}_table"]) != (schema, table):
+                        continue
+                    peer_schema, peer_table = relation[f"{peer}_schema"], relation[f"{peer}_table"]
+                    identifier = f"{peer_schema}.{peer_table}"
+                    item = linked.setdefault(identifier, {"id": identifier, "schema": peer_schema,
+                        "table": peer_table, "name": peer_table, "displayName": peer_table,
+                        "direction": direction, "constraints": [], "relationships": []})
+                    if item["direction"] != direction:
+                        item["direction"] = "both"
+                    entry = {"name": relation["name"], "direction": direction,
+                        "sourceSchema": relation["source_schema"], "sourceTable": relation["source_table"],
+                        "targetSchema": relation["target_schema"], "targetTable": relation["target_table"],
+                        "columns": list(relation["columns"]), "referencedColumns": list(relation["referenced_columns"])}
+                    if collection == "relationships":
+                        entry.update(sourceKind=relation["source_kind"], relationshipKind=relation["relationship_kind"],
+                            cardinality=relation["cardinality"], description=relation["description"],
+                            provenance=relation["provenance"])
+                    item[collection].append(entry)
         primary = sorted((column for column in columns if column["primary"]), key=lambda column: column["primaryPosition"])
         return {**_object_summary(row), "primaryKey": [column["name"] for column in primary],
                 "properties": [{"name": column["name"], "displayName": column["name"],

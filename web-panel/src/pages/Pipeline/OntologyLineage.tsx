@@ -30,7 +30,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const searchRef = useRef<HTMLInputElement>(null);
   const nodeRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const pointer = useRef<{ x: number; y: number; left: number; top: number }>();
-  const [zoom, setZoom] = useState(1);
+  const [manualZoom, setManualZoom] = useState(1);
   const [autoFit, setAutoFit] = useState(true);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -74,6 +74,10 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const pipelineHeight = hasPipeline ? Math.max(400, viewportSize.height - (independentRows ? independentRows * 72 + 106 : 70)) : 0;
   const independentTop = hasPipeline ? pipelineHeight + 60 : 100;
   const height = Math.max(viewportSize.height, independentRows ? independentTop + independentRows * 72 + 32 : pipelineHeight);
+  const zoom = autoFit && viewportSize.width && viewportSize.height ? Math.max(.25, Math.min(1, viewportSize.width / width, viewportSize.height / height)) : manualZoom;
+  // Compare ratios before multiplication: ceil(467 / 1860 * 1860) can be 468.
+  const extentWidth = zoom <= viewportSize.width / width ? viewportSize.width : Math.ceil(width * zoom);
+  const extentHeight = zoom <= viewportSize.height / height ? viewportSize.height : Math.ceil(height * zoom);
   const insetX = Math.max(0, (viewportSize.width - width * zoom) / 2);
   const insetY = Math.max(0, (viewportSize.height - height * zoom) / 2);
   const stageStep = (width - 256) / 4;
@@ -81,7 +85,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const nodes = visible.map((schema) => {
     const stage = stages[schema.key];
     const index = independent.findIndex((item) => item.key === schema.key);
-    return { ...schema, x: stage ? 40 + stage.column * stageStep : 40 + (index % columns) * independentStep, y: stage ? stage.y / 440 * pipelineHeight : independentTop + Math.floor(index / columns) * 72 };
+    return { ...schema, x: Math.round(stage ? 40 + stage.column * stageStep : 40 + (index % columns) * independentStep), y: Math.round(stage ? stage.y / 440 * pipelineHeight : independentTop + Math.floor(index / columns) * 72) };
   });
   const links = relationships.flatMap(([source, target]) => {
     const from = nodes.find((node) => node.key === source);
@@ -101,9 +105,13 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const measure = () => setViewportSize((current) => current.width === viewport.clientWidth && current.height === viewport.clientHeight ? current : { width: viewport.clientWidth, height: viewport.clientHeight });
+    const measure = (entry?: ResizeObserverEntry) => {
+      const width = Math.floor(entry?.contentRect.width ?? viewport.clientWidth);
+      const height = Math.floor(entry?.contentRect.height ?? viewport.clientHeight);
+      setViewportSize((current) => current.width === width && current.height === height ? current : { width, height });
+    };
     measure();
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(([entry]) => measure(entry));
     observer.observe(viewport);
     return () => observer.disconnect();
   }, [loading, error, visible.length]);
@@ -113,10 +121,6 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     preference.addEventListener('change', update);
     return () => preference.removeEventListener('change', update);
   }, []);
-  useEffect(() => {
-    if (!autoFit || !viewportSize.width || !viewportSize.height) return;
-    setZoom(Math.max(.25, Math.min(1, viewportSize.width / width, viewportSize.height / height)));
-  }, [autoFit, viewportSize.width, viewportSize.height, width, height]);
   useEffect(() => { if (selected) setInspectorOpen(true); }, [selected]);
   useEffect(() => setCopyStatus(''), [params]);
   const selectNode = (key: string) => {
@@ -132,16 +136,15 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     setAutoFit(false);
     const next = Math.max(.25, Math.min(1.75, Math.round(value * 100) / 100));
     const viewport = viewportRef.current;
-    const left = viewport ? (viewport.scrollLeft + viewport.clientWidth / 2) * next / zoom - viewport.clientWidth / 2 : 0;
-    const top = viewport ? (viewport.scrollTop + viewport.clientHeight / 2) * next / zoom - viewport.clientHeight / 2 : 0;
-    setZoom(next);
+    const left = viewport ? (viewport.scrollLeft + viewport.clientWidth / 2 - insetX) * next / zoom - viewport.clientWidth / 2 + Math.max(0, (viewport.clientWidth - width * next) / 2) : 0;
+    const top = viewport ? (viewport.scrollTop + viewport.clientHeight / 2 - insetY) * next / zoom - viewport.clientHeight / 2 + Math.max(0, (viewport.clientHeight - height * next) / 2) : 0;
+    setManualZoom(next);
     requestAnimationFrame(() => viewport?.scrollTo({ left: Math.max(0, left), top: Math.max(0, top) }));
   };
   const fitGraph = () => {
     const viewport = viewportRef.current;
     if (!viewport) return;
     setAutoFit(true);
-    setZoom(Math.max(.25, Math.min(1, viewport.clientWidth / width, viewport.clientHeight / height)));
     requestAnimationFrame(() => viewport.scrollTo({ left: 0, top: 0 }));
   };
   useEffect(() => {
@@ -191,7 +194,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     {copyStatus === 'manual' && <div className="flow-lineage-copy-fallback"><span>Copy this view link:</span><input aria-label="View link to copy" readOnly value={window.location.href} autoFocus onFocus={event => event.currentTarget.select()} /></div>}
     <div className="flow-lineage-toolbar" role="toolbar" aria-label="Lineage tools">
       <div className="flow-lineage-tool-group"><button type="button" aria-label="Pan canvas" disabled={!canvasReady} title="Drag empty canvas to pan" aria-pressed={tool === 'pan'} onClick={() => setTool('pan')}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4m12-8 4 4-4 4" /></svg><span>Pan</span></button><button type="button" aria-label="Select nodes" disabled={!canvasReady} title="Select a schema without dragging the canvas" aria-pressed={tool === 'select'} onClick={() => setTool('select')}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m5 3 14 10-7 1-3 7Z" /></svg><span>Select</span></button></div>
-      <div className="flow-lineage-tool-group"><button type="button" aria-label="Fit layout" disabled={!canvasReady} title="Fit all schemas to the canvas" onClick={fitGraph}><FullscreenOutlined /><span>Layout</span></button><button type="button" aria-label="Reset layout" disabled={!canvasReady} title="Reset to 100%" onClick={() => { setAutoFit(false); setZoom(1); viewportRef.current?.scrollTo({ left: 0, top: 0 }); }}><ReloadOutlined /><span>Reset</span></button></div>
+      <div className="flow-lineage-tool-group"><button type="button" aria-label="Fit layout" disabled={!canvasReady} title="Fit all schemas to the canvas" onClick={fitGraph}><FullscreenOutlined /><span>Layout</span></button><button type="button" aria-label="Reset layout" disabled={!canvasReady} title="Reset to 100%" onClick={() => { setAutoFit(false); setManualZoom(1); viewportRef.current?.scrollTo({ left: 0, top: 0 }); }}><ReloadOutlined /><span>Reset</span></button></div>
       <div className="flow-lineage-tool-group"><button type="button" disabled={!canvasReady} aria-label={paused ? 'Play flow animation' : 'Pause flow animation'} title={paused ? 'Play animation' : 'Pause animation'} aria-pressed={paused} onClick={() => updateQuery({ motion: paused ? null : 'off' }, true)}>{paused ? <PlayFilled /> : <PauseOutlined />}<span>Motion</span></button><button type="button" aria-label="Toggle schema color legend" disabled={!canvasReady} aria-pressed={legendOpen} aria-expanded={legendOpen} onClick={() => setLegendOpen(value => !value)}><EyeOutlined /><span>Legend</span></button></div>
       <label className="flow-lineage-search"><SearchOutlined /><input ref={searchRef} aria-label="Search lineage nodes" placeholder="Find schemas" value={search} onChange={event => updateQuery({ q: event.target.value || null }, true)} />{search && <button type="button" aria-label="Clear lineage search" onClick={() => { updateQuery({ q: null }, true); searchRef.current?.focus(); }}><CloseOutlined /></button>}</label>
       <span className="flow-lineage-notice" title="Relationships are predefined ETL processor contracts, not discovered data lineage.">Relationships predefined</span>
@@ -213,7 +216,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
                 if (event.key === '-') { event.preventDefault(); changeZoom(zoom - .1); }
                 if (event.key === 'Home') { event.preventDefault(); fitGraph(); }
               }}>
-                <div className="flow-lineage-extent" style={{ width: Math.ceil(Math.max(viewportSize.width, width * zoom)), height: Math.ceil(Math.max(viewportSize.height, height * zoom)) }}><div className="flow-lineage-stage" style={{ width, height, left: insetX, top: insetY, minWidth: 0, minHeight: 0, transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
+                <div className="flow-lineage-extent" style={{ width: extentWidth, height: extentHeight }}><div className="flow-lineage-stage" style={{ width, height, left: insetX, top: insetY, minWidth: 0, minHeight: 0, transform: zoom === 1 ? undefined : `scale(${zoom})`, transformOrigin: 'top left' }}>
                   {hasPipeline && <div className="flow-lineage-stage-labels">{['Ingestion', 'Standardization', 'Tasks & dimensions', 'Detail', 'Aggregation'].map((label, index) => <span key={label} style={{ left: 40 + index * stageStep }}>{label}</span>)}</div>}
                   {independent.length > 0 && <div className="flow-lineage-independent" style={{ top: independentTop - 54 }}>Unmapped preview assets <span>{independent.length} schemas · No predefined upstream or downstream relationships</span></div>}
                   <svg ref={graphRef} className="flow-lineage-edges" width={width} height={height} aria-label="Static processor contract preview">
@@ -229,7 +232,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
                 </div></div>
               </div>
               {legendOpen && <aside className="flow-lineage-legend" aria-label="Schema color legend"><header><strong>Schema colors</strong><button type="button" aria-label="Close schema color legend" onClick={() => setLegendOpen(false)}><CloseOutlined /></button></header><div>{schemas.map(schema => <span key={schema.key}><i style={{ background: schemaColor(schema.key) }} />{schema.key}</span>)}</div><p>Node colors identify schemas. Gray arrows show predefined contracts; colored dots show measured output.</p></aside>}
-              <div className="flow-lineage-canvas-tools" aria-label="Lineage canvas tools"><button type="button" aria-label="Fit to view" title="Fit to view (Home)" onClick={fitGraph}><FullscreenOutlined /></button><button type="button" aria-label="Zoom in" title="Zoom in (+)" disabled={zoom >= 1.75} onClick={() => changeZoom(zoom + .1)}><PlusOutlined /></button><button type="button" aria-label="Zoom out" title="Zoom out (-)" disabled={zoom <= .25} onClick={() => changeZoom(zoom - .1)}><MinusOutlined /></button><button type="button" aria-label="Reset view" title="Reset to 100%" onClick={() => { setAutoFit(false); setZoom(1); viewportRef.current?.scrollTo({ left: 0, top: 0 }); }}><ReloadOutlined /></button><span className="flow-lineage-zoom-label" aria-live="polite">{Math.round(zoom * 100)}%</span></div>
+              <div className="flow-lineage-canvas-tools" aria-label="Lineage canvas tools"><button type="button" aria-label="Fit to view" title="Fit to view (Home)" onClick={fitGraph}><FullscreenOutlined /></button><button type="button" aria-label="Zoom in" title="Zoom in (+)" disabled={zoom >= 1.75} onClick={() => changeZoom(zoom + .1)}><PlusOutlined /></button><button type="button" aria-label="Zoom out" title="Zoom out (-)" disabled={zoom <= .25} onClick={() => changeZoom(zoom - .1)}><MinusOutlined /></button><button type="button" aria-label="Reset view" title="Reset to 100%" onClick={() => { setAutoFit(false); setManualZoom(1); viewportRef.current?.scrollTo({ left: 0, top: 0 }); }}><ReloadOutlined /></button><span className="flow-lineage-zoom-label" aria-live="polite">{Math.round(zoom * 100)}%</span></div>
               <div className="flow-lineage-dock" role="toolbar" aria-label="Selected schema panels">{([{ key: 'details', label: 'Details', icon: <BarsOutlined /> }, { key: 'upstream', label: 'Upstream', icon: <ArrowUpOutlined /> }, { key: 'downstream', label: 'Downstream', icon: <ArrowDownOutlined /> }] as const).map(item => <button key={item.key} type="button" disabled={!asset} aria-pressed={Boolean(asset && inspectorOpen && panel === item.key)} onClick={() => openPanel(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>
               <div className="flow-lineage-status"><span>{nodes.length} schemas · {links.length} predefined relationships</span><small data-testid="ontology-lineage-motion-status">{motionStatus}</small></div>
               {asset && inspectorOpen && <aside className="flow-lineage-inspector" aria-label="Node details"><header><span>SELECTED SCHEMA</span><button type="button" aria-label="Close node details" onClick={closeInspector}><CloseOutlined /></button></header><h2>{asset.alias || asset.label}</h2><code>{asset.key}</code><p className="flow-lineage-inspector-disclosure">ETL contract preview. Relationships are predefined, not discovered data lineage.</p>
