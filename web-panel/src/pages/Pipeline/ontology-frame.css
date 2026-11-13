@@ -1,51 +1,68 @@
-.flow-console.flow-console--ontology{--ontology-bg:#1c2127;--ontology-panel:#252a31;--ontology-border:#383e47;--ontology-text:#f0f2f5;--ontology-muted:#abb3bf;--ontology-control-border:#667383;display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;height:100%;padding:0;overflow:hidden;background:var(--ontology-bg);color:var(--ontology-text);font-size:12px;line-height:1.5;animation:none}
-.flow-console.flow-console--ontology>.flow-core{display:flex;flex:1;min-width:0;min-height:0;width:100%;max-width:none;height:auto;overflow:hidden;margin:0;padding:0}
-.flow-domain-nav{display:flex;align-items:center;gap:12px;flex:none;min-height:34px;padding:2px 14px;border-bottom:1px solid var(--ontology-border);background:#252a31;overflow-x:auto}
-.flow-domain-links{display:flex;align-items:center;align-self:stretch;gap:3px}.flow-domain-links button{position:relative;display:flex;align-items:center;gap:6px;flex:none;min-height:28px;padding:0 10px;border:0;border-radius:5px;background:none;color:var(--ontology-muted);font:inherit;font-size:11px;font-weight:400;white-space:nowrap;cursor:pointer}.flow-domain-links button>.ui-icon{font-size:12px}.flow-domain-links button:hover{color:var(--ontology-text);background:#272e38}
-.flow-console--ontology button:focus-visible,.flow-console--ontology a:focus-visible{outline:2px solid #8abbff;outline-offset:2px}
-.flow-ontology-runtime{flex:1;min-width:0;padding:24px 28px;overflow:auto}.flow-ontology-page-heading>span{font-size:10px;letter-spacing:.1em;color:#8f99a8}.flow-ontology-page-heading h1{margin:7px 0;color:var(--ontology-text);font-size:20px;font-weight:500}.flow-ontology-page-heading p{margin:0 0 24px;color:var(--ontology-muted);font-size:11px}.flow-ontology-message{padding:24px;border:1px solid var(--ontology-border);border-radius:12px;color:var(--ontology-muted)}
-.flow-ontology-runtime .cdc-status-panel{margin-top:0;border-color:var(--ontology-border);background:var(--ontology-panel)}
-.flow-ontology-runtime .flow-ontology-message{padding:12px 14px;color:#8f99a8;font-size:11px;line-height:1.6;background:transparent}
-.flow-ontology-runtime .cdc-status-panel .ui-alert-info,.flow-ontology-runtime .cdc-status-panel .ui-alert-warning{padding:8px 0;border:0;background:transparent;color:#8f99a8}
-.flow-ontology-runtime .cdc-status-panel .ui-alert-info .ui-alert-message,.flow-ontology-runtime .cdc-status-panel .ui-alert-warning .ui-alert-message,.flow-ontology-runtime .cdc-status-panel .ui-alert-info .ui-alert-icon,.flow-ontology-runtime .cdc-status-panel .ui-alert-warning .ui-alert-icon{color:#8f99a8;font-size:11px;line-height:1.6}
-.flow-ontology-runtime .cdc-status-panel .ui-typography-secondary,.flow-ontology-runtime .cdc-probe>span:last-child{color:#8f99a8;font-size:11px;line-height:1.6}
-@media(max-width:760px){.flow-domain-nav{gap:8px;padding-inline:8px}.flow-domain-links button{padding:0 9px}.flow-ontology-runtime{padding:20px 16px}}
-
-.flow-console--ontology .flow-domain-links button:focus-visible { outline-offset: -4px; }
-.flow-console--ontology .flow-domain-command { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: var(--ontology-muted); font: inherit; font-size: 11px; font-weight: 400; box-shadow: none; cursor: pointer; }
-.flow-console--ontology .flow-domain-command:hover { background: #2b3440; color: var(--ontology-text); }
-.flow-console--ontology .flow-domain-command:disabled { opacity: .5; cursor: default; }
-.flow-console--ontology .flow-domain-context { flex: none; margin-left: auto; color: #8f99a8; font-size: 11px; white-space: nowrap; }
-.flow-console--ontology .flow-domain-nav { max-width: 100%; overscroll-behavior-x: contain; scroll-padding-inline: 16px; }
-.flow-console--ontology .ui-input-affix-wrapper { border-color: var(--ontology-control-border); }
-.flow-console--ontology .ui-input-affix-wrapper-focused { box-shadow: 0 0 0 2px #8abbff33; }
+/* Reference workspace layout inherits the application theme, including body portals. */
+.flow-console--ontology,
+.flow-surface-modal,
+.flow-menu-popup,
+.flow-select-popup {
+  --ontology-bg: var(--ui-bg, #1a1d27);
+  --ontology-panel: var(--ui-panel, #242836);
+  --ontology-toolbar: var(--ui-elevated, #2a2e3a);
+  --ontology-border: var(--ui-border-soft, rgba(255,255,255,.05));
+  --ontology-text: var(--ui-text, #e4e7eb);
+  --ontology-muted: var(--ui-muted, #9ca3af);
+  --ontology-control-border: var(--ui-border, rgba(255,255,255,.08));
+  --ontology-primary: var(--ui-primary, #018bff);
+  --ontology-link: color-mix(in srgb, var(--ontology-primary) 80%, var(--ontology-text));
+  --ontology-hover: color-mix(in srgb, var(--ontology-text) 6%, var(--ontology-panel));
+  --ontology-selected: color-mix(in srgb, var(--ontology-primary) 18%, var(--ontology-panel));
+  --ontology-success-bg: color-mix(in srgb, var(--ui-success, #10b981) 8%, var(--ontology-panel));
+  --ontology-success-border: color-mix(in srgb, var(--ui-success, #10b981) 30%, var(--ontology-panel));
+  color: var(--ontology-text);
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+html[data-theme="dark"] :is(.flow-console--ontology,.flow-surface-modal,.flow-menu-popup,.flow-select-popup) { color-scheme:dark; }
+html[data-theme="light"] :is(.flow-console--ontology,.flow-surface-modal,.flow-menu-popup,.flow-select-popup) { color-scheme:light; }
+.flow-console.flow-console--ontology { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; height:100%; padding:0; overflow:hidden; background:var(--ontology-bg); animation:none; }
+.flow-console.flow-console--ontology > .flow-core { display:flex; flex:1; min-width:0; min-height:0; width:100%; max-width:none; height:auto; overflow:hidden; margin:0; padding:0; }
+.flow-console--ontology .flow-domain-nav { display:flex; align-items:center; flex:none; gap:12px; width:100%; height:38px; min-height:38px; padding:0 12px 0 0; border-bottom:1px solid var(--ontology-border); background:var(--ontology-toolbar); overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; }
+.flow-console--ontology .flow-domain-context { display:flex; align-items:center; align-self:stretch; flex:none; min-width:128px; padding:0 18px; border-right:1px solid var(--ontology-border); background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; font-weight:400; white-space:nowrap; }
+.flow-domain-links { display:flex; align-items:center; gap:3px; }
+.flow-console--ontology .flow-domain-command { display:inline-flex; align-items:center; justify-content:center; gap:6px; flex:none; height:28px; min-height:28px; padding:0 9px; border:1px solid transparent; border-radius:3px; background:transparent; color:var(--ontology-text); font:inherit; font-size:12px; font-weight:400; box-shadow:none; white-space:nowrap; cursor:pointer; }
+.flow-console--ontology .flow-domain-command:hover { border-color:var(--ontology-control-border); background:var(--ontology-border); }
+.flow-console--ontology .flow-domain-command:disabled { color:var(--ontology-muted); cursor:default; opacity:.6; }
+.flow-console--ontology .flow-domain-command > .ui-icon { width:12px; height:12px; font-size:12px; color:var(--ontology-muted); }
+.flow-console--ontology :is(button,a):focus-visible,
+.flow-surface-modal :is(button,a):focus-visible { outline:2px solid var(--ontology-primary); outline-offset:2px; }
+.flow-console--ontology .flow-domain-command:focus-visible { outline-offset:-2px; }
 .flow-console--ontology .ui-btn,
-.flow-console--ontology .ui-input,
-.flow-console--ontology .ui-select { font-size: 12px; font-weight: 400; }
-.flow-console--ontology .ui-btn { border-radius: 4px; box-shadow: 0 1px 2px #11141826; }
-.flow-console--ontology .ui-btn-default { border-color: #4c5665; background: #2f343c; color: var(--ontology-text); }
-.flow-console--ontology .ui-btn-default:not(:disabled):hover { border-color: #667383; background: #383e47; color: #ffffff; }
-.flow-console--ontology .ui-input-affix-wrapper { border-radius: 4px; background: var(--ontology-bg); }
-.flow-console--ontology .ui-tag { border-radius: 3px; font-size: 11px; font-weight: 400; }
-.flow-console--ontology .ui-table-thead > tr > th { color: var(--ontology-muted); font-weight: 500; }
-.flow-console--ontology .flow-ontology-page-heading h1 { font-size: 18px; }
-.flow-console--ontology .flow-ontology-runtime { overscroll-behavior: contain; scroll-padding: 16px; }
-.flow-platform-shell [data-testid="project-sidebar"] > div:first-child span { font-size: 12px !important; font-weight: 500 !important; }
-.flow-platform-shell [data-testid="project-sidebar"] .neo4j-sidebar-scroll > div > div > div:first-child { font-size: 11px !important; font-weight: 500 !important; }
-.flow-platform-shell [data-testid="project-sidebar"] .neo4j-sidebar-scroll button { font-size: 12px !important; font-weight: 500 !important; }
-.flow-platform-shell [data-testid="project-sidebar"] button:focus-visible { outline: 2px solid #8abbff; outline-offset: -3px; }
-@media (max-width: 640px), (pointer: coarse) {
-  .flow-console--ontology .flow-domain-nav { min-height: 44px; padding-block: 0; }
-  .flow-console--ontology .flow-domain-command { min-height: 44px; }
-  .flow-console--ontology .flow-domain-links button { min-height: 44px; }
-  .flow-console--ontology .flow-ontology-runtime .ui-btn { min-height: 44px; }
-  .flow-platform-shell [data-testid="project-sidebar"] .neo4j-sidebar-scroll button { min-height: 44px; }
-}
-@media (forced-colors: active) {
-  .flow-console--ontology button:focus-visible,
-  .flow-console--ontology a:focus-visible,
-  .flow-console--ontology input:focus-visible { outline: 2px solid Highlight; }
-}
-
-@media(max-width:1000px){.flow-platform-shell .ui-layout-header{gap:12px}.flow-platform-shell .header-shortcut-button{min-width:36px;padding:0 9px!important}.flow-platform-shell .header-shortcut-button>span:last-child{display:none!important}.flow-platform-shell .ui-layout-header img[alt="Astral Helio"]{max-width:126px;height:auto!important;max-height:28px}}
-@media(max-width:640px){.flow-platform-shell .ui-layout-header{padding:0 12px!important}.flow-platform-shell .ui-layout-header>div:first-child{gap:8px!important}.flow-platform-shell .ui-layout-header img[alt="Astral Helio"]{max-width:100px}.flow-platform-shell [aria-label="Open project sidebar"]{min-width:44px;min-height:44px}.flow-platform-shell .header-shortcut-button{min-width:36px;min-height:40px;padding:0 8px!important}.flow-platform-shell [aria-label="Open account menu"]{min-width:40px;min-height:40px}}
+.flow-surface-modal .ui-btn { min-height:28px; border-radius:3px; box-shadow:none; font-size:12px; font-weight:400; }
+.flow-console--ontology .ui-btn-default,
+.flow-surface-modal .ui-btn-default { border-color:var(--ontology-control-border); background:var(--ontology-bg); color:var(--ontology-text); }
+.flow-console--ontology .ui-btn-default:not(:disabled):hover,
+.flow-surface-modal .ui-btn-default:not(:disabled):hover { border-color:var(--ontology-control-border); background:var(--ontology-hover); color:var(--ontology-text); }
+.flow-console--ontology .ui-btn-primary,
+.flow-surface-modal .ui-btn-primary { border-color:var(--ontology-link); background:var(--ontology-primary); color:#fff; }
+.flow-console--ontology :is(.ui-input,.ui-input-affix-wrapper,.ui-select-selector),
+.flow-surface-modal :is(.ui-input,.ui-input-affix-wrapper,.ui-select-selector) { border-color:var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; }
+.flow-console--ontology .ui-input-affix-wrapper:focus-within,
+.flow-surface-modal .ui-input-affix-wrapper:focus-within { border-color:var(--ontology-primary); box-shadow:0 0 0 1px var(--ontology-primary); }
+.flow-console--ontology .ui-tag,
+.flow-surface-modal .ui-tag { border-radius:3px; font-size:12px; font-weight:400; }
+.flow-console--ontology .flow-ontology-runtime { flex:1; min-width:0; padding:28px 32px; overflow:auto; overscroll-behavior:contain; scroll-padding:16px; background:var(--ontology-bg); }
+.flow-console--ontology .flow-ontology-page-heading { max-width:none; }
+.flow-console--ontology .flow-ontology-page-heading > span { color:var(--ontology-muted); font-size:12px; font-weight:400; letter-spacing:0; }
+.flow-console--ontology .flow-ontology-page-heading h1 { margin:4px 0 8px; color:var(--ontology-text); font-size:24px; font-weight:600; line-height:1.3; }
+.flow-console--ontology .flow-ontology-page-heading p { margin:0 0 24px; color:var(--ontology-muted); font-size:14px; }
+.flow-console--ontology .flow-ontology-message { padding:12px 14px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-muted); font-size:12px; line-height:1.6; }
+.flow-menu-popup.ui-dropdown .ui-dropdown-menu { border:1px solid var(--ontology-control-border); border-radius:3px; background:var(--ontology-panel); color:var(--ontology-text); box-shadow:0 2px 6px #1c21271a; }
+.flow-menu-popup .ui-dropdown-menu-item { min-height:28px; border-radius:2px; font-size:12px; color:var(--ontology-text); }
+.flow-menu-popup .ui-dropdown-menu-item:hover { background:var(--ontology-hover); }
+.flow-menu-popup .ui-dropdown-menu-item-selected { color:var(--ontology-link); background:var(--ontology-selected); }
+.flow-select-popup.ui-select-dropdown { border:1px solid var(--ontology-control-border)!important; border-radius:3px; background:var(--ontology-panel)!important; color:var(--ontology-text); box-shadow:0 2px 6px #1c21271a!important; }
+.flow-select-popup.ui-select-dropdown .ui-select-item { justify-content:flex-start; min-height:28px; color:var(--ontology-text); font-size:12px; text-align:left; }
+.flow-select-popup .ui-select-item-option-selected { background:var(--ontology-selected); color:var(--ontology-link); }
+.flow-select-popup .ui-select-item-option-active { background:var(--ontology-hover); }
+@media(max-width:760px) { .flow-console--ontology .flow-domain-nav { gap:6px; }.flow-console--ontology .flow-domain-context { min-width:104px; padding-inline:12px; }.flow-console--ontology .flow-ontology-runtime { padding:20px 16px; } }
+@media(max-width:640px),(pointer:coarse) { .flow-console--ontology .flow-domain-nav { height:44px; min-height:44px; }.flow-console--ontology .flow-domain-command { min-height:40px; }.flow-console--ontology .flow-ontology-runtime .ui-btn { min-height:40px; } }
+@media(forced-colors:active) { .flow-console--ontology :is(button,a):focus-visible { outline-color:Highlight; } }

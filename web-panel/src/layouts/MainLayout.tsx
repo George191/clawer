@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Layout,
   Button,
@@ -291,8 +291,11 @@ interface MainLayoutProps {
 }
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
-  const [manualCollapsed, setManualCollapsed] = useState(false);
-  const [pinned, setPinned] = useState(true);
+  const location = useLocation();
+  const isFlowSurface = location.pathname === '/flow' || location.pathname.startsWith('/flow/');
+  const [manualCollapsed, setManualCollapsed] = useState(isFlowSurface);
+  const [pinned, setPinned] = useState(!isFlowSurface);
+  const sidebarPreferenceChanged = useRef(false);
   const [isMobile, setIsMobile] = useState(false);
   const [settledCollapsed, setSettledCollapsed] = useState(false);
   const [projectTextReady, setProjectTextReady] = useState(true);
@@ -301,7 +304,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
-  const location = useLocation();
   const navigate = useNavigate();
   const { mode } = useThemeStore();
   const isDark = mode === 'dark';
@@ -334,6 +336,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     muted: isDark ? '#6B7280' : '#94A3B8',
     hover: isDark ? 'rgba(255, 255, 255, 0.06)' : '#F1F5F9',
   };
+
+  useEffect(() => {
+    if (isFlowSurface && !sidebarPreferenceChanged.current) {
+      setPinned(false);
+      setManualCollapsed(true);
+    }
+  }, [isFlowSurface]);
 
   const handleResize = useCallback(() => {
     const nextIsMobile = window.innerWidth < 768;
@@ -436,6 +445,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const handlePinToggle = () => {
+    sidebarPreferenceChanged.current = true;
     if (pinned) {
       setPinned(false);
       setManualCollapsed(true);
@@ -692,7 +702,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   return (
-    <div className={activeProjectKey === 'etl-pipeline' ? 'flow-platform-shell' : undefined} style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: palette.appBg }}>
+    <div className={isFlowSurface ? 'flow-platform-shell' : undefined} style={{ height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', background: palette.appBg, ...(isFlowSurface ? { '--flow-header-height': `${HEADER_H}px` } : {}) } as React.CSSProperties}>
       <Header
         style={{
           position: 'fixed',
@@ -705,6 +715,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
+          gap: isFlowSurface && isMobile ? 8 : undefined,
           lineHeight: `${HEADER_H}px`,
           borderBottom: `1px solid ${palette.border}`,
           zIndex: 101,
@@ -725,7 +736,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             style={{
               display: 'flex',
               alignItems: 'center',
-              flexShrink: 0,
+              flexShrink: isFlowSurface && isMobile ? 1 : 0,
+              minWidth: 0,
               cursor: 'pointer',
               border: 'none',
               padding: 0,
@@ -736,7 +748,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             <img
               src={isDark ? '/astral-helio-logo-white.svg' : '/astral-helio-logo.svg'}
               alt="Astral Helio"
-              style={{ height: 28, width: 'auto' }}
+              style={{ height: isFlowSurface && isMobile ? 'auto' : 28, width: 'auto', maxHeight: 28, maxWidth: isFlowSurface && isMobile ? '100%' : undefined }}
             />
           </button>
           {!isMobile && (

@@ -2,7 +2,24 @@
 .cdc-status-panel .ui-table-wrapper { margin-top: 14px; overflow-x: auto; }
 .cdc-probes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
 .cdc-probe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
-.cdc-probe > span:last-child { flex-basis: 100%; color: var(--text-secondary, #9aa3af); font-size: 12px; }
+.cdc-probe > span:last-child:not(.ui-tag) { flex-basis: 100%; color: var(--ui-muted, #9ca3af); font-size: 12px; }
 .cdc-explanation { margin-top: 14px; margin-bottom: 0 !important; font-size: 12px; }
+.flow-ontology-runtime .cdc-status-panel { width:100%; margin-top:0; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-panel); box-shadow:none; }
+.flow-ontology-runtime .cdc-status-panel .ui-card-head { min-height:44px; padding:10px 16px; border-color:var(--ontology-border); background:var(--ontology-panel); }
+.flow-ontology-runtime .cdc-status-panel .ui-card-head-title { color:var(--ontology-text); font-size:14px; font-weight:500; }
+.flow-ontology-runtime .cdc-status-panel .ui-card-body { padding:16px; }
+.flow-ontology-runtime .cdc-status-panel :is(.ui-typography-secondary,.cdc-probe>span:last-child:not(.ui-tag),.cdc-explanation) { color:var(--ontology-muted); font-size:12px; line-height:1.6; }
+.flow-ontology-runtime .cdc-status-panel :is(.ui-alert-info,.ui-alert-warning) { padding:8px 10px; border:1px solid var(--ontology-border); border-radius:3px; background:var(--ontology-bg); color:var(--ontology-muted); }
+.flow-ontology-runtime .cdc-status-panel :is(.ui-alert-message,.ui-alert-icon) { color:var(--ontology-muted); font-size:12px; line-height:1.6; }
+.flow-ontology-runtime .cdc-probes { gap:0; margin:20px 0; border:1px solid var(--ontology-border); border-radius:3px; }
+.flow-ontology-runtime .cdc-probe { align-content:start; padding:14px 16px; border-right:1px solid var(--ontology-border); font-size:14px; }
+.flow-ontology-runtime .cdc-probe:last-child { border-right:0; }
+.flow-ontology-runtime .cdc-status-panel .ui-table { background:var(--ontology-panel); color:var(--ontology-text); }
+.flow-ontology-runtime .cdc-status-panel .ui-table th { background:var(--ontology-bg); color:var(--ontology-text); font-size:12px; font-weight:500; }
+.flow-ontology-runtime .cdc-status-panel .ui-table td { border-color:var(--ontology-border); color:var(--ontology-text); font-size:12px; }
 @media (max-width: 900px) { .cdc-probes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .cdc-probes { grid-template-columns: minmax(0, 1fr); } }
+@media(max-width:900px) { .flow-ontology-runtime .cdc-probe { border-bottom:1px solid var(--ontology-border); }.flow-ontology-runtime .cdc-probe:nth-child(2n) { border-right:0; }.flow-ontology-runtime .cdc-probe:nth-last-child(-n+2) { border-bottom:0; } }
+@media(max-width:520px) { .flow-ontology-runtime .cdc-probe { border-right:0; }.flow-ontology-runtime .cdc-probe:nth-last-child(2) { border-bottom:1px solid var(--ontology-border); } }
+
+.flow-ontology-runtime .cdc-probe > strong { font-weight:500; }
