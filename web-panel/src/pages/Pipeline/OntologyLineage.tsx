@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowRightOutlined, DatabaseOutlined, FullscreenOutlined, MinusOutlined, PauseOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { Button, Input, Spin } from 'antd';
+import { ArrowRightOutlined, DatabaseOutlined, FullscreenOutlined, MinusOutlined, PauseOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import { Button, Input, Spin } from '@/components/ui';
 import { fetchLayers } from '../../services/api';
 import type { LayerNode } from '../../services/types';
 import { schemaColor } from './OntologyExplorer';
@@ -19,7 +19,7 @@ const stages: Record<string, { column: number; y: number }> = {
   ts_dwd: { column: 3, y: 100 }, ts_dws: { column: 4, y: 100 },
 };
 
-export default function OntologyLineage() {
+export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: number }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const search = params.get('q') || '';
@@ -30,6 +30,9 @@ export default function OntologyLineage() {
   const nodeRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const pointer = useRef<{ x: number; y: number; left: number; top: number }>();
   const [zoom, setZoom] = useState(1);
+  const [autoFit, setAutoFit] = useState(true);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
+  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   const [panning, setPanning] = useState(false);
   const id = useId().replace(/:/g, '');
   const [schemas, setSchemas] = useState<LayerNode[]>([]);
@@ -50,7 +53,7 @@ export default function OntologyLineage() {
     }).catch(() => { if (active) { setError(true); setSchemas([]); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [version]);
+  }, [version, refreshToken]);
   useEffect(() => {
     if (!loading && !error && selected && !schemas.some((schema) => schema.key === selected)) {
       setParams((current) => { const next = new URLSearchParams(current); next.delete('schema'); return next; }, { replace: true });
@@ -59,14 +62,18 @@ export default function OntologyLineage() {
   const visible = schemas.filter((schema) => `${schema.key} ${schema.label} ${schema.alias || ''}`.toLowerCase().includes(search.trim().toLowerCase()));
   const independent = visible.filter((schema) => !stages[schema.key]).sort((a, b) => a.key.localeCompare(b.key));
   const hasPipeline = visible.some((schema) => stages[schema.key]);
-  const independentTop = hasPipeline ? 540 : 100;
-  const columns = Math.max(4, Math.min(6, Math.ceil(Math.sqrt(independent.length))));
-  const width = Math.max(1240, columns * 240 + 80);
-  const height = independent.length ? independentTop + Math.ceil(independent.length / columns) * 130 : 480;
+  const width = Math.max(hasPipeline ? 1120 : 256, viewportSize.width);
+  const columns = Math.max(1, Math.floor((width - 40) / 216));
+  const independentRows = Math.ceil(independent.length / columns);
+  const pipelineHeight = hasPipeline ? Math.max(440, viewportSize.height - (independentRows ? independentRows * 130 + 90 : 0)) : 0;
+  const independentTop = hasPipeline ? pipelineHeight + 60 : 100;
+  const height = Math.max(viewportSize.height, independentRows ? independentTop + independentRows * 130 + 32 : pipelineHeight);
+  const stageStep = (width - 256) / 4;
+  const independentStep = columns > 1 ? (width - 256) / (columns - 1) : 0;
   const nodes = visible.map((schema) => {
     const stage = stages[schema.key];
     const index = independent.findIndex((item) => item.key === schema.key);
-    return { ...schema, x: stage ? 40 + stage.column * 240 : 40 + (index % columns) * 240, y: stage ? stage.y : independentTop + Math.floor(index / columns) * 130 };
+    return { ...schema, x: stage ? 40 + stage.column * stageStep : 40 + (index % columns) * independentStep, y: stage ? stage.y / 440 * pipelineHeight : independentTop + Math.floor(index / columns) * 130 };
   });
   const links = relationships.flatMap(([source, target]) => {
     const from = nodes.find((node) => node.key === source);
@@ -80,13 +87,35 @@ export default function OntologyLineage() {
     return [{ source, target, from, color: schemaColor(source), d: `M${startX},${startY} C${mid},${startY} ${mid},${endY} ${endX},${endY}` }];
   });
   const asset = schemas.find((schema) => schema.key === selected);
+  const liveLinks = links.filter((link) => link.from.metricsAvailable && link.from.rateOut > 0).length;
+  const directionLinks = links.filter((link) => !link.from.metricsAvailable).length;
   const selectedNode = nodes.find((node) => node.key === selected);
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const measure = () => setViewportSize((current) => current.width === viewport.clientWidth && current.height === viewport.clientHeight ? current : { width: viewport.clientWidth, height: viewport.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [loading, error, visible.length]);
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReducedMotion(preference.matches);
+    preference.addEventListener('change', update);
+    return () => preference.removeEventListener('change', update);
+  }, []);
+  useEffect(() => {
+    if (!autoFit || !viewportSize.width || !viewportSize.height) return;
+    setZoom(Math.max(.25, Math.min(1, viewportSize.width / width, viewportSize.height / height)));
+  }, [autoFit, viewportSize.width, viewportSize.height, width, height]);
   const selectNode = (key: string) => updateQuery({ schema: key, ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
   const closeInspector = () => {
     updateQuery({ schema: null }, true);
     requestAnimationFrame(() => nodeRefs.current[selected]?.focus());
   };
   const changeZoom = (value: number) => {
+    setAutoFit(false);
     const next = Math.max(.25, Math.min(1.75, Math.round(value * 100) / 100));
     const viewport = viewportRef.current;
     const left = viewport ? (viewport.scrollLeft + viewport.clientWidth / 2) * next / zoom - viewport.clientWidth / 2 : 0;
@@ -97,14 +126,15 @@ export default function OntologyLineage() {
   const fitGraph = () => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    setZoom(Math.max(.25, Math.min(1.5, (viewport.clientWidth - 32) / width, (viewport.clientHeight - 32) / height)));
+    setAutoFit(true);
+    setZoom(Math.max(.25, Math.min(1, viewport.clientWidth / width, viewport.clientHeight / height)));
     requestAnimationFrame(() => viewport.scrollTo({ left: 0, top: 0 }));
   };
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
-    if (paused) graph.pauseAnimations(); else graph.unpauseAnimations();
-  }, [paused, loading, links.length]);
+    if (paused || reducedMotion) graph.pauseAnimations(); else graph.unpauseAnimations();
+  }, [paused, reducedMotion, loading, links.length]);
   useEffect(() => {
     if (!selectedNode || loading || !viewportRef.current) return;
     const viewport = viewportRef.current;
@@ -118,12 +148,12 @@ export default function OntologyLineage() {
     return () => document.removeEventListener('keydown', close);
   }, [selected, params]);
   return <div className="flow-lineage" data-testid="ontology-lineage">
-    <header className="flow-lineage-toolbar"><div><span>DATA RELATIONSHIPS</span><h1>数据血缘</h1></div><Input aria-label="搜索血缘节点" prefix={<SearchOutlined />} placeholder="搜索 schema" allowClear value={search} onChange={(event) => updateQuery({ q: event.target.value || null }, true)} /><Button icon={<ReloadOutlined />} loading={loading} onClick={() => setVersion((value) => value + 1)}>刷新</Button></header>
-    <div className="flow-lineage-notice"><ArrowRightOutlined /><span>单向处理依赖 · 按当前 ETL 处理器定义展示。流动效果仅在该节点具有有效输出速率时显示。</span></div>
-    {error ? <div className="flow-lineage-state" role="alert">血缘资产读取失败。<Button onClick={() => setVersion((value) => value + 1)}>重试</Button></div>
+    <header className="flow-lineage-toolbar"><div><span>DATA RELATIONSHIPS</span><h1>Data lineage</h1></div><Input aria-label="Search lineage nodes" prefix={<SearchOutlined />} placeholder="Search schemas" allowClear value={search} onChange={(event) => updateQuery({ q: event.target.value || null }, true)} /><Button icon={<ReloadOutlined />} loading={loading} onClick={() => setVersion((value) => value + 1)}>Refresh</Button></header>
+    <div className="flow-lineage-notice"><ArrowRightOutlined /><span>One-way processing dependencies. Dots show measured output; moving dashes illustrate processing direction.</span><small data-testid="ontology-lineage-motion-status">{reducedMotion ? 'Animations are off because reduced motion is enabled.' : paused ? 'Animation paused' : liveLinks ? `${liveLinks} live outputs${directionLinks ? ` · ${directionLinks} direction previews` : ''}` : directionLinks ? `${directionLinks} direction previews · Live metrics unavailable` : 'No measured output · Live motion stopped'}</small></div>
+    {error ? <div className="flow-lineage-state" role="alert">Unable to load lineage assets.<Button onClick={() => setVersion((value) => value + 1)}>Retry</Button></div>
       : loading ? <div className="flow-lineage-state"><Spin /></div>
-        : !nodes.length ? <div className="flow-lineage-state">{search ? '没有匹配的资产' : '尚未发现可展示的 schema'}</div>
-          : <div className="flow-lineage-body"><div className="flow-lineage-viewport" ref={viewportRef} tabIndex={0} aria-label="血缘画布，拖动空白处平移，使用工具栏缩放" style={{ cursor: panning ? 'grabbing' : 'grab' }} onPointerDown={(event) => {
+        : !nodes.length ? <div className="flow-lineage-state">{search ? 'No matching assets' : 'No schemas to display'}</div>
+          : <div className="flow-lineage-body"><div className="flow-lineage-viewport" ref={viewportRef} tabIndex={0} aria-label="Lineage canvas. Drag empty space to pan and use the toolbar to zoom." style={{ cursor: panning ? 'grabbing' : 'grab' }} onPointerDown={(event) => {
             if (event.button !== 0 || event.pointerType !== 'mouse' || (event.target as Element).closest('button,input,a')) return;
             pointer.current = { x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop };
             event.currentTarget.setPointerCapture(event.pointerId); setPanning(true);
@@ -135,22 +165,24 @@ export default function OntologyLineage() {
             if (event.key === '-') { event.preventDefault(); changeZoom(zoom - .1); }
             if (event.key === 'Home') { event.preventDefault(); fitGraph(); }
           }}><div className="flow-lineage-extent" style={{ width: Math.ceil(width * zoom), height: Math.ceil(height * zoom) }}><div className="flow-lineage-stage" style={{ width, height, minWidth: 0, minHeight: 0, transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
-            {hasPipeline && <div className="flow-lineage-stage-labels">{['接入', '标准化', '任务与维度', '明细', '聚合'].map((label, index) => <span key={label} style={{ left: 40 + index * 240 }}>{label}</span>)}</div>}
-            {independent.length > 0 && <div className="flow-lineage-independent" style={{ top: independentTop - 77 }}>独立资产 <span>{independent.length} 个 schema · 尚未登记上下游关系</span></div>}
-            <svg ref={graphRef} className="flow-lineage-edges" width={width} height={height} aria-label="已定义的数据处理依赖">
+            {hasPipeline && <div className="flow-lineage-stage-labels">{['Ingestion', 'Standardization', 'Tasks & dimensions', 'Detail', 'Aggregation'].map((label, index) => <span key={label} style={{ left: 40 + index * stageStep }}>{label}</span>)}</div>}
+            {independent.length > 0 && <div className="flow-lineage-independent" style={{ top: independentTop - 54 }}>Independent assets <span>{independent.length} schemas · No registered upstream or downstream relationships</span></div>}
+            <svg ref={graphRef} className="flow-lineage-edges" width={width} height={height} aria-label="Registered processing dependencies">
               <defs>{links.map((link, index) => <marker key={link.source + link.target} id={`${id}-arrow-${index}`} markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,1 L7,4 L0,7" fill="none" stroke={link.color} strokeWidth="1.2" /></marker>)}</defs>
               {links.map((link, index) => <g key={link.source + link.target} data-source={link.source} data-target={link.target} data-color={link.color}>
-                <path data-testid="ontology-lineage-edge" d={link.d} fill="none" stroke={link.color} strokeOpacity=".55" strokeWidth="1.4" markerEnd={`url(#${id}-arrow-${index})`} />
+                <path data-testid="ontology-lineage-edge" data-motion={link.from.metricsAvailable ? 'measured' : 'direction'} d={link.d} fill="none" stroke={link.color} strokeOpacity=".55" strokeWidth="1.4" strokeDasharray={link.from.metricsAvailable ? undefined : '5 7'} markerEnd={`url(#${id}-arrow-${index})`}>
+                  {!link.from.metricsAvailable && <animate data-testid="ontology-direction-demo" attributeName="stroke-dashoffset" from="24" to="0" dur="1.6s" repeatCount="indefinite" />}
+                </path>
                 {link.from.metricsAvailable && link.from.rateOut > 0 && <circle r="3.5" fill={link.color} data-testid="ontology-flow-packet"><animateMotion dur="3.8s" repeatCount="indefinite" path={link.d} /></circle>}
               </g>)}
             </svg>
-            {nodes.map((node) => <button ref={(element) => { nodeRefs.current[node.key] = element; }} key={node.key} type="button" data-testid="ontology-lineage-node" data-schema={node.key} className={`flow-lineage-node${selected === node.key ? ' is-selected' : ''}`} style={{ left: node.x, top: node.y, '--schema-color': schemaColor(node.key) } as React.CSSProperties} onClick={() => selectNode(node.key)}><DatabaseOutlined /><span><strong>{node.alias || node.label}</strong><small>{node.key}</small><em>{node.tables ?? '—'} tables · {node.status === 'running' ? '可访问' : '不可访问'}</em></span></button>)}
+            {nodes.map((node) => <button ref={(element) => { nodeRefs.current[node.key] = element; }} key={node.key} type="button" data-testid="ontology-lineage-node" data-schema={node.key} className={`flow-lineage-node${selected === node.key ? ' is-selected' : ''}`} style={{ left: node.x, top: node.y, '--schema-color': schemaColor(node.key) } as React.CSSProperties} onClick={() => selectNode(node.key)}><DatabaseOutlined /><span><strong>{node.alias || node.label}</strong><small>{node.key}</small><em>{node.tables ?? '—'} tables · {node.status === 'running' ? 'Available' : 'Unavailable'}</em></span></button>)}
           </div></div></div>
-          <div className="flow-lineage-canvas-tools" aria-label="血缘画布工具栏"><button type="button" aria-label="缩小画布" title="缩小 (-)" disabled={zoom <= .25} onClick={() => changeZoom(zoom - .1)}><MinusOutlined /></button><span className="flow-lineage-zoom-label" aria-live="polite">{Math.round(zoom * 100)}%</span><button type="button" aria-label="放大画布" title="放大 (+)" disabled={zoom >= 1.75} onClick={() => changeZoom(zoom + .1)}><PlusOutlined /></button><button type="button" aria-label="适应画布" title="适应画布 (Home)" onClick={fitGraph}><FullscreenOutlined /></button><button type="button" aria-label="重置画布" title="重置为100%" onClick={() => { setZoom(1); viewportRef.current?.scrollTo({ left: 0, top: 0 }); }}><ReloadOutlined /></button><button type="button" aria-label={paused ? '播放流动动画' : '暂停流动动画'} title={paused ? '播放动画' : '暂停动画'} aria-pressed={paused} onClick={() => updateQuery({ motion: paused ? null : 'off' }, true)}>{paused ? <PlayCircleOutlined /> : <PauseOutlined />}</button></div>
-          {asset && <aside className="flow-lineage-inspector" aria-label="节点详情"><span className="flow-lineage-inspector-eyebrow">SELECTED RESOURCE</span><h2>{asset.alias || asset.label}</h2><code>{asset.key}</code><dl><dt>数据库</dt><dd>{asset.database || '—'}</dd><dt>表数量</dt><dd>{asset.tables ?? '—'}</dd><dt>输入速率</dt><dd>{asset.metricsAvailable ? `${asset.rateIn.toLocaleString()} /s` : '尚无运行指标'}</dd><dt>输出速率</dt><dd>{asset.metricsAvailable ? `${asset.rateOut.toLocaleString()} /s` : '尚无运行指标'}</dd><dt>关系</dt><dd>{stages[asset.key] ? 'ETL 处理器定义' : '尚未登记'}</dd></dl><div className="flow-lineage-node-relations">{(['upstream', 'downstream'] as const).map((direction) => {
+          <div className="flow-lineage-canvas-tools" aria-label="Lineage canvas tools"><button type="button" aria-label="Zoom out" title="Zoom out (-)" disabled={zoom <= .25} onClick={() => changeZoom(zoom - .1)}><MinusOutlined /></button><span className="flow-lineage-zoom-label" aria-live="polite">{Math.round(zoom * 100)}%</span><button type="button" aria-label="Zoom in" title="Zoom in (+)" disabled={zoom >= 1.75} onClick={() => changeZoom(zoom + .1)}><PlusOutlined /></button><button type="button" aria-label="Fit to view" title="Fit to view (Home)" onClick={fitGraph}><FullscreenOutlined /></button><button type="button" aria-label="Reset view" title="Reset to 100%" onClick={() => { setAutoFit(false); setZoom(1); viewportRef.current?.scrollTo({ left: 0, top: 0 }); }}><ReloadOutlined /></button><button type="button" aria-label={paused ? 'Play flow animation' : 'Pause flow animation'} title={paused ? 'Play animation' : 'Pause animation'} aria-pressed={paused} onClick={() => updateQuery({ motion: paused ? null : 'off' }, true)}>{paused ? <PlayCircleOutlined /> : <PauseOutlined />}</button></div>
+          {asset && <aside className="flow-lineage-inspector" aria-label="Node details"><span className="flow-lineage-inspector-eyebrow">SELECTED RESOURCE</span><h2>{asset.alias || asset.label}</h2><code>{asset.key}</code><dl><dt>Database</dt><dd>{asset.database || '—'}</dd><dt>Tables</dt><dd>{asset.tables ?? '—'}</dd><dt>Input rate</dt><dd>{asset.metricsAvailable ? `${asset.rateIn.toLocaleString('en-US')} /s` : 'Metrics unavailable'}</dd><dt>Output rate</dt><dd>{asset.metricsAvailable ? `${asset.rateOut.toLocaleString('en-US')} /s` : 'Metrics unavailable'}</dd><dt>Relationships</dt><dd>{stages[asset.key] ? 'ETL processor contract' : 'Not registered'}</dd></dl><div className="flow-lineage-node-relations">{(['upstream', 'downstream'] as const).map((direction) => {
             const related = relationships.filter(([source, target]) => direction === 'upstream' ? target === asset.key : source === asset.key).map(([source, target]) => schemas.find((schema) => schema.key === (direction === 'upstream' ? source : target))).filter((schema): schema is LayerNode => !!schema);
-            return <section key={direction}><h3>{direction === 'upstream' ? '上游资产' : '下游资产'}</h3>{related.length ? related.map((schema) => <button type="button" key={schema.key} onClick={() => selectNode(schema.key)}><i style={{ background: schemaColor(schema.key) }} /><span>{schema.key}</span><ArrowRightOutlined /></button>) : <p>暂无已登记的{direction === 'upstream' ? '上游' : '下游'}关系</p>}</section>;
-          })}</div><Button onClick={() => navigate(`/flow/layers?schema=${encodeURIComponent(asset.key)}`)}>打开数据工作区 <ArrowRightOutlined /></Button><button type="button" className="flow-lineage-close" aria-label="关闭节点详情" onClick={closeInspector}>关闭详情</button></aside>}
+            return <section key={direction}><h3>{direction === 'upstream' ? 'Upstream assets' : 'Downstream assets'}</h3>{related.length ? related.map((schema) => <button type="button" key={schema.key} onClick={() => selectNode(schema.key)}><i style={{ background: schemaColor(schema.key) }} /><span>{schema.key}</span><ArrowRightOutlined /></button>) : <p>No registered {direction === 'upstream' ? 'upstream' : 'downstream'} relationships</p>}</section>;
+          })}</div><Button onClick={() => navigate(`/flow/layers?schema=${encodeURIComponent(asset.key)}`)}>Open data workspace <ArrowRightOutlined /></Button><button type="button" className="flow-lineage-close" aria-label="Close node details" onClick={closeInspector}>Close details</button></aside>}
           </div>}
   </div>;
 }

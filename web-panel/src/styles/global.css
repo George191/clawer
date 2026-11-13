@@ -76,27 +76,27 @@ body {
  * ============================================ */
 
 /* Keep the restrained platform chrome: hover must not introduce a new outline. */
-.ant-btn:hover,
-.ant-btn:focus-visible {
+.ui-btn:hover,
+.ui-btn:focus-visible {
   box-shadow: none !important;
 }
 
-.ant-btn-default,
-.ant-btn-default:hover {
+.ui-btn-default,
+.ui-btn-default:hover {
   border-color: rgba(255, 255, 255, 0.14) !important;
 }
 
-.ant-btn-default:hover {
+.ui-btn-default:hover {
   background: #1d202b !important;
   color: #e4e7eb !important;
 }
 
-.ant-btn-text:hover,
-.ant-btn-text:focus-visible {
+.ui-btn-text:hover,
+.ui-btn-text:focus-visible {
   border-color: transparent !important;
 }
 
-.ant-btn-text:not(.ant-btn-dangerous):hover {
+.ui-btn-text:not(.ui-btn-dangerous):hover {
   background: #1d202b !important;
   color: #e4e7eb !important;
 }
@@ -108,26 +108,26 @@ body {
 .header-context-button:hover,
 .header-context-button:focus,
 .header-context-button:active,
-.header-context-button.ant-btn-clicked {
+.header-context-button.ui-btn-clicked {
   background: transparent !important;
 }
 
 .project-domain-switch:hover,
 .project-domain-switch:focus,
 .project-domain-switch:active,
-.project-domain-switch.ant-btn-clicked {
+.project-domain-switch.ui-btn-clicked {
   background: transparent !important;
 }
 .project-domain-switch:hover,
 .project-domain-switch:focus,
 .project-domain-switch:active,
-.project-domain-switch.ant-btn-clicked {
+.project-domain-switch.ui-btn-clicked {
   background: transparent !important;
   box-shadow: none !important;
 }
-.ant-btn-text.project-domain-switch:not(.ant-btn-dangerous):hover,
-.ant-btn-text.project-domain-switch:not(.ant-btn-dangerous):focus,
-.ant-btn-text.project-domain-switch:not(.ant-btn-dangerous):active {
+.ui-btn-text.project-domain-switch:not(.ui-btn-dangerous):hover,
+.ui-btn-text.project-domain-switch:not(.ui-btn-dangerous):focus,
+.ui-btn-text.project-domain-switch:not(.ui-btn-dangerous):active {
   background: transparent !important;
   color: inherit !important;
   box-shadow: none !important;
@@ -159,7 +159,7 @@ body {
   font-size: 12px;
 }
 .header-shortcut-button > span:last-child { font-size: 12px; }
-.header-context-group .ant-dropdown-trigger {
+.header-context-group .ui-dropdown-trigger {
   display: inline-flex;
   align-items: center;
 }
@@ -839,15 +839,15 @@ body {
  *   Sidebar Menu — Tellius-Style Active Indicator
  * ============================================ */
 
-.ant-menu-dark.ant-menu-inline .ant-menu-item-selected,
-.ant-menu-dark.ant-menu-inline .ant-menu-submenu-selected > .ant-menu-submenu-title {
+.ui-menu-dark.ui-menu-inline .ui-menu-item-selected,
+.ui-menu-dark.ui-menu-inline .ui-menu-submenu-selected > .ui-menu-submenu-title {
   background: rgba(59, 130, 246, 0.12) !important;
   border-radius: 8px !important;
   margin: 2px 8px !important;
   width: auto !important;
   position: relative;
 }
-.ant-menu-dark.ant-menu-inline .ant-menu-item-selected::before {
+.ui-menu-dark.ui-menu-inline .ui-menu-item-selected::before {
   content: '';
   position: absolute;
   left: 0; top: 50%;
@@ -881,32 +881,32 @@ body {
  *   Primary Button Override
  * ============================================ */
 
-.ant-btn-primary,
-.ant-btn-primary:hover {
+.ui-btn-primary,
+.ui-btn-primary:hover {
   border-color: transparent !important;
   background: #018bff !important;
   box-shadow: none !important;
   transition: all 0.25s ease;
 }
-.ant-btn-primary:hover {
+.ui-btn-primary:hover {
   background: #006fc9 !important;
 }
 
-html[data-theme='light'] .ant-btn-default,
-html[data-theme='light'] .ant-btn-default:hover,
-.light-mode .ant-btn-default,
-.light-mode .ant-btn-default:hover {
+html[data-theme='light'] .ui-btn-default,
+html[data-theme='light'] .ui-btn-default:hover,
+.light-mode .ui-btn-default,
+.light-mode .ui-btn-default:hover {
   border-color: #d7dce3 !important;
 }
 
-html[data-theme='light'] .ant-btn-default:hover,
-.light-mode .ant-btn-default:hover {
+html[data-theme='light'] .ui-btn-default:hover,
+.light-mode .ui-btn-default:hover {
   background: #eef1f5 !important;
   color: #172033 !important;
 }
 
-html[data-theme='light'] .ant-btn-text:not(.ant-btn-dangerous):hover,
-.light-mode .ant-btn-text:not(.ant-btn-dangerous):hover {
+html[data-theme='light'] .ui-btn-text:not(.ui-btn-dangerous):hover,
+.light-mode .ui-btn-text:not(.ui-btn-dangerous):hover {
   background: #eef1f5 !important;
   color: #172033 !important;
 }
@@ -915,16 +915,16 @@ html[data-theme='light'] .ant-btn-text:not(.ant-btn-dangerous):hover,
  *   Typography Enhancements
  * ============================================ */
 
-h1.ant-typography { letter-spacing: -0.03em; }
-h2.ant-typography { letter-spacing: -0.02em; }
-h3.ant-typography { letter-spacing: -0.02em; }
-h4.ant-typography { letter-spacing: -0.01em; }
+h1.ui-typography { letter-spacing: -0.03em; }
+h2.ui-typography { letter-spacing: -0.02em; }
+h3.ui-typography { letter-spacing: -0.02em; }
+h4.ui-typography { letter-spacing: -0.01em; }
 
 /* ============================================
  *   Table Enhancements
  * ============================================ */
 
-.ant-table-wrapper .ant-table-thead > tr > th {
+.ui-table-wrapper .ui-table-thead > tr > th {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -936,14 +936,14 @@ h4.ant-typography { letter-spacing: -0.01em; }
  *   Drawer / Modal Enhancements
  * ============================================ */
 
-.ant-drawer-header {
+.ui-drawer-header {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
 }
 /* ============================================
  *   System Tips
  * ============================================ */
 
-.ant-message {
+.ui-message {
   top: 84px !important;
   left: auto !important;
   right: 24px !important;
@@ -953,16 +953,16 @@ h4.ant-typography { letter-spacing: -0.01em; }
   pointer-events: none;
 }
 
-.ant-message .ant-message-notice {
+.ui-message .ui-message-notice {
   padding: 0 !important;
   text-align: right;
 }
 
-.ant-message .ant-message-notice-wrapper {
+.ui-message .ui-message-notice-wrapper {
   text-align: right;
 }
 
-.ant-message .ant-message-notice-content {
+.ui-message .ui-message-notice-content {
   min-height: 36px;
   padding: 8px 14px !important;
   border-radius: 14px !important;
@@ -977,13 +977,13 @@ h4.ant-typography { letter-spacing: -0.01em; }
   pointer-events: auto;
 }
 
-.ant-message .ant-message-custom-content {
+.ui-message .ui-message-custom-content {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
-.ant-message .anticon {
+.ui-message .ui-icon {
   font-size: 14px;
 }
 
@@ -1029,7 +1029,7 @@ h4.ant-typography { letter-spacing: -0.01em; }
 }
 
 .access-tabs > button,
-.access-tabs .ant-segmented-item {
+.access-tabs .ui-segmented-item {
   min-height: 32px;
   border: 0;
   border-radius: 6px;
@@ -1042,29 +1042,29 @@ h4.ant-typography { letter-spacing: -0.01em; }
 .access-tabs:not(.automation-tabs) { gap: 2px; }
 .access-tabs > button { padding: 5px 9px; }
 .access-tabs > button:hover,
-.access-tabs .ant-segmented-item:hover { background: #12151d; color: #e4e7eb; }
+.access-tabs .ui-segmented-item:hover { background: #12151d; color: #e4e7eb; }
 .access-tabs > button.is-active,
-.access-tabs .ant-segmented-item-selected,
-.access-tabs .ant-segmented-thumb { background: #242836; color: #e4e7eb; box-shadow: none; }
+.access-tabs .ui-segmented-item-selected,
+.access-tabs .ui-segmented-thumb { background: #242836; color: #e4e7eb; box-shadow: none; }
 .access-tabs .is-active::after { display: none; }
-.access-tabs .ant-segmented { padding: 0; background: transparent; }
-.access-tabs .ant-segmented-group { gap: 4px; }
-.access-tabs .ant-segmented-item-label { min-height: 32px; padding: 5px 12px; line-height: 22px; }
+.access-tabs .ui-segmented { padding: 0; background: transparent; }
+.access-tabs .ui-segmented-group { gap: 4px; }
+.access-tabs .ui-segmented-item-label { min-height: 32px; padding: 5px 12px; line-height: 22px; }
 .automation-tabs { justify-content: space-between; gap: 16px; }
 .automation-tabs .automation-filters { margin-left: auto; }
-.automation-tabs .automation-filters .ant-select,
-.automation-tabs .automation-filters .ant-select-selector,
-.automation-tabs .automation-filters .ant-input-affix-wrapper,
-.automation-tabs .automation-filters .ant-btn { height: 32px !important; min-height: 32px !important; }
-.automation-tabs .automation-filters .ant-input-affix-wrapper { padding-block: 4px !important; }
-.automation-tabs .automation-filters .ant-btn { padding-block: 4px !important; }
+.automation-tabs .automation-filters .ui-select,
+.automation-tabs .automation-filters .ui-select-selector,
+.automation-tabs .automation-filters .ui-input-affix-wrapper,
+.automation-tabs .automation-filters .ui-btn { height: 32px !important; min-height: 32px !important; }
+.automation-tabs .automation-filters .ui-input-affix-wrapper { padding-block: 4px !important; }
+.automation-tabs .automation-filters .ui-btn { padding-block: 4px !important; }
 
 html[data-theme='light'] .access-tabs { background: #fff; }
 html[data-theme='light'] .access-tabs > button:hover,
 html[data-theme='light'] .access-tabs > button.is-active,
-html[data-theme='light'] .access-tabs .ant-segmented-item:hover,
-html[data-theme='light'] .access-tabs .ant-segmented-item-selected,
-html[data-theme='light'] .access-tabs .ant-segmented-thumb { background: #f3f4f7 !important; color: #172033 !important; }
+html[data-theme='light'] .access-tabs .ui-segmented-item:hover,
+html[data-theme='light'] .access-tabs .ui-segmented-item-selected,
+html[data-theme='light'] .access-tabs .ui-segmented-thumb { background: #f3f4f7 !important; color: #172033 !important; }
 
 @media (max-width: 680px) {
   .access-tabs { overflow-x: auto; }

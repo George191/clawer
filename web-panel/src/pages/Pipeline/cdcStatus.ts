@@ -7,7 +7,7 @@ export function cdcNeedsAttention(status: CdcStatus): boolean {
 }
 
 export function formatWalBytes(value: number | null): string {
-  if (value === null) return '未知';
+  if (value === null) return 'Unknown';
   if (value < 1024) return `${value} B`;
   const units = ['KiB', 'MiB', 'GiB', 'TiB'];
   const exponent = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length);

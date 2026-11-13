@@ -1,9 +1,9 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Drawer, Button, Typography, theme, Card, Result, App } from 'antd';
+import { Drawer, Button, Typography, theme, Card, Result, App } from '@/components/ui';
 import {
   MenuFoldOutlined,
   HistoryOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import PageHeader from '@/components/PageHeader';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { executeQuery } from '@/services/api';

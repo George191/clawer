@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Tree, Dropdown, Card, Input, Skeleton, theme, Typography, Spin, Empty, Button, Result } from 'antd';
-import type { MenuProps } from 'antd';
+import { Tree, Dropdown, Card, Input, Skeleton, theme, Typography, Spin, Empty, Button, Result } from '@/components/ui';
+import type { MenuProps } from '@/components/ui';
 import {
   TableOutlined,
   SearchOutlined,
   CopyOutlined,
   EyeOutlined,
   InfoCircleOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { fetchLayers, fetchLayerTables } from '@/services/api';
 import type { LayerNode, LayerTable } from '@/services/types';
 import SearchEngineIcon, { inferSearchEngine } from '@/components/SearchEngineIcon';

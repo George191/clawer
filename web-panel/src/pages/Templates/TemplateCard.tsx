@@ -10,13 +10,13 @@ import {
   App,
   theme,
   Tooltip,
-} from 'antd';
+} from '@/components/ui';
 import {
   EditOutlined,
   ExperimentOutlined,
   CopyOutlined,
   DeleteOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import client from '@/services/api';
 
 const { Text, Paragraph } = Typography;

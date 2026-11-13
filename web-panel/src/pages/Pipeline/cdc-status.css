@@ -1,5 +1,5 @@
 .cdc-status-panel { margin-top: 20px; }
-.cdc-status-panel .ant-table-wrapper { margin-top: 14px; overflow-x: auto; }
+.cdc-status-panel .ui-table-wrapper { margin-top: 14px; overflow-x: auto; }
 .cdc-probes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 16px 0; }
 .cdc-probe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .cdc-probe > span:last-child { flex-basis: 100%; color: var(--text-secondary, #9aa3af); font-size: 12px; }

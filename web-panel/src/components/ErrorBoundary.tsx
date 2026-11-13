@@ -1,10 +1,10 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
-import { Button, Collapse, Typography } from 'antd';
+import { Button, Collapse, Typography } from '@/components/ui';
 import {
   ExclamationCircleOutlined,
   ReloadOutlined,
   BugOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 
 const { Text, Paragraph } = Typography;
 
@@ -58,7 +58,7 @@ class ErrorBoundary extends Component<Props, State> {
           <ExclamationCircleOutlined
             style={{
               fontSize: 64,
-              color: 'var(--ant-color-error, #ff4d4f)',
+              color: 'var(--ui-color-error, #ff4d4f)',
               marginBottom: 24,
             }}
           />
@@ -68,7 +68,7 @@ class ErrorBoundary extends Component<Props, State> {
               fontSize: 20,
               fontWeight: 600,
               margin: '0 0 8px',
-              color: 'var(--ant-color-text, #1d1d1d)',
+              color: 'var(--ui-color-text, #1d1d1d)',
             }}
           >
             页面出错了
@@ -104,7 +104,7 @@ class ErrorBoundary extends Component<Props, State> {
               {
                 key: 'error-detail',
                 label: (
-                  <span style={{ fontSize: 13, color: 'var(--ant-color-text-secondary, #8b949e)' }}>
+                  <span style={{ fontSize: 13, color: 'var(--ui-color-text-secondary, #8b949e)' }}>
                     <BugOutlined style={{ marginRight: 6 }} />
                     错误详情
                   </span>

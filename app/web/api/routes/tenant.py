@@ -1,12 +1,12 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from app.web.api.dependencies import (
     SessionDep,
-    get_current_active_superuser,
     CurrentInstanceTenant, InstanceStatementTenant,
-    ValidateCreateInTenant, ValidateUpdateOnTenant
+    ValidateCreateInTenant, ValidateUpdateTenant
 )
 from app.web.api.models import (
     Message,
@@ -21,6 +21,7 @@ from fastapi_pagination.links import Page
 from fastapi_filter import FilterDepends
 
 from ..filters import TenantFilter
+from app.web.api.dependencies.common import get_current_active_superuser
 
 
 router = APIRouter(
@@ -65,7 +66,7 @@ async def create_tenant(
 
 
 
-@router.get("/{user_id}", response_model=TenantOut)
+@router.get("/{id}", response_model=TenantOut)
 async def read_tenant_by_id(
     tenant: CurrentInstanceTenant
 ) -> Any:
@@ -74,13 +75,13 @@ async def read_tenant_by_id(
 
 
 @router.patch(
-    "/{user_id}",
+    "/{id}",
     response_model=TenantOut,
 )
 async def update_user(
     *,
     session: SessionDep,
-    tenant: ValidateUpdateOnTenant,
+    tenant: ValidateUpdateTenant,
     tenant_in: TenantUpdate,
 ) -> Any:
     """
@@ -93,7 +94,7 @@ async def update_user(
     return tenant
 
 
-@router.delete("/{user_id}")
+@router.delete("/{id}", dependencies=[Depends(get_current_active_superuser)])
 async def delete_user(
     session: SessionDep,
     tenant: CurrentInstanceTenant
@@ -101,6 +102,10 @@ async def delete_user(
     """
     Delete a Tenant.
     """
-    await session.delete(tenant)
-    await session.commit()
-    return Message(message="Graph deleted successfully")
+    try:
+        await session.delete(tenant)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="This organization contains teams or other resources and cannot be deleted")
+    return Message(message="Organization deleted successfully")

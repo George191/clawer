@@ -1,8 +1,7 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { ConfigProvider, App as AntApp, theme as antTheme, message, Spin } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
-import enUS from 'antd/locale/en_US';
+import { ConfigProvider, App as UiApp, theme as uiTheme, message, notification, Modal, Spin } from '@/components/ui';
+import enUS from '@/components/ui/locale';
 import { useThemeStore } from '@/stores/settings';
 import { themeTokens } from './theme/tokens';
 import { darkTheme } from './theme/dark';
@@ -11,6 +10,8 @@ import { lightTheme } from './theme/light';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/Login/ResetPassword';
 import AuthLayout from '@/pages/Login/AuthLayout';
+import LockScreen from '@/pages/Login/LockScreen';
+import { clearSession, getAccessToken, getRefreshToken, getSessionState, lockSession, recordActivity, SESSION_CHANGED_EVENT } from './services/session';
 
 const MainLayout = lazy(() => import('@/layouts/MainLayout'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
@@ -31,8 +32,46 @@ const FAQ = lazy(() => import('@/pages/FAQ'));
 const Legal = lazy(() => import('@/pages/Legal'));
 
 const App: React.FC = () => {
-  const { mode, language } = useThemeStore();
+  const { mode } = useThemeStore();
   const location = useLocation();
+  const [session, setSession] = useState(getSessionState);
+
+  useEffect(() => {
+    Modal.destroyAll();
+    message.destroy();
+    notification.destroy();
+  }, [session.authenticated, session.locked, session.identity]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const sync = () => {
+      clearTimeout(timer);
+      const next = getSessionState();
+      if (!next.authenticated && (getAccessToken() || getRefreshToken())) { clearSession(); return; }
+      if (next.locked) lockSession(false);
+      setSession((current) => current.authenticated === next.authenticated && current.locked === next.locked && current.identity === next.identity ? current : next);
+      if (next.authenticated) {
+        const deadline = next.locked ? next.expiresAt : Math.min(next.expiresAt, next.idleAt);
+        timer = setTimeout(sync, Math.max(1, Math.min(deadline - Date.now(), 2147483647)));
+      }
+    };
+    const activity = () => { recordActivity(); };
+    const activityEvents = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'] as const;
+    sync();
+    window.addEventListener(SESSION_CHANGED_EVENT, sync);
+    window.addEventListener('storage', sync);
+    window.addEventListener('focus', sync);
+    document.addEventListener('visibilitychange', sync);
+    activityEvents.forEach((event) => document.addEventListener(event, activity, { passive: true }));
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener(SESSION_CHANGED_EVENT, sync);
+      window.removeEventListener('storage', sync);
+      window.removeEventListener('focus', sync);
+      document.removeEventListener('visibilitychange', sync);
+      activityEvents.forEach((event) => document.removeEventListener(event, activity));
+    };
+  }, []);
 
   const isDark = mode === 'dark';
   const currentToken = isDark ? darkTheme : lightTheme;
@@ -49,13 +88,13 @@ const App: React.FC = () => {
 
   return (
     <ConfigProvider
-      locale={language === 'en-US' ? enUS : zhCN}
+      locale={enUS}
       theme={{
-        algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
+        algorithm: isDark ? uiTheme.darkAlgorithm : uiTheme.defaultAlgorithm,
         token: mergedToken,
       }}
     >
-      <AntApp>
+      <UiApp>
         {['/login', '/reset-password'].includes(location.pathname) ? (
           <AuthLayout>
             {location.pathname === '/reset-password' && <ResetPassword />}
@@ -64,12 +103,14 @@ const App: React.FC = () => {
               <Login />
             </div>
           </AuthLayout>
-        ) : !localStorage.getItem('access_token') && !localStorage.getItem('refresh_token') ? (
+        ) : !session.authenticated ? (
           <Navigate to={`/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`} replace />
+        ) : session.locked ? (
+          <AuthLayout><LockScreen /></AuthLayout>
         ) : (
-          <Suspense fallback={<div role="status" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>正在加载页面...</span></div>}>
-          <MainLayout>
-          <Suspense fallback={<div role="status" style={{ minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>正在加载页面...</span></div>}>
+          <Suspense fallback={<div role="status" style={{ minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>Loading workspace...</span></div>}>
+          <MainLayout key={session.identity}>
+          <Suspense fallback={<div role="status" style={{ minHeight: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}><Spin /><span>Loading workspace...</span></div>}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/dashboard" element={<Dashboard />} />
@@ -138,7 +179,7 @@ const App: React.FC = () => {
           </MainLayout>
           </Suspense>
         )}
-      </AntApp>
+      </UiApp>
     </ConfigProvider>
   );
 };

@@ -1,6 +1,6 @@
 import React from 'react';
-import { Button, Card, Col, Progress, Row, Space, Table, Tag, Timeline, Typography, theme } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
+import { Button, Card, Col, Progress, Row, Space, Table, Tag, Timeline, Typography, theme } from '@/components/ui';
+import type { ColumnsType } from '@/components/ui/data';
 import {
   ApiOutlined,
   AuditOutlined,
@@ -19,7 +19,7 @@ import {
   ReloadOutlined,
   SafetyCertificateOutlined,
   TeamOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { useLocation } from 'react-router-dom';
 import PageHeader from '@/components/PageHeader';
 import ErrorBoundary from '@/components/ErrorBoundary';

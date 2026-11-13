@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
+import { clearSession, getAccessToken, getRefreshToken, getSessionState, lockSession, updateAccessToken } from './session';
 import type {
   DashboardMetrics,
   LayerNode,
@@ -59,10 +60,10 @@ function setLoading(v: boolean) {
 // ── 友好错误消息映射 ──
 export function getFriendlyErrorMessage(error: AxiosError): string {
   if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
-    return '后端服务未响应，请检查服务是否已启动';
+    return 'The service did not respond. Please try again.';
   }
   if (!error.response) {
-    return '网络连接失败，请检查网络后重试';
+    return 'Unable to connect. Check your connection and try again.';
   }
   const { status, data } = error.response;
   const serverMsg =
@@ -72,24 +73,24 @@ export function getFriendlyErrorMessage(error: AxiosError): string {
   const msg =
     typeof serverMsg === 'string'
       ? serverMsg
-      : `服务器错误 (HTTP ${status})`;
+      : `Service error (HTTP ${status})`;
 
   switch (status) {
     case 400:
-      return `请求参数错误: ${msg}`;
+      return `Invalid request: ${msg}`;
     case 401:
-      return '未授权，请重新登录';
+      return 'Your session has expired. Sign in again.';
     case 403:
-      return '无权限访问该资源';
+      return 'You do not have permission to access this resource.';
     case 404:
-      return `资源不存在: ${msg}`;
+      return `Resource not found: ${msg}`;
     case 422:
-      return `请求数据校验失败: ${msg}`;
+      return `Invalid data: ${msg}`;
     case 500:
-      return `服务器内部错误: ${msg}`;
+      return `Internal service error: ${msg}`;
     case 502:
     case 503:
-      return '服务暂时不可用，请稍后重试';
+      return 'The service is temporarily unavailable. Try again later.';
     default:
       return msg;
   }
@@ -131,8 +132,7 @@ function isAuthenticationError(error: AxiosError): boolean {
 }
 
 function requireLogin() {
-  localStorage.removeItem('access_token');
-  localStorage.removeItem('refresh_token');
+  clearSession();
   if (!redirectingToLogin && !['/login', '/reset-password'].includes(location.pathname)) {
     redirectingToLogin = true;
     location.replace(`/login?next=${encodeURIComponent(location.pathname + location.search + location.hash)}`);
@@ -145,13 +145,19 @@ export const fetchCurrentUserContext = (): Promise<CurrentUserContext> =>
 // 请求拦截器
 client.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    const session = getSessionState();
+    if (!session.authenticated) { requireLogin(); return Promise.reject(new axios.CanceledError('Session expired')); }
+    if (session.locked) { lockSession(); return Promise.reject(new axios.CanceledError('Session locked')); }
+    const auth = config as InternalAxiosRequestConfig & { _sessionIdentity?: string; _loadingCounted?: boolean };
+    if (auth._sessionIdentity && auth._sessionIdentity !== session.identity) return Promise.reject(new axios.CanceledError('Session changed'));
+    auth._sessionIdentity = session.identity;
     setLoading(true);
-    const token = localStorage.getItem('access_token');
+    auth._loadingCounted = true;
+    const token = getAccessToken();
     if (token) config.headers.Authorization = `Bearer ${token}`;
     return config;
   },
   (error) => {
-    setLoading(false);
     return Promise.reject(error);
   },
 );
@@ -159,21 +165,23 @@ client.interceptors.request.use(
 // 响应拦截器
 client.interceptors.response.use(
   (response: AxiosResponse) => {
-    setLoading(false);
+    if ((response.config as InternalAxiosRequestConfig & { _loadingCounted?: boolean })._loadingCounted) setLoading(false);
     return response;
   },
   async (error: AxiosError) => {
-    setLoading(false);
-    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean }) | undefined;
+    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean; _loadingCounted?: boolean; _sessionIdentity?: string }) | undefined;
+    if (config?._loadingCounted) { setLoading(false); config._loadingCounted = false; }
     if (isAuthenticationError(error) && config) {
+      if (config._sessionIdentity !== getSessionState().identity) return Promise.reject(error);
+      if (!getSessionState().authenticated) { requireLogin(); return Promise.reject(error); }
       if (!config._authRetried) {
         config._authRetried = true;
-        const currentToken = localStorage.getItem('access_token');
+        const currentToken = getAccessToken();
         // Another request may already have refreshed this request's token.
         if (currentToken && config.headers.Authorization !== `Bearer ${currentToken}`) {
           return client(config);
         }
-        const refreshToken = localStorage.getItem('refresh_token');
+        const refreshToken = getRefreshToken();
         if (refreshToken) {
           try {
             if (!refreshPromise) {
@@ -183,8 +191,7 @@ client.interceptors.response.use(
                 const token = unwrap<{ access_token?: string }>(response.data).access_token;
                 if (typeof token !== 'string' || !token) throw new Error('No access token returned');
                 // Do not restore a session that was signed out during the refresh.
-                if (localStorage.getItem('refresh_token') !== refreshToken) throw new Error('Session changed');
-                localStorage.setItem('access_token', token);
+                if (!updateAccessToken(token, refreshToken)) throw new Error('Session changed');
                 return token;
               }).finally(() => { refreshPromise = null; });
             }
@@ -196,7 +203,7 @@ client.interceptors.response.use(
                 ![400, 401, 403, 404].includes(refreshError.response?.status ?? 0)) {
               return Promise.reject(refreshError);
             }
-            if (localStorage.getItem('refresh_token') !== refreshToken) return Promise.reject(error);
+            if (getRefreshToken() !== refreshToken) return Promise.reject(error);
           }
         }
       }
@@ -205,9 +212,9 @@ client.interceptors.response.use(
     // 统一记录错误日志
     if (axios.isAxiosError(error)) {
       const friendly = getFriendlyErrorMessage(error);
-      console.error('[API Error]', friendly, error);
+      console.error('[API Error]', friendly);
     } else {
-      console.error('[API Error]', error);
+      console.error('[API Error]', 'Unexpected request failure');
     }
     return Promise.reject(error);
   },
@@ -491,3 +498,26 @@ export const aiFetchPlatformOverview = (): Promise<Record<string, unknown>> =>
   client.get('/ai/platform/overview').then((r) => unwrap<Record<string, unknown>>(r.data));
 
 export default client;
+
+// Identity and access directory: existing server-managed resources.
+export interface AccessPage<T> { items: T[]; total: number; page: number; size: number; pages?: number; }
+export interface AccessUser { id: string; full_name?: string | null; email: string; phone: string; status: number; is_superuser: boolean; is_tenant_admin: boolean; created_at?: string; updated_at?: string; }
+export interface AccessTenant { id: string; name: string; description?: string | null; plan: number; status: number; created_at?: string; updated_at?: string; }
+export interface AccessTeam { id: string; name: string; description?: string | null; tenant_id: string; created_at?: string; updated_at?: string; }
+export interface AccessUserInput { full_name: string; email: string; phone: string; password?: string; status: number; is_superuser?: boolean; is_tenant_admin?: boolean; }
+export interface AccessTenantInput { name: string; description?: string; plan: number; status: number; }
+export interface AccessTeamInput { name: string; description?: string; }
+export interface AccessQuery { page?: number; size?: number; search?: string; status?: number; is_superuser?: boolean; is_tenant_admin?: boolean; }
+export const fetchAccessUsers = (teamId: string, query: AccessQuery) => client.get('/users/', { params: { team_id: teamId, ...query } }).then(r => unwrap<AccessPage<AccessUser>>(r.data));
+export const fetchAccessUser = (id: string, teamId: string) => client.get(`/users/${encodeURIComponent(id)}`, { params: { team_id: teamId } }).then(r => unwrap<AccessUser>(r.data));
+export const createAccessUser = (teamId: string, body: AccessUserInput) => client.post('/users/', body, { params: { team_id: teamId } }).then(r => unwrap<AccessUser>(r.data));
+export const updateAccessUser = (id: string, teamId: string, body: Partial<AccessUserInput>) => client.patch(`/users/${encodeURIComponent(id)}`, body, { params: { team_id: teamId } }).then(r => unwrap<AccessUser>(r.data));
+export const deleteAccessUser = (id: string, teamId: string) => client.delete(`/users/${encodeURIComponent(id)}`, { params: { team_id: teamId } });
+export const fetchAccessTenants = (query: AccessQuery) => client.get('/tenant/', { params: query }).then(r => unwrap<AccessPage<AccessTenant>>(r.data));
+export const createAccessTenant = (body: AccessTenantInput) => client.post('/tenant/', body).then(r => unwrap<AccessTenant>(r.data));
+export const updateAccessTenant = (id: string, body: Partial<AccessTenantInput>) => client.patch(`/tenant/${encodeURIComponent(id)}`, body).then(r => unwrap<AccessTenant>(r.data));
+export const deleteAccessTenant = (id: string) => client.delete(`/tenant/${encodeURIComponent(id)}`);
+export const fetchAccessTeams = (tenantId: string, query: AccessQuery) => client.get('/team/', { params: { tenant_id: tenantId, ...query } }).then(r => unwrap<AccessPage<AccessTeam>>(r.data));
+export const createAccessTeam = (tenantId: string, body: AccessTeamInput) => client.post('/team/', body, { params: { tenant_id: tenantId } }).then(r => unwrap<AccessTeam>(r.data));
+export const updateAccessTeam = (id: string, tenantId: string, body: AccessTeamInput) => client.put(`/team/${encodeURIComponent(id)}`, body, { params: { tenant_id: tenantId } }).then(r => unwrap<AccessTeam>(r.data));
+export const deleteAccessTeam = (id: string, tenantId: string) => client.delete(`/team/${encodeURIComponent(id)}`, { params: { tenant_id: tenantId } });

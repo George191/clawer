@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
-import { Table, Button, Space, Card, Skeleton, Typography, Tooltip } from 'antd';
-import { FileExcelOutlined, FileTextOutlined } from '@ant-design/icons';
-import type { ColumnsType, TablePaginationConfig } from 'antd/es/table';
+import { Table, Button, Space, Card, Skeleton, Typography, Tooltip } from '@/components/ui';
+import { FileExcelOutlined, FileTextOutlined } from '@/components/ui/icons';
+import type { ColumnsType, TablePaginationConfig } from '@/components/ui/data';
 import type { QueryResult } from '@/services/types';
 import EmptyState from '@/components/EmptyState';
 

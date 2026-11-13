@@ -1,10 +1,10 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Card, Switch, Space, Typography, Checkbox, Button, Tooltip } from 'antd';
+import { Card, Switch, Space, Typography, Checkbox, Button, Tooltip } from '@/components/ui';
 import {
   ClearOutlined,
   VerticalAlignBottomOutlined,
   PauseCircleOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { MONITOR_WS_URL } from '@/services/api';
 import type { LogEntry } from '@/services/types';

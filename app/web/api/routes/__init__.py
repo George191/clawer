@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from app.web.api.dependencies.common import get_current_user
 
 from . import (
-    login, user, utils, apikey, team, graph, model,
+    login, user, utils, apikey, team, tenant, graph, model,
     provider, thread, upload, dataset, embedding,
     health, dashboard, templates, tasks, ai_collect, automation,
     monitor,
@@ -19,6 +19,7 @@ api_router.include_router(user.router)
 api_router.include_router(utils.router)
 api_router.include_router(apikey.router)
 api_router.include_router(team.router)
+api_router.include_router(tenant.router)
 api_router.include_router(graph.router)
 api_router.include_router(model.router)
 api_router.include_router(provider.router)

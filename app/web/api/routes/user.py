@@ -3,7 +3,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status, BackgroundTasks
 
-from sqlmodel import or_, select
+from sqlmodel import or_, select, delete
+from sqlalchemy.exc import IntegrityError
 
 from app.web.api.dependencies import (
     CurrentUser,
@@ -17,6 +18,7 @@ from app.web.core.config import settings
 from app.web.core.security import get_password_hash, verify_password
 from app.web.api.models import (
     TeamUserJoin,
+    InviteCodes,
     UpdatePassword,
     User,
     UserCreate,
@@ -87,6 +89,8 @@ async def create_user(
         )
 
     # 权限检查
+    if not current_team_and_user.user.is_superuser and (user_in.is_superuser or user_in.is_tenant_admin):
+        raise HTTPException(status_code=403, detail="Only platform administrators can assign administrator privileges")
     if not current_team_and_user.user.is_superuser and not current_team_and_user.user.is_tenant_admin:
         # 检查当前用户在团队中的角色
         user_role_statement = select(TeamUserJoin.role).where(
@@ -107,22 +111,24 @@ async def create_user(
     )
     
     session.add(user)
+    await session.flush()
+
+    # Account creation and its selected-team membership are one transaction.
+    invite = InviteCodes(code=uuid.uuid4().hex)
+    session.add(invite)
+    await session.flush()
+    team_user = TeamUserJoin(
+        team_id=current_team_and_user.team.id,
+        user_id=user.id,
+        role=RoleTypes.MEMBER,
+        status=StatusTypes.ENABLE,
+        invite_by=current_team_and_user.user.id,
+        invite_code=invite.id,
+    )
+    session.add(team_user)
+
     await session.commit()
     await session.refresh(instance=user)
-
-    # 为非超级管理员创建的用户，自动添加到当前团队
-    if not current_team_and_user.user.is_superuser:
-        team_user = TeamUserJoin(
-            team_id=current_team_and_user.team.id,
-            user_id=user.id,
-            role=RoleTypes.MEMBER,
-            status=user.status,
-            invite_by=current_team_and_user.user.id,
-            # 这里需要创建或获取一个邀请码
-            invite_code=uuid.uuid4()  # 这里简化处理，实际应该创建一个真实的邀请码
-        )
-        session.add(team_user)
-        await session.commit()
 
     # 发送欢迎邮件
     if settings.emails_enabled and user_in.email:
@@ -235,6 +241,9 @@ async def read_user_context(session: SessionDep, current_user: CurrentUser) -> U
         tenant.id: UserContextTenant(id=tenant.id, name=tenant.name)
         for _, tenant in rows
     }
+    if current_user.is_superuser:
+        available = await session.scalars(select(Tenant).where(Tenant.status == StatusTypes.ENABLE).order_by(Tenant.name))
+        tenants = {tenant.id: UserContextTenant(id=tenant.id, name=tenant.name) for tenant in available.all()}
     teams = [
         UserContextTeam(id=team.id, name=team.name, tenant_id=tenant.id)
         for team, tenant in rows
@@ -284,7 +293,7 @@ async def register_user(session: SessionDep, user_in: UserRegister) -> Any:
     return user
 
 
-@router.get("/{user_id}", response_model=UserOut)
+@router.get("/{id}", response_model=UserOut)
 async def read_user_by_id(
     user: CurrentInstanceUser
 ) -> Any:
@@ -294,28 +303,31 @@ async def read_user_by_id(
 
 
 @router.patch(
-    "/{user_id}",
+    "/{id}",
     response_model=UserOut,
 )
 async def update_user(
     *,
     session: SessionDep,
-    user_id: uuid.UUID,
+    id: uuid.UUID,
     user_in: UserUpdate,
     user: CheckUserUpdatePermissionUser,
+    current_user: CurrentUser,
 ) -> Any:
     """
     Update a user.
     """
-    if user_in.email:
-        statement = select(User).where(
-            or_(
-                User.email == user_in.email,
-                User.phone == user_in.phone
-            )
-        )
+    changes = user_in.model_dump(exclude_unset=True)
+    if not current_user.is_superuser and any(
+        key in changes and changes[key] != getattr(user, key)
+        for key in ("is_superuser", "is_tenant_admin")
+    ):
+        raise HTTPException(status_code=403, detail="Only platform administrators can assign administrator privileges")
+    unique_fields = [getattr(User, key) == changes[key] for key in ("email", "phone") if changes.get(key)]
+    if unique_fields:
+        statement = select(User).where(or_(*unique_fields))
         existing_user = await session.scalar(statement)
-        if existing_user and existing_user.id != user_id:
+        if existing_user and existing_user.id != id:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, 
                 detail="User with this email or phone already exists"
@@ -332,14 +344,22 @@ async def update_user(
     return user
 
 
-@router.delete("/{user_id}")
+@router.delete("/{id}")
 async def delete_user(
     session: SessionDep, 
     user: CheckUserUpdatePermissionUser,
+    current_user: CurrentUser,
 ) -> Message:
     """
     Delete a user.
     """
-    await session.delete(user)
-    await session.commit()
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Only platform administrators can delete accounts")
+    try:
+        await session.execute(delete(TeamUserJoin).where(TeamUserJoin.user_id == user.id))
+        await session.delete(user)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="This user is referenced by other resources. Disable the account instead.")
     return Message(message="User deleted successfully")

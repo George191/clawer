@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Table, Tag, Badge, Card, theme, Typography, Spin, Empty, Button, Result } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
+import { Table, Tag, Badge, Card, theme, Typography, Spin, Empty, Button, Result } from '@/components/ui';
+import type { ColumnsType } from '@/components/ui/data';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/zh-cn';

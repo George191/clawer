@@ -9,7 +9,7 @@ import {
   MarkLineComponent,
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
-import { Row, Col, Card, theme } from 'antd';
+import { Row, Col, Card, theme } from '@/components/ui';
 import { chartPalette } from '@/theme/tokens';
 import type { DashboardMetrics, LayerThroughputPoint } from '@/services/types';
 

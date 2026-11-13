@@ -4,7 +4,7 @@ import {
   ApartmentOutlined, AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
   CloseOutlined, DatabaseOutlined, FolderOutlined, ReloadOutlined,
   SearchOutlined, StarFilled, StarOutlined, TableOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { fetchLayers, fetchLayerTables } from '../../services/api';
 import type { LayerNode, LayerTable } from '../../services/types';
 import { layerColors } from '../../theme/tokens';
@@ -12,12 +12,12 @@ import './ontology-explorer.css';
 
 type Group = 'all' | 'favorites' | 'ingestion' | 'processing' | 'serving' | 'other';
 const groups: Array<{ key: Group; label: string; description: string }> = [
-  { key: 'all', label: '全部资产', description: '浏览当前数据库中的数据架构' },
-  { key: 'favorites', label: '我的收藏', description: '快速访问你关注的数据架构' },
-  { key: 'ingestion', label: '采集与标准化', description: '原始数据接入与标准化数据架构' },
-  { key: 'processing', label: '加工与建模', description: '任务、明细、汇总及维度数据架构' },
-  { key: 'serving', label: '发布与应用', description: '面向应用的数据架构' },
-  { key: 'other', label: '其他架构', description: '自动发现的其他数据架构' },
+  { key: 'all', label: 'All assets', description: 'Browse the schemas available in your databases.' },
+  { key: 'favorites', label: 'Favorites', description: 'Quick access to the schemas you follow.' },
+  { key: 'ingestion', label: 'Ingestion', description: 'Raw ingestion and standardized schemas.' },
+  { key: 'processing', label: 'Processing', description: 'Task, detail, aggregate, and dimension schemas.' },
+  { key: 'serving', label: 'Serving', description: 'Schemas published for downstream applications.' },
+  { key: 'other', label: 'Other schemas', description: 'Additional schemas discovered in the catalog.' },
 ];
 const favoriteStorageKey = 'flow-favorite-schemas';
 const groupFor = (key: string): Group => {
@@ -40,11 +40,11 @@ export function schemaColor(key: string): string {
 }
 
 const schemaTitle = (schema: LayerNode) => schema.alias?.trim() || schema.label || schema.key;
-const schemaStatus = (schema: LayerNode) => schema.status === 'running' ? '可访问' : schema.status === 'error' ? '连接异常' : '未发现';
-const tableCount = (count?: number) => count === undefined ? '—' : count.toLocaleString();
+const schemaStatus = (schema: LayerNode) => schema.status === 'running' ? 'Available' : schema.status === 'error' ? 'Connection error' : 'Not found';
+const tableCount = (count?: number) => count === undefined ? '—' : count.toLocaleString('en-US');
 const accentStyle = (key: string) => ({ '--asset-color': schemaColor(key) } as React.CSSProperties);
 
-export default function OntologyExplorer() {
+export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: number }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const keyword = params.get('q') || '';
@@ -56,7 +56,7 @@ export default function OntologyExplorer() {
   const searchRef = useRef<HTMLInputElement>(null);
   const inspectorRef = useRef<HTMLElement>(null);
   const cardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const [mobilePreview, setMobilePreview] = useState(() => window.matchMedia('(max-width: 900px)').matches);
+  const [mobilePreview, setMobilePreview] = useState(() => window.matchMedia('(max-width: 1150px)').matches);
   const [schemas, setSchemas] = useState<LayerNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -79,10 +79,10 @@ export default function OntologyExplorer() {
       const next = layers.map((layer) => ({ ...layer, key: layer.schemaName || (layer.key.startsWith('ts_') ? layer.key : `ts_${layer.key}`) }))
         .filter((layer) => layer.key !== 'ts_meta');
       setSchemas(next);
-    }).catch(() => { if (active) setError('数据目录读取失败，请刷新重试。'); })
+    }).catch(() => { if (active) setError('Unable to load the catalog. Refresh to try again.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [version]);
+  }, [version, refreshToken]);
 
   useEffect(() => {
     try { localStorage.setItem(favoriteStorageKey, JSON.stringify(favorites)); } catch { /* Browsing remains available when storage is unavailable. */ }
@@ -97,10 +97,10 @@ export default function OntologyExplorer() {
     fetchLayerTables(key).then((rows) => {
       if (active) setTableState({ schema: key, rows, loading: false, error: '' });
     }).catch(() => {
-      if (active) setTableState({ schema: key, rows: [], loading: false, error: '数据表读取失败，请重试。' });
+      if (active) setTableState({ schema: key, rows: [], loading: false, error: 'Unable to load tables. Try again.' });
     });
     return () => { active = false; };
-  }, [selected?.key, tab, tableVersion, version]);
+  }, [selected?.key, tab, tableVersion, version, refreshToken]);
 
   const updateQuery = (changes: Record<string, string | null>, replace = false) => setParams((current) => {
     const next = new URLSearchParams(current);
@@ -122,7 +122,7 @@ export default function OntologyExplorer() {
     }
   }, [loading, error, selectedKey, selected, setParams]);
   useEffect(() => {
-    const query = window.matchMedia('(max-width: 900px)');
+    const query = window.matchMedia('(max-width: 1150px)');
     const resize = () => setMobilePreview(query.matches);
     query.addEventListener('change', resize);
     return () => query.removeEventListener('change', resize);
@@ -142,7 +142,7 @@ export default function OntologyExplorer() {
     if (!selected) return;
     inspectorRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
     if (!mobilePreview) return;
-    const background = [rootRef.current?.querySelector<HTMLElement>('.flow-ontology__topbar'), rootRef.current?.querySelector<HTMLElement>('.flow-ontology__sidebar'), rootRef.current?.querySelector<HTMLElement>('.flow-ontology__main'), document.querySelector<HTMLElement>('.flow-domain-nav'), document.querySelector<HTMLElement>('.ant-layout-header')].filter((element): element is HTMLElement => !!element);
+    const background = [rootRef.current?.querySelector<HTMLElement>('.flow-ontology__sidebar'), rootRef.current?.querySelector<HTMLElement>('.flow-ontology__main'), document.querySelector<HTMLElement>('.flow-domain-nav'), document.querySelector<HTMLElement>('.ui-layout-header'), document.querySelector<HTMLElement>('[data-testid="project-sidebar"]')].filter((element): element is HTMLElement => !!element);
     const before = background.map((element) => element.inert);
     background.forEach((element) => { element.inert = true; });
     const trapFocus = (event: KeyboardEvent) => {
@@ -189,55 +189,53 @@ export default function OntologyExplorer() {
   const toggleFavorite = (key: string) => setFavorites((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
 
   return <div ref={rootRef} className="flow-ontology" data-testid="ontology-explorer">
-    <header className="flow-ontology__topbar">
-      <div className="flow-ontology__breadcrumb"><span className="flow-ontology__mark"><ApartmentOutlined /></span><span>Flow</span><span className="flow-ontology__slash">/</span><strong>Discover</strong></div>
-      <label className="flow-ontology__search"><SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label="搜索数据资产" value={keyword} onChange={(event) => setKeyword(event.target.value)} onKeyDown={(event) => { if (event.key === 'ArrowDown' && visible.length) { event.preventDefault(); cardRefs.current[visible[0].key]?.focus(); } }} placeholder="搜索名称、Schema 或数据库" /><kbd className="flow-ontology__search-shortcut">Ctrl K</kbd>{keyword && <button type="button" aria-label="清空搜索" onClick={() => { setKeyword(''); searchRef.current?.focus(); }}><CloseOutlined /></button>}</label>
-      <div className="flow-ontology__top-actions"><button type="button" className="flow-ontology__icon-button" aria-label="刷新数据目录" title="刷新数据目录" disabled={loading} onClick={() => setVersion((current) => current + 1)}><ReloadOutlined spin={loading} /></button><button type="button" className="flow-ontology__button flow-ontology__button--primary" onClick={() => openWorkspace()}><span>打开工作区</span><ArrowRightOutlined /></button></div>
-    </header>
-
     <div className="flow-ontology__body">
-      <aside className="flow-ontology__sidebar" aria-label="资产分组">
-        <div className="flow-ontology__sidebar-title">探索 <span>EXPLORE</span></div>
+      <aside className="flow-ontology__sidebar" aria-label="Asset groups">
+        <div className="flow-ontology__sidebar-title">Browse <span>SCHEMAS</span></div>
         <nav>{groups.map((item) => <button type="button" key={item.key} data-group={item.key} className={group === item.key ? 'is-active' : ''} aria-pressed={group === item.key} onClick={() => setGroup(item.key)}>{item.key === 'favorites' ? <StarOutlined /> : item.key === 'all' ? <AppstoreOutlined /> : <FolderOutlined />}<span>{item.label}</span><small>{groupCounts[item.key]}</small></button>)}</nav>
-        <div className="flow-ontology__sidebar-note"><DatabaseOutlined /><span>数据目录<small>{new Set(schemas.map((schema) => schema.database).filter(Boolean)).size} 个数据库 · {schemas.length} 个架构</small></span></div>
-        <button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/flow/lineage')}><ApartmentOutlined /><span>数据关系</span><ArrowRightOutlined /></button>
+        <div className="flow-ontology__sidebar-note"><DatabaseOutlined /><span>Data catalog<small>{new Set(schemas.map((schema) => schema.database).filter(Boolean)).size} databases · {schemas.length} schemas</small></span></div>
+        <button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/flow/lineage')}><ApartmentOutlined /><span>Lineage</span><ArrowRightOutlined /></button>
       </aside>
 
       <main className="flow-ontology__main" aria-busy={loading}>
-        <div className="flow-ontology__intro"><span className="flow-ontology__eyebrow">DATA DISCOVERY</span><h1>发现数据资产</h1><p>从数据架构开始，探索数据表与连接信息。</p></div>
-        <div className="flow-ontology__summary" aria-label="目录概况"><span><strong>{schemas.length}</strong> 数据架构</span><span><strong>{tableCount(tablesTotal)}</strong> 数据表</span><span><i />{schemas.filter((schema) => schema.status === 'running').length} 个架构可访问</span></div>
-        {error && <div className="flow-ontology__notice" role="alert"><span>{error}{schemas.length > 0 ? ' 当前展示上次读取的目录。' : ''}</span><button type="button" onClick={() => setVersion((current) => current + 1)}>重试</button></div>}
-        <div className="flow-ontology__collection-heading"><div><h2>{activeGroup.label}<small>{visible.length}</small></h2><p>{keyword ? `搜索 “${keyword.trim()}”` : activeGroup.description}</p></div><div className="flow-ontology__view-switch" aria-label="资产展示方式"><button type="button" aria-label="网格视图" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => setView('grid')}><AppstoreOutlined /></button><button type="button" aria-label="列表视图" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => setView('list')}><BarsOutlined /></button></div></div>
-        {loading && !schemas.length ? <div className="flow-ontology__empty" role="status"><ReloadOutlined spin /><strong>正在读取数据目录</strong><span>获取当前可见的数据架构。</span></div> : !visible.length ? <div className="flow-ontology__empty"><FolderOutlined /><strong>{!schemas.length && !error ? '尚未发现数据资产' : '没有匹配的资产'}</strong><span>{group === 'favorites' && !keyword ? '点击资产卡片上的星标，将常用架构加入收藏。' : '尝试其他关键词或浏览全部资产。'}</span>{(keyword || group !== 'all') && <button type="button" className="flow-ontology__button" onClick={() => updateQuery({ q: null, group: null })}>浏览全部资产</button>}</div> : <div className={`flow-ontology__assets is-${view}`} data-testid="ontology-assets">
+        <header className="flow-ontology__topbar">
+          <label className="flow-ontology__search"><SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label="Search data assets" value={keyword} onChange={(event) => setKeyword(event.target.value)} onKeyDown={(event) => { if (event.key === 'ArrowDown' && visible.length) { event.preventDefault(); cardRefs.current[visible[0].key]?.focus(); } }} placeholder="Search name, schema, or database" /><kbd className="flow-ontology__search-shortcut">Ctrl K</kbd>{keyword && <button type="button" aria-label="Clear search" onClick={() => { setKeyword(''); searchRef.current?.focus(); }}><CloseOutlined /></button>}</label>
+          <div className="flow-ontology__top-actions"><button type="button" className="flow-ontology__icon-button" aria-label="Refresh catalog" title="Refresh catalog" disabled={loading} onClick={() => setVersion((current) => current + 1)}><ReloadOutlined spin={loading} /></button><button type="button" className="flow-ontology__button flow-ontology__button--primary" onClick={() => openWorkspace()}><span>Open workspace</span><ArrowRightOutlined /></button></div>
+        </header>
+        <div className="flow-ontology__intro"><span className="flow-ontology__eyebrow">DATA DISCOVERY</span><h1>Discover</h1><p>Explore schemas, tables, and their connections.</p></div>
+        <div className="flow-ontology__summary" aria-label="Catalog summary"><span><strong>{schemas.length}</strong> Schemas</span><span><strong>{tableCount(tablesTotal)}</strong> Tables</span><span><i />{schemas.filter((schema) => schema.status === 'running').length} schemas available</span></div>
+        {error && <div className="flow-ontology__notice" role="alert"><span>{error}{schemas.length > 0 ? ' Showing the last available catalog.' : ''}</span><button type="button" onClick={() => setVersion((current) => current + 1)}>Retry</button></div>}
+        <div className="flow-ontology__collection-heading"><div><h2>{activeGroup.label}<small>{visible.length}</small></h2><p>{keyword ? `Results for “${keyword.trim()}”` : activeGroup.description}</p></div><div className="flow-ontology__view-switch" aria-label="Asset view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => setView('grid')}><AppstoreOutlined /></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => setView('list')}><BarsOutlined /></button></div></div>
+        {loading && !schemas.length ? <div className="flow-ontology__empty" role="status"><ReloadOutlined spin /><strong>Loading catalog</strong><span>Loading the schemas available to you.</span></div> : !visible.length ? <div className="flow-ontology__empty"><FolderOutlined /><strong>{!schemas.length && !error ? 'No assets discovered yet' : 'No matching assets'}</strong><span>{group === 'favorites' && !keyword ? 'Star a schema to add it to your favorites.' : 'Try another search or browse all assets.'}</span>{(keyword || group !== 'all') && <button type="button" className="flow-ontology__button" onClick={() => updateQuery({ q: null, group: null })}>Browse all assets</button>}</div> : <div className={`flow-ontology__assets is-${view}`} data-testid="ontology-assets">
           {visible.map((schema, index) => <article key={schema.key} data-testid="ontology-schema-card" data-schema={schema.key} className={`flow-ontology__asset${selectedKey === schema.key ? ' is-selected' : ''}`} style={accentStyle(schema.key)}>
-            <button ref={(element) => { cardRefs.current[schema.key] = element; }} type="button" className="flow-ontology__asset-main" aria-label={`查看 ${schema.key}`} aria-pressed={selectedKey === schema.key} onKeyDown={(event) => moveCardFocus(event, index)} onClick={() => selectSchema(schema.key)}>
+            <button ref={(element) => { cardRefs.current[schema.key] = element; }} type="button" className="flow-ontology__asset-main" aria-label={`Preview ${schema.key}`} aria-pressed={selectedKey === schema.key} onKeyDown={(event) => moveCardFocus(event, index)} onClick={() => selectSchema(schema.key)}>
               <span className="flow-ontology__asset-icon"><DatabaseOutlined /></span><span className="flow-ontology__asset-name"><strong title={schemaTitle(schema)}>{schemaTitle(schema)}</strong><code>{schema.key}</code></span>
-              <span className="flow-ontology__asset-description">{schema.database || '数据库信息未提供'}</span>
-              <span className="flow-ontology__asset-meta"><span><TableOutlined />{tableCount(schema.tables)} 张表</span><span className={`flow-ontology__status is-${schema.status}`}><i />{schemaStatus(schema)}</span></span>
-              {schema.metricsAvailable && <span className="flow-ontology__asset-rates">IN {schema.rateIn.toLocaleString()}/s <span>→</span> OUT {schema.rateOut.toLocaleString()}/s</span>}
+              <span className="flow-ontology__asset-description">{schema.database || 'Database not provided'}</span>
+              <span className="flow-ontology__asset-meta"><span><TableOutlined />{tableCount(schema.tables)} tables</span><span className={`flow-ontology__status is-${schema.status}`}><i />{schemaStatus(schema)}</span></span>
+              {schema.metricsAvailable && <span className="flow-ontology__asset-rates">IN {schema.rateIn.toLocaleString('en-US')}/s <span>→</span> OUT {schema.rateOut.toLocaleString('en-US')}/s</span>}
               {schema.metricsAvailable && schema.rateOut > 0 && <span className="flow-ontology__stream" aria-hidden="true"><i /><b>›</b></span>}
             </button>
-            <button type="button" className={`flow-ontology__favorite${favorites.includes(schema.key) ? ' is-favorite' : ''}`} aria-label={`${favorites.includes(schema.key) ? '取消收藏' : '收藏'} ${schema.key}`} aria-pressed={favorites.includes(schema.key)} onClick={() => toggleFavorite(schema.key)}>{favorites.includes(schema.key) ? <StarFilled /> : <StarOutlined />}</button>
+            <button type="button" className={`flow-ontology__favorite${favorites.includes(schema.key) ? ' is-favorite' : ''}`} aria-label={`${favorites.includes(schema.key) ? 'Unstar' : 'Star'} ${schema.key}`} aria-pressed={favorites.includes(schema.key)} onClick={() => toggleFavorite(schema.key)}>{favorites.includes(schema.key) ? <StarFilled /> : <StarOutlined />}</button>
           </article>)}
         </div>}
-        <footer className="flow-ontology__catalog-footer"><span>POSTGRESQL CATALOG</span><span>架构可访问状态与任务运行状态分别查看</span></footer>
+        <footer className="flow-ontology__catalog-footer"><span>POSTGRESQL CATALOG</span><span>Schema availability and task runtime are reported separately.</span></footer>
       </main>
 
-      {selected && mobilePreview && <button type="button" className="flow-ontology__preview-backdrop" aria-label="关闭资产预览遮罩" tabIndex={-1} onClick={closeInspector} />}
-      {selected && <aside ref={inspectorRef} className="flow-ontology__inspector" data-testid="ontology-inspector" data-schema={selected.key} style={accentStyle(selected.key)} role={mobilePreview ? 'dialog' : undefined} aria-modal={mobilePreview ? true : undefined} aria-label={`${selected.key} 资产详情`}>
-        <div className="flow-ontology__inspector-toolbar"><span>资产预览</span><button type="button" className="flow-ontology__icon-button" aria-label="关闭资产预览" onClick={closeInspector}><CloseOutlined /></button></div>
-        <div className="flow-ontology__inspector-heading"><span className="flow-ontology__asset-icon"><DatabaseOutlined /></span><span className="flow-ontology__resource-type">DATA SCHEMA</span><h2>{schemaTitle(selected)}</h2><code>{selected.key}</code><div><span className={`flow-ontology__status is-${selected.status}`}><i />{schemaStatus(selected)}</span><button type="button" className={`flow-ontology__favorite${favorites.includes(selected.key) ? ' is-favorite' : ''}`} aria-label={`${favorites.includes(selected.key) ? '取消收藏' : '收藏'} ${selected.key}`} aria-pressed={favorites.includes(selected.key)} onClick={() => toggleFavorite(selected.key)}>{favorites.includes(selected.key) ? <StarFilled /> : <StarOutlined />}</button></div></div>
-        <div className="flow-ontology__inspector-tabs" role="tablist" aria-label="资产详情" onKeyDown={(event) => {
+      {selected && mobilePreview && <button type="button" className="flow-ontology__preview-backdrop" aria-label="Dismiss asset preview" tabIndex={-1} onClick={closeInspector} />}
+      {selected && <aside ref={inspectorRef} className="flow-ontology__inspector" data-testid="ontology-inspector" data-schema={selected.key} style={accentStyle(selected.key)} role={mobilePreview ? 'dialog' : undefined} aria-modal={mobilePreview ? true : undefined} aria-label={`${selected.key} Asset details`}>
+        <div className="flow-ontology__inspector-toolbar"><span>Asset preview</span><button type="button" className="flow-ontology__icon-button" aria-label="Close asset preview" onClick={closeInspector}><CloseOutlined /></button></div>
+        <div className="flow-ontology__inspector-heading"><span className="flow-ontology__asset-icon"><DatabaseOutlined /></span><span className="flow-ontology__resource-type">DATA SCHEMA</span><h2>{schemaTitle(selected)}</h2><code>{selected.key}</code><div><span className={`flow-ontology__status is-${selected.status}`}><i />{schemaStatus(selected)}</span><button type="button" className={`flow-ontology__favorite${favorites.includes(selected.key) ? ' is-favorite' : ''}`} aria-label={`${favorites.includes(selected.key) ? 'Unstar' : 'Star'} ${selected.key}`} aria-pressed={favorites.includes(selected.key)} onClick={() => toggleFavorite(selected.key)}>{favorites.includes(selected.key) ? <StarFilled /> : <StarOutlined />}</button></div></div>
+        <div className="flow-ontology__inspector-tabs" role="tablist" aria-label="Asset details" onKeyDown={(event) => {
           if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
           event.preventDefault();
           const next = event.key === 'Home' ? 'overview' : event.key === 'End' ? 'tables' : tab === 'overview' ? 'tables' : 'overview';
           setTab(next);
           requestAnimationFrame(() => inspectorRef.current?.querySelector<HTMLButtonElement>(`#ontology-${next}-tab`)?.focus());
-        }}><button type="button" role="tab" tabIndex={tab === 'overview' ? 0 : -1} id="ontology-overview-tab" aria-controls="ontology-overview-panel" aria-selected={tab === 'overview'} className={tab === 'overview' ? 'is-active' : ''} onClick={() => setTab('overview')}>概览</button><button type="button" role="tab" tabIndex={tab === 'tables' ? 0 : -1} id="ontology-tables-tab" aria-controls="ontology-tables-panel" aria-selected={tab === 'tables'} className={tab === 'tables' ? 'is-active' : ''} onClick={() => setTab('tables')}>数据表 <small>{tableCount(selected.tables)}</small></button></div>
+        }}><button type="button" role="tab" tabIndex={tab === 'overview' ? 0 : -1} id="ontology-overview-tab" aria-controls="ontology-overview-panel" aria-selected={tab === 'overview'} className={tab === 'overview' ? 'is-active' : ''} onClick={() => setTab('overview')}>Overview</button><button type="button" role="tab" tabIndex={tab === 'tables' ? 0 : -1} id="ontology-tables-tab" aria-controls="ontology-tables-panel" aria-selected={tab === 'tables'} className={tab === 'tables' ? 'is-active' : ''} onClick={() => setTab('tables')}>Tables <small>{tableCount(selected.tables)}</small></button></div>
         <div className="flow-ontology__inspector-content" role="tabpanel" id={tab === 'overview' ? 'ontology-overview-panel' : 'ontology-tables-panel'} aria-labelledby={tab === 'overview' ? 'ontology-overview-tab' : 'ontology-tables-tab'}>
-          {tab === 'overview' ? <><h3>基本信息</h3><dl><div><dt>Schema</dt><dd>{selected.key}</dd></div><div><dt>数据库</dt><dd>{selected.database || '—'}</dd></div><div><dt>显示名称</dt><dd>{selected.alias || selected.label || '—'}</dd></div><div><dt>资产分组</dt><dd>{groups.find((item) => item.key === groupFor(selected.key))!.label}</dd></div><div><dt>数据表</dt><dd>{tableCount(selected.tables)}</dd></div></dl><h3>数据流量</h3>{selected.metricsAvailable ? <div className="flow-ontology__metrics"><div><span>IN</span><strong>{selected.rateIn.toLocaleString()}<small>/s</small></strong></div><ArrowRightOutlined /><div><span>OUT</span><strong>{selected.rateOut.toLocaleString()}<small>/s</small></strong></div></div> : <p className="flow-ontology__muted">当前未提供流量指标。</p>}<h3>数据关系</h3><p className="flow-ontology__muted">在关系视图中查看已确认的数据处理链路。</p><button type="button" className="flow-ontology__text-button" onClick={() => navigate(`/flow/lineage?schema=${encodeURIComponent(selected.key)}`)}>打开数据关系 <ArrowRightOutlined /></button></> : tableState.schema !== selected.key || tableState.loading ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>正在读取数据表</span></div> : tableState.error ? <div className="flow-ontology__notice" role="alert"><span>{tableState.error}</span><button type="button" onClick={() => setTableVersion((current) => current + 1)}>重试</button></div> : !tableState.rows.length ? <div className="flow-ontology__empty is-compact"><TableOutlined /><strong>此架构暂无数据表</strong></div> : <div className="flow-ontology__table-list">{tableState.rows.map((table) => <button type="button" key={table.name} data-testid="ontology-table-row" onClick={() => openWorkspace(selected.key, table.name)}><TableOutlined /><span><strong>{table.name}</strong><small>{table.dataType || (table.tableRole === 'history' ? '历史数据' : '数据表')}{table.size ? ` · ${table.size}` : ''}</small></span><ArrowRightOutlined /></button>)}</div>}
+          {tab === 'overview' ? <><h3>Resource details</h3><dl><div><dt>Schema</dt><dd>{selected.key}</dd></div><div><dt>Database</dt><dd>{selected.database || '—'}</dd></div><div><dt>Display name</dt><dd>{selected.alias || selected.label || '—'}</dd></div><div><dt>Asset groups</dt><dd>{groups.find((item) => item.key === groupFor(selected.key))!.label}</dd></div><div><dt>Tables</dt><dd>{tableCount(selected.tables)}</dd></div></dl><h3>Throughput</h3>{selected.metricsAvailable ? <div className="flow-ontology__metrics"><div><span>IN</span><strong>{selected.rateIn.toLocaleString('en-US')}<small>/s</small></strong></div><ArrowRightOutlined /><div><span>OUT</span><strong>{selected.rateOut.toLocaleString('en-US')}<small>/s</small></strong></div></div> : <p className="flow-ontology__muted">Runtime metrics are not available.</p>}<h3>Lineage</h3><p className="flow-ontology__muted">Inspect registered processing dependencies in the lineage view.</p><button type="button" className="flow-ontology__text-button" onClick={() => navigate(`/flow/lineage?schema=${encodeURIComponent(selected.key)}`)}>Open lineage <ArrowRightOutlined /></button></> : tableState.schema !== selected.key || tableState.loading ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading tables</span></div> : tableState.error ? <div className="flow-ontology__notice" role="alert"><span>{tableState.error}</span><button type="button" onClick={() => setTableVersion((current) => current + 1)}>Retry</button></div> : !tableState.rows.length ? <div className="flow-ontology__empty is-compact"><TableOutlined /><strong>No tables in this schema</strong></div> : <div className="flow-ontology__table-list">{tableState.rows.map((table) => <button type="button" key={table.name} data-testid="ontology-table-row" onClick={() => openWorkspace(selected.key, table.name)}><TableOutlined /><span><strong>{table.name}</strong><small>{table.dataType || (table.tableRole === 'history' ? 'History table' : 'Tables')}{table.size ? ` · ${table.size}` : ''}</small></span><ArrowRightOutlined /></button>)}</div>}
         </div>
-        <div className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" onClick={() => openWorkspace(selected.key)}>探索数据表 <ArrowRightOutlined /></button></div>
+        <div className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" onClick={() => openWorkspace(selected.key)}>Explore tables <ArrowRightOutlined /></button></div>
       </aside>}
     </div>
   </div>;

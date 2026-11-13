@@ -16,7 +16,7 @@ export const useThemeStore = create<SettingsState>()(
   persist(
     (set) => ({
       mode: 'dark',
-      language: 'zh-CN',
+      language: 'en-US',
       setMode: (mode) => set({ mode }),
       setLanguage: (language) => set({ language }),
       toggle: () => set((s) => ({ mode: s.mode === 'dark' ? 'light' : 'dark' })),

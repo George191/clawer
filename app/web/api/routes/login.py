@@ -25,6 +25,7 @@ from app.web.api.models import (
     PasswordRecoveryCodeVerify,
     Token,
     TokenPayload,
+    SessionUnlock,
     User,
     UserOut,
     Message
@@ -36,7 +37,7 @@ from app.web.utils.template import (
     send_email,
     verify_password_reset_token,
 )
-from app.web.core.security import get_password_hash, verify_password, generate_token, ALGORITHM, TokenType
+from app.web.core.security import get_password_hash, verify_password, generate_token, ALGORITHM, TokenType, decode_session_token
 
 
 router = APIRouter(tags=["login"])
@@ -109,10 +110,7 @@ async def login_refresh(refresh_token: str, session: SessionDep) -> AccessToken:
     Refresh access token using the refresh token.
     """
     try:
-        payload = jwt.decode(
-            refresh_token, settings.SECRET_KEY, algorithms=[ALGORITHM],
-            options={"require": ["sub", "exp"]},
-        )
+        payload = decode_session_token(refresh_token, TokenType.REFRESH_TOKEN)
 
         token_data = TokenPayload(**payload)
         if token_data.type != TokenType.REFRESH_TOKEN.value or not token_data.sub:
@@ -144,7 +142,22 @@ async def login_refresh(refresh_token: str, session: SessionDep) -> AccessToken:
         )
 
     # 使用已验证的用户信息生成新的访问令牌
-    token = generate_token(user.id)
+    token = generate_token(user.id, session_expires_at=token_data.session_exp)
+    return AccessToken(access_token=token.access_token)
+
+
+@router.post("/login/unlock")
+async def unlock_session(body: SessionUnlock, session: SessionDep) -> AccessToken:
+    try:
+        token_data = TokenPayload(**decode_session_token(body.refresh_token, TokenType.REFRESH_TOKEN))
+    except (jwt.InvalidTokenError, ValidationError):
+        raise HTTPException(status_code=401, detail="Session has expired. Sign in again.")
+    user = await session.get(User, token_data.sub)
+    if not user or user.status != StatusTypes.ENABLE:
+        raise HTTPException(status_code=401, detail="Session is no longer available. Sign in again.")
+    if not verify_password(body.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    token = generate_token(user.id, session_expires_at=token_data.session_exp)
     return AccessToken(access_token=token.access_token)
 
 

@@ -29,7 +29,7 @@ async def instance_statement(
             Team.tenant_id == current_team_and_user.team.tenant_id,
             TeamUserJoin.status == StatusTypes.ENABLE
         )
-    return statement
+    return statement.distinct()
 
 
 async def current_instance(
@@ -39,10 +39,7 @@ async def current_instance(
 ) -> User:
 
     statement: SelectOfScalar[User] = await instance_statement(current_team_and_user)
-    statement = statement.where(
-        User.id == id, 
-        TeamUserJoin.team_id == current_team_and_user.team.id
-    )
+    statement = statement.where(User.id == id)
 
     user = await session.scalar(statement)
     if not user:
@@ -70,13 +67,19 @@ async def check_user_permission(
     if not user: raise HTTPException(status_code=404, detail="User not found")
 
     if not current_team_and_user.user.is_superuser:
+        outside_tenant = select(TeamUserJoin.id).join(Team).where(
+            TeamUserJoin.user_id == id,
+            Team.tenant_id != current_team_and_user.team.tenant_id,
+        )
+        if await session.scalar(outside_tenant):
+            raise HTTPException(status_code=403, detail="Only platform administrators can modify accounts shared across organizations")
 
         if current_team_and_user.user.is_tenant_admin and user.is_superuser:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No permission to operate on superuser account"
             )
-        else:
+        elif not current_team_and_user.user.is_tenant_admin:
 
             # 普通用户或团队管理员，需检查团队角色
             team_role_statement = select(TeamUserJoin.role).where(
@@ -94,7 +97,7 @@ async def check_user_permission(
             )
             target_role = await session.scalar(target_role_statement)
 
-            if not target_role: raise HTTPException(status_code=404, detail="Target user is not in your team")
+            if target_role is None: raise HTTPException(status_code=404, detail="Target user is not in your team")
 
             if user_role == RoleTypes.ADMIN:
                 if target_role in [RoleTypes.OWNER, RoleTypes.ADMIN]:

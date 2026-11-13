@@ -1,5 +1,5 @@
 import React from 'react';
-import { Drawer } from 'antd';
+import { Drawer } from '@/components/ui';
 import { aiAura } from './shared/aura';
 
 interface Props {
@@ -18,19 +18,19 @@ const CollectWizard: React.FC<Props> = ({ open, onClose }) => {
   return (
     <>
       <style>{`
-        .cc-wizard .ant-drawer-content {
+        .cc-wizard .ui-drawer-content {
           background: ${aiAura.bg};
           color: ${aiAura.text};
         }
-        .cc-wizard .ant-drawer-header {
+        .cc-wizard .ui-drawer-header {
           background: ${aiAura.bg};
           border-bottom-color: ${aiAura.border};
         }
-        .cc-wizard .ant-drawer-title,
-        .cc-wizard .ant-drawer-close {
+        .cc-wizard .ui-drawer-title,
+        .cc-wizard .ui-drawer-close {
           color: ${aiAura.text};
         }
-        .cc-wizard .ant-drawer-body {
+        .cc-wizard .ui-drawer-body {
           padding: 0;
           overflow: hidden;
         }

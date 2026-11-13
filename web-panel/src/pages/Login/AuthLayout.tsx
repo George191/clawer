@@ -1,6 +1,6 @@
 import React from 'react';
-import { Typography } from 'antd';
-import { LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { Typography } from '@/components/ui';
+import { LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@/components/ui/icons';
 import { useLocation } from 'react-router-dom';
 
 type BackgroundProps = { onUnavailable: () => void; onReady?: () => void };

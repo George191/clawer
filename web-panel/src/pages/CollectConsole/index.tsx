@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Button, Input, Segmented, Space, Tag } from 'antd';
+import { Button, Input, Segmented, Space, Tag } from '@/components/ui';
 import {
   AppstoreOutlined,
   DatabaseOutlined,
@@ -9,7 +9,7 @@ import {
   RobotOutlined,
   SearchOutlined,
   ThunderboltOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import TemplateView from './TemplateView';
 import TaskView from './TaskView';
@@ -86,7 +86,7 @@ const CollectConsole: React.FC = () => {
           line-height: 1.2;
           font-weight: 720;
         }
-        .cc-heading .anticon {
+        .cc-heading .ui-icon {
           color: ${aiAura.accent};
           font-size: 22px;
         }
@@ -124,7 +124,7 @@ const CollectConsole: React.FC = () => {
           color: ${aiAura.accent};
           border-bottom-color: ${aiAura.accent};
         }
-        .cc-tab .anticon {
+        .cc-tab .ui-icon {
           font-size: 16px;
         }
         .cc-tab-count {
@@ -167,29 +167,29 @@ const CollectConsole: React.FC = () => {
           margin-right: 4px;
         }
         /* Ant overrides */
-        .collect-console .ant-btn,
-        .collect-console .ant-input-affix-wrapper {
+        .collect-console .ui-btn,
+        .collect-console .ui-input-affix-wrapper {
           background: transparent;
           border-color: ${aiAura.border};
           color: ${aiAura.text};
           box-shadow: none;
         }
-        .collect-console .ant-input {
+        .collect-console .ui-input {
           background: transparent;
           color: ${aiAura.text};
         }
-        .collect-console .ant-input::placeholder {
+        .collect-console .ui-input::placeholder {
           color: ${aiAura.subtle};
         }
-        .collect-console .ant-btn-primary {
+        .collect-console .ui-btn-primary {
           background: ${aiAura.accent};
           border-color: ${aiAura.accent};
           color: ${aiAura.bg};
         }
-        .collect-console .ant-btn-primary:hover {
+        .collect-console .ui-btn-primary:hover {
           opacity: 0.88;
         }
-        .collect-console .ant-tag {
+        .collect-console .ui-tag {
           background: transparent;
           border-color: ${aiAura.border};
           color: ${aiAura.subtle};

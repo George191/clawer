@@ -39,7 +39,7 @@ def _postgres_identity() -> dict[str, str]:
 
 async def _connect() -> ConnectState:
     if not settings.cdc_connect_url:
-        return ConnectState(state="unconfigured", reason="未配置 Kafka Connect 管理地址")
+        return ConnectState(state="unconfigured", reason="No Kafka Connect management URL is configured")
     async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_SECONDS, trust_env=False) as client:
         response = await client.get(
             f"{settings.cdc_connect_url.rstrip('/')}/connectors", params={"expand": "status"},
@@ -58,7 +58,7 @@ async def _connect() -> ConnectState:
             task_states=[_state(task["state"]) for task in status.get("tasks", [])],
         ))
     if not connectors:
-        return ConnectState(state="not_ready", reason="Connect 可达，但未发现本项目连接器")
+        return ConnectState(state="not_ready", reason="Kafka Connect is reachable, but no project connectors were found")
     expected = set()
     if settings.db_url and settings.db_name:
         expected.add(f"{mongo_cdc_topic_prefix()}-{settings.db_name}")
@@ -70,14 +70,14 @@ async def _connect() -> ConnectState:
                 for item in connectors if item.name in expected)
     return ConnectState(
         state="available" if ready and not missing else "not_ready", connectors=connectors,
-        reason=f"尚未注册连接器：{'、'.join(sorted(missing))}" if missing else
-        None if ready else "连接器或任务尚未全部运行；请检查受保护的服务端日志",
+        reason=f"Connectors not registered: {', '.join(sorted(missing))}" if missing else
+        None if ready else "Some connectors or tasks are not running. Check the protected server logs.",
     )
 
 
 async def _mongo() -> ProbeState:
     if not settings.db_url or not settings.db_name:
-        return ProbeState(state="unconfigured", reason="未配置 MongoDB 数据源")
+        return ProbeState(state="unconfigured", reason="No MongoDB source is configured")
     from motor.motor_asyncio import AsyncIOMotorClient
 
     client = AsyncIOMotorClient(
@@ -87,17 +87,17 @@ async def _mongo() -> ProbeState:
     try:
         hello = await client.admin.command("hello")
         if not hello.get("setName") and hello.get("msg") != "isdbgrid":
-            return ProbeState(state="not_ready", reason="MongoDB 尚未启用副本集或分片拓扑")
+            return ProbeState(state="not_ready", reason="MongoDB requires a replica set or sharded topology")
         async with client[settings.db_name].watch(max_await_time_ms=100) as changes:
             await changes.try_next()
-        return ProbeState(state="available", reason="已验证拓扑和数据库 Change Streams 读取权限")
+        return ProbeState(state="available", reason="Topology and database Change Streams read permissions verified")
     finally:
         client.close()
 
 
 async def _postgres() -> PostgresState:
     if not settings.pg_url:
-        return PostgresState(state="unconfigured", reason="未配置 PostgreSQL 数据源")
+        return PostgresState(state="unconfigured", reason="No PostgreSQL source is configured")
     pg = get_pg_client()
     level = await pg.fetch_one(
         "SELECT current_setting('wal_level') AS wal_level, pg_is_in_recovery() AS in_recovery",
@@ -105,10 +105,10 @@ async def _postgres() -> PostgresState:
     if not level or level["wal_level"] != "logical":
         return PostgresState(
             state="not_ready", wal_level=level["wal_level"] if level else None,
-            reason="PostgreSQL wal_level 尚未设为 logical",
+            reason="PostgreSQL wal_level is not set to logical",
         )
     if level["in_recovery"]:
-        return PostgresState(state="not_ready", wal_level="logical", reason="当前连接为备库，需单独验证逻辑复制支持")
+        return PostgresState(state="not_ready", wal_level="logical", reason="This connection targets a standby. Verify logical replication support separately.")
     rows = await pg.fetch_all("""
         SELECT slot_name AS name, active,
                pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)::bigint AS retained_bytes,
@@ -123,7 +123,7 @@ async def _postgres() -> PostgresState:
     return PostgresState(
         state="available" if active else "not_ready", wal_level="logical", slots=slots,
         expected_slot=expected,
-        reason=None if active else "本项目逻辑复制槽尚未创建或没有活跃的 CDC 读取连接",
+        reason=None if active else "The project replication slot is missing or has no active CDC reader",
     )
 
 
@@ -143,7 +143,7 @@ async def _consumer_offsets(admin: AIOKafkaAdminClient) -> dict[str, dict[TopicP
 
 async def _kafka() -> KafkaState:
     if not settings.kafka_brokers:
-        return KafkaState(state="unconfigured", reason="未配置 Kafka")
+        return KafkaState(state="unconfigured", reason="No Kafka cluster is configured")
     admin = AIOKafkaAdminClient(**build_admin_client_kwargs(request_timeout_ms=3000))
     # This observer never subscribes, joins a group or commits offsets.
     reader = AIOKafkaConsumer(**build_consumer_kwargs(group_id=None, request_timeout_ms=3000))
@@ -152,7 +152,7 @@ async def _kafka() -> KafkaState:
         offsets = await _consumer_offsets(admin)
         partitions = {partition for positions in offsets.values() for partition in positions}
         if not partitions:
-            return KafkaState(state="not_ready", reason="尚未发现本项目 CDC 消费组的已提交位点")
+            return KafkaState(state="not_ready", reason="No committed offsets were found for the project CDC consumer groups")
         await reader.start()
         ends = await reader.end_offsets(list(partitions))
         consumers = [ConsumerLag(
@@ -177,10 +177,10 @@ async def _probe(operation: Callable[[], Awaitable[_Probe]], model: type[_Probe]
 async def status() -> CdcStatus:
     """Return bounded independent infrastructure probes, without implying ETL completion."""
     connect, mongo, postgres, kafka = await asyncio.gather(
-        _probe(_connect, ConnectState, "无法读取 Kafka Connect 状态；请检查连接和访问权限"),
-        _probe(_mongo, ProbeState, "无法验证 MongoDB 拓扑和 Change Streams 读取权限"),
-        _probe(_postgres, PostgresState, "无法读取 PostgreSQL WAL 状态；请检查连接和监控权限"),
-        _probe(_kafka, KafkaState, "无法读取 CDC 消费位点；请检查 Kafka 连接和组读取权限"),
+        _probe(_connect, ConnectState, "Unable to read Kafka Connect status. Check connectivity and permissions."),
+        _probe(_mongo, ProbeState, "Unable to verify MongoDB topology and Change Streams read permissions"),
+        _probe(_postgres, PostgresState, "Unable to read PostgreSQL WAL status. Check connectivity and monitoring permissions."),
+        _probe(_kafka, KafkaState, "Unable to read CDC offsets. Check Kafka connectivity and consumer group read permissions."),
     )
     return CdcStatus(
         checked_at=datetime.now(timezone.utc).isoformat(), output_mode=settings.etl_output_mode,

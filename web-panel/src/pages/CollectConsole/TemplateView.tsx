@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Button, Segmented, Space, Tag, Typography } from 'antd';
+import { Button, Segmented, Space, Tag, Typography } from '@/components/ui';
 import {
   BranchesOutlined,
   CheckCircleOutlined,
@@ -12,7 +12,7 @@ import {
   PlusOutlined,
   StopOutlined,
   ToolOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { aiAura } from './shared/aura';
 import { templates } from './shared/mockData';
 import type { TemplateAsset, TemplateStatus, TemplateIcon } from './shared/types';
@@ -69,16 +69,16 @@ const TemplateView: React.FC<Props> = ({ keyword }) => {
           gap: 12px;
           border-bottom: 1px solid ${aiAura.borderSoft};
         }
-        .cc-tpl-toolbar .ant-segmented {
+        .cc-tpl-toolbar .ui-segmented {
           background: ${aiAura.surfaceSoft};
           border: 1px solid ${aiAura.borderSoft};
           padding: 2px;
         }
-        .cc-tpl-toolbar .ant-segmented-item {
+        .cc-tpl-toolbar .ui-segmented-item {
           color: ${aiAura.subtle};
           border-radius: 6px;
         }
-        .cc-tpl-toolbar .ant-segmented-item-selected {
+        .cc-tpl-toolbar .ui-segmented-item-selected {
           background: ${aiAura.surface};
           color: ${aiAura.text};
           box-shadow: inset 0 0 0 1px ${aiAura.border};
@@ -223,7 +223,7 @@ const TemplateView: React.FC<Props> = ({ keyword }) => {
           justify-content: center;
           color: ${aiAura.subtle};
         }
-        .cc-tpl-card .ant-tag {
+        .cc-tpl-card .ui-tag {
           background: transparent;
           border-color: ${aiAura.border};
           color: ${aiAura.subtle};

@@ -1,13 +1,14 @@
 from typing import Optional
 
 from app.web.api.models import User
+from app.web.api.utils.models import StatusTypes
 
 from fastapi_filter.contrib.sqlalchemy import Filter
 
 
 class UserFilter(Filter):
     email__ilike: Optional[str] = None
-    is_active: Optional[bool] = None
+    status: Optional[StatusTypes] = None
     is_superuser: Optional[bool] = None
     is_tenant_admin: Optional[bool] = None
     full_name__ilike: Optional[str] = None

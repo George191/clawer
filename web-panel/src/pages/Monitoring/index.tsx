@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
-import { Alert as AlertBanner, Button, Card, Col, Row, Space, Statistic, Table, Tag, Typography } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { Alert as AlertBanner, Button, Card, Col, Row, Space, Statistic, Table, Tag, Typography } from '@/components/ui';
+import { ReloadOutlined } from '@/components/ui/icons';
 import { usePolling } from '@/hooks/usePolling';
 import { fetchDashboardAlerts, fetchDashboardMetrics } from '@/services/api';
 import type { Alert, DashboardMetrics } from '@/services/types';

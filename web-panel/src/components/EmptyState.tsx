@@ -1,5 +1,5 @@
 import React from 'react';
-import { Empty, Button } from 'antd';
+import { Empty, Button } from '@/components/ui';
 import {
   InboxOutlined,
   FileTextOutlined,
@@ -7,7 +7,7 @@ import {
   SearchOutlined,
   ExclamationCircleOutlined,
   AppstoreOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 
 type EmptyPreset = 'no-data' | 'no-tasks' | 'no-alerts' | 'no-results' | 'error' | 'no-templates';
 

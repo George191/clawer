@@ -368,7 +368,7 @@ export interface CdcStatus {
 export type ProductDomain = 'ai-collect' | 'data-lake' | 'etl-pipeline' | 'data-cockpit' | 'knowledge-graph' | 'knowledge-rag' | 'platform';
 
 export interface CurrentUserContext {
-  user: { id: string; full_name?: string | null; email: string; is_superuser?: boolean };
+  user: { id: string; full_name?: string | null; email: string; phone?: string; status?: number; is_superuser?: boolean; is_tenant_admin?: boolean; created_at?: string; updated_at?: string };
   tenants: Array<{ id: string; name: string }>;
   teams: Array<{ id: string; name: string; tenant_id: string }>;
 }

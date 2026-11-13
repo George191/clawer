@@ -9,12 +9,12 @@ import {
   App,
   theme,
   Table,
-} from 'antd';
+} from '@/components/ui';
 import {
   SaveOutlined,
   ExperimentOutlined,
   CloseOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import Editor from '@monaco-editor/react';
 import type { TemplateItem, TemplateType } from './TemplateCard';
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   Card, Progress, Button, Space, Modal, Typography, Popconfirm, Tooltip, theme, Row, Col,
-} from 'antd';
+} from '@/components/ui';
 import {
   PauseCircleOutlined,
   FileTextOutlined,
@@ -14,7 +14,7 @@ import {
   SafetyCertificateOutlined,
   MessageOutlined,
   BarChartOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import StatusBadge from '@/components/StatusBadge';
 import type { TaskInfo } from '@/services/types';
 

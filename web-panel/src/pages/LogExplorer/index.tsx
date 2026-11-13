@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, Input, Segmented, Select, Space, Tag, Tooltip, Typography } from 'antd';
+import { Badge, Button, Input, Segmented, Select, Space, Tag, Tooltip, Typography } from '@/components/ui';
 import {
   ArrowRightOutlined,
   CaretDownOutlined,
@@ -25,7 +25,7 @@ import {
   BranchesOutlined,
   ThunderboltOutlined,
   VerticalAlignBottomOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
 const { Text } = Typography;
@@ -495,48 +495,48 @@ const LogExplorer: React.FC = () => {
             align-items: center;
             gap: 8px;
           }
-          .log-actions .ant-btn {
+          .log-actions .ui-btn {
             background: transparent;
             border-color: ${aura.border};
             color: ${aura.muted};
             box-shadow: none;
           }
-          .log-actions .ant-btn:hover {
+          .log-actions .ui-btn:hover {
             background: ${aura.surface};
             color: ${aura.text};
           }
-          .log-actions .ant-btn.is-active {
+          .log-actions .ui-btn.is-active {
             background: ${aura.cyan}15;
             border-color: ${aura.cyan}66;
             color: ${aura.cyan};
           }
-          .log-actions .ant-input-affix-wrapper {
+          .log-actions .ui-input-affix-wrapper {
             background: transparent;
             border-color: ${aura.border};
             color: ${aura.text};
           }
-          .log-actions .ant-input {
+          .log-actions .ui-input {
             background: transparent;
             color: ${aura.text};
             font-family: 'Fira Code', monospace;
             font-size: 13px;
           }
-          .log-actions .ant-select-selector {
+          .log-actions .ui-select-selector {
             background: transparent !important;
             border-color: ${aura.border} !important;
             color: ${aura.muted} !important;
           }
-          .log-actions .ant-select-arrow {
+          .log-actions .ui-select-arrow {
             color: ${aura.subtle};
           }
-          .log-actions .ant-segmented {
+          .log-actions .ui-segmented {
             background: transparent;
             padding: 0;
           }
-          .log-actions .ant-segmented-item {
+          .log-actions .ui-segmented-item {
             color: ${aura.muted};
           }
-          .log-actions .ant-segmented-item-selected {
+          .log-actions .ui-segmented-item-selected {
             background: ${aura.surface};
             color: ${aura.text};
             box-shadow: inset 0 0 0 1px ${aura.border};

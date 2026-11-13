@@ -1,141 +1,204 @@
-import React, { useMemo, useState } from 'react';
-import { Avatar, Button, Card, Checkbox, ConfigProvider, Descriptions, Drawer, Dropdown, Form, Input, Modal, Select, Space, Table, Tag, Timeline, Typography, message } from 'antd';
-import enUS from 'antd/locale/en_US';
-import { ArrowLeftOutlined, CheckCircleOutlined, ClockCircleOutlined, CopyOutlined, DeleteOutlined, DollarOutlined, DownloadOutlined, EditOutlined, EyeOutlined, FileExcelOutlined, FilePdfOutlined, FileTextOutlined, LockOutlined, MoreOutlined, PlusOutlined, PrinterOutlined, ProjectOutlined, UserAddOutlined, UserOutlined } from '@ant-design/icons';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Avatar, Button, Card, ConfigProvider, Descriptions, Dropdown, Empty, Form, Input, Modal, Select, Space, Spin, Tag, Typography, message } from '@/components/ui';
+import enUS from '@/components/ui/locale';
+import { ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, LockOutlined, MoreOutlined, PlusOutlined, ReloadOutlined, UserAddOutlined } from '@/components/ui/icons';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import {
+  fetchCurrentUserContext, fetchAccessUsers, fetchAccessUser, createAccessUser, updateAccessUser, deleteAccessUser,
+  fetchAccessTenants, createAccessTenant, updateAccessTenant, deleteAccessTenant,
+  fetchAccessTeams, createAccessTeam, updateAccessTeam, deleteAccessTeam,
+} from '../../services/api';
+import type { AccessPage, AccessUser, AccessUserInput, AccessTenant, AccessTenantInput, AccessTeam, AccessQuery } from '../../services/api';
+import type { CurrentUserContext } from '../../services/types';
 import './style.css';
 import './compact.css';
 import './final.css';
 import AccessListPanel from './AccessListPanel';
 
 type View = 'users' | 'roles' | 'permissions' | 'tenants' | 'teams';
-type Status = 'active' | 'pending' | 'inactive';
-type User = { id: string; name: string; email: string; team: string; role: string; status: Status; lastActive: string };
-type Role = { id: string; name: string; description: string; permissions: string[] };
-type Permission = { id: string; name: string; key: string; module: string; description: string };
-type Scope = { id: string; name: string; detail: string; status: 'active' | 'inactive' };
-
-const STORE = 'asiral-access-directory-v1';
-const seedPermissions: Permission[] = [
-  ['p1','Manage users','users.manage','Identity','Create, edit, suspend and remove users'], ['p2','Manage roles','roles.manage','Identity','Create roles and assign permissions'],
-  ['p3','Run collections','collect.run','Collect','Operate collection tasks'], ['p4','Edit templates','templates.edit','Automation','Create and update templates'],
-  ['p5','View data lake','lake.read','Data Lake','Read catalog and lineage'], ['p6','Manage pipelines','pipelines.manage','ETL Pipeline','Create and operate pipelines'],
-].map(([id,name,key,module,description]) => ({ id,name,key,module,description }));
-const seedRoles: Role[] = [
-  { id:'r1', name:'Tenant Admin', description:'Full tenant administration', permissions:seedPermissions.map(x=>x.key) },
-  { id:'r2', name:'Data Operator', description:'Operate collection and data pipelines', permissions:['collect.run','templates.edit','lake.read','pipelines.manage'] },
-  { id:'r3', name:'Viewer', description:'Read-only platform access', permissions:['lake.read'] },
-];
-const seedUsers: User[] = [
-  { id:'u1',name:'Jing Du',email:'jing.du@acme.io',team:'Default Team',role:'Tenant Admin',status:'active',lastActive:'2 minutes ago' },
-  { id:'u2',name:'Mei Lin',email:'mei.lin@acme.io',team:'Research Lab',role:'Data Operator',status:'active',lastActive:'1 hour ago' },
-  { id:'u3',name:'Wei Zhang',email:'wei.zhang@acme.io',team:'Data Operations',role:'Viewer',status:'pending',lastActive:'Invitation sent' },
-  { id:'u4',name:'Ava Chen',email:'ava.chen@acme.io',team:'Default Team',role:'Data Operator',status:'active',lastActive:'12 minutes ago' },
-  { id:'u5',name:'Noah Williams',email:'noah.williams@acme.io',team:'Research Lab',role:'Viewer',status:'active',lastActive:'25 minutes ago' },
-  { id:'u6',name:'Olivia Martin',email:'olivia.martin@acme.io',team:'Data Operations',role:'Tenant Admin',status:'active',lastActive:'43 minutes ago' },
-  { id:'u7',name:'Ethan Brown',email:'ethan.brown@acme.io',team:'Default Team',role:'Data Operator',status:'pending',lastActive:'Invitation sent' },
-  { id:'u8',name:'Sophia Davis',email:'sophia.davis@acme.io',team:'Research Lab',role:'Viewer',status:'inactive',lastActive:'3 days ago' },
-  { id:'u9',name:'Liam Wilson',email:'liam.wilson@acme.io',team:'Data Operations',role:'Data Operator',status:'active',lastActive:'2 hours ago' },
-  { id:'u10',name:'Emma Taylor',email:'emma.taylor@acme.io',team:'Default Team',role:'Viewer',status:'active',lastActive:'4 hours ago' },
-  { id:'u11',name:'Lucas Anderson',email:'lucas.anderson@acme.io',team:'Research Lab',role:'Tenant Admin',status:'active',lastActive:'Yesterday' },
-  { id:'u12',name:'Mia Thomas',email:'mia.thomas@acme.io',team:'Data Operations',role:'Data Operator',status:'pending',lastActive:'Invitation sent' },
-  { id:'u13',name:'Mason Moore',email:'mason.moore@acme.io',team:'Default Team',role:'Viewer',status:'active',lastActive:'Yesterday' },
-  { id:'u14',name:'Isabella Jackson',email:'isabella.jackson@acme.io',team:'Research Lab',role:'Data Operator',status:'inactive',lastActive:'5 days ago' },
-  { id:'u15',name:'James White',email:'james.white@acme.io',team:'Data Operations',role:'Viewer',status:'active',lastActive:'6 hours ago' },
-  { id:'u16',name:'Charlotte Harris',email:'charlotte.harris@acme.io',team:'Default Team',role:'Tenant Admin',status:'active',lastActive:'8 hours ago' },
-  { id:'u17',name:'Benjamin Clark',email:'benjamin.clark@acme.io',team:'Research Lab',role:'Data Operator',status:'pending',lastActive:'Invitation sent' },
-  { id:'u18',name:'Amelia Lewis',email:'amelia.lewis@acme.io',team:'Data Operations',role:'Viewer',status:'active',lastActive:'Yesterday' },
-  { id:'u19',name:'Henry Walker',email:'henry.walker@acme.io',team:'Default Team',role:'Data Operator',status:'active',lastActive:'2 days ago' },
-  { id:'u20',name:'Evelyn Hall',email:'evelyn.hall@acme.io',team:'Research Lab',role:'Viewer',status:'inactive',lastActive:'1 week ago' },
-  { id:'u21',name:'Alexander Young',email:'alexander.young@acme.io',team:'Data Operations',role:'Tenant Admin',status:'active',lastActive:'3 hours ago' },
-  { id:'u22',name:'Harper King',email:'harper.king@acme.io',team:'Default Team',role:'Viewer',status:'pending',lastActive:'Invitation sent' },
-  { id:'u23',name:'Daniel Wright',email:'daniel.wright@acme.io',team:'Research Lab',role:'Data Operator',status:'active',lastActive:'5 hours ago' },
-  { id:'u24',name:'Ella Scott',email:'ella.scott@acme.io',team:'Data Operations',role:'Viewer',status:'active',lastActive:'2 days ago' },
-  { id:'u25',name:'Michael Green',email:'michael.green@acme.io',team:'Default Team',role:'Data Operator',status:'inactive',lastActive:'1 week ago' },
-];
-const seedTenants: Scope[] = [{id:'t1',name:'Acme Research',detail:'Enterprise · 18 members',status:'active'},{id:'t2',name:'Platform Tenant',detail:'Internal platform · 7 members',status:'active'}];
-const seedTeams: Scope[] = [{id:'g1',name:'Default Team',detail:'Acme Research · 8 members',status:'active'},{id:'g2',name:'Research Lab',detail:'Acme Research · 5 members',status:'active'},{id:'g3',name:'Data Operations',detail:'Acme Research · 5 members',status:'active'}];
-const defaults = { users:seedUsers, roles:seedRoles, permissions:seedPermissions, tenants:seedTenants, teams:seedTeams };
-const load = () => { try { const stored=JSON.parse(localStorage.getItem(STORE) || '{}');const storedUsers=Array.isArray(stored.users)?stored.users as User[]:null;const storedIds=new Set(storedUsers?.map(user=>user.id));const seededUsers=storedUsers&&storedUsers.length<seedUsers.length?[...storedUsers,...seedUsers.filter(user=>!storedIds.has(user.id))]:(storedUsers??seedUsers);return { ...defaults, ...stored, users:seededUsers }; } catch { return defaults; } };
-const initials = (name:string) => name.split(/\s+/).map(x=>x[0]).join('').slice(0,2).toUpperCase();
-const status = (value:Status|'active'|'inactive') => <span className={`access-status is-${value}`}>{value[0].toUpperCase()+value.slice(1)}</span>;
-const userPlan = (user: User) => user.role === 'Tenant Admin' ? 'Enterprise' : user.role === 'Data Operator' ? 'Team' : 'Basic';
-const userBilling = (user: User) => user.status === 'pending' ? 'Pending' : 'Auto Debit';
-const roleLabel = (role: string) => {
-  const meta = role === 'Tenant Admin' ? { tone:'admin', icon:<LockOutlined/> } : role === 'Data Operator' ? { tone:'operator', icon:<EditOutlined/> } : { tone:'viewer', icon:<EyeOutlined/> };
-  return <span className={`access-role-label is-${meta.tone}`}><span className="access-role-icon">{meta.icon}</span>{role}</span>;
+type OrganizationRow = Pick<AccessTenant, 'id' | 'name'> & Partial<AccessTenant>;
+type Editor = { type: 'users'; record: AccessUser | null } | { type: 'tenants'; record: OrganizationRow | null } | { type: 'teams'; record: AccessTeam | null };
+const emptyPage = <T,>(): AccessPage<T> => ({ items: [], total: 0, page: 1, size: 10 });
+const tabs: Array<{ key: View; label: string }> = [{ key: 'users', label: 'Users' }, { key: 'roles', label: 'Roles' }, { key: 'permissions', label: 'Permissions' }, { key: 'tenants', label: 'Organizations' }, { key: 'teams', label: 'Teams' }];
+const statuses = ['Active', 'Disabled', 'Expired', 'Pending', 'Locked', 'Hidden'];
+const plans = ['Free', 'Basic', 'Professional', 'Enterprise'];
+const roleOf = (user: Pick<AccessUser, 'is_superuser' | 'is_tenant_admin'>) => user.is_superuser ? 'Platform administrator' : user.is_tenant_admin ? 'Organization administrator' : 'User';
+const userName = (user: AccessUser) => user.full_name?.trim() || user.email;
+const initials = (name: string) => name.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
+const showStatus = (value?: number) => value === undefined ? 'Not exposed' : <span className={`access-status is-${value === 0 ? 'active' : value === 3 ? 'pending' : 'inactive'}`}>{statuses[value] || 'Unknown'}</span>;
+const date = (value?: string) => value ? new Date(value).toLocaleString('en-US') : 'Not available';
+const errorMessage = (error: unknown) => {
+  const response = (error as { response?: { status?: number; data?: { detail?: unknown; errors?: unknown } } })?.response;
+  if (response?.status === 403) return 'You do not have permission to perform this action.';
+  const detail = response?.data?.detail ?? response?.data?.errors;
+  return typeof detail === 'string' ? detail : response?.status === 422 ? 'Some fields were rejected by the server. Review the form and try again.' : 'The request could not be completed. Please try again.';
 };
 
 const Organization: React.FC = () => {
   const navigate = useNavigate();
   const { userId } = useParams<{ userId: string }>();
-  const initial = useMemo(load, []);
-  const [users,setUsers] = useState<User[]>(initial.users), [roles,setRoles] = useState<Role[]>(initial.roles), [permissions,setPermissions] = useState<Permission[]>(initial.permissions);
-  const [tenants,setTenants] = useState<Scope[]>(initial.tenants), [teams,setTeams] = useState<Scope[]>(initial.teams);
-  const [params,setParams] = useSearchParams(), requested = params.get('view') as View;
-  const view:View = ['users','roles','permissions','tenants','teams'].includes(requested) ? requested : 'users';
-  const [search,setSearch] = useState(''), [permissionSearch,setPermissionSearch] = useState(''), [roleFilter,setRoleFilter] = useState('all'), [planFilter,setPlanFilter] = useState('all'), [statusFilter,setStatusFilter] = useState('all');
-  const [detail,setDetail] = useState<User|null>(null), [userEdit,setUserEdit] = useState<User|'new'|null>(null), [roleEdit,setRoleEdit] = useState<Role|'new'|null>(null), [permissionEdit,setPermissionEdit] = useState<Permission|'new'|null>(null);
-  const [scopeEdit,setScopeEdit] = useState<{type:'tenants'|'teams';record:Scope|'new'}|null>(null);
-  const [scopeDetail,setScopeDetail] = useState<{type:'tenants'|'teams';record:Scope}|null>(null), [memberScope,setMemberScope] = useState<Scope|null>(null), [selectedMembers,setSelectedMembers] = useState<string[]>([]);
-  const [detailTab,setDetailTab] = useState<'account'|'security'|'billing'|'notifications'|'connections'>('account');
-  const [userForm] = Form.useForm(), [roleForm] = Form.useForm(), [permissionForm] = Form.useForm(), [scopeForm] = Form.useForm();
-  const persist = (next:Partial<typeof defaults>) => localStorage.setItem(STORE,JSON.stringify({users,roles,permissions,tenants,teams,...next}));
-  const changeUsers=(x:User[])=>{setUsers(x);persist({users:x})}, changeRoles=(x:Role[])=>{setRoles(x);persist({roles:x})}, changePermissions=(x:Permission[])=>{setPermissions(x);persist({permissions:x})};
-  const changeScopes=(type:'tenants'|'teams',x:Scope[])=>{type==='tenants'?setTenants(x):setTeams(x);persist({[type]:x})};
-  const openUser=(x:User|'new')=>{setUserEdit(x);x==='new'?userForm.setFieldsValue({status:'pending'}):userForm.setFieldsValue(x)};
-  const saveUser=async()=>{const v=await userForm.validateFields();const x:User={...v,id:userEdit==='new'?crypto.randomUUID():userEdit!.id,lastActive:userEdit==='new'?'Invitation sent':userEdit!.lastActive};changeUsers(userEdit==='new'?[...users,x]:users.map(u=>u.id===x.id?x:u));setUserEdit(null);message.success('User saved')};
-  const saveRole=async()=>{const v=await roleForm.validateFields();const x:Role={...v,id:roleEdit==='new'?crypto.randomUUID():roleEdit!.id};changeRoles(roleEdit==='new'?[...roles,x]:roles.map(r=>r.id===x.id?x:r));setRoleEdit(null);message.success('Role saved')};
-  const savePermission=async()=>{const values=await permissionForm.validateFields();const {assignedRoles=[],...permissionValues}=values;const previousKey=permissionEdit==='new'?null:permissionEdit!.key;const x:Permission={...permissionValues,id:permissionEdit==='new'?crypto.randomUUID():permissionEdit!.id};changePermissions(permissionEdit==='new'?[...permissions,x]:permissions.map(p=>p.id===x.id?x:p));changeRoles(roles.map(r=>({...r,permissions:[...r.permissions.filter(k=>k!==previousKey&&k!==x.key),...(assignedRoles.includes(r.id)?[x.key]:[])]})));setPermissionEdit(null);message.success('Permission saved')};
-  const saveScope=async()=>{if(!scopeEdit)return;const v=await scopeForm.validateFields();const list=scopeEdit.type==='tenants'?tenants:teams;const x:Scope={...v,id:scopeEdit.record==='new'?crypto.randomUUID():scopeEdit.record.id};changeScopes(scopeEdit.type,scopeEdit.record==='new'?[...list,x]:list.map(s=>s.id===x.id?x:s));setScopeEdit(null);message.success('Saved')};
-  const filtered=users.filter(u=>`${u.name} ${u.email} ${u.team}`.toLowerCase().includes(search.toLowerCase())&&(roleFilter==='all'||u.role===roleFilter)&&(planFilter==='all'||userPlan(u)===planFilter)&&(statusFilter==='all'||u.status===statusFilter));
-  const filteredPermissions=permissions.filter(p=>`${p.name} ${p.key} ${p.module}`.toLowerCase().includes(permissionSearch.toLowerCase()));
-  const exportUsers=async(format:'copy'|'csv'|'excel'|'pdf'|'print')=>{const rows=filtered.map(x=>({User:x.name,Email:x.email,Role:x.role,Plan:userPlan(x),Billing:userBilling(x),Status:x.status[0].toUpperCase()+x.status.slice(1)}));const csv=['User,Email,Role,Plan,Billing,Status',...rows.map(x=>Object.values(x).map(v=>`"${v}"`).join(','))].join('\n');if(format==='copy'){try{await navigator.clipboard.writeText(csv)}catch{const area=document.createElement('textarea');area.value=csv;document.body.appendChild(area);area.select();document.execCommand('copy');area.remove()}message.success('User list copied');return}if(format==='print'||format==='pdf'){const popup=window.open('','_blank','width=960,height=720');if(!popup){message.error('Allow pop-ups to print this list');return}const cells=rows.map(row=>`<tr>${Object.values(row).map(value=>`<td>${String(value).replace(/[&<>]/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[char]!))}</td>`).join('')}</tr>`).join('');popup.document.write(`<!doctype html><html><head><title>Access Users</title><style>body{font:13px Arial;padding:24px;color:#222}h1{font-size:20px}table{width:100%;border-collapse:collapse}th,td{padding:9px 10px;border-bottom:1px solid #ddd;text-align:left}th{background:#f3f4f6;font-size:11px;text-transform:uppercase}</style></head><body><h1>Access Users</h1><table><thead><tr>${Object.keys(rows[0]??{User:'',Email:'',Role:'',Plan:'',Billing:'',Status:''}).map(key=>`<th>${key}</th>`).join('')}</tr></thead><tbody>${cells}</tbody></table></body></html>`);popup.document.close();popup.focus();popup.print();message.success(format==='pdf'?'Print dialog opened — choose Save as PDF':'Print dialog opened');return}const content=(format==='excel'?'\ufeff':'')+csv;const ext=format==='excel'?'xls':'csv';const url=URL.createObjectURL(new Blob([content],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`access-users.${ext}`;a.click();URL.revokeObjectURL(url);message.success(`${format.toUpperCase()} exported`)};
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('view') as View;
+  const view: View = tabs.some(tab => tab.key === requested) ? requested : 'users';
+  const [context, setContext] = useState<CurrentUserContext>();
+  const [contextError, setContextError] = useState('');
+  const [contextVersion, setContextVersion] = useState(0);
+  const [version, setVersion] = useState(0);
+  const [teamId, setTeamId] = useState(() => params.get('team') || '');
+  const [tenantId, setTenantId] = useState('');
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<number>();
+  const [users, setUsers] = useState<AccessPage<AccessUser>>(emptyPage);
+  const [tenants, setTenants] = useState<AccessPage<OrganizationRow>>(emptyPage);
+  const [teams, setTeams] = useState<AccessPage<AccessTeam>>(emptyPage);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [detail, setDetail] = useState<AccessUser>();
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [editor, setEditor] = useState<Editor | null>(null);
+  const [mutating, setMutating] = useState(false);
+  const pending = useRef(false);
+  const active = useRef(true);
+  const [form] = Form.useForm();
+  const platformAdmin = context?.user.is_superuser === true;
+  const organizationAdmin = context?.user.is_tenant_admin === true;
+  const canManageUsers = platformAdmin || organizationAdmin;
+  const canManageTeams = platformAdmin || organizationAdmin;
 
-  const userColumns:any[]=[
-    {title:'User',render:(_:unknown,u:User)=><Space><Avatar>{initials(u.name)}</Avatar><div><Button type="link" className="access-user-link" onClick={()=>navigate(`/organization/users/${u.id}`)}>{u.name}</Button><Typography.Text type="secondary" className="access-subtext">{u.email}</Typography.Text></div></Space>},
-    {title:'Role',dataIndex:'role',render:roleLabel},{title:'Plan',render:(_:unknown,u:User)=>userPlan(u)},{title:'Billing',render:(_:unknown,u:User)=>userBilling(u)},{title:'Status',dataIndex:'status',render:status},
-    {title:'Actions',width:90,render:(_:unknown,u:User)=><Dropdown trigger={['click']} menu={{items:[{key:'edit',label:'Edit user',icon:<EditOutlined/>},{key:'toggle',label:u.status==='inactive'?'Activate':'Deactivate',icon:<LockOutlined/>},{key:'delete',label:'Delete user',danger:true,icon:<DeleteOutlined/>}],onClick:({key})=>{if(key==='edit')openUser(u);if(key==='toggle')changeUsers(users.map(x=>x.id===u.id?{...x,status:x.status==='inactive'?'active':'inactive'}:x));if(key==='delete')Modal.confirm({title:`Delete ${u.name}?`,content:'This removes the user from the local access directory.',okButtonProps:{danger:true},onOk:()=>changeUsers(users.filter(x=>x.id!==u.id))})}}}><Button type="text" icon={<MoreOutlined/>} aria-label={`Actions for ${u.name}`}/></Dropdown>}
-  ];
-  const renderUsers=()=>{const userStats=[{label:'Total Users',value:users.length,note:'Access directory',tone:'purple',icon:<UserOutlined/>},{label:'Paid Users',value:users.filter(x=>userBilling(x)==='Auto Debit').length,note:'Active billing',tone:'red',icon:<DollarOutlined/>},{label:'Active Users',value:users.filter(x=>x.status==='active').length,note:'Current access',tone:'green',icon:<CheckCircleOutlined/>},{label:'Pending Users',value:users.filter(x=>x.status==='pending').length,note:'Awaiting activation',tone:'orange',icon:<ClockCircleOutlined/>}];return <><div className="access-stats access-user-stats">{userStats.map(item=><Card key={item.label} className={`access-stat-card tone-${item.tone}`}><div><span>{item.label}</span><strong>{item.value}</strong><small>{item.note}</small></div><i>{item.icon}</i></Card>)}</div><AccessListPanel<User> filters={<><Typography.Title level={5}>Filters</Typography.Title><Select value={roleFilter} onChange={setRoleFilter} options={[{value:'all',label:'Select Role'},...roles.map(x=>({value:x.name,label:x.name}))]}/><Select value={planFilter} onChange={setPlanFilter} options={[{value:'all',label:'Select Plan'},...['Basic','Enterprise','Team'].map(x=>({value:x,label:x}))]}/><Select value={statusFilter} onChange={setStatusFilter} options={[{value:'all',label:'Select Status'},...['active','pending','inactive'].map(x=>({value:x,label:x[0].toUpperCase()+x.slice(1)}))]}/></>} search={{placeholder:'Search User',value:search,onChange:e=>setSearch(e.target.value)}} actions={<><Dropdown overlayClassName="access-export-menu" menu={{items:[{key:'copy',label:'Copy',icon:<CopyOutlined/>},{key:'csv',label:'CSV',icon:<FileTextOutlined/>},{key:'excel',label:'Excel',icon:<FileExcelOutlined/>},{key:'pdf',label:'PDF',icon:<FilePdfOutlined/>},{key:'print',label:'Print',icon:<PrinterOutlined/>}],onClick:({key})=>void exportUsers(key as 'copy'|'csv'|'excel'|'pdf'|'print')}}><Button icon={<DownloadOutlined/>}>Export</Button></Dropdown><Button icon={<UserAddOutlined/>} onClick={()=>openUser('new')}>New Record</Button></>} table={{rowSelection:{type:'checkbox'},scroll:{x:850},rowKey:'id',dataSource:filtered,columns:userColumns}}/></>};
-  const renderRoles=()=><div className="access-role-grid">{roles.map(r=>{const members=users.filter(u=>u.role===r.name);return <Card key={r.id} className="access-role-card"><div className="access-role-members"><Typography.Title level={5}>Total {members.length} users</Typography.Title><Avatar.Group max={{count:3}}>{members.map(u=><Avatar key={u.id}>{initials(u.name)}</Avatar>)}</Avatar.Group></div><Typography.Title level={4}>{r.name}</Typography.Title><div className="access-role-footer"><Button type="link" onClick={()=>{setRoleEdit(r);roleForm.setFieldsValue(r)}}>Edit Role</Button><Button type="text" icon={<CopyOutlined/>} aria-label={`Duplicate ${r.name}`} onClick={()=>changeRoles([...roles,{...r,id:crypto.randomUUID(),name:`${r.name} Copy`}])}/></div></Card>})}<Card className="access-add-card access-add-role"><div className="access-add-illustration"><PlusOutlined/></div><div><Button type="primary" onClick={()=>{setRoleEdit('new');roleForm.resetFields()}}>Add New Role</Button><Typography.Text type="secondary">Add new role,<br/>if it doesn’t exist.</Typography.Text></div></Card></div>;
-  const permissionColumns:any[]=[{title:'Name',width:250,render:(_:unknown,p:Permission)=><div><Typography.Text strong>{p.name}</Typography.Text><Typography.Text type="secondary" className="access-subtext">{p.description}</Typography.Text></div>},{title:'Assigned To',width:460,className:'access-assigned-cell',render:(_:unknown,p:Permission)=>roles.filter(r=>r.permissions.includes(p.key)).map(r=><Tag key={r.id} className={`access-assigned-tag is-${r.name==='Tenant Admin'?'admin':r.name==='Data Operator'?'operator':'viewer'}`}>{r.name}</Tag>)},{title:'Created Date',width:200,className:'access-created-date',render:()=> '21 Aug 2026'},{title:'Actions',width:90,render:(_:unknown,p:Permission)=><Dropdown trigger={['click']} menu={{items:[{key:'edit',label:'Edit permission',icon:<EditOutlined/>}],onClick:()=>{setPermissionEdit(p);permissionForm.setFieldsValue({...p,assignedRoles:roles.filter(r=>r.permissions.includes(p.key)).map(r=>r.id)})}}}><Button type="text" icon={<MoreOutlined/>} aria-label={`Actions for ${p.name}`}/></Dropdown>}];
-  const renderPermissions=()=><AccessListPanel<Permission> search={{placeholder:'Search permissions',value:permissionSearch,onChange:e=>setPermissionSearch(e.target.value)}} actions={<Button icon={<PlusOutlined/>} onClick={()=>{setPermissionEdit('new');permissionForm.resetFields()}}>New Record</Button>} table={{rowSelection:{type:'checkbox'},tableLayout:'fixed',scroll:{x:1035},rowKey:'id',dataSource:filteredPermissions,columns:permissionColumns}}/>;
-  const renderScopes=(type:'tenants'|'teams')=>{const list=type==='tenants'?tenants:teams,isOrganizations=type==='tenants',label=isOrganizations?'Organization':'Team';return <div className="access-project-grid">{list.map((x,index)=>{const teamMembers=users.filter(u=>u.team===x.name),scopeMembers=isOrganizations?users:teamMembers,organizationTeams=isOrganizations?teams.filter(t=>t.detail.includes(x.name)):[],tags=isOrganizations?[index===0?'Enterprise':'Internal',`${organizationTeams.length} Teams`]:[index===0?'Platform':'Data',...Array.from(new Set(teamMembers.map(u=>u.role))).slice(0,1)];return <Card key={x.id} className="access-project-card"><div className="access-project-head"><div className={`access-project-logo tone-${index%4}`}>{initials(x.name)}</div><Button type="link" className="access-project-title" onClick={()=>setScopeDetail({type,record:x})}>{x.name}</Button><Dropdown trigger={['click']} menu={{items:[{key:'view',label:'View Details',icon:<EyeOutlined/>},{key:'manage',label:isOrganizations?'Manage Teams':'Manage Members',icon:<UserOutlined/>},{key:'edit',label:`Edit ${label}`,icon:<EditOutlined/>},{key:'toggle',label:x.status==='active'?'Archive':'Activate',icon:<LockOutlined/>}],onClick:({key})=>{if(key==='view')setScopeDetail({type,record:x});if(key==='manage'){if(isOrganizations)setParams({view:'teams'});else{setMemberScope(x);setSelectedMembers(teamMembers.map(u=>u.id))}}if(key==='edit'){setScopeEdit({type,record:x});scopeForm.setFieldsValue(x)}if(key==='toggle'){changeScopes(type,list.map(s=>s.id===x.id?{...s,status:s.status==='active'?'inactive':'active'}:s));message.success(x.status==='active'?`${label} archived`:`${label} activated`)}}}}><Button type="text" icon={<MoreOutlined/>} aria-label={`Actions for ${x.name}`}/></Dropdown></div><Typography.Paragraph className="access-project-description" type="secondary" ellipsis={{rows:2}}>{isOrganizations?`${x.name} manages tenant membership, teams and platform access.`:`${x.name} coordinates ${x.detail.toLowerCase()} across shared data operations.`}</Typography.Paragraph><div className="access-project-footer"><Avatar.Group max={{count:3}}>{scopeMembers.map(u=><Avatar key={u.id}>{initials(u.name)}</Avatar>)}</Avatar.Group><div className="access-project-tags">{tags.filter(Boolean).map(tag=><Tag key={tag}>{tag}</Tag>)}<Tag className={`is-${x.status}`}>{x.status}</Tag></div></div></Card>})}<Card className="access-add-card access-add-project"><div className="access-add-illustration"><PlusOutlined/></div><Typography.Title level={5}>Add New {label}</Typography.Title><Typography.Text type="secondary">Create another {label.toLowerCase()}.</Typography.Text><Button onClick={()=>{setScopeEdit({type,record:'new'});scopeForm.resetFields()}}>Add {label}</Button></Card></div>};
-  const tabs:Array<{key:View;label:string}>=[{key:'users',label:'Users'},{key:'roles',label:'Roles'},{key:'permissions',label:'Permissions'},{key:'tenants',label:'Organizations'},{key:'teams',label:'Teams'}];
-  const changeView = (next: View) => { setDetail(null); setUserEdit(null); setRoleEdit(null); setPermissionEdit(null); setScopeEdit(null); setScopeDetail(null); setMemberScope(null); setParams({ view: next }); };
-  const detailUser = userId ? users.find(user => user.id === userId) : null;
-  if (userId) {
-    if (!detailUser) return <ConfigProvider locale={enUS}><div className="access-page"><Card className="access-empty-detail"><Typography.Title level={4}>User not found</Typography.Title><Button icon={<ArrowLeftOutlined/>} onClick={()=>navigate('/organization?view=users')}>Back to Users</Button></Card></div></ConfigProvider>;
-    const permissionCount = roles.find(role=>role.name===detailUser.role)?.permissions.length ?? 0;
-    return <ConfigProvider locale={enUS}><div className="access-page access-user-detail-page">
-      <Button type="text" icon={<ArrowLeftOutlined/>} className="access-back-button" onClick={()=>navigate('/organization?view=users')}>Users</Button>
-      <div className="access-user-detail-grid">
-        <Card className="access-profile-card">
-          <div className="access-detail-identity"><Avatar size={94}>{initials(detailUser.name)}</Avatar><Typography.Title level={3}>{detailUser.name}</Typography.Title><Tag color="cyan">{detailUser.role}</Tag></div>
-          <div className="access-detail-metrics"><div><CheckCircleOutlined/><span><strong>{permissionCount}</strong><small>Permissions</small></span></div><div><ProjectOutlined/><span><strong>{detailUser.team==='Default Team'?3:1}</strong><small>Projects</small></span></div></div>
-          <Typography.Title level={5}>Details</Typography.Title>
-          <dl className="access-detail-list"><div><dt>Username:</dt><dd>@{detailUser.email.split('@')[0]}</dd></div><div><dt>Email:</dt><dd>{detailUser.email}</dd></div><div><dt>Status:</dt><dd>{status(detailUser.status)}</dd></div><div><dt>Role:</dt><dd>{detailUser.role}</dd></div><div><dt>Team:</dt><dd>{detailUser.team}</dd></div><div><dt>Last active:</dt><dd>{detailUser.lastActive}</dd></div></dl>
-          <Space><Button onClick={()=>openUser(detailUser)}>Edit</Button><Button danger onClick={()=>changeUsers(users.map(user=>user.id===detailUser.id?{...user,status:user.status==='inactive'?'active':'inactive'}:user))}>{detailUser.status==='inactive'?'Activate':'Suspend'}</Button></Space>
-        </Card>
-        <div className="access-detail-main">
-          <Card className="access-plan-card"><div><Typography.Title level={4}>{userPlan(detailUser)}</Typography.Title><Typography.Text type="secondary">Current access plan</Typography.Text><ul><li>{permissionCount} assigned permissions</li><li>{detailUser.team} membership</li><li>{userBilling(detailUser)} billing</li></ul></div><Button onClick={()=>setDetailTab('billing')}>View Plan</Button></Card>
-          <nav className="access-detail-tabs">{([{key:'account',label:'Account'},{key:'security',label:'Security'},{key:'billing',label:'Billing & Plans'},{key:'notifications',label:'Notifications'},{key:'connections',label:'Connections'}] as const).map(item=><button type="button" key={item.key} className={detailTab===item.key?'is-active':''} onClick={()=>setDetailTab(item.key)}>{item.label}</button>)}</nav>
-          {detailTab==='account'&&<><Card className="access-detail-section"><Typography.Title level={5}>Project List</Typography.Title><Table size="small" pagination={false} rowKey="name" dataSource={[{name:detailUser.team,leader:detailUser.name,role:detailUser.role},{name:'Automation Foundation',leader:detailUser.name,role:'Member'}]} columns={[{title:'Project',dataIndex:'name'},{title:'Leader',dataIndex:'leader'},{title:'Role',dataIndex:'role'}]}/></Card><Card className="access-detail-section"><Typography.Title level={5}>User Activity Timeline</Typography.Title><Timeline items={[{children:`Account activity · ${detailUser.lastActive}`},{children:`Assigned to ${detailUser.team}`},{children:`Role set to ${detailUser.role}`}]} /></Card></>}
-          {detailTab!=='account'&&<Card className="access-detail-section"><Typography.Title level={5}>{detailTab==='billing'?'Billing & Plans':detailTab[0].toUpperCase()+detailTab.slice(1)}</Typography.Title><Typography.Text type="secondary">Manage this user’s {detailTab==='billing'?'plan and billing settings':`${detailTab} settings`}.</Typography.Text></Card>}
-        </div>
-      </div>
-      <Modal title="Edit User" open={!!userEdit} onCancel={()=>setUserEdit(null)} onOk={()=>void saveUser()} okText="Save User" destroyOnHidden><Form form={userForm} layout="vertical"><Form.Item name="name" label="Full name" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="email" label="Email" rules={[{required:true,type:'email'}]}><Input/></Form.Item><Form.Item name="team" label="Team" rules={[{required:true}]}><Select options={teams.map(x=>({value:x.name,label:x.name}))}/></Form.Item><Form.Item name="role" label="Role" rules={[{required:true}]}><Select options={roles.map(x=>({value:x.name,label:x.name}))}/></Form.Item><Form.Item name="status" label="Status"><Select options={['active','pending','inactive'].map(x=>({value:x,label:x}))}/></Form.Item></Form></Modal>
-    </div></ConfigProvider>;
-  }
-  return <ConfigProvider locale={enUS}><div className="access-page access-directory-page"><header className="access-header"><div><Typography.Text className="access-kicker">IDENTITY & ACCESS MANAGEMENT</Typography.Text><Typography.Title level={2}>Access</Typography.Title></div></header><nav className="access-tabs">{tabs.map(x=><button key={x.key} type="button" className={view===x.key?'is-active':''} onClick={()=>changeView(x.key)}>{x.label}</button>)}</nav>{view==='users'&&renderUsers()}{view==='roles'&&renderRoles()}{view==='permissions'&&renderPermissions()}{view==='tenants'&&renderScopes('tenants')}{view==='teams'&&renderScopes('teams')}
-    <Drawer title="User Details" open={!!detail} onClose={()=>setDetail(null)} width={480} extra={detail&&<Button icon={<EditOutlined/>} onClick={()=>{openUser(detail);setDetail(null)}}>Edit</Button>}>{detail&&<><div className="access-user-profile"><Avatar size={76}>{initials(detail.name)}</Avatar><Typography.Title level={3}>{detail.name}</Typography.Title><Typography.Text type="secondary">{detail.email}</Typography.Text>{status(detail.status)}</div><Descriptions column={1} bordered items={[{key:'team',label:'Team',children:detail.team},{key:'role',label:'Role',children:detail.role},{key:'last',label:'Last active',children:detail.lastActive}]}/><Typography.Title level={5}>Effective Permissions</Typography.Title><Space wrap>{roles.find(r=>r.name===detail.role)?.permissions.map(k=><Tag key={k}>{k}</Tag>)}</Space></>}</Drawer>
-    <Drawer title={scopeDetail?.type==='tenants'?'Organization Details':'Team Details'} open={!!scopeDetail} onClose={()=>setScopeDetail(null)} width={480} extra={scopeDetail&&<Button icon={<EditOutlined/>} onClick={()=>{setScopeEdit({type:scopeDetail.type,record:scopeDetail.record});scopeForm.setFieldsValue(scopeDetail.record);setScopeDetail(null)}}>Edit</Button>}>{scopeDetail&&<><div className="access-user-profile"><Avatar size={76} shape="square">{initials(scopeDetail.record.name)}</Avatar><Typography.Title level={3}>{scopeDetail.record.name}</Typography.Title>{status(scopeDetail.record.status)}</div><Descriptions column={1} bordered items={[{key:'type',label:'Type',children:scopeDetail.type==='tenants'?'Organization / Tenant':'Team'},{key:'detail',label:'Description',children:scopeDetail.record.detail},{key:'members',label:'Members',children:scopeDetail.type==='tenants'?users.length:users.filter(u=>u.team===scopeDetail.record.name).length}]}/><Typography.Title level={5} style={{marginTop:24}}>Members</Typography.Title><Space wrap>{(scopeDetail.type==='tenants'?users:users.filter(u=>u.team===scopeDetail.record.name)).map(u=><Tag key={u.id}>{u.name}</Tag>)}</Space></>}</Drawer>
-    <Modal title={`Manage Members · ${memberScope?.name||''}`} open={!!memberScope} onCancel={()=>setMemberScope(null)} onOk={()=>{if(memberScope){changeUsers(users.map(u=>selectedMembers.includes(u.id)?{...u,team:memberScope.name}:u));message.success('Team membership updated')}setMemberScope(null)}} okText="Save Members"><Checkbox.Group value={selectedMembers} onChange={values=>setSelectedMembers(values as string[])} className="access-member-checks">{users.map(u=><Checkbox key={u.id} value={u.id}><Avatar size="small">{initials(u.name)}</Avatar><span><strong>{u.name}</strong><small>{u.email}</small></span></Checkbox>)}</Checkbox.Group></Modal>
-    <Modal title={userEdit==='new'?'Add User':'Edit User'} open={!!userEdit} onCancel={()=>setUserEdit(null)} onOk={()=>void saveUser()} okText="Save User" destroyOnHidden><Form form={userForm} layout="vertical"><Form.Item name="name" label="Full name" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="email" label="Email" rules={[{required:true,type:'email'}]}><Input/></Form.Item><Form.Item name="team" label="Team" rules={[{required:true}]}><Select options={teams.map(x=>({value:x.name,label:x.name}))}/></Form.Item><Form.Item name="role" label="Role" rules={[{required:true}]}><Select options={roles.map(x=>({value:x.name,label:x.name}))}/></Form.Item><Form.Item name="status" label="Status"><Select options={['active','pending','inactive'].map(x=>({value:x,label:x}))}/></Form.Item></Form></Modal>
-    <Modal title={roleEdit==='new'?'Add Role':'Edit Role'} open={!!roleEdit} onCancel={()=>setRoleEdit(null)} onOk={()=>void saveRole()} okText="Save Role" width={720} destroyOnHidden><Form form={roleForm} layout="vertical"><Form.Item name="name" label="Role name" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="description" label="Description" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="permissions" label="Permissions" rules={[{required:true}]}><Checkbox.Group className="access-permission-checks">{permissions.map(p=><Checkbox key={p.key} value={p.key}><strong>{p.name}</strong><small>{p.module} · {p.key}</small></Checkbox>)}</Checkbox.Group></Form.Item></Form></Modal>
-    <Modal title={permissionEdit==='new'?'Add Permission':'Edit Permission'} open={!!permissionEdit} onCancel={()=>setPermissionEdit(null)} width={680} destroyOnHidden footer={<div className="permission-modal-actions">{permissionEdit!=='new'&&<Button danger onClick={()=>{const p=permissionEdit as Permission;Modal.confirm({title:`Delete ${p.name}?`,content:'This permission will be removed from every assigned role.',okButtonProps:{danger:true},onOk:()=>{changePermissions(permissions.filter(x=>x.id!==p.id));changeRoles(roles.map(r=>({...r,permissions:r.permissions.filter(k=>k!==p.key)})));setPermissionEdit(null)}})}}>Delete Permission</Button>}<span/><Button onClick={()=>setPermissionEdit(null)}>Cancel</Button><Button type="primary" onClick={()=>void savePermission()}>Save Permission</Button></div>}><Form form={permissionForm} layout="vertical" className="permission-vuexy-form"><div className="permission-form-grid"><Form.Item name="name" label="Permission Name" rules={[{required:true}]}><Input placeholder="Manage users"/></Form.Item><Form.Item name="key" label="Permission Key" rules={[{required:true,pattern:/^[a-z][a-z0-9_.-]+$/}]}><Input placeholder="module.action"/></Form.Item></div><Form.Item name="module" label="Module" rules={[{required:true}]}><Select options={['Identity','Collect','Automation','Data Lake','ETL Pipeline','Data Cockpit'].map(x=>({value:x,label:x}))}/></Form.Item><Form.Item name="description" label="Description" rules={[{required:true}]}><Input.TextArea rows={2}/></Form.Item><Typography.Title level={5}>Assign to roles</Typography.Title><Form.Item name="assignedRoles"><Checkbox.Group className="permission-role-grid">{roles.map(r=><Checkbox key={r.id} value={r.id}>{r.name}</Checkbox>)}</Checkbox.Group></Form.Item></Form></Modal>
-    <Modal title={`${scopeEdit?.record==='new'?'Add':'Edit'} ${scopeEdit?.type==='tenants'?'Organization':'Team'}`} open={!!scopeEdit} onCancel={()=>setScopeEdit(null)} onOk={()=>void saveScope()} okText="Save" destroyOnHidden><Form form={scopeForm} layout="vertical"><Form.Item name="name" label="Name" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="detail" label="Description" rules={[{required:true}]}><Input/></Form.Item><Form.Item name="status" label="Status" initialValue="active"><Select options={['active','inactive'].map(x=>({value:x,label:x}))}/></Form.Item></Form></Modal>
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  useEffect(() => {
+    let current = true;
+    setContextError('');
+    fetchCurrentUserContext().then(next => {
+      if (!current) return;
+      setContext(next);
+      setTeamId(old => next.teams.some(team => team.id === old) ? old : next.teams[0]?.id || '');
+      setTenantId(old => next.tenants.some(tenant => tenant.id === old) ? old : next.tenants[0]?.id || '');
+    }).catch(error => { if (current) setContextError(errorMessage(error)); });
+    return () => { current = false; };
+  }, [contextVersion]);
+  useEffect(() => { const timer = window.setTimeout(() => { setQuery(search.trim()); setPage(1); }, 250); return () => window.clearTimeout(timer); }, [search]);
+  useEffect(() => { setPage(1); setSearch(''); setQuery(''); setEditor(null); setLoadError(''); }, [view, teamId, tenantId]);
+
+  useEffect(() => {
+    if (!context || userId || view === 'roles' || view === 'permissions') return;
+    let current = true;
+    setLoading(true); setLoadError('');
+    const base: AccessQuery = { page, size: pageSize, ...(query ? { search: query } : {}) };
+    const run = async () => {
+      if (view === 'users') {
+        const role = roleFilter === 'platform' ? { is_superuser: true } : roleFilter === 'organization' ? { is_superuser: false, is_tenant_admin: true } : roleFilter === 'user' ? { is_superuser: false, is_tenant_admin: false } : {};
+        const result = teamId ? await fetchAccessUsers(teamId, { ...base, ...role, ...(statusFilter === undefined ? {} : { status: statusFilter }) }) : emptyPage<AccessUser>();
+        if (current) { setUsers(result); if (page > 1 && !result.items.length) setPage(Math.max(1, Math.ceil(result.total / pageSize))); }
+      } else if (view === 'tenants') {
+        const result = platformAdmin ? await fetchAccessTenants(base) : { items: context.tenants.filter(tenant => tenant.name.toLowerCase().includes(query.toLowerCase())), total: context.tenants.length, page: 1, size: context.tenants.length };
+        if (current) setTenants(result);
+      } else {
+        const result = tenantId ? await fetchAccessTeams(tenantId, { page, size: pageSize }) : emptyPage<AccessTeam>();
+        if (current) { setTeams(result); if (page > 1 && !result.items.length) setPage(Math.max(1, Math.ceil(result.total / pageSize))); }
+      }
+    };
+    void run().catch(error => { if (current) { setLoadError(errorMessage(error)); setUsers(emptyPage()); setTenants(emptyPage()); setTeams(emptyPage()); } }).finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [context, userId, view, page, pageSize, query, teamId, tenantId, roleFilter, statusFilter, platformAdmin, version]);
+
+  useEffect(() => {
+    if (!userId || !context || !teamId) return;
+    let current = true;
+    setDetail(undefined); setDetailLoading(true); setLoadError('');
+    fetchAccessUser(userId, teamId).then(user => { if (current) setDetail(user); }).catch(error => { if (current) setLoadError(errorMessage(error)); }).finally(() => { if (current) setDetailLoading(false); });
+    return () => { current = false; };
+  }, [context, userId, teamId, version]);
+
+  const refresh = () => { setVersion(value => value + 1); setContextVersion(value => value + 1); };
+  const mutate = async (action: () => Promise<unknown>) => {
+    if (pending.current) return false;
+    pending.current = true; setMutating(true);
+    try { await action(); if (active.current) { message.success('Changes saved'); refresh(); } return true; }
+    catch (error) { if (active.current) message.error(errorMessage(error)); return false; }
+    finally { pending.current = false; if (active.current) setMutating(false); }
+  };
+  const openEditor = (next: Editor) => {
+    if (pending.current) return;
+    form.resetFields();
+    if (next.type === 'users') form.setFieldsValue(next.record ? { ...next.record, accountRole: next.record.is_superuser ? 'platform' : next.record.is_tenant_admin ? 'organization' : 'user' } : { status: 0, accountRole: 'user' });
+    else if (next.type === 'tenants') form.setFieldsValue(next.record || { plan: 0, status: 0 });
+    else form.setFieldsValue(next.record || {});
+    setEditor(next);
+  };
+  const save = async () => {
+    if (!editor || pending.current) return;
+    let values;
+    try { values = await form.validateFields(); } catch { return; }
+    const target = editor;
+    const saved = await mutate(async () => {
+      if (target.type === 'users') {
+        if (!canManageUsers || !teamId) throw new Error('Unavailable user scope');
+        const body: AccessUserInput = { full_name: values.full_name, email: values.email, phone: values.phone, status: values.status, ...(platformAdmin ? { is_superuser: values.accountRole === 'platform', is_tenant_admin: values.accountRole === 'organization' } : {}), ...(!target.record ? { password: values.password } : {}) };
+        return target.record ? updateAccessUser(target.record.id, teamId, body) : createAccessUser(teamId, body);
+      }
+      if (target.type === 'tenants') {
+        if (!platformAdmin) throw new Error('Unavailable organization scope');
+        const body: AccessTenantInput = { name: values.name, description: values.description, plan: values.plan, status: values.status };
+        return target.record ? updateAccessTenant(target.record.id, body) : createAccessTenant(body);
+      }
+      if (!canManageTeams || !tenantId) throw new Error('Unavailable team scope');
+      const body = { name: values.name, description: values.description };
+      return target.record ? updateAccessTeam(target.record.id, target.record.tenant_id, body) : createAccessTeam(tenantId, body);
+    });
+    if (saved && active.current) setEditor(null);
+  };
+  const confirmDelete = (type: 'user' | 'organization' | 'team', name: string, action: () => Promise<unknown>) => Modal.confirm({
+    title: `Delete ${type} “${name}”?`, content: 'This action permanently removes the record.', okText: 'Delete', okButtonProps: { danger: true },
+    onOk: async () => { if (!await mutate(action)) throw new Error('The record was not deleted'); },
+  });
+  const changeView = (next: View) => { if (!pending.current) setParams({ view: next }); };
+  const pageProps = (total: number) => ({ current: page, pageSize, total, onChange: (next: number, size: number) => { setPage(size === pageSize ? next : 1); setPageSize(size); } });
+  const exportPage = () => {
+    const cell = (value: string) => `"${(/^[=+@-]/.test(value) ? "'" : '') + value.replace(/"/g, '""')}"`;
+    const csv = ['Name,Email,Phone,Account role,Status', ...users.items.map(user => [userName(user), user.email, user.phone, roleOf(user), statuses[user.status] || 'Unknown'].map(cell).join(','))].join('\r\n');
+    const url = URL.createObjectURL(new Blob(['\ufeff', csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a'); link.href = url; link.download = 'access-users-page.csv'; link.click(); URL.revokeObjectURL(url);
+  };
+  const userActions = (user: AccessUser) => canManageUsers && user.id !== context?.user.id ? <Dropdown trigger={['click']} menu={{ items: [{ key: 'edit', label: 'Edit user', icon: <EditOutlined /> }, { key: 'toggle', label: user.status === 0 ? 'Disable access' : 'Enable access', icon: <LockOutlined /> }, ...(platformAdmin ? [{ key: 'delete', label: 'Delete user', danger: true, icon: <DeleteOutlined /> }] : [])], onClick: ({ key }) => {
+    if (key === 'edit') openEditor({ type: 'users', record: user });
+    if (key === 'toggle') void mutate(() => updateAccessUser(user.id, teamId, { status: user.status === 0 ? 1 : 0 }));
+    if (key === 'delete') confirmDelete('user', userName(user), () => deleteAccessUser(user.id, teamId));
+  } }}><Button type="text" aria-label={`Actions for ${userName(user)}`} disabled={mutating} icon={<MoreOutlined />} /></Dropdown> : null;
+  const scopeControl = view === 'users' ? <Select aria-label="Directory team" value={teamId || undefined} placeholder="Select a team" disabled={mutating} onChange={setTeamId} options={context?.teams.map(team => ({ value: team.id, label: team.name }))} /> : view === 'teams' ? <Select aria-label="Team organization" value={tenantId || undefined} placeholder="Select an organization" disabled={mutating} onChange={setTenantId} options={context?.tenants.map(tenant => ({ value: tenant.id, label: tenant.name }))} /> : null;
+
+  const renderUsers = () => <AccessListPanel<AccessUser> filters={<><Typography.Title level={5}>Directory scope</Typography.Title>{scopeControl}<Select aria-label="Account role filter" value={roleFilter} onChange={value => { setRoleFilter(value); setPage(1); }} options={[{ value: 'all', label: 'All account roles' }, { value: 'platform', label: 'Platform administrator' }, { value: 'organization', label: 'Organization administrator' }, { value: 'user', label: 'User' }]} /><Select aria-label="User status filter" allowClear placeholder="All statuses" value={statusFilter} onChange={value => { setStatusFilter(value); setPage(1); }} options={statuses.map((label, value) => ({ value, label }))} /><Typography.Text type="secondary" className="access-scope-note">Users in the selected team’s organization. Your own account is excluded.</Typography.Text></>} search={{ placeholder: 'Search name or email', value: search, onChange: event => setSearch(event.target.value) }} actions={<><Button icon={<DownloadOutlined />} disabled={!users.items.length || loading} onClick={exportPage}>Export page</Button>{canManageUsers && <Button icon={<UserAddOutlined />} disabled={!teamId || loading || mutating} onClick={() => openEditor({ type: 'users', record: null })}>Add user</Button>}</>} table={{ rowKey: 'id', loading, dataSource: users.items, scroll: { x: 800 }, pagination: pageProps(users.total), locale: { emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={!teamId ? 'No accessible team is available' : loadError ? 'Directory could not be loaded' : 'No users match the current filters'} /> }, columns: [
+    { title: 'User', render: (_: unknown, user: AccessUser) => <Space><Avatar>{initials(userName(user))}</Avatar><div><Button type="link" className="access-user-link" onClick={() => navigate(`/organization/users/${user.id}?team=${encodeURIComponent(teamId)}`)}>{userName(user)}</Button><Typography.Text className="access-subtext" type="secondary">{user.email}</Typography.Text></div></Space> },
+    { title: 'Account role', render: (_: unknown, user: AccessUser) => roleOf(user) }, { title: 'Status', dataIndex: 'status', render: showStatus }, { title: 'Updated', dataIndex: 'updated_at', render: date }, { title: 'Actions', width: 85, render: (_: unknown, user: AccessUser) => userActions(user) },
+  ] }} />;
+  const renderTenants = () => <AccessListPanel<OrganizationRow> filters={<Typography.Text type="secondary">{platformAdmin ? 'Server-managed organizations and account plans.' : 'Organizations available to your signed-in account.'}</Typography.Text>} search={{ placeholder: 'Search organizations', value: search, onChange: event => setSearch(event.target.value) }} actions={platformAdmin && <Button icon={<PlusOutlined />} disabled={mutating} onClick={() => openEditor({ type: 'tenants', record: null })}>Add organization</Button>} table={{ rowKey: 'id', loading, dataSource: tenants.items, pagination: platformAdmin ? pageProps(tenants.total) : false, columns: [
+    { title: 'Organization', dataIndex: 'name' }, { title: 'Description', dataIndex: 'description', render: (value: string) => value || 'Not exposed' }, { title: 'Plan', dataIndex: 'plan', render: (value?: number) => value === undefined ? 'Not exposed' : plans[value] || 'Unknown' }, { title: 'Status', dataIndex: 'status', render: showStatus },
+    { title: 'Actions', width: 85, render: (_: unknown, tenant: OrganizationRow) => platformAdmin && <Dropdown trigger={['click']} menu={{ items: [{ key: 'edit', label: 'Edit organization', icon: <EditOutlined /> }, { key: 'delete', label: 'Delete organization', danger: true, icon: <DeleteOutlined /> }], onClick: ({ key }) => key === 'edit' ? openEditor({ type: 'tenants', record: tenant }) : confirmDelete('organization', tenant.name, () => deleteAccessTenant(tenant.id)) }}><Button type="text" disabled={mutating} icon={<MoreOutlined />} aria-label={`Actions for ${tenant.name}`} /></Dropdown> },
+  ] }} />;
+  const renderTeams = () => <AccessListPanel<AccessTeam> filters={<><Typography.Title level={5}>Organization scope</Typography.Title>{scopeControl}<Typography.Text className="access-scope-note" type="secondary">Membership and team-role assignment are not exposed by the current API.</Typography.Text></>} search={{ placeholder: 'Search is unavailable for this endpoint', disabled: true }} actions={canManageTeams && <Button icon={<PlusOutlined />} disabled={!tenantId || mutating} onClick={() => openEditor({ type: 'teams', record: null })}>Add team</Button>} table={{ rowKey: 'id', loading, dataSource: teams.items, pagination: pageProps(teams.total), columns: [
+    { title: 'Team', dataIndex: 'name' }, { title: 'Description', dataIndex: 'description', render: (value: string) => value || 'No description' }, { title: 'Organization', dataIndex: 'tenant_id', render: (value: string) => context?.tenants.find(tenant => tenant.id === value)?.name || value }, { title: 'Updated', dataIndex: 'updated_at', render: date },
+    { title: 'Actions', width: 85, render: (_: unknown, team: AccessTeam) => canManageTeams && <Dropdown trigger={['click']} menu={{ items: [{ key: 'edit', label: 'Edit team', icon: <EditOutlined /> }, { key: 'delete', label: 'Delete team', danger: true, icon: <DeleteOutlined /> }], onClick: ({ key }) => key === 'edit' ? openEditor({ type: 'teams', record: team }) : confirmDelete('team', team.name, () => deleteAccessTeam(team.id, team.tenant_id)) }}><Button type="text" disabled={mutating} icon={<MoreOutlined />} aria-label={`Actions for ${team.name}`} /></Dropdown> },
+  ] }} />;
+  const renderRoles = () => <><Alert type="info" showIcon message="Built-in access roles" description="Custom role definitions and assignments are not exposed by the current API." /><div className="access-role-grid access-contract-grid">{[
+    ['Platform administrator', 'Platform-wide user, organization and team administration. Assigned through account settings by a platform administrator.'],
+    ['Organization administrator', 'Administration within organizations where the account has active team membership.'],
+    ['User', 'Access limited to the account’s active team memberships.'],
+    ['Team roles', 'Member, Moderator, Administrator and Owner are stored on team memberships. Membership-role management is not exposed by the current API.'],
+  ].map(([name, description]) => <Card key={name} className="access-role-card"><Tag>Built-in</Tag><Typography.Title level={4}>{name}</Typography.Title><Typography.Paragraph type="secondary">{description}</Typography.Paragraph></Card>)}</div></>;
+
+  const renderEditor = () => <Modal title={editor ? `${editor.record ? 'Edit' : 'Add'} ${editor.type === 'users' ? 'user' : editor.type === 'teams' ? 'team' : 'organization'}` : ''} open={!!editor} onCancel={() => { if (!pending.current) setEditor(null); }} onOk={() => void save()} confirmLoading={mutating} cancelButtonProps={{ disabled: mutating }} maskClosable={!mutating} keyboard={!mutating} destroyOnHidden okText="Save changes"><Form form={form} layout="vertical" disabled={mutating}>
+    {editor?.type === 'users' ? <><Typography.Paragraph type="secondary">New users are added to the selected team as members. Account roles apply at platform or organization level.</Typography.Paragraph><Form.Item name="full_name" label="Full name" rules={[{ required: true }]}><Input /></Form.Item><Form.Item name="email" label="Email" rules={[{ required: true, type: 'email' }]}><Input /></Form.Item><Form.Item name="phone" label="Phone" rules={[{ required: true }]}><Input /></Form.Item>{!editor.record && <Form.Item name="password" label="Initial password" rules={[{ required: true, min: 8 }]}><Input.Password autoComplete="new-password" /></Form.Item>}{platformAdmin && <Form.Item name="accountRole" label="Account role" rules={[{ required: true }]}><Select options={[{ value: 'user', label: 'User' }, { value: 'organization', label: 'Organization administrator' }, { value: 'platform', label: 'Platform administrator' }]} /></Form.Item>}<Form.Item name="status" label="Status" rules={[{ required: true }]}><Select options={statuses.map((label, value) => ({ value, label }))} /></Form.Item></> : <><Form.Item name="name" label="Name" rules={[{ required: true }, ...(editor?.type === 'teams' ? [{ pattern: /^[a-zA-Z0-9_-]{1,64}$/, message: 'Use 1–64 letters, numbers, underscores or hyphens.' }] : [])]}><Input /></Form.Item><Form.Item name="description" label="Description"><Input.TextArea rows={3} maxLength={editor?.type === 'tenants' ? 256 : undefined} /></Form.Item>{editor?.type === 'tenants' && <><Form.Item name="plan" label="Plan" rules={[{ required: true }]}><Select options={plans.map((label, value) => ({ value, label }))} /></Form.Item><Form.Item name="status" label="Status" rules={[{ required: true }]}><Select options={statuses.map((label, value) => ({ value, label }))} /></Form.Item></>}</>}
+  </Form></Modal>;
+
+  if (contextError) return <div className="access-page"><Alert type="error" showIcon message="Access context could not be loaded" description={contextError} action={<Button onClick={() => setContextVersion(value => value + 1)}>Retry</Button>} /></div>;
+  if (!context) return <div className="access-page"><Spin tip="Loading access context" /></div>;
+  return <ConfigProvider locale={enUS}><div className={`access-page ${userId ? 'access-user-detail-page' : 'access-directory-page'}`}>
+    {userId ? <><Button type="text" className="access-back-button" icon={<ArrowLeftOutlined />} onClick={() => navigate(`/organization?view=users&team=${encodeURIComponent(teamId)}`)}>Back to users</Button>{detailLoading ? <Spin /> : loadError ? <Alert type="error" showIcon message="User details could not be loaded" description={loadError} action={<Button onClick={refresh}>Retry</Button>} /> : !detail ? <Empty description="No user is available in the selected scope" /> : <Card className="access-profile-card"><div className="access-detail-identity"><Avatar size={64}>{initials(userName(detail))}</Avatar><Typography.Title level={3}>{userName(detail)}</Typography.Title><Tag>{roleOf(detail)}</Tag></div><Descriptions column={1} bordered items={[{ key: 'email', label: 'Email', children: detail.email }, { key: 'phone', label: 'Phone', children: detail.phone }, { key: 'status', label: 'Status', children: showStatus(detail.status) }, { key: 'created', label: 'Created', children: date(detail.created_at) }, { key: 'updated', label: 'Updated', children: date(detail.updated_at) }]} /><div className="access-detail-actions">{canManageUsers && <Button icon={<EditOutlined />} onClick={() => openEditor({ type: 'users', record: detail })}>Edit user</Button>}</div></Card>}</> : <><header className="access-header"><div><Typography.Text className="access-kicker">IDENTITY & ACCESS MANAGEMENT</Typography.Text><Typography.Title level={2}>Access</Typography.Title></div><Space><Typography.Text type="secondary">{context.user.full_name || context.user.email}</Typography.Text><Button icon={<ReloadOutlined />} onClick={refresh} disabled={loading || mutating}>Refresh</Button></Space></header><nav className="access-tabs">{tabs.map(tab => <button key={tab.key} type="button" disabled={mutating} className={view === tab.key ? 'is-active' : ''} onClick={() => changeView(tab.key)}>{tab.label}</button>)}</nav>{loadError && <Alert className="access-load-error" type="error" showIcon message="Directory could not be loaded" description={loadError} action={<Button onClick={refresh}>Retry</Button>} />}{view === 'users' ? renderUsers() : view === 'tenants' ? renderTenants() : view === 'teams' ? renderTeams() : view === 'roles' ? renderRoles() : <Card><Empty description="Fine-grained permission policies are not exposed by the current API" /><Typography.Paragraph type="secondary">Account flags and active team memberships are enforced by the server. Custom permission catalogs, policy editing and effective-permission inspection require additional backend interfaces.</Typography.Paragraph></Card>}</>}
+    {renderEditor()}
   </div></ConfigProvider>;
 };
 export default Organization;

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Button, Input, Segmented, Space, Tag, Typography } from 'antd';
+import { Button, Input, Segmented, Space, Tag, Typography } from '@/components/ui';
 import {
   ApiOutlined,
   BranchesOutlined,
@@ -14,7 +14,7 @@ import {
   SearchOutlined,
   StopOutlined,
   ToolOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
 const { Text } = Typography;
@@ -234,30 +234,30 @@ const Templates: React.FC = () => {
             flex-wrap: wrap;
             justify-content: flex-end;
           }
-          .template-library .ant-input-affix-wrapper,
-          .template-library .ant-btn {
+          .template-library .ui-input-affix-wrapper,
+          .template-library .ui-btn {
             background: transparent;
             border-color: ${aura.border};
             color: ${aura.text};
             box-shadow: none;
           }
-          .template-library .ant-input {
+          .template-library .ui-input {
             background: transparent;
             color: ${aura.text};
           }
-          .template-library .ant-input::placeholder {
+          .template-library .ui-input::placeholder {
             color: ${aura.subtle};
           }
-          .template-library .ant-segmented {
+          .template-library .ui-segmented {
             background: ${aura.surfaceSoft};
             border: 1px solid ${aura.borderSoft};
             padding: 2px;
           }
-          .template-library .ant-segmented-item {
+          .template-library .ui-segmented-item {
             color: ${aura.subtle};
             border-radius: 6px;
           }
-          .template-library .ant-segmented-item-selected {
+          .template-library .ui-segmented-item-selected {
             background: ${aura.surface};
             color: ${aura.text};
             box-shadow: inset 0 0 0 1px ${aura.border};
@@ -407,7 +407,7 @@ const Templates: React.FC = () => {
             justify-content: center;
             color: ${aura.subtle};
           }
-          .template-card .ant-tag {
+          .template-card .ui-tag {
             background: transparent;
             border-color: ${aura.border};
             color: ${aura.subtle};
@@ -426,7 +426,7 @@ const Templates: React.FC = () => {
             .template-actions {
               justify-content: flex-start;
             }
-            .template-actions .ant-input-affix-wrapper {
+            .template-actions .ui-input-affix-wrapper {
               width: 100% !important;
             }
             .template-grid {

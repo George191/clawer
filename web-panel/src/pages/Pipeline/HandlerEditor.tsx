@@ -11,7 +11,7 @@ import {
   Tooltip,
   Spin,
   Result,
-} from 'antd';
+} from '@/components/ui';
 import {
   CaretRightOutlined,
   PauseOutlined,
@@ -21,7 +21,7 @@ import {
   UndoOutlined,
   LoadingOutlined,
   ExclamationCircleOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import EmptyState from '@/components/EmptyState';
 import { fetchHandlerCode, saveHandlerCode, validateHandlerCode } from '@/services/api';

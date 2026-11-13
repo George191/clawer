@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Table, Tooltip, Typography, Upload } from 'antd';
+import { Alert, Button, Checkbox, Input, InputNumber, Popconfirm, Segmented, Select, Switch, Table, Tooltip, Typography, Upload } from '@/components/ui';
 import {
   ApartmentOutlined,
   BankOutlined,
@@ -37,7 +37,7 @@ import {
   UserOutlined,
   WarningOutlined,
   WifiOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import {
   createWorkspaceTask,
   deleteWorkspaceTask,
@@ -1973,7 +1973,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
   useLayoutEffect(() => {
     const container = bodyScrollRef.current;
     if (!embedded || !container) return;
-    const pagination = container.querySelector<HTMLElement>('.ant-pagination');
+    const pagination = container.querySelector<HTMLElement>('.ui-pagination');
     const update = () => {
       const style = pagination ? getComputedStyle(pagination) : null;
       const footerHeight = pagination
@@ -2432,7 +2432,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             </span>
             <div className="workspace-dock-card-copy">
               <div className="workspace-dock-card-titleline">
-                <Text strong>{item.name}</Text>
+                <Text strong title={embedded ? item.name : undefined}>{item.name}</Text>
                 <span className="workspace-dock-card-title-actions">
                   <span
                     className={`workspace-dock-card-pin ${isPinned ? 'is-pinned' : ''}`}
@@ -2444,7 +2444,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                 </span>
               </div>
               <div className="workspace-dock-card-subline">
-                <Text type="secondary">{item.template}</Text>
+                <Text type="secondary" title={embedded ? item.template : undefined}>{item.template}</Text>
                 <span className="workspace-dock-card-runtime">
                   <span className="workspace-dock-card-state" style={{ color: item.display.color }}>
                     {item.display.icon}
@@ -2458,11 +2458,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         </div>
 
         <div className="workspace-dock-card-meta">
-          <span><SiteLogoMark site={item.site} />{stripDecorativeSuffix(item.area)}</span>
+          <span title={embedded ? stripDecorativeSuffix(item.area) : undefined}><SiteLogoMark site={item.site} />{stripDecorativeSuffix(item.area)}</span>
           <Tooltip title={`Batch writes: ${writeCount?.toLocaleString() ?? 'No statistics available'}. ${taskWriteCountHelp}`}>
             <span>{writeCount === null ? '--' : formatCompactNumber(writeCount)}</span>
           </Tooltip>
-          <span>{item.owner}</span>
+          <span title={embedded ? item.owner : undefined}>{item.owner}</span>
         </div>
 
         <div className="workspace-dock-card-footer">
@@ -3520,7 +3520,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           height: 100%;
           flex-shrink: 0;
         }
-        .workspace-glyph .anticon {
+        .workspace-glyph .ui-icon {
           font-size: 18px;
           line-height: 1;
         }
@@ -3613,7 +3613,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           align-items: center;
           gap: 8px;
         }
-        .workspace-dock-toolbar-search-row .ant-input-affix-wrapper {
+        .workspace-dock-toolbar-search-row .ui-input-affix-wrapper {
           flex: 1;
           min-width: 0;
         }
@@ -3642,35 +3642,35 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           background: rgba(255, 255, 255, 0.05);
           transform: translateY(-1px);
         }
-        .workspace-dock-toolbar-action-btn .anticon {
+        .workspace-dock-toolbar-action-btn .ui-icon {
           font-size: 14px;
           line-height: 1;
         }
-        .workspace-dock-toolbar .ant-input-affix-wrapper,
-        .workspace-dock-toolbar .ant-segmented {
+        .workspace-dock-toolbar .ui-input-affix-wrapper,
+        .workspace-dock-toolbar .ui-segmented {
           background: rgba(255, 255, 255, 0.035);
           border-color: ${aura.border};
           box-shadow: none;
         }
-        .workspace-dock-toolbar .ant-input {
+        .workspace-dock-toolbar .ui-input {
           background: transparent !important;
         }
-        .workspace-dock-toolbar .ant-input::placeholder {
+        .workspace-dock-toolbar .ui-input::placeholder {
           font-size: 11px;
         }
-        .workspace-dock-toolbar .ant-segmented {
+        .workspace-dock-toolbar .ui-segmented {
           padding: 3px;
         }
-        .workspace-dock-toolbar .ant-segmented-item {
+        .workspace-dock-toolbar .ui-segmented-item {
           color: ${aura.subtle};
           font-size: 12px;
         }
-        .workspace-dock-toolbar .ant-segmented-item:has(.ant-segmented-item-input:checked) {
+        .workspace-dock-toolbar .ui-segmented-item:has(.ui-segmented-item-input:checked) {
           background: rgba(138, 180, 255, 0.14);
           color: ${aura.text};
           box-shadow: none;
         }
-        .workspace-dock-toolbar .ant-segmented-thumb {
+        .workspace-dock-toolbar .ui-segmented-thumb {
           opacity: 0;
         }
         .workspace-dock-body {
@@ -3780,7 +3780,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-card-title-leading {
           flex: 1;
         }
-        .workspace-dock-card-titleline .ant-typography {
+        .workspace-dock-card-titleline .ui-typography {
           min-width: 0;
           flex: 1;
           color: ${aura.text};
@@ -3790,7 +3790,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .workspace-dock-card-copy .ant-typography-secondary {
+        .workspace-dock-card-copy .ui-typography-secondary {
           display: block;
           margin-top: 2px;
           color: ${aura.subtle};
@@ -3806,7 +3806,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           gap: 8px;
           margin-top: 2px;
         }
-        .workspace-dock-card-subtitle.ant-typography-secondary {
+        .workspace-dock-card-subtitle.ui-typography-secondary {
           min-width: 0;
           flex: 1;
           margin-top: 0;
@@ -3830,7 +3830,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-size: 9px;
           line-height: 1;
         }
-        .workspace-dock-card-state .anticon {
+        .workspace-dock-card-state .ui-icon {
           font-size: 11px;
         }
         .workspace-dock-card-pill,
@@ -3892,7 +3892,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-card-pin.is-pinned {
           color: #F6C35B;
         }
-        .workspace-dock-card-pin .anticon {
+        .workspace-dock-card-pin .ui-icon {
           font-size: 11px;
           line-height: 1;
         }
@@ -4089,7 +4089,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-size: 13px;
           line-height: 1.4;
         }
-        .workspace-dock-detail-leading .ant-typography-secondary {
+        .workspace-dock-detail-leading .ui-typography-secondary {
           display: block;
           margin-top: 2px;
           font-size: 10px;
@@ -4116,7 +4116,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           align-items: center;
           gap: 8px;
         }
-        .workspace-dock-control-tooltip .ant-tooltip-inner {
+        .workspace-dock-control-tooltip .ui-tooltip-inner {
           min-height: 0;
           padding: 3px 7px;
           border-radius: 5px;
@@ -4124,24 +4124,24 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-weight: 400;
           line-height: 16px;
         }
-        .workspace-dock-control-popconfirm .ant-popover-inner {
+        .workspace-dock-control-popconfirm .ui-popover-inner {
           padding: 9px 10px;
           border-radius: 7px;
         }
-        .workspace-dock-control-popconfirm .ant-popconfirm-title {
+        .workspace-dock-control-popconfirm .ui-popconfirm-title {
           font-size: 12px;
           font-weight: 500;
           line-height: 18px;
         }
-        .workspace-dock-control-popconfirm .ant-popconfirm-description {
+        .workspace-dock-control-popconfirm .ui-popconfirm-description {
           margin-top: 1px;
           font-size: 11px;
           line-height: 16px;
         }
-        .workspace-dock-control-popconfirm .ant-popconfirm-buttons {
+        .workspace-dock-control-popconfirm .ui-popconfirm-buttons {
           margin-top: 7px;
         }
-        .workspace-dock-control-popconfirm .ant-popconfirm-buttons .ant-btn {
+        .workspace-dock-control-popconfirm .ui-popconfirm-buttons .ui-btn {
           height: 24px;
           padding: 0 8px;
           border-radius: 5px;
@@ -4497,39 +4497,39 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           flex-direction: column;
           gap: 6px;
         }
-        .workspace-dock-form-block .ant-input,
-        .workspace-dock-form-grid .ant-input,
-        .workspace-dock-form-block .ant-input-number,
-        .workspace-dock-form-grid .ant-input-number,
-        .workspace-dock-form-block .ant-input-affix-wrapper,
-        .workspace-dock-form-grid .ant-input-affix-wrapper,
-        .workspace-dock-form-block .ant-select-selector,
-        .workspace-dock-form-grid .ant-select-selector {
+        .workspace-dock-form-block .ui-input,
+        .workspace-dock-form-grid .ui-input,
+        .workspace-dock-form-block .ui-input-number,
+        .workspace-dock-form-grid .ui-input-number,
+        .workspace-dock-form-block .ui-input-affix-wrapper,
+        .workspace-dock-form-grid .ui-input-affix-wrapper,
+        .workspace-dock-form-block .ui-select-selector,
+        .workspace-dock-form-grid .ui-select-selector {
           background: rgba(255, 255, 255, 0.04);
           border-color: ${aura.border};
           color: ${aura.text};
           font-size: 11px;
           line-height: 1.5;
         }
-        .workspace-dock-form-block .ant-select,
-        .workspace-dock-form-grid .ant-select,
-        .workspace-dock-form-block .ant-input-number,
-        .workspace-dock-form-grid .ant-input-number {
+        .workspace-dock-form-block .ui-select,
+        .workspace-dock-form-grid .ui-select,
+        .workspace-dock-form-block .ui-input-number,
+        .workspace-dock-form-grid .ui-input-number {
           width: 100%;
         }
-        .workspace-dock-form-block .ant-segmented,
-        .workspace-dock-form-grid .ant-segmented {
+        .workspace-dock-form-block .ui-segmented,
+        .workspace-dock-form-grid .ui-segmented {
           padding: 3px;
           background: rgba(255, 255, 255, 0.04);
           border: 1px solid ${aura.border};
         }
-        .workspace-dock-form-block .ant-segmented-item,
-        .workspace-dock-form-grid .ant-segmented-item {
+        .workspace-dock-form-block .ui-segmented-item,
+        .workspace-dock-form-grid .ui-segmented-item {
           font-size: 12px;
           color: ${aura.subtle};
         }
-        .workspace-dock-form-block .ant-segmented-item-selected,
-        .workspace-dock-form-grid .ant-segmented-item-selected {
+        .workspace-dock-form-block .ui-segmented-item-selected,
+        .workspace-dock-form-grid .ui-segmented-item-selected {
           color: ${aura.text};
           background: rgba(138, 180, 255, 0.14);
           box-shadow: none;
@@ -4539,51 +4539,51 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-size: 10px;
           letter-spacing: 0.02em;
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-input,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-input,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-input-number,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-input-number,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-input-affix-wrapper,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-input-affix-wrapper,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-select-selector,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-select-selector {
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-input,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-input,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-input-number,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-input-number,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-input-affix-wrapper,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-input-affix-wrapper,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-select-selector,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-select-selector {
           min-height: 34px;
           border-radius: 9px;
           font-size: 12px;
           background: rgba(255, 255, 255, 0.055);
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-input,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-input {
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-input,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-input {
           padding-top: 6px;
           padding-bottom: 6px;
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-segmented,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-segmented {
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-segmented,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-segmented {
           padding: 4px;
           border-radius: 10px;
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ant-segmented-item,
-        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ant-segmented-item {
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-block .ui-segmented-item,
+        .workspace-dock-detail.is-task-composer .workspace-dock-form-grid .ui-segmented-item {
           min-height: 30px;
           font-size: 11px;
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-run-schedule.ant-segmented {
+        .workspace-dock-detail.is-task-composer .workspace-dock-run-schedule.ui-segmented {
           width: fit-content;
           height: 32px;
           padding: 2px;
           border-radius: 8px;
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-run-schedule .ant-segmented-item {
+        .workspace-dock-detail.is-task-composer .workspace-dock-run-schedule .ui-segmented-item {
           min-height: 26px;
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-run-schedule .ant-segmented-item-label {
+        .workspace-dock-detail.is-task-composer .workspace-dock-run-schedule .ui-segmented-item-label {
           padding-inline: 10px;
           line-height: 26px;
         }
         .workspace-dock-detail.is-task-composer .workspace-dock-concurrency {
           width: 82px;
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-file-picker-button.ant-btn {
+        .workspace-dock-detail.is-task-composer .workspace-dock-file-picker-button.ui-btn {
           height: 30px;
           padding: 0 8px;
           border-radius: 6px;
@@ -4592,14 +4592,14 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-detail.is-task-composer .workspace-dock-task-checkbox {
           flex-shrink: 0;
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-task-checkbox .ant-checkbox-inner {
+        .workspace-dock-detail.is-task-composer .workspace-dock-task-checkbox .ui-checkbox-inner {
           width: 16px;
           height: 16px;
           border-radius: 4px;
           border-color: ${aura.border};
           background: rgba(255, 255, 255, 0.04);
         }
-        .workspace-dock-detail.is-task-composer .workspace-dock-task-checkbox .ant-checkbox-checked .ant-checkbox-inner {
+        .workspace-dock-detail.is-task-composer .workspace-dock-task-checkbox .ui-checkbox-checked .ui-checkbox-inner {
           border-color: rgba(129, 216, 208, 0.68);
           background: #81D8D0;
         }
@@ -4614,13 +4614,13 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           text-overflow: ellipsis;
           white-space: nowrap;
         }
-        .workspace-dock-template-select-dropdown .ant-select-item {
+        .workspace-dock-template-select-dropdown .ui-select-item {
           border-radius: 8px;
           margin: 2px 6px;
           padding-top: 8px;
           padding-bottom: 8px;
         }
-        .workspace-dock-template-select-dropdown .ant-select-item-option-content {
+        .workspace-dock-template-select-dropdown .ui-select-item-option-content {
           overflow: visible;
         }
         .workspace-dock-detail-actions {
@@ -4712,7 +4712,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
             linear-gradient(180deg, rgba(138, 180, 255, 0.3), rgba(138, 180, 255, 0.16)),
             rgba(255, 255, 255, 0.07);
         }
-        .workspace-dock-inline-action.is-icon-only .anticon {
+        .workspace-dock-inline-action.is-icon-only .ui-icon {
           font-size: 14px;
         }
         .workspace-dock-progress-meta {
@@ -4760,12 +4760,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-log-run-select {
           width: 100%;
         }
-        .workspace-dock-log-run-select.ant-select-single,
-        .workspace-dock-log-run-select.ant-select-single.ant-select-sm {
+        .workspace-dock-log-run-select.ui-select-single,
+        .workspace-dock-log-run-select.ui-select-single.ui-select-sm {
           height: auto !important;
           min-height: 0 !important;
         }
-        .workspace-dock-log-run-select .ant-select-selector {
+        .workspace-dock-log-run-select .ui-select-selector {
           display: flex !important;
           align-items: center !important;
           justify-content: center !important;
@@ -4776,25 +4776,25 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           box-shadow: none !important;
           font-size: 9px !important;
         }
-        .workspace-dock-log-run-select.ant-select-focused .ant-select-selector,
-        .workspace-dock-log-run-select:focus-within .ant-select-selector {
+        .workspace-dock-log-run-select.ui-select-focused .ui-select-selector,
+        .workspace-dock-log-run-select:focus-within .ui-select-selector {
           border: 0 !important;
           outline: 0 !important;
           box-shadow: none !important;
         }
-        .workspace-dock-log-run-select .ant-select-selection-wrap {
+        .workspace-dock-log-run-select .ui-select-selection-wrap {
           display: flex;
           align-items: center;
           align-self: stretch;
         }
-        .workspace-dock-log-run-select .ant-select-selection-item {
+        .workspace-dock-log-run-select .ui-select-selection-item {
           display: flex;
           align-items: center;
           justify-content: center;
           line-height: normal !important;
           text-align: center;
         }
-        .workspace-dock-log-run-select .ant-select-arrow {
+        .workspace-dock-log-run-select .ui-select-arrow {
           top: 50%;
           inset-inline-end: 8px;
           display: inline-flex;
@@ -4807,20 +4807,20 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: ${aura.subtle};
           font-size: 8px;
         }
-        .workspace-dock-log-run-select .ant-select-arrow .anticon {
+        .workspace-dock-log-run-select .ui-select-arrow .ui-icon {
           display: inline-flex;
           align-items: center;
           justify-content: center;
           line-height: 1;
         }
-        .workspace-dock-log-run-select .ant-select-arrow svg {
+        .workspace-dock-log-run-select .ui-select-arrow svg {
           width: 8px;
           height: 8px;
         }
         .workspace-dock-log-run-arrow {
           transition: transform 160ms ease;
         }
-        .workspace-dock-log-run-select.ant-select-open .workspace-dock-log-run-arrow {
+        .workspace-dock-log-run-select.ui-select-open .workspace-dock-log-run-arrow {
           transform: rotate(180deg);
         }
         .workspace-dock-log-run-popup {
@@ -4831,7 +4831,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           background: ${aura.surfaceElevated};
           box-shadow: ${aura.shadow};
         }
-        .workspace-dock-log-run-popup .ant-select-item {
+        .workspace-dock-log-run-popup .ui-select-item {
           display: flex;
           align-items: center;
           justify-content: center;
@@ -4842,16 +4842,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           font-size: 9px;
           text-align: center;
         }
-        .workspace-dock-log-run-popup .ant-select-item-option-content {
+        .workspace-dock-log-run-popup .ui-select-item-option-content {
           width: 100%;
           overflow: hidden;
           text-align: center;
           text-overflow: ellipsis;
         }
-        .workspace-dock-log-run-popup .ant-select-item-option-active:not(.ant-select-item-option-disabled) {
+        .workspace-dock-log-run-popup .ui-select-item-option-active:not(.ui-select-item-option-disabled) {
           background: ${aura.surfaceSoft};
         }
-        .workspace-dock-log-run-popup .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+        .workspace-dock-log-run-popup .ui-select-item-option-selected:not(.ui-select-item-option-disabled) {
           color: ${aura.text};
           background: ${aura.accentSoft};
         }
@@ -5214,7 +5214,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           color: ${aura.subtle};
           font-size: 10px;
         }
-        .workspace-dock-shell.is-embedded .workspace-dock-toolbar .ant-segmented {
+        .workspace-dock-shell.is-embedded .workspace-dock-toolbar .ui-segmented {
           max-width: 100%;
           overflow-x: auto;
         }
@@ -5228,31 +5228,54 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           gap: 0;
         }
         .workspace-dock-task-table,
-        .workspace-dock-task-table > .ant-spin-nested-loading,
-        .workspace-dock-task-table > .ant-spin-nested-loading > .ant-spin-container {
+        .workspace-dock-task-table > .ui-spin-nested-loading,
+        .workspace-dock-task-table > .ui-spin-nested-loading > .ui-spin-container {
           display: flex;
           flex: 1;
           min-height: 0;
           flex-direction: column;
         }
-        .workspace-dock-task-table.ant-table-wrapper .ant-table {
+        .workspace-dock-task-table.ui-table-wrapper .ui-table {
           flex: 1;
           min-height: 0;
           overflow: hidden;
           background: transparent;
         }
-        .workspace-dock-task-table .ant-table-container {
+        .workspace-dock-task-table .ui-table-container {
           background: #242836;
         }
-        .workspace-dock-task-table .ant-table-body {
+        .workspace-dock-task-table .ui-table-body {
           overflow-y: auto !important;
         }
-        .workspace-dock-task-table .ant-table-tbody > tr > td {
+        .automation-task-panel .workspace-dock-task-table .ui-table-container {
+          display: flex;
+          height: 100%;
+          min-height: 0;
+          flex-direction: column;
+        }
+        .automation-task-panel .workspace-dock-task-table .ui-table-body {
+          flex: 1;
+          min-height: 0;
+          scrollbar-gutter: stable;
+        }
+        .automation-task-panel .workspace-dock-task-table .workspace-dock-card {
+          height: 118px;
+          flex: none;
+        }
+        .automation-task-panel .workspace-dock-task-table .workspace-dock-card-meta {
+          flex-wrap: nowrap;
+        }
+        .automation-task-panel .workspace-dock-task-table .workspace-dock-card-meta > span {
+          min-width: 0;
+          overflow: hidden;
+          white-space: nowrap;
+        }
+        .workspace-dock-task-table .ui-table-tbody > tr > td {
           padding: 3px 8px;
           border: 0;
           background: transparent !important;
         }
-        .workspace-dock-task-table .ant-table-pagination {
+        .workspace-dock-task-table .ui-table-pagination {
           flex: none;
           margin: 10px 14px 0 !important;
         }
@@ -5336,10 +5359,11 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                     loading={taskListLoading}
                     dataSource={taskRows}
                     scroll={{ y: taskTableHeight }}
-                    pagination={{ current: Math.min(taskPage, Math.max(1, Math.ceil(taskRows.length / defaultPageSize))), onChange: setTaskPage, defaultPageSize, hideOnSinglePage: true, showSizeChanger: false }}
+                    pagination={{ current: Math.min(taskPage, Math.max(1, Math.ceil(taskRows.length / defaultPageSize))), onChange: setTaskPage, defaultPageSize, hideOnSinglePage: false, showSizeChanger: false }}
                     columns={[{ key: 'task', render: (_: unknown, item: TaskRow) => renderTaskCard(item) }]}
                     locale={{ emptyText: <div className="workspace-dock-empty">{taskListError || 'No matching tasks'}</div> }}
                   /> : activePanel === 'templates' ? renderTemplateList() : renderTaskList()}
+
                   {!embedded && showBodyFade ? <div className="workspace-dock-bottom-fade" aria-hidden="true" /> : null}
                 </div>
               </section>

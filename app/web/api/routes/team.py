@@ -1,4 +1,7 @@
 from typing import Any
+import uuid
+from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException
 
 from fastapi import APIRouter
 
@@ -19,6 +22,7 @@ from fastapi_pagination.links import Page
 from fastapi_filter import FilterDepends
 
 from ..filters import TeamFilter
+from app.web.api.dependencies.team import ManageInstance
 
 
 router = APIRouter(
@@ -51,6 +55,7 @@ async def create_team(
     *,
     session: SessionDep,
     current_user: CurrentUser,
+    tenant_id: uuid.UUID,
     team_in: TeamCreate,
     _: ValidateCreateInTeam
 ) -> Team:
@@ -58,7 +63,7 @@ async def create_team(
     Create new team and it's team leader
     """
     team = Team.model_validate(team_in, update={
-        "owner_id": current_user.id,
+        "tenant_id": tenant_id,
     })
 
     session.add(team)
@@ -85,10 +90,14 @@ async def update_team(
 
 
 @router.delete("/{id}")
-async def delete_team(session: SessionDep, team: CurrentInstanceTeam) -> Any:
+async def delete_team(session: SessionDep, team: ManageInstance) -> Any:
     """
     Delete a team.
     """
-    await session.delete(team)
-    await session.commit()
+    try:
+        await session.delete(team)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="This team is referenced by members or other resources and cannot be deleted")
     return Message(message="Team deleted successfully")

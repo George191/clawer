@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Avatar, Button, Drawer, Input, Progress, Segmented, Space, Tag, Typography } from 'antd';
+import { Avatar, Button, Drawer, Input, Progress, Segmented, Space, Tag, Typography } from '@/components/ui';
 import {
   AppstoreOutlined,
   BarChartOutlined,
@@ -15,7 +15,7 @@ import {
   PlusOutlined,
   SearchOutlined,
   SyncOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import ErrorBoundary from '@/components/ErrorBoundary';
 
 const { Text } = Typography;
@@ -257,26 +257,26 @@ const TaskCenter: React.FC = () => {
             align-items: center;
             gap: 8px;
           }
-          .task-board .ant-btn,
-          .task-board .ant-input-affix-wrapper {
+          .task-board .ui-btn,
+          .task-board .ui-input-affix-wrapper {
             background: transparent;
             border-color: ${aura.border};
             color: ${aura.text};
             box-shadow: none;
           }
-          .task-board .ant-input {
+          .task-board .ui-input {
             background: transparent;
             color: ${aura.text};
           }
-          .task-board .ant-segmented {
+          .task-board .ui-segmented {
             background: transparent;
             padding: 0;
           }
-          .task-board .ant-segmented-item {
+          .task-board .ui-segmented-item {
             color: ${aura.muted};
             border-radius: 6px;
           }
-          .task-board .ant-segmented-item-selected {
+          .task-board .ui-segmented-item-selected {
             background: ${aura.surface};
             color: ${aura.text};
             box-shadow: inset 0 0 0 1px ${aura.border};
@@ -418,16 +418,16 @@ const TaskCenter: React.FC = () => {
             text-overflow: ellipsis;
             white-space: nowrap;
           }
-          .task-detail .ant-drawer-content {
+          .task-detail .ui-drawer-content {
             background: ${aura.bg};
             color: ${aura.text};
           }
-          .task-detail .ant-drawer-header {
+          .task-detail .ui-drawer-header {
             background: ${aura.bg};
             border-bottom-color: ${aura.border};
           }
-          .task-detail .ant-drawer-title,
-          .task-detail .ant-drawer-close {
+          .task-detail .ui-drawer-title,
+          .task-detail .ui-drawer-close {
             color: ${aura.text};
           }
           .task-detail-body {
@@ -484,7 +484,7 @@ const TaskCenter: React.FC = () => {
             flex-wrap: wrap;
             margin-bottom: 18px;
           }
-          .task-detail .ant-tag {
+          .task-detail .ui-tag {
             border-color: ${aura.border};
             background: transparent;
             color: ${aura.muted};

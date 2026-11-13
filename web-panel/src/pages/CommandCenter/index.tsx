@@ -7,7 +7,7 @@ import {
   Spin,
   Tag,
   Typography,
-} from 'antd';
+} from '@/components/ui';
 import {
   ApiOutlined,
   BranchesOutlined,
@@ -24,7 +24,7 @@ import {
   RobotOutlined,
   SafetyCertificateOutlined,
   ThunderboltOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import {

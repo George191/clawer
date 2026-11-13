@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 import secrets
+import math
 
 import jwt
 from cryptography.fernet import Fernet
@@ -25,6 +26,7 @@ class TokenGenerator(ABC):
 
 
 ALGORITHM = "HS256"
+SESSION_LIFETIME = timedelta(hours=8)
 
 class TokenType(Enum):
     ACCESS_TOKEN = "access"
@@ -33,19 +35,22 @@ class TokenType(Enum):
 
 class JWTTokenGenerator(TokenGenerator):
 
-    def __init__(self, payload: dict[str, Any], algorithm: str):
+    def __init__(self, payload: dict[str, Any], algorithm: str, session_expires_at: float | None = None):
         self.payload: dict[str, Any] = payload
         self.algorithm = algorithm
+        self.issued_at = int(datetime.now(timezone.utc).timestamp())
+        self.session_expires_at = (
+            session_expires_at if session_expires_at is not None
+            else self.issued_at + SESSION_LIFETIME.total_seconds()
+        )
 
     @property
     def refresh_token(self):
         payload = self.payload.copy()
         payload.update({
-            "exp": (
-                datetime.now(timezone.utc) + timedelta(
-                    days=settings.REFRESH_TOKEN_EXPIRE_DAYS
-                )
-            ).timestamp(),
+            "iat": self.issued_at,
+            "session_exp": self.session_expires_at,
+            "exp": self.session_expires_at,
             "type": TokenType.REFRESH_TOKEN.value
         })
 
@@ -55,14 +60,36 @@ class JWTTokenGenerator(TokenGenerator):
     def access_token(self) -> str:
         payload = self.payload.copy()
         payload.update({
-            "exp": (
-                datetime.now(timezone.utc) + timedelta(
-                    minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-                )
-            ).timestamp(),
+            "iat": self.issued_at,
+            "session_exp": self.session_expires_at,
+            "exp": min(self.issued_at + settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, self.session_expires_at),
             "type": TokenType.ACCESS_TOKEN.value
         })
         return jwt.encode(payload, settings.SECRET_KEY, algorithm=self.algorithm)
+
+
+def decode_session_token(token: str, token_type: TokenType) -> dict[str, Any]:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM],
+                             options={"require": ["sub", "exp", "iat", "type", "session_exp"]})
+    except (ValueError, TypeError, OverflowError) as error:
+        raise jwt.InvalidTokenError("Invalid session claims") from error
+    if payload["type"] != token_type.value or not isinstance(payload["sub"], str) or not payload["sub"]:
+        raise jwt.InvalidTokenError("Invalid session token")
+    if any(
+        isinstance(payload[key], bool)
+        or not isinstance(payload[key], (int, float))
+        or not math.isfinite(payload[key])
+        for key in ("exp", "iat", "session_exp")
+    ):
+        raise jwt.InvalidTokenError("Invalid session expiry")
+    if (
+        payload["exp"] > payload["session_exp"]
+        or payload["session_exp"] > payload["iat"] + SESSION_LIFETIME.total_seconds()
+        or payload["session_exp"] <= datetime.now(timezone.utc).timestamp()
+    ):
+        raise jwt.InvalidTokenError("Session has expired")
+    return payload
     
 
 class SecurityManager:
@@ -84,11 +111,11 @@ class SecurityManager:
         )
 
     def create_token(
-        self, subject: str | Any, token_generator: TokenGenerator | None = None
+        self, subject: str | Any, token_generator: TokenGenerator | None = None, *, session_expires_at: float | None = None
     ) -> TokenGenerator:
         payload = {"sub": str(subject)}
         if token_generator is None:
-            token_generator = JWTTokenGenerator(payload, ALGORITHM)
+            token_generator = JWTTokenGenerator(payload, ALGORITHM, session_expires_at)
         return token_generator
     
     def verify_password(self, plain_password: str, hashed_password: str) -> bool:

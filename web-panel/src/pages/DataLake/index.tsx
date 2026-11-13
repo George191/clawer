@@ -6,8 +6,8 @@ import {
   SearchOutlined,
   TableOutlined,
   WarningFilled,
-} from '@ant-design/icons';
-import { Button, Empty, Input, Spin, theme } from 'antd';
+} from '@/components/ui/icons';
+import { Button, Empty, Input, Spin, theme } from '@/components/ui';
 import { useNavigate } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import SearchEngineIcon, { inferSearchEngine } from '@/components/SearchEngineIcon';

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Button, Card, Form, Radio, Select, Space, Typography, message } from 'antd';
-import { BgColorsOutlined, GlobalOutlined } from '@ant-design/icons';
+import { Button, Card, Form, Radio, Select, Space, Typography, message } from '@/components/ui';
+import { BgColorsOutlined, GlobalOutlined } from '@/components/ui/icons';
 import { useThemeStore, type SystemLanguage, type ThemeMode } from '@/stores/settings';
 import './style.css';
 

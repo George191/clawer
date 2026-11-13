@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { SearchOutlined } from '@ant-design/icons';
+import { SearchOutlined } from '@/components/ui/icons';
 import { fetchWorkspaceTemplates, type SearchEngine } from '@/services/aiApi';
 
 export const searchEngineLabels: Record<SearchEngine, string> = {

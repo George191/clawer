@@ -67,6 +67,12 @@ class TokenPayload(SQLModel):
     sub: str | None = None
     exp: float | None = None
     type: str | None = None
+    session_exp: float
+
+
+class SessionUnlock(SQLModel):
+    refresh_token: str
+    password: str = Field(min_length=1, repr=False)
 
 
 class NewPassword(SQLModel):

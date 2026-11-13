@@ -1,6 +1,6 @@
 import React from 'react';
-import { Card, Skeleton, Tooltip } from 'antd';
-import { ArrowUpOutlined, ArrowDownOutlined, MinusOutlined } from '@ant-design/icons';
+import { Card, Skeleton, Tooltip } from '@/components/ui';
+import { ArrowUpOutlined, ArrowDownOutlined, MinusOutlined } from '@/components/ui/icons';
 
 interface DataCardProps {
   icon?: React.ReactNode;
@@ -41,7 +41,7 @@ const DataCard: React.FC<DataCardProps> = ({
           <span
             style={{
               fontSize: 16,
-              color: color ?? 'var(--ant-color-primary, #3B82F6)',
+              color: color ?? 'var(--ui-color-primary, #3B82F6)',
               marginRight: 10,
               display: 'flex',
               alignItems: 'center',

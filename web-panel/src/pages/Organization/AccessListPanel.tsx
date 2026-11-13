@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { Card, Input, Table } from 'antd';
-import type { InputProps, TableProps } from 'antd';
-import { SearchOutlined } from '@ant-design/icons';
+import { Card, Input, Table } from '@/components/ui';
+import type { InputProps, TableProps } from '@/components/ui';
+import { SearchOutlined } from '@/components/ui/icons';
 
 type AccessListPanelProps<T extends object> = {
   intro?: React.ReactNode;

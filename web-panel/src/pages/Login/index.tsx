@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Alert, App, Button, Checkbox, Form, Input, Typography } from 'antd';
-import { LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Checkbox, Form, Input, Typography } from '@/components/ui';
+import { LockOutlined, MailOutlined, SafetyCertificateOutlined } from '@/components/ui/icons';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import './login.css';
+import { saveSession } from '../../services/session';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -39,9 +40,7 @@ const Login: React.FC = () => {
       if (typeof data.access_token !== 'string' || !data.access_token) {
         throw new Error('Sign-in failed: no access token was returned. Please try again.');
       }
-      localStorage.setItem('access_token', data.access_token);
-      if (typeof data.refresh_token === 'string' && data.refresh_token) localStorage.setItem('refresh_token', data.refresh_token);
-      else localStorage.removeItem('refresh_token');
+      saveSession(data.access_token, data.refresh_token);
       let next = '/';
       const target = searchParams.get('next');
       if (target?.startsWith('/') && !target.startsWith('//') && !target.includes('\\')) {

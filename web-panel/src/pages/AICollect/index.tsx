@@ -20,8 +20,8 @@ import {
   Tooltip,
   Typography,
   Upload,
-} from 'antd';
-import type { ColumnsType } from 'antd/es/table';
+} from '@/components/ui';
+import type { ColumnsType } from '@/components/ui/data';
 import {
   AudioOutlined,
   BranchesOutlined,
@@ -43,7 +43,7 @@ import {
   StopOutlined,
   ThunderboltOutlined,
   UploadOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { useSearchParams } from 'react-router-dom';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import SearchEngineIcon, { searchEngineLabels } from '@/components/SearchEngineIcon';
@@ -5475,7 +5475,7 @@ const AICollect: React.FC = () => {
     <ErrorBoundary>
       <style>
         {`
-          body:has(.ai-collect-workbench) .ant-layout-content {
+          body:has(.ai-collect-workbench) .ui-layout-content {
             padding: 0 !important;
             height: calc(100vh - 48px) !important;
             min-height: calc(100vh - 48px) !important;
@@ -5489,7 +5489,7 @@ const AICollect: React.FC = () => {
             height: 100vh;
             overflow: hidden !important;
           }
-          body:has(.ai-collect-workbench) .ant-layout-content > div,
+          body:has(.ai-collect-workbench) .ui-layout-content > div,
           body:has(.ai-collect-workbench) main {
             height: calc(100vh - 48px) !important;
             min-height: calc(100vh - 48px) !important;
@@ -5603,59 +5603,59 @@ const AICollect: React.FC = () => {
             -ms-overflow-style: none;
             color: ${aura.text};
           }
-          .ai-collect-workbench .ant-typography {
+          .ai-collect-workbench .ui-typography {
             color: ${aura.text};
           }
-          .ai-collect-workbench .ant-typography-secondary,
-          .ai-collect-workbench .ant-typography.ant-typography-secondary {
+          .ai-collect-workbench .ui-typography-secondary,
+          .ai-collect-workbench .ui-typography.ui-typography-secondary {
             color: ${aura.muted};
           }
-          .ai-collect-workbench .ant-input,
-          .ai-collect-workbench .ant-input-affix-wrapper,
-          .ai-collect-workbench .ant-input-number,
-          .ai-collect-workbench .ant-select-selector {
+          .ai-collect-workbench .ui-input,
+          .ai-collect-workbench .ui-input-affix-wrapper,
+          .ai-collect-workbench .ui-input-number,
+          .ai-collect-workbench .ui-select-selector {
             background: rgba(255, 255, 255, 0.035) !important;
             border-color: ${aura.border} !important;
             color: ${aura.text} !important;
             border-radius: 8px !important;
           }
-          .ai-collect-workbench .ant-input::placeholder {
+          .ai-collect-workbench .ui-input::placeholder {
             color: ${aura.subtle};
           }
-          .ai-collect-workbench .ant-segmented {
+          .ai-collect-workbench .ui-segmented {
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid ${aura.border};
             border-radius: 8px;
             padding: 2px;
           }
-          .ai-collect-workbench .ant-segmented-item {
+          .ai-collect-workbench .ui-segmented-item {
             color: ${aura.muted};
             border-radius: 6px;
           }
-          .ai-collect-workbench .ant-segmented-item-selected {
+          .ai-collect-workbench .ui-segmented-item-selected {
             background: ${aura.accentSoft};
             color: ${aura.text};
             box-shadow: inset 0 0 0 1px rgba(138, 180, 255, 0.18);
           }
-          .ai-collect-workbench .ant-btn {
+          .ai-collect-workbench .ui-btn {
             background: rgba(255, 255, 255, 0.03);
             border-color: ${aura.border};
             color: ${aura.text};
             box-shadow: none;
             border-radius: 8px;
           }
-          .ai-collect-workbench .ant-btn-link {
+          .ai-collect-workbench .ui-btn-link {
             border: none;
             color: ${aura.accent};
             background: transparent;
           }
-          .ai-collect-workbench .ant-btn-primary,
+          .ai-collect-workbench .ui-btn-primary,
           .ai-collect-workbench .ai-aura-primary {
             border-color: rgba(138, 180, 255, 0.18) !important;
             background: ${aura.accentSoft} !important;
             color: ${aura.text} !important;
           }
-          .ai-collect-workbench .ant-tag {
+          .ai-collect-workbench .ui-tag {
             background: transparent;
             border-color: ${aura.border};
             color: ${aura.muted};
@@ -5748,7 +5748,7 @@ const AICollect: React.FC = () => {
             position: relative;
             z-index: 1;
           }
-          .ai-session-prompt-main .ant-input {
+          .ai-session-prompt-main .ui-input {
             background: transparent !important;
             border-color: transparent !important;
             box-shadow: none !important;
@@ -6336,7 +6336,7 @@ const AICollect: React.FC = () => {
             font-size: 10px;
             line-height: 1.2;
           }
-          .ai-template-stage-complete .anticon {
+          .ai-template-stage-complete .ui-icon {
             font-size: 11px;
           }
           .ai-template-stage-section:hover .ai-template-stage-body,
@@ -6391,7 +6391,7 @@ const AICollect: React.FC = () => {
             border-radius: 14px;
             transition: width var(--ai-session-split-transition), max-width var(--ai-session-split-transition);
           }
-          .ai-session-inline-alert .ant-alert-message {
+          .ai-session-inline-alert .ui-alert-message {
             font-size: 11px;
             line-height: 1.35;
           }
@@ -6633,7 +6633,7 @@ const AICollect: React.FC = () => {
             color: #ffffff;
             background: rgba(138, 180, 255, 0.15);
           }
-          .ai-session-release-action .anticon {
+          .ai-session-release-action .ui-icon {
             font-size: 15px;
           }
           .ai-session-release-action > svg {
@@ -6670,7 +6670,7 @@ const AICollect: React.FC = () => {
             align-items: center;
             gap: 9px;
           }
-          .ai-session-task-create-title > .anticon {
+          .ai-session-task-create-title > .ui-icon {
             margin-top: 0;
             color: rgba(188, 219, 255, 0.9);
             font-size: 16px;
@@ -6759,7 +6759,7 @@ const AICollect: React.FC = () => {
             width: 132px;
             flex: none;
           }
-          .ai-session-task-schedule-options .ant-select {
+          .ai-session-task-schedule-options .ui-select {
             width: 100%;
           }
           .ai-session-task-control {
@@ -6774,57 +6774,57 @@ const AICollect: React.FC = () => {
             line-height: 1.3;
             letter-spacing: 0;
           }
-          .ai-session-task-control .ant-input,
-          .ai-session-task-control .ant-input-number,
-          .ai-session-task-control .ant-select-selector,
-          .ai-session-task-control .ant-picker {
+          .ai-session-task-control .ui-input,
+          .ai-session-task-control .ui-input-number,
+          .ai-session-task-control .ui-select-selector,
+          .ai-session-task-control .ui-picker {
             font-size: 12px;
           }
-          .ai-session-task-control .ant-input,
-          .ai-session-task-control .ant-input-number,
-          .ai-session-task-control .ant-select,
-          .ai-session-task-control .ant-select-selector,
-          .ai-session-task-control .ant-picker,
-          .ai-session-task-control .ant-segmented {
+          .ai-session-task-control .ui-input,
+          .ai-session-task-control .ui-input-number,
+          .ai-session-task-control .ui-select,
+          .ai-session-task-control .ui-select-selector,
+          .ai-session-task-control .ui-picker,
+          .ai-session-task-control .ui-segmented {
             height: 32px;
           }
-          .ai-session-task-control .ant-picker {
+          .ai-session-task-control .ui-picker {
             width: 100%;
           }
-          .ai-session-task-control .ant-picker-suffix {
+          .ai-session-task-control .ui-picker-suffix {
             color: rgba(255, 255, 255, 0.5);
           }
-          .ai-session-task-control .ant-input-number-input-wrap,
-          .ai-session-task-control .ant-input-number-input {
+          .ai-session-task-control .ui-input-number-input-wrap,
+          .ai-session-task-control .ui-input-number-input {
             height: 30px;
           }
-          .ai-session-task-control .ant-segmented-item-label {
+          .ai-session-task-control .ui-segmented-item-label {
             min-width: 0;
             padding-inline: 10px;
             line-height: 30px;
             white-space: nowrap;
           }
-          .ai-session-task-run-schedule .ant-segmented-item-label {
+          .ai-session-task-run-schedule .ui-segmented-item-label {
             font-size: 10px;
           }
-          .ai-session-task-control .ant-input-number {
+          .ai-session-task-control .ui-input-number {
             width: 100%;
           }
-          .ai-session-task-control .ant-segmented {
+          .ai-session-task-control .ui-segmented {
             background: rgba(255, 255, 255, 0.045);
           }
           .ai-session-task-checkbox {
             flex: none;
             line-height: 1;
           }
-          .ai-session-task-checkbox .ant-checkbox-inner {
+          .ai-session-task-checkbox .ui-checkbox-inner {
             width: 16px;
             height: 16px;
             border-radius: 4px;
             border-color: ${aura.border};
             background: rgba(255, 255, 255, 0.04);
           }
-          .ai-session-task-checkbox .ant-checkbox-checked .ant-checkbox-inner {
+          .ai-session-task-checkbox .ui-checkbox-checked .ui-checkbox-inner {
             border-color: rgba(129, 216, 208, 0.68);
             background: ${tiffanyAccent};
           }
@@ -6871,7 +6871,7 @@ const AICollect: React.FC = () => {
             align-items: center;
             gap: 7px;
           }
-          .ai-session-task-file-picker .ant-btn {
+          .ai-session-task-file-picker .ui-btn {
             height: 30px;
             padding: 0 8px;
             border-radius: 6px;
@@ -6916,7 +6916,7 @@ const AICollect: React.FC = () => {
             color: #ffffff;
             background: rgba(255, 255, 255, 0.08);
           }
-          .ai-session-task-file-remove .anticon {
+          .ai-session-task-file-remove .ui-icon {
             font-size: 10px;
           }
           .ai-session-task-batch-params {
@@ -6981,39 +6981,39 @@ const AICollect: React.FC = () => {
             font-size: 10px;
             line-height: 1.35;
           }
-          .ai-session-time-picker-dropdown .ant-picker-panel-container {
+          .ai-session-time-picker-dropdown .ui-picker-panel-container {
             border: 1px solid rgba(255, 255, 255, 0.1);
             background: rgba(37, 42, 52, 0.98);
             box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
           }
-          .ai-session-time-picker-dropdown .ant-picker-time-panel-column {
+          .ai-session-time-picker-dropdown .ui-picker-time-panel-column {
             overscroll-behavior: contain;
             scrollbar-width: thin;
             scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
           }
-          .ai-session-time-picker-dropdown .ant-picker-time-panel-column > li.ant-picker-time-panel-cell .ant-picker-time-panel-cell-inner {
+          .ai-session-time-picker-dropdown .ui-picker-time-panel-column > li.ui-picker-time-panel-cell .ui-picker-time-panel-cell-inner {
             color: rgba(255, 255, 255, 0.68);
           }
-          .ai-session-time-picker-dropdown .ant-picker-time-panel-column > li.ant-picker-time-panel-cell-selected .ant-picker-time-panel-cell-inner,
-          .ai-session-time-picker-dropdown .ant-picker-time-panel-column > li.ant-picker-time-panel-cell:hover .ant-picker-time-panel-cell-inner {
+          .ai-session-time-picker-dropdown .ui-picker-time-panel-column > li.ui-picker-time-panel-cell-selected .ui-picker-time-panel-cell-inner,
+          .ai-session-time-picker-dropdown .ui-picker-time-panel-column > li.ui-picker-time-panel-cell:hover .ui-picker-time-panel-cell-inner {
             background: rgba(129, 216, 208, 0.16);
             color: #edfffc;
           }
-          .ai-session-time-picker-dropdown .ant-picker-time-panel-column::after {
+          .ai-session-time-picker-dropdown .ui-picker-time-panel-column::after {
             border-color: rgba(255, 255, 255, 0.07);
           }
-          .ai-session-time-picker-dropdown .ant-picker-footer {
+          .ai-session-time-picker-dropdown .ui-picker-footer {
             padding: 7px 10px;
             border-top: 1px solid rgba(255, 255, 255, 0.08);
           }
-          .ai-session-time-picker-dropdown .ant-picker-now {
+          .ai-session-time-picker-dropdown .ui-picker-now {
             color: rgba(188, 219, 255, 0.9);
             font-size: 11px;
           }
-          .ai-session-time-picker-dropdown .ant-picker-now:hover {
+          .ai-session-time-picker-dropdown .ui-picker-now:hover {
             color: #ffffff;
           }
-          .ai-session-time-picker-dropdown .ant-picker-ok .ant-btn {
+          .ai-session-time-picker-dropdown .ui-picker-ok .ui-btn {
             height: 26px;
             padding: 0 10px;
             border-radius: 6px;
@@ -7022,7 +7022,7 @@ const AICollect: React.FC = () => {
             color: #e6fffb;
             font-size: 11px;
           }
-          .ai-session-time-picker-dropdown .ant-picker-ok .ant-btn:hover {
+          .ai-session-time-picker-dropdown .ui-picker-ok .ui-btn:hover {
             background: rgba(129, 216, 208, 0.28);
           }
           .ai-session-release-footer {
@@ -7829,11 +7829,11 @@ const AICollect: React.FC = () => {
             line-height: 1.45;
             color: ${aura.text};
           }
-          .ai-template-field-value .ant-input,
-          .ai-template-field-value .ant-input-affix-wrapper,
-          .ai-template-field-value .ant-input-number,
-          .ai-template-field-value .ant-select-selector,
-          .ai-template-field-value .ant-input-textarea textarea {
+          .ai-template-field-value .ui-input,
+          .ai-template-field-value .ui-input-affix-wrapper,
+          .ai-template-field-value .ui-input-number,
+          .ai-template-field-value .ui-select-selector,
+          .ai-template-field-value .ui-input-textarea textarea {
             background: transparent !important;
             color: ${aura.text} !important;
             border-color: transparent !important;
@@ -7844,26 +7844,26 @@ const AICollect: React.FC = () => {
             font-size: 12px !important;
             line-height: 1.45 !important;
           }
-          .ai-template-field-value input.ant-input,
-          .ai-template-field-value .ant-input-affix-wrapper,
-          .ai-template-field-value .ant-input-number,
-          .ai-template-field-value .ant-select-selector {
+          .ai-template-field-value input.ui-input,
+          .ai-template-field-value .ui-input-affix-wrapper,
+          .ai-template-field-value .ui-input-number,
+          .ai-template-field-value .ui-select-selector {
             min-height: 22px !important;
             height: 22px !important;
           }
-          .ai-template-field-value .ant-select,
-          .ai-template-field-value .ant-input-number {
+          .ai-template-field-value .ui-select,
+          .ai-template-field-value .ui-input-number {
             width: 100%;
           }
-          .ai-template-field-value input.ant-input {
+          .ai-template-field-value input.ui-input {
             line-height: 22px !important;
           }
-          .ai-template-field-value .ant-input-number-input-wrap {
+          .ai-template-field-value .ui-input-number-input-wrap {
             height: 100%;
             display: flex;
             align-items: center;
           }
-          .ai-template-field-value .ant-input-number-input {
+          .ai-template-field-value .ui-input-number-input {
             height: 22px !important;
             line-height: 22px !important;
             padding: 0;
@@ -7872,11 +7872,11 @@ const AICollect: React.FC = () => {
           .ai-template-number-input {
             max-width: 100%;
           }
-          .ai-template-number-input .ant-input-number-input-wrap {
+          .ai-template-number-input .ui-input-number-input-wrap {
             justify-content: flex-start;
             padding-inline-start: 0 !important;
           }
-          .ai-template-number-input .ant-input-number-handler-wrap {
+          .ai-template-number-input .ui-input-number-handler-wrap {
             opacity: 1;
             width: 22px;
             min-width: 22px;
@@ -7888,60 +7888,60 @@ const AICollect: React.FC = () => {
             background: rgba(255, 255, 255, 0.035) !important;
             transition: border-color 160ms ease, background 160ms ease;
           }
-          .ai-template-number-input .ant-input-number-handler {
+          .ai-template-number-input .ui-input-number-handler {
             height: 10px;
             color: rgba(255, 255, 255, 0.62);
             border-color: transparent !important;
             background: transparent !important;
             transition: color 160ms ease, background 160ms ease, transform 160ms ease;
           }
-          .ai-template-number-input .ant-input-number-input {
+          .ai-template-number-input .ui-input-number-input {
             text-align: left !important;
             padding-inline-start: 0 !important;
           }
-          .ai-template-number-input:hover .ant-input-number-handler,
-          .ai-template-number-input:focus-within .ant-input-number-handler {
+          .ai-template-number-input:hover .ui-input-number-handler,
+          .ai-template-number-input:focus-within .ui-input-number-handler {
             color: rgba(255, 255, 255, 0.9);
           }
-          .ai-template-number-input:hover .ant-input-number-handler-wrap {
+          .ai-template-number-input:hover .ui-input-number-handler-wrap {
             background: rgba(0, 0, 0, 0.16) !important;
           }
-          .ai-template-number-input:focus-within .ant-input-number-handler-wrap {
+          .ai-template-number-input:focus-within .ui-input-number-handler-wrap {
             border-color: rgba(255, 255, 255, 0.3) !important;
             background: rgba(255, 255, 255, 0.08) !important;
           }
-          .ai-template-number-input .ant-input-number-handler:hover {
+          .ai-template-number-input .ui-input-number-handler:hover {
             color: rgba(255, 255, 255, 1);
             background: rgba(255, 255, 255, 0.1) !important;
           }
-          .ai-template-field-value .ant-select-single.ant-select-sm .ant-select-selector,
-          .ai-template-field-value .ant-select-single .ant-select-selector {
+          .ai-template-field-value .ui-select-single.ui-select-sm .ui-select-selector,
+          .ai-template-field-value .ui-select-single .ui-select-selector {
             display: flex;
             align-items: center;
           }
-          .ai-template-field-value .ant-select-selection-item,
-          .ai-template-field-value .ant-select-selection-placeholder {
+          .ai-template-field-value .ui-select-selection-item,
+          .ai-template-field-value .ui-select-selection-placeholder {
             font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
             font-size: 12px;
             line-height: 22px !important;
           }
-          .ai-template-field-value .ant-select-selector {
+          .ai-template-field-value .ui-select-selector {
             border: 1px solid rgba(255, 255, 255, 0.14) !important;
             border-radius: 4px !important;
             background: rgba(255, 255, 255, 0.025) !important;
             padding-inline: 6px !important;
           }
-          .ai-template-field-value .ant-select:hover .ant-select-selector {
+          .ai-template-field-value .ui-select:hover .ui-select-selector {
             background: rgba(0, 0, 0, 0.14) !important;
           }
-          .ai-template-field-value .ant-select-focused .ant-select-selector {
+          .ai-template-field-value .ui-select-focused .ui-select-selector {
             border-color: rgba(255, 255, 255, 0.3) !important;
             box-shadow: none !important;
           }
-          .ai-template-field-value .ant-select-arrow {
+          .ai-template-field-value .ui-select-arrow {
             color: rgba(255, 255, 255, 0.45);
           }
-          .ai-template-field-value.is-rich .ant-input-textarea textarea {
+          .ai-template-field-value.is-rich .ui-input-textarea textarea {
             min-height: 70px !important;
             border: 1px solid rgba(255, 255, 255, 0.08) !important;
             border-radius: 10px !important;
@@ -7959,7 +7959,7 @@ const AICollect: React.FC = () => {
             display: inline-flex;
             align-items: center;
           }
-          .ai-template-bool-switch.ant-switch {
+          .ai-template-bool-switch.ui-switch {
             min-width: 36px;
             height: 20px;
             padding: 1px;
@@ -7968,22 +7968,22 @@ const AICollect: React.FC = () => {
             box-shadow: none;
             transition: background 160ms ease, border-color 160ms ease;
           }
-          .ai-template-bool-switch.ant-switch .ant-switch-handle {
+          .ai-template-bool-switch.ui-switch .ui-switch-handle {
             top: 1px;
             inset-inline-start: 1px;
             width: 16px;
             height: 16px;
           }
-          .ai-template-bool-switch.ant-switch .ant-switch-handle::before {
+          .ai-template-bool-switch.ui-switch .ui-switch-handle::before {
             border-radius: 50%;
             background: rgba(255, 255, 255, 0.92);
             box-shadow: none;
           }
-          .ai-template-bool-switch.ant-switch.ant-switch-checked {
+          .ai-template-bool-switch.ui-switch.ui-switch-checked {
             background: rgba(129, 216, 208, 0.52);
             border-color: rgba(129, 216, 208, 0.68);
           }
-          .ai-template-bool-switch.ant-switch.ant-switch-checked .ant-switch-handle::before {
+          .ai-template-bool-switch.ui-switch.ui-switch-checked .ui-switch-handle::before {
             background: linear-gradient(180deg, rgba(186, 255, 247, 0.98), rgba(129, 216, 208, 0.92));
           }
           .ai-session-shell {
@@ -8007,8 +8007,8 @@ const AICollect: React.FC = () => {
             color: ${aura.accent} !important;
             background: ${aura.accentSoft} !important;
           }
-          .ai-session-icon-btn.ant-btn[disabled],
-          .ai-session-icon-btn.ant-btn[disabled]:hover {
+          .ai-session-icon-btn.ui-btn[disabled],
+          .ai-session-icon-btn.ui-btn[disabled]:hover {
             color: rgba(245, 247, 247, 0.34) !important;
             background: transparent !important;
             cursor: not-allowed;
@@ -8428,7 +8428,7 @@ const AICollect: React.FC = () => {
             font-size: 13px;
             color: ${aura.muted};
           }
-          .ai-web-search-options .ant-input-number {
+          .ai-web-search-options .ui-input-number {
             width: 72px;
           }
           .ai-web-search-note {
@@ -8509,7 +8509,7 @@ const AICollect: React.FC = () => {
             font-size: 13px;
             line-height: 30px;
           }
-          .ai-prompt-url-tag .ant-tag-close-icon {
+          .ai-prompt-url-tag .ui-tag-close-icon {
             margin-left: 4px;
             color: rgba(245, 247, 247, 0.58);
           }
@@ -8538,8 +8538,8 @@ const AICollect: React.FC = () => {
             line-height: 34px;
             text-overflow: ellipsis;
           }
-          .ai-prompt-preflight-copy-base .anticon,
-          .ai-prompt-preflight-copy-sweep .anticon {
+          .ai-prompt-preflight-copy-base .ui-icon,
+          .ai-prompt-preflight-copy-sweep .ui-icon {
             flex: 0 0 24px;
             font-size: 18px;
           }
@@ -8567,12 +8567,12 @@ const AICollect: React.FC = () => {
             position: relative;
             z-index: 1;
           }
-          .ai-prompt-icon.ant-btn[disabled],
-          .ai-prompt-icon.ant-btn[disabled]:hover {
+          .ai-prompt-icon.ui-btn[disabled],
+          .ai-prompt-icon.ui-btn[disabled]:hover {
             color: rgba(245, 247, 247, 0.34) !important;
             cursor: not-allowed;
           }
-          .ai-collect-workbench .ai-prompt-input.ant-input {
+          .ai-collect-workbench .ai-prompt-input.ui-input {
             min-height: 34px !important;
             max-height: 70px;
             padding: 0 0 0 2px !important;
@@ -8591,20 +8591,20 @@ const AICollect: React.FC = () => {
             position: relative;
             z-index: 1;
           }
-          .ai-prompt-shell .ant-input,
-          .ai-session-prompt-main .ant-input {
+          .ai-prompt-shell .ui-input,
+          .ai-session-prompt-main .ui-input {
             background-color: transparent !important;
             background-image: none !important;
           }
-          .ai-collect-workbench .ai-prompt-input.ant-input::placeholder {
+          .ai-collect-workbench .ai-prompt-input.ui-input::placeholder {
             color: ${aura.subtle};
             text-indent: 5px;
           }
           .ai-collect-panel::-webkit-scrollbar,
           .ai-mission-content::-webkit-scrollbar,
           .ai-code-block::-webkit-scrollbar,
-          .ai-collect-workbench .ant-table-body::-webkit-scrollbar,
-          .ai-collect-workbench .ant-table-content::-webkit-scrollbar {
+          .ai-collect-workbench .ui-table-body::-webkit-scrollbar,
+          .ai-collect-workbench .ui-table-content::-webkit-scrollbar {
             display: none;
             width: 0;
             height: 0;
@@ -9150,7 +9150,7 @@ const AICollect: React.FC = () => {
             gap: 8px;
             flex-shrink: 0;
           }
-          .ai-logic-score .ant-typography {
+          .ai-logic-score .ui-typography {
             font-size: 12px;
           }
           .ai-logic-metrics {
@@ -9680,7 +9680,7 @@ const AICollect: React.FC = () => {
             .ai-prompt-title {
               font-size: clamp(23px, 6vw, 28px);
             }
-            .ai-collect-workbench .ai-prompt-input.ant-input {
+            .ai-collect-workbench .ai-prompt-input.ui-input {
               font-size: 14px;
             }
             .ai-collect-body.is-session {

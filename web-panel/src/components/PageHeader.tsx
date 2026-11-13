@@ -1,5 +1,5 @@
 import React from 'react';
-import { Typography, Divider } from 'antd';
+import { Typography, Divider } from '@/components/ui';
 
 const { Title, Text } = Typography;
 

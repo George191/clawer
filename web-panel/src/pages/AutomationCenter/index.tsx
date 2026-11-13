@@ -3,13 +3,13 @@ import {
   Alert, App, Badge, Button, Card, ConfigProvider, Descriptions, Drawer, Empty, Form, Input,
   InputNumber, Modal, Popconfirm, Segmented, Select, Space, Spin, Switch,
   Table, Tag, Timeline, Typography,
-} from 'antd';
-import enUS from 'antd/locale/en_US';
+} from '@/components/ui';
+import enUS from '@/components/ui/locale';
 import {
   ApartmentOutlined, ClockCircleOutlined, CloseOutlined, DeleteOutlined,
   EditOutlined, ExportOutlined, FieldTimeOutlined,
   PlusOutlined, SearchOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   automationCreateWorkflow, automationDeleteWorkflow,
@@ -387,9 +387,9 @@ const AutomationCenter: React.FC = () => {
     const updateTableHeight = () => {
       const card = tableCardRef.current;
       if (!card) return;
-      const header = card.querySelector<HTMLElement>('.ant-table-thead');
+      const header = card.querySelector<HTMLElement>('.ui-table-thead');
       const toolbar = card.querySelector<HTMLElement>('.automation-schedule-toolbar');
-      const pagination = card.querySelector<HTMLElement>('.ant-pagination');
+      const pagination = card.querySelector<HTMLElement>('.ui-pagination');
       const paginationStyle = pagination ? getComputedStyle(pagination) : null;
       const paginationMargins = paginationStyle
         ? parseFloat(paginationStyle.marginTop) + parseFloat(paginationStyle.marginBottom)
@@ -468,7 +468,7 @@ const AutomationCenter: React.FC = () => {
           { value: 'paused', label: <span>Disabled <small>{filteredSchedules.length - enabledScheduleCount}</small></span> },
         ]} />
       </div>}
-      <Spin spinning={loading}><Table showHeader={section !== 'schedules'} scroll={{ y: tableBodyHeight }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: true, ...(section === 'schedules' ? { showSizeChanger: false } : {}) }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => section === 'schedules' ? openScheduleDetail(record as AutomationSchedule) : setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
+      <Spin spinning={loading}><Table showHeader={section !== 'schedules'} scroll={{ y: tableBodyHeight }} rowKey={(record) => String('id' in record && record.id ? record.id : 'task_name' in record ? record.task_name : record.name)} columns={currentColumns as never} dataSource={currentData as never} pagination={{ pageSize: section === 'schedules' ? 20 : 10, hideOnSinglePage: false, ...(section === 'schedules' ? { showSizeChanger: false } : {}) }} locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`No ${sectionMeta[section].label.toLowerCase()} match the current filters`} /> }} onRow={(record) => ({ onClick: () => section === 'schedules' ? openScheduleDetail(record as AutomationSchedule) : setDetail(record as SelectedRecord), style: { cursor: 'pointer' } })} /></Spin>
     </Card>}
 
     {section === 'workflows' && <Modal title={editorTitle} open={editorOpen} confirmLoading={mutating} onCancel={() => setEditorOpen(false)} onOk={() => void save()} okText={editing ? 'Save Changes' : 'Create'} width={640} forceRender>

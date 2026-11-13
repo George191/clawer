@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from uuid import UUID
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
+from jwt import InvalidTokenError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import settings
 from app.logger import get_logger
@@ -18,20 +22,30 @@ from app.storage.redis_client import RedisClient
 from app.web.services.automation_store import automation_store
 from app.web.services.automation_task_store import automation_task_store
 from app.web.services.task_events import TASK_EVENT_CHANNEL
+from app.web.api.dependencies.common import get_current_user
+from app.web.core.db import engine
+from app.web.core.security import decode_session_token, TokenType
 
 logger = get_logger(__name__)
 
 
 class ClientConnection:
-    def __init__(self, websocket: WebSocket):
+    def __init__(self, websocket: WebSocket, expires_at: float):
         self.websocket = websocket
+        self.expires_at = expires_at
         self.subscriptions: set[str] = set()
         self.send_lock = asyncio.Lock()
 
     async def send(self, message: dict | None = None, *, snapshot_channel: str | None = None) -> None:
         async with self.send_lock:
+            if time.time() >= self.expires_at:
+                await self.websocket.close(code=4401)
+                return
             if snapshot_channel is not None:
                 message = await _channel_snapshot(snapshot_channel)
+            if time.time() >= self.expires_at:
+                await self.websocket.close(code=4401)
+                return
             await asyncio.wait_for(self.websocket.send_json(jsonable_encoder(message)), timeout=5)
 
 
@@ -152,16 +166,34 @@ async def lifespan(_app):
 router = APIRouter(lifespan=lifespan)
 
 
+async def _close_at_expiry(connection: ClientConnection) -> None:
+    await asyncio.sleep(max(0, connection.expires_at - time.time()))
+    with suppress(Exception):
+        await connection.websocket.close(code=4401)
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    connection = ClientConnection(websocket)
+    protocols = [value.strip() for value in websocket.headers.get("sec-websocket-protocol", "").split(',')]
+    if len(protocols) != 2 or protocols[0] != 'bearer':
+        await websocket.close(code=4401)
+        return
+    try:
+        payload = decode_session_token(protocols[1], TokenType.ACCESS_TOKEN)
+        async with AsyncSession(engine) as session:
+            await get_current_user(session, protocols[1])
+    except (InvalidTokenError, HTTPException):
+        await websocket.close(code=4401)
+        return
+    await websocket.accept(subprotocol='bearer')
+    connection = ClientConnection(websocket, payload['exp'])
+    expiry = asyncio.create_task(_close_at_expiry(connection))
     _connections.add(connection)
     try:
         await connection.send({"type": "task_stream_status", "data": {"available": _stream_available}})
         while True:
             try:
-                message = await websocket.receive_json()
+                message = await asyncio.wait_for(websocket.receive_json(), timeout=max(0, connection.expires_at - time.time()))
                 action = message["type"]
                 channel = message["channel"]
                 if action not in {"subscribe", "unsubscribe"} or not isinstance(channel, str):
@@ -182,9 +214,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 await connection.send({"type": "unsubscribed", "channel": channel})
     except WebSocketDisconnect:
         pass
+    except asyncio.TimeoutError:
+        with suppress(Exception):
+            await websocket.close(code=4401)
     except Exception:
         logger.exception("Task WebSocket connection failed")
         with suppress(Exception):
             await websocket.close(code=1011)
     finally:
+        expiry.cancel()
+        with suppress(asyncio.CancelledError):
+            await expiry
         _connections.discard(connection)

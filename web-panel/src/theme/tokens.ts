@@ -1,4 +1,4 @@
-import type { AliasToken } from 'antd/es/theme/interface';
+import type { AliasToken } from '@/components/ui/types';
 
 /** 扩展自定义 Design Token — Tellius 风格 */
 export interface CustomToken {

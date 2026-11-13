@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { Badge, Button, Card, Descriptions, Input, Segmented, Space, Tabs, Tag, Typography } from 'antd';
-import { ApartmentOutlined, DatabaseOutlined, SearchOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { Badge, Button, Card, Descriptions, Input, Segmented, Space, Tabs, Tag, Typography } from '@/components/ui';
+import { ApartmentOutlined, DatabaseOutlined, SearchOutlined, ShareAltOutlined } from '@/components/ui/icons';
 import './workspace.css';
 
 type GraphNode = { id: string; name: string; category: number; value: number; meta: { type: string; owner: string; schema?: string; status: string } };

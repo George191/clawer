@@ -1,6 +1,6 @@
 import React from 'react';
-import { Card, Collapse, Input, Space, Tag, Typography, theme } from 'antd';
-import { ApiOutlined, BookOutlined, QuestionCircleOutlined, SearchOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { Card, Collapse, Input, Space, Tag, Typography, theme } from '@/components/ui';
+import { ApiOutlined, BookOutlined, QuestionCircleOutlined, SearchOutlined, SafetyCertificateOutlined } from '@/components/ui/icons';
 import './style.css';
 
 const groups = [

@@ -42,7 +42,7 @@
   width: 138px;
 }
 
-.dashboard-time-select .ant-select-selector,
+.dashboard-time-select .ui-select-selector,
 .dashboard-context-pill,
 .dashboard-connection {
   min-height: 36px !important;
@@ -53,7 +53,7 @@
   box-shadow: none !important;
 }
 
-.dashboard-time-select .ant-select-selection-item {
+.dashboard-time-select .ui-select-selection-item {
   line-height: 34px !important;
 }
 
@@ -192,7 +192,7 @@
   margin-top: 18px;
 }
 
-.dashboard-summary-actions .ant-btn {
+.dashboard-summary-actions .ui-btn {
   height: 34px;
   border-color: var(--dashboard-border);
   border-radius: 8px;
@@ -201,7 +201,7 @@
   box-shadow: none;
 }
 
-.dashboard-summary-actions .ant-btn-primary {
+.dashboard-summary-actions .ui-btn-primary {
   border-color: rgba(138, 180, 255, 0.25);
   background: rgba(138, 180, 255, 0.16);
   color: #e4edff;

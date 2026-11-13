@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Avatar, Drawer, Progress, Segmented, Space, Tag, Typography } from 'antd';
+import { Avatar, Drawer, Progress, Segmented, Space, Tag, Typography } from '@/components/ui';
 import {
   AppstoreOutlined,
   BarChartOutlined,
@@ -14,7 +14,7 @@ import {
   PlusOutlined,
   SearchOutlined,
   SyncOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { aiAura } from './shared/aura';
 import { tasks } from './shared/mockData';
 import type { CollectTask, TaskStatus, TaskGroup } from './shared/types';
@@ -81,16 +81,16 @@ const TaskView: React.FC<Props> = ({ keyword }) => {
           gap: 12px;
           border-bottom: 1px solid ${aiAura.borderSoft};
         }
-        .cc-task-toolbar .ant-segmented {
+        .cc-task-toolbar .ui-segmented {
           background: ${aiAura.surfaceSoft};
           border: 1px solid ${aiAura.borderSoft};
           padding: 2px;
         }
-        .cc-task-toolbar .ant-segmented-item {
+        .cc-task-toolbar .ui-segmented-item {
           color: ${aiAura.subtle};
           border-radius: 6px;
         }
-        .cc-task-toolbar .ant-segmented-item-selected {
+        .cc-task-toolbar .ui-segmented-item-selected {
           background: ${aiAura.surface};
           color: ${aiAura.text};
           box-shadow: inset 0 0 0 1px ${aiAura.border};
@@ -216,16 +216,16 @@ const TaskView: React.FC<Props> = ({ keyword }) => {
           white-space: nowrap;
         }
         /* Drawer */
-        .cc-task-detail .ant-drawer-content {
+        .cc-task-detail .ui-drawer-content {
           background: ${aiAura.bg};
           color: ${aiAura.text};
         }
-        .cc-task-detail .ant-drawer-header {
+        .cc-task-detail .ui-drawer-header {
           background: ${aiAura.bg};
           border-bottom-color: ${aiAura.border};
         }
-        .cc-task-detail .ant-drawer-title,
-        .cc-task-detail .ant-drawer-close {
+        .cc-task-detail .ui-drawer-title,
+        .cc-task-detail .ui-drawer-close {
           color: ${aiAura.text};
         }
         .cc-task-detail-title {
@@ -279,7 +279,7 @@ const TaskView: React.FC<Props> = ({ keyword }) => {
           flex-wrap: wrap;
           margin-bottom: 16px;
         }
-        .cc-task-detail .ant-tag {
+        .cc-task-detail .ui-tag {
           border-color: ${aiAura.border};
           background: transparent;
           color: ${aiAura.muted};

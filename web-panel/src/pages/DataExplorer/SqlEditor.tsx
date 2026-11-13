@@ -1,13 +1,13 @@
 import React, { useRef, useCallback } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
-import { Button, Space, theme as antTheme, Tooltip, Typography } from 'antd';
+import { Button, Space, theme as antTheme, Tooltip, Typography } from '@/components/ui';
 import {
   PlayCircleOutlined,
   ClearOutlined,
   FormatPainterOutlined,
   HistoryOutlined,
   FieldTimeOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import type { editor } from 'monaco-editor';
 
 const { Text } = Typography;

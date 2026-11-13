@@ -1,5 +1,5 @@
 import React from 'react';
-import { Tag, theme } from 'antd';
+import { Tag, theme } from '@/components/ui';
 import {
   PlayCircleOutlined,
   CheckCircleOutlined,
@@ -8,7 +8,7 @@ import {
   PauseCircleOutlined,
   StopOutlined,
   ExclamationCircleOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 
 type StatusType =
   | 'running'

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Card, Divider, Typography } from 'antd';
+import { Card, Divider, Typography } from '@/components/ui';
 import { useLocation, useNavigate } from 'react-router-dom';
 import './style.css';
 

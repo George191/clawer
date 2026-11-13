@@ -1,4 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { fetchCurrentUserContext } from '../services/api';
+import { getAccessToken, getSessionState, tokenExpiresAt } from '../services/session';
 
 interface UseWebSocketOptions {
   onMessage: (data: string) => void;
@@ -20,19 +22,30 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
   const initialConnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const shouldReconnect = useRef(false);
+  const connectionAttempt = useRef(0);
 
   const savedCallbacks = useRef({ onMessage, onOpen, onClose, onError });
   savedCallbacks.current = { onMessage, onOpen, onClose, onError };
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (
       wsRef.current?.readyState === WebSocket.OPEN
       || wsRef.current?.readyState === WebSocket.CONNECTING
     ) return;
 
     clearTimeout(reconnectTimer.current);
-
-    const ws = new WebSocket(url);
+    const attempt = ++connectionAttempt.current;
+    if (!getSessionState().authenticated || getSessionState().locked) return;
+    try {
+      if (tokenExpiresAt(getAccessToken(), 'access') <= Date.now()) await fetchCurrentUserContext();
+    } catch {
+      if (shouldReconnect.current && attempt === connectionAttempt.current) reconnectTimer.current = setTimeout(connect, reconnectInterval);
+      return;
+    }
+    if (!shouldReconnect.current || attempt !== connectionAttempt.current || !getSessionState().authenticated || getSessionState().locked) return;
+    const token = getAccessToken();
+    if (!token) return;
+    const ws = new WebSocket(url, ['bearer', token]);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -63,6 +76,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions) {
     initialConnectTimer.current = setTimeout(connect, 0);
     return () => {
       shouldReconnect.current = false;
+      connectionAttempt.current++;
       clearTimeout(initialConnectTimer.current);
       clearTimeout(reconnectTimer.current);
       const ws = wsRef.current;

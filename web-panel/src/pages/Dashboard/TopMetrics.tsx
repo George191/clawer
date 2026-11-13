@@ -1,11 +1,11 @@
 import React from 'react';
-import { Row, Col, Card, theme, Empty } from 'antd';
+import { Row, Col, Card, theme, Empty } from '@/components/ui';
 import {
   ThunderboltOutlined,
   CloudUploadOutlined,
   HourglassOutlined,
   DatabaseOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import Sparkline from './Sparkline';
 import type { DashboardMetrics } from '@/services/types';
 

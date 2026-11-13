@@ -4,7 +4,7 @@ import * as echarts from 'echarts/core';
 import { GraphChart } from 'echarts/charts';
 import { TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
-import { Card, theme } from 'antd';
+import { Card, theme } from '@/components/ui';
 import { layerColors } from '@/theme/tokens';
 import type { PipelineNodeData } from '@/services/types';
 

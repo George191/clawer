@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Alert, App, Button, Form, Input, Typography } from 'antd';
+import { Alert, App, Button, Form, Input, Typography } from '@/components/ui';
 import {
   ArrowLeftOutlined,
   LockOutlined,
   MailOutlined,
   SafetyCertificateOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import './login.css';
 

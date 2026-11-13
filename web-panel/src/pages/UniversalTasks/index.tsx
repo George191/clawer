@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { Badge, Button, Card, Input, Progress, Segmented, Space, Table, Tabs, Tag, Typography } from 'antd';
-import { PauseOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
+import { Badge, Button, Card, Input, Progress, Segmented, Space, Table, Tabs, Tag, Typography } from '@/components/ui';
+import { PauseOutlined, ReloadOutlined, SearchOutlined, StopOutlined } from '@/components/ui/icons';
 
 const tasks = [
   { key: '1', name: 'Patent normalization', type: 'ETL', team: 'Data Operations', status: 'running', progress: 68, trigger: 'Pipeline', started: '10:24', duration: '12m 14s' },

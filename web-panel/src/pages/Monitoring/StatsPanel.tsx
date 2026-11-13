@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { Alert, Button, Card, Col, Row, Skeleton, Statistic } from 'antd';
+import { Alert, Button, Card, Col, Row, Skeleton, Statistic } from '@/components/ui';
 import { usePolling } from '@/hooks/usePolling';
 import { fetchMonitorStats } from '@/services/api';
 import type { MonitorStats } from '@/services/types';

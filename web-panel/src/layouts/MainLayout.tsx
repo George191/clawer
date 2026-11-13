@@ -5,7 +5,7 @@ import {
   Space,
   Dropdown,
   Progress,
-} from 'antd';
+} from '@/components/ui';
 import {
   ApiOutlined,
   ApartmentOutlined,
@@ -37,10 +37,11 @@ import {
   SearchOutlined,
   SettingOutlined,
   ThunderboltOutlined,
-} from '@ant-design/icons';
+} from '@/components/ui/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
 import { fetchCurrentUserContext } from '@/services/api';
+import { clearSession } from '@/services/session';
 import type { CurrentUserContext } from '@/services/types';
 
 const { Header, Content } = Layout;
@@ -167,7 +168,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         key: 'serving',
         label: 'Serving',
         children: [
-          { key: '/data-api', icon: <ApiOutlined />, label: '数据 API' },
+          { key: '/data-api', icon: <ApiOutlined />, label: 'Data APIs' },
           { key: '/vault/market', icon: <BarChartOutlined />, label: 'Metrics Market' },
         ],
       },
@@ -184,7 +185,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     sections: [
       {
         key: 'lifecycle',
-        label: 'Data workspace',
+        label: 'Workspace',
         children: [
           { key: '/flow', icon: <SearchOutlined />, label: 'Discover' },
           { key: '/flow/layers', icon: <DatabaseOutlined />, label: 'Schemas' },
@@ -320,7 +321,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     next.delete('domain');
     navigate(`${location.pathname}${next.toString() ? `?${next.toString()}` : ''}`, { replace: true });
   }, [location.pathname, location.search, navigate]);
-  const hideSidebar = activeProjectKey === 'ai-collect' || activeProjectKey === 'etl-pipeline' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
+  const hideSidebar = activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
@@ -445,8 +446,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const logout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
+    clearSession();
     navigate('/login', { replace: true });
   };
 
@@ -567,9 +567,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       </div>
       <div style={{ height: 1, margin: '0 14px 4px', background: palette.border }} />
       {[
-        { title: '采集任务完成', desc: 'Google Patent 模板已写入 ODS 层', time: '1h ago', color: '#28C76F', tint: 'rgba(40, 199, 111, 0.14)', icon: <RobotOutlined /> },
-        { title: '质量规则告警', desc: 'navwarn.content 缺失率超过阈值', time: '4h ago', color: '#FF9F43', tint: 'rgba(255, 159, 67, 0.14)', icon: <AuditOutlined /> },
-        { title: 'ETL 调度提示', desc: 'DWD 聚合任务将在 18:30 执行', time: 'Yesterday', color: '#0D9394', tint: 'rgba(13, 147, 148, 0.14)', icon: <ScheduleOutlined /> },
+        { title: 'Collection complete', desc: 'Google Patent data was written to the ODS layer', time: '1h ago', color: '#28C76F', tint: 'rgba(40, 199, 111, 0.14)', icon: <RobotOutlined /> },
+        { title: 'Data quality alert', desc: 'navwarn.content missing values exceed the threshold', time: '4h ago', color: '#FF9F43', tint: 'rgba(255, 159, 67, 0.14)', icon: <AuditOutlined /> },
+        { title: 'ETL schedule notice', desc: 'DWD aggregation is scheduled for 18:30', time: 'Yesterday', color: '#0D9394', tint: 'rgba(13, 147, 148, 0.14)', icon: <ScheduleOutlined /> },
       ].map(({ title, desc, time, color, tint, icon }) => (
         <div
           key={title}
@@ -714,6 +714,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           {isMobile && !hideSidebar && (
             <Button
               type="text"
+              aria-label="Open project sidebar"
               icon={<MenuOutlined />}
               onClick={() => setManualCollapsed(false)}
               style={{ width: 34, height: 34, color: palette.secondary }}
@@ -881,7 +882,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         {isMobile && !collapsed && !hideSidebar && (
           <button
             type="button"
-            aria-label="关闭侧边栏遮罩"
+            aria-label="Close sidebar overlay"
             onClick={() => setManualCollapsed(true)}
             style={{
               position: 'fixed',
@@ -895,6 +896,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
         {!hideSidebar && (
         <aside
+          data-testid="project-sidebar"
           style={{
             position: 'fixed',
             left: 0,
@@ -1141,10 +1143,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                 pointerEvents: collapsed ? 'none' : 'auto',
               }}
             >
-              {!collapsed && (
+              {!collapsed && activeProjectKey !== 'etl-pipeline' && (
                 <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', color: palette.secondary, fontSize: 12, marginBottom: 6 }}>
-                  <span>今日链路健康度</span>
+                  <span>Pipeline health today</span>
                   <span>92%</span>
                 </div>
                 <Progress percent={92} showInfo={false} strokeColor={activeProject.accent} trailColor={isDark ? 'rgba(255,255,255,0.08)' : '#E2E8F0'} size="small" />
@@ -1157,7 +1159,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   type="text"
                   icon={<PushpinOutlined />}
                   onClick={handlePinToggle}
-                  aria-label={pinned ? '取消固定侧边栏' : '固定侧边栏'}
+                  aria-label={pinned ? 'Unpin sidebar' : 'Pin sidebar'}
                   style={{
                     width: 32,
                     height: 32,

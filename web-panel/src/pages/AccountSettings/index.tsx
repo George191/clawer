@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Avatar, Button, Checkbox, Form, Input, Radio, Select, Switch, Tag, Typography, message } from 'antd';
-import { ApiOutlined, BellOutlined, CreditCardOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, GlobalOutlined, LinkOutlined, LockOutlined, MailOutlined, MoreOutlined, SafetyCertificateOutlined, SyncOutlined, UserOutlined } from '@ant-design/icons';
+import { Avatar, Button, Checkbox, Form, Input, Radio, Select, Switch, Tag, Typography, message } from '@/components/ui';
+import { ApiOutlined, BellOutlined, CreditCardOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, GlobalOutlined, LinkOutlined, LockOutlined, MailOutlined, MoreOutlined, SafetyCertificateOutlined, SyncOutlined, UserOutlined } from '@/components/ui/icons';
 import './account-settings.css';
 import './account-overrides.css';
 

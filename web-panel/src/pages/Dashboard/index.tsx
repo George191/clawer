@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRightOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@ant-design/icons';
-import { Alert as AlertBanner, App, Button, Select, Skeleton } from 'antd';
+import { ArrowRightOutlined, CheckCircleFilled, ExclamationCircleFilled } from '@/components/ui/icons';
+import { Alert as AlertBanner, App, Button, Select, Skeleton } from '@/components/ui';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import workspacePalette from '@/pages/AICollect/palette';
