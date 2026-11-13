@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Layout,
   Button,
@@ -293,9 +293,8 @@ interface MainLayoutProps {
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const location = useLocation();
   const isFlowSurface = location.pathname === '/flow' || location.pathname.startsWith('/flow/');
-  const [manualCollapsed, setManualCollapsed] = useState(isFlowSurface);
-  const [pinned, setPinned] = useState(!isFlowSurface);
-  const sidebarPreferenceChanged = useRef(false);
+  const [manualCollapsed, setManualCollapsed] = useState(false);
+  const [pinned, setPinned] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
   const [settledCollapsed, setSettledCollapsed] = useState(false);
   const [projectTextReady, setProjectTextReady] = useState(true);
@@ -323,7 +322,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     next.delete('domain');
     navigate(`${location.pathname}${next.toString() ? `?${next.toString()}` : ''}`, { replace: true });
   }, [location.pathname, location.search, navigate]);
-  const hideSidebar = activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
+  const hideSidebar = isFlowSurface || activeProjectKey === 'ai-collect' || isAtlasSurface || isGraphSurface || isAutomationSurface || isPlatformManagementSurface || isSystemSettingsSurface;
   const palette = {
     appBg: isDark ? '#171A22' : '#F6F8FB',
     surface: isDark ? '#22262F' : '#FFFFFF',
@@ -336,13 +335,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     muted: isDark ? '#6B7280' : '#94A3B8',
     hover: isDark ? 'rgba(255, 255, 255, 0.06)' : '#F1F5F9',
   };
-
-  useEffect(() => {
-    if (isFlowSurface && !sidebarPreferenceChanged.current) {
-      setPinned(false);
-      setManualCollapsed(true);
-    }
-  }, [isFlowSurface]);
 
   const handleResize = useCallback(() => {
     const nextIsMobile = window.innerWidth < 768;
@@ -445,7 +437,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   };
 
   const handlePinToggle = () => {
-    sidebarPreferenceChanged.current = true;
     if (pinned) {
       setPinned(false);
       setManualCollapsed(true);

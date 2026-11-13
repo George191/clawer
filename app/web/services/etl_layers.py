@@ -16,6 +16,17 @@ from sqlalchemy.exc import DBAPIError
 from app.storage.postgres_client import get_pg_client
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
+_OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
+_OBJECT_GROUP_SQL = """CASE regexp_replace(n.nspname, '_hist$', '')
+    WHEN 'ts_rds' THEN 'ingestion' WHEN 'ts_ods' THEN 'ingestion'
+    WHEN 'ts_task' THEN 'processing' WHEN 'ts_dim' THEN 'processing'
+    WHEN 'ts_dwd' THEN 'processing' WHEN 'ts_dws' THEN 'processing'
+    WHEN 'ts_ads' THEN 'serving' ELSE 'other' END"""
+_OBJECT_TABLE_SQL = """n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
+    AND n.nspname <> 'ts_meta_hist'
+    AND c.relname ~ '^[a-z_][a-z0-9_]{0,62}$' AND c.relkind IN ('r','p')
+    AND NOT c.relispartition
+    AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
 
 
 def quote_identifier(name: str) -> str:
@@ -33,6 +44,24 @@ def resolve_schema(layer: str, table_role: str = "current") -> str:
         schema += "_hist"
     quote_identifier(schema)
     return schema
+
+
+def _object_schema(layer: str) -> str:
+    schema = resolve_schema(layer)
+    if schema in {"ts_meta", "ts_meta_hist"}:
+        raise HTTPException(404, "Schema not found")
+    return schema
+
+
+def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": f'{row["schema"]}.{row["name"]}', "schema": row["schema"],
+        "table": row["name"], "name": row["name"], "displayName": row["name"],
+        "description": row["description"] or "", "dataType": row["data_type"] or "",
+        "objectCount": int(row["object_count"]), "objectCountEstimated": True,
+        "propertiesCount": int(row["properties_count"]), "status": "available",
+        "titleProperty": None, "visibility": "not_configured",
+    }
 
 
 class EtlLayers:
@@ -119,6 +148,152 @@ class EtlLayers:
                  "size": row["size"], "updatedAt": "", "description": row["description"] or "",
                  "rowCountEstimated": True} for row in rows]
 
+    async def _object_rows(self, session, where: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        alias_exists = (await session.execute(text(
+            "SELECT to_regclass('public.ai_collect_template_alias') IS NOT NULL"
+        ))).scalar_one()
+        data_type = """(SELECT CASE WHEN count(DISTINCT a.data_type) = 1
+                                THEN min(a.data_type) END
+            FROM public.ai_collect_template_alias a
+            WHERE regexp_replace(regexp_replace(c.relname,
+                  '^(rds|ods|raw|dwd|dws|dim|ads|stg|etl|tmp|dw|dm|task)_', ''),
+                  '_p[0-9]{1,3}$', '') IN (a.collection_name, a.template_name))""" if alias_exists else "NULL::text"
+        result = await session.execute(text(f"""
+            SELECT c.oid, n.nspname AS schema, c.relname AS name,
+                   obj_description(c.oid, 'pg_class') AS description,
+                   {data_type} AS data_type,
+                   (SELECT count(*) FROM pg_attribute a WHERE a.attrelid = c.oid
+                    AND a.attnum > 0 AND NOT a.attisdropped) AS properties_count,
+                   storage.object_count
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            CROSS JOIN LATERAL (
+                WITH RECURSIVE descendants(relid) AS (
+                    SELECT c.oid UNION
+                    SELECT i.inhrelid FROM pg_inherits i
+                    JOIN descendants d ON i.inhparent = d.relid
+                )
+                SELECT COALESCE(sum(CASE WHEN physical.relkind = 'p' THEN 0
+                    ELSE GREATEST(0, pg_stat_get_live_tuples(d.relid)) END), 0) AS object_count
+                FROM descendants d JOIN pg_class physical ON physical.oid = d.relid
+            ) storage
+            WHERE {where}
+            ORDER BY n.nspname, c.relname LIMIT :limit OFFSET :offset
+        """), params)
+        return [dict(row) for row in result.mappings()]
+
+    async def object_types(self, schema: str | None = None, search: str = "", group: str = "",
+                           limit: int = 100, offset: int = 0, ids: str | None = None) -> dict[str, Any]:
+        if not 1 <= limit <= 500 or not 0 <= offset <= 1_000_000:
+            raise HTTPException(400, "Pagination is outside supported bounds")
+        if group and group not in _OBJECT_GROUPS:
+            raise HTTPException(400, "Unknown object type group")
+        if len(search) > 1000:
+            raise HTTPException(400, "Search is too long")
+        params: dict[str, Any] = {"search": search.strip(), "limit": limit, "offset": offset}
+        where = _OBJECT_TABLE_SQL + """ AND position(lower(:search) in lower(
+            n.nspname || '.' || c.relname || ' ' || COALESCE(obj_description(c.oid, 'pg_class'), ''))) > 0"""
+        if schema:
+            params["schema"] = _object_schema(schema)
+            where += " AND n.nspname = :schema"
+        if ids:
+            identifiers = list(dict.fromkeys(ids.split(",")))
+            if len(identifiers) > 200:
+                raise HTTPException(400, "At most 200 object type identifiers are supported")
+            for identifier in identifiers:
+                parts = identifier.split(".")
+                if len(parts) != 2 or not parts[0].startswith("ts_"):
+                    raise HTTPException(400, "Invalid object type identifier")
+                _object_schema(parts[0])
+                quote_identifier(parts[1])
+            params["ids"] = identifiers
+            where += " AND n.nspname || '.' || c.relname = ANY(CAST(:ids AS text[]))"
+        async with self.session() as session:
+            counts = await session.execute(text(f"""
+                SELECT n.nspname AS schema, {_OBJECT_GROUP_SQL} AS resource_group, count(*) AS count
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE {where} GROUP BY n.nspname ORDER BY n.nspname
+            """), params)
+            schema_counts: dict[str, int] = {}
+            group_counts = dict.fromkeys(_OBJECT_GROUPS, 0)
+            for row in counts.mappings():
+                schema_counts[row["schema"]] = int(row["count"])
+                group_counts[row["resource_group"]] += int(row["count"])
+            total = group_counts[group] if group else sum(schema_counts.values())
+            if group:
+                where += f" AND ({_OBJECT_GROUP_SQL}) = :group"
+                params["group"] = group
+            rows = await self._object_rows(session, where, params) if offset < total else []
+        return {"items": [_object_summary(row) for row in rows], "total": total,
+                "limit": limit, "offset": offset, "schemaCounts": schema_counts,
+                "groupCounts": group_counts}
+
+    async def preview(self, layer: str, table: str) -> dict[str, Any]:
+        schema = _object_schema(layer)
+        quote_identifier(table)
+        async with self.session() as session:
+            rows = await self._object_rows(session, _OBJECT_TABLE_SQL +
+                " AND n.nspname = :schema AND c.relname = :table",
+                {"schema": schema, "table": table, "limit": 1, "offset": 0})
+            if not rows:
+                raise HTTPException(404, "Table does not exist in this schema")
+            row = rows[0]
+            result = await session.execute(text("""
+                SELECT con.conname AS name, sn.nspname AS source_schema, sc.relname AS source_table,
+                       tn.nspname AS target_schema, tc.relname AS target_table,
+                       ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(attnum, position)
+                             JOIN pg_attribute a ON a.attrelid = sc.oid AND a.attnum = k.attnum
+                             ORDER BY k.position) AS columns,
+                       ARRAY(SELECT a.attname FROM unnest(con.confkey) WITH ORDINALITY k(attnum, position)
+                             JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum
+                             ORDER BY k.position) AS referenced_columns
+                FROM pg_constraint con
+                JOIN pg_class sc ON sc.oid = con.conrelid
+                JOIN pg_namespace sn ON sn.oid = sc.relnamespace
+                JOIN pg_class tc ON tc.oid = con.confrelid
+                JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+                WHERE con.contype = 'f' AND con.conparentid = 0
+                  AND (sc.oid = CAST(:oid AS oid) OR tc.oid = CAST(:oid AS oid))
+                  AND sn.nspname ~ '^ts_[a-z0-9_]+$' AND sn.nspname <> 'ts_meta'
+                  AND sn.nspname <> 'ts_meta_hist'
+                  AND tn.nspname ~ '^ts_[a-z0-9_]+$' AND tn.nspname <> 'ts_meta'
+                  AND tn.nspname <> 'ts_meta_hist'
+                  AND sc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
+                  AND tc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
+                  AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
+                  AND NOT sc.relispartition AND NOT tc.relispartition
+                  AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = sc.oid)
+                  AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = tc.oid)
+                ORDER BY sn.nspname, sc.relname, con.conname, con.oid
+            """), {"oid": row["oid"]})
+            foreign_keys = [dict(item) for item in result.mappings()]
+        columns = await self.columns(schema, table) if row["properties_count"] else []
+        linked: dict[str, dict[str, Any]] = {}
+        for foreign in foreign_keys:
+            if any(not foreign[f"{side}_schema"].startswith("ts_") or
+                   foreign[f"{side}_schema"] in {"ts_meta", "ts_meta_hist"}
+                   for side in ("source", "target")):
+                continue
+            for direction, side, peer in (("outgoing", "source", "target"), ("incoming", "target", "source")):
+                if (foreign[f"{side}_schema"], foreign[f"{side}_table"]) != (schema, table):
+                    continue
+                peer_schema, peer_table = foreign[f"{peer}_schema"], foreign[f"{peer}_table"]
+                identifier = f"{peer_schema}.{peer_table}"
+                item = linked.setdefault(identifier, {"id": identifier, "schema": peer_schema,
+                    "table": peer_table, "name": peer_table, "displayName": peer_table,
+                    "direction": direction, "constraints": []})
+                if item["direction"] != direction:
+                    item["direction"] = "both"
+                item["constraints"].append({"name": foreign["name"], "direction": direction,
+                    "sourceSchema": foreign["source_schema"], "sourceTable": foreign["source_table"],
+                    "targetSchema": foreign["target_schema"], "targetTable": foreign["target_table"],
+                    "columns": list(foreign["columns"]), "referencedColumns": list(foreign["referenced_columns"])})
+        primary = sorted((column for column in columns if column["primary"]), key=lambda column: column["primaryPosition"])
+        return {**_object_summary(row), "primaryKey": [column["name"] for column in primary],
+                "properties": [{"name": column["name"], "displayName": column["name"],
+                    "type": column["type"], "nullable": column["nullable"],
+                    "primaryKey": column["primary"], "comment": column["comment"] or ""} for column in columns],
+                "linkedObjectTypes": [linked[key] for key in sorted(linked)]}
+
     async def get_table(self, layer: str, table: str) -> dict[str, Any]:
         quote_identifier(table)
         tables = await self.tables(layer)
@@ -133,6 +308,7 @@ class EtlLayers:
         async with self.session() as session:
             result = await session.execute(text("""
                 SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type,
+                       col_description(c.oid, a.attnum) AS comment,
                        NOT a.attnotnull AS nullable,
                        COALESCE(array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts, false) AS primary,
                        CASE WHEN array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts

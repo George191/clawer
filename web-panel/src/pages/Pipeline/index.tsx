@@ -1,8 +1,8 @@
 import  React,  {  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
-import  {  useLocation,  useNavigate  }  from  'react-router-dom';
+import  {  Link,  useLocation,  useNavigate  }  from  'react-router-dom';
 import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Tabs,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
-import  {  AlertOutlined,  ApartmentOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  BranchesOutlined,  CaretRightOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  ExperimentOutlined,  PlusOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
+import  {  AlertOutlined,  ApartmentOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CaretRightOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
 import  '../ProductWorkspace/workspace.css';
 import CdcStatusPanel from './CdcStatusPanel';
 import OntologyExplorer, { schemaColor } from './OntologyExplorer';
@@ -136,42 +136,19 @@ const  SqlPreview:  React.FC<{  sql:  string  }>  =  React.memo(({  sql  })  => 
     })}</pre>;
 });
 
-const flowNavigation = [
-    { path: '/flow', label: 'Discover', icon: <SearchOutlined /> },
-    { path: '/flow/layers', label: 'Schemas', icon: <DatabaseOutlined /> },
-    { path: '/flow/lineage', label: 'Lineage', icon: <BranchesOutlined /> },
-    { path: '/flow/transforms', label: 'Transformations', icon: <CodeOutlined /> },
-    { path: '/flow/runtime', label: 'Runtime', icon: <ExperimentOutlined /> },
-];
-
 const Pipeline: React.FC = () => {
     const { pathname } = useLocation();
-    const navigate = useNavigate();
-    const rootRef = useRef<HTMLElement>(null);
-    const [refreshToken, setRefreshToken] = useState(0);
-    const find = () => {
-        const input = rootRef.current?.querySelector<HTMLInputElement>('[data-testid="ontology-search"], input[aria-label="Search lineage nodes"], input[aria-label="Search schemas"]');
-        input?.focus(); input?.select();
-    };
-    return <ConfigProvider locale={enUS}><main ref={rootRef} className="flow-console flow-console--ontology">
-        <div className="flow-domain-nav" data-testid="flow-domain-nav" role="toolbar" aria-label="Flow toolbar">
-            <span className="flow-domain-context">{flowNavigation.find((item) => item.path === pathname)?.label}</span>
-            <div className="flow-domain-links">
-                <Dropdown overlayClassName="flow-menu-popup" trigger={['click']} menu={{ selectedKeys: [pathname], items: flowNavigation.map((item) => ({ key: item.path, label: item.label, icon: item.icon })), onClick: ({ key }) => navigate(key) }}><button type="button" className="flow-domain-command" aria-label="View" aria-haspopup="menu">View<DownOutlined /></button></Dropdown>
-                <button type="button" className="flow-domain-command" onClick={() => setRefreshToken((value) => value + 1)}>Refresh</button>
-                <button type="button" className="flow-domain-command" disabled={pathname === '/flow/runtime'} onClick={find}>Find</button>
-            </div>
-        </div>
+    return <ConfigProvider locale={enUS}><main className="flow-console flow-console--ontology">
         <section className="flow-core">
-            {pathname === '/flow' ? <OntologyExplorer refreshToken={refreshToken} />
-                : pathname === '/flow/lineage' ? <OntologyLineage refreshToken={refreshToken} />
-                    : pathname === '/flow/runtime' ? <FlowRuntime refreshToken={refreshToken} />
-                        : <DataLayersWorkspace refreshToken={refreshToken} />}
+            {pathname === '/flow' ? <OntologyExplorer refreshToken={0} />
+                : pathname === '/flow/lineage' ? <OntologyLineage refreshToken={0} />
+                    : pathname === '/flow/runtime' ? <FlowRuntime />
+                        : <DataLayersWorkspace />}
         </section>
     </main></ConfigProvider>;
 };
 
-const FlowRuntime: React.FC<{ refreshToken: number }> = ({ refreshToken }) => {
+const FlowRuntime: React.FC = () => {
     const [allowed, setAllowed] = useState<boolean>();
     const [error, setError] = useState(false);
     const [version, setVersion] = useState(0);
@@ -181,14 +158,14 @@ const FlowRuntime: React.FC<{ refreshToken: number }> = ({ refreshToken }) => {
         fetchCurrentUserContext().then((context) => { if (active) setAllowed(context.user.is_superuser); })
             .catch(() => { if (active) setError(true); });
         return () => { active = false; };
-    }, [version, refreshToken]);
-    return <div className="flow-ontology-runtime" data-testid="ontology-runtime"><div className="flow-ontology-page-heading"><span>OBSERVABILITY</span><h1>Runtime status</h1><p>Inspect the current ingestion and consumption infrastructure.</p></div>
+    }, [version]);
+    return <div className="flow-ontology-runtime" data-testid="ontology-runtime"><div className="flow-ontology-page-heading"><span><Link to="/flow" style={{ color: 'inherit' }}>Object types</Link></span><h1>Runtime status</h1><p>Inspect the current ingestion and consumption infrastructure.</p></div>
         {error ? <div role="alert">Unable to verify your access.<Button onClick={() => setVersion((value) => value + 1)}>Retry</Button></div>
             : allowed === undefined ? <Spin />
-                : allowed ? <CdcStatusPanel key={refreshToken} /> : <div className="flow-ontology-message">Runtime diagnostics are available to administrators. You can continue exploring data assets and tables.</div>}
+                : allowed ? <CdcStatusPanel /> : <div className="flow-ontology-message">Runtime diagnostics are available to administrators. You can continue exploring data assets and tables.</div>}
     </div>;
 };
-const  DataLayersWorkspace:  React.FC<{ refreshToken: number }>  =  ({ refreshToken })  =>  {
+const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const { search, pathname } = useLocation();
     const workspacePath = pathname === '/flow/transforms' ? '/flow/transforms' : '/flow/layers';
     const  navigate  =  useNavigate();
@@ -518,14 +495,11 @@ const  DataLayersWorkspace:  React.FC<{ refreshToken: number }>  =  ({ refreshTo
         refreshCatalog().catch((error) => { if (workspaceActive.current) setRequestError(errorText(error)); });
         return () => { workspaceActive.current = false; catalogRequest.current++; selection.current = ''; };
     }, []);
-    const previousRefresh = useRef(refreshToken);
-    useEffect(() => {
-        if (previousRefresh.current === refreshToken) return;
-        previousRefresh.current = refreshToken;
+    const refreshWorkspace = () => {
         if (mutationPending.current || editingRowKey || scriptDirty || apisDirty || draftExists) { message.warning(draftExists ? 'Save changes or close the draft tab before refreshing' : 'Save or cancel current changes before refreshing'); return; }
         setRefreshVersion((value) => value + 1);
         refreshCatalog().catch((error) => { if (workspaceActive.current) setRequestError(errorText(error)); });
-    }, [refreshToken]);
+    };
     useEffect(() => {
         if (!catalogLoaded) return;
         const params = new URLSearchParams(search);
@@ -533,6 +507,7 @@ const  DataLayersWorkspace:  React.FC<{ refreshToken: number }>  =  ({ refreshTo
         const schema = schemas.find((item) => item.key === requested)?.key || schemas[0]?.key || '';
         setSelectedSchema(schema); setSchemaNameDraft(schema);
         if (requested !== schema && (requested || schema)) {
+            if (params.get('create') === 'table') params.delete('create');
             if (schema) params.set('schema', schema); else params.delete('schema');
             params.delete('table');
             navigate(`${workspacePath}${params.size ? `?${params.toString()}` : ''}`, { replace: true });
@@ -633,7 +608,7 @@ const  DataLayersWorkspace:  React.FC<{ refreshToken: number }>  =  ({ refreshTo
         if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; }
         setCreateOpen(false);
         setClosedTables((current) => { const next = new Set(current); next.delete(selected.name); return next; });
-        const params = new URLSearchParams(search); params.set('schema', selectedSchema); params.set('table', selected.name);
+        const params = new URLSearchParams(search); params.delete('create'); params.set('schema', selectedSchema); params.set('table', selected.name);
         navigate(`${workspacePath}?${params.toString()}`, { replace: true });
     };
     const closeTable = (name: string) => {
@@ -719,6 +694,7 @@ const  DataLayersWorkspace:  React.FC<{ refreshToken: number }>  =  ({ refreshTo
     });
     const startNewTable = () => {
         if (!canManage || !selectedSchemaAvailable || mutationPending.current) return;
+        if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; }
         if (!draftExists) {
             setNewTableName(''); setNewTableDescription(''); setTableOptions({ comment: '' }); setDdlText(''); setReferenceColumns({});
             setFields([{ id: 'field-1', name: 'record_id', type: 'TEXT', length: '', nullable: false, primary: true, comment: 'Business record identifier' }, { id: 'field-empty', name: '', type: 'TEXT', length: '', nullable: true, primary: false, comment: '' }]);
@@ -728,6 +704,15 @@ const  DataLayersWorkspace:  React.FC<{ refreshToken: number }>  =  ({ refreshTo
         }
         setDraftExists(true); setCreateOpen(true);
     };
+    useEffect(() => {
+        const params = new URLSearchParams(search);
+        if (params.get('create') !== 'table' || !catalogLoaded) return;
+        const requestedSchemaExists = schemas.some((schema) => schema.key === params.get('schema'));
+        if (canManage && requestedSchemaExists && (!selectedSchemaAvailable || params.get('schema') !== selectedSchema || tablesLoadedSchema !== selectedSchema || tablesLoading)) return;
+        params.delete('create');
+        if (canManage && requestedSchemaExists) startNewTable();
+        navigate(`${workspacePath}${params.size ? `?${params.toString()}` : ''}`, { replace: true });
+    }, [search, schemas, catalogLoaded, canManage, selectedSchemaAvailable, selectedSchema, tablesLoadedSchema, tablesLoading, navigate, workspacePath]);
     const createTable = async () => {
         if (!selectedSchemaAvailable || !beginMutation()) return;
         const schema = selectedSchema;
@@ -827,7 +812,7 @@ const  DataLayersWorkspace:  React.FC<{ refreshToken: number }>  =  ({ refreshTo
     return  <div  className="flow-layers  flow-layers--tagged">
         <div  className="flow-layer-layout">
             <aside className="flow-layer-tree flow-ontology-schema-sidebar">
-                <div className="flow-tree-label flow-tree-label--actions"><span>Schemas</span>{canManage && <button type="button" aria-label="Manage connections" title="Manage connections" onClick={() => { setConnectorStep('type'); setConnectorSelectionActive(false); setConnectorSelectedSchema(''); setDatabaseSearch(''); setCollectionOpen(true); }}><PlusOutlined /></button>}</div>
+                <div className="flow-tree-label flow-tree-label--actions"><span>Schemas</span><span style={{ display: 'inline-flex', gap: 4 }}><button type="button" aria-label="Refresh schemas" title="Refresh schemas" onClick={refreshWorkspace}><ReloadOutlined /></button>{canManage && <button type="button" aria-label="Manage connections" title="Manage connections" onClick={() => { setConnectorStep('type'); setConnectorSelectionActive(false); setConnectorSelectedSchema(''); setDatabaseSearch(''); setCollectionOpen(true); }}><PlusOutlined /></button>}</span></div>
                 <Input className="flow-ontology-schema-search" aria-label="Search schemas" placeholder="Search schemas" prefix={<SearchOutlined />} value={schemaSearch} onChange={(event) => setSchemaSearch(event.target.value)} allowClear />
                 <div className="flow-ontology-schema-list">
                     {visibleSchemas.map((item) => <button type="button" className={`flow-connector-tree-item flow-ontology-schema-item ${selectedSchema === item.key ? 'is-active' : ''}`} key={item.key} style={{ '--schema-color': schemaColor(item.key) } as React.CSSProperties} aria-current={selectedSchema === item.key ? 'page' : undefined} onClick={() => navigate(`${workspacePath}?schema=${encodeURIComponent(item.key)}`)}><i className="flow-schema-color-dot" aria-hidden="true" /><span className="flow-connector-tree-name"><strong>{item.alias || item.label}</strong><small>{item.key}</small></span><em>{item.tables ?? 0}</em></button>)}

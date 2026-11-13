@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowDownOutlined, ArrowRightOutlined, ArrowUpOutlined, BarsOutlined, BranchesOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DatabaseOutlined, ExportOutlined, EyeOutlined, FullscreenOutlined, MinusOutlined, PauseOutlined, PlayFilled, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import { ArrowDownOutlined, ArrowLeftOutlined, ArrowRightOutlined, ArrowUpOutlined, BarsOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DatabaseOutlined, ExportOutlined, EyeOutlined, FullscreenOutlined, MinusOutlined, PauseOutlined, PlayFilled, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { Spin } from '@/components/ui';
 import { fetchLayers } from '../../services/api';
 import type { LayerNode } from '../../services/types';
@@ -185,7 +185,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const motionStatus = reducedMotion ? 'Animations are off because reduced motion is enabled.' : paused ? 'Animation paused' : liveLinks ? `${liveLinks} measured schema outputs${directionLinks ? ` · ${directionLinks} direction previews` : ''}` : directionLinks ? `${directionLinks} direction previews · Output metrics unavailable` : 'No measured output · Motion stopped';
   return <div className="flow-lineage" data-testid="ontology-lineage">
     <header className="flow-lineage-context">
-      <div className="flow-lineage-context-title"><BranchesOutlined /><h1>Data lineage</h1><span>ETL contract preview</span></div>
+      <div className="flow-lineage-context-title"><button type="button" className="flow-lineage-back" aria-label="Back to object types" title="Back to object types" onClick={() => navigate('/flow')}><ArrowLeftOutlined /></button><h1>Data lineage</h1><span>ETL contract preview</span></div>
       <div className="flow-lineage-context-actions"><button type="button" className="flow-lineage-action" aria-label="Refresh lineage" title="Refresh schemas and output metrics" disabled={loading} onClick={() => setVersion(value => value + 1)}><ReloadOutlined spin={loading} /><span>Refresh</span></button><button type="button" className="flow-lineage-action is-primary" onClick={() => void copyLink()}>{copyStatus === 'copied' ? <CheckOutlined /> : <CopyOutlined />}<span>{copyStatus === 'copied' ? 'Link copied' : 'Copy link'}</span></button></div>
     </header>
     {copyStatus === 'manual' && <div className="flow-lineage-copy-fallback"><span>Copy this view link:</span><input aria-label="View link to copy" readOnly value={window.location.href} autoFocus onFocus={event => event.currentTarget.select()} /></div>}

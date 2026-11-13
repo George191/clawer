@@ -81,6 +81,65 @@ export interface LayerTable {
   updatedAt: string;
 }
 
+export interface EtlObjectType {
+  id: string;
+  schema: string;
+  table: string;
+  name: string;
+  displayName: string;
+  description: string;
+  dataType: string;
+  objectCount: number;
+  objectCountEstimated: boolean;
+  propertiesCount: number;
+  status: 'available';
+  titleProperty: string | null;
+  visibility: 'not_configured';
+}
+
+export interface EtlObjectCatalog {
+  items: EtlObjectType[];
+  total: number;
+  limit: number;
+  offset: number;
+  schemaCounts: Record<string, number>;
+  groupCounts: Record<string, number>;
+}
+
+export interface EtlObjectProperty {
+  name: string;
+  displayName: string;
+  type: string;
+  nullable: boolean;
+  primaryKey: boolean;
+  comment: string;
+}
+
+export interface EtlLinkedObjectType {
+  id: string;
+  schema: string;
+  table: string;
+  name: string;
+  displayName: string;
+  direction: 'incoming' | 'outgoing' | 'both';
+  constraints: Array<{
+    name: string;
+    direction: 'incoming' | 'outgoing';
+    sourceSchema: string;
+    sourceTable: string;
+    targetSchema: string;
+    targetTable: string;
+    columns: string[];
+    referencedColumns: string[];
+  }>;
+}
+
+export interface EtlObjectPreview extends EtlObjectType {
+  primaryKey: string[];
+  properties: EtlObjectProperty[];
+  linkedObjectTypes: EtlLinkedObjectType[];
+}
+
 // ==================== Tasks ====================
 export interface TaskInfo {
   id: string;

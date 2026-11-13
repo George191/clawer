@@ -35,6 +35,14 @@ async def layers() -> list[dict[str, Any]]:
     return await get_etl_layers().layers()
 
 
+@read.get("/object-types")
+async def object_types(schema: str | None = None, search: str = Query("", max_length=1000),
+                       group: str = "", limit: int = Query(100, ge=1, le=500),
+                       offset: int = Query(0, ge=0, le=1_000_000),
+                       ids: str | None = Query(None, max_length=26_000)) -> dict[str, Any]:
+    return await get_etl_layers().object_types(schema, search, group, limit, offset, ids)
+
+
 @read.get("/task-config/vulnerability-keywords")
 async def vulnerability_keywords() -> dict[str, Any]:
     return await keyword_files.configuration()
@@ -115,6 +123,11 @@ async def table_data(layer: str, table: str, limit: int = Query(50, ge=1, le=500
                      offset: int = Query(0, ge=0, le=1_000_000),
                      partition: str | None = None) -> dict[str, Any]:
     return await get_etl_layers().data(layer, table, {"limit": limit, "offset": offset, "partition": partition})
+
+
+@read.get("/{layer}/{table}/preview")
+async def object_preview(layer: str, table: str) -> dict[str, Any]:
+    return await get_etl_layers().preview(layer, table)
 
 
 @read.post("/{layer}/{table}/data")

@@ -18,23 +18,15 @@
   --ontology-success-border: color-mix(in srgb, var(--ui-success, #10b981) 30%, var(--ontology-panel));
   color: var(--ontology-text);
   font-family: Inter, "Segoe UI", Arial, sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
 }
 html[data-theme="dark"] :is(.flow-console--ontology,.flow-surface-modal,.flow-menu-popup,.flow-select-popup) { color-scheme:dark; }
 html[data-theme="light"] :is(.flow-console--ontology,.flow-surface-modal,.flow-menu-popup,.flow-select-popup) { color-scheme:light; }
 .flow-console.flow-console--ontology { display:flex; flex:1; flex-direction:column; min-width:0; min-height:0; height:100%; padding:0; overflow:hidden; background:var(--ontology-bg); animation:none; }
 .flow-console.flow-console--ontology > .flow-core { display:flex; flex:1; min-width:0; min-height:0; width:100%; max-width:none; height:auto; overflow:hidden; margin:0; padding:0; }
-.flow-console--ontology .flow-domain-nav { display:flex; align-items:center; flex:none; gap:12px; width:100%; height:38px; min-height:38px; padding:0 12px 0 0; border-bottom:1px solid var(--ontology-border); background:var(--ontology-toolbar); overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; }
-.flow-console--ontology .flow-domain-context { display:flex; align-items:center; align-self:stretch; flex:none; min-width:128px; padding:0 18px; border-right:1px solid var(--ontology-border); background:var(--ontology-panel); color:var(--ontology-text); font-size:12px; font-weight:400; white-space:nowrap; }
-.flow-domain-links { display:flex; align-items:center; gap:3px; }
-.flow-console--ontology .flow-domain-command { display:inline-flex; align-items:center; justify-content:center; gap:6px; flex:none; height:28px; min-height:28px; padding:0 9px; border:1px solid transparent; border-radius:3px; background:transparent; color:var(--ontology-text); font:inherit; font-size:12px; font-weight:400; box-shadow:none; white-space:nowrap; cursor:pointer; }
-.flow-console--ontology .flow-domain-command:hover { border-color:var(--ontology-control-border); background:var(--ontology-border); }
-.flow-console--ontology .flow-domain-command:disabled { color:var(--ontology-muted); cursor:default; opacity:.6; }
-.flow-console--ontology .flow-domain-command > .ui-icon { width:12px; height:12px; font-size:12px; color:var(--ontology-muted); }
 .flow-console--ontology :is(button,a):focus-visible,
 .flow-surface-modal :is(button,a):focus-visible { outline:2px solid var(--ontology-primary); outline-offset:2px; }
-.flow-console--ontology .flow-domain-command:focus-visible { outline-offset:-2px; }
 .flow-console--ontology .ui-btn,
 .flow-surface-modal .ui-btn { min-height:28px; border-radius:3px; box-shadow:none; font-size:12px; font-weight:400; }
 .flow-console--ontology .ui-btn-default,
@@ -63,6 +55,6 @@ html[data-theme="light"] :is(.flow-console--ontology,.flow-surface-modal,.flow-m
 .flow-select-popup.ui-select-dropdown .ui-select-item { justify-content:flex-start; min-height:28px; color:var(--ontology-text); font-size:12px; text-align:left; }
 .flow-select-popup .ui-select-item-option-selected { background:var(--ontology-selected); color:var(--ontology-link); }
 .flow-select-popup .ui-select-item-option-active { background:var(--ontology-hover); }
-@media(max-width:760px) { .flow-console--ontology .flow-domain-nav { gap:6px; }.flow-console--ontology .flow-domain-context { min-width:104px; padding-inline:12px; }.flow-console--ontology .flow-ontology-runtime { padding:20px 16px; } }
-@media(max-width:640px),(pointer:coarse) { .flow-console--ontology .flow-domain-nav { height:44px; min-height:44px; }.flow-console--ontology .flow-domain-command { min-height:40px; }.flow-console--ontology .flow-ontology-runtime .ui-btn { min-height:40px; } }
+@media(max-width:760px) { .flow-console--ontology .flow-ontology-runtime { padding:20px 16px; } }
+@media(max-width:640px),(pointer:coarse) { .flow-console--ontology .flow-ontology-runtime .ui-btn { min-height:40px; } }
 @media(forced-colors:active) { .flow-console--ontology :is(button,a):focus-visible { outline-color:Highlight; } }

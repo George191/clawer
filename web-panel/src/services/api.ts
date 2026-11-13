@@ -5,6 +5,8 @@ import type {
   DashboardMetrics,
   LayerNode,
   LayerTable,
+  EtlObjectCatalog,
+  EtlObjectPreview,
   QueryResult,
   TaskInfo,
   TemplateInfo,
@@ -238,6 +240,12 @@ export const DASHBOARD_WS_URL = `${
 // ============================================================
 export const fetchLayers = (): Promise<LayerNode[]> =>
   client.get('/etl/layers').then((r) => unwrap<LayerNode[]>(r.data));
+
+export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number } = {}): Promise<EtlObjectCatalog> =>
+  client.get('/etl/object-types', { params }).then((r) => unwrap<EtlObjectCatalog>(r.data));
+
+export const fetchEtlObjectPreview = (schema: string, table: string): Promise<EtlObjectPreview> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview`).then((r) => unwrap<EtlObjectPreview>(r.data));
 
 export const fetchCdcStatus = (signal?: AbortSignal): Promise<CdcStatus> =>
   client.get('/cdc/status', { signal }).then((r) => unwrap<CdcStatus>(r.data));
