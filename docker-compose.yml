@@ -136,6 +136,10 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      SPIDER_PROXY_PRE_PROXY_URL: socks5h://172.18.0.1:1080
+    extra_hosts:
+      - "mongo.spider.internal:192.168.1.32"
     working_dir: /app
     volumes:
       - ./docker/kafka.crt:/etc/kafka/kafka.crt:ro

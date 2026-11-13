@@ -15,7 +15,6 @@ from curl_cffi.requests.exceptions import ProxyError
 from app.anti_crawl.adapters.base import ProxyInfo, ProxySourceAdapter
 from app.config.settings import settings
 from app.logger import get_adapter_logger
-from app.utils.runtime_control import check_control_state
 
 logger = get_adapter_logger(__name__, "zdopen_api", "proxy")
 
@@ -120,39 +119,37 @@ class ZdopenAPIAdapter(ProxySourceAdapter):
         # Do not log the URL: query parameters may contain app_id/akey.
         logger.info("Fetching proxies from Zdopen API")
 
-        while 1:
-            try:
-                client = await self._get_client()
-                response = await client.get(api_url)
-                response.raise_for_status()
-                data = response.json()
-            except curl_requests.errors.RequestsError as e:
-                logger.error("HTTP request failed: %s", e)
-                return []
-            except ValueError as e:
-                logger.error("JSON parse failed: %s", e)
-                return []
+        try:
+            client = await self._get_client()
+            response = await client.get(api_url)
+            response.raise_for_status()
+            data = response.json()
+        except curl_requests.errors.RequestsError as e:
+            logger.error("HTTP request failed: %s", e)
+            return []
+        except ValueError as e:
+            logger.error("JSON parse failed: %s", e)
+            return []
 
-            code = data.get("code", "")
-            if code == ERROR_CODE_RATE_LIMIT:
-                logger.warning(
-                    "ZdopenAPI rate limited: code=%s; retrying immediately",
-                    code,
-                )
-                await check_control_state()
-                continue
+        code = data.get("code", "")
+        if code == ERROR_CODE_RATE_LIMIT:
+            logger.warning(
+                "ZdopenAPI rate limited: code=%s; skipping this source until the next pool refresh",
+                code,
+            )
+            return []
 
-            if code == ERROR_CODE_IP_IN_USE:
-                logger.warning(
-                    "ZdopenAPI client IP already in use: code=%s; skipping this source so another configured source can be used",
-                    code,
-                )
-                return []
+        if code == ERROR_CODE_IP_IN_USE:
+            logger.warning(
+                "ZdopenAPI client IP already in use: code=%s; skipping this source so another configured source can be used",
+                code,
+            )
+            return []
 
-            proxy_list = self._extract_proxy_list(data)
-            proxies = self._parse_proxy_items(proxy_list)
-            logger.info("Fetched %d proxies", len(proxies))
-            return proxies
+        proxy_list = self._extract_proxy_list(data)
+        proxies = self._parse_proxy_items(proxy_list)
+        logger.info("Fetched %d proxies", len(proxies))
+        return proxies
 
     def _extract_proxy_list(self, data: Any) -> list[dict]:
         """从 API 响应中提取代理条目列表。

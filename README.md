@@ -108,7 +108,7 @@ Redis 统一使用 `app.base.redis.RedisClient` 或 `app.storage.redis_client.Re
 未单独配置时使用 `SPIDER_TUNNEL_PROXY_URL` 作为前置入口。
 模板 `anti_crawl_enabled` 是页面、详情、资源下载和浏览器的唯一出口模式开关：
 关闭时只经过前置代理，开启时再叠加动态出口代理池；`force_direct` 不改变模式。
-失败后立即重试，启用出口池时切换出口，前置或出口不可用时不回退直连。
+采集请求失败后立即重试，启用出口池时切换出口，前置或出口不可用时不回退直连；资源下载每轮只尝试一次，失败交由后续补偿扫描处理。
 Crawler 镜像包含 Playwright 和系统 Chromium，
 部署这一基类需要重建 Crawler 镜像；仅更新 MinIO 站点源码不会安装运行依赖。
 

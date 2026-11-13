@@ -27,6 +27,7 @@ from app.logger import get_logger
 logger = get_logger(__name__)
 
 _ADAPTER_EXHAUSTION_RELOAD_COOLDOWN_SECONDS = 60.0
+_EMPTY_POOL_RELOAD_COOLDOWN_SECONDS = 60.0
 
 
 class ProxyPool:
@@ -55,6 +56,7 @@ class ProxyPool:
         self._unhealthy: list[ProxyInfo] = []
         self._load_lock: asyncio.Lock = asyncio.Lock()
         self._loaded: bool = False
+        self._next_load_at: float = 0.0
 
         # 粘性代理（除非失败否则不换）
         self._current_proxy: ProxyInfo | None = None
@@ -92,6 +94,7 @@ class ProxyPool:
             )
         self._adapters.append(adapter)
         self._loaded = False  # 重置加载状态
+        self._next_load_at = 0.0
         logger.info("Registered proxy adapter: %s", adapter.name)
 
     def unregister_adapter(self, adapter_name: str) -> None:
@@ -102,6 +105,7 @@ class ProxyPool:
         """
         self._adapters = [a for a in self._adapters if a.name != adapter_name]
         self._loaded = False
+        self._next_load_at = 0.0
         logger.info("Unregistered proxy adapter: %s", adapter_name)
 
     @property
@@ -121,10 +125,10 @@ class ProxyPool:
 
     async def ensure_loaded(self) -> None:
         """确保代理池已加载（懒加载，只加载一次）。"""
-        if not self.enabled or self._loaded:
+        if not self.enabled or self._loaded or time.monotonic() < self._next_load_at:
             return
         async with self._load_lock:
-            if self._loaded:
+            if self._loaded or time.monotonic() < self._next_load_at:
                 return
             await self._load_from_adapters()
             self._loaded = True
@@ -174,6 +178,7 @@ class ProxyPool:
                 self._proxies.append(proxy_info)
 
         if not self._proxies:
+            self._next_load_at = time.monotonic() + _EMPTY_POOL_RELOAD_COOLDOWN_SECONDS
             logger.warning("Proxy pool is empty after loading from all adapters")
             return
 
@@ -188,6 +193,7 @@ class ProxyPool:
 
         # 初始分类：全部标记为健康
         self._healthy = list(self._proxies)
+        self._next_load_at = 0.0
         logger.info(
             "Proxy pool loaded: %d total, %d healthy",
             len(self._proxies),
@@ -197,6 +203,8 @@ class ProxyPool:
     async def reload(self) -> None:
         """强制重新加载代理池（清空现有代理并从适配器重新加载）。"""
         async with self._load_lock:
+            if time.monotonic() < self._next_load_at:
+                return
             self._proxies.clear()
             self._healthy.clear()
             self._unhealthy.clear()
