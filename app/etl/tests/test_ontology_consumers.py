@@ -1,7 +1,6 @@
 """ETL/CDC ontology-registry consumers; all SQL and external clients are local fakes."""
 
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 

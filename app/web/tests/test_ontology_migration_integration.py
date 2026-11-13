@@ -138,6 +138,14 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(state.values()))
         self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS count FROM ts_meta.ddlregistry"))["count"], 2)
 
+    async def test_release_recovery_preserves_object_identity_and_can_be_reapplied(self):
+        await self.migration.migrate(self.pg, apply=True)
+        before = await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM public.ontology_objects ORDER BY id")
+        await self.migration.restore_registration(self.pg)
+        self.assertEqual(await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM ts_meta.ddlregistry ORDER BY id"), before)
+        await self.migration.migrate(self.pg, apply=True)
+        self.assertEqual(await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM public.ontology_objects ORDER BY id"), before)
+
     async def test_create_table_and_metadata_commit_or_rollback_together(self):
         await self.migration.migrate(self.pg, apply=True)
         payload = {"name": "created_people", "description": "People's : catalog", "fields": [

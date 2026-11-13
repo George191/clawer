@@ -138,11 +138,24 @@ async def migrate(pg, *, apply: bool = False) -> dict:
         return report
 
 
-async def run(apply: bool) -> int:
+async def restore_registration(pg) -> dict:
+    """Release rollback only: quiesce new processes before restoring the previous registry name."""
+    async with pg.session() as session:
+        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_metadata_migration'))"))
+        await session.execute(text("SET LOCAL lock_timeout = '5s'"))
+        if await exists(session, OLD_OBJECTS) or not await exists(session, OBJECTS):
+            raise RuntimeError("Rollback requires the migrated registry and no previous registry")
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS ts_meta"))
+        await session.execute(text("ALTER TABLE public.ontology_objects SET SCHEMA ts_meta"))
+        await session.execute(text("ALTER TABLE ts_meta.ontology_objects RENAME TO ddlregistry"))
+        return {"restored_previous_registration": True, "business_rows_read": 0, "business_rows_written": 0}
+
+
+async def run(apply: bool, restore: bool = False) -> int:
     pg = get_pg_client()
     try:
         await pg.connect(max_retries=1)
-        result = await migrate(pg, apply=apply)
+        result = await restore_registration(pg) if restore else await migrate(pg, apply=apply)
         print(json.dumps(result))
         return 0
     finally:
@@ -154,8 +167,9 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true", help="Inspect the migration plan without writes")
     group.add_argument("--apply", action="store_true", help="Migrate the catalog and persist actual table properties atomically")
+    group.add_argument("--restore-registration", action="store_true", help="Release recovery only; stop all new processes first")
     args = parser.parse_args()
-    return asyncio.run(run(args.apply))
+    return asyncio.run(run(args.apply, args.restore_registration))
 
 
 if __name__ == "__main__":
