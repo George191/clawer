@@ -37,7 +37,7 @@ type SelectedRecord = AutomationWorkflow | AutomationSchedule;
 const domainMeta: Record<ProductDomain, { label: string; color: string; className: string; accent: string }> = {
   'ai-collect': { label: 'Scout', color: 'purple', className: 'is-ai', accent: '#7C3AED' },
   'data-lake': { label: 'Vault', color: 'green', className: 'is-lake', accent: '#059669' },
-  'etl-pipeline': { label: 'Flow', color: 'blue', className: 'is-etl', accent: '#0EA5E9' },
+  'etl-pipeline': { label: 'Ontology', color: 'blue', className: 'is-etl', accent: '#0EA5E9' },
   'data-cockpit': { label: 'Atlas', color: 'gold', className: 'is-cockpit', accent: '#F59E0B' },
   'knowledge-graph': { label: 'Graph', color: 'purple', className: 'is-graph', accent: '#8B5CF6' },
   'knowledge-rag': { label: 'RAG', color: 'cyan', className: 'is-rag', accent: '#0D9488' },

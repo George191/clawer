@@ -176,8 +176,8 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   },
   'etl-pipeline': {
     key: 'etl-pipeline',
-    label: 'ETL Pipeline',
-    shortLabel: 'Flow',
+    label: 'Ontology',
+    shortLabel: 'Ontology',
     enabled: true,
     icon: <ApartmentOutlined />,
     defaultPath: '/flow',

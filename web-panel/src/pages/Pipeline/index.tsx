@@ -823,7 +823,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             <section  className="flow-layer-main">
                 {(loading || tablesLoading) && <Spin size="small" />}
                 {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
-                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/flow')}>Flow</button><RightOutlined /><span>{pathname === '/flow/transforms' ? 'Transformations' : 'Schemas'}</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}</nav>
+                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/flow')}>Ontology</button><RightOutlined /><span>{pathname === '/flow/transforms' ? 'Transformations' : 'Schemas'}</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}</nav>
                 <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
                     <div  className="flow-layer-glyph"><PostgresIcon  className="flow-layer-glyph-svg"  /></div>
                     <h3>{schemaAliases[selectedSchema] || selectedSchema || 'No schema selected'}<em>{selectedSchema}{schemaNode?.database ? ` · ${schemaNode.database}` : ''}</em></h3>
