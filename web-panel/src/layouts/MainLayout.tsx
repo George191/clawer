@@ -759,7 +759,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   className={currentTenantOptions.length > 1 ? 'header-context-button is-enabled' : 'header-context-button'}
                   style={{ color: palette.secondary, border: 'none', cursor: currentTenantOptions.length > 1 ? 'pointer' : 'default', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 0 }}
                 >
-                  <span className="header-context-label" style={{ color: palette.muted }}>TENANT:</span><span className="header-context-value">{currentTenantName}</span><DownOutlined className="header-context-arrow" style={{ color: currentTenantOptions.length > 1 ? palette.secondary : palette.muted }} />
+                  <span className="header-context-label" style={{ color: palette.muted }}>TENANT:</span><span className="header-context-value" title={currentTenantName}>{currentTenantName}</span><DownOutlined className="header-context-arrow" style={{ color: currentTenantOptions.length > 1 ? palette.secondary : palette.muted }} />
                 </Button>
               </Dropdown>
               <Dropdown
@@ -776,7 +776,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   className={currentTeamOptions.length > 1 ? 'header-context-button is-enabled' : 'header-context-button'}
                   style={{ color: palette.secondary, border: 'none', cursor: currentTeamOptions.length > 1 ? 'pointer' : 'default', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 0 }}
                 >
-                  <span className="header-context-label" style={{ color: palette.muted }}>TEAM:</span><span className="header-context-value">{currentTeamName}</span><DownOutlined className="header-context-arrow" style={{ color: currentTeamOptions.length > 1 ? palette.secondary : palette.muted }} />
+                  <span className="header-context-label" style={{ color: palette.muted }}>TEAM:</span><span className="header-context-value" title={currentTeamName}>{currentTeamName}</span><DownOutlined className="header-context-arrow" style={{ color: currentTeamOptions.length > 1 ? palette.secondary : palette.muted }} />
                 </Button>
               </Dropdown>
               <Dropdown
@@ -788,6 +788,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
                   type="text"
                   size="small"
                   className="header-context-button is-enabled project-domain-switch"
+                  aria-label={`Switch project domain: ${activeProject.shortLabel}`}
                   style={{ color: palette.secondary, background: 'transparent', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', lineHeight: 1, gap: 10 }}
                 >
                   <span className="header-context-label" style={{ color: palette.muted }}>DOMAIN:</span>
@@ -811,7 +812,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               style={{ color: isAutomationSurface ? palette.text : palette.secondary, background: isAutomationSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
             >
               <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><ThunderboltOutlined style={{ display: 'block', fontSize: 14 }} /></span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Automation</span>
+              <span className="header-shortcut-label" style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Automation</span>
             </Button>
             <Button
               type="text"
@@ -822,7 +823,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               style={{ color: isPlatformManagementSurface ? palette.text : palette.secondary, background: isPlatformManagementSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
             >
               <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><SafetyCertificateOutlined style={{ display: 'block', fontSize: 14 }} /></span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Access</span>
+              <span className="header-shortcut-label" style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Access</span>
             </Button>
             <Button
               type="text"
@@ -833,7 +834,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               style={{ color: isSystemSettingsSurface ? palette.text : palette.secondary, background: isSystemSettingsSurface ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
             >
               <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><SettingOutlined style={{ display: 'block', fontSize: 14 }} /></span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Settings</span>
+              <span className="header-shortcut-label" style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Settings</span>
             </Button>
           </div>
           <Dropdown

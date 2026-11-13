@@ -76,19 +76,18 @@
 .sp-login-form-wrap .ui-btn-lg { height: 36px; padding: 0 15px; font-size: 13px; }
 .sp-sso-button { height: 36px; }
 .sp-login-options { font-size: 12px; }
-.sp-login-options .ui-checkbox + span { font-size: 12px; padding-inline-start: 7px; }
+.sp-login-options .ui-checkbox + span { font-size: 12px; }
 .sp-login-options a { color: #2dd4bf; }
 .sp-login-options a:hover { color: #5eead4; }
-/* Compact 14px checkbox, custom centered check mark */
-.sp-login-options .ui-checkbox-inner { width: 14px; height: 14px; border-radius: 3px; }
-.sp-login-options .ui-checkbox-inner:after { top: 50%; left: 50%; margin: 0; width: 5px; height: 8px; border: solid #fff; border-width: 0 1.5px 1.5px 0; transform: translate(-50%, -56%) rotate(45deg) scale(0); }
-.sp-login-options .ui-checkbox-checked .ui-checkbox-inner:after { opacity: 1; transform: translate(-50%, -56%) rotate(45deg) scale(1); }
+/* Match the compact login checkbox to the shared native check mark. */
+.sp-login-options .ui-checkbox { width: 14px; height: 14px; --ui-checkbox-check: #fff; --ui-primary: #0d9488; }
+.sp-login-options .ui-checkbox-inner { width: 100%; height: 100%; border-radius: 3px; }
 /* Sign in button and checkbox checked state follow the teal accent */
 .sp-login-form-wrap .ui-btn-primary { background: #0d9488 !important; border-color: #0d9488 !important; }
 .sp-login-form-wrap .ui-btn-primary:not(:disabled):hover { background: #14b8a6 !important; border-color: #14b8a6 !important; }
 .sp-login-form-wrap .ui-btn-primary:not(:disabled):active { background: #0f766e !important; border-color: #0f766e !important; }
-.sp-login-options .ui-checkbox-checked .ui-checkbox-inner { background-color: #0d9488 !important; border-color: #0d9488 !important; }
-.sp-login-options .ui-checkbox:hover .ui-checkbox-inner { border-color: #14b8a6 !important; }
+.sp-login-options .ui-checkbox-input:checked + .ui-checkbox-inner { background-color: #0d9488 !important; border-color: #0d9488 !important; }
+.sp-login-options .ui-checkbox-wrapper:not(.ui-checkbox-wrapper-disabled):hover .ui-checkbox-inner { border-color: #14b8a6 !important; }
 @media (max-width: 960px) { .sp-login { display: block; background: #070d16; } .sp-login-space, .sp-login-graph, .sp-login-background-loader { display: none; } .sp-login-panel { min-height: 100%; } }
 @media (max-width: 760px) { .sp-login-panel { padding: 24px 18px; } .sp-login-form-wrap { padding: 26px 22px 24px; }.sp-login-form-brand { gap: 10px; }.sp-login-form-wrap h2 { font-size: clamp(22px, 6vw, 28px); }.sp-login-options { gap: 12px; font-size: 12px; }.sp-login-security-note { text-align: center; line-height: 1.6; } }
 @media (prefers-reduced-motion: reduce) { .sp-login-copy, .sp-login-panel, .sp-login-background-loader ~ .sp-login-space, .sp-login-background-loader .sp-auth-loading-satellite { animation: none !important; } .sp-login-background-loader .sp-auth-loading-satellite { will-change: auto; } .sp-login-background-loader, .sp-login:has(> .sp-login-background-loader) > :is(.sp-login-graph, .sp-login-panel) { transition: none !important; } }

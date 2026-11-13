@@ -152,13 +152,26 @@ body {
   white-space: nowrap;
 }
 .header-context-value {
-  display: inline-flex;
-  align-items: center;
+  display: block;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 20px;
   white-space: nowrap;
   font-size: 12px;
 }
 .header-shortcut-button > span:last-child { font-size: 12px; }
+@media (min-width: 768px) and (max-width: 1100px) {
+  .header-context-group { gap: 8px !important; }
+  .header-context-button:not(.project-domain-switch) .header-context-label { display: none; }
+  .header-context-button:not(.project-domain-switch) .header-context-value { max-width: 100px; }
+}
+@media (max-width: 1100px) {
+  .header-shortcut-label { display: none !important; }
+}
+@media (min-width: 768px) and (max-width: 900px) {
+  .project-domain-switch .header-context-label { display: none; }
+}
 .header-context-group .ui-dropdown-trigger {
   display: inline-flex;
   align-items: center;

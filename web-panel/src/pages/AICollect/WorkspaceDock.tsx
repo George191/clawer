@@ -6,7 +6,6 @@ import {
   BellOutlined,
   BugOutlined,
   CalendarOutlined,
-  CaretRightOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   CloseCircleOutlined,
@@ -23,6 +22,7 @@ import {
   FileTextOutlined,
   LineChartOutlined,
   PauseCircleOutlined,
+  PlayFilled,
   PlusOutlined,
   PushpinOutlined,
   RadarChartOutlined,
@@ -31,7 +31,6 @@ import {
   RocketOutlined,
   SearchOutlined,
   SettingOutlined,
-  StopOutlined,
   SyncOutlined,
   UploadOutlined,
   UserOutlined,
@@ -3218,7 +3217,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   aria-label="启动任务"
                   onClick={() => handleStartTask(selectedTask.key)}
                 >
-                  <CaretRightOutlined />
+                  <PlayFilled />
                 </button>
               </Tooltip>
             ) : null}
@@ -3266,7 +3265,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   aria-label="继续任务"
                   onClick={() => handleResumeTask(selectedTask.key)}
                 >
-                  <CaretRightOutlined />
+                  <PlayFilled />
                 </button>
               </Tooltip>
             ) : null}
@@ -3278,7 +3277,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
                   aria-label="取消任务"
                   onClick={() => handleCancelTask(selectedTask.key)}
                 >
-                  <StopOutlined />
+                  <CloseCircleOutlined />
                 </button>
               </Tooltip>
             ) : null}
@@ -3391,26 +3390,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
               <div className="workspace-dock-log-caption">
                 Logs
                 {logRunOptions.length ? (
-                  <span
-                    className="workspace-dock-log-run-trigger"
-                    role="button"
-                    tabIndex={0}
-                    aria-expanded={taskLogRunOpen}
-                    onMouseDownCapture={(event) => {
-                      if ((event.target as HTMLElement).closest('.workspace-dock-log-run-popup')) {
-                        return;
-                      }
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setTaskLogRunOpen((current) => !current);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        setTaskLogRunOpen((current) => !current);
-                      }
-                    }}
-                  >
+                  <span className="workspace-dock-log-run-trigger">
                     <Select
                       className="workspace-dock-log-run-select"
                       popupClassName="workspace-dock-log-run-popup"
@@ -4149,6 +4129,7 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         }
         .workspace-dock-detail-icon-btn {
           border: none;
+          padding: 0;
           background: transparent;
           color: ${aura.subtle};
           width: 26px;
@@ -4159,6 +4140,9 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           justify-content: center;
           cursor: pointer;
           transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+        }
+        .workspace-dock-detail-icon-btn .ui-icon {
+          font-size: 14px;
         }
         .workspace-dock-detail-icon-btn:hover:not(:disabled) {
           color: ${aura.text};
