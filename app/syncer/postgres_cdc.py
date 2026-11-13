@@ -53,7 +53,7 @@ def _connector_tables() -> str:
 
 _ODS_CURRENT_SQL = """
 SELECT DISTINCT n.nspname,c.relname
-FROM ts_meta.ddlregistry r
+FROM public.ontology_objects r
 JOIN pg_namespace n ON n.nspname=r.schema_name
 JOIN pg_class c ON c.relnamespace=n.oid AND c.relname=r.table_name
 WHERE r.layer='ods' AND r.table_role='current' AND r.is_active
@@ -205,10 +205,10 @@ async def prepare_database(pg: PostgresClient) -> None:
             await session.execute(text(f"ALTER TABLE {name} REPLICA IDENTITY FULL"))
         if settings.pg_cdc_url:
             reader = _identifier(make_url(settings.pg_cdc_url).username or "")
-            await session.execute(text(f"GRANT USAGE ON SCHEMA ts_meta TO {reader}"))
+            await session.execute(text(f"GRANT USAGE ON SCHEMA public TO {reader}"))
             await session.execute(text(
                 "GRANT SELECT (layer,table_role,is_active,schema_name,table_name) "
-                f"ON ts_meta.ddlregistry TO {reader}"
+                f"ON public.ontology_objects TO {reader}"
             ))
 
 

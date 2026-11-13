@@ -92,6 +92,8 @@
 .flow-ontology__asset-main:focus-visible { outline-offset: -3px; }
 .flow-ontology__asset-icon { display: inline-grid; flex: none; place-items: center; width: 30px; height: 30px; border-radius: 3px; background: var(--asset-color, var(--ontology-primary)); color: #fff; font-size: 16px; line-height: 1; }
 .flow-ontology__asset-icon > .ui-icon, .flow-ontology__asset-icon svg { width: 16px; height: 16px; font-size: 16px; line-height: 1; }
+.flow-ontology__asset-icon > .workspace-glyph { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: inherit !important; font-size: 16px; line-height: 1; }
+.flow-ontology__asset-icon .workspace-glyph .ui-icon { width: 16px; height: 16px; font-size: 16px; line-height: 1; }
 .flow-ontology__asset-icon svg { stroke-width: 1.5; }
 .flow-ontology__asset-name { flex: 1; min-width: 0; }
 .flow-ontology__asset-name > span { display: flex; align-items: center; gap: 7px; min-width: 0; }
@@ -162,6 +164,8 @@
 button.flow-ontology__linked-row:hover { background: var(--ontology-elevated); }
 .flow-ontology__linked-icon { display: inline-grid; flex: 0 0 16px; place-items: center; width: 16px; height: 16px; border-radius: 2px; background: var(--asset-color, var(--ontology-primary)); color: #fff; font-size: 12px; }
 .flow-ontology__linked-icon > .ui-icon, .flow-ontology__linked-icon svg { width: 12px; height: 12px; font-size: 12px; line-height: 1; }
+.flow-ontology__linked-icon > .workspace-glyph { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; color: inherit !important; font-size: 12px; line-height: 1; }
+.flow-ontology__linked-icon .workspace-glyph .ui-icon { width: 12px; height: 12px; font-size: 12px; line-height: 1; }
 .flow-ontology__linked-icon svg { stroke-width: 1.5; }
 .flow-ontology__linked-row > span:not(.flow-ontology__linked-icon) { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
 .flow-ontology__preview-back { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; margin: 8px 10px 0; padding: 2px 0; border: 0; background: none; color: var(--ontology-link) !important; font-size: 12px; }

@@ -39,8 +39,9 @@ from app.base.kafka import (
 )
 from app.config.settings import settings
 from app.etl.schema.layout import partition_bounds, schema_name_for
+from app.etl.schema.ontology import sync_object_metadata
 from app.etl.schema.registry import (
-    ensure_ddlregistry_table,
+    ensure_ontology_tables,
     get_registered_ddl,
     get_registered_ddl_record,
 )
@@ -176,7 +177,7 @@ class ETLBase:
         await self._pg.execute(
             f"CREATE SCHEMA IF NOT EXISTS {schema_name_for(self._layer, self._table_role)}"
         )
-        await ensure_ddlregistry_table(self._pg)
+        await ensure_ontology_tables(self._pg)
         for table in self._handlers:
             if await get_registered_ddl(self._pg, self._layer, table, self._table_role):
                 await self._ensure_registered_table(table, self._table_role, create_partitions=False)
@@ -229,6 +230,9 @@ class ETLBase:
         # optional indexes over their historical data on every worker startup.
         if not existing or existing["relation"] is None:
             await self._pg.init_schema([ddl_record["ddl_sql"]])
+        schema_name, table_name = self._table_fqn(table, table_role).split(".")
+        async with self._pg.session() as session:
+            await sync_object_metadata(session, schema_name, table_name)
         if table_role == "current" and settings.etl_output_mode == "debezium":
             await self._ensure_cdc_identity(self._table_fqn(table, table_role))
         logger.info(

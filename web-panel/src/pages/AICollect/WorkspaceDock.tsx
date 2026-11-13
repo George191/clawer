@@ -120,7 +120,9 @@ type TaskLogLevel = 'info' | 'ok' | 'warn';
 type SiteKind = 'acticle' | 'news' | 'patent' | 'intelligence' | 'financial_report' | 'social_media' | 'contract' | 'tender' | 'warning' | 'signal' | 'game' | 'system' | 'generic'
   | 'satellite' | 'constellation' | 'orbital' | 'debris' | 'debrisevents' | 'frequency'
   | 'launchinfo' | 'launchsites' | 'launchvehicles' | 'groundstations' | 'organizations' | 'vulnerability'
-  | 'account' | 'company' | 'filing' | 'financial_fact' | 'search_result';
+  | 'account' | 'company' | 'filing' | 'financial_fact' | 'search_result'
+  | 'organization' | 'filing_document' | 'navwarn' | 'tweet'
+  | 'social_account' | 'social_content' | 'social_hashtag' | 'social_content_hashtag' | 'social_interaction';
 
 interface TemplateDraft {
   adapter: string;
@@ -757,12 +759,19 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
   acticle: { icon: <FileTextOutlined />, label: '文章', tint: '#8AB4FF' },
   financial_report: { icon: <FinancialReportGlyph />, label: 'Financial report', tint: '#69D3B0' },
   social_media: { icon: <SocialMediaGlyph />, label: 'Social media', tint: '#75CBFF' },
+  social_account: { icon: <UserOutlined />, label: 'Social account', tint: '#8DCFE8' },
+  social_content: { icon: <SocialMediaGlyph />, label: 'Social content', tint: '#75CBFF' },
+  social_hashtag: { icon: <SocialMediaGlyph />, label: 'Social hashtag', tint: '#75CBFF' },
+  social_content_hashtag: { icon: <SocialMediaGlyph />, label: 'Content hashtag', tint: '#75CBFF' },
+  social_interaction: { icon: <SocialMediaGlyph />, label: 'Social interaction', tint: '#75CBFF' },
+  tweet: { icon: <SocialMediaGlyph />, label: 'Tweet', tint: '#75CBFF' },
   contract: { icon: <ContractGlyph />, label: '合同', tint: '#74C7A5' },
   tender: { icon: <TenderGlyph />, label: '招标', tint: '#E8BB73' },
   news: { icon: <ReadOutlined />, label: '新闻', tint: '#BFA8FF' },
   patent: { icon: <ExperimentOutlined />, label: '专利', tint: '#8AB4FF' },
   intelligence: { icon: <RadarChartOutlined />, label: '情报', tint: '#7DD3FC' },
   warning: { icon: <BellOutlined />, label: '告警', tint: '#F6C35B' },
+  navwarn: { icon: <BellOutlined />, label: 'Navigational warning', tint: '#F6C35B' },
   signal: { icon: <DeploymentUnitOutlined />, label: '信号', tint: '#65D5A3' },
   game: { icon: <GamepadGlyph />, label: '游戏', tint: '#FFFFFF' },
   satellite: { icon: <SatelliteGlyph />, label: '卫星基础信息', tint: '#80BDFF' },
@@ -776,15 +785,19 @@ const siteKindMeta: Record<SiteKind, { icon: React.ReactNode; label: string; tin
   launchvehicles: { icon: <RocketOutlined />, label: '运载火箭', tint: '#F2A66F' },
   groundstations: { icon: <GroundStationGlyph />, label: '地面站', tint: '#7BCDD0' },
   organizations: { icon: <ApartmentOutlined />, label: '组织机构', tint: '#9DB5EE' },
+  organization: { icon: <ApartmentOutlined />, label: 'Organization', tint: '#9DB5EE' },
   vulnerability: { icon: <BugOutlined />, label: '漏洞', tint: '#EF8FB1' },
   account: { icon: <UserOutlined />, label: '账号', tint: '#8DCFE8' },
   company: { icon: <BankOutlined />, label: '公司', tint: '#AFB9ED' },
   filing: { icon: <FileTextOutlined />, label: '申报文件', tint: '#9AD8B2' },
+  filing_document: { icon: <FileTextOutlined />, label: 'Filing document', tint: '#9AD8B2' },
   financial_fact: { icon: <LineChartOutlined />, label: '财务指标', tint: '#E4CB86' },
   search_result: { icon: <SearchOutlined />, label: '搜索结果', tint: '#81D8D0' },
   system: { icon: <SettingOutlined />, label: '系统', tint: '#A0AEC0' },
   generic: { icon: <CodeOutlined />, label: '通用', tint: '#A0AEC0' },
 };
+
+const siteKindNames = (Object.keys(siteKindMeta) as SiteKind[]).sort((left, right) => right.length - left.length);
 
 const siteProfileRegistry: Record<string, SiteProfile> = {
   acticle_wechat: { kind: 'acticle', brand: 'WeChat', hue: '#07C160' },
@@ -986,13 +999,13 @@ export const inferSiteKind = (value: string, fallback?: string): SiteKind => {
   // Layer tables carry warehouse prefixes and partition suffixes
   // (ods_contract_p31); strip them so the data type lookup still hits.
   const stripped = text
-    .replace(/^(ods|raw|dwd|dim|ads|stg|etl|tmp|dw|dm)_/, '')
+    .replace(/^(rds|ods|raw|dwd|dws|dim|ads|task|stg|etl|tmp|dw|dm)_/, '')
     .replace(/_p\d{1,3}$/, '');
   if (text === 'other') return 'generic';
   for (const key of [text, stripped]) {
     if (Object.prototype.hasOwnProperty.call(siteKindMeta, key)) return key as SiteKind;
     if (Object.prototype.hasOwnProperty.call(siteProfileRegistry, key)) return siteProfileRegistry[key].kind;
-    const namedKind = (Object.keys(siteKindMeta) as SiteKind[]).find((kind) => (
+    const namedKind = siteKindNames.find((kind) => (
       key.startsWith(`${kind}_`) || key.endsWith(`_${kind}`)
     ));
     if (namedKind) return namedKind;

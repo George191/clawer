@@ -45,6 +45,10 @@ _USER_SCHEMAS = {"etl", "web", "meta"}
 
 
 def include_name(name, type_, parent_names):
+    # Ontology owns these table definitions and its explicit metadata migration.
+    if type_ == "table" and parent_names.get("schema_name") in {None, "public"}:
+        if name in {"ontology_objects", "ontology_object_properties", "ontology_object_relations"}:
+            return False
     if type_ != "schema":
         return True
     if name is None or name == "public":

@@ -19,6 +19,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.config.settings import settings
 from app.etl.cdc import cdc_schemas
+from app.etl.schema.ontology import resource_group, sync_object_metadata
 from app.storage.postgres_client import get_pg_client
 from app.web.core.config import settings as web_settings
 from app.web.services.etl_layers import (
@@ -268,6 +269,10 @@ class EtlWorkspace:
             raise
         except DBAPIError as error:
             code = getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
+            if code == "42P01" and any(f"public.{name}" in str(error.statement) for name in (
+                "ontology_objects", "ontology_object_properties", "ontology_object_relations"
+            )):
+                raise HTTPException(503, "Ontology metadata is not initialized") from error
             if code in {"23505", "42P07", "42P06", "42710", "2BP01", "23503", "3F000"}:
                 raise HTTPException(409, "Database object conflicts with existing data or dependencies") from error
             if code and (code.startswith("22") or code.startswith("23") or code.startswith("42")):
@@ -353,7 +358,26 @@ class EtlWorkspace:
         async with self._session() as session:
             await self._schema_exists(session, schema)
             if target != schema:
+                managed = await session.execute(text("""
+                    SELECT 1 FROM public.ontology_objects
+                    WHERE schema_name = :schema AND ddl_sql <> '' LIMIT 1
+                """), {"schema": schema})
+                if managed.scalar_one_or_none() is not None:
+                    raise HTTPException(409, "Schemas with managed object DDL cannot be renamed; set an alias instead")
                 await session.execute(text(f"ALTER SCHEMA {quote_identifier(schema)} RENAME TO {quote_identifier(target)}"))
+                target_layer = target[3:].removesuffix("_hist")
+                await session.execute(text("""
+                    UPDATE public.ontology_objects SET schema_name = :target, layer = :layer,
+                        table_role = :table_role, resource_group = :resource_group,
+                        updated_at = now() WHERE schema_name = :schema
+                """), {"schema": schema, "target": target, "layer": target_layer,
+                    "table_role": "history" if target.endswith("_hist") else "current",
+                    "resource_group": resource_group(target_layer)})
+                for side in ("source", "target"):
+                    await session.execute(text(f"""
+                        UPDATE public.ontology_object_relations SET {side}_schema = :target,
+                            updated_at = now() WHERE {side}_schema = :schema
+                    """), {"schema": schema, "target": target})
                 if await self._exists(session, "flow_publications"):
                     await session.execute(text("UPDATE public.flow_publications SET schema_name = :target WHERE schema_name = :schema"), {"target": target, "schema": schema})
                 if await self._exists(session, "flow_handler_drafts"):
@@ -376,6 +400,8 @@ class EtlWorkspace:
         async with self._session() as session:
             await self._schema_exists(session, schema)
             await session.execute(text(f"DROP SCHEMA {quote_identifier(schema)} RESTRICT"))
+            await session.execute(text("DELETE FROM public.ontology_object_relations WHERE source_schema = :schema OR target_schema = :schema"), {"schema": schema})
+            await session.execute(text("DELETE FROM public.ontology_objects WHERE schema_name = :schema"), {"schema": schema})
             if await self._exists(session, "flow_publications"):
                 await session.execute(text("DELETE FROM public.flow_publications WHERE schema_name = :schema"), {"schema": schema})
             if await self._exists(session, "flow_handler_drafts"):
@@ -391,6 +417,9 @@ class EtlWorkspace:
             await self._schema_exists(session, schema)
             for statement in statements:
                 await session.execute(text(statement.replace(":", r"\:")))
+            await sync_object_metadata(session, schema, payload["name"],
+                provenance="flow:create_table", description=payload.get("description") or (payload.get("options") or {}).get("comment"),
+                ddl_sql=";\n".join(statements) + ";\n")
         return await self._layers.get_table(schema, payload["name"])
 
     async def _write_row(self, layer: str, table: str, payload: dict[str, Any], delete: bool) -> dict[str, Any]:

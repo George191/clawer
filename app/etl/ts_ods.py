@@ -24,7 +24,7 @@ from app.etl.schema.catalogs import (
     validate_table_name,
 )
 from app.etl.schema.registry import (
-    ensure_ddlregistry_table,
+    ensure_ontology_tables,
     get_registered_ddl,
     save_registered_ddl,
 )
@@ -55,7 +55,7 @@ class TsOds(ETLBase):
 
     async def _on_init_schema(self) -> None:
         await self._pg.execute("CREATE SCHEMA IF NOT EXISTS ts_ods")
-        await ensure_ddlregistry_table(self._pg)
+        await ensure_ontology_tables(self._pg)
         for table in CATALOG_ODS_COLUMNS:
             if not self._table_name or table == self._table_name:
                 await self._ensure_registered_table(table, "current", create_partitions=False)

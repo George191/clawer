@@ -7,14 +7,14 @@ from typing import Any
 
 from sqlalchemy import text
 
-RELATION_TABLE = "ts_meta.object_relations"
+RELATION_TABLE = "public.ontology_object_relations"
 CARDINALITIES = {"one_to_one", "one_to_many", "many_to_one", "many_to_many"}
 _FIELDS = ("name", "source_schema", "source_table", "source_fields", "target_schema",
            "target_table", "target_fields", "relationship_kind", "cardinality", "description",
            "provenance", "enabled")
 OBJECT_RELATIONS_DDL_STATEMENTS = (
-    "CREATE SCHEMA IF NOT EXISTS ts_meta",
-    """CREATE TABLE IF NOT EXISTS ts_meta.object_relations (
+    "CREATE SCHEMA IF NOT EXISTS public",
+    """CREATE TABLE IF NOT EXISTS public.ontology_object_relations (
         id BIGSERIAL PRIMARY KEY,
         name TEXT NOT NULL UNIQUE,
         source_schema TEXT NOT NULL,
@@ -45,10 +45,10 @@ OBJECT_RELATIONS_DDL_STATEMENTS = (
         CHECK (length(provenance) > 0),
         UNIQUE (source_schema, source_table, source_fields, target_schema, target_table, target_fields)
     )""",
-    """CREATE INDEX IF NOT EXISTS idx_object_relations_target
-        ON ts_meta.object_relations (target_schema, target_table) WHERE enabled""",
-    """CREATE INDEX IF NOT EXISTS idx_object_relations_source
-        ON ts_meta.object_relations (source_schema, source_table) WHERE enabled""",
+    """CREATE INDEX IF NOT EXISTS idx_ontology_object_relations_target
+        ON public.ontology_object_relations (target_schema, target_table) WHERE enabled""",
+    """CREATE INDEX IF NOT EXISTS idx_ontology_object_relations_source
+        ON public.ontology_object_relations (source_schema, source_table) WHERE enabled""",
 )
 OBJECT_RELATIONS_DDL = ";\n\n".join(OBJECT_RELATIONS_DDL_STATEMENTS) + ";\n"
 
@@ -107,12 +107,17 @@ async def read_object_relations(session, schema: str, table: str) -> list[dict[s
     result = await session.execute(text("""
         SELECT r.name, r.source_schema, r.source_table, r.source_fields AS columns,
                r.target_schema, r.target_table, r.target_fields AS referenced_columns,
-               r.relationship_kind, r.cardinality, r.description, r.provenance
-        FROM ts_meta.object_relations r
+               r.relationship_kind, r.cardinality, r.description, r.provenance,
+               so.data_type AS source_data_type, target_object.data_type AS target_data_type
+        FROM public.ontology_object_relations r
         JOIN pg_namespace sn ON sn.nspname = r.source_schema
         JOIN pg_class sc ON sc.relnamespace = sn.oid AND sc.relname = r.source_table
         JOIN pg_namespace tn ON tn.nspname = r.target_schema
         JOIN pg_class tc ON tc.relnamespace = tn.oid AND tc.relname = r.target_table
+        LEFT JOIN public.ontology_objects so ON so.schema_name = sn.nspname
+            AND so.table_name = sc.relname AND so.is_active
+        LEFT JOIN public.ontology_objects target_object ON target_object.schema_name = tn.nspname
+            AND target_object.table_name = tc.relname AND target_object.is_active
         WHERE r.enabled AND ((r.source_schema = :schema AND r.source_table = :table)
                          OR (r.target_schema = :schema AND r.target_table = :table))
           AND sn.nspname ~ '^ts_[a-z0-9_]+$' AND sn.nspname NOT IN ('ts_meta','ts_meta_hist')
@@ -170,7 +175,7 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, appl
         raise ValueError("Duplicate relationship field mapping, including a reverse definition")
     async with pg.session() as session:
         if apply:
-            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('ts_meta.object_relations'))"))
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_object_relations'))"))
         else:
             await session.execute(text("SET TRANSACTION READ ONLY"))
         installed = await _installed(session)
@@ -190,7 +195,7 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, appl
                     raise ValueError(f'Relationship {row["name"]} has a missing table or {side} field')
         existing = {}
         if installed:
-            result = await session.execute(text("SELECT " + ", ".join(_FIELDS) + " FROM ts_meta.object_relations ORDER BY name"))
+            result = await session.execute(text("SELECT " + ", ".join(_FIELDS) + " FROM public.ontology_object_relations ORDER BY name"))
             existing = {item["name"]: dict(item) for item in result.mappings()}
         existing_mappings = {relation_mapping({**row, "columns": row["source_fields"],
             "referenced_columns": row["target_fields"]}): name for name, row in existing.items()}
@@ -208,7 +213,7 @@ async def manage_object_relations(pg, definitions: list[dict[str, Any]], *, appl
                 if row["name"] in changes["unchanged"]:
                     continue
                 await session.execute(text("""
-                    INSERT INTO ts_meta.object_relations (name, source_schema, source_table, source_fields,
+                    INSERT INTO public.ontology_object_relations (name, source_schema, source_table, source_fields,
                         target_schema, target_table, target_fields, relationship_kind, cardinality,
                         description, provenance, enabled)
                     VALUES (:name, :source_schema, :source_table, CAST(:source_fields AS text[]),

@@ -89,6 +89,9 @@ export interface EtlObjectType {
   displayName: string;
   description: string;
   dataType: string;
+  dataTypeSource?: string;
+  descriptionSource?: string;
+  resourceGroup?: 'ingestion' | 'processing' | 'serving' | 'other';
   objectCount: number;
   objectCountEstimated: boolean;
   propertiesCount: number;
@@ -121,6 +124,7 @@ export interface EtlLinkedObjectType {
   table: string;
   name: string;
   displayName: string;
+  dataType?: string;
   direction: 'incoming' | 'outgoing' | 'both';
   constraints: Array<{
     name: string;

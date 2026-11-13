@@ -23,7 +23,7 @@ from app.etl.schema.object_relations import (
 )
 from app.web.tests.test_etl_object_types import Result, foreign, service, summary
 
-SEEDS = json.loads((Path(__file__).resolve().parents[2] / "etl/schema/object_relations.seed.json").read_text())
+SEEDS = json.loads((Path(__file__).resolve().parents[2] / "etl/schema/object_relations.seed.json").read_text(encoding="utf-8"))
 
 
 def logical(row):
@@ -31,7 +31,9 @@ def logical(row):
             "target_schema": row["target_schema"], "target_table": row["target_table"],
             "columns": row["source_fields"], "referenced_columns": row["target_fields"],
             "relationship_kind": row["relationship_kind"], "cardinality": row["cardinality"],
-            "description": row["description"], "provenance": row["provenance"], "source_kind": "logical"}
+            "description": row["description"], "provenance": row["provenance"], "source_kind": "logical",
+            "source_data_type": "organization" if row["source_table"] == "ods_organization" else "filing",
+            "target_data_type": "filing_document" if row["target_table"] == "ods_filing_document" else "filing"}
 
 
 class MetadataPg:
@@ -74,14 +76,14 @@ class MetadataPg:
             return Result([{"name": name} for name in self.catalog.get((params["schema"], params["table"]), ())])
         if sql.startswith("SELECT name, source_schema"):
             return Result(list(deepcopy(self.records).values()))
-        if sql.startswith("CREATE TABLE IF NOT EXISTS ts_meta.object_relations"):
+        if sql.startswith("CREATE TABLE IF NOT EXISTS public.ontology_object_relations"):
             self.installed = True
-        elif sql.startswith("INSERT INTO ts_meta.object_relations"):
+        elif sql.startswith("INSERT INTO public.ontology_object_relations"):
             if params["name"] == self.fail_on_name:
                 raise RuntimeError("Fixture rejects a metadata write")
             self.records[params["name"]] = deepcopy(params)
         elif not sql.startswith(("SELECT pg_advisory_xact_lock", "SET TRANSACTION READ ONLY",
-                                 "CREATE SCHEMA IF NOT EXISTS ts_meta", "CREATE INDEX IF NOT EXISTS idx_object_relations_")):
+                                 "CREATE SCHEMA IF NOT EXISTS public", "CREATE INDEX IF NOT EXISTS idx_ontology_object_relations_")):
             raise AssertionError("Unexpected or non-metadata SQL: " + sql)
         return Result()
 
@@ -121,7 +123,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(pg.records[SEEDS[0]["name"]]["enabled"])
         for sql, _ in pg.calls:
             if sql.startswith("INSERT"):
-                self.assertTrue(sql.startswith("INSERT INTO ts_meta.object_relations"))
+                self.assertTrue(sql.startswith("INSERT INTO public.ontology_object_relations"))
             self.assertNotIn("ALTER TABLE", sql)
             self.assertNotIn("REFERENCES ts_ods", sql)
 
@@ -180,22 +182,24 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len([sql for sql, _ in pg.calls if sql.startswith("INSERT")]), writes)
 
     async def test_preview_includes_outgoing_logical_links_without_claiming_a_physical_constraint(self):
-        instance, _ = service(Result(scalar=False), Result([summary("ts_ods", "ods_organization", properties_count=0)]),
+        instance, _ = service(Result([summary("ts_ods", "ods_organization", properties_count=0)]),
                               Result([]), Result(scalar=True), Result([logical(row) for row in SEEDS[:2]]))
         result = await instance.preview("ods", "ods_organization")
         self.assertEqual(len(result["linkedObjectTypes"]), 2)
         linked = result["linkedObjectTypes"][0]
         self.assertEqual(linked["direction"], "outgoing")
+        self.assertEqual(linked["dataType"], "filing")
         self.assertEqual(linked["constraints"], [])
         self.assertEqual(linked["relationships"][0]["sourceKind"], "logical")
         self.assertEqual(linked["relationships"][0]["cardinality"], "one_to_many")
         self.assertIn("Declared SEC EDGAR", linked["relationships"][0]["provenance"])
 
     async def test_preview_includes_incoming_logical_links_and_never_queries_business_records(self):
-        instance, session = service(Result(scalar=False), Result([summary("ts_ods", "ods_filing_document", properties_count=0)]),
+        instance, session = service(Result([summary("ts_ods", "ods_filing_document", properties_count=0)]),
                                     Result([]), Result(scalar=True), Result([logical(SEEDS[2])]))
         result = await instance.preview("ts_ods", "ods_filing_document")
         self.assertEqual(result["linkedObjectTypes"][0]["id"], "ts_ods.ods_filing")
+        self.assertEqual(result["linkedObjectTypes"][0]["dataType"], "filing")
         relation = result["linkedObjectTypes"][0]["relationships"][0]
         self.assertEqual(relation["direction"], "incoming")
         self.assertEqual(relation["columns"], ["accession_number"])
@@ -203,7 +207,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any("FROM ts_ods." in sql or "JOIN ts_ods." in sql for sql, _ in session.calls))
 
     async def test_missing_registry_is_explicit_503_not_a_false_empty_relationship_list(self):
-        instance, _ = service(Result(scalar=False), Result([summary(properties_count=0)]), Result([]), Result(scalar=False))
+        instance, _ = service(Result([summary(properties_count=0)]), Result([]), Result(scalar=False))
         with self.assertRaises(HTTPException) as error:
             await instance.preview("ods", "objects")
         self.assertEqual(error.exception.status_code, 503)
@@ -235,7 +239,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_physical_constraints_remain_separate_and_unknown_fk_cardinality_is_not_guessed(self):
         fk = foreign()
-        instance, _ = service(Result(scalar=False), Result([summary(properties_count=0)]),
+        instance, _ = service(Result([summary(properties_count=0)]),
                               Result([fk]), Result(scalar=True), Result([]))
         linked = (await instance.preview("ods", "objects"))["linkedObjectTypes"][0]
         self.assertEqual(linked["constraints"][0]["name"], "fk_owner")
@@ -245,7 +249,7 @@ class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
 
     def test_storage_ddl_is_only_one_metadata_table_and_has_no_business_foreign_keys(self):
         self.assertEqual(OBJECT_RELATIONS_DDL.count("CREATE TABLE"), 1)
-        self.assertIn("CREATE TABLE IF NOT EXISTS ts_meta.object_relations", OBJECT_RELATIONS_DDL)
+        self.assertIn("CREATE TABLE IF NOT EXISTS public.ontology_object_relations", OBJECT_RELATIONS_DDL)
         self.assertNotIn("REFERENCES", OBJECT_RELATIONS_DDL)
         self.assertIn("source_fields TEXT[]", OBJECT_RELATIONS_DDL)
         self.assertIn("target_fields TEXT[]", OBJECT_RELATIONS_DDL)

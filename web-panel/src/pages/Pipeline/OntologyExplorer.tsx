@@ -4,11 +4,12 @@ import { Modal, Select } from '@/components/ui';
 import {
   ApartmentOutlined, AppstoreOutlined, ArrowLeftOutlined, ArrowRightOutlined, BarsOutlined,
   CloseOutlined, DatabaseOutlined, EyeOutlined, InfoCircleOutlined,
-  PlusOutlined, ReloadOutlined, SearchOutlined, StarFilled, StarOutlined, TableOutlined,
+  PlusOutlined, ReloadOutlined, SearchOutlined, StarFilled, StarOutlined,
 } from '@/components/ui/icons';
 import { fetchCurrentUserContext, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers } from '../../services/api';
 import type { EtlObjectCatalog, EtlObjectPreview, EtlObjectType } from '../../services/types';
 import { layerColors } from '../../theme/tokens';
+import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
 import './ontology-explorer.css';
 
 type Group = 'all' | 'favorites' | 'ingestion' | 'processing' | 'serving' | 'other';
@@ -63,7 +64,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const selectedTable = params.get('table') || '';
   const selectedId = selectedSchema && selectedTable ? `${selectedSchema}.${selectedTable}` : '';
   const source = params.get('source') || (!selectedTable ? selectedSchema : '');
-  const allProperties = params.get('tab') === 'properties';
   const page = Math.max(1, Math.min(16667, Number.parseInt(params.get('page') || '1', 10) || 1));
   const rootRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -216,7 +216,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const selectedColor = accentStyle(selectedId);
   const knownSchemas = [...new Set([...schemaNames, ...Object.keys(catalog.schemaCounts)])].filter((name) => !['ts_meta', 'ts_meta_hist'].includes(name)).sort();
   const groupTotal = Object.values(catalog.groupCounts).reduce((sum, count) => sum + count, 0);
-  const visibleProperties = data ? allProperties ? data.properties : data.properties.slice(0, 6) : [];
 
   return <div ref={rootRef} className="flow-ontology" data-testid="ontology-explorer">
     <div className="flow-ontology__workspace">
@@ -242,7 +241,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
             {sections.map((section) => <section key={section.key} className="flow-ontology__collection"><header className="flow-ontology__collection-heading"><h2>{section.label}</h2></header><div className={`flow-ontology__assets is-${view}`}>
               {section.items.map((object) => <article key={object.id} data-testid="ontology-object-card" data-object-id={object.id} data-schema={object.schema} className={`flow-ontology__asset${selectedId === object.id ? ' is-selected' : ''}`} style={accentStyle(object.id)}>
                 <button ref={(element) => { cardRefs.current[object.id] = element; }} type="button" className="flow-ontology__asset-main" aria-label={`Preview ${object.id}`} aria-pressed={selectedId === object.id} onKeyDown={(event) => moveCardFocus(event, renderedObjects.findIndex((item) => item.id === object.id))} onClick={() => selectObject(object)}>
-                  <span className="flow-ontology__asset-icon"><TableOutlined /></span><span className="flow-ontology__asset-name"><span><strong title={object.displayName}>{object.displayName}</strong><small className="flow-ontology__table-count" title={object.objectCountEstimated ? 'Estimated object count' : 'Object count'}>{object.objectCountEstimated ? '~' : ''}{number(object.objectCount)}</small></span><code>{object.schema}</code></span><span className="flow-ontology__preview-action" aria-hidden="true"><InfoCircleOutlined /></span>
+                  <span className="flow-ontology__asset-icon"><TemplateGlyph kind={inferSiteKind(object.dataType, object.table)} source={object.table} /></span><span className="flow-ontology__asset-name"><span><strong title={object.displayName}>{object.displayName}</strong><small className="flow-ontology__table-count" title={object.objectCountEstimated ? 'Estimated object count' : 'Object count'}>{object.objectCountEstimated ? '~' : ''}{number(object.objectCount)}</small></span><code>{object.schema}</code></span><span className="flow-ontology__preview-action" aria-hidden="true"><InfoCircleOutlined /></span>
                 </button><button type="button" className={`flow-ontology__favorite${favorites.includes(object.id) ? ' is-favorite' : ''}`} aria-label={`${favorites.includes(object.id) ? 'Unstar' : 'Star'} ${object.id}`} aria-pressed={favorites.includes(object.id)} onClick={() => setFavorites((current) => current.includes(object.id) ? current.filter((id) => id !== object.id) : [...current, object.id])}>{favorites.includes(object.id) ? <StarFilled /> : <StarOutlined />}</button>
               </article>)}
             </div></section>)}
@@ -253,16 +252,16 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     </div>
     {selectedId && mobilePreview && <button type="button" className="flow-ontology__preview-backdrop" aria-label="Dismiss asset preview" tabIndex={-1} onClick={closeInspector} />}
     {selectedId && <aside ref={inspectorRef} className="flow-ontology__inspector" data-testid="ontology-inspector" data-object-id={selectedId} style={selectedColor} role={mobilePreview ? 'dialog' : undefined} aria-modal={mobilePreview ? true : undefined} aria-label={`${selectedId} Object type preview`}>
-      <header className="flow-ontology__inspector-toolbar"><span className="flow-ontology__asset-icon"><TableOutlined /></span><div className="flow-ontology__preview-identity"><h2 title={selectedId}>{identity?.displayName || selectedTable}</h2><span>Object Type</span></div><button type="button" className="flow-ontology__icon-button" aria-label="Close asset preview" onClick={closeInspector}><CloseOutlined /></button></header>
+      <header className="flow-ontology__inspector-toolbar"><span className="flow-ontology__asset-icon"><TemplateGlyph kind={inferSiteKind(identity?.dataType || '', selectedTable)} source={selectedTable} /></span><div className="flow-ontology__preview-identity"><h2 title={selectedId}>{identity?.displayName || selectedTable}</h2><span>Object Type</span></div><button type="button" className="flow-ontology__icon-button" aria-label="Close asset preview" onClick={closeInspector}><CloseOutlined /></button></header>
       <div className="flow-ontology__inspector-content" aria-busy={preview.loading}>
         {preview.loading || preview.id !== selectedId ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading object type</span></div> : preview.error ? <div className="flow-ontology__notice" role="alert"><span>{preview.error}</span><button type="button" onClick={() => setPreviewVersion((value) => value + 1)}>Retry</button></div> : data && <>
           <section className="flow-ontology__preview-section"><h3>Description</h3><p className="flow-ontology__muted">{data.description || 'No description provided.'}</p></section>
           <section className="flow-ontology__preview-section"><div className="flow-ontology__visibility"><h3>Visibility</h3><span className="flow-ontology__visibility-badge is-unconfigured" title="Object-level visibility is not configured. This resource uses the existing signed-in ETL access policy."><EyeOutlined />Not configured</span></div></section>
-          <section className="flow-ontology__preview-section"><header><h3>Properties <small>({number(data.properties.length)})</small></h3>{allProperties ? <button type="button" className="flow-ontology__preview-back" onClick={() => updateQuery({ tab: null })}><ArrowLeftOutlined />Back</button> : <button type="button" onClick={() => updateQuery({ tab: 'properties' })}>View <ArrowRightOutlined /></button>}</header>
-            <div className="flow-ontology__property-list">{visibleProperties.map((property) => <div className="flow-ontology__property-row" key={property.name} title={`${property.type}${property.nullable ? ' · Nullable' : ' · Required'}${property.comment ? ` · ${property.comment}` : ''}`}><PropertyIcon type={property.type} /><span className="flow-ontology__property-name">{property.displayName}</span>{data.titleProperty === property.name && <span className="flow-ontology__property-badge is-title">Title</span>}{property.primaryKey && <span className="flow-ontology__property-badge is-primary">Primary key</span>}</div>)}</div>
+          <section className="flow-ontology__preview-section"><header><h3>Properties <small>({number(data.properties.length)})</small></h3></header>
+            <div className="flow-ontology__property-list">{data.properties.map((property) => <div className="flow-ontology__property-row" key={property.name} title={`${property.type}${property.nullable ? ' · Nullable' : ' · Required'}${property.comment ? ` · ${property.comment}` : ''}`}><PropertyIcon type={property.type} /><span className="flow-ontology__property-name">{property.displayName}</span>{data.titleProperty === property.name && <span className="flow-ontology__property-badge is-title">Title</span>}{property.primaryKey && <span className="flow-ontology__property-badge is-primary">Primary key</span>}</div>)}</div>
             {!data.properties.length && <p className="flow-ontology__muted">No properties defined.</p>}
           </section>
-          <section className="flow-ontology__preview-section"><header><h3>Linked object types <small>({number(data.linkedObjectTypes.length)})</small></h3></header><div className="flow-ontology__linked-list">{data.linkedObjectTypes.map((linked) => <button type="button" className="flow-ontology__linked-row" key={linked.id} style={accentStyle(linked.id)} title={`${linked.id} · ${linked.direction}\n${linked.relationships.map((relation) => `${relation.sourceKind === 'logical' ? 'Logical relationship' : 'Foreign key'}: ${relation.sourceSchema}.${relation.sourceTable} (${relation.columns.join(', ')}) → ${relation.targetSchema}.${relation.targetTable} (${relation.referencedColumns.join(', ')})${relation.cardinality ? ` · ${relation.cardinality.replace(/_/g, ' ')}` : ''}${relation.description ? ` · ${relation.description}` : ''}`).join('\n')}`} onClick={() => selectObject(linked)}><span className="flow-ontology__linked-icon"><TableOutlined /></span><span>{linked.displayName}</span></button>)}</div>{!data.linkedObjectTypes.length && <p className="flow-ontology__muted">No relationships defined.</p>}</section>
+          <section className="flow-ontology__preview-section"><header><h3>Linked object types <small>({number(data.linkedObjectTypes.length)})</small></h3></header><div className="flow-ontology__linked-list">{data.linkedObjectTypes.map((linked) => <button type="button" className="flow-ontology__linked-row" key={linked.id} style={accentStyle(linked.id)} title={`${linked.id} · ${linked.direction}\n${linked.relationships.map((relation) => `${relation.sourceKind === 'logical' ? 'Logical relationship' : 'Foreign key'}: ${relation.sourceSchema}.${relation.sourceTable} (${relation.columns.join(', ')}) → ${relation.targetSchema}.${relation.targetTable} (${relation.referencedColumns.join(', ')})${relation.cardinality ? ` · ${relation.cardinality.replace(/_/g, ' ')}` : ''}${relation.description ? ` · ${relation.description}` : ''}`).join('\n')}`} onClick={() => selectObject(linked)}><span className="flow-ontology__linked-icon"><TemplateGlyph kind={inferSiteKind(linked.dataType || '', linked.table)} source={linked.table} /></span><span>{linked.displayName}</span></button>)}</div>{!data.linkedObjectTypes.length && <p className="flow-ontology__muted">No relationships defined.</p>}</section>
         </>}
       </div>
       <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>

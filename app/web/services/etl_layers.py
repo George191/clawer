@@ -22,11 +22,10 @@ from app.storage.postgres_client import get_pg_client
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
 _OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
-_OBJECT_GROUP_SQL = """CASE regexp_replace(n.nspname, '_hist$', '')
-    WHEN 'ts_rds' THEN 'ingestion' WHEN 'ts_ods' THEN 'ingestion'
-    WHEN 'ts_task' THEN 'processing' WHEN 'ts_dim' THEN 'processing'
-    WHEN 'ts_dwd' THEN 'processing' WHEN 'ts_dws' THEN 'processing'
-    WHEN 'ts_ads' THEN 'serving' ELSE 'other' END"""
+_OBJECT_GROUP_SQL = "COALESCE(o.resource_group, 'other')"
+_OBJECT_METADATA_JOIN = """LEFT JOIN public.ontology_objects o
+    ON o.schema_name = n.nspname AND o.table_name = c.relname AND o.is_active"""
+_OBJECT_DESCRIPTION_SQL = "COALESCE(NULLIF(obj_description(c.oid, 'pg_class'), ''), o.description, '')"
 _OBJECT_TABLE_SQL = """n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
     AND n.nspname <> 'ts_meta_hist'
     AND c.relname ~ '^[a-z_][a-z0-9_]{0,62}$' AND c.relkind IN ('r','p')
@@ -63,6 +62,9 @@ def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
         "id": f'{row["schema"]}.{row["name"]}', "schema": row["schema"],
         "table": row["name"], "name": row["name"], "displayName": row["name"],
         "description": row["description"] or "", "dataType": row["data_type"] or "",
+        "dataTypeSource": row.get("data_type_source") or "not_configured",
+        "descriptionSource": row.get("description_source") or "not_configured",
+        "resourceGroup": row.get("resource_group") or "other",
         "objectCount": int(row["object_count"]), "objectCountEstimated": True,
         "propertiesCount": int(row["properties_count"]), "status": "available",
         "titleProperty": None, "visibility": "not_configured",
@@ -88,6 +90,8 @@ class EtlLayers:
             raise HTTPException(503, "PostgreSQL is unavailable or the query timed out") from exc
         except DBAPIError as exc:
             code = getattr(exc.orig, "sqlstate", None)
+            if code == "42P01":
+                raise HTTPException(503, "Ontology metadata is not initialized") from exc
             status = 503 if code == "57014" else 400
             raise HTTPException(status, "PostgreSQL could not complete this query") from exc
 
@@ -118,18 +122,12 @@ class EtlLayers:
     async def tables(self, layer: str, table_role: str = "current") -> list[dict[str, Any]]:
         schema = resolve_schema(layer, table_role)
         async with self.session() as session:
-            result = await session.execute(text("""
+            result = await session.execute(text(f"""
                 SELECT c.relname AS name, c.relkind = 'p' OR storage.has_children AS partitioned,
-                       (SELECT CASE WHEN count(DISTINCT a.data_type) = 1
-                                    THEN min(a.data_type) END
-                        FROM public.ai_collect_template_alias a
-                        WHERE regexp_replace(regexp_replace(c.relname,
-                                  '^(rds|ods|raw|dwd|dws|dim|ads|stg|etl|tmp|dw|dm|task)_', ''),
-                                  '_p[0-9]{1,3}$', '')
-                              IN (a.collection_name, a.template_name)) AS data_type,
-                       obj_description(c.oid, 'pg_class') AS description,
+                       o.data_type, {_OBJECT_DESCRIPTION_SQL} AS description,
                        storage.rows, storage.size
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                {_OBJECT_METADATA_JOIN}
                 CROSS JOIN LATERAL (
                     WITH RECURSIVE descendants(relid) AS (
                         SELECT c.oid
@@ -153,24 +151,28 @@ class EtlLayers:
                  "size": row["size"], "updatedAt": "", "description": row["description"] or "",
                  "rowCountEstimated": True} for row in rows]
 
-    async def _object_rows(self, session, where: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-        alias_exists = (await session.execute(text(
-            "SELECT to_regclass('public.ai_collect_template_alias') IS NOT NULL"
+    @staticmethod
+    async def _require_ontology(session) -> None:
+        installed = (await session.execute(text(
+            "SELECT to_regclass('public.ontology_objects') IS NOT NULL "
+            "AND to_regclass('public.ontology_object_properties') IS NOT NULL"
         ))).scalar_one()
-        data_type = """(SELECT CASE WHEN count(DISTINCT a.data_type) = 1
-                                THEN min(a.data_type) END
-            FROM public.ai_collect_template_alias a
-            WHERE regexp_replace(regexp_replace(c.relname,
-                  '^(rds|ods|raw|dwd|dws|dim|ads|stg|etl|tmp|dw|dm|task)_', ''),
-                  '_p[0-9]{1,3}$', '') IN (a.collection_name, a.template_name))""" if alias_exists else "NULL::text"
+        if not installed:
+            raise HTTPException(503, "Ontology metadata is not initialized")
+
+    async def _object_rows(self, session, where: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         result = await session.execute(text(f"""
             SELECT c.oid, n.nspname AS schema, c.relname AS name,
-                   obj_description(c.oid, 'pg_class') AS description,
-                   {data_type} AS data_type,
+                   {_OBJECT_DESCRIPTION_SQL} AS description,
+                   o.id AS object_id, o.data_type, o.data_type_source,
+                   CASE WHEN NULLIF(obj_description(c.oid, 'pg_class'), '') IS NOT NULL
+                        THEN 'table_comment' ELSE o.description_source END AS description_source,
+                   {_OBJECT_GROUP_SQL} AS resource_group,
                    (SELECT count(*) FROM pg_attribute a WHERE a.attrelid = c.oid
                     AND a.attnum > 0 AND NOT a.attisdropped) AS properties_count,
                    storage.object_count
             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            {_OBJECT_METADATA_JOIN}
             CROSS JOIN LATERAL (
                 WITH RECURSIVE descendants(relid) AS (
                     SELECT c.oid UNION
@@ -195,8 +197,8 @@ class EtlLayers:
         if len(search) > 1000:
             raise HTTPException(400, "Search is too long")
         params: dict[str, Any] = {"search": search.strip(), "limit": limit, "offset": offset}
-        where = _OBJECT_TABLE_SQL + """ AND position(lower(:search) in lower(
-            n.nspname || '.' || c.relname || ' ' || COALESCE(obj_description(c.oid, 'pg_class'), ''))) > 0"""
+        where = _OBJECT_TABLE_SQL + f""" AND position(lower(:search) in lower(
+            n.nspname || '.' || c.relname || ' ' || {_OBJECT_DESCRIPTION_SQL})) > 0"""
         if schema:
             params["schema"] = _object_schema(schema)
             where += " AND n.nspname = :schema"
@@ -213,15 +215,17 @@ class EtlLayers:
             params["ids"] = identifiers
             where += " AND n.nspname || '.' || c.relname = ANY(CAST(:ids AS text[]))"
         async with self.session() as session:
+            await self._require_ontology(session)
             counts = await session.execute(text(f"""
                 SELECT n.nspname AS schema, {_OBJECT_GROUP_SQL} AS resource_group, count(*) AS count
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE {where} GROUP BY n.nspname ORDER BY n.nspname
+                {_OBJECT_METADATA_JOIN}
+                WHERE {where} GROUP BY n.nspname, {_OBJECT_GROUP_SQL} ORDER BY n.nspname
             """), params)
             schema_counts: dict[str, int] = {}
             group_counts = dict.fromkeys(_OBJECT_GROUPS, 0)
             for row in counts.mappings():
-                schema_counts[row["schema"]] = int(row["count"])
+                schema_counts[row["schema"]] = schema_counts.get(row["schema"], 0) + int(row["count"])
                 group_counts[row["resource_group"]] += int(row["count"])
             total = group_counts[group] if group else sum(schema_counts.values())
             if group:
@@ -236,6 +240,7 @@ class EtlLayers:
         schema = _object_schema(layer)
         quote_identifier(table)
         async with self.session() as session:
+            await self._require_ontology(session)
             rows = await self._object_rows(session, _OBJECT_TABLE_SQL +
                 " AND n.nspname = :schema AND c.relname = :table",
                 {"schema": schema, "table": table, "limit": 1, "offset": 0})
@@ -248,6 +253,7 @@ class EtlLayers:
                        ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(attnum, position)
                              JOIN pg_attribute a ON a.attrelid = sc.oid AND a.attnum = k.attnum
                              ORDER BY k.position) AS columns,
+                       so.data_type AS source_data_type, target_object.data_type AS target_data_type,
                        ARRAY(SELECT a.attname FROM unnest(con.confkey) WITH ORDINALITY k(attnum, position)
                              JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum
                              ORDER BY k.position) AS referenced_columns
@@ -256,6 +262,10 @@ class EtlLayers:
                 JOIN pg_namespace sn ON sn.oid = sc.relnamespace
                 JOIN pg_class tc ON tc.oid = con.confrelid
                 JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+                LEFT JOIN public.ontology_objects so ON so.schema_name = sn.nspname
+                    AND so.table_name = sc.relname AND so.is_active
+                LEFT JOIN public.ontology_objects target_object ON target_object.schema_name = tn.nspname
+                    AND target_object.table_name = tc.relname AND target_object.is_active
                 WHERE con.contype = 'f' AND con.conparentid = 0
                   AND (sc.oid = CAST(:oid AS oid) OR tc.oid = CAST(:oid AS oid))
                   AND sn.nspname ~ '^ts_[a-z0-9_]+$' AND sn.nspname <> 'ts_meta'
@@ -275,7 +285,37 @@ class EtlLayers:
                 logical = await read_object_relations(session, schema, table)
             except ObjectRelationsNotInitialized as exc:
                 raise HTTPException(503, str(exc)) from exc
-        columns = await self.columns(schema, table) if row["properties_count"] else []
+            if row.get("object_id") is not None:
+                result = await session.execute(text("""
+                    SELECT p.name, p.sql_type AS type, p.comment, p.is_nullable AS nullable,
+                           p.is_primary_key AS primary, p.primary_key_position AS "primaryPosition"
+                    FROM public.ontology_object_properties p
+                    JOIN pg_attribute a ON a.attrelid = CAST(:oid AS oid) AND a.attname = p.name
+                        AND a.attnum > 0 AND NOT a.attisdropped
+                    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                    LEFT JOIN pg_index i ON i.indrelid = a.attrelid AND i.indisprimary
+                    WHERE p.object_id = :object_id
+                      AND p.sql_type = format_type(a.atttypid, a.atttypmod)
+                      AND p.ordinal_position = a.attnum AND p.is_nullable = NOT a.attnotnull
+                      AND p.identity_kind = a.attidentity::text AND p.generated_kind = a.attgenerated::text
+                      AND p.comment = COALESCE(col_description(a.attrelid, a.attnum), '')
+                      AND p.default_expression IS NOT DISTINCT FROM
+                          CASE WHEN a.attgenerated = '' THEN pg_get_expr(d.adbin, d.adrelid) END
+                      AND p.generation_expression IS NOT DISTINCT FROM
+                          CASE WHEN a.attgenerated <> '' THEN pg_get_expr(d.adbin, d.adrelid) END
+                      AND p.is_primary_key = COALESCE(array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts, false)
+                      AND p.primary_key_position IS NOT DISTINCT FROM
+                          CASE WHEN array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts
+                               THEN array_position(i.indkey::smallint[], a.attnum) + 1 END
+                    ORDER BY p.ordinal_position
+                """), {"object_id": row["object_id"], "oid": row["oid"]})
+                columns = [dict(item) for item in result.mappings()]
+                if len(columns) != row["properties_count"]:
+                    raise HTTPException(409, "Object properties differ from the table structure; synchronize its Ontology metadata")
+            else:
+                columns = None
+        if columns is None:
+            columns = await self.columns(schema, table) if row["properties_count"] else []
         linked: dict[str, dict[str, Any]] = {}
         for collection, relations in (("constraints", foreign_keys),
                 ("relationships", merge_object_relations(foreign_keys, logical))):
@@ -291,6 +331,7 @@ class EtlLayers:
                     identifier = f"{peer_schema}.{peer_table}"
                     item = linked.setdefault(identifier, {"id": identifier, "schema": peer_schema,
                         "table": peer_table, "name": peer_table, "displayName": peer_table,
+                        "dataType": relation.get(f"{peer}_data_type") or "",
                         "direction": direction, "constraints": [], "relationships": []})
                     if item["direction"] != direction:
                         item["direction"] = "both"
