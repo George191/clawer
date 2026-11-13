@@ -4745,6 +4745,12 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
         .workspace-dock-log-run-select {
           width: 100%;
         }
+        .workspace-dock-log-run-select:focus,
+        .workspace-dock-log-run-select:focus-within {
+          border: 0 !important;
+          outline: 0 !important;
+          box-shadow: none !important;
+        }
         .workspace-dock-log-run-select.ui-select-single,
         .workspace-dock-log-run-select.ui-select-single.ui-select-sm {
           height: auto !important;
@@ -4766,6 +4772,10 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           border: 0 !important;
           outline: 0 !important;
           box-shadow: none !important;
+        }
+        .workspace-dock-log-run-select:focus-visible .ui-select-selector {
+          border-radius: 4px;
+          background: ${aura.surfaceSoft} !important;
         }
         .workspace-dock-log-run-select .ui-select-selection-wrap {
           display: flex;
@@ -4815,6 +4825,16 @@ const WorkspaceDock: React.FC<WorkspaceDockProps> = ({
           border-radius: 8px;
           background: ${aura.surfaceElevated};
           box-shadow: ${aura.shadow};
+          transform-origin: top center;
+          animation: workspace-dock-log-run-enter 160ms ease-out;
+        }
+        @keyframes workspace-dock-log-run-enter {
+          from { opacity: 0; transform: translateY(-4px) scale(.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .workspace-dock-log-run-popup { animation: none; }
+          .workspace-dock-log-run-arrow { transition: none; }
         }
         .workspace-dock-log-run-popup .ui-select-item {
           display: flex;
