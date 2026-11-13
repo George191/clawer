@@ -145,6 +145,21 @@ class OntologyMetadataTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pg.objects[("ts_custom", "items")]["resource_group"], "other")
         self.assertEqual((result["version"], result["checksum"]), (0, ""))
 
+    async def test_internal_char_empty_null_bytes_are_normalized_before_text_writes(self):
+        for empty in (b"\x00", bytearray(b"\x00"), memoryview(b"\x00")):
+            pg = MetadataPg()
+            pg.catalog[("ts_custom", "items")]["partstrat"] = b"\x00"
+            pg.columns[100][0].update(identity_kind=empty, generated_kind=empty)
+            self.assertEqual(ontology._catalog_text(empty), "")
+            result = await self.sync(pg, ddl_sql="CREATE TABLE ts_custom.items (id bigint);")
+            self.assertEqual(pg.properties[result["id"]][0]["identity_kind"], "")
+            self.assertEqual(pg.properties[result["id"]][0]["generated_kind"], "")
+            self.assertEqual(pg.objects[("ts_custom", "items")]["partition_type"], "none")
+            metadata_sql = "\n".join(sql for sql, _ in pg.calls)
+            self.assertIn("p.partstrat::text AS partstrat", metadata_sql)
+            self.assertIn("a.attidentity::text AS identity_kind", metadata_sql)
+            self.assertIn("a.attgenerated::text AS generated_kind", metadata_sql)
+
     async def test_defaults_recomputed_on_change_removal_and_non_literal_expression(self):
         pg = MetadataPg()
         field = property_row("data_type", default_expression="'organization'::text")

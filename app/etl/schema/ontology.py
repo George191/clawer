@@ -94,7 +94,8 @@ def resource_group(layer: str) -> str:
 
 
 def _catalog_text(value: Any) -> str:
-    return bytes(value).decode("utf-8") if isinstance(value, (bytes, bytearray, memoryview)) else str(value or "")
+    decoded = bytes(value).decode("utf-8") if isinstance(value, (bytes, bytearray, memoryview)) else str(value or "")
+    return decoded.rstrip("\x00")
 
 
 def _identity(schema: str, table: str) -> tuple[str, str]:
@@ -158,7 +159,7 @@ async def sync_object_metadata(session, schema: str, table: str, *,
     layer, role = _identity(schema, table)
     identity = {"schema": schema, "table": table}
     result = await session.execute(text("""
-        SELECT c.oid, obj_description(c.oid, 'pg_class') AS comment, p.partstrat,
+        SELECT c.oid, obj_description(c.oid, 'pg_class') AS comment, p.partstrat::text AS partstrat,
                ARRAY(SELECT a.attname FROM unnest(p.partattrs) WITH ORDINALITY k(num, pos)
                      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.num ORDER BY k.pos) AS partition_fields,
                (SELECT count(*) FROM pg_inherits i WHERE i.inhparent = c.oid) AS partition_count
@@ -179,7 +180,7 @@ async def sync_object_metadata(session, schema: str, table: str, *,
                COALESCE(array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts, false) AS is_primary_key,
                CASE WHEN array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts
                     THEN array_position(i.indkey::smallint[], a.attnum) + 1 END AS primary_key_position,
-               a.attidentity AS identity_kind, a.attgenerated AS generated_kind,
+               a.attidentity::text AS identity_kind, a.attgenerated::text AS generated_kind,
                CASE WHEN a.attgenerated <> '' THEN pg_get_expr(d.adbin, d.adrelid) END AS generation_expression,
                COALESCE(col_description(a.attrelid, a.attnum), '') AS comment
         FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
