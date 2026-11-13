@@ -138,6 +138,66 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(state.values()))
         self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS count FROM ts_meta.ddlregistry"))["count"], 2)
 
+    async def test_restore_reapply_preserves_ids_versions_and_handles_old_bootstrap_duplicate_indexes(self):
+        original_oid = (await self.pg.fetch_one("SELECT 'ts_meta.ddlregistry'::regclass::oid AS oid"))["oid"]
+        await self.migration.migrate(self.pg, apply=True)
+        original = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM public.ontology_objects ORDER BY id")
+        await self.migration.restore_registration(self.pg)
+        restored_indexes = await self.pg.fetch_all("""SELECT c.relname AS name FROM pg_index i
+            JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='ts_meta.ddlregistry'::regclass""")
+        self.assertTrue(all("ontology_objects" not in row["name"] for row in restored_indexes))
+        async with self.pg.session() as session:
+            # Reproduce the former restore's new index name plus the old worker bootstrap's duplicate.
+            await session.execute(text("ALTER INDEX ts_meta.uq_ddlregistry_table RENAME TO uq_ontology_objects_table"))
+            await session.execute(text("""CREATE UNIQUE INDEX uq_ddlregistry_table ON ts_meta.ddlregistry
+                (layer,table_role,schema_name,table_name)"""))
+            await session.execute(text("""CREATE UNIQUE INDEX IF NOT EXISTS uq_ddlregistry_version ON ts_meta.ddlregistry
+                (layer,table_role,schema_name,table_name,version)"""))
+            # Quoted identifiers can contain both a quote and the text USING; neither is SQL syntax here.
+            unusual = 'idx_ddlregistry_" USING marker'
+            for name in (unusual, unusual.replace("ddlregistry", "ontology_objects")):
+                await session.execute(text(f"CREATE INDEX {self.migration.identifier(name)} ON ts_meta.ddlregistry (updated_at DESC) WHERE is_active"))
+        keep_oid = (await self.pg.fetch_one("SELECT 'ts_meta.uq_ontology_objects_table'::regclass::oid AS oid"))["oid"]
+        result = await self.migration.migrate(self.pg, apply=True)
+        self.assertTrue(result["existing_registration_preserved"])
+        actual = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM public.ontology_objects ORDER BY id")
+        self.assertEqual(actual, original)
+        self.assertEqual((await self.pg.fetch_one("SELECT 'public.ontology_objects'::regclass::oid AS oid"))["oid"], original_oid)
+        self.assertEqual((await self.pg.fetch_one("SELECT 'public.uq_ontology_objects_table'::regclass::oid AS oid"))["oid"], keep_oid)
+        indexes = await self.pg.fetch_all("""SELECT c.relname AS name FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid
+            WHERE i.indrelid='public.ontology_objects'::regclass""")
+        self.assertNotIn(unusual, {row["name"] for row in indexes})
+        self.assertIn(unusual.replace("ddlregistry", "ontology_objects"), {row["name"] for row in indexes})
+        self.assertFalse(any("ddlregistry" in row["name"] for row in indexes))
+        await self.migration.restore_registration(self.pg)
+        await self.migration.migrate(self.pg, apply=True)
+        self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM public.ontology_objects ORDER BY id"), original)
+
+    async def test_migration_aborts_on_non_equivalent_or_business_index_name_collision(self):
+        async with self.pg.session() as session:
+            await session.execute(text("CREATE INDEX idx_ddlregistry_collision ON ts_meta.ddlregistry (version)"))
+            await session.execute(text("CREATE INDEX idx_ontology_objects_collision ON ts_meta.ddlregistry (version) WHERE is_active"))
+        before = await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM ts_meta.ddlregistry ORDER BY id")
+        with self.assertRaisesRegex(RuntimeError, "different metadata index"):
+            await self.migration.migrate(self.pg, apply=True)
+        self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM ts_meta.ddlregistry ORDER BY id"), before)
+        async with self.pg.session() as session:
+            await session.execute(text("DROP INDEX ts_meta.idx_ontology_objects_collision"))
+            await session.execute(text("CREATE TABLE public.ontology_index_collision_fixture (version INTEGER)"))
+            await session.execute(text("CREATE INDEX idx_ontology_objects_collision ON public.ontology_index_collision_fixture (version)"))
+        business_oid = (await self.pg.fetch_one("SELECT 'public.idx_ontology_objects_collision'::regclass::oid AS oid"))["oid"]
+        try:
+            with self.assertRaisesRegex(RuntimeError, "different metadata index"):
+                await self.migration.migrate(self.pg, apply=True)
+            state = await self.pg.fetch_one("""SELECT to_regclass('ts_meta.ddlregistry') IS NOT NULL AS old_exists,
+                to_regclass('public.ontology_objects') IS NULL AS new_absent,
+                'public.idx_ontology_objects_collision'::regclass::oid AS business_oid""")
+            self.assertTrue(state["old_exists"] and state["new_absent"])
+            self.assertEqual(state["business_oid"], business_oid)
+            self.assertEqual(await self.pg.fetch_all(f"SELECT {self.migration.IDENTITY_COLUMNS} FROM ts_meta.ddlregistry ORDER BY id"), before)
+        finally:
+            await self.pg.execute("DROP TABLE public.ontology_index_collision_fixture")
+
     async def test_release_recovery_preserves_object_identity_and_can_be_reapplied(self):
         await self.migration.migrate(self.pg, apply=True)
         before = await self.pg.fetch_all("SELECT id,table_name,version,checksum FROM public.ontology_objects ORDER BY id")

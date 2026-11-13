@@ -48,6 +48,52 @@ def identifier(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
+async def index_rows(session, *, table: str | None = None, schema: str | None = None,
+                     name: str | None = None) -> list[dict]:
+    return await rows(session, """
+        SELECT c.relname AS name, quote_ident(c.relname) AS quoted_name,
+            i.indrelid AS table_oid, i.indisunique AS unique, i.indisprimary AS primary,
+            i.indisvalid AS valid, i.indisready AS ready, i.indislive AS live,
+            CASE WHEN i.indexrelid IS NOT NULL THEN pg_get_indexdef(i.indexrelid) END AS definition,
+            quote_ident(tn.nspname) || '.' || quote_ident(t.relname) AS qualified_table
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_index i ON i.indexrelid = c.oid
+        LEFT JOIN pg_class t ON t.oid = i.indrelid
+        LEFT JOIN pg_namespace tn ON tn.oid = t.relnamespace
+        WHERE (CAST(:table AS text) IS NULL OR i.indrelid = to_regclass(CAST(:table AS text)))
+          AND (CAST(:schema AS text) IS NULL OR n.nspname = CAST(:schema AS text))
+          AND (CAST(:name AS text) IS NULL OR c.relname = CAST(:name AS text))
+    """, {"table": table, "schema": schema, "name": name})
+
+
+def index_signature(row: dict) -> tuple:
+    # Match the complete catalog-quoted prefix; index names may themselves contain USING.
+    prefix = "CREATE " + ("UNIQUE " if row["unique"] else "") + "INDEX " + row["quoted_name"] + " ON "
+    for only in ("", "ONLY "):
+        header = prefix + only + (row["qualified_table"] or "") + " USING "
+        if (row["definition"] or "").startswith(header):
+            return (*(row[key] for key in ("table_oid", "unique", "primary", "valid", "ready", "live")),
+                    row["definition"][len(header):])
+    raise RuntimeError("Cannot compare the metadata index definition safely")
+
+
+async def rename_metadata_indexes(session, table: str, old: str, new: str) -> None:
+    schema = table.split(".", 1)[0]
+    for current in await index_rows(session, table=table):
+        if old not in current["name"]:
+            continue
+        target_name = current["name"].replace(old, new)
+        target = await index_rows(session, schema=schema, name=target_name)
+        if target:
+            target = target[0]
+            if target["table_oid"] != current["table_oid"] or index_signature(target) != index_signature(current):
+                raise RuntimeError("A different metadata index already uses the migrated name")
+            # Only an equivalent index belonging to this exact metadata table can be removed.
+            await session.execute(text(f"DROP INDEX {identifier(schema)}.{identifier(current['name'])}"))
+        else:
+            await session.execute(text(f"ALTER INDEX {identifier(schema)}.{identifier(current['name'])} RENAME TO {identifier(target_name)}"))
+
+
 async def snapshot(session) -> dict:
     installed = {name: await exists(session, name) for name in (OLD_OBJECTS, OBJECTS, PROPERTIES, OLD_RELATIONS, RELATIONS)}
     if installed[OLD_OBJECTS] and installed[OBJECTS]:
@@ -95,15 +141,7 @@ async def migrate(pg, *, apply: bool = False) -> dict:
                 name = value["conname"]
                 if "ddlregistry" in name:
                     await session.execute(text(f'ALTER TABLE public.ontology_objects RENAME CONSTRAINT {identifier(name)} TO {identifier(name.replace("ddlregistry", "ontology_objects"))}'))
-            indexes = await rows(session, """
-                SELECT index_class.relname AS name FROM pg_index i
-                JOIN pg_class index_class ON index_class.oid = i.indexrelid
-                WHERE i.indrelid = 'public.ontology_objects'::regclass
-            """)
-            for value in indexes:
-                name = value["name"]
-                if "ddlregistry" in name:
-                    await session.execute(text(f'ALTER INDEX public.{identifier(name)} RENAME TO {identifier(name.replace("ddlregistry", "ontology_objects"))}'))
+            await rename_metadata_indexes(session, OBJECTS, "ddlregistry", "ontology_objects")
             if await exists(session, "public.ddlregistry_id_seq"):
                 await session.execute(text("ALTER SEQUENCE public.ddlregistry_id_seq RENAME TO ontology_objects_id_seq"))
         for statement in ONTOLOGY_DDL_STATEMENTS:
@@ -148,6 +186,12 @@ async def restore_registration(pg) -> dict:
         await session.execute(text("CREATE SCHEMA IF NOT EXISTS ts_meta"))
         await session.execute(text("ALTER TABLE public.ontology_objects SET SCHEMA ts_meta"))
         await session.execute(text("ALTER TABLE ts_meta.ontology_objects RENAME TO ddlregistry"))
+        constraints = await rows(session, "SELECT conname FROM pg_constraint WHERE conrelid = 'ts_meta.ddlregistry'::regclass")
+        for row in constraints:
+            name = row["conname"]
+            if "ontology_objects" in name:
+                await session.execute(text(f"ALTER TABLE ts_meta.ddlregistry RENAME CONSTRAINT {identifier(name)} TO {identifier(name.replace('ontology_objects', 'ddlregistry'))}"))
+        await rename_metadata_indexes(session, OLD_OBJECTS, "ontology_objects", "ddlregistry")
         return {"restored_previous_registration": True, "business_rows_read": 0, "business_rows_written": 0}
 
 
