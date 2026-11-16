@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Modal, Select, Tooltip } from '@/components/ui';
+import { Drawer, Modal, Select, Tooltip } from '@/components/ui';
 import {
   ApartmentOutlined, AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
   CloseOutlined, DatabaseOutlined, EyeOutlined, InfoCircleOutlined,
@@ -64,6 +64,13 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const inspectorRef = useRef<HTMLElement>(null);
   const cardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [mobilePreview, setMobilePreview] = useState(() => window.matchMedia('(max-width: 1150px)').matches);
+  const [inspectedObject, setInspectedObject] = useState({ schema: selectedSchema, table: selectedTable, allProperties });
+  const inspectorSchema = selectedId ? selectedSchema : inspectedObject.schema;
+  const inspectorTable = selectedId ? selectedTable : inspectedObject.table;
+  const inspectorId = inspectorSchema && inspectorTable ? `${inspectorSchema}.${inspectorTable}` : '';
+  const inspectorOpen = !!inspectorId;
+  const inspectorClosing = inspectorOpen && !selectedId;
+  const inspectorAllProperties = selectedId ? allProperties : inspectedObject.allProperties;
   const [catalog, setCatalog] = useState<EtlObjectCatalog>(emptyCatalog);
   const [menuGroupSchemaCounts, setMenuGroupSchemaCounts] = useState<EtlObjectCatalog['groupSchemaCounts']>({});
   const [favoriteSchemaCounts, setFavoriteSchemaCounts] = useState<Record<string, number>>({});
@@ -158,14 +165,20 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return () => { active = false; window.clearTimeout(timer); };
   }, [source, keyword, group, favoriteQuery, version, refreshToken]);
   useEffect(() => {
-    if (!selectedId) { setPreview({ id: '', loading: false, error: '' }); return; }
+    if (selectedId) { setInspectedObject({ schema: selectedSchema, table: selectedTable, allProperties }); return; }
+    if (!inspectorId) return;
+    const timer = window.setTimeout(() => setInspectedObject({ schema: '', table: '', allProperties: false }), window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220);
+    return () => window.clearTimeout(timer);
+  }, [selectedId, selectedSchema, selectedTable, allProperties, inspectorId]);
+  useEffect(() => {
+    if (!inspectorId) { setPreview({ id: '', loading: false, error: '' }); return; }
     let active = true;
-    setPreview({ id: selectedId, loading: true, error: '' });
-    fetchEtlObjectPreview(selectedSchema, selectedTable).then((data) => {
-      if (active) setPreview({ id: selectedId, data, loading: false, error: '' });
-    }).catch(() => { if (active) setPreview({ id: selectedId, loading: false, error: 'Unable to load this object type. Try again.' }); });
+    setPreview({ id: inspectorId, loading: true, error: '' });
+    fetchEtlObjectPreview(inspectorSchema, inspectorTable).then((data) => {
+      if (active) setPreview({ id: inspectorId, data, loading: false, error: '' });
+    }).catch(() => { if (active) setPreview({ id: inspectorId, loading: false, error: 'Unable to load this object type. Try again.' }); });
     return () => { active = false; };
-  }, [selectedId, selectedSchema, selectedTable, previewVersion, version, refreshToken]);
+  }, [inspectorId, inspectorSchema, inspectorTable, previewVersion, version, refreshToken]);
 
   const updateQuery = (changes: Record<string, string | null>, replace = false) => setParams((current) => {
     const next = new URLSearchParams(current);
@@ -175,7 +188,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const selectObject = (object: { schema: string; table: string }) => updateQuery({ schema: object.schema, table: object.table, tab: null });
   const closeInspector = () => {
     updateQuery({ schema: null, table: null, tab: null }, true);
-    requestAnimationFrame(() => (cardRefs.current[selectedId] || searchRef.current)?.focus());
   };
   const openWorkspace = () => {
     if (selectedId) navigate(`/flow/layers?${new URLSearchParams({ schema: selectedSchema, table: selectedTable })}`);
@@ -193,29 +205,27 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   }, []);
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); }
-      else if (event.key === 'Escape' && selectedId && ![...document.querySelectorAll<HTMLElement>('[data-ui-popup],.ui-modal-wrap')].some((element) => element.getClientRects().length > 0)) { event.preventDefault(); closeInspector(); }
+      if (!inspectorOpen && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); }
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [selectedId, params]);
+  }, [inspectorOpen]);
   useEffect(() => {
-    if (!selectedId) return;
-    inspectorRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
-    if (!mobilePreview) return;
-    const background = [rootRef.current?.querySelector<HTMLElement>('.flow-ontology__workspace'), document.querySelector<HTMLElement>('.ui-layout-header'), document.querySelector<HTMLElement>('[data-testid="project-sidebar"]')].filter((element): element is HTMLElement => !!element);
-    const before = background.map((element) => element.inert);
-    background.forEach((element) => { element.inert = true; });
-    const trapFocus = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab') return;
-      const controls = [...(inspectorRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), [tabindex="0"]') || [])].filter((element) => element.getClientRects().length > 0);
-      const first = controls[0]; const last = controls[controls.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    if (inspectorId) inspectorRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [inspectorId]);
+  useEffect(() => {
+    if (!inspectorOpen) return;
+    const background = document.getElementById('root');
+    const before = background?.inert;
+    if (background) background.inert = true;
+    return () => {
+      if (background) background.inert = !!before;
+      requestAnimationFrame(() => {
+        const target = cardRefs.current[inspectorId] || searchRef.current;
+        if (target?.isConnected) target.focus();
+      });
     };
-    document.addEventListener('keydown', trapFocus);
-    return () => { document.removeEventListener('keydown', trapFocus); background.forEach((element, index) => { element.inert = before[index]; }); };
-  }, [selectedId, mobilePreview]);
+  }, [inspectorOpen]);
 
   const sections = useMemo(() => {
     const resourceGroups = group === 'all' ? groups.filter((item) => item.key !== 'all' && item.key !== 'favorites') : groups.filter((item) => item.key === group);
@@ -245,10 +255,10 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? renderedObjects.length - 1 : Math.max(0, Math.min(renderedObjects.length - 1, index + (event.key === 'ArrowLeft' ? -1 : 1)));
     cardRefs.current[renderedObjects[next]?.id]?.focus();
   };
-  const data = preview.id === selectedId ? preview.data : undefined;
-  const visibleProperties = data ? allProperties ? data.properties : data.properties.slice(0, 6) : [];
-  const identity = data || catalog.items.find((object) => object.id === selectedId);
-  const selectedColor = accentStyle(selectedId);
+  const data = preview.id === inspectorId ? preview.data : undefined;
+  const visibleProperties = data ? inspectorAllProperties ? data.properties : data.properties.slice(0, 6) : [];
+  const identity = data || catalog.items.find((object) => object.id === inspectorId);
+  const selectedColor = accentStyle(inspectorId);
   const groupTotal = Object.values(facetGroupCounts).reduce((sum, count) => sum + count, 0);
 
   return <div ref={rootRef} className="flow-ontology" data-testid="ontology-explorer">
@@ -304,22 +314,22 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         </main>
       </div>
     </div>
-    {selectedId && mobilePreview && <button type="button" className="flow-ontology__preview-backdrop" aria-label="Dismiss asset preview" tabIndex={-1} onClick={closeInspector} />}
-    {selectedId && <aside ref={inspectorRef} className="flow-ontology__inspector" data-testid="ontology-inspector" data-object-id={selectedId} style={selectedColor} role={mobilePreview ? 'dialog' : undefined} aria-modal={mobilePreview ? true : undefined} aria-label={`${selectedId} Object type preview`}>
-      <header className="flow-ontology__inspector-toolbar"><span className="flow-ontology__asset-icon"><TemplateGlyph kind={inferSiteKind(identity?.dataType || '', selectedTable)} source={selectedTable} /></span><div className="flow-ontology__preview-identity"><h2 title={selectedId}>{identity?.displayName || selectedTable}</h2><span>Object Type</span></div><button type="button" className="flow-ontology__icon-button" aria-label="Close asset preview" onClick={closeInspector}><CloseOutlined /></button></header>
+    <Drawer open={inspectorOpen} onClose={closeInspector} width="100%" title={`${inspectorId} Object type preview`} closable={false} destroyOnHidden rootClassName={`flow-ontology flow-ontology__drawer${inspectorClosing ? ' is-closing' : ''}`} styles={{ header: { display: 'none' }, body: { display: 'flex', padding: 0, overflow: 'hidden' } }}>
+    <aside ref={inspectorRef} className="flow-ontology__inspector" data-testid="ontology-inspector" data-object-id={inspectorId} style={selectedColor}>
+      <header className="flow-ontology__inspector-toolbar"><span className="flow-ontology__asset-icon"><TemplateGlyph kind={inferSiteKind(identity?.dataType || '', inspectorTable)} source={inspectorTable} /></span><div className="flow-ontology__preview-identity"><h2 title={inspectorId}>{identity?.displayName || inspectorTable}</h2><span>Object Type</span></div><button type="button" className="flow-ontology__icon-button" aria-label="Close asset preview" onClick={closeInspector}><CloseOutlined /></button></header>
       <div className="flow-ontology__inspector-content" aria-busy={preview.loading}>
-        {preview.loading || preview.id !== selectedId ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading object type</span></div> : preview.error ? <div className="flow-ontology__notice" role="alert"><span>{preview.error}</span><button type="button" onClick={() => setPreviewVersion((value) => value + 1)}>Retry</button></div> : data && <>
+        {preview.loading || preview.id !== inspectorId ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading object type</span></div> : preview.error ? <div className="flow-ontology__notice" role="alert"><span>{preview.error}</span><button type="button" onClick={() => setPreviewVersion((value) => value + 1)}>Retry</button></div> : data && <>
           <section className="flow-ontology__preview-section"><h3>Description</h3><p className="flow-ontology__muted">{data.description || 'No description provided.'}</p></section>
           <section className="flow-ontology__preview-section"><div className="flow-ontology__visibility"><h3>Visibility</h3><span className="flow-ontology__visibility-badge is-unconfigured" title="Object-level visibility is not configured. This resource uses the existing signed-in ETL access policy."><EyeOutlined />Not configured</span></div></section>
-          <section className="flow-ontology__preview-section"><header><h3>Properties <small>({number(data.properties.length)})</small></h3>{data.properties.length > 6 && <button type="button" className="flow-ontology__properties-toggle" aria-expanded={allProperties} aria-controls="ontology-properties" onClick={() => updateQuery({ tab: allProperties ? null : 'properties' })}>{allProperties ? <><RightOutlined rotate={180} /><span>Back</span></> : <><span>View</span><RightOutlined /></>}</button>}</header>
-            <div id="ontology-properties" className="flow-ontology__property-list" role="region" aria-label="Properties" tabIndex={allProperties && data.properties.length > 6 ? 0 : undefined}>{visibleProperties.map((property) => <div className="flow-ontology__property-row" key={property.name} title={`${property.type}${property.nullable ? ' · Nullable' : ' · Required'}${property.comment ? ` · ${property.comment}` : ''}`}><PropertyIcon type={property.type} /><span className="flow-ontology__property-name">{property.displayName}</span>{data.titleProperty === property.name && <span className="flow-ontology__property-badge is-title">Title</span>}{property.primaryKey && <span className="flow-ontology__property-badge is-primary">Primary key</span>}</div>)}</div>
+          <section className="flow-ontology__preview-section"><header><h3>Properties <small>({number(data.properties.length)})</small></h3>{data.properties.length > 6 && <button type="button" className="flow-ontology__properties-toggle" aria-expanded={inspectorAllProperties} aria-controls="ontology-properties" onClick={() => updateQuery({ tab: inspectorAllProperties ? null : 'properties' })}>{inspectorAllProperties ? <><RightOutlined rotate={180} /><span>Back</span></> : <><span>View</span><RightOutlined /></>}</button>}</header>
+            <div id="ontology-properties" className="flow-ontology__property-list" role="region" aria-label="Properties" tabIndex={inspectorAllProperties && data.properties.length > 6 ? 0 : undefined}>{visibleProperties.map((property) => <div className="flow-ontology__property-row" key={property.name} title={`${property.type}${property.nullable ? ' · Nullable' : ' · Required'}${property.comment ? ` · ${property.comment}` : ''}`}><PropertyIcon type={property.type} /><span className="flow-ontology__property-name">{property.displayName}</span>{data.titleProperty === property.name && <span className="flow-ontology__property-badge is-title">Title</span>}{property.primaryKey && <span className="flow-ontology__property-badge is-primary">Primary key</span>}</div>)}</div>
             {!data.properties.length && <p className="flow-ontology__muted">No properties defined.</p>}
           </section>
           <section className="flow-ontology__preview-section"><header><h3>Linked object types <small>({number(data.linkedObjectTypes.length)})</small></h3></header><div className="flow-ontology__linked-list">{data.linkedObjectTypes.map((linked) => <Tooltip key={linked.id} placement={mobilePreview ? 'top' : 'left'} overlayClassName="flow-ontology__relation-tooltip" title={`${linked.id} · ${linked.direction}\n${linked.relationships.map((relation) => `${relation.sourceKind === 'logical' ? 'Logical relationship' : 'Foreign key'}: ${relation.sourceSchema}.${relation.sourceTable} (${relation.columns.join(', ')}) → ${relation.targetSchema}.${relation.targetTable} (${relation.referencedColumns.join(', ')})${relation.cardinality ? ` · ${relation.cardinality.replace(/_/g, ' ')}` : ''}${relation.description ? ` · ${relation.description}` : ''}`).join('\n')}`}><button type="button" className="flow-ontology__linked-row" style={accentStyle(linked.id)} onClick={() => selectObject(linked)}><span className="flow-ontology__linked-icon"><TemplateGlyph kind={inferSiteKind(linked.dataType || '', linked.table)} source={linked.table} /></span><span>{linked.displayName}</span></button></Tooltip>)}</div>{!data.linkedObjectTypes.length && <p className="flow-ontology__muted">No relationships defined.</p>}</section>
         </>}
       </div>
       <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>
-    </aside>}
+    </aside></Drawer>
     <Modal className="flow-surface-modal" title="Choose a schema" open={createOpen} onCancel={() => setCreateOpen(false)} okText="Continue" okButtonProps={{ disabled: !createSchema }} onOk={() => { if (createSchema) { setCreateOpen(false); navigate(`/flow/layers?${new URLSearchParams({ schema: createSchema, create: 'table' })}`); } }}><p>Choose where to create the new object type. The existing data table editor opens next.</p><Select aria-label="New object type schema" popupClassName="flow-select-popup" placeholder="Select a schema" value={createSchema} onChange={setCreateSchema} options={schemaNames.map((schema) => ({ value: schema, label: schema }))} style={{ width: '100%' }} /></Modal>
   </div>;
 }
