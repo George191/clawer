@@ -241,6 +241,34 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.requests), 1)
         self.assertEqual(self.http._download_operations, {})
 
+    async def test_close_during_retry_backoff_cancels_outer_download(self):
+        backoff_started = asyncio.Event()
+
+        async def blocked_backoff(*args):
+            backoff_started.set()
+            await asyncio.Event().wait()
+
+        self.outcomes[:] = [TransferError(), self.resumed()]
+        with patch.object(module.asyncio, "sleep", blocked_backoff):
+            task = asyncio.create_task(self.fetch())
+            await backoff_started.wait()
+            self.assertIs(self.http._download_owners[id(task)], task)
+            await self.http.close()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(self.http._download_owners, {})
+
+    async def test_head_content_length_describes_object_not_response_body(self):
+        for transport in ({"stream": True}, {}):
+            with self.subTest(streaming=bool(transport)):
+                self.outcomes[:] = [Response(headers={"Content-Length": "999", "ETag": ETAG})]
+                with patch.object(module, "_STREAM_REQUEST_KWARGS", transport):
+                    result = await self.fetch(config=RequestConfig(method="HEAD"))
+                self.assertEqual(result.status_code, 200)
+                self.assertEqual(result.headers["content-length"], "999")
+                self.assertEqual(result.data, b"")
+
     async def test_deadline_is_shared_across_attempts(self):
         self.outcomes[:] = [TransferError() for _ in range(5)]
         with patch.object(module.settings, "http_retry_backoff", 2):

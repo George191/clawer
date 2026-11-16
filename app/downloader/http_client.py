@@ -757,6 +757,10 @@ class HttpClient:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + total_timeout
         attempts = 4 if method == "GET" else 1
+        task = asyncio.current_task()
+        task_id = id(task) if task is not None else 0
+        if task is not None:
+            self._download_owners[task_id] = task
         try:
             for attempt in range(attempts):
                 try:
@@ -789,6 +793,7 @@ class HttpClient:
                 return result
             raise RuntimeError("Download attempts exhausted")
         finally:
+            self._download_owners.pop(task_id, None)
             buffer.close()
 
     async def _download_response_once(
@@ -852,8 +857,6 @@ class HttpClient:
         response = request_task = None
         operations: set[asyncio.Future] = set()
         self._download_operations[task_id] = operations
-        if asyncio.current_task() is not None:
-            self._download_owners[task_id] = asyncio.current_task()
         streaming = bool(_STREAM_REQUEST_KWARGS)
         completed = cancelled = False
         buffer = _buffer
@@ -917,7 +920,7 @@ class HttpClient:
                 length = (response.headers or {}).get("Content-Length") or \
                     (response.headers or {}).get("content-length") or ""
                 total = int(str(length).strip()) if str(length).strip().isdigit() else 0
-                if response.status_code in (204, 304):
+                if response.status_code in (204, 304) or (config.method or "GET").upper() == "HEAD":
                     total = 0
                 # Refresh roughly every 1% (>=2s); the task-log capture merges
                 # these lines into ONE live progress row.
@@ -970,6 +973,7 @@ class HttpClient:
                 raw_headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
                 length = raw_headers.get("content-length", "")
                 if (length.isascii() and length.isdecimal()
+                        and (config.method or "GET").upper() != "HEAD"
                         and raw_headers.get("content-encoding", "identity").lower() == "identity"
                         and len(data) != int(length)):
                     raise DownloadTruncatedError("Download incomplete")
@@ -1005,7 +1009,6 @@ class HttpClient:
             raise
         finally:
             self._download_operations.pop(task_id, None)
-            self._download_owners.pop(task_id, None)
             if response is None and request_task is not None and request_task.done() and not request_task.cancelled() and request_task.exception() is None:
                 response = request_task.result()
             transfer = getattr(response, "astream_task", None)
