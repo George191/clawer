@@ -234,6 +234,19 @@ class SafeMigrationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PlanValidationTests(unittest.TestCase):
+    def test_namespace_uses_index_information_without_command_kwargs(self):
+        class Collection:
+            def index_information(self):
+                return {"_meta.record_id_1": {"unique": True, "key": [("_meta.record_id", 1)]}}
+
+        collection = Collection()
+        database = MagicMock()
+        database.list_collections.return_value = [{"info": {"uuid": bytes.fromhex("a" * 32)}}]
+        database.__getitem__.return_value = collection
+        client = MagicMock()
+        client.__getitem__.return_value = database
+        self.assertIs(migration.validate_namespace(client, self.plan()), collection)
+
     def plan(self):
         parts = [{**p, "worker": worker} for worker, p in enumerate(migration.facts.split_ranges("000000000000000000000001", "000000000000000000000060"))]
         parts[-1]["upper_inclusive"] = "000000000000000000000060"

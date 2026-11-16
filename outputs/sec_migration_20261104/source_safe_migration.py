@@ -292,7 +292,7 @@ def validate_namespace(client, plan):
     rows = list(database.list_collections(filter={"name": plan["collection"]}, maxTimeMS=15000))
     require(len(rows) == 1 and bytes(rows[0]["info"]["uuid"]).hex() == plan["mongo_uuid"], "Mongo UUID changed")
     collection = database[plan["collection"]]
-    index = collection.index_information(maxTimeMS=15000).get("_meta.record_id_1", {})
+    index = collection.index_information().get("_meta.record_id_1", {})
     require(index.get("unique") is True and index.get("key") == [("_meta.record_id", 1)], "Mongo record_id index changed")
     return collection
 
