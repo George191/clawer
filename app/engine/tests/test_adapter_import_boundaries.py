@@ -3,11 +3,11 @@
 import ast
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 import sys
 import textwrap
 import unittest
+from pathlib import Path
 
 from app.adapters import load_adapter_module_from_source, validate_adapter_imports
 from app.adapters.runtime import validate_extension_source

@@ -12,10 +12,10 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib
-from importlib.util import resolve_name
 import pkgutil
 import re
 import sys
+from importlib.util import resolve_name
 from types import ModuleType
 from typing import Any
 
@@ -146,7 +146,7 @@ def validate_adapter_imports(source: str) -> ast.Module:
                     fromlist = node.args[3] if len(node.args) > 3 else next(
                         (item.value for item in node.keywords if item.arg == "fromlist"), None,
                     )
-                    if module == "app" and isinstance(fromlist, (ast.List, ast.Tuple)) and any(
+                    if module == "app" and isinstance(fromlist, ast.List | ast.Tuple) and any(
                         isinstance(item, ast.Constant) and item.value == "etl" for item in fromlist.elts
                     ):
                         self.check("app.etl", node)
