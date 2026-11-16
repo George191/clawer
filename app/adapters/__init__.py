@@ -9,8 +9,10 @@ USPTO 的 CAPTCHA 处理等），使 SpiderEngine 保持通用性。
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib
+from importlib.util import resolve_name
 import pkgutil
 import re
 import sys
@@ -77,6 +79,86 @@ def get_adapter_class(name: str | None) -> type[BaseSiteAdapter]:
     return cls
 
 
+def validate_adapter_imports(source: str) -> ast.Module:
+    """Keep ETL imports inside callable bodies when a source bundle is loaded."""
+    class ImportBoundary(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.importlib_names = {"importlib"}
+            self.import_module_names: set[str] = set()
+
+        def check(self, module: str, node: ast.AST) -> None:
+            if module == "app.etl" or module.startswith("app.etl."):
+                raise ValueError(
+                    f"Adapter ETL import '{module}' at line {node.lineno} must be inside a function body"
+                )
+
+        def visit_Import(self, node: ast.Import) -> None:
+            for alias in node.names:
+                self.check(alias.name, node)
+                if alias.name == "importlib":
+                    self.importlib_names.add(alias.asname or alias.name)
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            module = node.module or ""
+            if node.level:
+                module = resolve_name("." * node.level + module, "app.adapters")
+            self.check(module, node)
+            if module == "app" and any(alias.name == "etl" for alias in node.names):
+                self.check("app.etl", node)
+            if module == "importlib":
+                self.import_module_names.update(alias.asname or alias.name for alias in node.names
+                                                if alias.name == "import_module")
+
+        def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            for decorator in node.decorator_list:
+                self.visit(decorator)
+            self.visit(node.args)
+            if node.returns is not None:
+                self.visit(node.returns)
+            for parameter in getattr(node, "type_params", ()):
+                self.visit(parameter)
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Lambda(self, node: ast.Lambda) -> None:
+            self.visit(node.args)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            dynamic_import = (
+                isinstance(node.func, ast.Name)
+                and node.func.id in {"__import__", *self.import_module_names}
+                or isinstance(node.func, ast.Attribute) and node.func.attr == "import_module"
+                and isinstance(node.func.value, ast.Name) and node.func.value.id in self.importlib_names
+            )
+            if dynamic_import:
+                name = node.args[0] if node.args else next(
+                    (item.value for item in node.keywords if item.arg == "name"), None,
+                )
+                if isinstance(name, ast.Constant) and isinstance(name.value, str):
+                    module = name.value
+                    if module.startswith("."):
+                        package = node.args[1] if len(node.args) > 1 else next(
+                            (item.value for item in node.keywords if item.arg == "package"), None,
+                        )
+                        if isinstance(package, ast.Constant) and isinstance(package.value, str):
+                            module = resolve_name(module, package.value)
+                    self.check(module, node)
+                    fromlist = node.args[3] if len(node.args) > 3 else next(
+                        (item.value for item in node.keywords if item.arg == "fromlist"), None,
+                    )
+                    if module == "app" and isinstance(fromlist, (ast.List, ast.Tuple)) and any(
+                        isinstance(item, ast.Constant) and item.value == "etl" for item in fromlist.elts
+                    ):
+                        self.check("app.etl", node)
+            self.generic_visit(node)
+            if isinstance(node.func, ast.Lambda):
+                self.visit(node.func.body)
+
+    tree = ast.parse(source)
+    ImportBoundary().visit(tree)
+    return tree
+
+
 def load_adapter_class_from_source(
     name: str,
     source: str,
@@ -92,6 +174,7 @@ def load_adapter_class_from_source(
 
 def load_adapter_module_from_source(name: str, source: str, source_key: str) -> ModuleType:
     """Compile an immutable artifact once; it may contain only ETL exports."""
+    tree = validate_adapter_imports(source)
     safe_name = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_") or "adapter"
     digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
     module_name = f"app.adapters._runtime_{safe_name}_{digest}"
@@ -103,7 +186,7 @@ def load_adapter_module_from_source(name: str, source: str, source_key: str) -> 
     previous_registry = dict(_ADAPTER_REGISTRY)
     sys.modules[module_name] = module
     try:
-        exec(compile(source, module.__file__, "exec"), module.__dict__)
+        exec(compile(tree, module.__file__, "exec"), module.__dict__)
         module._released_adapter_classes = {
             key: cls for key, cls in _ADAPTER_REGISTRY.items() if cls.__module__ == module_name
         }

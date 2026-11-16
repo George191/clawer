@@ -6,7 +6,7 @@ import ast
 from time import monotonic
 from types import ModuleType
 
-from app.adapters import load_adapter_module_from_source
+from app.adapters import load_adapter_module_from_source, validate_adapter_imports
 from app.etl.schema.catalogs import validate_ods_fields, validate_table_name
 from app.records.collection_routes import collection_route_store
 from app.storage.minio_client import get_business_metadata_minio_client
@@ -17,7 +17,7 @@ _MODULES: dict[tuple[str, str], tuple[float, ModuleType | None]] = {}
 
 def validate_extension_source(source: str) -> set[str]:
     """Validate declarations without running generated code during publication."""
-    tree = ast.parse(source)
+    tree = validate_adapter_imports(source)
     declared: set[str] = set()
     for node in tree.body:
         if isinstance(node, ast.Assign | ast.AnnAssign):

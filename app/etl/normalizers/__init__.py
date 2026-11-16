@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib import import_module
 from typing import Any, Callable
 
 from app.logger import get_logger
@@ -7,6 +8,33 @@ from app.logger import get_logger
 logger = get_logger(__name__)
 
 _NORMALIZER_REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {}
+_NORMALIZER_MODULES: dict[str, str] = {
+    "acticle": "acticle",
+    "intelligence": "intelligence",
+    "navwarn": "navwarn",
+    "news": "news",
+    "patent": "patent",
+    "organization": "organization",
+    "filing": "filing",
+    "filing_document": "filing_document",
+    "financial_fact": "financial_fact",
+    "contract": "procurement",
+    "tender": "procurement",
+    "search_result": "search_result",
+    "account": "social_account",
+    "tweet": "social_content",
+    "constellation": "space",
+    "debrisevents": "space",
+    "debris": "space",
+    "launchvehicles": "space",
+    "frequency": "space",
+    "groundstations": "space",
+    "launchinfo": "space",
+    "satellite": "space",
+    "launchsites": "space",
+    "orbital": "space",
+    "vulnerability": "vulnerability",
+}
 
 
 def register_normalizer(
@@ -26,6 +54,11 @@ def get_normalizer(
     specific_key = f"{data_type}:{data_source}"
     if specific_key in _NORMALIZER_REGISTRY:
         return _NORMALIZER_REGISTRY[specific_key]
+    module = _NORMALIZER_MODULES.get(data_type)
+    if module:
+        import_module(f".{module}", __name__)
+    if specific_key in _NORMALIZER_REGISTRY:
+        return _NORMALIZER_REGISTRY[specific_key]
     generic_key = f"{data_type}:*"
     if generic_key in _NORMALIZER_REGISTRY:
         return _NORMALIZER_REGISTRY[generic_key]
@@ -33,22 +66,3 @@ def get_normalizer(
         "No source-specific normalizer registered for %s, fallback to generic",
         specific_key,
     )
-
-
-from app.etl.normalizers import (
-    acticle,  # noqa: E402, F401
-    intelligence,  # noqa: E402, F401
-    navwarn,  # noqa: E402, F401
-    news,  # noqa: E402, F401
-    patent,  # noqa: E402, F401
-    organization,  # noqa: E402, F401
-    filing,  # noqa: E402, F401
-    filing_document,  # noqa: E402, F401
-    financial_fact,  # noqa: E402, F401
-    procurement,  # noqa: E402, F401
-    search_result,  # noqa: E402, F401
-    social_account,  # noqa: E402, F401
-    social_content,  # noqa: E402, F401
-    space,  # noqa: E402, F401
-    vulnerability,  # noqa: E402, F401
-)
