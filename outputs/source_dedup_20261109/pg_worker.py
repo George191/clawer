@@ -368,12 +368,33 @@ def runtime_layout(root, plan):
     if (value['workers'] != WORKERS or value['page_size'] != PAGE_SIZE
             or not 1 <= value['sql_batch_size'] <= BATCH or value['plan_sha256'] != plan['plan_sha256']):
         raise RuntimeError('Expected the authorized 6-worker/3000-key layout with SQL batches at most 300')
+    scope = read(root / 'scope.json', {})
+    if scope.get('protocol') == 'source_safe_facts_full_alias_tail_v1':
+        scopes = scope.get('scopes', [])
+        relations = {('ts_rds', 'rds_financial_fact', 'rds'), ('ts_ods', 'ods_financial_fact', 'ods')}
+        if (scope.get('workers') != WORKERS or scope.get('batch_size') != BATCH
+                or scope.get('guard_table') is not None or len(scopes) != 2
+                or {s.get('old') for s in scopes} != {'sec_edgar_financial_fact', 'sec_edgar_company'}
+                or any(s.get('new') != 'financial_fact_sec_edgar' or s.get('data_type') != 'financial_fact'
+                       or len(s.get('relations', [])) != 2
+                       or any(set(r) != {'schema', 'name', 'layer'} for r in s['relations'])
+                       or {(r['schema'], r['name'], r['layer']) for r in s['relations']} != relations
+                       for s in scopes)):
+            raise RuntimeError('Unexpected dedicated facts source-tail scope')
+        value['scope'] = 'facts_full'
+    elif layout.get('scope') is not None:
+        raise RuntimeError('A dedicated facts layout requires its immutable scope')
     return value
 
 
 def unit_owner(unit, layout):
     table = (unit['schema'], unit['table'])
     if table in (('ts_rds', 'rds_financial_fact'), ('ts_ods', 'ods_financial_fact')):
+        if layout.get('scope') == 'facts_full':
+            if (unit['old'] not in ('sec_edgar_financial_fact', 'sec_edgar_company')
+                    or unit['new'] != 'financial_fact_sec_edgar' or unit['data_type'] != 'financial_fact'):
+                raise ValueError('Unexpected dedicated facts source identity')
+            return unit['unit'] % WORKERS
         return None
     slots = {('ts_rds', 'rds_filing'): 0, ('ts_ods', 'ods_filing'): 2,
              ('ts_ods', 'ods_filing_document'): 4}

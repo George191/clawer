@@ -42,85 +42,107 @@ def fingerprint(value):
  return isinstance(value,str) and len(value)==64 and all(c in '0123456789abcdef' for c in value)
 def local_file(root,relative,folder):
  path=(root/relative).resolve();need(path.parent==(root/folder).resolve());return path
+def read_committed_worker(root,plan,number,part,expected=None):
+ sha=plan['plan_sha256'];cp=json.loads((root/('worker-'+str(number)+'.json')).read_bytes());count=cp['processed'];cursor=cp['cursor']
+ need(cp['plan_sha256']==sha and type(cp['worker']) is int and cp['worker']==number
+   and type(count) is int and count>=0 and type(cp['done']) is bool and (count==0)==(cursor is None))
+ if cursor:need(part['lower']<=cursor<=(part.get('upper_inclusive') or 'f'*24)
+   and (not part.get('upper') or cursor<part['upper']))
+ if expected is not None:need(count<=expected and (not cp['done'] or (count==expected and cursor==part['upper_inclusive'])))
+ if count:
+  receipt=json.loads(local_file(root,cp['last_receipt'],'transactions').read_bytes());ids=receipt['record_ids']
+  need(receipt['committed'] is True and receipt['protocol']==plan['protocol'] and receipt['plan_sha256']==sha
+    and receipt['mongo_uuid']==plan['mongo_uuid'] and receipt['worker']==number and receipt['part']==part
+    and receipt['receipt']==cp['last_receipt'] and receipt['last_id']==cursor
+    and type(receipt['rows']) is int and 0<receipt['rows']<=300
+    and type(receipt['previous_processed']) is int and receipt['previous_processed']>=0
+    and receipt['previous_processed']+receipt['rows']==count
+    and len(ids)==len(set(ids))==receipt['rows'])
+  for layer in ('rds','ods'):
+   values=receipt['after_sha256'][layer];need(set(values)==set(ids) and all(fingerprint(v) for v in values.values()))
+  if receipt.get('archive'):
+   archive=receipt['archive'];need(fingerprint(archive['sha256']) and type(archive['rows']) is int and archive['rows']>0)
+   need(hashlib.sha256(local_file(root,archive['path'],'transactions').read_bytes()).hexdigest()==archive['sha256'])
+ return cp
+def read_facts_repair():
+ try:
+  base=Path('/app/output/sec_migration_20261104');root=base/'facts-source-safe-20261116'
+  plan=json.loads((root/'plan.json').read_bytes());sha=plan['plan_sha256']
+  owner=json.loads((base/'source-safe-current-owners.json').read_bytes())['facts_history_repair']
+  need(owner['root']=='/data/clawer/output/sec_migration_20261104/'+root.name
+    and owner['plan_sha256']==sha and fingerprint(owner['source_sha256']))
+  need(fingerprint(sha) and hashlib.sha256(encoded({k:v for k,v in plan.items() if k!='plan_sha256'})).hexdigest()==sha
+    and plan['protocol']=='source_safe_mongo_migration_v1' and plan['kind']=='facts'
+    and plan['collection']=='financial_fact_sec_edgar' and plan['data_type']=='financial_fact'
+    and len(plan['parts'])==6 and [p['worker'] for p in plan['parts']]==list(range(6)))
+  manifest_path=Path(plan['manifest_path']);raw=manifest_path.read_bytes()
+  need(manifest_path.parent==base/'facts-burst-evidence-20261116' and hashlib.sha256(raw).hexdigest()==plan['manifest_sha256'])
+  manifest=json.loads(raw);need(manifest['protocol']=='facts_burst_checkpoint_manifest_v1' and manifest['total']==78600
+    and manifest['mongo_uuid_hex']==plan['mongo_uuid'] and sorted(manifest['parts'],key=lambda p:p['worker'])==plan['parts'])
+  summary=json.loads((root/'state.json').read_bytes())
+  need(summary['protocol']==plan['protocol'] and summary['kind']=='facts' and summary['plan_sha256']==sha
+    and summary['mongo_uuid']==plan['mongo_uuid'] and summary['stage']=='complete' and summary['processed']==78600
+    and summary['cdc_replay'] is False and not summary.get('last_error'))
+  states=[read_committed_worker(root,plan,n,p,p['actual_count']) for n,p in enumerate(plan['parts'])]
+  need(sum(s['processed'] for s in states)==78600 and all(s['done'] and not s.get('pending') and not s.get('last_error') for s in states))
+  return {'verified':True,'processed':78600,'stage':'complete','plan_sha256':sha}
+ except Exception as error:
+  return {'verified':False,'error_class':type(error).__name__}
 def read_migration(kind):
  sampled=datetime.now(timezone.utc).isoformat()
  try:
-  base=Path('/app/output/sec_migration_20261104');root=base/(kind+'-source-safe-20261116')
+  base=Path('/app/output/sec_migration_20261104');root=base/('facts-migration-20261116' if kind=='facts' else 'patent-source-safe-20261116')
+  plan_kind='facts_full' if kind=='facts' else 'patent'
   owner=json.loads((base/'source-safe-current-owners.json').read_bytes())[kind]
   need(owner['root']=='/data/clawer/output/sec_migration_20261104/'+root.name
     and owner['workers']==6 and owner['page_size']==3000 and owner['sql_batch_size']==300
     and owner['mongo_cdc_replay'] is False and fingerprint(owner['source_sha256'])
-    and owner['container'].startswith('source-safe-'+kind+'-20261116') and isinstance(owner['image'],str))
+    and owner['container'].startswith(('source-safe-facts-full-20261116' if kind=='facts' else 'source-safe-patent-20261116'))
+    and isinstance(owner['image'],str))
   plan=json.loads((root/'plan.json').read_bytes());sha=plan['plan_sha256']
   need(fingerprint(sha) and sha==owner['plan_sha256']
     and hashlib.sha256(encoded({k:v for k,v in plan.items() if k!='plan_sha256'})).hexdigest()==sha
-    and plan['protocol']=='source_safe_mongo_migration_v1' and plan['kind']==kind
+    and plan['protocol']=='source_safe_mongo_migration_v1' and plan['kind']==plan_kind
     and plan['collection']==('financial_fact_sec_edgar' if kind=='facts' else 'patent_google')
     and plan['data_type']==('financial_fact' if kind=='facts' else 'patent')
     and plan['aliases']==(['sec_edgar_financial_fact','sec_edgar_company'] if kind=='facts' else ['google_patent'])
     and plan['workers']==6 and plan['page_size']==3000 and plan['sql_batch_size']==300
     and len(plan['parts'])==6 and [p['worker'] for p in plan['parts']]==list(range(6)))
-  expected=None
-  if kind=='facts':
-   manifest_path=Path(plan['manifest_path']);raw=manifest_path.read_bytes()
-   need(manifest_path.parent==base/'facts-burst-evidence-20261116' and hashlib.sha256(raw).hexdigest()==plan['manifest_sha256'])
-   manifest=json.loads(raw);need(manifest['protocol']=='facts_burst_checkpoint_manifest_v1' and manifest['total']==78600
-     and manifest['mongo_uuid_hex']==plan['mongo_uuid'] and sorted(manifest['parts'],key=lambda p:p['worker'])==plan['parts'])
-   expected=[part['actual_count'] for part in plan['parts']];need(sum(expected)==78600)
+  if kind=='facts':need(plan.get('manifest_path') is None and plan.get('manifest_sha256') is None)
   summary=json.loads((root/'state.json').read_bytes())
-  need(summary['protocol']==plan['protocol'] and summary['kind']==kind and summary['plan_sha256']==sha
+  need(summary['protocol']==plan['protocol'] and summary['kind']==plan_kind and summary['plan_sha256']==sha
     and summary['mongo_uuid']==plan['mongo_uuid'] and summary['cdc_replay'] is False
     and summary['workers']==6 and summary['page_size']==3000 and summary['sql_batch_size']==300
     and summary['stage'] in ('running','complete','failed','paused','canary_complete','pg_alias_tail','mongo_coverage_complete'))
-  states=[]
-  for number,part in enumerate(plan['parts']):
-   cp=json.loads((root/('worker-'+str(number)+'.json')).read_bytes());count=cp['processed'];cursor=cp['cursor']
-   need(cp['plan_sha256']==sha and type(cp['worker']) is int and cp['worker']==number
-     and type(count) is int and count>=0 and type(cp['done']) is bool and (count==0)==(cursor is None))
-   if cursor:need(part['lower']<=cursor<=(part.get('upper_inclusive') or 'f'*24)
-     and (not part.get('upper') or cursor<part['upper']))
-   if expected:need(count<=expected[number] and (not cp['done'] or (count==expected[number] and cursor==part['upper_inclusive'])))
-   if count:
-    receipt=json.loads(local_file(root,cp['last_receipt'],'transactions').read_bytes());ids=receipt['record_ids']
-    need(receipt['committed'] is True and receipt['protocol']==plan['protocol'] and receipt['plan_sha256']==sha
-      and receipt['mongo_uuid']==plan['mongo_uuid'] and receipt['worker']==number and receipt['part']==part
-      and receipt['receipt']==cp['last_receipt'] and receipt['last_id']==cursor
-      and type(receipt['rows']) is int and 0<receipt['rows']<=300
-      and type(receipt['previous_processed']) is int and receipt['previous_processed']>=0
-      and receipt['previous_processed']+receipt['rows']==count
-      and len(ids)==len(set(ids))==receipt['rows'])
-    for layer in ('rds','ods'):
-     values=receipt['after_sha256'][layer];need(set(values)==set(ids) and all(fingerprint(v) for v in values.values()))
-    if receipt.get('archive'):
-     archive=receipt['archive'];need(fingerprint(archive['sha256']) and type(archive['rows']) is int and archive['rows']>0)
-     need(hashlib.sha256(local_file(root,archive['path'],'transactions').read_bytes()).hexdigest()==archive['sha256'])
-   states.append(cp)
+  states=[read_committed_worker(root,plan,n,p) for n,p in enumerate(plan['parts'])]
   count=sum(s['processed'] for s in states);done=sum(s['done'] for s in states)
   need(type(summary['processed']) is int and 0<=summary['processed']<=count)
-  if summary['stage']=='complete':need(done==6 and (kind!='facts' or count==78600))
+  if summary['stage']=='complete':need(done==6)
   tail=None
   if (summary['stage']=='pg_alias_tail' or summary.get('pg_only_alias_sweep_complete') is True
-    or (kind=='patent' and done==6 and summary['stage'] in ('paused','failed') and (root/'pg-alias-tail'/'plan.json').exists())):
-   need(kind=='patent' and done==6);directory=root/'pg-alias-tail';raw=(directory/'scope.json').read_bytes()
+    or (done==6 and summary['stage'] in ('paused','failed') and (root/'pg-alias-tail'/'plan.json').exists())):
+   need(done==6);directory=root/'pg-alias-tail';raw=(directory/'scope.json').read_bytes()
    scope=json.loads(raw);tail_plan=json.loads((directory/'plan.json').read_bytes());tail_sha=hashlib.sha256(raw).hexdigest()
-   need(scope['protocol']=='source_safe_patent_alias_tail_v1' and scope['mongo_plan_sha256']==sha
+   expected={(old,'ts_'+layer,layer+'_'+plan['data_type'],n) for old in plan['aliases'] for layer in ('rds','ods') for n in range(32)}
+   need(scope['protocol']=='source_safe_'+plan_kind+'_alias_tail_v1' and scope['mongo_plan_sha256']==sha
       and tail_plan['plan_sha256']==tail_sha and tail_plan['workers']==6 and tail_plan['batch_size']==300
-      and tail_plan.get('guard_table') is None and len(tail_plan['units'])==64
-      and {u['unit'] for u in tail_plan['units']}==set(range(64))
-      and {(u['schema'],u['table'],u['ordinal']) for u in tail_plan['units']}=={('ts_'+l,l+'_patent',n) for l in ('rds','ods') for n in range(32)})
-   tail={'rds':0,'ods':0,'done':0,'pending':0}
+      and tail_plan.get('guard_table') is None and len(tail_plan['units'])==len(expected)
+      and {u['unit'] for u in tail_plan['units']}==set(range(len(expected)))
+      and {(u['old'],u['schema'],u['table'],u['ordinal']) for u in tail_plan['units']}==expected)
+   tail={'rds':0,'ods':0,'done':0,'pending':0,'units':len(expected)}
    for unit in tail_plan['units']:
-    need(unit['old']=='google_patent' and unit['new']=='patent_google' and unit['data_type']=='patent')
+    need(unit['old'] in plan['aliases'] and unit['new']==plan['collection'] and unit['data_type']==plan['data_type']
+      and unit['schema']=='ts_'+unit['layer'] and unit['table']==unit['layer']+'_'+plan['data_type'])
     path=directory/'checkpoints'/('unit-'+str(unit['unit'])+'.json')
     if not path.exists():continue
     cp=json.loads(path.read_bytes());n=cp['processed']
     need(cp['unit']==unit['unit'] and cp['plan_sha256']==tail_sha and type(n) is int and n>=0
       and n==cp['renamed']+cp['deduplicated'])
     tail[unit['layer']]+=n;tail['done']+=cp.get('done') is True;tail['pending']+=bool(cp.get('pending'))
-   if summary.get('pg_only_alias_sweep_complete') is True:need(tail['done']==64 and not tail['pending'])
-  if kind=='patent' and summary['stage']=='complete':need(summary.get('pg_only_alias_sweep_complete') is True)
+   if summary.get('pg_only_alias_sweep_complete') is True:need(tail['done']==len(expected) and not tail['pending'])
+  if summary['stage']=='complete':need(summary.get('pg_only_alias_sweep_complete') is True)
   return {'verified':True,'sampled_at':sampled,'kind':kind,'owner':owner,'root':str(root),'plan_sha256':sha,
-    'mongo_uuid':plan['mongo_uuid'],'processed':count,'total':78600 if kind=='facts' else None,'workers_done':done,
+    'mongo_uuid':plan['mongo_uuid'],'processed':count,'total':None,'workers_done':done,
     'worker_processed':[s['processed'] for s in states],'pending':sum(bool(s.get('pending')) for s in states),
     'errors':list(dict.fromkeys([s['last_error'] for s in states if s.get('last_error')]+([summary['last_error']] if summary.get('last_error') else []))),
     'stage':summary['stage'],'cdc_replay':False,'tail':tail}
@@ -155,6 +177,7 @@ async def main():
    'SELECT pid,application_name,state,wait_event_type,wait_event FROM pg_stat_activity '
    'WHERE application_name LIKE $1 ORDER BY application_name',prefix+'%')]
   migrations={kind:read_migration(kind) for kind in ('facts','patent')}
+  facts_repair=read_facts_repair()
   for value in migrations.values():
    if not value.get('verified'):continue
    directory=value['root']+('/pg-alias-tail' if value['stage']=='pg_alias_tail' else '')
@@ -172,7 +195,7 @@ async def main():
  print(json.dumps({'observed_at':datetime.now(timezone.utc).isoformat(),'run':str(ROOT),
   'plan_sha256':plan['plan_sha256'],'layout':layout,'stop_requested':(ROOT/'STOP').exists(),
   'units':units,'checkpoints':states,'worker_errors':errors,'backends':backends,
-  'migrations':migrations}))
+  'migrations':migrations,'facts_repair':facts_repair}))
 asyncio.run(main())
 
 '''
@@ -202,7 +225,7 @@ def summarize_migration(raw, previous, sampled_at):
     return value
 
 
-def migration_report(values, markdown_format=False):
+def migration_report(values, markdown_format=False, facts_repair=None):
     lines = ['', 'facts / 专利 RDS+ODS 迁移（同批双层验证的 record_id 只计一次）']
     headers = ('范围', '阶段', '双层已验证 ID / 目标', '本轮新增', 'ID/分钟', 'PG 会话', '待确认事务', '错误')
     rows = []
@@ -225,13 +248,18 @@ def migration_report(values, markdown_format=False):
                      delta, rate, workers, str(value['pending']), errors))
         if value.get('tail'):
             tail = value['tail']
-            lines.append(f"专利旧源尾扫：RDS {tail['rds']:,} 行，ODS {tail['ods']:,} 行；完成单元 {tail['done']}/64；不与双层 record_id 进度相加。")
+            label = 'facts' if kind == 'facts' else '专利'
+            lines.append(f"{label}旧源尾扫：RDS {tail['rds']:,} 行，ODS {tail['ods']:,} 行；完成单元 {tail['done']}/{tail['units']}；不与双层 record_id 进度相加。")
     if markdown_format:
         lines += ['| ' + ' | '.join(headers) + ' |', '| ' + ' | '.join('---' for _ in headers) + ' |']
         lines.extend('| ' + ' | '.join(str(cell).replace('|', '\\|').replace('\n', ' ') for cell in row) + ' |' for row in rows)
     else:
         lines += [' | '.join(headers), *(' | '.join(row) for row in rows)]
-    lines.append('facts 仅修复已确认的 78,600 个目标；专利未做全库计数，完成率与 ETA 未核定。迁移不触发 Mongo CDC 全量回放。')
+    if facts_repair and facts_repair.get('verified'):
+        lines.append('前置历史修复：78,600 个目标已完成定点去重；这是独立已完成阶段，不计入本次 facts 全量迁移进度。')
+    else:
+        lines.append('前置历史修复证据：未验证（' + ((facts_repair or {}).get('error_class') or 'NotSampled') + '）；不复用历史计数作为本次 facts 全量迁移进度。')
+    lines.append('facts / 专利本次全量迁移未做业务库全表计数，完成率与 ETA 未核定。迁移不触发 Mongo CDC 全量回放。')
     return '\n'.join(lines)
 
 def summarize(snapshot, previous=None):
@@ -327,6 +355,7 @@ def summarize(snapshot, previous=None):
             'totals': {key: sum(row[key] for row in rows)
                        for key in ('processed', 'renamed', 'deduplicated', 'pending')},
             'worker_errors': current_errors,
+            'facts_repair': snapshot.get('facts_repair'),
             'migrations': {kind: summarize_migration((snapshot.get('migrations') or {}).get(kind),
                 (previous.get('migrations') or {}).get(kind) if previous else None, snapshot['observed_at'])
                 for kind in ('facts', 'patent')}}
@@ -358,7 +387,7 @@ def markdown(value):
               '完成分区要求该分区下全部旧来源单元均已完成；worker 会话按本次运行的 PG 连接核对。']
     if value.get('worker_errors'):
         lines.append('运行目录存在本次启动后的 worker 错误回执，请核对日志。')
-    lines.append(migration_report(value['migrations'], markdown_format=True))
+    lines.append(migration_report(value['migrations'], markdown_format=True, facts_repair=value.get('facts_repair')))
     return '\n'.join(lines)
 
 def plain_table(value):
@@ -399,7 +428,7 @@ def plain_table(value):
     lines.extend([border, '', '旧数据总量：未核定；全量完成率：未核定；ETA：—。'])
     errors = sorted({str(error.get('last_error') or 'WorkerError') for error in value.get('worker_errors') or []})
     lines.append('当前错误/瓶颈：' + (', '.join(errors) if errors else '无。'))
-    lines.append(migration_report(value['migrations']))
+    lines.append(migration_report(value['migrations'], facts_repair=value.get('facts_repair')))
     return '\n'.join(lines)
 
 

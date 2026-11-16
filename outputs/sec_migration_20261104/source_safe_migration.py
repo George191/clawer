@@ -25,6 +25,7 @@ PROTOCOL = "source_safe_mongo_migration_v1"
 WORKERS, PAGE_SIZE, SQL_BATCH = 6, 3000, 300
 SCOPES = {
     "facts": (facts, ["sec_edgar_financial_fact", "sec_edgar_company"]),
+    "facts_full": (facts, ["sec_edgar_financial_fact", "sec_edgar_company"]),
     "patent": (patent, ["google_patent"]),
 }
 
@@ -78,11 +79,16 @@ def validate_plan(plan):
                     and part["actual_count"] == part.get("processed") and part["actual_count"] > 0,
                     "invalid bounded facts range")
         elif number < WORKERS - 1:
-            require(part["upper"] == parts[number + 1]["lower"], "patent ranges have a gap")
+            require(not part.get("upper_inclusive") and part["upper"] == parts[number + 1]["lower"],
+                    "migration ranges have a gap")
         else:
-            require(part.get("upper_inclusive"), "patent final range must have a fixed inclusive upper bound")
+            require(part.get("upper") is None and part.get("upper_inclusive"),
+                    "final migration range must have a fixed inclusive upper bound")
     if plan["kind"] == "facts":
         require(sum(p["actual_count"] for p in parts) == 78600, "facts plan exceeds approved burst")
+    elif plan["kind"] == "facts_full":
+        require(plan.get("manifest_path") is None and plan.get("manifest_sha256") is None,
+                "full facts migration cannot reuse the bounded cleanup manifest")
 
 
 def validate_checkpoint(state, plan, worker, expected):
@@ -477,15 +483,18 @@ def write_state(root, plan, canary, *, failed=False, last_error=None):
     return value
 
 
-def patent_alias_tail(root, plan):
+def source_alias_tail(root, plan):
     tail = root / "pg-alias-tail"
-    scope = {"protocol": "source_safe_patent_alias_tail_v1", "mongo_plan_sha256": plan["plan_sha256"],
+    require(plan["kind"] in ("patent", "facts_full"), "source tail requires a full migration")
+    baseline, aliases = SCOPES[plan["kind"]]
+    scope = {"protocol": ("source_safe_facts_full_alias_tail_v1" if plan["kind"] == "facts_full"
+                          else "source_safe_patent_alias_tail_v1"), "mongo_plan_sha256": plan["plan_sha256"],
              "workers": WORKERS, "batch_size": SQL_BATCH, "guard_table": None,
-             "scopes": [{"old": "google_patent", "new": "patent_google", "data_type": "patent",
-                         "relations": [{"schema": "ts_" + layer, "name": layer + "_patent", "layer": layer}
-                                       for layer in ("rds", "ods")]}]}
+             "scopes": [{"old": old, "new": baseline.COLLECTION, "data_type": baseline.KIND,
+                         "relations": [{"schema": "ts_" + layer, "name": layer + "_" + baseline.KIND, "layer": layer}
+                                       for layer in ("rds", "ods")]} for old in aliases]}
     state = write_state(root, plan, False)
-    require(plan["kind"] == "patent" and state["workers_done"] == WORKERS, "patent tail requires complete Mongo ranges")
+    require(state["workers_done"] == WORKERS, "source tail requires complete Mongo ranges")
     if (root / "STOP").exists():
         pg.atomic(root / "state.json", {**state, "stage": "paused"})
         return
@@ -493,14 +502,15 @@ def patent_alias_tail(root, plan):
     pg.immutable(tail / "scope.json", pg.encoded(scope))
     tail_plan = asyncio.run(pg.prepare(tail))
     units = tail_plan["units"]
-    expected = {(schema, table, ordinal) for schema, table in
-                (("ts_rds", "rds_patent"), ("ts_ods", "ods_patent")) for ordinal in range(32)}
+    expected = {("ts_" + layer, layer + "_" + baseline.KIND, ordinal, old)
+                for old in aliases for layer in ("rds", "ods") for ordinal in range(32)}
+    unit_count = len(expected)
     require(tail_plan["plan_sha256"] == pg.sha(pg.encoded(scope)) and tail_plan["workers"] == WORKERS
             and tail_plan["batch_size"] == SQL_BATCH and tail_plan.get("guard_table") is None
-            and len(units) == 64 and {u["unit"] for u in units} == set(range(64))
-            and {(u["schema"], u["table"], u["ordinal"]) for u in units} == expected
-            and all(u["old"] == "google_patent" and u["new"] == "patent_google"
-                    and u["data_type"] == "patent" for u in units), "patent tail plan coverage differs")
+            and len(units) == unit_count and {u["unit"] for u in units} == set(range(unit_count))
+            and {(u["schema"], u["table"], u["ordinal"], u["old"]) for u in units} == expected
+            and all(u["new"] == baseline.COLLECTION and u["data_type"] == baseline.KIND for u in units),
+            "source tail plan coverage differs")
     pg.main(argparse.Namespace(root=str(tail), prepare=False, worker=None))
     if (tail / "STOP").exists():
         pg.atomic(root / "state.json", {**state, "stage": "paused"})
@@ -508,14 +518,15 @@ def patent_alias_tail(root, plan):
     checkpoints = [pg.read(tail / "checkpoints" / f"unit-{u['unit']}.json", {}) for u in units]
     require(all(cp.get("plan_sha256") == tail_plan["plan_sha256"] and cp.get("unit") == unit["unit"]
                 and cp.get("done") is True and not cp.get("pending") and not cp.get("last_error")
-                for unit, cp in zip(units, checkpoints)), "patent tail checkpoints are incomplete or differ")
+                for unit, cp in zip(units, checkpoints)), "source tail checkpoints are incomplete or differ")
     pg.atomic(root / "state.json", {**state, "stage": "complete", "pg_only_alias_sweep_complete": True,
-              "tail_units_done": 64, "tail_processed": sum(cp.get("processed", 0) for cp in checkpoints)})
+              "tail_units_done": unit_count, "tail_processed": sum(cp.get("processed", 0) for cp in checkpoints)})
 
 
 def prepare_plan(root, kind, manifest_path=None):
     baseline, aliases = SCOPES[kind]
     require(kind != "facts" or manifest_path is not None, "facts require the approved bounded checkpoint manifest")
+    require(kind == "facts" or manifest_path is None, "full migrations do not accept bounded facts manifests")
     client = facts.mongo_client()
     try:
         database = client[facts.settings.db_name]
@@ -597,8 +608,8 @@ def main():
                 process.join(timeout=0.2)
         require(all(process.exitcode == 0 for process in processes), "worker failed; preserve checkpoints")
         state = write_state(root, plan, args.canary)
-        if plan["kind"] == "patent" and not args.canary and state["workers_done"] == WORKERS:
-            patent_alias_tail(root, plan)
+        if plan["kind"] in ("patent", "facts_full") and not args.canary and state["workers_done"] == WORKERS:
+            source_alias_tail(root, plan)
     except BaseException as error:
         write_state(root, plan, args.canary, failed=True, last_error=type(error).__name__)
         raise

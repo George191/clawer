@@ -34,17 +34,18 @@ def snapshot():
              for i, (schema, table) in enumerate(tables)]
     return {'observed_at': SAMPLED, 'run': '/app/output/run', 'plan_sha256': 'history-plan',
             'layout': {'workers': 6, 'page_size': 3000, 'sql_batch_size': 300}, 'units': units,
-            'checkpoints': [], 'backends': [], 'worker_errors': [], 'stop_requested': False}
+            'checkpoints': [], 'backends': [], 'worker_errors': [], 'stop_requested': False,
+            'facts_repair': {'verified': True, 'processed': 78600, 'stage': 'complete'}}
 
 
 def migration(kind='patent', **changes):
     return {'verified': True, 'sampled_at': SAMPLED, 'kind': kind, 'plan_sha256': 'a' * 64,
-            'worker_processed': [100] * 6, 'processed': 600, 'total': 78600 if kind == 'facts' else None,
+            'worker_processed': [100] * 6, 'processed': 600, 'total': None,
             'stage': 'running', 'pg_workers': list(range(6)), 'pending': 0, 'errors': [],
             'tail': None, 'cdc_replay': False, **changes}
 
 
-def reader_fixture(kind='patent', complete=False):
+def reader_fixture(kind='patent', complete=False, bounded=False):
     files = {}
 
     class MemoryPath(PurePosixPath):
@@ -66,24 +67,26 @@ def reader_fixture(kind='patent', complete=False):
     environment = {'datetime': datetime, 'timezone': timezone, 'json': json, 'hashlib': hashlib,
                    'Path': MemoryPath}
     exec(compile(ast.Module(body=functions, type_ignores=[]), '<migration-probe>', 'exec'), environment)
-    root = BASE + '/' + kind + '-source-safe-20261116'
+    plan_kind = 'facts' if bounded else 'facts_full' if kind == 'facts' else 'patent'
+    root_name = 'facts-source-safe-20261116' if bounded else 'facts-migration-20261116' if kind == 'facts' else 'patent-source-safe-20261116'
+    root = BASE + '/' + root_name
     parts = []
     for number in range(6):
         part = {'worker': number, 'lower': f'{number * 100000 + 1:024x}',
                 'upper': f'{(number + 1) * 100000 + 1:024x}' if number < 5 else None}
         if number == 5:
             part['upper_inclusive'] = f'{600000:024x}'
-        if kind == 'facts':
+        if bounded:
             part.update(upper_inclusive=f'{number * 100000 + 13100:024x}', actual_count=13100,
                         processed=13100)
         parts.append(part)
-    plan = {'protocol': 'source_safe_mongo_migration_v1', 'kind': kind,
+    plan = {'protocol': 'source_safe_mongo_migration_v1', 'kind': plan_kind,
             'collection': 'financial_fact_sec_edgar' if kind == 'facts' else 'patent_google',
             'data_type': 'financial_fact' if kind == 'facts' else 'patent',
             'aliases': ['sec_edgar_financial_fact', 'sec_edgar_company'] if kind == 'facts' else ['google_patent'],
             'workers': 6, 'page_size': 3000, 'sql_batch_size': 300,
-            'mongo_uuid': '1' * 32, 'parts': parts}
-    if kind == 'facts':
+            'mongo_uuid': '1' * 32, 'parts': parts, 'manifest_path': None, 'manifest_sha256': None}
+    if bounded:
         manifest = {'protocol': 'facts_burst_checkpoint_manifest_v1', 'total': 78600,
                     'mongo_uuid_hex': plan['mongo_uuid'], 'parts': parts}
         manifest_path = BASE + '/facts-burst-evidence-20261116/facts-burst-manifest-20261116.json'
@@ -91,12 +94,13 @@ def reader_fixture(kind='patent', complete=False):
         plan.update(manifest_path=manifest_path, manifest_sha256=hashlib.sha256(files[manifest_path]).hexdigest())
     plan['plan_sha256'] = hashlib.sha256(encoded(plan)).hexdigest()
     files[root + '/plan.json'] = encoded(plan)
-    owner = {'root': HOST_BASE + '/' + kind + '-source-safe-20261116', 'workers': 6,
+    owner = {'root': HOST_BASE + '/' + root_name, 'workers': 6,
              'page_size': 3000, 'sql_batch_size': 300, 'mongo_cdc_replay': False,
              'source_sha256': 'c' * 64, 'plan_sha256': plan['plan_sha256'],
-             'container': 'source-safe-' + kind + '-20261116', 'image': 'maintenance:commit'}
-    files[BASE + '/source-safe-current-owners.json'] = encoded({kind: owner})
-    count = 13100 if complete and kind == 'facts' else 2
+             'container': 'source-safe-facts-full-20261116' if kind == 'facts' and not bounded else 'source-safe-' + kind + '-20261116',
+             'image': 'maintenance:commit'}
+    files[BASE + '/source-safe-current-owners.json'] = encoded({'facts_history_repair' if bounded else kind: owner})
+    count = 13100 if complete and bounded else 2
     for number, part in enumerate(parts):
         rows = min(count, 300)
         ids = [f'private-fixture-{number}-{n}' for n in range(rows)]
@@ -110,12 +114,14 @@ def reader_fixture(kind='patent', complete=False):
         files[root + f'/worker-{number}.json'] = encoded({'worker': number,
             'plan_sha256': plan['plan_sha256'], 'processed': count, 'cursor': cursor,
             'done': complete, 'pending': None, 'last_error': None, 'last_receipt': relative})
-    summary = {'protocol': plan['protocol'], 'kind': kind, 'plan_sha256': plan['plan_sha256'],
+    summary = {'protocol': plan['protocol'], 'kind': plan_kind, 'plan_sha256': plan['plan_sha256'],
                'mongo_uuid': plan['mongo_uuid'], 'workers': 6, 'page_size': 3000, 'sql_batch_size': 300,
                'processed': count * 6, 'stage': 'complete' if complete else 'running',
                'pg_only_alias_sweep_complete': False, 'cdc_replay': False, 'last_error': None}
     files[root + '/state.json'] = encoded(summary)
-    return lambda: environment['read_migration'](kind), files, root, plan
+    if complete and not bounded:
+        add_tail(files, root, plan, complete=True)
+    return lambda: environment['read_facts_repair']() if bounded else environment['read_migration'](kind), files, root, plan
 
 
 def mutate(files, path, **values):
@@ -126,17 +132,18 @@ def mutate(files, path, **values):
 def add_tail(files, root, parent_plan, complete=False):
     for number in range(6):
         mutate(files, root + f'/worker-{number}.json', done=True)
-    scope = {'protocol': 'source_safe_patent_alias_tail_v1',
+    scope = {'protocol': 'source_safe_' + parent_plan['kind'] + '_alias_tail_v1',
              'mongo_plan_sha256': parent_plan['plan_sha256']}
     directory = root + '/pg-alias-tail'
     files[directory + '/scope.json'] = encoded(scope)
     sha = hashlib.sha256(files[directory + '/scope.json']).hexdigest()
     units = []
-    for layer in ('rds', 'ods'):
-        for ordinal in range(32):
-            units.append({'unit': len(units), 'schema': 'ts_' + layer,
-                          'table': layer + '_patent', 'layer': layer, 'ordinal': ordinal,
-                          'old': 'google_patent', 'new': 'patent_google', 'data_type': 'patent'})
+    for old in parent_plan['aliases']:
+        for layer in ('rds', 'ods'):
+            for ordinal in range(32):
+                units.append({'unit': len(units), 'schema': 'ts_' + layer,
+                              'table': layer + '_' + parent_plan['data_type'], 'layer': layer, 'ordinal': ordinal,
+                              'old': old, 'new': parent_plan['collection'], 'data_type': parent_plan['data_type']})
     files[directory + '/plan.json'] = encoded({'plan_sha256': sha, 'workers': 6,
         'batch_size': 300, 'guard_table': None, 'units': units})
     for unit in units:
@@ -186,8 +193,9 @@ class ProgressTests(unittest.TestCase):
         for render in (progress.markdown, progress.plain_table):
             report = render(value)
             self.assertIn('同批双层验证的 record_id 只计一次', report)
-            self.assertIn('600/78,600', report)
             self.assertIn('600/未核定', report)
+            self.assertNotIn('600/78,600', report)
+            self.assertIn('不计入本次 facts 全量迁移进度', report)
             self.assertNotIn('1,200/', report)
 
     def test_history_pending_never_advances_committed_counts(self):
@@ -272,7 +280,7 @@ class ProgressTests(unittest.TestCase):
 
     def test_tail_rows_are_separate_from_both_layer_identity_progress(self):
         raw = {**snapshot(), 'migrations': {'facts': migration('facts'),
-            'patent': migration(stage='pg_alias_tail', tail={'rds': 23, 'ods': 45, 'done': 2, 'pending': 1})}}
+            'patent': migration(stage='pg_alias_tail', tail={'rds': 23, 'ods': 45, 'done': 2, 'pending': 1, 'units': 64})}}
         value = progress.summarize(raw)
         for render in (progress.markdown, progress.plain_table):
             report = render(value)
@@ -291,8 +299,70 @@ class ProgressTests(unittest.TestCase):
             report = progress.migration_report({'facts': value, 'patent': progress.summarize_migration(None, None, SAMPLED)}, markdown)
             self.assertIn('facts/RDS+ODS', report)
             self.assertIn('完成', report)
-            self.assertIn('78,600/78,600', report)
+            self.assertIn('12/未核定', report)
             self.assertIn('0/6', report)
+
+    def test_facts_full_progress_does_not_reuse_completed_burst_count_or_rate(self):
+        old = migration('facts', plan_sha256='b' * 64, processed=78600,
+                        worker_processed=[13100] * 6, stage='complete')
+        raw = migration('facts', sampled_at='2026-11-16T06:10:00+00:00')
+        current = progress.summarize_migration(raw, old, raw['sampled_at'])
+        self.assertEqual(current['processed'], 600)
+        self.assertIsNone(current['delta'])
+        self.assertIsNone(current['total'])
+        report = progress.migration_report({'facts': current, 'patent': current}, True,
+            {'verified': True, 'processed': 78600, 'stage': 'complete'})
+        self.assertIn('600/未核定', report)
+        self.assertNotIn('600/78,600', report)
+        self.assertNotIn('79,200/', report)
+        self.assertIn('前置历史修复：78,600', report)
+
+    def test_facts_full_rejects_owner_still_pointing_to_completed_repair(self):
+        probe, files, root, _ = reader_fixture('facts')
+        path = BASE + '/source-safe-current-owners.json'
+        owners = json.loads(files[path]); owners['facts']['root'] = HOST_BASE + '/facts-source-safe-20261116'
+        files[path] = encoded(owners)
+        value = probe()
+        self.assertFalse(value['verified'])
+        self.assertNotIn('processed', value)
+
+    def test_completed_burst_evidence_is_independent_of_full_migration(self):
+        repair, files, root, plan = reader_fixture('facts', complete=True, bounded=True)
+        before = dict(files)
+        value = repair()
+        self.assertTrue(value['verified'], value)
+        self.assertEqual(value['processed'], 78600)
+        self.assertEqual(files, before)
+        mutate(files, root + '/worker-0.json', pending='transactions/not-committed.json')
+        self.assertFalse(repair()['verified'])
+        full, _, _, _ = reader_fixture('facts')
+        self.assertEqual(full()['processed'], 12)
+
+    def test_facts_tail_requires_both_aliases_for_both_layers_all_128_units(self):
+        probe, files, root, plan = reader_fixture('facts')
+        directory = add_tail(files, root, plan, complete=True)
+        value = probe(); self.assertTrue(value['verified'], value)
+        self.assertEqual(value['processed'], 12)
+        self.assertEqual(value['tail'], {'rds': 640, 'ods': 640, 'done': 128, 'pending': 0, 'units': 128})
+        value['pg_workers'] = []
+        rendered = progress.migration_report({'facts': progress.summarize_migration(value, None, value['sampled_at']),
+            'patent': progress.summarize_migration(None, None, SAMPLED)}, True)
+        self.assertIn('facts旧源尾扫：RDS 640 行，ODS 640 行；完成单元 128/128', rendered)
+        self.assertIn('12/未核定', rendered)
+        self.assertNotIn('1,292/未核定', rendered)
+        tail_plan_path = directory + '/plan.json';tail_plan = json.loads(files[tail_plan_path])
+        tail_plan['units'][-1]['old'] = 'foreign_source'
+        files[tail_plan_path] = encoded(tail_plan)
+        self.assertFalse(probe()['verified'])
+
+    def test_facts_full_complete_requires_tail_acceptance(self):
+        probe, files, root, plan = reader_fixture('facts')
+        for number in range(6):
+            mutate(files, root + f'/worker-{number}.json', done=True)
+        mutate(files, root + '/state.json', stage='mongo_coverage_complete')
+        self.assertTrue(probe()['verified'])
+        mutate(files, root + '/state.json', stage='complete')
+        self.assertFalse(probe()['verified'])
 
     def test_abnormal_container_exit_is_visible_without_losing_verified_commits(self):
         raw = migration(container_running=False, exit_code=137, restart_count=3)
@@ -320,7 +390,7 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual((raw['processed'], raw['worker_processed'], raw['pending']), (12, [2] * 6, 0))
             self.assertNotIn('private-fixture', json.dumps(raw))
             self.assertNotIn('record_ids', json.dumps(raw))
-            self.assertEqual(raw['total'], 78600 if kind == 'facts' else None)
+            self.assertIsNone(raw['total'])
 
     def test_probe_pending_does_not_add_future_transaction_rows(self):
         probe, files, root, _ = reader_fixture()
@@ -347,7 +417,7 @@ class ProgressTests(unittest.TestCase):
         add_tail(files, root, plan)
         value = probe(); self.assertTrue(value['verified'], value)
         self.assertEqual(value['processed'], 12)
-        self.assertEqual(value['tail'], {'rds': 320, 'ods': 320, 'done': 0, 'pending': 0})
+        self.assertEqual(value['tail'], {'rds': 320, 'ods': 320, 'done': 0, 'pending': 0, 'units': 64})
 
     def test_patent_complete_requires_successful_all_unit_tail(self):
         probe, files, root, plan = reader_fixture()
@@ -362,7 +432,7 @@ class ProgressTests(unittest.TestCase):
         patent, patent_files, root, _ = reader_fixture()
         del patent_files[root + '/state.json']
         self.assertTrue(facts()['verified'])
-        self.assertEqual(facts()['processed'], 78600)
+        self.assertEqual(facts()['processed'], 12)
         self.assertFalse(patent()['verified'])
 
     def test_host_inspection_reads_source_of_completed_containers_without_exec(self):

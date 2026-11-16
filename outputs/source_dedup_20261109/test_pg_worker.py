@@ -673,6 +673,45 @@ class BoundsTests(unittest.TestCase):
                 subject.main(type('Args', (), {'root': directory, 'prepare': False, 'worker': number})())
                 entry.assert_called_with(str(Path(directory).resolve()), number)
 
+    def test_dedicated_facts_tail_authorizes_only_its_disjoint_six_worker_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scopes = [{'old': old, 'new': 'financial_fact_sec_edgar', 'data_type': 'financial_fact',
+                       'relations': [{'schema': 'ts_' + layer, 'name': layer + '_financial_fact', 'layer': layer}
+                                     for layer in ('rds', 'ods')]}
+                      for old in ('sec_edgar_financial_fact', 'sec_edgar_company')]
+            scope = {'protocol': 'source_safe_facts_full_alias_tail_v1', 'workers': 6,
+                     'batch_size': 300, 'guard_table': None, 'scopes': scopes}
+            subject.atomic(root / 'scope.json', scope)
+            plan = {'plan_sha256': subject.sha((root / 'scope.json').read_bytes())}
+            layout = subject.runtime_layout(root, plan)
+            self.assertEqual(layout['scope'], 'facts_full')
+            units = []
+            for source in scopes:
+                for layer in ('rds', 'ods'):
+                    for ordinal in range(32):
+                        units.append({'unit': len(units), 'ordinal': ordinal, 'schema': 'ts_' + layer,
+                            'table': layer + '_financial_fact', 'old': source['old'],
+                            'new': source['new'], 'data_type': source['data_type']})
+            assigned = [{u['unit'] for u in units if subject.unit_owner(u, layout) == n} for n in range(6)]
+            self.assertEqual(set.union(*assigned), set(range(128)))
+            self.assertEqual(sum(map(len, assigned)), 128)
+            self.assertTrue(all(subject.unit_owner(u, {'workers': 6}) is None for u in units))
+            for bad in ({**scope, 'scopes': scopes[:1]},
+                        {**scope, 'scopes': [{**scopes[0], 'new': 'other_source'}, scopes[1]]},
+                        {**scope, 'workers': 8}, {**scope, 'guard_table': subject.GUARD_TABLE}):
+                subject.atomic(root / 'scope.json', bad)
+                with self.assertRaisesRegex(RuntimeError, 'facts source-tail scope'):
+                    subject.runtime_layout(root, plan)
+
+    def test_facts_layout_flag_cannot_enable_original_history_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); plan = {'plan_sha256': 'a' * 64}
+            subject.atomic(root / 'scope.json', {'protocol': 'sec_history_source_dedup_v1'})
+            subject.atomic(root / 'layout.json', {**plan, 'scope': 'facts_full'})
+            with self.assertRaisesRegex(RuntimeError, 'immutable scope'):
+                subject.runtime_layout(root, plan)
+
     def test_first_keyset_page_omits_null_cursor_and_binds_limit_third(self):
         query, parameters = subject.keyset_page_query(UNIT, None, 3000)
         self.assertEqual(parameters, [OLD, KIND, 3000])
