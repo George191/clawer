@@ -81,12 +81,10 @@ try:
 except Exception:
     _STREAM_REQUEST_KWARGS = {}
 
-# 无字节进展判死阈值；task_log_capture 按 "download progress:" 前缀合并进度行。
+# 无字节进展告警阈值；task_log_capture 按 "download progress:" 前缀合并进度行。
 _STREAM_CHUNK_IDLE_SECONDS = 300
 _STREAM_LOG_MIN_SECONDS = 2.0
 _STREAM_BAR_WIDTH = 22
-# curl 总时长下限：基准包（cvelistV5 ~600MB）在劣化链路上远超默认下载超时。
-_STREAM_TOTAL_TIMEOUT_FLOOR = 3600
 _DOWNLOAD_CLEANUP_SECONDS = 5.0
 
 
@@ -107,15 +105,15 @@ def _download_progress_line(received: int, total: int, speed_mbps: float) -> str
 
 
 def _stream_watchdog_tick(state: dict, now: float, warned: int):
-    """Pure decision for the stall watchdog: ok | warn | exit."""
+    """Report a stalled transfer twice until byte progress resumes."""
     idle_for = now - state["t"]
     if idle_for <= _STREAM_CHUNK_IDLE_SECONDS:
         return "ok", 0
-    return ("warn" if warned < 2 else "exit"), warned + 1
+    return ("warn", warned + 1) if warned < 2 else ("ok", warned)
 
 
 async def _stream_download_watchdog(state: dict, hard_deadline_s: float, url: str) -> None:
-    """Legacy adapter watchdog; callers must observe its controlled failure."""
+    """Report stalled transfers without imposing a network timeout."""
     warned = 0
     while True:
         await asyncio.sleep(30)
@@ -124,13 +122,9 @@ async def _stream_download_watchdog(state: dict, hard_deadline_s: float, url: st
         if decision == "ok":
             continue
         logger.warning(
-            "download stalled: no bytes for %.0fs (received %.1f MB, hard budget "
-            "%.0fs), escalation %d/3 - %s",
+            "download stalled: no bytes for %.0fs (received %.1f MB) - %s",
             asyncio.get_event_loop().time() - state["t"],
-            state["bytes"] / 1048576, hard_deadline_s, warned, url)
-        if decision != "exit":
-            continue
-        raise DownloadError(url, message="download watchdog: stalled transfer")
+            state["bytes"] / 1048576, url)
 
 
 def _init_anti_crawl(*, use_proxy: bool = True):
@@ -321,7 +315,7 @@ class HttpClient:
         session_kwargs: dict = {
             "impersonate": "chrome120",
             "proxy": proxy_url,
-            "timeout": None if no_timeout else settings.http_request_timeout,
+            "timeout": None,
             "headers": {"User-Agent": settings.http_user_agent},
             "verify": settings.http_verify_ssl,
             "allow_redirects": True,
@@ -528,7 +522,7 @@ class HttpClient:
             force_direct: 不改变采集代理模式；所有请求仍使用前置代理。
             page: 当前页码，用于日志记录。
             attempt: 当前尝试次数，用于日志记录。
-            no_timeout: 不设置连接或响应超时，仅用于交互式网站预检。
+            no_timeout: 所有采集请求均不设置连接或响应超时。
             reuse_session: 显式复用当前协程的连接；响应 Cookie 不跨请求保留。
 
         Returns:
@@ -539,10 +533,6 @@ class HttpClient:
         retrying = attempt > 0 or rotate_proxy or task in self._retrying_tasks
         if task is not None:
             self._retrying_tasks.add(task)
-        # Cached download clients have the normal request timeout. Interactive
-        # no-timeout requests retain their original dedicated-session path.
-        reuse_session = reuse_session and not no_timeout
-
         headers = dict(config.headers)
         cookies = dict(config.cookies)
                 
@@ -678,11 +668,7 @@ class HttpClient:
         if asyncio.current_task() is not None:
             self._download_owners[task_id] = asyncio.current_task()
         try:
-            ready, _ = await asyncio.wait(
-                {request_task}, timeout=None if no_timeout else settings.http_request_timeout * 2,
-            )
-            if not ready:
-                raise asyncio.TimeoutError("Page request exceeded its time budget")
+            await asyncio.wait({request_task})
             response = request_task.result()
             completed = True
             if task is not None:
@@ -751,11 +737,6 @@ class HttpClient:
         state = ResumeState() if (method == "GET" and _STREAM_REQUEST_KWARGS
                                  and not any(key.lower() == "range" for key in config.headers)) else None
         buffer = BytesIO()
-        total_timeout = max(settings.http_download_timeout, _STREAM_TOTAL_TIMEOUT_FLOOR) if (
-            chunk_callback is not None and _STREAM_REQUEST_KWARGS
-        ) else settings.http_download_timeout
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + total_timeout
         attempts = 4 if method == "GET" else 1
         task = asyncio.current_task()
         task_id = id(task) if task is not None else 0
@@ -766,7 +747,6 @@ class HttpClient:
                 try:
                     result = await self._download_response_once(
                         url, config, use_proxy=use_proxy, _state=state, _buffer=buffer,
-                        _deadline=deadline, _total_timeout=total_timeout,
                     )
                 except DownloadCleanupError:
                     raise
@@ -778,7 +758,7 @@ class HttpClient:
                         or isinstance(error, (TimeoutError, ConnectionError))
                     )
                     delay = max(0.0, settings.http_retry_backoff) * 2 ** attempt
-                    if not retryable or attempt + 1 >= attempts or loop.time() + delay >= deadline:
+                    if not retryable or attempt + 1 >= attempts:
                         if isinstance(error, (TimeoutError, DownloadTruncatedError)):
                             raise DownloadError(url, status, str(error)) from error
                         raise
@@ -804,8 +784,6 @@ class HttpClient:
         use_proxy: bool | None,
         _state: ResumeState | None,
         _buffer: BytesIO,
-        _deadline: float,
-        _total_timeout: float,
     ) -> DownloadResponse:
         config = config or RequestConfig()
         task = asyncio.current_task()
@@ -863,17 +841,15 @@ class HttpClient:
         try:
             # Every supported transport streams so interrupted resources can
             # resume even when the caller does not request progress callbacks.
-            total_timeout = _total_timeout
             loop = asyncio.get_running_loop()
             started = loop.time()
-            deadline = _deadline
             stream_kwargs = dict(
                 method=config.method or "GET",
                 url=url,
                 headers=headers,
                 params=config.params,
                 cookies=cookies,
-                timeout=max(0.001, deadline - loop.time()),
+                timeout=None,
             )
 
             if streaming:
@@ -887,9 +863,7 @@ class HttpClient:
                 stream_kwargs["stream"] = False
             request_task = asyncio.ensure_future(client.request(**stream_kwargs))
             operations.add(request_task)
-            ready, _ = await asyncio.wait({request_task}, timeout=max(0.0, deadline - loop.time()))
-            if not ready:
-                raise TimeoutError("Download exceeded its time budget before response headers")
+            await asyncio.wait({request_task})
             response = request_task.result()
             transfer = getattr(response, "astream_task", None)
             if isinstance(transfer, asyncio.Future):
@@ -934,10 +908,7 @@ class HttpClient:
                 while True:
                     chunk_task = asyncio.ensure_future(chunk_iter.__anext__())
                     operations.add(chunk_task)
-                    remaining = min(_STREAM_CHUNK_IDLE_SECONDS, max(0.0, deadline - loop.time()))
-                    ready, _ = await asyncio.wait({chunk_task}, timeout=remaining)
-                    if not ready:
-                        raise TimeoutError("Download stalled or exceeded its time budget")
+                    await asyncio.wait({chunk_task})
                     try:
                         chunk = chunk_task.result()
                     except StopAsyncIteration:
@@ -955,8 +926,6 @@ class HttpClient:
                         elapsed = max(loop.time() - started, 1e-9)
                         logger.info("%s", _download_progress_line(
                             received, total, received / 1048576 / elapsed))
-                    if loop.time() > deadline:
-                        raise TimeoutError("Download exceeded its time budget")
                 if _state is not None:
                     _state.finish()
                 elif total and received != total:
@@ -1061,8 +1030,8 @@ class HttpClient:
 
         Streaming is feature-detected: the payload arrives chunk-by-chunk and
         each refresh logs a "download progress:" line that the task-log
-        capture layer merges into ONE live row. Stalls raise DownloadError
-        after bounded transport cleanup. The returned bytes still require
+        capture layer merges into ONE live row. Transfers wait until completion
+        or explicit cancellation. The returned bytes still require
         memory proportional to the complete payload. Legacy curl_cffi builds
         fall back to the non-stream download_response path.
         """

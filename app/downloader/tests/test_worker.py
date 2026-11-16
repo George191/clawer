@@ -71,29 +71,38 @@ class DownloadWorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(raised.exception, error)
         self.assertEqual(self.worker._http.download_response.await_count, 1)
 
-    async def test_proxy_acquisition_stall_obeys_total_fetch_budget(self):
-        cancelled = asyncio.Event()
+    async def test_slow_fetch_completes_without_total_budget(self):
+        started, release = asyncio.Event(), asyncio.Event()
 
         async def stalled(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return self.response
+
+        module.settings.http_download_timeout = 0.03
+        self.worker._http.download_response.side_effect = stalled
+        task = asyncio.create_task(self.download())
+        try:
+            await started.wait()
+            await asyncio.sleep(0.06)
+            self.assertFalse(task.done())
+            release.set()
+            self.assertEqual(await asyncio.wait_for(task, 1), "stored/object")
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        self.assertEqual(self.worker._http.download_response.await_count, 1)
+        self.worker._minio.upload_bytes.assert_awaited_once()
+
+    async def test_external_cancellation_stays_cancelled(self):
+        started, cancelled = asyncio.Event(), asyncio.Event()
+
+        async def stalled(*args, **kwargs):
+            started.set()
             try:
                 await asyncio.Event().wait()
             finally:
                 cancelled.set()
-
-        module.settings.http_download_timeout = 0.03
-        self.worker._http.download_response.side_effect = stalled
-        with self.assertRaisesRegex(DownloadError, "resource fetch exceeded"):
-            await self.download()
-        self.assertTrue(cancelled.is_set())
-        self.assertEqual(self.worker._http.download_response.await_count, 1)
-        self.worker._minio.upload_bytes.assert_not_awaited()
-
-    async def test_external_cancellation_stays_cancelled(self):
-        started = asyncio.Event()
-
-        async def stalled(*args, **kwargs):
-            started.set()
-            await asyncio.Event().wait()
 
         self.worker._http.download_response.side_effect = stalled
         task = asyncio.create_task(self.download())
@@ -102,6 +111,8 @@ class DownloadWorkerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await task
         self.assertTrue(task.cancelled())
+        self.assertTrue(cancelled.is_set())
+        self.worker._minio.upload_bytes.assert_not_awaited()
 
     async def test_fetch_preserves_task_identity_for_proxy_cleanup(self):
         owner = asyncio.current_task()

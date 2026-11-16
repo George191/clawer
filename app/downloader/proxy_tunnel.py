@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import threading
 from contextlib import suppress
 from urllib.parse import urlsplit
 
 from curl_cffi import Curl, CurlInfo, CurlOpt
 
 from app.downloader.browser_runtime import BrowserRuntimeError
+from app.downloader.curl_control import configure_curl_cancellation
 
 
 class ProxyTunnel:
     """Forward Chromium TCP through an already selected front/exit proxy route."""
 
-    def __init__(self, proxy_url: str, pre_proxy_url: str | None, *, timeout: float) -> None:
+    def __init__(self, proxy_url: str, pre_proxy_url: str | None, *, timeout: float | None) -> None:
         self._check_route(proxy_url, pre_proxy_url)
         self._proxy_url = proxy_url
         self._pre_proxy_url = pre_proxy_url
-        self._timeout = max(0.001, timeout)
+        self._timeout = None if timeout is None else max(0.001, timeout)
         self._server: asyncio.Server | None = None
         self._connections: set[asyncio.Task] = set()
         self._connecting: set[asyncio.Task] = set()
@@ -48,7 +50,7 @@ class ProxyTunnel:
             await self._close_connections()
             self._proxy_url, self._pre_proxy_url = proxy_url, pre_proxy_url
 
-    def _connect(self, host: str, port: int) -> tuple[Curl, socket.socket]:
+    def _connect(self, host: str, port: int, stopped: threading.Event) -> tuple[Curl, socket.socket]:
         curl = Curl()
         try:
             authority = f"[{host}]" if ":" in host else host
@@ -59,7 +61,10 @@ class ProxyTunnel:
                 curl.setopt(CurlOpt.PRE_PROXY, self._pre_proxy_url.encode())
             curl.setopt(CurlOpt.HTTPPROXYTUNNEL, 1)
             curl.setopt(CurlOpt.CONNECT_ONLY, 1)
-            curl.setopt(CurlOpt.TIMEOUT_MS, max(1, int(self._timeout * 1000)))
+            curl.setopt(CurlOpt.TIMEOUT_MS, 0 if self._timeout is None else max(1, int(self._timeout * 1000)))
+            if self._timeout is None:
+                curl.setopt(CurlOpt.CONNECTTIMEOUT_MS, 0)
+            _cancellation_callback = configure_curl_cancellation(curl, stopped)
             curl.perform()
             descriptor = curl.getinfo(CurlInfo.ACTIVESOCKET)
             if descriptor < 0:
@@ -99,6 +104,7 @@ class ProxyTunnel:
         upstream = None
         established = False
         pumps = []
+        stopped = threading.Event()
         try:
             async with asyncio.timeout(self._timeout):
                 version, count = await reader.readexactly(2)
@@ -122,12 +128,13 @@ class ProxyTunnel:
                     raise ValueError("Unsupported SOCKS5 address type")
                 port = int.from_bytes(await reader.readexactly(2), "big")
                 async with self._route_lock:
-                    pending = asyncio.create_task(asyncio.to_thread(self._connect, host, port))
+                    pending = asyncio.create_task(asyncio.to_thread(self._connect, host, port, stopped))
                     self._connecting.add(pending)
                     pending.add_done_callback(self._connecting.discard)
                 try:
                     curl, connection = await asyncio.shield(pending)
                 except asyncio.CancelledError:
+                    stopped.set()
                     pending.add_done_callback(self._close_late_connection)
                     raise
             upstream_reader, upstream = await asyncio.open_connection(sock=connection)
@@ -145,6 +152,7 @@ class ProxyTunnel:
                     writer.write(b"\x05\x04\x00\x01\x00\x00\x00\x00\x00\x00")
                     await writer.drain()
         finally:
+            stopped.set()
             for task in pumps:
                 task.cancel()
             if pumps:

@@ -52,12 +52,16 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
 
         async def make_client(*args, **kwargs):
             class Session:
-                def __init__(self): self.close = AsyncMock()
+                def __init__(self):
+                    self.close = AsyncMock()
+                    self.cookies = {}
                 async def request(self, **kwargs):
                     owner.requests.append(kwargs)
                     outcome = owner.outcomes.pop(0)
                     if isinstance(outcome, BaseException):
                         raise outcome
+                    if callable(outcome):
+                        return await outcome()
                     return outcome
             session = Session()
             owner.sessions.append(session)
@@ -232,11 +236,15 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
 
         first.aiter_content = stalled
         self.outcomes[:] = [first]
-        task = asyncio.create_task(self.fetch())
-        await started.wait()
-        task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await task
+        with patch.object(module.settings, "http_download_timeout", 0.01), \
+                patch.object(module, "_STREAM_CHUNK_IDLE_SECONDS", 0.01):
+            task = asyncio.create_task(self.fetch())
+            await started.wait()
+            await asyncio.sleep(0.05)
+            self.assertFalse(task.done())
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
         self.assertTrue(cancelled.is_set())
         self.assertEqual(len(self.requests), 1)
         self.assertEqual(self.http._download_operations, {})
@@ -269,12 +277,103 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.headers["content-length"], "999")
                 self.assertEqual(result.data, b"")
 
-    async def test_deadline_is_shared_across_attempts(self):
+    async def test_retry_backoff_does_not_consume_download_budget(self):
         self.outcomes[:] = [TransferError() for _ in range(5)]
-        with patch.object(module.settings, "http_retry_backoff", 2):
+        with patch.object(module.settings, "http_retry_backoff", 2), \
+                patch.object(module.asyncio, "sleep", AsyncMock()) as sleep:
             with self.assertRaises(TransferError):
                 await self.fetch()
-        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(len(self.requests), 4)
+        self.assertEqual([call.args[0] for call in sleep.await_args_list], [2, 4, 8])
+
+    async def test_slow_response_headers_have_no_download_deadline(self):
+        for transport in ({"stream": True}, {}):
+            with self.subTest(streaming=bool(transport)):
+                started, release = asyncio.Event(), asyncio.Event()
+
+                async def delayed_response():
+                    started.set()
+                    await release.wait()
+                    return Response([b"whole"], content=b"whole", headers={"Content-Length": "5"})
+
+                self.outcomes[:] = [delayed_response]
+                with patch.object(module.settings, "http_download_timeout", 0.01), \
+                        patch.object(module, "_STREAM_REQUEST_KWARGS", transport):
+                    task = asyncio.create_task(self.fetch())
+                    try:
+                        await started.wait()
+                        await asyncio.sleep(0.05)
+                        self.assertFalse(task.done())
+                        release.set()
+                        self.assertEqual((await asyncio.wait_for(task, 1)).data, b"whole")
+                    finally:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                self.assertIsNone(self.requests[-1]["timeout"])
+
+    async def test_client_sessions_disable_timeout_for_both_flag_values(self):
+        with patch.object(module, "_ResponseHeaderSession") as session:
+            for no_timeout in (False, True):
+                await module.HttpClient._create_client(self.http, no_timeout=no_timeout)
+                self.assertIsNone(session.call_args.kwargs["timeout"])
+
+    async def test_legacy_watchdog_reports_stalls_without_terminating_transfer(self):
+        state = {"t": asyncio.get_running_loop().time() - 301, "bytes": 0}
+        with patch.object(module.asyncio, "sleep", AsyncMock(side_effect=[None, None, None, asyncio.CancelledError])), \
+                patch.object(module.logger, "warning") as warning:
+            with self.assertRaises(asyncio.CancelledError):
+                await module._stream_download_watchdog(state, 300, URL)
+        self.assertEqual(warning.call_count, 2)
+
+    async def test_slow_pages_have_no_deadline_with_or_without_cached_session(self):
+        self.http._before_request = AsyncMock(return_value="fixture")
+        self.http._after_request = AsyncMock()
+        for reuse_session in (False, True):
+            started, release = asyncio.Event(), asyncio.Event()
+
+            async def delayed_response():
+                started.set()
+                await release.wait()
+                response = Response()
+                response.text = "slow page"
+                return response
+
+            self.outcomes[:] = [delayed_response]
+            with patch.object(module.settings, "http_request_timeout", 0.01):
+                task = asyncio.create_task(self.http.request_page(
+                    URL, anti_crawl_enabled=False, reuse_session=reuse_session,
+                ))
+                try:
+                    await started.wait()
+                    await asyncio.sleep(0.05)
+                    self.assertFalse(task.done())
+                    release.set()
+                    self.assertEqual(await asyncio.wait_for(task, 1), "slow page")
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
+    async def test_cancelled_page_closes_cached_or_dedicated_session(self):
+        self.http._before_request = AsyncMock(return_value="fixture")
+        for reuse_session in (False, True):
+            started = asyncio.Event()
+
+            async def blocked_response():
+                started.set()
+                await asyncio.Event().wait()
+
+            self.outcomes[:] = [blocked_response]
+            task = asyncio.create_task(self.http.request_page(
+                URL, anti_crawl_enabled=False, reuse_session=reuse_session,
+            ))
+            await started.wait()
+            session = self.sessions[-1]
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            session.close.assert_awaited_once()
+            self.assertEqual(self.http._download_operations, {})
+            self.assertEqual(self.http._download_owners, {})
 
     async def test_legacy_transport_retries_complete_payload(self):
         self.outcomes[:] = [TransferError(), Response(content=b"whole", headers={"Content-Length": "5"})]

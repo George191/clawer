@@ -490,28 +490,21 @@ class DownloadWorker:
         use_proxy: bool,
     ) -> str | None:
         started_at = perf_counter()
+        await check_control_state()
         try:
-            # One attempt per scan; include proxy acquisition in the fetch budget.
-            async with asyncio.timeout(settings.http_download_timeout):
-                await check_control_state()
-                try:
-                    response = await self._http.download_response(item.url, use_proxy=use_proxy)
-                    validator = get_download_response_validator(template_name)
-                    if validator is not None:
-                        validator(item, response)
-                    if item.attachment and (response.content_type or "").startswith("text/html"):
-                        raise DownloadError(item.url, response.status_code, "attachment is HTML")
-                except DownloadCleanupError:
-                    raise
-                except Exception as exc:
-                    if HttpClient._error_status_code(exc) == 404:
-                        return None
-                    await self._http.mark_last_proxy_failed()
-                    raise
-        except TimeoutError as exc:
-            raise DownloadError(
-                item.url, message=f"resource fetch exceeded its {settings.http_download_timeout}s budget",
-            ) from exc
+            response = await self._http.download_response(item.url, use_proxy=use_proxy)
+            validator = get_download_response_validator(template_name)
+            if validator is not None:
+                validator(item, response)
+            if item.attachment and (response.content_type or "").startswith("text/html"):
+                raise DownloadError(item.url, response.status_code, "attachment is HTML")
+        except DownloadCleanupError:
+            raise
+        except Exception as exc:
+            if HttpClient._error_status_code(exc) == 404:
+                return None
+            await self._http.mark_last_proxy_failed()
+            raise
         response_data = response.data
         content_type = response.content_type or "application/octet-stream"
         filename = item.filename

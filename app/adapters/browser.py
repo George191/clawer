@@ -25,7 +25,6 @@ class BrowserSiteAdapter(BaseSiteAdapter):
     """
 
     browser_wait_selector: str | None = None
-    browser_wait_timeout_seconds: float | None = None
     browser_viewport = {"width": 1440, "height": 1000}
     browser_service_workers = "allow"
 
@@ -62,14 +61,15 @@ class BrowserSiteAdapter(BaseSiteAdapter):
 
             self._playwright = await self._controlled(async_playwright().start())
             self._browser_proxy = ProxyTunnel(
-                proxy_url, pre_proxy_url, timeout=settings.http_request_timeout,
+                proxy_url, pre_proxy_url, timeout=None,
             )
             browser_proxy_url = await self._browser_proxy.start()
             options = browser_launch_options(
                 self._playwright,
-                timeout_ms=max(1, int(settings.http_request_timeout * 1000)),
+                timeout_ms=0,
                 proxy_url=browser_proxy_url,
             )
+            options["timeout"] = 0
             self._browser = await self._controlled(self._playwright.chromium.launch(**options))
             self._browser_context = await self._controlled(self._browser.new_context(
                 viewport=self.browser_viewport,
@@ -77,9 +77,8 @@ class BrowserSiteAdapter(BaseSiteAdapter):
                 ignore_https_errors=not settings.http_verify_ssl,
                 service_workers=self.browser_service_workers,
             ))
-            self._browser_context.set_default_timeout(
-                max(1, int(settings.http_request_timeout * 1000))
-            )
+            self._browser_context.set_default_timeout(0)
+            self._browser_context.set_default_navigation_timeout(0)
             self._browser_proxy_url = route
         except asyncio.CancelledError:
             await self.close()
@@ -134,7 +133,7 @@ class BrowserSiteAdapter(BaseSiteAdapter):
                     ])
                 response = await self._controlled(page.goto(
                     url, wait_until="domcontentloaded",
-                    timeout=max(1, int(settings.http_request_timeout * 1000)),
+                    timeout=0,
                 ))
                 if response is None or response.status >= 400:
                     raise DownloadError(
@@ -152,9 +151,8 @@ class BrowserSiteAdapter(BaseSiteAdapter):
 
     async def wait_for_selector(self, page, selector: str) -> None:
         """Wait for rendered content without blocking pause/cancel checks."""
-        timeout = self.browser_wait_timeout_seconds or settings.http_request_timeout
         await self._controlled(page.wait_for_selector(
-            selector, state="visible", timeout=max(1, int(timeout * 1000)),
+            selector, state="visible", timeout=0,
         ))
 
     async def prepare_list_page(self, page) -> str | None:
@@ -178,9 +176,8 @@ class BrowserSiteAdapter(BaseSiteAdapter):
         headers = [" ".join(value.split()) for value in await table.locator("thead th").all_text_contents()]
         if not headers or not all(headers) or len(set(headers)) != len(headers):
             raise ValueError("Browser table has missing or duplicate column headers")
-        timeout = self.browser_wait_timeout_seconds or settings.http_request_timeout
         await self._controlled(table.locator("tbody tr").first.wait_for(
-            state="visible", timeout=max(1, int(timeout * 1000)),
+            state="visible", timeout=0,
         ))
         seen = set()
         records = []
