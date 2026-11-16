@@ -316,11 +316,11 @@ export const fetchDataConnectorTypes = (): Promise<DataConnectorType[]> =>
 export const fetchDataSources = (): Promise<DataSource[]> =>
   client.get('/etl/data-connections').then((r) => unwrap<DataSource[]>(r.data));
 export const testDataSource = (payload: DataSourcePayload, connectionId?: string): Promise<DataSourceTest> =>
-  client.post('/etl/data-connections/test', payload, { params: { connectionId } }).then((r) => unwrap<DataSourceTest>(r.data));
+  client.post('/etl/data-connections/test', payload, { params: { connectionId }, timeout: 45000 }).then((r) => unwrap<DataSourceTest>(r.data));
 export const createDataSource = (payload: DataSourcePayload): Promise<DataSource> =>
-  client.post('/etl/data-connections', payload).then((r) => unwrap<DataSource>(r.data));
+  client.post('/etl/data-connections', payload, { timeout: 45000 }).then((r) => unwrap<DataSource>(r.data));
 export const updateDataSource = (id: string, payload: DataSourcePayload): Promise<DataSource> =>
-  client.put(`/etl/data-connections/${id}`, payload).then((r) => unwrap<DataSource>(r.data));
+  client.put(`/etl/data-connections/${id}`, payload, { timeout: 45000 }).then((r) => unwrap<DataSource>(r.data));
 export const deleteDataSource = (id: string): Promise<void> =>
   client.delete(`/etl/data-connections/${id}`).then(() => undefined);
 export interface EtlDataQuery {
