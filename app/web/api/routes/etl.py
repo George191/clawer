@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
@@ -10,8 +10,11 @@ from app.web.api.dependencies.common import get_current_active_superuser, get_cu
 from app.web.api.models.etl import (
     CodePayload,
     DataQuery,
+    FavoriteImport,
+    FavoriteMutation,
     KeywordVersion,
     OffsetUpdate,
+    ObjectVisibility,
     SqlQuery,
 )
 from app.web.services import etl_runtime
@@ -39,8 +42,24 @@ async def layers() -> list[dict[str, Any]]:
 async def object_types(schema: str | None = None, search: str = Query("", max_length=1000),
                        group: str = "", limit: int = Query(100, ge=1, le=500),
                        offset: int = Query(0, ge=0, le=1_000_000),
-                       ids: str | None = Query(None, max_length=26_000)) -> dict[str, Any]:
+                       ids: str | None = Query(None, max_length=26_000),
+                       includeHidden: bool = False, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    if includeHidden and not getattr(current_user, "is_superuser", False):
+        raise HTTPException(403, "Only administrators can include hidden object types")
+    if includeHidden:
+        return await get_etl_layers().object_types(schema, search, group, limit, offset, ids, include_hidden=True)
     return await get_etl_layers().object_types(schema, search, group, limit, offset, ids)
+
+
+@read.get("/object-types/favorites")
+async def object_favorites(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    return await get_etl_workspace().object_favorites(str(current_user.id))
+
+
+@read.post("/object-types/favorites/import")
+async def import_object_favorites(payload: FavoriteImport,
+                                  current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    return await get_etl_workspace().import_object_favorites(payload.ids, str(current_user.id))
 
 
 @read.get("/task-config/vulnerability-keywords")
@@ -126,8 +145,31 @@ async def table_data(layer: str, table: str, limit: int = Query(50, ge=1, le=500
 
 
 @read.get("/{layer}/{table}/preview")
-async def object_preview(layer: str, table: str) -> dict[str, Any]:
+async def object_preview(layer: str, table: str, includeHidden: bool = False,
+                         current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    if includeHidden and not getattr(current_user, "is_superuser", False):
+        raise HTTPException(403, "Only administrators can include hidden object types")
+    if includeHidden:
+        return await get_etl_layers().preview(layer, table, include_hidden=True)
     return await get_etl_layers().preview(layer, table)
+
+
+@write.put("/{layer}/{table}/visibility")
+async def set_object_visibility(layer: str, table: str, payload: ObjectVisibility,
+                                current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    return await get_etl_workspace().set_object_visibility(layer, table, payload.visibility, str(current_user.id))
+
+
+@read.put("/{layer}/{table}/favorite")
+async def favorite_object(layer: str, table: str, payload: FavoriteMutation | None = None,
+                           current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    return await get_etl_workspace().set_object_favorite(layer, table, True, str(current_user.id))
+
+
+@read.delete("/{layer}/{table}/favorite")
+async def unfavorite_object(layer: str, table: str, payload: FavoriteMutation | None = None,
+                             current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    return await get_etl_workspace().set_object_favorite(layer, table, False, str(current_user.id))
 
 
 @read.post("/{layer}/{table}/data")

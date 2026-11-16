@@ -81,6 +81,11 @@ export interface LayerTable {
   updatedAt: string;
 }
 
+export type EtlObjectVisibility = 'normal' | 'prominent' | 'hidden';
+
+export interface EtlObjectFavorites { ids: string[]; }
+export interface EtlObjectFavoriteMembership { id: string; favorite: boolean; }
+
 export interface EtlObjectType {
   id: string;
   schema: string;
@@ -97,7 +102,7 @@ export interface EtlObjectType {
   propertiesCount: number;
   status: 'available';
   titleProperty: string | null;
-  visibility: 'not_configured';
+  visibility: EtlObjectVisibility;
 }
 
 export interface EtlObjectCatalog {
@@ -125,7 +130,8 @@ export interface EtlLinkedObjectType {
   table: string;
   name: string;
   displayName: string;
-  dataType?: string;
+  dataType: string;
+  visibility: EtlObjectVisibility;
   direction: 'incoming' | 'outgoing' | 'both';
   constraints: Array<{
     name: string;

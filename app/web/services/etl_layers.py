@@ -67,7 +67,7 @@ def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
         "resourceGroup": row.get("resource_group") or "other",
         "objectCount": int(row["object_count"]), "objectCountEstimated": True,
         "propertiesCount": int(row["properties_count"]), "status": "available",
-        "titleProperty": None, "visibility": "not_configured",
+        "titleProperty": None, "visibility": row.get("visibility") or "normal",
     }
 
 
@@ -155,7 +155,9 @@ class EtlLayers:
     async def _require_ontology(session) -> None:
         installed = (await session.execute(text(
             "SELECT to_regclass('public.ontology_objects') IS NOT NULL "
-            "AND to_regclass('public.ontology_object_properties') IS NOT NULL"
+            "AND to_regclass('public.ontology_object_properties') IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('public.ontology_objects') "
+            "AND attname = 'visibility' AND attnum > 0 AND NOT attisdropped)"
         ))).scalar_one()
         if not installed:
             raise HTTPException(503, "Ontology metadata is not initialized")
@@ -164,7 +166,7 @@ class EtlLayers:
         result = await session.execute(text(f"""
             SELECT c.oid, n.nspname AS schema, c.relname AS name,
                    {_OBJECT_DESCRIPTION_SQL} AS description,
-                   o.id AS object_id, o.data_type, o.data_type_source,
+                    o.id AS object_id, o.data_type, o.data_type_source, COALESCE(o.visibility, 'normal') AS visibility,
                    CASE WHEN NULLIF(obj_description(c.oid, 'pg_class'), '') IS NOT NULL
                         THEN 'table_comment' ELSE o.description_source END AS description_source,
                    {_OBJECT_GROUP_SQL} AS resource_group,
@@ -184,12 +186,14 @@ class EtlLayers:
                 FROM descendants d JOIN pg_class physical ON physical.oid = d.relid
             ) storage
             WHERE {where}
-            ORDER BY n.nspname, c.relname LIMIT :limit OFFSET :offset
+            ORDER BY CASE WHEN COALESCE(o.visibility, 'normal') = 'prominent' THEN 0 ELSE 1 END,
+                n.nspname, c.relname LIMIT :limit OFFSET :offset
         """), params)
         return [dict(row) for row in result.mappings()]
 
     async def object_types(self, schema: str | None = None, search: str = "", group: str = "",
-                           limit: int = 100, offset: int = 0, ids: str | None = None) -> dict[str, Any]:
+                           limit: int = 100, offset: int = 0, ids: str | None = None, *,
+                           include_hidden: bool = False) -> dict[str, Any]:
         if not 1 <= limit <= 500 or not 0 <= offset <= 1_000_000:
             raise HTTPException(400, "Pagination is outside supported bounds")
         if group and group not in _OBJECT_GROUPS:
@@ -199,6 +203,8 @@ class EtlLayers:
         params: dict[str, Any] = {"search": search.strip(), "limit": limit, "offset": offset}
         where = _OBJECT_TABLE_SQL + f""" AND position(lower(:search) in lower(
             n.nspname || '.' || c.relname || ' ' || {_OBJECT_DESCRIPTION_SQL})) > 0"""
+        if not include_hidden:
+            where += " AND COALESCE(o.visibility, 'normal') <> 'hidden'"
         if schema:
             params["schema"] = _object_schema(schema)
         if ids:
@@ -242,12 +248,13 @@ class EtlLayers:
                 "limit": limit, "offset": offset, "schemaCounts": schema_counts,
                 "groupCounts": group_counts, "groupSchemaCounts": group_schema_counts}
 
-    async def preview(self, layer: str, table: str) -> dict[str, Any]:
+    async def preview(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
         schema = _object_schema(layer)
         quote_identifier(table)
         async with self.session() as session:
             await self._require_ontology(session)
-            rows = await self._object_rows(session, _OBJECT_TABLE_SQL +
+            visible = "" if include_hidden else " AND COALESCE(o.visibility, 'normal') <> 'hidden'"
+            rows = await self._object_rows(session, _OBJECT_TABLE_SQL + visible +
                 " AND n.nspname = :schema AND c.relname = :table",
                 {"schema": schema, "table": table, "limit": 1, "offset": 0})
             if not rows:
@@ -259,7 +266,8 @@ class EtlLayers:
                        ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(attnum, position)
                              JOIN pg_attribute a ON a.attrelid = sc.oid AND a.attnum = k.attnum
                              ORDER BY k.position) AS columns,
-                       so.data_type AS source_data_type, target_object.data_type AS target_data_type,
+                        so.data_type AS source_data_type, target_object.data_type AS target_data_type,
+                        so.visibility AS source_visibility, target_object.visibility AS target_visibility,
                        ARRAY(SELECT a.attname FROM unnest(con.confkey) WITH ORDINALITY k(attnum, position)
                              JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum
                              ORDER BY k.position) AS referenced_columns
@@ -334,10 +342,13 @@ class EtlLayers:
                     if (relation[f"{side}_schema"], relation[f"{side}_table"]) != (schema, table):
                         continue
                     peer_schema, peer_table = relation[f"{peer}_schema"], relation[f"{peer}_table"]
+                    if not include_hidden and relation.get(f"{peer}_visibility") == "hidden":
+                        continue
                     identifier = f"{peer_schema}.{peer_table}"
                     item = linked.setdefault(identifier, {"id": identifier, "schema": peer_schema,
                         "table": peer_table, "name": peer_table, "displayName": peer_table,
                         "dataType": relation.get(f"{peer}_data_type") or "",
+                        "visibility": relation.get(f"{peer}_visibility") or "normal",
                         "direction": direction, "constraints": [], "relationships": []})
                     if item["direction"] != direction:
                         item["direction"] = "both"

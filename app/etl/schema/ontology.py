@@ -13,12 +13,14 @@ from app.etl.schema.layout import logical_table_name, physical_table_name
 
 ONTOLOGY_OBJECTS_TABLE = "public.ontology_objects"
 ONTOLOGY_PROPERTIES_TABLE = "public.ontology_object_properties"
+ONTOLOGY_FAVORITES_TABLE = "public.ontology_object_favorites"
 _EXTRA_OBJECT_COLUMNS = (
     "data_type TEXT NOT NULL DEFAULT ''",
     "data_type_source TEXT NOT NULL DEFAULT 'not_configured'",
     "description_source TEXT NOT NULL DEFAULT 'not_configured'",
     "provenance TEXT NOT NULL DEFAULT ''",
     "resource_group TEXT NOT NULL DEFAULT 'other' CONSTRAINT ontology_objects_resource_group_check CHECK (resource_group IN ('ingestion','processing','serving','other'))",
+    "visibility TEXT NOT NULL DEFAULT 'normal' CONSTRAINT ontology_objects_visibility_check CHECK (visibility IN ('normal','prominent','hidden'))",
 )
 ONTOLOGY_OBJECT_COLUMNS_ADD_STATEMENTS = tuple(
     f"ALTER TABLE public.ontology_objects ADD COLUMN IF NOT EXISTS {column}"
@@ -52,6 +54,8 @@ ONTOLOGY_OBJECTS_DDL = """CREATE TABLE IF NOT EXISTS public.ontology_objects (
     description_source TEXT NOT NULL DEFAULT 'not_configured',
     provenance TEXT NOT NULL DEFAULT '',
     resource_group TEXT NOT NULL DEFAULT 'other',
+    visibility TEXT NOT NULL DEFAULT 'normal',
+    CONSTRAINT ontology_objects_visibility_check CHECK (visibility IN ('normal','prominent','hidden')),
     CONSTRAINT ontology_objects_resource_group_check CHECK (resource_group IN ('ingestion','processing','serving','other')),
     CONSTRAINT ontology_objects_table_role_check CHECK (table_role IN ('current','history')),
     CONSTRAINT ontology_objects_partition_type_check CHECK (partition_type IN ('none','range','hash')),
@@ -85,7 +89,14 @@ ONTOLOGY_INDEX_DDL_STATEMENTS = (
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_ontology_objects_table ON public.ontology_objects (layer, table_role, schema_name, table_name)",
     "CREATE INDEX IF NOT EXISTS idx_ontology_objects_lookup ON public.ontology_objects (layer, table_role, schema_name, table_name, version DESC)",
 )
-ONTOLOGY_DDL_STATEMENTS = (ONTOLOGY_OBJECTS_DDL, *ONTOLOGY_INDEX_DDL_STATEMENTS, ONTOLOGY_PROPERTIES_DDL)
+ONTOLOGY_FAVORITES_DDL = """CREATE TABLE IF NOT EXISTS public.ontology_object_favorites (
+    user_id UUID NOT NULL,
+    object_id BIGINT NOT NULL REFERENCES public.ontology_objects(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, object_id)
+)"""
+ONTOLOGY_DDL_STATEMENTS = (ONTOLOGY_OBJECTS_DDL, *ONTOLOGY_INDEX_DDL_STATEMENTS,
+                          ONTOLOGY_PROPERTIES_DDL, ONTOLOGY_FAVORITES_DDL)
 ONTOLOGY_DDL = ";\n\n".join(ONTOLOGY_DDL_STATEMENTS) + ";\n"
 
 

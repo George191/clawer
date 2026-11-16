@@ -6,6 +6,9 @@ import type {
   LayerNode,
   LayerTable,
   EtlObjectCatalog,
+  EtlObjectVisibility,
+  EtlObjectFavorites,
+  EtlObjectFavoriteMembership,
   EtlObjectPreview,
   QueryResult,
   TaskInfo,
@@ -241,11 +244,25 @@ export const DASHBOARD_WS_URL = `${
 export const fetchLayers = (): Promise<LayerNode[]> =>
   client.get('/etl/layers').then((r) => unwrap<LayerNode[]>(r.data));
 
-export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number } = {}): Promise<EtlObjectCatalog> =>
+export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean } = {}): Promise<EtlObjectCatalog> =>
   client.get('/etl/object-types', { params }).then((r) => unwrap<EtlObjectCatalog>(r.data));
 
-export const fetchEtlObjectPreview = (schema: string, table: string): Promise<EtlObjectPreview> =>
-  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview`).then((r) => unwrap<EtlObjectPreview>(r.data));
+export const fetchEtlObjectPreview = (schema: string, table: string, includeHidden = false): Promise<EtlObjectPreview> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview`, { params: { includeHidden } }).then((r) => unwrap<EtlObjectPreview>(r.data));
+
+export const updateEtlObjectVisibility = (schema: string, table: string, visibility: EtlObjectVisibility): Promise<{ schema: string; table: string; visibility: EtlObjectVisibility }> =>
+  client.put(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/visibility`, { visibility }).then((r) => unwrap<{ schema: string; table: string; visibility: EtlObjectVisibility }>(r.data));
+
+export const fetchEtlObjectFavorites = (): Promise<EtlObjectFavorites> =>
+  client.get('/etl/object-types/favorites').then((r) => unwrap<EtlObjectFavorites>(r.data));
+
+export const importEtlObjectFavorites = (ids: string[]): Promise<EtlObjectFavorites & { imported: number; skipped: number }> =>
+  client.post('/etl/object-types/favorites/import', { ids }).then((r) => unwrap<EtlObjectFavorites & { imported: number; skipped: number }>(r.data));
+
+export const updateEtlObjectFavorite = (schema: string, table: string, favorite: boolean): Promise<EtlObjectFavoriteMembership> => {
+  const path = `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/favorite`;
+  return (favorite ? client.put(path) : client.delete(path)).then((r) => unwrap<EtlObjectFavoriteMembership>(r.data));
+};
 
 export const fetchCdcStatus = (signal?: AbortSignal): Promise<CdcStatus> =>
   client.get('/cdc/status', { signal }).then((r) => unwrap<CdcStatus>(r.data));

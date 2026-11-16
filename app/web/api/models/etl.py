@@ -35,3 +35,17 @@ class SqlQuery(BaseModel):
 class KeywordVersion(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: str = Field(min_length=36, max_length=36)
+
+
+class ObjectVisibility(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    visibility: Literal["normal", "prominent", "hidden"]
+
+
+class FavoriteMutation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class FavoriteImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ids: list[str] = Field(max_length=200)

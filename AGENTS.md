@@ -34,6 +34,7 @@ When instructions conflict, follow them in this order:
 
 ## Fix Root Causes; Keep Migration Code Out of Production Paths
 
+- Do not add runtime fallback or silent degradation logic. Fix the faulty source, contract, or implementation directly, and report failures explicitly instead of returning substitute data or pretending success.
 - Fix incorrect source data, producer behavior, or interface contracts at their origin. Do not accumulate historical-name branches, compatibility shims, or per-run exceptions to hide the underlying problem.
 - Keep one-time data repair and migration logic in standalone scripts. Do not add helpers such as `_source_dedup_guards`, migration transaction lookups, or run-specific state to shared production CDC/ETL code.
 - Do not preserve historical compatibility unless the user explicitly requests it. Prefer one current, correct behavior.

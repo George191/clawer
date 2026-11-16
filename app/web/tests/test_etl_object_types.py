@@ -105,7 +105,7 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(item["objectCountEstimated"])
         self.assertEqual(item["propertiesCount"], 3)
         self.assertIsNone(item["titleProperty"])
-        self.assertEqual(item["visibility"], "not_configured")
+        self.assertEqual(item["visibility"], "normal")
         self.assertNotIn("oid", item)
         sql, params = session.calls[-1]
         self.assertEqual((params["limit"], params["offset"]), (1, 2))
@@ -366,7 +366,7 @@ class ObjectRouteTests(unittest.TestCase):
             response = self.client.get("/api/v1/etl/ts_ods/objects/preview")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["id"], "ts_ods.objects")
-            self.assertEqual(response.json()["visibility"], "not_configured")
+            self.assertEqual(response.json()["visibility"], "normal")
 
     def test_missing_ontology_is_explicit_503_on_both_get_routes(self):
         instance, session = service(Result([]), ontology_installed=False)

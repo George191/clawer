@@ -23,6 +23,7 @@ from app.etl.schema.ontology import resource_group, sync_object_metadata
 from app.storage.postgres_client import get_pg_client
 from app.web.core.config import settings as web_settings
 from app.web.services.etl_layers import (
+    EtlLayers,
     LAYERS,
     get_etl_layers,
 )
@@ -270,7 +271,7 @@ class EtlWorkspace:
         except DBAPIError as error:
             code = getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
             if code == "42P01" and any(f"public.{name}" in str(error.statement) for name in (
-                "ontology_objects", "ontology_object_properties", "ontology_object_relations"
+                "ontology_objects", "ontology_object_properties", "ontology_object_relations", "ontology_object_favorites"
             )):
                 raise HTTPException(503, "Ontology metadata is not initialized") from error
             if code in {"23505", "42P07", "42P06", "42710", "2BP01", "23503", "3F000"}:
@@ -421,6 +422,113 @@ class EtlWorkspace:
                 provenance="flow:create_table", description=payload.get("description") or (payload.get("options") or {}).get("comment"),
                 ddl_sql=";\n".join(statements) + ";\n")
         return await self._layers.get_table(schema, payload["name"])
+
+    async def set_object_visibility(self, layer: str, table: str, visibility: str, actor: str) -> dict[str, Any]:
+        schema = resolve_schema(layer)
+        quote_identifier(table)
+        if schema in {"ts_meta", "ts_meta_hist"}:
+            raise HTTPException(404, "Schema not found")
+        if visibility not in {"normal", "prominent", "hidden"}:
+            _bad("Invalid object type visibility")
+        async with self._session() as session:
+            await EtlLayers._require_ontology(session)
+            metadata = await self._ontology_object(session, schema, table, "flow:visibility")
+            await session.execute(text("""UPDATE public.ontology_objects
+                SET visibility = :visibility, updated_by = :actor, updated_at = now()
+                WHERE id = :id"""), {"visibility": visibility, "actor": actor, "id": metadata["id"]})
+        return {"schema": schema, "table": table, "visibility": visibility}
+
+    async def _ontology_object(self, session, schema: str, table: str, provenance: str, *, allow_missing=False):
+        identity = {"schema": schema, "table": table}
+        physical = (await session.execute(text("""SELECT c.oid
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = :schema AND c.relname = :table AND c.relkind IN ('r','p')
+                  AND NOT c.relispartition
+                  AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+        """), identity)).mappings().first()
+        if not physical:
+            if allow_missing:
+                return None
+            raise HTTPException(404, "Table does not exist in this schema")
+        metadata = (await session.execute(text("""SELECT id, is_active FROM public.ontology_objects
+            WHERE schema_name = :schema AND table_name = :table FOR UPDATE"""), identity)).mappings().first()
+        if not metadata or not metadata["is_active"]:
+            try:
+                metadata = await sync_object_metadata(session, schema, table, provenance=provenance)
+            except ValueError as error:
+                raise HTTPException(404, "Table does not exist in this schema") from error
+            await session.execute(text("UPDATE public.ontology_objects SET is_active = TRUE WHERE id = :id"),
+                                  {"id": metadata["id"]})
+        return metadata
+
+    @staticmethod
+    def _favorite_identity(layer: str, table: str) -> str:
+        schema = resolve_schema(layer)
+        quote_identifier(table)
+        if schema in {"ts_meta", "ts_meta_hist"}:
+            raise HTTPException(404, "Schema not found")
+        return schema
+
+    @staticmethod
+    async def _favorite_ids(session, user_id: str) -> list[str]:
+        rows = await session.execute(text("""SELECT o.schema_name || '.' || o.table_name AS id
+            FROM public.ontology_object_favorites f JOIN public.ontology_objects o ON o.id = f.object_id
+            WHERE f.user_id = CAST(:user_id AS uuid) ORDER BY o.schema_name, o.table_name"""), {"user_id": user_id})
+        return [row["id"] for row in rows.mappings()]
+
+    async def object_favorites(self, user_id: str) -> dict[str, Any]:
+        async with self._session() as session:
+            await EtlLayers._require_ontology(session)
+            return {"ids": await self._favorite_ids(session, user_id)}
+
+    async def set_object_favorite(self, layer: str, table: str, favorite: bool, user_id: str) -> dict[str, Any]:
+        schema = self._favorite_identity(layer, table)
+        async with self._session() as session:
+            await EtlLayers._require_ontology(session)
+            if favorite:
+                metadata = await self._ontology_object(session, schema, table, "flow:favorite")
+                await session.execute(text("""INSERT INTO public.ontology_object_favorites (user_id, object_id)
+                    VALUES (CAST(:user_id AS uuid), :object_id) ON CONFLICT (user_id, object_id) DO NOTHING"""),
+                    {"user_id": user_id, "object_id": metadata["id"]})
+            else:
+                await session.execute(text("""DELETE FROM public.ontology_object_favorites
+                    WHERE user_id = CAST(:user_id AS uuid) AND object_id IN (
+                        SELECT id FROM public.ontology_objects WHERE schema_name = :schema AND table_name = :table)"""),
+                    {"user_id": user_id, "schema": schema, "table": table})
+        return {"id": f"{schema}.{table}", "favorite": favorite}
+
+    async def import_object_favorites(self, ids: list[str], user_id: str) -> dict[str, Any]:
+        identities = []
+        if len(ids) > 200:
+            _bad("At most 200 favorite identifiers are supported")
+        for identifier in sorted(set(ids)):
+            parts = identifier.split(".")
+            try:
+                if len(parts) != 2 or not parts[0].startswith("ts_"):
+                    _bad("Invalid favorite object identifier")
+                schema = self._favorite_identity(*parts)
+            except HTTPException:
+                _bad("Invalid favorite object identifier")
+            identities.append((schema, parts[1]))
+        async with self._session() as session:
+            await EtlLayers._require_ontology(session)
+            object_ids = []
+            skipped = 0
+            for schema, table in identities:
+                metadata = await self._ontology_object(session, schema, table, "flow:favorite", allow_missing=True)
+                if metadata:
+                    object_ids.append(metadata["id"])
+                else:
+                    skipped += 1
+            imported = 0
+            if object_ids:
+                rows = await session.execute(text("""INSERT INTO public.ontology_object_favorites (user_id, object_id)
+                    SELECT CAST(:user_id AS uuid), value FROM unnest(CAST(:object_ids AS bigint[])) AS wanted(value)
+                    WHERE TRUE
+                    ON CONFLICT (user_id, object_id) DO NOTHING RETURNING object_id"""),
+                    {"user_id": user_id, "object_ids": object_ids})
+                imported = len(list(rows.mappings()))
+            return {"ids": await self._favorite_ids(session, user_id), "imported": imported, "skipped": skipped}
 
     async def _write_row(self, layer: str, table: str, payload: dict[str, Any], delete: bool) -> dict[str, Any]:
         schema = resolve_schema(layer)
