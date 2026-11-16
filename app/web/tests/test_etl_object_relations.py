@@ -40,7 +40,8 @@ def logical(row):
             "relationship_kind": row["relationship_kind"], "cardinality": row["cardinality"],
             "description": row["description"], "provenance": row["provenance"], "source_kind": "logical",
             "source_data_type": row["source_table"].removeprefix("ods_"),
-            "target_data_type": row["target_table"].removeprefix("ods_")}
+            "target_data_type": row["target_table"].removeprefix("ods_"),
+            "source_visibility": "normal", "target_visibility": "normal"}
 
 
 class MetadataPg:

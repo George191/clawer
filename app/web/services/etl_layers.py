@@ -67,7 +67,7 @@ def _object_summary(row: dict[str, Any]) -> dict[str, Any]:
         "resourceGroup": row.get("resource_group") or "other",
         "objectCount": int(row["object_count"]), "objectCountEstimated": True,
         "propertiesCount": int(row["properties_count"]), "status": "available",
-        "titleProperty": None, "visibility": row.get("visibility") or "normal",
+        "titleProperty": None, "visibility": row["visibility"],
     }
 
 
@@ -267,7 +267,7 @@ class EtlLayers:
                              JOIN pg_attribute a ON a.attrelid = sc.oid AND a.attnum = k.attnum
                              ORDER BY k.position) AS columns,
                         so.data_type AS source_data_type, target_object.data_type AS target_data_type,
-                        so.visibility AS source_visibility, target_object.visibility AS target_visibility,
+                        COALESCE(so.visibility, 'normal') AS source_visibility, COALESCE(target_object.visibility, 'normal') AS target_visibility,
                        ARRAY(SELECT a.attname FROM unnest(con.confkey) WITH ORDINALITY k(attnum, position)
                              JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum
                              ORDER BY k.position) AS referenced_columns
@@ -342,13 +342,13 @@ class EtlLayers:
                     if (relation[f"{side}_schema"], relation[f"{side}_table"]) != (schema, table):
                         continue
                     peer_schema, peer_table = relation[f"{peer}_schema"], relation[f"{peer}_table"]
-                    if not include_hidden and relation.get(f"{peer}_visibility") == "hidden":
+                    if not include_hidden and relation[f"{peer}_visibility"] == "hidden":
                         continue
                     identifier = f"{peer_schema}.{peer_table}"
                     item = linked.setdefault(identifier, {"id": identifier, "schema": peer_schema,
                         "table": peer_table, "name": peer_table, "displayName": peer_table,
                         "dataType": relation.get(f"{peer}_data_type") or "",
-                        "visibility": relation.get(f"{peer}_visibility") or "normal",
+                        "visibility": relation[f"{peer}_visibility"],
                         "direction": direction, "constraints": [], "relationships": []})
                     if item["direction"] != direction:
                         item["direction"] = "both"

@@ -109,7 +109,7 @@ async def read_object_relations(session, schema: str, table: str) -> list[dict[s
                r.target_schema, r.target_table, r.target_fields AS referenced_columns,
                r.relationship_kind, r.cardinality, r.description, r.provenance,
                so.data_type AS source_data_type, target_object.data_type AS target_data_type,
-               so.visibility AS source_visibility, target_object.visibility AS target_visibility
+               COALESCE(so.visibility, 'normal') AS source_visibility, COALESCE(target_object.visibility, 'normal') AS target_visibility
         FROM public.ontology_object_relations r
         JOIN pg_namespace sn ON sn.nspname = r.source_schema
         JOIN pg_class sc ON sc.relnamespace = sn.oid AND sc.relname = r.source_table

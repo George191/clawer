@@ -69,7 +69,7 @@ def service(*results, ontology_installed=True):
 
 def summary(schema="ts_ods", table="objects", **changes):
     return {"oid": 101, "schema": schema, "name": table, "description": "Actual PG table comment",
-            "data_type": "catalog classification", "object_count": 23, "properties_count": 3, **changes}
+            "data_type": "catalog classification", "object_count": 23, "properties_count": 3, "visibility": "normal", **changes}
 
 
 def column(name, type="text", primary=False, position=None, nullable=True, comment=None):
@@ -81,7 +81,8 @@ def foreign(name="fk_owner", source_schema="ts_ods", source_table="objects",
             target_schema="ts_rds", target_table="owners", columns=None, referenced=None, **changes):
     return {"name": name, "source_schema": source_schema, "source_table": source_table,
             "target_schema": target_schema, "target_table": target_table,
-            "columns": columns or ["owner_id"], "referenced_columns": referenced or ["id"], **changes}
+            "columns": columns or ["owner_id"], "referenced_columns": referenced or ["id"],
+            "source_visibility": "normal", "target_visibility": "normal", **changes}
 
 
 class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
