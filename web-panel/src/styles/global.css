@@ -39,36 +39,23 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* ── Scrollbar (Neo4j Console Style) ── */
-::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
-}
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 2px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-.light-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(71, 85, 105, 0.15);
-}
-.light-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(71, 85, 105, 0.3);
+/* Hide scroll chrome without changing wheel, touch or keyboard scrolling. */
+html:root,
+html:root * {
+  scrollbar-width: none !important;
+  scrollbar-gutter: auto !important;
 }
 
-/* Neo4j sidebar scrollbar */
-.neo4j-sidebar-scroll::-webkit-scrollbar {
-  width: 3px;
+html:root::-webkit-scrollbar,
+html:root *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
-.neo4j-sidebar-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 1.5px;
-}
-.neo4j-sidebar-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.1);
+
+/* Monaco draws its own scroll tracks instead of native scrollbars. */
+.monaco-scrollable-element > .scrollbar {
+  display: none !important;
 }
 
 /* ============================================
