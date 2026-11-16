@@ -65,6 +65,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const cardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [mobilePreview, setMobilePreview] = useState(() => window.matchMedia('(max-width: 1150px)').matches);
   const [catalog, setCatalog] = useState<EtlObjectCatalog>(emptyCatalog);
+  const [menuGroupSchemaCounts, setMenuGroupSchemaCounts] = useState<EtlObjectCatalog['groupSchemaCounts']>({});
+  const [favoriteSchemaCounts, setFavoriteSchemaCounts] = useState<Record<string, number>>({});
   const [expandedGroup, setExpandedGroup] = useState<Group | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -106,7 +108,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       try {
         const query = { schema: source || undefined, search: keyword.trim() || undefined };
         let result: EtlObjectCatalog;
+        let menuCounts: EtlObjectCatalog['groupSchemaCounts'];
         if (group === 'favorites') {
+          const directory = await fetchEtlObjectTypes({ search: query.search, limit: 1 });
+          if (!active) return;
+          menuCounts = directory.groupSchemaCounts;
           const ids = favoriteQuery ? favoriteQuery.split(',') : [];
           const items: EtlObjectType[] = [];
           const schemaCounts: Record<string, number> = {};
@@ -128,6 +134,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           const filters = { ...query, group: group === 'all' ? undefined : group, limit: catalogBatchSize };
           result = await fetchEtlObjectTypes({ ...filters, offset: 0 });
           if (!active) return;
+          menuCounts = result.groupSchemaCounts;
           const items = [...result.items];
           while (items.length < result.total) {
             const part = await fetchEtlObjectTypes({ ...filters, offset: items.length });
@@ -139,6 +146,12 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         }
         if (!active) return;
         setCatalog(result);
+        setMenuGroupSchemaCounts(menuCounts);
+        if (group === 'favorites') {
+          const counts: Record<string, number> = {};
+          Object.values(result.groupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
+          setFavoriteSchemaCounts(counts);
+        }
       } catch { if (active) setError('Unable to load object types. Refresh to try again.'); }
       finally { if (active) setLoading(false); }
     }, keyword ? 200 : 0);
@@ -214,11 +227,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const renderedObjects = sections.flatMap((section) => section.schemas.flatMap((schema) => schema.items));
   const schemaCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    Object.values(catalog.groupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
+    Object.values(menuGroupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
     if (source && !(source in counts)) counts[source] = 0;
     return counts;
-  }, [catalog.groupSchemaCounts, source]);
-  const facetGroupCounts = Object.fromEntries(Object.entries(catalog.groupSchemaCounts).map(([key, schemas]) => [key, Object.values(schemas).reduce((sum, count) => sum + count, 0)]));
+  }, [menuGroupSchemaCounts, source]);
+  const facetGroupCounts = Object.fromEntries(Object.entries(menuGroupSchemaCounts).map(([key, schemas]) => [key, Object.values(schemas).reduce((sum, count) => sum + count, 0)]));
   const moveCardFocus = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
@@ -256,7 +269,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
             const active = group === item.key && !source;
-            const counts = item.key === 'all' || item.key === 'favorites' ? schemaCounts : { ...catalog.groupSchemaCounts[item.key] };
+            const counts = item.key === 'favorites' ? { ...favoriteSchemaCounts } : item.key === 'all' ? schemaCounts : { ...menuGroupSchemaCounts[item.key] };
             if (group === item.key && source && !(source in counts)) counts[source] = 0;
             const schemas = Object.keys(counts).sort();
             return <React.Fragment key={item.key}>{item.key === 'ingestion' && <div className="flow-ontology__sidebar-title">Object type groups</div>}
