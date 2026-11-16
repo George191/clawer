@@ -3193,21 +3193,6 @@ const AICollect: React.FC = () => {
     handleGuideSubmit();
   }, [finishPromptGeneration, handleGuideSubmit, promptGenerating]);
 
-  const handlePromptKeyDown = useCallback((event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key !== 'Enter' || event.shiftKey) return;
-    event.preventDefault();
-    if (hasSession) {
-      if (promptGenerating) {
-        finishPromptGeneration();
-        return;
-      }
-      handleGuideSubmit();
-      return;
-    }
-    commitLandingUrl();
-    handleAnalyze();
-  }, [commitLandingUrl, finishPromptGeneration, handleAnalyze, handleGuideSubmit, hasSession, promptGenerating]);
-
   const handleWorkspacePanelToggle = useCallback((panel: WorkspacePanel) => {
     const nextParams = new URLSearchParams(searchParams);
     if (activeWorkspacePanel === panel) {
@@ -3333,10 +3318,8 @@ const AICollect: React.FC = () => {
           {collectionSource === 'search' ? (
             <form
               className="ai-web-search-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void handleSearch();
-              }}
+              onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement && !event.target.closest('[role="combobox"]')) event.preventDefault(); }}
+              onSubmit={(event) => event.preventDefault()}
             >
               <div className="ai-prompt-shell">
                 <span className="ai-prompt-leading-icon" aria-hidden="true"><SearchEngineIcon engine={searchEngine} style={{ width: 18, height: 18 }} /></span>
@@ -3352,7 +3335,7 @@ const AICollect: React.FC = () => {
                 <Button
                   className="ai-prompt-icon"
                   shape="circle"
-                  htmlType="submit"
+                  onClick={() => void handleSearch()}
                   icon={<SearchOutlined />}
                   aria-label={`开始 ${searchEngineLabels[searchEngine]} 搜索采集`}
                   loading={searchLoading}
@@ -3412,7 +3395,7 @@ const AICollect: React.FC = () => {
                 </label>
                 <Button
                   type="primary"
-                  htmlType="submit"
+                  onClick={() => void handleSearch()}
                   loading={searchLoading}
                   disabled={!searchQuery.trim()}
                 >开始采集</Button>
@@ -3437,7 +3420,6 @@ const AICollect: React.FC = () => {
               onChange={(event) => setIntent(event.target.value)}
               onBlur={commitLandingUrl}
               onPaste={handleLandingUrlPaste}
-              onKeyDown={handlePromptKeyDown}
               autoSize={{ minRows: 1, maxRows: 1 }}
               placeholder="输入 HTTP/HTTPS 网址"
             />
@@ -5272,7 +5254,6 @@ const AICollect: React.FC = () => {
           <TextArea
             value={taskDraft}
             onChange={(event) => setTaskDraft(event.target.value)}
-            onKeyDown={handlePromptKeyDown}
             autoSize={{ minRows: 1, maxRows: 2 }}
             placeholder="补充字段规则、调度要求或数据边界"
           />

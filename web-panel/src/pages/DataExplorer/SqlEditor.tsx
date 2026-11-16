@@ -28,16 +28,6 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute, error
   const handleMount: OnMount = (editor) => {
     editorRef.current = editor;
 
-    // Ctrl+Enter / Cmd+Enter to execute
-    editor.addAction({
-      id: 'execute-query',
-      label: 'Execute Query',
-      keybindings: [2048 | 3, 512 | 3],
-      run: () => {
-        const sql = editor.getValue();
-        if (sql.trim()) onExecute(sql);
-      },
-    });
   };
 
   const handleClear = useCallback(() => {
@@ -62,7 +52,7 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ value, onChange, onExecute, error
         }}
       >
         <Space size={4}>
-          <Tooltip title="执行查询 (Ctrl+Enter)">
+          <Tooltip title="执行查询">
             <Button type="primary" size="small" icon={<PlayCircleOutlined />} onClick={() => onExecute(value)} disabled={!value.trim()}>
               执行
             </Button>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Checkbox, Drawer, Select, Tooltip } from '@/components/ui';
 import {
@@ -34,6 +34,70 @@ const visibilityDescriptions: Record<EtlObjectVisibility, string> = {
   prominent: 'Shown first within its resource group and schema.',
   hidden: 'Hidden from the catalog by default. Administrators can show hidden object types.',
 };
+type CardFrame = { node: HTMLElement; rect: DOMRect; opacity: number };
+type CardMotion = { animation: Animation; x: number; y: number; from: number; to: number };
+function useCatalogMotion(root: React.RefObject<HTMLDivElement>, scope: string, items: EtlObjectType[]) {
+  const previous = useRef<{ scope: string; cards: Map<string, CardFrame> }>({ scope: '', cards: new Map() });
+  const motions = useRef(new Map<HTMLElement, CardMotion>());
+  const ghosts = useRef(new Map<string, CardFrame>());
+  const reduced = useRef(window.matchMedia('(prefers-reduced-motion: reduce)'));
+  const cancel = () => {
+    for (const [node, motion] of motions.current) { motion.animation.cancel(); node.style.removeProperty('will-change'); }
+    motions.current.clear();
+    for (const frame of ghosts.current.values()) frame.node.remove();
+    ghosts.current.clear();
+  };
+  const snapshot = () => new Map(Array.from(root.current?.querySelectorAll<HTMLElement>('[data-testid="ontology-object-card"]') || [], (node) => [node.dataset.objectId!, { node, rect: node.getBoundingClientRect(), opacity: 1 }]));
+  useLayoutEffect(() => {
+    const container = root.current;
+    if (!container) return;
+    const viewport = container.getBoundingClientRect();
+    const visible = (rect: DOMRect) => rect.bottom > viewport.top && rect.top < viewport.bottom && rect.right > viewport.left && rect.left < viewport.right;
+    const visual = (frame: CardFrame): CardFrame => {
+      const motion = motions.current.get(frame.node), progress = motion?.animation.effect?.getComputedTiming().progress;
+      if (!motion || progress == null) return frame;
+      return { ...frame, rect: new DOMRect(frame.rect.x + motion.x * (1 - progress), frame.rect.y + motion.y * (1 - progress), frame.rect.width, frame.rect.height), opacity: motion.from + (motion.to - motion.from) * progress };
+    };
+    const before = new Map(Array.from(previous.current.cards, ([id, frame]) => [id, visual(frame)]));
+    const exiting = new Map(Array.from(ghosts.current, ([id, frame]) => [id, visual(frame)]));
+    const sameScope = previous.current.scope === scope;
+    cancel();
+    const after = snapshot();
+    const play = (node: HTMLElement, x: number, y: number, from: number, to: number, duration: number, remove = false) => {
+      node.style.willChange = 'transform, opacity';
+      const animation = node.animate([{ transform: `translate(${x}px, ${y}px)`, opacity: from }, { transform: 'translate(0, 0)', opacity: to }], { duration, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+      motions.current.set(node, { animation, x, y, from, to });
+      const finish = () => { if (motions.current.get(node)?.animation === animation) motions.current.delete(node); node.style.removeProperty('will-change'); if (remove) { node.remove(); for (const [id, frame] of ghosts.current) if (frame.node === node) ghosts.current.delete(id); } };
+      animation.onfinish = finish; animation.oncancel = finish;
+    };
+    if (!reduced.current.matches) {
+      if (sameScope) for (const [id, frame] of before) {
+        if (after.has(id) || !visible(frame.rect)) continue;
+        const node = frame.node.cloneNode(true) as HTMLElement;
+        for (const attribute of ['data-testid', 'data-object-id', 'data-schema', 'id']) node.removeAttribute(attribute);
+        node.querySelectorAll('[id]').forEach((element) => element.removeAttribute('id'));
+        node.classList.add('flow-ontology__asset-ghost'); node.setAttribute('aria-hidden', 'true'); node.inert = true;
+        Object.assign(node.style, { position: 'absolute', left: `${frame.rect.left - viewport.left}px`, top: `${frame.rect.top - viewport.top}px`, width: `${frame.rect.width}px`, height: `${frame.rect.height}px`, margin: '0' });
+        container.append(node); ghosts.current.set(id, { ...frame, node });
+        play(node, 0, 0, frame.opacity, 0, 140, true);
+      }
+      for (const [id, frame] of after) {
+        if (!visible(frame.rect)) continue;
+        const old = sameScope ? before.get(id) || exiting.get(id) : undefined;
+        const x = old ? old.rect.left - frame.rect.left : 0, y = old ? old.rect.top - frame.rect.top : 0;
+        const opacity = old?.opacity ?? 0;
+        if (Math.abs(x) > .5 || Math.abs(y) > .5 || opacity < 1) play(frame.node, x, y, opacity, 1, old ? 220 : 160);
+      }
+    }
+    previous.current = { scope, cards: after };
+  }, [scope, items]);
+  useEffect(() => {
+    const body = root.current?.querySelector('.flow-ontology__body');
+    const reset = () => { cancel(); previous.current.cards = snapshot(); };
+    body?.addEventListener('scroll', reset, { passive: true }); window.addEventListener('resize', reset); reduced.current.addEventListener('change', reset);
+    return () => { body?.removeEventListener('scroll', reset); window.removeEventListener('resize', reset); reduced.current.removeEventListener('change', reset); cancel(); };
+  }, []);
+}
 function PropertyIcon({ type }: { type: string }) {
   const value = type.toLowerCase();
   const glyph = /^(date|time|timestamp|interval)(\s|\(|$)/.test(value)
@@ -82,7 +146,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const inspectorOpen = !!inspectorId;
   const inspectorClosing = inspectorOpen && !selectedId;
   const inspectorAllProperties = selectedId ? allProperties : inspectedObject.allProperties;
-  const [catalogState, setCatalogState] = useState<{ key: string; data: EtlObjectCatalog }>({ key: '', data: emptyCatalog });
+  const [catalogState, setCatalogState] = useState<{ key: string; scope: string; data: EtlObjectCatalog }>({ key: '', scope: '', data: emptyCatalog });
   const [menuGroupSchemaCounts, setMenuGroupSchemaCounts] = useState<EtlObjectCatalog['groupSchemaCounts']>({});
   const [favoriteSchemaCounts, setFavoriteSchemaCounts] = useState<Record<string, number>>({});
   const [favoriteVisibleCount, setFavoriteVisibleCount] = useState<number | null>(null);
@@ -121,9 +185,17 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   selectionRef.current = selectedId;
   const favoriteIds = favorites.join(',');
   const favoriteQuery = group === 'favorites' ? favorites.join(',') : '';
+  const catalogScope = JSON.stringify([source, keyword, group, favoriteReady, currentUserId]);
   const catalogKey = JSON.stringify([source, keyword, group, favoriteQuery, favoriteReady, includeHidden]);
   const catalog = catalogState.key === catalogKey ? catalogState.data : emptyCatalog;
   const loading = catalogLoading || catalogState.key !== catalogKey;
+  const presentedItems = useMemo(() => {
+    if (catalogState.key === catalogKey) return catalogState.data.items;
+    if (catalogState.scope !== catalogScope) return [];
+    return catalogState.data.items.filter((object) => (includeHidden || object.visibility !== 'hidden') && (group !== 'favorites' || favorites.includes(object.id)));
+  }, [catalogState, catalogKey, catalogScope, includeHidden, group, favoriteIds]);
+  const facetCatalog = catalogState.scope === catalogScope ? catalogState.data : emptyCatalog;
+  useCatalogMotion(rootRef, `${catalogScope}:${view}`, presentedItems);
 
   useEffect(() => { activeRef.current = true; return () => { activeRef.current = false; }; }, []);
 
@@ -204,7 +276,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return () => { active = false; };
   }, [favoriteIds, favoriteReady, includeHidden, version, refreshToken]);
   useEffect(() => {
-    if (group === 'favorites' && !favoriteReady) { setCatalogLoading(true); setCatalogState({ key: catalogKey, data: emptyCatalog }); return; }
+    if (group === 'favorites' && !favoriteReady) { setCatalogLoading(true); setCatalogState({ key: catalogKey, scope: catalogScope, data: emptyCatalog }); return; }
     let active = true;
     setCatalogLoading(true); setError('');
     const timer = window.setTimeout(async () => {
@@ -248,13 +320,13 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           result = { ...result, items, limit: items.length, offset: 0 };
         }
         if (!active) return;
-        setCatalogState({ key: catalogKey, data: result });
+        setCatalogState({ key: catalogKey, scope: catalogScope, data: result });
         setMenuGroupSchemaCounts(menuCounts);
-      } catch { if (active) { setCatalogState({ key: catalogKey, data: emptyCatalog }); setError('Unable to load object types. Refresh to try again.'); } }
+      } catch { if (active) { setCatalogState({ key: catalogKey, scope: catalogScope, data: emptyCatalog }); setError('Unable to load object types. Refresh to try again.'); } }
       finally { if (active) setCatalogLoading(false); }
     }, keyword ? 200 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [source, keyword, group, favoriteQuery, favoriteReady, includeHidden, version, refreshToken, catalogKey]);
+  }, [source, keyword, group, favoriteQuery, favoriteReady, includeHidden, version, refreshToken, catalogKey, catalogScope]);
   useEffect(() => {
     if (selectedId) { setInspectedObject({ schema: selectedSchema, table: selectedTable, allProperties }); return; }
     if (!inspectorId) return;
@@ -361,17 +433,17 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const sections = useMemo(() => {
     const resourceGroups = group === 'all' ? groups.filter((item) => item.key !== 'all' && item.key !== 'favorites') : groups.filter((item) => item.key === group);
     return resourceGroups.map((item) => {
-      const items = group === 'all' ? catalog.items.filter((object) => object.resourceGroup === item.key) : catalog.items;
+      const items = group === 'all' ? presentedItems.filter((object) => object.resourceGroup === item.key) : presentedItems;
       return { ...item, schemas: [...new Set(items.map((object) => object.schema))].sort().map((schema) => ({ schema, items: items.filter((object) => object.schema === schema).sort((left, right) => Number(right.visibility === 'prominent') - Number(left.visibility === 'prominent')) })) };
     }).filter((section) => section.schemas.length);
-  }, [catalog.items, group]);
+  }, [presentedItems, group]);
   const renderedObjects = sections.flatMap((section) => section.schemas.flatMap((schema) => schema.items));
   const displayedFavoriteSchemaCounts = useMemo(() => {
     if (group !== 'favorites') return favoriteSchemaCounts;
     const counts: Record<string, number> = {};
-    Object.values(catalog.groupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
+    Object.values(facetCatalog.groupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
     return counts;
-  }, [group, catalog.groupSchemaCounts, favoriteSchemaCounts]);
+  }, [group, facetCatalog.groupSchemaCounts, favoriteSchemaCounts]);
   const schemaCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     Object.values(menuGroupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
@@ -401,18 +473,18 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   return <div ref={rootRef} className="flow-ontology" data-testid="ontology-explorer">
     <div className="flow-ontology__workspace">
       <header className="flow-ontology__hero" aria-label="Object type catalog">
-        <div className="flow-ontology__topbar">
+        <div className={`flow-ontology__topbar${canManage ? ' is-manage' : ''}`}>
           <div className="flow-ontology__search" role="search">
             <SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label="Search object types" value={keyword} onChange={(event) => updateQuery({ q: event.target.value || null }, true)} onKeyDown={(event) => { if (event.key === 'ArrowDown' && renderedObjects.length) { event.preventDefault(); cardRefs.current[renderedObjects[0].id]?.focus(); } }} placeholder="Search object types..." />{keyword && <button type="button" aria-label="Clear search" onClick={() => { updateQuery({ q: null }, true); searchRef.current?.focus(); }}><CloseOutlined /></button>}
           </div>
           <div className="flow-ontology__view-switch" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
           {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
-          <span className="flow-ontology__summary">{number(catalog.total)} object types</span>
-          {canManage && <><button type="button" className="flow-ontology__button" onClick={() => setConnectionsOpen(true)}><DatabaseOutlined />New data connector</button><button type="button" className="flow-ontology__button" disabled={!creationSchemas.length} onClick={startNewObject}><PlusOutlined />New object type</button></>}
+          <span className="flow-ontology__summary" aria-busy={loading} aria-label={loading ? 'Updating object type count' : error ? 'Object type count unavailable' : `${number(catalog.total)} object types`}><span className="flow-ontology__summary-value">{loading ? '…' : error ? '—' : number(catalog.total)}</span><span>object types</span></span>
+          {canManage && <><button type="button" className="flow-ontology__button flow-ontology__connector-action" onClick={() => setConnectionsOpen(true)}><DatabaseOutlined />New data connector</button><button type="button" className="flow-ontology__button flow-ontology__create-action" disabled={!creationSchemas.length} onClick={startNewObject}><PlusOutlined />New object type</button></>}
         </div>
       </header>
       <div className="flow-ontology__body">
-        <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav>
+        <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
             const active = group === item.key && !source;
@@ -428,7 +500,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
                 <div id={`ontology-schema-group-${item.key}`} className={`flow-ontology__schema-collapse${expanded ? ' is-expanded' : ''}`} aria-hidden={!expanded} ref={(element) => { if (element) element.inert = !expanded; }}>
                   <div className="flow-ontology__schema-collapse-content">
                     <div className="flow-ontology__schema-nav" role="group" aria-label={`${item.label} schemas`}>
-                      {schemas.length ? schemas.map((schema) => <button type="button" key={schema} data-schema-filter={schema} aria-pressed={group === item.key && source === schema} className={group === item.key && source === schema ? 'is-active' : ''} onClick={() => updateQuery({ group: item.key === 'all' ? null : item.key, source: schema, ...(!selectedTable ? { schema: null } : {}) })}><span title={schema}>{schema}</span><small>{number(counts[schema])}</small></button>) : <span className="flow-ontology__schema-empty">{loading ? 'Loading schemas…' : 'No schemas'}</span>}
+                      {schemas.length ? schemas.map((schema) => <button type="button" key={schema} data-schema-filter={schema} aria-pressed={group === item.key && source === schema} className={group === item.key && source === schema ? 'is-active' : ''} onClick={() => updateQuery({ group: item.key === 'all' ? null : item.key, source: schema, ...(!selectedTable ? { schema: null } : {}) })}><span className="flow-ontology__schema-label"><DatabaseOutlined /><span title={schema}>{schema}</span></span><small>{number(counts[schema])}</small></button>) : <span className="flow-ontology__schema-empty">{loading ? 'Loading schemas…' : 'No schemas'}</span>}
                     </div>
                   </div>
                 </div>
@@ -440,8 +512,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteSummaryError && <div className="flow-ontology__notice" role="alert"><span>{favoriteSummaryError}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteError && <div className="flow-ontology__notice" role="alert"><span>{favoriteError}</span><button type="button" aria-label="Retry favorites" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
-          {loading && !catalog.items.length ? <div className="flow-ontology__empty" role="status"><ReloadOutlined spin /><span>Loading object types</span></div> : !catalog.items.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{group === 'favorites' ? 'No favorite object types' : 'No object types found'}</strong><span>{group === 'favorites' ? 'Star an object type to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets">
-            {sections.map((section) => <section key={section.key} className="flow-ontology__collection"><header className="flow-ontology__collection-heading"><h2>{section.label}</h2></header>{section.schemas.map(({ schema, items }) => <section key={schema} className="flow-ontology__schema-section" data-schema-group={schema}><h3 className="flow-ontology__schema-heading"><DatabaseOutlined />{schema}</h3><div className={`flow-ontology__assets is-${view}`}>
+          {error && !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>Catalog unavailable</strong><span>Retry to load object types.</span></div> : loading && !presentedItems.length ? <div className="flow-ontology__empty" role="status"><ReloadOutlined spin /><span>Loading object types</span></div> : !presentedItems.length ? <div className="flow-ontology__empty"><DatabaseOutlined /><strong>{group === 'favorites' ? 'No favorite object types' : 'No object types found'}</strong><span>{group === 'favorites' ? 'Star an object type to keep it here.' : 'Try a different resource group, schema, or search.'}</span></div> : <div className={`flow-ontology__collections is-${view}`} data-testid="ontology-assets">
+            {sections.map((section) => <section key={section.key} className="flow-ontology__collection"><header className="flow-ontology__collection-heading"><h2>{section.label}</h2></header>{section.schemas.map(({ schema, items }) => <section key={schema} className="flow-ontology__schema-section" data-schema-group={schema}><h3 className="flow-ontology__schema-heading"><span className="flow-ontology__schema-tag"><DatabaseOutlined /><span title={schema}>{schema}</span></span></h3><div className={`flow-ontology__assets is-${view}`}>
               {items.map((object) => <article key={object.id} data-testid="ontology-object-card" data-object-id={object.id} data-schema={object.schema} className={`flow-ontology__asset${selectedId === object.id ? ' is-selected' : ''}`} style={accentStyle(object.dataType)}>
                 <button ref={(element) => { cardRefs.current[object.id] = element; }} type="button" className="flow-ontology__asset-main" aria-label={`Preview ${object.id}`} aria-pressed={selectedId === object.id} onKeyDown={(event) => moveCardFocus(event, renderedObjects.findIndex((item) => item.id === object.id))} onClick={() => selectObject(object)}>
                   <span className="flow-ontology__asset-icon"><TemplateGlyph kind={inferSiteKind(object.dataType, object.table)} source={object.table} /></span><span className="flow-ontology__asset-name"><span className="flow-ontology__asset-heading"><strong title={object.displayName}>{object.displayName}</strong>{object.visibility !== 'normal' && <small className={`flow-ontology__asset-visibility is-${object.visibility}`} title={visibilityDescriptions[object.visibility]}>{visibilityLabels[object.visibility]}</small>}<small className="flow-ontology__table-count" title={`${object.objectCountEstimated ? 'Estimated object count' : 'Object count'}: ${object.objectCountEstimated ? '~' : ''}${number(object.objectCount)}`}>{object.objectCountEstimated ? '~' : ''}{number(object.objectCount)}</small></span><span className="flow-ontology__asset-description" title={object.description?.trim() || 'No description provided.'}>{object.description?.trim() || 'No description provided.'}</span></span><span className="flow-ontology__preview-action" aria-hidden="true"><InfoCircleOutlined /></span>
@@ -449,7 +521,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
               </article>)}
             </div></section>)}</section>)}
           </div>}
-          <footer className="flow-ontology__catalog-footer"><span>{loading ? 'Updating catalog…' : `${number(catalog.total)} object types`}</span></footer>
+          <footer className="flow-ontology__catalog-footer"><span>{loading ? 'Updating catalog…' : error ? 'Catalog unavailable' : `${number(catalog.total)} object types`}</span></footer>
         </main>
       </div>
     </div>

@@ -101,7 +101,7 @@ const ResultTable: React.FC<ResultTableProps> = ({ result, loading }) => {
   if (!result) {
     return (
       <Card size="small">
-        <EmptyState title="暂无数据" description="编写 SQL 并按 Ctrl+Enter 执行查询" />
+        <EmptyState title="暂无数据" description="编写 SQL 后点击执行查询" />
       </Card>
     );
   }
