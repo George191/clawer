@@ -20,6 +20,7 @@ class MissingMetadata(Exception):
 class TransactionPg:
     def __init__(self):
         self.state = {"schemas": {"ts_custom", "ts_other"}, "tables": {("ts_other", "keep")},
+                      "indexes": set(), "properties": {},
                       "objects": {("ts_custom", "old"): {"id": 1}, ("ts_other", "keep"): {"id": 2}},
                       "relations": [{"source_schema": "ts_custom", "target_schema": "ts_other"},
                                     {"source_schema": "ts_other", "target_schema": "ts_custom"},
@@ -64,10 +65,26 @@ class TransactionPg:
                 for (schema, _table), row in self.state["objects"].items()) else None)
         if sql.startswith("SELECT to_regclass"):
             return Result(scalar="ontology_" in str(params))
+        if sql.startswith("SELECT pg_advisory_xact_lock"):
+            return Result()
+        if sql.startswith("SELECT p.name FROM public.ontology_objects"):
+            identity = (params["schema"], params["table"])
+            metadata = self.state["objects"].get(identity)
+            fields = self.state["properties"].get(identity, []) if metadata and metadata.get("is_active") and identity in self.state["tables"] else []
+            return Result(rows=[{"name": name} for name in fields])
+        if sql.startswith("SELECT name, source_schema, source_table"):
+            source = (params["schema"], params["table"])
+            return Result(rows=[{**row, "columns": row["source_fields"], "referenced_columns": row["target_fields"]}
+                for row in self.state["relations"] if row.get("name") and (row["name"] in params["names"]
+                    or source in ((row["source_schema"], row["source_table"]), (row["target_schema"], row["target_table"])) )])
         if sql.startswith("CREATE TABLE"):
             identity = re.search(r'"([a-z_]+)"\."([a-z_]+)"', sql).groups()
             self.state["tables"].add(identity)
-        elif sql.startswith("COMMENT ON") or sql.startswith("CREATE INDEX"):
+        elif sql.startswith(("CREATE INDEX", "CREATE UNIQUE INDEX")):
+            self.state["indexes"].add(re.search(r'INDEX "([a-z_]+)"', sql).group(1))
+        elif sql.startswith("INSERT INTO public.ontology_object_relations"):
+            self.state["relations"].append(deepcopy(params))
+        elif sql.startswith("COMMENT ON"):
             pass
         elif sql.startswith("ALTER SCHEMA"):
             source, target = re.findall(r'"([a-z_]+)"', sql)
@@ -108,9 +125,93 @@ def workspace():
 PAYLOAD = {"name": "created", "dataType": "company", "description": "Created through Flow", "fields": [
     {"name": "id", "type": "BIGINT", "primary": True, "nullable": False},
     {"name": "name", "type": "TEXT", "comment": "Display text"}]}
+RELATION = {"name": "created_keeps", "targetSchema": "ts_other", "targetTable": "keep",
+    "sourceFields": ["id", "name"], "targetFields": ["id", "name"], "cardinality": "many_to_one", "description": "Linked records"}
 
 
 class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
+    async def create_with_relation_metadata(self, instance, payload):
+        async def sync(session, schema, table, **_kwargs):
+            session.state["objects"][(schema, table)] = {"id": 3, "is_active": True}
+            session.state["properties"][(schema, table)] = [field["name"] for field in payload["fields"]]
+
+        with patch("app.web.services.etl_workspace.sync_object_metadata", new=AsyncMock(side_effect=sync)):
+            return await instance.create_table("custom", payload)
+
+    def relation_workspace(self):
+        instance = workspace()
+        instance._pg.state["objects"][("ts_other", "keep")]["is_active"] = True
+        instance._pg.state["properties"][("ts_other", "keep")] = ["id", "name"]
+        return instance
+
+    async def test_create_cross_schema_logical_relation_in_one_transaction_without_foreign_keys(self):
+        instance = self.relation_workspace()
+        await self.create_with_relation_metadata(instance, {**PAYLOAD, "relations": [RELATION]})
+        row = instance._pg.state["relations"][-1]
+        self.assertEqual((row["source_schema"], row["source_table"], row["target_schema"], row["target_table"]),
+                         ("ts_custom", "created", "ts_other", "keep"))
+        self.assertEqual((row["source_fields"], row["target_fields"], row["provenance"]),
+                         (["id", "name"], ["id", "name"], "ontology:create_table"))
+        self.assertEqual((instance._pg.commits, instance._pg.rollbacks), (1, 0))
+        self.assertFalse(any("FOREIGN KEY" in sql or "SELECT * FROM" in sql for sql, _ in instance._pg.calls))
+
+    async def test_target_must_be_physical_active_registered_object_with_registered_properties(self):
+        for invalid in ("physical", "registration", "active", "property"):
+            instance = self.relation_workspace()
+            target = ("ts_other", "keep")
+            if invalid == "physical":
+                instance._pg.state["tables"].remove(target)
+            elif invalid == "registration":
+                instance._pg.state["objects"].pop(target)
+            elif invalid == "active":
+                instance._pg.state["objects"][target]["is_active"] = False
+            else:
+                instance._pg.state["properties"][target] = ["id"]
+            before = deepcopy(instance._pg.state)
+            with self.subTest(invalid=invalid), self.assertRaises(HTTPException) as error:
+                await self.create_with_relation_metadata(instance, {**PAYLOAD, "relations": [RELATION]})
+            self.assertEqual(error.exception.status_code, 422)
+            self.assertEqual(instance._pg.state, before)
+            self.assertEqual((instance._pg.commits, instance._pg.rollbacks), (0, 1))
+            instance._layers.get_table.assert_not_awaited()
+
+    async def test_existing_name_and_reverse_property_mapping_conflicts_roll_back_creation(self):
+        for conflict in ("name", "mapping"):
+            instance = self.relation_workspace()
+            instance._pg.state["relations"].append({"name": RELATION["name"] if conflict == "name" else "reverse",
+                "source_schema": "ts_other", "source_table": "keep", "source_fields": ["name", "id"],
+                "target_schema": "ts_custom", "target_table": "other" if conflict == "name" else "created",
+                "target_fields": ["name", "id"]})
+            before = deepcopy(instance._pg.state)
+            with self.subTest(conflict=conflict), self.assertRaises(HTTPException) as error:
+                await self.create_with_relation_metadata(instance, {**PAYLOAD, "relations": [RELATION]})
+            self.assertEqual(error.exception.status_code, 409)
+            self.assertEqual(instance._pg.state, before)
+            self.assertEqual((instance._pg.commits, instance._pg.rollbacks), (0, 1))
+
+    async def test_second_relation_failure_rolls_back_first_relation_properties_indexes_and_table(self):
+        instance = self.relation_workspace()
+        payload = {**PAYLOAD, "indexes": [{"name": "composite", "fields": ["id", "name"]}], "relations": [
+            RELATION, {**RELATION, "name": "second", "targetFields": ["name", "id"]}]}
+        before = deepcopy(instance._pg.state)
+        original_execute = instance._pg.execute
+        inserts = 0
+
+        async def fail_second_relation(statement, params=None):
+            nonlocal inserts
+            if str(statement).startswith("INSERT INTO public.ontology_object_relations"):
+                inserts += 1
+                if inserts == 2:
+                    raise RuntimeError("Second relation rejected")
+            return await original_execute(statement, params)
+
+        with patch.object(instance._pg, "execute", new=fail_second_relation), self.assertRaisesRegex(RuntimeError, "Second relation rejected"):
+            await self.create_with_relation_metadata(instance, payload)
+        self.assertEqual(inserts, 2)
+        self.assertEqual(instance._pg.state, before)
+        self.assertEqual((instance._pg.commits, instance._pg.rollbacks), (0, 1))
+        instance._layers.get_table.assert_not_awaited()
+
     async def test_create_table_syncs_metadata_in_the_physical_ddl_transaction(self):
         instance = workspace()
         pg = instance._pg

@@ -1,0 +1,79 @@
+"""Explicitly install the encrypted external source registry; never reads external business data."""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from sqlalchemy import text
+
+from app.etl.schema.data_connections import DATA_CONNECTIONS_DDL
+from app.storage.postgres_client import get_pg_client
+
+
+EXPECTED = {"id": "uuid", "name": "text", "engine": "text", "config": "jsonb",
+            "credentials_ciphertext": "text", "created_by": "text", "created_at": "timestamp with time zone",
+            "updated_at": "timestamp with time zone", "tested_at": "timestamp with time zone"}
+
+
+async def definition(session):
+    rows = (await session.execute(text("""SELECT a.attname AS name,
+        format_type(a.atttypid,a.atttypmod) AS type, a.attnotnull AS not_null
+        FROM pg_attribute a WHERE a.attrelid=to_regclass('public.ontology_data_connections')
+        AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum"""))).mappings().all()
+    if not rows:
+        return False
+    if {row["name"]: row["type"] for row in rows} != EXPECTED or not all(row["not_null"] for row in rows):
+        raise RuntimeError("Existing external source registry differs from its expected column contract")
+    primary = (await session.execute(text("""SELECT EXISTS (SELECT 1 FROM pg_constraint k
+        JOIN pg_attribute a ON a.attrelid=k.conrelid AND a.attname='id'
+        WHERE k.conrelid=to_regclass('public.ontology_data_connections') AND k.contype='p'
+        AND k.conkey=ARRAY[a.attnum]::smallint[])"""))).scalar_one()
+    if not primary:
+        raise RuntimeError("External source registry is missing its UUID primary key")
+    return True
+
+
+async def migrate(pg, *, apply=False):
+    async with pg.session() as session:
+        if apply:
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_data_connections_migration'))"))
+            await session.execute(text("SET LOCAL lock_timeout='5s'"))
+            await session.execute(text("SET LOCAL statement_timeout='30s'"))
+        else:
+            await session.execute(text("SET TRANSACTION READ ONLY"))
+        before = await definition(session)
+        if not before and apply:
+            await session.execute(text(DATA_CONNECTIONS_DDL))
+        ready = await definition(session) if apply else before
+        return {"applied": apply, "ready": ready, "changes": [] if before else ["create_external_source_registry"],
+                "business_rows_read": 0, "business_rows_written": 0}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true")
+    mode.add_argument("--apply", action="store_true")
+    arguments = parser.parse_args()
+
+    async def run():
+        pg = get_pg_client()
+        try:
+            await pg.connect(max_retries=1)
+            return await migrate(pg, apply=arguments.apply)
+        finally:
+            await pg.close()
+
+    report = asyncio.run(run())
+    print(json.dumps(report, sort_keys=True))
+    return 0 if report["ready"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

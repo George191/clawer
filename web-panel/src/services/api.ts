@@ -293,6 +293,36 @@ export const fetchLayerScript = (layer: string, table: string): Promise<EtlScrip
   client.get(`/etl/${layer}/${table}/script`).then((r) => unwrap<EtlScript>(r.data));
 
 export interface EtlConnection { id: string; name: string; database: string; schemas: string[]; }
+export type DataConnectorEngine = 'postgresql' | 'mysql' | 'oracle' | 'dameng' | 'elasticsearch' | 'milvus';
+export interface DataConnectorType {
+  engine: DataConnectorEngine; name: string; category: 'relational' | 'non_relational' | 'vector';
+  port: number; description: string; driverAvailable: boolean; prerequisite: string;
+}
+export interface DataSourceConfig {
+  host: string; port: number; database: string; username: string;
+  auth: 'password' | 'api_key' | 'token'; tls: boolean;
+}
+export interface DataSourcePayload {
+  name: string; engine: DataConnectorEngine; config: DataSourceConfig;
+  credentials: { password?: string; apiKey?: string; token?: string };
+}
+export interface DataSource extends Omit<DataSourcePayload, 'credentials'> {
+  id: string; credentialsConfigured: boolean; createdBy: string;
+  createdAt: string; updatedAt: string; testedAt: string;
+}
+export interface DataSourceTest { ok: boolean; message: string; latencyMs: number; testedAt?: string; }
+export const fetchDataConnectorTypes = (): Promise<DataConnectorType[]> =>
+  client.get('/etl/connector-types').then((r) => unwrap<DataConnectorType[]>(r.data));
+export const fetchDataSources = (): Promise<DataSource[]> =>
+  client.get('/etl/data-connections').then((r) => unwrap<DataSource[]>(r.data));
+export const testDataSource = (payload: DataSourcePayload, connectionId?: string): Promise<DataSourceTest> =>
+  client.post('/etl/data-connections/test', payload, { params: { connectionId } }).then((r) => unwrap<DataSourceTest>(r.data));
+export const createDataSource = (payload: DataSourcePayload): Promise<DataSource> =>
+  client.post('/etl/data-connections', payload).then((r) => unwrap<DataSource>(r.data));
+export const updateDataSource = (id: string, payload: DataSourcePayload): Promise<DataSource> =>
+  client.put(`/etl/data-connections/${id}`, payload).then((r) => unwrap<DataSource>(r.data));
+export const deleteDataSource = (id: string): Promise<void> =>
+  client.delete(`/etl/data-connections/${id}`).then(() => undefined);
 export interface EtlDataQuery {
   limit: number; offset: number; partition?: string; search?: string;
   filters: Array<{ id: string; field: string; operator: string; value: string; active: boolean; join: string }>;

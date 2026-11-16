@@ -19,6 +19,7 @@ from app.web.services.etl_workspace import EtlWorkspace
 URL = os.environ.get("ONTOLOGY_TEST_DATABASE_URL")
 DATABASE = "ontology_creation_regression"
 SCHEMA = "ts_creation"
+TARGET_SCHEMA = "ts_creation_targets"
 PAYLOAD = {"name": "firms", "dataType": "company", "description": "Companies registered through Flow",
     "fields": [
         {"name": "record_id", "type": "TEXT", "primary": True, "nullable": False, "comment": "Business record identifier"},
@@ -40,11 +41,16 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             await self.pg.close()
             raise RuntimeError("Connected database is not ontology_creation_regression")
         async with self.pg.session() as session:
-            await session.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
-            await session.execute(text(f"CREATE SCHEMA {SCHEMA}"))
+            for schema in (SCHEMA, TARGET_SCHEMA):
+                await session.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+                await session.execute(text(f"CREATE SCHEMA {schema}"))
             for statement in (*ontology.ONTOLOGY_DDL_STATEMENTS, *OBJECT_RELATIONS_DDL_STATEMENTS):
                 await session.execute(text(statement))
-            await session.execute(text("DELETE FROM public.ontology_objects WHERE schema_name = :schema"), {"schema": SCHEMA})
+            await session.execute(text("""DELETE FROM public.ontology_object_relations
+                WHERE source_schema IN (:source, :target) OR target_schema IN (:source, :target)"""),
+                {"source": SCHEMA, "target": TARGET_SCHEMA})
+            await session.execute(text("DELETE FROM public.ontology_objects WHERE schema_name IN (:source, :target)"),
+                {"source": SCHEMA, "target": TARGET_SCHEMA})
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
         self.workspace = object.__new__(EtlWorkspace)
@@ -63,6 +69,78 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.pg.fetch_all("""SELECT p.name FROM public.ontology_object_properties p
             JOIN public.ontology_objects o ON o.id=p.object_id WHERE o.schema_name=:schema AND o.table_name=:table""",
             {"schema": SCHEMA, "table": table}), [])
+
+    async def relation_payload(self):
+        await self.workspace.create_table(TARGET_SCHEMA, {"name": "companies", "dataType": "company",
+            "fields": deepcopy(PAYLOAD["fields"])})
+        return {**deepcopy(PAYLOAD), "relations": [{"name": "firms_company", "targetSchema": TARGET_SCHEMA,
+            "targetTable": "companies", "sourceFields": ["record_id"], "targetFields": ["record_id"],
+            "cardinality": "many_to_one", "description": "Parent company"}]}
+
+    async def test_logical_relation_is_persisted_cross_schema_and_visible_from_both_objects_without_foreign_keys(self):
+        payload = await self.relation_payload()
+        await self.workspace.create_table(SCHEMA, payload)
+        row = await self.pg.fetch_one("SELECT * FROM public.ontology_object_relations WHERE name='firms_company'")
+        self.assertEqual((row["source_schema"], row["target_schema"], row["source_fields"], row["target_fields"]),
+                         (SCHEMA, TARGET_SCHEMA, ["record_id"], ["record_id"]))
+        self.assertEqual((row["provenance"], row["relationship_kind"], row["cardinality"]),
+                         ("ontology:create_table", "association", "many_to_one"))
+        outgoing = (await self.layers.preview(SCHEMA, "firms"))["linkedObjectTypes"]
+        incoming = (await self.layers.preview(TARGET_SCHEMA, "companies"))["linkedObjectTypes"]
+        self.assertEqual([(item["id"], item["direction"]) for item in outgoing], [(f"{TARGET_SCHEMA}.companies", "outgoing")])
+        self.assertEqual([(item["id"], item["direction"]) for item in incoming], [(f"{SCHEMA}.firms", "incoming")])
+        self.assertEqual(outgoing[0]["constraints"], [])
+        self.assertEqual(outgoing[0]["relationships"][0]["sourceKind"], "logical")
+        constraints = await self.pg.fetch_all("SELECT contype::text AS kind FROM pg_constraint WHERE conrelid=to_regclass(:table)",
+                                             {"table": f"{SCHEMA}.firms"})
+        self.assertNotIn("f", {item["kind"] for item in constraints})
+
+    async def test_multiple_composite_indexes_are_created_with_distinct_ordered_properties(self):
+        payload = deepcopy(PAYLOAD)
+        payload["indexes"] = [{"name": "record_name", "fields": ["record_id", "company_name"]},
+                              {"name": "name_record", "fields": ["company_name", "record_id"]}]
+        await self.workspace.create_table(SCHEMA, payload)
+        rows = await self.pg.fetch_all("SELECT indexname, indexdef FROM pg_indexes WHERE schemaname=:schema", {"schema": SCHEMA})
+        indexes = {row["indexname"]: row["indexdef"] for row in rows}
+        self.assertIn("(record_id, company_name)", indexes["record_name"])
+        self.assertIn("(company_name, record_id)", indexes["name_record"])
+
+    async def test_stale_or_unregistered_target_properties_reject_and_roll_back_creation(self):
+        payload = await self.relation_payload()
+        async with self.pg.session() as session:
+            await session.execute(text(f"ALTER TABLE {TARGET_SCHEMA}.companies DROP COLUMN company_name"))
+        payload["relations"][0].update(sourceFields=["company_name"], targetFields=["company_name"])
+        with self.assertRaises(HTTPException) as error:
+            await self.workspace.create_table(SCHEMA, payload)
+        self.assertEqual(error.exception.status_code, 422)
+        await self.assert_absent("firms")
+        self.assertIsNone(await self.pg.fetch_one("SELECT name FROM public.ontology_object_relations WHERE name='firms_company'"))
+
+    async def test_relation_write_failure_rolls_back_table_indexes_properties_and_earlier_relation(self):
+        payload = await self.relation_payload()
+        payload["relations"].append({**payload["relations"][0], "name": "firms_company_rejected",
+                                     "sourceFields": ["company_name"], "targetFields": ["company_name"]})
+        async with self.pg.session() as session:
+            await session.execute(text(f"""CREATE FUNCTION {SCHEMA}.reject_relation() RETURNS trigger
+                LANGUAGE plpgsql AS $$ BEGIN
+                RAISE EXCEPTION 'Isolated relation rejection' USING ERRCODE='23514';
+                END; $$"""))
+            await session.execute(text(f"""CREATE TRIGGER creation_reject_relation BEFORE INSERT
+                ON public.ontology_object_relations FOR EACH ROW WHEN (NEW.name='firms_company_rejected')
+                EXECUTE FUNCTION {SCHEMA}.reject_relation()"""))
+        try:
+            with self.assertRaises(HTTPException) as error:
+                await self.workspace.create_table(SCHEMA, payload)
+            self.assertEqual(error.exception.status_code, 422)
+            await self.assert_absent("firms")
+            self.assertEqual(await self.pg.fetch_all("SELECT name FROM public.ontology_object_relations WHERE source_schema=:schema",
+                                                     {"schema": SCHEMA}), [])
+            self.assertIsNone((await self.pg.fetch_one("SELECT to_regclass(:table) AS name",
+                                                     {"table": f"{SCHEMA}.company_name_lookup"}))["name"])
+        finally:
+            async with self.pg.session() as session:
+                await session.execute(text("DROP TRIGGER creation_reject_relation ON public.ontology_object_relations"))
+                await session.execute(text(f"DROP FUNCTION {SCHEMA}.reject_relation()"))
 
     async def test_creation_commits_ddl_registration_properties_and_comments(self):
         created = await self.workspace.create_table(SCHEMA, deepcopy(PAYLOAD))

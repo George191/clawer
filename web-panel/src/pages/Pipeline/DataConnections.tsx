@@ -1,42 +1,41 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Input, Modal } from '@/components/ui';
-import { ApartmentOutlined, ArrowLeftOutlined, DatabaseOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
-import { createEtlConnection, deleteEtlConnection, deleteEtlSchema, fetchCurrentUserContext, fetchEtlConnections, fetchLayers, updateEtlConnection, updateEtlSchema } from '../../services/api';
-import type { EtlConnection } from '../../services/api';
-import type { LayerNode } from '../../services/types';
+import { Button, Checkbox, Input, Modal, Select } from '@/components/ui';
+import { ArrowLeftOutlined, CheckCircleOutlined, DatabaseOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSources, testDataSource, updateDataSource } from '../../services/api';
+import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceConfig, DataSourcePayload, DataSourceTest } from '../../services/api';
 import { getSessionState } from '../../services/session';
+import PostgresGlyph from './PostgresGlyph';
+import './data-connections.css';
 
 type Props = { onCancel: () => void; onChanged: () => void };
-type ConnectionDraft = { name: string; database: string; schemas: string[] };
+type Draft = { name: string; engine: DataConnectorEngine; config: Omit<DataSourceConfig, 'port'> & { port: string }; secret: string };
 type Confirmation = { title: string; detail: string; label: string; action: () => Promise<boolean> };
-const metadataSchemas = new Set(['ts_meta', 'ts_meta_hist']);
-const validSchema = (name: string) => /^ts_[a-z_][a-z0-9_]{0,59}$/.test(name) && !metadataSchemas.has(name);
-const emptyDraft: ConnectionDraft = { name: '', database: '', schemas: [] };
+const categories = [{ key: 'all', label: 'All connectors' }, { key: 'relational', label: 'Relational databases' }, { key: 'non_relational', label: 'Non-relational databases' }, { key: 'vector', label: 'Vector databases' }];
 const errorText = (error: unknown) => {
   const response = (error as { response?: { data?: { errors?: unknown; detail?: unknown; message?: unknown } }; message?: string })?.response?.data;
   const detail = response?.errors ?? response?.detail ?? response?.message;
   return typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : (error as Error)?.message || 'Request failed';
 };
+const initialDraft = (connector: DataConnectorType): Draft => ({ name: '', engine: connector.engine, secret: '', config: { host: '', port: String(connector.port), database: connector.engine === 'milvus' ? 'default' : '', username: '', auth: 'password', tls: connector.engine !== 'dameng' } });
+
+function ConnectorMark({ engine }: { engine: DataConnectorEngine }) {
+  return <span className={`ontology-connectors__mark is-${engine}`} aria-hidden="true">{engine === 'postgresql' ? <PostgresGlyph /> : engine === 'oracle' ? <span className="ontology-connectors__oracle" /> : engine === 'elasticsearch' ? <svg viewBox="0 0 24 24"><path fill="#FEC514" d="M3 8a9 9 0 0 1 15-3L11 9Z" /><path fill="#00BFB3" d="m12 10 9-3a9 9 0 0 1-1 11l-8-4Z" /><path fill="#F04E98" d="m3 10 7 1v4l-5 4a9 9 0 0 1-2-9Z" /><path fill="#009EBB" d="m11 16 7 4a9 9 0 0 1-11 1Z" /></svg> : engine === 'milvus' ? <svg viewBox="0 0 24 24" fill="currentColor"><path d="m3 8 5-4v12l-5 4Zm7-3 5 4v11l-5-4Zm7 4 5-4v11l-5 4Z" /></svg> : <span className="ontology-connectors__wordmark">{engine === 'mysql' ? 'MySQL' : 'DM'}</span>}</span>;
+}
 
 export default function DataConnections({ onCancel, onChanged }: Props) {
-  const [connections, setConnections] = useState<EtlConnection[]>([]);
-  const [layers, setLayers] = useState<LayerNode[]>([]);
+  const [connectors, setConnectors] = useState<DataConnectorType[]>([]);
+  const [sources, setSources] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [canManage, setCanManage] = useState(false);
   const [reload, setReload] = useState(0);
+  const [category, setCategory] = useState('all');
   const [search, setSearch] = useState('');
-  const [view, setView] = useState<'empty' | 'type' | 'connection' | 'schema'>('type');
-  const [selectedId, setSelectedId] = useState('');
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [editingId, setEditingId] = useState('');
-  const [draft, setDraft] = useState<ConnectionDraft>(emptyDraft);
   const [baseline, setBaseline] = useState('');
-  const [schemaInput, setSchemaInput] = useState('');
-  const [selectedSchema, setSelectedSchema] = useState('');
-  const [schemaName, setSchemaName] = useState('');
-  const [schemaAlias, setSchemaAlias] = useState('');
-  const [schemaBaseline, setSchemaBaseline] = useState('');
-  const [pending, setPending] = useState(false);
+  const [operation, setOperation] = useState<'' | 'test' | 'save' | 'delete'>('');
+  const [testResult, setTestResult] = useState<DataSourceTest | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -45,160 +44,149 @@ export default function DataConnections({ onCancel, onChanged }: Props) {
   const pendingRef = useRef(false);
   const sessionIdentity = useRef(getSessionState().identity).current;
   const current = () => active.current && getSessionState().identity === sessionIdentity;
+  const pending = !!operation;
   const blocked = pending || loading || !!loadError || !canManage;
-  const selected = connections.find((connection) => connection.id === selectedId);
-  const dirty = view === 'connection' ? JSON.stringify(draft) !== baseline || !!schemaInput.trim()
-    : view === 'schema' && JSON.stringify([schemaName, schemaAlias]) !== schemaBaseline;
+  const connector = connectors.find((item) => item.engine === draft?.engine);
+  const selected = sources.find((item) => item.id === editingId);
+  const dirty = !!draft && JSON.stringify(draft) !== baseline;
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     let valid = true;
     setLoading(true); setLoadError('');
-    Promise.all([fetchEtlConnections(), fetchLayers(), fetchCurrentUserContext()]).then(([resources, schemas, context]) => {
+    fetchCurrentUserContext().then(async (context) => {
       if (!valid || !current()) return;
-      setConnections(resources); setLayers(schemas); setCanManage(context.user.is_superuser === true);
-    }).catch((failure) => { if (valid && current()) setLoadError(`Unable to load data connections. ${errorText(failure)}`); })
+      const allowed = context.user.is_superuser === true;
+      setCanManage(allowed);
+      if (!allowed) return;
+      const [types, saved] = await Promise.all([fetchDataConnectorTypes(), fetchDataSources()]);
+      if (valid && current()) { setConnectors(types); setSources(saved); }
+    }).catch((failure) => { if (valid && current()) setLoadError(`Unable to load data sources. ${errorText(failure)}`); })
       .finally(() => { if (valid && current()) setLoading(false); });
     return () => { valid = false; };
   }, [reload, sessionIdentity]);
-
-  const openConnection = (connection: EtlConnection) => {
-    const next = { name: connection.name, database: connection.database, schemas: [...connection.schemas] };
-    setSelectedId(connection.id); setEditingId(connection.id); setDraft(next); setBaseline(JSON.stringify(next));
-    setSchemaInput(''); setSelectedSchema(''); setView('connection'); setError('');
-  };
-  useEffect(() => { if (!loading && !loadError && view === 'empty' && connections.length) openConnection(connections[0]); }, [loading, loadError, view, connections]);
 
   const navigate = (action: () => void) => {
     if (pendingRef.current) return;
     if (dirty) {
       setConfirmationError('');
-      setConfirmation({ title: 'Discard unsaved changes?', detail: 'Your unsaved changes will be discarded.', label: 'Discard changes', action: async () => { if (!current() || pendingRef.current) return false; action(); return true; } });
+      setConfirmation({ title: 'Discard unsaved changes?', detail: 'Your unsaved connection settings will be discarded.', label: 'Discard changes', action: async () => { if (!current() || pendingRef.current) return false; action(); return true; } });
     } else action();
   };
-  const close = () => navigate(onCancel);
-  const newConnection = () => navigate(() => { setView('type'); setSelectedId(''); setError(''); setNotice(''); });
-  const configurePostgres = () => {
-    const databases = [...new Set([...connections.map((connection) => connection.database), ...layers.map((layer) => layer.database).filter((database): database is string => !!database)])];
-    const next = { name: '', database: databases.length === 1 ? databases[0] : '', schemas: [] };
-    setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(''); setSchemaInput(''); setView('connection'); setError('');
+  const resetFeedback = () => { setError(''); setNotice(''); setTestResult(null); };
+  const newSource = () => navigate(() => { setDraft(null); setEditingId(''); resetFeedback(); });
+  const configure = (type: DataConnectorType) => {
+    const next = initialDraft(type);
+    setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(''); resetFeedback();
   };
-  const openSchema = (schema: string) => navigate(() => {
-    const layer = layers.find((entry) => entry.schemaName === schema);
-    const alias = layer?.alias || '';
-    setSelectedSchema(schema); setSchemaName(schema); setSchemaAlias(alias);
-    setSchemaBaseline(JSON.stringify([schema, alias])); setView('schema'); setError(''); setNotice('');
+  const openSource = (source: DataSource) => navigate(() => {
+    const next = { name: source.name, engine: source.engine, config: { ...source.config, port: String(source.config.port) }, secret: '' };
+    setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(source.id); resetFeedback();
   });
-  const mutate = async (action: () => Promise<void>) => {
+  const change = (patch: Partial<Draft>) => { setDraft((value) => value ? { ...value, ...patch } : value); resetFeedback(); };
+  const changeConfig = (patch: Partial<Draft['config']>) => { if (draft) change({ config: { ...draft.config, ...patch } }); };
+  const payload = (): DataSourcePayload | null => {
+    if (!draft) return null;
+    const name = draft.name.trim(), config = draft.config;
+    if (!name || !config.host.trim() || !/^\d+$/.test(config.port) || Number(config.port) < 1 || Number(config.port) > 65535) { setError('Enter a connection name, host and port between 1 and 65535.'); return null; }
+    if (config.auth === 'password' && !config.username.trim()) { setError('Enter the database username.'); return null; }
+    if (['postgresql', 'mysql', 'oracle', 'milvus'].includes(draft.engine) && !config.database.trim()) { setError('Enter the database or service name.'); return null; }
+    if (!draft.secret && (!selected?.credentialsConfigured || selected.config.auth !== config.auth)) { setError('Enter credentials for this data source.'); return null; }
+    const key = config.auth === 'api_key' ? 'apiKey' : config.auth === 'token' ? 'token' : 'password';
+    return { name, engine: draft.engine, config: { ...config, host: config.host.trim(), port: Number(config.port), username: config.username.trim(), database: config.database.trim() }, credentials: draft.secret ? { [key]: draft.secret } : {} };
+  };
+  const mutate = async (kind: 'test' | 'save' | 'delete', action: () => Promise<void>) => {
     if (!current() || pendingRef.current || blocked) return false;
-    pendingRef.current = true; setPending(true); setError(''); setNotice(''); setConfirmationError('');
+    pendingRef.current = true; setOperation(kind); setError(''); setNotice(''); setConfirmationError('');
     try { await action(); return current(); }
     catch (failure) { if (current()) { const detail = errorText(failure); setError(detail); setConfirmationError(detail); } return false; }
-    finally { pendingRef.current = false; if (current()) setPending(false); }
+    finally { pendingRef.current = false; if (current()) setOperation(''); }
   };
-  const changed = (text: string) => { setNotice(text); setReload((value) => value + 1); onChanged(); };
-  const addSchema = () => {
-    const name = schemaInput.trim();
-    if (!validSchema(name)) { setError('Use a schema name beginning with ts_, followed by lowercase letters, numbers or underscores (maximum 63 characters). Metadata schemas are managed by the system.'); return; }
-    if (draft.schemas.includes(name)) { setError('This schema is already included in the connection.'); return; }
-    setDraft((value) => ({ ...value, schemas: [...value.schemas, name] })); setSchemaInput(''); setError('');
-  };
-  const saveConnection = async () => {
-    const name = draft.name.trim(), database = draft.database.trim(), extra = schemaInput.trim();
-    if (!name || name.length > 200 || !database) { setError('Enter a connection name (maximum 200 characters) and the configured PostgreSQL database name.'); return; }
-    if (extra && !validSchema(extra)) { setError('Enter a valid schema name beginning with ts_ (maximum 63 characters).'); return; }
-    const payload = { name, database, schemas: [...new Set([...draft.schemas, ...(extra ? [extra] : [])])] };
-    const completed = await mutate(async () => {
-      const saved = editingId ? await updateEtlConnection(editingId, payload) : await createEtlConnection(payload);
-      if (!current()) return;
-      setConnections((items) => [...items.filter((item) => item.id !== saved.id), saved]);
-      openConnection(saved);
+  const test = async () => {
+    const body = payload();
+    if (!body) return;
+    setTestResult(null);
+    await mutate('test', async () => {
+      const result = await testDataSource(body, editingId || undefined);
+      if (current()) setTestResult(result);
     });
-    if (completed) changed(editingId ? 'Connection saved.' : 'Connection created.');
   };
-  const removeConnection = () => {
+  const save = async () => {
+    const body = payload();
+    if (!body) return;
+    await mutate('save', async () => {
+      const source = editingId ? await updateDataSource(editingId, body) : await createDataSource(body);
+      if (!current()) return;
+      setSources((items) => [...items.filter((item) => item.id !== source.id), source].sort((a, b) => a.name.localeCompare(b.name)));
+      const next: Draft = { name: source.name, engine: source.engine, config: { ...source.config, port: String(source.config.port) }, secret: '' };
+      setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(source.id);
+      setNotice('Source saved. Its connection was verified with a read-only request.'); setTestResult(null); onChanged();
+    });
+  };
+  const remove = () => {
     if (!selected || blocked) return;
-    const connection = selected;
+    const source = selected;
     setConfirmationError('');
-    setConfirmation({ title: 'Delete connection?', detail: `Delete “${connection.name}” from the connection catalog? Its database, schemas and data will be retained.`, label: 'Delete connection', action: async () => {
-      const completed = await mutate(async () => {
-        await deleteEtlConnection(connection.id);
+    setConfirmation({ title: 'Delete data source?', detail: `Delete “${source.name}” and its stored credentials? This retains the external database and all data.`, label: 'Delete source', action: async () => {
+      const done = await mutate('delete', async () => {
+        await deleteDataSource(source.id);
         if (!current()) return;
-        setConnections((items) => items.filter((item) => item.id !== connection.id)); setSelectedId(''); setView('empty');
+        setSources((items) => items.filter((item) => item.id !== source.id)); setDraft(null); setEditingId(''); setNotice('Data source deleted.'); onChanged();
       });
-      if (completed) changed('Connection deleted.');
-      return completed;
+      return done;
     } });
   };
-  const saveSchema = async () => {
-    const name = schemaName.trim();
-    if (!validSchema(name) || schemaAlias.length > 200) { setError('Enter a valid schema name beginning with ts_ (maximum 63 characters) and an alias of at most 200 characters.'); return; }
-    const previous = selectedSchema;
-    const completed = await mutate(async () => {
-      await updateEtlSchema(previous, { name, alias: schemaAlias });
-      if (!current()) return;
-      setConnections((items) => items.map((item) => ({ ...item, schemas: item.schemas.map((schema) => schema === previous ? name : schema) })));
-      setLayers((items) => items.map((item) => item.schemaName === previous ? { ...item, schemaName: name, key: name, alias: schemaAlias } : item));
-      setSelectedSchema(name); setSchemaName(name); setSchemaBaseline(JSON.stringify([name, schemaAlias]));
-    });
-    if (completed) changed('Schema saved.');
-  };
-  const removeSchema = () => {
-    if (blocked) return;
-    const schema = selectedSchema;
-    setConfirmationError('');
-    setConfirmation({ title: 'Delete empty schema?', detail: `Delete “${schema}”? Only empty, unprotected schemas can be deleted. This operation cannot be undone.`, label: 'Delete schema', action: async () => {
-      const completed = await mutate(async () => {
-        await deleteEtlSchema(schema);
-        if (!current()) return;
-        setConnections((items) => items.map((item) => ({ ...item, schemas: item.schemas.filter((name) => name !== schema) })));
-        setLayers((items) => items.filter((item) => item.schemaName !== schema));
-        setSelectedSchema(''); setView('empty');
-      });
-      if (completed) changed('Schema deleted.');
-      return completed;
-    } });
-  };
-  const filtered = connections.filter((connection) => `${connection.name} ${connection.database}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const filtered = connectors.filter((item) => (category === 'all' || item.category === category) && `${item.name} ${item.description}`.toLowerCase().includes(search.trim().toLowerCase()));
+  const secretLabel = draft?.config.auth === 'api_key' ? 'API key' : draft?.config.auth === 'token' ? 'Token' : 'Password';
 
   return <>
-    <Modal className="flow-surface-modal flow-connections" title="Data connections" open onCancel={close} closable={!pending} maskClosable={false} footer={null} width={1000}>
-      <div className="flow-connections__layout" aria-busy={loading || pending}>
-        <aside className="flow-connections__sidebar">
-          <div className="flow-connections__toolbar"><h3>Connections <small>{loading ? '…' : connections.length}</small></h3><Button size="small" icon={<PlusOutlined />} disabled={blocked} onClick={newConnection}>New connection</Button></div>
-          <Input aria-label="Search connections" placeholder="Search connections" prefix={<SearchOutlined />} value={search} onChange={(event) => setSearch(event.target.value)} disabled={pending} allowClear />
-          <nav className="flow-connections__list" aria-label="Connections">{filtered.map((connection) => <button type="button" key={connection.id} className={`flow-connections__item${selectedId === connection.id ? ' is-active' : ''}`} disabled={pending || loading} aria-pressed={selectedId === connection.id} onClick={() => navigate(() => { openConnection(connection); setNotice(''); })}><DatabaseOutlined /><span><strong>{connection.name}</strong><small>{connection.database}</small></span><em>{connection.schemas.filter((schema) => !metadataSchemas.has(schema)).length}</em></button>)}</nav>
-          {!loading && !loadError && !filtered.length && <p className="flow-connections__empty">{connections.length ? 'No matching connections.' : 'No connections yet.'}</p>}
+    <Modal className="flow-surface-modal ontology-connectors" title="Data connections" open onCancel={() => navigate(onCancel)} closable={!pending} maskClosable={false} footer={null} width={1100}>
+      <div className="ontology-connectors__layout" aria-busy={loading || pending}>
+        <aside className="ontology-connectors__sidebar">
+          <Button icon={<PlusOutlined />} disabled={blocked} onClick={newSource}>New source</Button>
+          <nav className="ontology-connectors__categories" aria-label="Connector category">{categories.map((item) => <button key={item.key} type="button" disabled={pending} aria-pressed={!draft && category === item.key} onClick={() => navigate(() => { setDraft(null); setEditingId(''); setCategory(item.key); resetFeedback(); })}>{item.label}<span>{connectors.filter((type) => item.key === 'all' || type.category === item.key).length}</span></button>)}</nav>
+          <h3 className="ontology-connectors__sidebar-heading">Saved sources <span>{sources.length}</span></h3>
+          <nav className="ontology-connectors__saved" aria-label="Saved data sources">{sources.map((source) => <button type="button" key={source.id} disabled={pending} aria-pressed={source.id === editingId} onClick={() => openSource(source)}><ConnectorMark engine={source.engine} /><span><strong>{source.name}</strong><small>{source.config.host}</small></span></button>)}{!loading && !sources.length && <p>No sources configured.</p>}</nav>
         </aside>
-        <main className="flow-connections__content">
-          {loading && <p className="flow-connections__feedback" role="status"><ReloadOutlined spin /> Loading connections…</p>}
-          {loadError && <div className="flow-connections__feedback is-error" role="alert"><span>{loadError}</span><Button size="small" onClick={() => setReload((value) => value + 1)} disabled={pending}>Retry</Button></div>}
-          {!loading && !loadError && !canManage && <p className="flow-connections__feedback is-error" role="alert">Only administrators can manage data connections.</p>}
-          {notice && <p className="flow-connections__feedback is-success" role="status">{notice}</p>}
-          {error && !confirmation && <p className="flow-connections__feedback is-error" role="alert">{error}</p>}
-          {view === 'empty' && !loading && !loadError && <div className="flow-connections__empty"><DatabaseOutlined /><h3>Connect your data</h3><p>Create a connection to organize the database and schemas available to your ontology.</p><Button type="primary" disabled={blocked} onClick={newConnection}>New connection</Button></div>}
-          {view === 'type' && <section className="flow-connections__section"><h3>Select a connector</h3><p>Choose the source type for your connection.</p><button type="button" className="flow-connections__type" aria-label="Configure PostgreSQL" disabled={blocked} onClick={configurePostgres}><DatabaseOutlined /><span><strong>PostgreSQL</strong><small>Use the database configured for this workspace.</small></span></button></section>}
-          {view === 'connection' && <form className="flow-connections__form" onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement && !event.target.closest('[role="combobox"]')) event.preventDefault(); }} onSubmit={(event) => event.preventDefault()}>
-            <header className="flow-connections__toolbar"><div><span className="flow-connections__eyebrow">PostgreSQL</span><h3>{editingId ? 'Connection settings' : 'New PostgreSQL connection'}</h3></div>{!editingId && <Button size="small" disabled={blocked} icon={<ArrowLeftOutlined />} onClick={() => navigate(() => setView('type'))}>Connector types</Button>}</header>
-            <fieldset disabled={blocked}><label className="flow-connections__field">Connection name<Input aria-label="Connection name" autoComplete="off" value={draft.name} maxLength={200} required onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} /></label>
-              <label className="flow-connections__field">Database<Input aria-label="Database" autoComplete="off" value={draft.database} required placeholder="Configured PostgreSQL database" onChange={(event) => setDraft((value) => ({ ...value, database: event.target.value }))} /></label>
-              <p className="flow-connections__help">The database must match the PostgreSQL database configured for this workspace.</p>
-              <section className="flow-connections__section"><h4>Schema scope</h4><p className="flow-connections__help">Add existing schemas or create new empty schemas when saving. Removing a schema from this list does not delete its data.</p>
-                <label className="flow-connections__field">Schema name<div className="flow-connections__schema-input"><Input aria-label="Schema name" value={schemaInput} placeholder="ts_example" maxLength={63} onChange={(event) => setSchemaInput(event.target.value)} /><Button size="small" aria-label="Add schema" icon={<PlusOutlined />} onClick={addSchema} disabled={!schemaInput.trim()}>Add</Button></div></label>
-                <div className="flow-connections__chips">{draft.schemas.filter((schema) => !metadataSchemas.has(schema)).map((schema) => <span key={schema}>{schema}<button type="button" aria-label={`Remove ${schema} from connection`} onClick={() => setDraft((value) => ({ ...value, schemas: value.schemas.filter((entry) => entry !== schema) }))}>×</button></span>)}</div>
+        <main className="ontology-connectors__content">
+          <div className="ontology-connectors__status" aria-live="polite">
+            {loading && <p role="status"><ReloadOutlined spin /> Loading data sources…</p>}
+            {loadError && <p className="is-error" role="alert"><span>{loadError}</span><Button size="small" onClick={() => setReload((value) => value + 1)} disabled={pending}>Retry</Button></p>}
+            {!loading && !loadError && !canManage && <p className="is-error" role="alert">Only administrators can manage data sources.</p>}
+            {notice && <p className="is-success" role="status"><CheckCircleOutlined />{notice}</p>}
+            {error && !confirmation && <p className="is-error" role="alert">{error}</p>}
+          </div>
+          {!draft && <section className="ontology-connectors__catalog">
+            <header><span className="ontology-connectors__eyebrow">New source</span><h2>Choose a connector</h2><p>Connect an external database to your workspace.</p></header>
+            <Input aria-label="Search connector types" prefix={<SearchOutlined />} value={search} placeholder="Search connectors" onChange={(event) => setSearch(event.target.value)} disabled={pending} allowClear />
+            <div className="ontology-connectors__grid">{filtered.map((item) => <button type="button" key={item.engine} className="ontology-connectors__card" aria-label={`Configure ${item.name}`} disabled={blocked} onClick={() => configure(item)}><ConnectorMark engine={item.engine} /><strong>{item.name}</strong><small>{item.description}</small><span className={`ontology-connectors__capability${item.driverAvailable ? '' : ' is-unavailable'}`}>{item.driverAvailable ? 'Read-only connection test' : 'Driver required'}</span></button>)}</div>
+            {!loading && canManage && !loadError && !filtered.length && <p className="ontology-connectors__empty">No connectors match your search.</p>}
+            <p className="ontology-connectors__scope"><DatabaseOutlined /> Saving a source stores its connection settings. Tables are not imported or synchronized automatically.</p>
+          </section>}
+          {draft && connector && <form className="ontology-connectors__form" onSubmit={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement && !event.target.closest('[role="combobox"]')) event.preventDefault(); }}>
+            <header className="ontology-connectors__form-heading"><div><ConnectorMark engine={draft.engine} /><span><span className="ontology-connectors__eyebrow">{connector.name}</span><h2>{editingId ? 'Source settings' : `New ${connector.name} source`}</h2></span></div><Button size="small" icon={<ArrowLeftOutlined />} disabled={blocked} onClick={newSource}>Connectors</Button></header>
+            {!connector.driverAvailable && <p className="ontology-connectors__prerequisite" role="alert">{connector.prerequisite} Connection testing and saving require this driver.</p>}
+            <fieldset disabled={blocked}>
+              <section className="ontology-connectors__section"><h3>Source details</h3><label>Connection name<Input aria-label="Connection name" value={draft.name} maxLength={200} autoComplete="off" placeholder="Production database" onChange={(event) => change({ name: event.target.value })} /></label></section>
+              <section className="ontology-connectors__section"><h3>Connection</h3><div className="ontology-connectors__endpoint"><label>Host<Input aria-label="Host" value={draft.config.host} maxLength={253} autoComplete="off" placeholder="database.example.com" onChange={(event) => changeConfig({ host: event.target.value })} /></label><label>Port<Input aria-label="Port" value={draft.config.port} inputMode="numeric" maxLength={5} onChange={(event) => changeConfig({ port: event.target.value })} /></label></div>
+                {!['elasticsearch', 'dameng'].includes(draft.engine) && <label>{draft.engine === 'oracle' ? 'Service name' : 'Database'}<Input aria-label={draft.engine === 'oracle' ? 'Service name' : 'Database'} value={draft.config.database} maxLength={128} autoComplete="off" onChange={(event) => changeConfig({ database: event.target.value })} /></label>}
+                {draft.engine !== 'dameng' ? <><Checkbox aria-label="Use TLS" checked={draft.config.tls} onChange={(event) => changeConfig({ tls: event.target.checked })}>Use TLS</Checkbox><p className="ontology-connectors__help">{draft.config.tls ? 'Verify the server certificate and hostname using the API image’s trusted certificate authorities.' : 'TLS is disabled. Connection traffic is not protected by this application.'}</p></> : <p className="ontology-connectors__help">Uses the DPI client’s default transport. Vendor certificate configuration is not managed by this form.</p>}
+              </section>
+              <section className="ontology-connectors__section"><h3>Authentication</h3>
+                {['elasticsearch', 'milvus'].includes(draft.engine) && <label>Authentication method<Select aria-label="Authentication method" value={draft.config.auth} disabled={blocked} onChange={(auth: DataSourceConfig['auth']) => { change({ config: { ...draft.config, auth, username: '' }, secret: '' }); }} options={[{ value: 'password', label: 'Username and password' }, draft.engine === 'elasticsearch' ? { value: 'api_key', label: 'API key' } : { value: 'token', label: 'Token' }]} /></label>}
+                {draft.config.auth === 'password' && <label>Username<Input aria-label="Username" value={draft.config.username} maxLength={200} autoComplete="off" onChange={(event) => changeConfig({ username: event.target.value })} /></label>}
+                <label>{secretLabel}<Input aria-label={secretLabel} type="password" value={draft.secret} maxLength={8192} autoComplete="new-password" placeholder={editingId ? `Leave blank to keep the stored ${secretLabel.toLowerCase()}` : `Enter ${secretLabel.toLowerCase()}`} onChange={(event) => change({ secret: event.target.value })} /></label>
+                <p className="ontology-connectors__help">Credentials are encrypted at rest and are never returned by the API. Use a dedicated account with read access.</p>
               </section>
             </fieldset>
-            <div className="flow-connections__footer">{editingId && <Button danger icon={<DeleteOutlined />} disabled={blocked} onClick={removeConnection}>Delete connection</Button>}<Button type="primary" onClick={() => void saveConnection()} loading={pending} disabled={blocked || !!editingId && !dirty}>{editingId ? 'Save connection' : 'Create connection'}</Button></div>
-            {selected && editingId && <section className="flow-connections__section"><h4>Schemas</h4><div className="flow-connections__schema-list">{selected.schemas.filter((schema) => !metadataSchemas.has(schema)).map((schema) => <button type="button" key={schema} aria-label={`Manage schema ${schema}`} disabled={blocked} onClick={() => openSchema(schema)}><ApartmentOutlined /><span><strong>{schema}</strong><small>{layers.find((layer) => layer.schemaName === schema)?.alias}</small></span></button>)}</div>{!selected.schemas.some((schema) => !metadataSchemas.has(schema)) && <p className="flow-connections__help">No schemas in this connection.</p>}</section>}
-          </form>}
-          {view === 'schema' && <form className="flow-connections__form" onKeyDown={(event) => { if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.target instanceof HTMLInputElement && !event.target.closest('[role="combobox"]')) event.preventDefault(); }} onSubmit={(event) => event.preventDefault()}><header className="flow-connections__toolbar"><div><span className="flow-connections__eyebrow">{selected?.name}</span><h3>Schema details</h3></div><Button size="small" icon={<ArrowLeftOutlined />} disabled={blocked} onClick={() => navigate(() => { if (selected) openConnection(selected); })}>Connection</Button></header>
-            <fieldset disabled={blocked}><label className="flow-connections__field">Schema name<Input aria-label="Schema name" value={schemaName} required maxLength={63} onChange={(event) => setSchemaName(event.target.value)} /></label><label className="flow-connections__field">Schema alias<Input aria-label="Schema alias" value={schemaAlias} maxLength={200} onChange={(event) => setSchemaAlias(event.target.value)} /></label><p className="flow-connections__help">Aliases change the display name. Protected pipeline schemas and schemas with managed object definitions cannot be renamed.</p></fieldset>
-            <div className="flow-connections__footer"><Button danger icon={<DeleteOutlined />} disabled={blocked} onClick={removeSchema}>Delete schema</Button><Button onClick={() => void saveSchema()} type="primary" loading={pending} disabled={blocked || !dirty}>Save schema</Button></div>
+            <div className="ontology-connectors__test-result" aria-live="polite">{testResult && <p className={testResult.ok ? 'is-success' : 'is-error'} role={testResult.ok ? 'status' : 'alert'}>{testResult.ok && <CheckCircleOutlined />}<span>{testResult.message}</span><small>{testResult.latencyMs} ms</small></p>}{selected && !testResult && <small>Last verified: {new Date(selected.testedAt).toLocaleString()}</small>}</div>
+            <div className="ontology-connectors__actions">{editingId && <Button danger icon={<DeleteOutlined />} disabled={blocked} onClick={remove}>Delete source</Button>}<span /><Button onClick={() => void test()} loading={operation === 'test'} disabled={blocked || !connector.driverAvailable}>Test connection</Button><Button type="primary" onClick={() => void save()} loading={operation === 'save'} disabled={blocked || !connector.driverAvailable || !!editingId && !dirty}>Save source</Button></div>
+            <p className="ontology-connectors__help">Saving verifies the connection again. This does not import tables or change the external database.</p>
           </form>}
         </main>
       </div>
-      <footer className="flow-connections__dialog-footer"><Button disabled={pending} onClick={close}>Close</Button></footer>
+      <footer className="ontology-connectors__dialog-footer"><Button disabled={pending} onClick={() => navigate(onCancel)}>Close</Button></footer>
     </Modal>
-    {confirmation && <Modal className="flow-surface-modal flow-create-confirmation flow-connections__confirmation" title={confirmation.title} open okText={confirmation.label} confirmLoading={pending} cancelButtonProps={{ disabled: pending }} closable={!pending} maskClosable={false} onCancel={() => { if (!pendingRef.current) setConfirmation(null); }} onOk={async () => { if (await confirmation.action() && current()) setConfirmation(null); }}><p>{confirmation.detail}</p>{confirmationError && <p className="flow-connections__feedback is-error" role="alert">{confirmationError}</p>}</Modal>}
+    {confirmation && <Modal className="flow-surface-modal ontology-connectors__confirmation" title={confirmation.title} open okText={confirmation.label} confirmLoading={pending} cancelButtonProps={{ disabled: pending }} closable={!pending} maskClosable={false} onCancel={() => { if (!pendingRef.current) setConfirmation(null); }} onOk={async () => { if (await confirmation.action() && current()) setConfirmation(null); }}><p>{confirmation.detail}</p>{confirmationError && <p role="alert">{confirmationError}</p>}</Modal>}
   </>;
 }

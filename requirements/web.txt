@@ -43,6 +43,8 @@ redis>=5.0
 celery>=5.4,<6
 sqlalchemy[asyncio]>=2.0
 asyncpg>=0.30
+PyMySQL[rsa]>=1.1,<2
+oracledb>=2.5,<4
 
 # Local AI generation used by app.web.agents.
 transformers>=4.40,<5

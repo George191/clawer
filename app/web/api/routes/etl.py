@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
@@ -17,6 +18,8 @@ from app.web.api.models.etl import (
     ObjectVisibility,
     SqlQuery,
 )
+from app.web.api.models.data_connections import DataConnectionPayload
+from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services import etl_runtime
 from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
@@ -100,6 +103,43 @@ async def download_current_vulnerability_keywords() -> Response:
 @read.get("/connections")
 async def connections() -> list[dict[str, Any]]:
     return await get_etl_workspace().connections()
+
+
+@write.get("/connector-types")
+async def available_connector_types() -> list[dict[str, Any]]:
+    return connector_types()
+
+
+@write.get("/data-connections")
+async def data_connections() -> list[dict[str, Any]]:
+    return await get_data_connections().list()
+
+
+@write.post("/data-connections/test")
+async def test_data_connection(payload: DataConnectionPayload, connectionId: UUID | None = None) -> dict[str, Any]:
+    return await get_data_connections().test(payload, str(connectionId) if connectionId else None)
+
+
+@write.post("/data-connections")
+async def create_data_connection(payload: DataConnectionPayload,
+                                 current_user: Any = Depends(get_current_active_superuser)) -> dict[str, Any]:
+    return await get_data_connections().save(payload, str(current_user.id))
+
+
+@write.post("/data-connections/{connection_id}/test")
+async def test_saved_data_connection(connection_id: UUID) -> dict[str, Any]:
+    return await get_data_connections().test_saved(str(connection_id))
+
+
+@write.put("/data-connections/{connection_id}")
+async def update_data_connection(connection_id: UUID, payload: DataConnectionPayload,
+                                 current_user: Any = Depends(get_current_active_superuser)) -> dict[str, Any]:
+    return await get_data_connections().save(payload, str(current_user.id), str(connection_id))
+
+
+@write.delete("/data-connections/{connection_id}")
+async def delete_data_connection(connection_id: UUID) -> dict[str, Any]:
+    return await get_data_connections().delete(str(connection_id))
 
 
 @write.post("/connections")

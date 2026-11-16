@@ -19,6 +19,7 @@ from sqlalchemy.exc import DBAPIError
 
 from app.config.settings import settings
 from app.etl.cdc import cdc_schemas
+from app.etl.schema.object_relations import relation_mapping, validate_definition
 from app.etl.schema.ontology import resource_group, sync_object_metadata
 from app.storage.postgres_client import get_pg_client
 from app.web.core.config import settings as web_settings
@@ -142,6 +143,8 @@ def _check_expression(expression: Any, fields: set[str]) -> str:
 
 def build_table_statements(schema: str, payload: dict[str, Any]) -> list[str]:
     """Build DDL from structured controls, with no user-supplied SQL fragments."""
+    if "foreignKeys" in payload:
+        _bad("Physical foreign keys are not supported; define ontology relations instead")
     table = payload.get("name", "")
     qualified = f"{quote_identifier(schema)}.{quote_identifier(table)}"
     options = payload.get("options") or {}
@@ -176,7 +179,7 @@ def build_table_statements(schema: str, payload: dict[str, Any]) -> list[str]:
     if primary:
         definitions.append(f"PRIMARY KEY ({', '.join(primary)})")
     constraint_names: set[str] = set()
-    for collection in ("checks", "foreignKeys", "indexes"):
+    for collection in ("checks", "indexes"):
         entries = payload.get(collection, [])
         if not isinstance(entries, list) or len(entries) > 200 or any(not isinstance(entry, dict) for entry in entries):
             _bad(f"{collection} must be an array of objects (maximum 200)")
@@ -190,30 +193,9 @@ def build_table_statements(schema: str, payload: dict[str, Any]) -> list[str]:
         definitions.append(f"CONSTRAINT {name} CHECK ({_check_expression(check.get('expression'), known)})")
         if check.get("comment"):
             comments.append(f"COMMENT ON CONSTRAINT {name} ON {qualified} IS {_literal(check['comment'])}")
-    actions = {"RESTRICT", "CASCADE", "SET NULL", "NO ACTION", "SET DEFAULT"}
-    for foreign in payload.get("foreignKeys", []):
-        if not foreign.get("name") and not foreign.get("fields"):
-            continue
-        name = quote_identifier(foreign.get("name", ""))
-        if name in constraint_names:
-            _bad("Constraint names must be distinct")
-        constraint_names.add(name)
-        local = _names(foreign.get("fields"), known)
-        remote = _names(foreign.get("refFields"))
-        if len(local) != len(remote):
-            _bad("Foreign key and referenced column counts must match")
-        delete = " ".join(str(foreign.get("onDelete", "RESTRICT")).upper().split())
-        update = " ".join(str(foreign.get("onUpdate", "RESTRICT")).upper().split())
-        if delete not in actions or update not in actions:
-            _bad("Invalid foreign key action")
-        ref = quote_identifier(foreign.get("refTable", ""))
-        definitions.append(
-            f"CONSTRAINT {name} FOREIGN KEY ({', '.join(map(quote_identifier, local))}) "
-            f"REFERENCES {quote_identifier(schema)}.{ref} ({', '.join(map(quote_identifier, remote))}) "
-            f"ON DELETE {delete} ON UPDATE {update}"
-        )
     statements = [f"CREATE TABLE {qualified} ({', '.join(definitions)})"]
     index_names: set[str] = set()
+    index_definitions: set[tuple] = set()
     for index in payload.get("indexes", []):
         if not index.get("name") and not index.get("fields"):
             continue
@@ -226,7 +208,14 @@ def build_table_statements(schema: str, payload: dict[str, Any]) -> list[str]:
             _bad("Unsupported index method")
         if index.get("unique") and method != "BTREE":
             _bad("Unique indexes require BTREE")
-        columns = ", ".join(map(quote_identifier, _names(index.get("fields"), known)))
+        fields_in_index = _names(index.get("fields"), known)
+        if method == "HASH" and len(fields_in_index) != 1:
+            _bad("HASH indexes require exactly one property")
+        definition = (method, tuple(fields_in_index), bool(index.get("unique")))
+        if definition in index_definitions:
+            _bad("Duplicate index definition: method, ordered properties and uniqueness must differ")
+        index_definitions.add(definition)
+        columns = ", ".join(map(quote_identifier, fields_in_index))
         statements.append(f"CREATE {'UNIQUE ' if index.get('unique') else ''}INDEX {name} ON {qualified} USING {method} ({columns})")
         if index.get("comment"):
             comments.append(f"COMMENT ON INDEX {quote_identifier(schema)}.{name} IS {_literal(index['comment'])}")
@@ -234,6 +223,37 @@ def build_table_statements(schema: str, payload: dict[str, Any]) -> list[str]:
     if description:
         comments.append(f"COMMENT ON TABLE {qualified} IS {_literal(description)}")
     return statements + comments
+
+
+def table_relations(schema: str, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    definitions = payload.get("relations", [])
+    if not isinstance(definitions, list) or len(definitions) > 200:
+        _bad("Relations must be an array (maximum 200)")
+    allowed = {"name", "targetSchema", "targetTable", "sourceFields", "targetFields", "cardinality", "description"}
+    known = {field["name"] for field in payload["fields"] if field.get("name")}
+    rows = []
+    for definition in definitions:
+        if not isinstance(definition, dict) or set(definition) - allowed:
+            _bad("A relation must contain only the documented metadata fields")
+        try:
+            row = validate_definition({"name": definition.get("name"), "source_schema": schema,
+                "source_table": payload["name"], "source_fields": definition.get("sourceFields"),
+                "target_schema": definition.get("targetSchema"), "target_table": definition.get("targetTable"),
+                "target_fields": definition.get("targetFields"), "cardinality": definition.get("cardinality"),
+                "description": definition.get("description", ""), "relationship_kind": "association",
+                "provenance": "ontology:create_table"})
+        except ValueError as error:
+            _bad(str(error))
+        if not set(row["source_fields"]).issubset(known):
+            _bad("A relation references an unknown source property")
+        rows.append(row)
+    if len({row["name"] for row in rows}) != len(rows):
+        _bad("Relation names must be distinct")
+    mappings = [relation_mapping({**row, "columns": row["source_fields"],
+                                 "referenced_columns": row["target_fields"]}) for row in rows]
+    if len(set(mappings)) != len(mappings):
+        _bad("Duplicate relation property mapping, including a reverse definition")
+    return rows
 
 
 _CONNECTION_DDL = """
@@ -417,6 +437,7 @@ class EtlWorkspace:
         if not isinstance(data_type, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", data_type):
             _bad("Data type must be a lowercase identifier of 1 to 63 characters")
         statements = build_table_statements(schema, payload)
+        relations = table_relations(schema, payload)
         async with self._session() as session:
             await self._schema_exists(session, schema)
             for statement in statements:
@@ -425,7 +446,52 @@ class EtlWorkspace:
                 data_type=data_type, data_type_source="registration",
                 provenance="flow:create_table", description=payload.get("description") or (payload.get("options") or {}).get("comment"),
                 ddl_sql=";\n".join(statements) + ";\n")
+            if relations:
+                await self._create_relations(session, relations)
         return await self._layers.get_table(schema, payload["name"])
+
+    async def _create_relations(self, session, rows: list[dict[str, Any]]) -> None:
+        await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_object_relations'))"))
+        targets: dict[tuple[str, str], set[str]] = {}
+        for row in rows:
+            target = (row["target_schema"], row["target_table"])
+            if target not in targets:
+                result = await session.execute(text("""SELECT p.name
+                    FROM public.ontology_objects o
+                    JOIN public.ontology_object_properties p ON p.object_id = o.id
+                    JOIN pg_namespace n ON n.nspname = o.schema_name
+                    JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = o.table_name
+                    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = p.name
+                        AND a.attnum > 0 AND NOT a.attisdropped
+                    WHERE o.is_active AND o.schema_name = :schema AND o.table_name = :table
+                        AND c.relkind IN ('r','p') AND NOT c.relispartition
+                        AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+                """), {"schema": target[0], "table": target[1]})
+                targets[target] = {item["name"] for item in result.mappings()}
+            if not targets[target] or not set(row["target_fields"]).issubset(targets[target]):
+                _bad("Choose an active ontology target object and its registered properties")
+        source = rows[0]
+        result = await session.execute(text("""SELECT name, source_schema, source_table, source_fields AS columns,
+                target_schema, target_table, target_fields AS referenced_columns
+            FROM public.ontology_object_relations
+            WHERE name = ANY(CAST(:names AS text[]))
+                OR (source_schema = :schema AND source_table = :table)
+                OR (target_schema = :schema AND target_table = :table)
+        """), {"names": [row["name"] for row in rows], "schema": source["source_schema"], "table": source["source_table"]})
+        existing = list(result.mappings())
+        names = {row["name"] for row in existing}
+        mappings = {relation_mapping(row) for row in existing}
+        for row in rows:
+            mapping = relation_mapping({**row, "columns": row["source_fields"], "referenced_columns": row["target_fields"]})
+            if row["name"] in names or mapping in mappings:
+                raise HTTPException(409, "Relation name or property mapping already exists")
+            await session.execute(text("""INSERT INTO public.ontology_object_relations
+                (name, source_schema, source_table, source_fields, target_schema, target_table, target_fields,
+                 relationship_kind, cardinality, description, provenance, enabled)
+                VALUES (:name, :source_schema, :source_table, CAST(:source_fields AS text[]),
+                    :target_schema, :target_table, CAST(:target_fields AS text[]),
+                    :relationship_kind, :cardinality, :description, :provenance, :enabled)
+            """), row)
 
     async def set_object_visibility(self, layer: str, table: str, visibility: str, actor: str) -> dict[str, Any]:
         schema = resolve_schema(layer)

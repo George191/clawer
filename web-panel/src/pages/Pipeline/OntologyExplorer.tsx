@@ -37,7 +37,7 @@ const visibilityDescriptions: Record<EtlObjectVisibility, string> = {
 };
 type CardFrame = { node: HTMLElement; rect: DOMRect; opacity: number };
 type CardMotion = { animation: Animation; x: number; y: number; from: number; to: number };
-function useCatalogMotion(root: React.RefObject<HTMLDivElement>, scope: string, items: EtlObjectType[]) {
+function useCatalogMotion(root: React.RefObject<HTMLDivElement>, scope: string, revision: unknown, kind: 'cards' | 'schemas' = 'cards') {
   const previous = useRef<{ scope: string; cards: Map<string, CardFrame> }>({ scope: '', cards: new Map() });
   const motions = useRef(new Map<HTMLElement, CardMotion>());
   const ghosts = useRef(new Map<string, CardFrame>());
@@ -48,7 +48,8 @@ function useCatalogMotion(root: React.RefObject<HTMLDivElement>, scope: string, 
     for (const frame of ghosts.current.values()) frame.node.remove();
     ghosts.current.clear();
   };
-  const snapshot = () => new Map(Array.from(root.current?.querySelectorAll<HTMLElement>('[data-testid="ontology-object-card"]') || [], (node) => [node.dataset.objectId!, { node, rect: node.getBoundingClientRect(), opacity: 1 }]));
+  const selector = kind === 'cards' ? '[data-testid="ontology-object-card"]' : '.flow-ontology__sidebar [data-group], .flow-ontology__schema-collapse.is-expanded [data-schema-motion-id]';
+  const snapshot = () => new Map(Array.from(root.current?.querySelectorAll<HTMLElement>(selector) || [], (node) => [node.dataset.objectId || node.dataset.schemaMotionId || `group:${node.dataset.group}`, { node, rect: node.getBoundingClientRect(), opacity: 1 }]));
   useLayoutEffect(() => {
     const container = root.current;
     if (!container) return;
@@ -62,41 +63,45 @@ function useCatalogMotion(root: React.RefObject<HTMLDivElement>, scope: string, 
     const before = new Map(Array.from(previous.current.cards, ([id, frame]) => [id, visual(frame)]));
     const exiting = new Map(Array.from(ghosts.current, ([id, frame]) => [id, visual(frame)]));
     const sameScope = previous.current.scope === scope;
+    const resizingSchemas = kind === 'schemas' && Array.from(container.querySelectorAll('.flow-ontology__schema-collapse')).some((node) => node.getAnimations().some((animation) => animation instanceof CSSTransition && animation.transitionProperty === 'grid-template-rows' && animation.playState === 'running'));
     cancel();
     const after = snapshot();
     const play = (node: HTMLElement, x: number, y: number, from: number, to: number, duration: number, remove = false) => {
       node.style.willChange = 'transform, opacity';
       const animation = node.animate([{ transform: `translate(${x}px, ${y}px)`, opacity: from }, { transform: 'translate(0, 0)', opacity: to }], { duration, easing: 'cubic-bezier(.2, .8, .2, 1)' });
       motions.current.set(node, { animation, x, y, from, to });
-      const finish = () => { if (motions.current.get(node)?.animation === animation) motions.current.delete(node); node.style.removeProperty('will-change'); if (remove) { node.remove(); for (const [id, frame] of ghosts.current) if (frame.node === node) ghosts.current.delete(id); } };
+      const finish = () => { if (motions.current.get(node)?.animation === animation) motions.current.delete(node); node.style.removeProperty('will-change'); if (remove) { node.remove(); for (const [id, frame] of ghosts.current) if (frame.node === node) ghosts.current.delete(id); } if (kind === 'schemas' && !motions.current.size) previous.current.cards = snapshot(); };
       animation.onfinish = finish; animation.oncancel = finish;
     };
     if (!reduced.current.matches) {
       if (sameScope) for (const [id, frame] of before) {
         if (after.has(id) || !visible(frame.rect)) continue;
+        if (kind === 'schemas' && (frame.node.isConnected || resizingSchemas)) continue;
         const node = frame.node.cloneNode(true) as HTMLElement;
-        for (const attribute of ['data-testid', 'data-object-id', 'data-schema', 'id']) node.removeAttribute(attribute);
+        for (const attribute of ['data-testid', 'data-object-id', 'data-schema', 'data-schema-filter', 'data-schema-motion-id', 'data-group', 'id']) node.removeAttribute(attribute);
         node.querySelectorAll('[id]').forEach((element) => element.removeAttribute('id'));
-        node.classList.add('flow-ontology__asset-ghost'); node.setAttribute('aria-hidden', 'true'); node.inert = true;
+        node.classList.add(kind === 'cards' ? 'flow-ontology__asset-ghost' : 'flow-ontology__schema-ghost'); node.setAttribute('aria-hidden', 'true'); node.inert = true;
         Object.assign(node.style, { position: 'absolute', left: `${frame.rect.left - viewport.left}px`, top: `${frame.rect.top - viewport.top}px`, width: `${frame.rect.width}px`, height: `${frame.rect.height}px`, margin: '0' });
         container.append(node); ghosts.current.set(id, { ...frame, node });
         play(node, 0, 0, frame.opacity, 0, 140, true);
       }
       for (const [id, frame] of after) {
         if (!visible(frame.rect)) continue;
-        const old = sameScope ? before.get(id) || exiting.get(id) : undefined;
-        const x = old ? old.rect.left - frame.rect.left : 0, y = old ? old.rect.top - frame.rect.top : 0;
+        const old = sameScope || id.startsWith('group:') ? before.get(id) || exiting.get(id) : undefined;
+        const x = old && !resizingSchemas ? old.rect.left - frame.rect.left : 0, y = old && !resizingSchemas ? old.rect.top - frame.rect.top : 0;
         const opacity = old?.opacity ?? 0;
         if (Math.abs(x) > .5 || Math.abs(y) > .5 || opacity < 1) play(frame.node, x, y, opacity, 1, old ? 220 : 160);
       }
     }
     previous.current = { scope, cards: after };
-  }, [scope, items]);
+  }, [scope, revision]);
   useEffect(() => {
     const body = root.current?.querySelector('.flow-ontology__body');
     const reset = () => { cancel(); previous.current.cards = snapshot(); };
-    body?.addEventListener('scroll', reset, { passive: true }); window.addEventListener('resize', reset); reduced.current.addEventListener('change', reset);
-    return () => { body?.removeEventListener('scroll', reset); window.removeEventListener('resize', reset); reduced.current.removeEventListener('change', reset); cancel(); };
+    const settled = (event: Event) => { if ((event as TransitionEvent).propertyName === 'grid-template-rows' && !motions.current.size) reset(); };
+    body?.addEventListener('scroll', reset, { passive: true, capture: true }); window.addEventListener('resize', reset); reduced.current.addEventListener('change', reset);
+    if (kind === 'schemas') body?.addEventListener('transitionend', settled);
+    return () => { body?.removeEventListener('scroll', reset, true); body?.removeEventListener('transitionend', settled); window.removeEventListener('resize', reset); reduced.current.removeEventListener('change', reset); cancel(); };
   }, []);
 }
 function PropertyIcon({ type }: { type: string }) {
@@ -147,15 +152,15 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const inspectorOpen = !!inspectorId;
   const inspectorClosing = inspectorOpen && !selectedId;
   const inspectorAllProperties = selectedId ? allProperties : inspectedObject.allProperties;
-  const [catalogState, setCatalogState] = useState<{ key: string; scope: string; data: EtlObjectCatalog }>({ key: '', scope: '', data: emptyCatalog });
-  const [menuFacetState, setMenuFacetState] = useState<{ key: string; counts: EtlObjectCatalog['groupSchemaCounts'] }>({ key: '', counts: {} });
+  const [catalogState, setCatalogState] = useState<{ key: string; scope: string; userId: string; group: Group; data: EtlObjectCatalog }>({ key: '', scope: '', userId: '', group: 'all', data: emptyCatalog });
+  const [menuFacetState, setMenuFacetState] = useState<{ key: string; userId: string; counts: EtlObjectCatalog['groupSchemaCounts'] }>({ key: '', userId: '', counts: {} });
   const [favoriteSchemaCounts, setFavoriteSchemaCounts] = useState<Record<string, number>>({});
   const [favoriteSchemaKey, setFavoriteSchemaKey] = useState('');
   const [favoriteVisibleCount, setFavoriteVisibleCount] = useState<number | null>(null);
   const [favoriteSummaryError, setFavoriteSummaryError] = useState('');
   const [expandedGroup, setExpandedGroup] = useState<Group | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [catalogError, setCatalogError] = useState({ key: '', message: '' });
   const [version, setVersion] = useState(0);
   const [creationSchemas, setCreationSchemas] = useState<LayerNode[]>([]);
   const [canManage, setCanManage] = useState(false);
@@ -188,18 +193,21 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const favoriteIds = favorites.join(',');
   const favoriteQuery = group === 'favorites' ? favorites.join(',') : '';
   const menuFacetKey = JSON.stringify([keyword.trim(), includeHidden]);
-  const menuFacetsReady = menuFacetState.key === menuFacetKey;
+  const menuFacetsReady = !!menuFacetState.key && menuFacetState.userId === currentUserId;
   const menuGroupSchemaCounts = menuFacetsReady ? menuFacetState.counts : {};
   const favoriteSummaryKey = JSON.stringify([currentUserId, favoriteIds, includeHidden]);
-  const favoriteSummaryReady = favoriteReady && favoriteSchemaKey === favoriteSummaryKey;
-  const catalogScope = JSON.stringify([source, keyword, group, favoriteReady, currentUserId]);
-  const catalogKey = JSON.stringify([source, keyword, group, favoriteQuery, favoriteReady, includeHidden]);
+  const favoriteSummaryReady = favoriteReady && !!favoriteSchemaKey && JSON.parse(favoriteSchemaKey)[0] === currentUserId;
+  const catalogFavoritesReady = group !== 'favorites' || favoriteReady;
+  const catalogScope = JSON.stringify([source, keyword, group, catalogFavoritesReady, currentUserId]);
+  const catalogKey = JSON.stringify([source, keyword, group, favoriteQuery, catalogFavoritesReady, includeHidden, currentUserId]);
   const catalog = catalogState.key === catalogKey ? catalogState.data : emptyCatalog;
-  const loading = catalogLoading || catalogState.key !== catalogKey;
+  const error = catalogError.key === catalogKey ? catalogError.message : '';
+  const loading = catalogLoading || (catalogState.key !== catalogKey && !error);
+  const confirmedTotal = catalogState.key && catalogState.userId === currentUserId ? catalogState.data.total : null;
   const presentedItems = useMemo(() => {
     if (catalogState.key === catalogKey) return catalogState.data.items;
     if (catalogState.scope !== catalogScope) return [];
-    return catalogState.data.items.filter((object) => (includeHidden || object.visibility !== 'hidden') && (group !== 'favorites' || favorites.includes(object.id)));
+    return catalogState.data.items.filter((object) => group !== 'favorites' || favorites.includes(object.id));
   }, [catalogState, catalogKey, catalogScope, includeHidden, group, favoriteIds]);
   useCatalogMotion(rootRef, `${catalogScope}:${view}`, presentedItems);
 
@@ -262,8 +270,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   }, [currentUserId, sessionIdentity, version, refreshToken]);
   useEffect(() => {
     let active = true;
-    setFavoriteVisibleCount(null); setFavoriteSummaryError('');
-    if (!favoriteReady) { setFavoriteSchemaCounts({}); return; }
+    setFavoriteSummaryError('');
+    if (!favoriteReady) return;
     const load = async () => {
       try {
         const ids = favoriteIds ? favoriteIds.split(',') : [];
@@ -282,9 +290,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return () => { active = false; };
   }, [favoriteIds, favoriteReady, includeHidden, version, refreshToken, favoriteSummaryKey]);
   useEffect(() => {
-    if (group === 'favorites' && !favoriteReady) { setCatalogLoading(true); setCatalogState({ key: catalogKey, scope: catalogScope, data: emptyCatalog }); return; }
+    if (!currentUserId || !catalogFavoritesReady) { setCatalogLoading(true); return; }
     let active = true;
-    setCatalogLoading(true); setError('');
+    setCatalogLoading(true); setCatalogError({ key: catalogKey, message: '' });
     const timer = window.setTimeout(async () => {
       try {
         const query = { schema: source || undefined, search: keyword.trim() || undefined, includeHidden };
@@ -326,13 +334,13 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           result = { ...result, items, limit: items.length, offset: 0 };
         }
         if (!active) return;
-        setCatalogState({ key: catalogKey, scope: catalogScope, data: result });
-        setMenuFacetState({ key: menuFacetKey, counts: menuCounts });
-      } catch { if (active) { setCatalogState({ key: catalogKey, scope: catalogScope, data: emptyCatalog }); setError('Unable to load object types. Refresh to try again.'); } }
+        setCatalogState({ key: catalogKey, scope: catalogScope, userId: currentUserId, group, data: result });
+        setMenuFacetState({ key: menuFacetKey, userId: currentUserId, counts: menuCounts });
+      } catch { if (active) setCatalogError({ key: catalogKey, message: 'Unable to load object types. The last loaded results are retained. Retry to update them.' }); }
       finally { if (active) setCatalogLoading(false); }
     }, keyword ? 200 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [source, keyword, group, favoriteQuery, favoriteReady, includeHidden, version, refreshToken, catalogKey, catalogScope, menuFacetKey]);
+  }, [source, keyword, group, favoriteQuery, catalogFavoritesReady, includeHidden, version, refreshToken, catalogKey, catalogScope, menuFacetKey]);
   useEffect(() => {
     if (selectedId) { setInspectedObject({ schema: selectedSchema, table: selectedTable, allProperties }); return; }
     if (!inspectorId) return;
@@ -445,14 +453,14 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   }, [presentedItems, group]);
   const renderedObjects = sections.flatMap((section) => section.schemas.flatMap((schema) => schema.items));
   const favoriteFacetsReady = favoriteReady && (!favoriteIds || (group !== 'favorites' || !keyword.trim()
-    ? favoriteSummaryReady : catalogState.key === catalogKey && !error));
+    ? favoriteSummaryReady : catalogState.group === 'favorites' && catalogState.userId === currentUserId && !!catalogState.key));
   const displayedFavoriteSchemaCounts = useMemo(() => {
     if (!favoriteFacetsReady || !favoriteIds) return {};
     if (group !== 'favorites' || !keyword.trim()) return favoriteSchemaCounts;
     const counts: Record<string, number> = {};
-    Object.values(catalog.groupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
+    Object.values(catalogState.data.groupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
     return counts;
-  }, [group, keyword, catalog.groupSchemaCounts, favoriteSchemaCounts, favoriteFacetsReady, favoriteIds]);
+  }, [group, keyword, catalogState.data.groupSchemaCounts, favoriteSchemaCounts, favoriteFacetsReady, favoriteIds]);
   const schemaCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     Object.values(menuGroupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
@@ -460,6 +468,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return counts;
   }, [menuGroupSchemaCounts, source, menuFacetsReady]);
   const facetGroupCounts = Object.fromEntries(Object.entries(menuGroupSchemaCounts).map(([key, schemas]) => [key, Object.values(schemas).reduce((sum, count) => sum + count, 0)]));
+  useCatalogMotion(rootRef, `${currentUserId}:${group}`, JSON.stringify([expandedGroup, menuGroupSchemaCounts, displayedFavoriteSchemaCounts]), 'schemas');
   const moveCardFocus = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
@@ -488,7 +497,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           </div>
           <div className="flow-ontology__view-switch" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
           {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
-          <span className="flow-ontology__summary" aria-busy={loading} aria-label={loading ? 'Updating object type count' : error ? 'Object type count unavailable' : `${number(catalog.total)} object types`}><span className="flow-ontology__summary-value">{loading ? '…' : error ? '—' : number(catalog.total)}</span><span>object types</span></span>
+          <span className="flow-ontology__summary" aria-busy={loading} aria-label={confirmedTotal === null ? 'Object type count not loaded' : `${number(confirmedTotal)} object types${loading ? ', updating' : error ? ', last loaded count' : ''}`}><span className="flow-ontology__summary-value">{confirmedTotal === null ? '…' : number(confirmedTotal)}</span><span>object types</span></span>
           {canManage && <><button type="button" className="flow-ontology__button flow-ontology__connector-action" onClick={() => setConnectionsOpen(true)}><DatabaseOutlined />New data connector</button><button type="button" className="flow-ontology__button flow-ontology__create-action" disabled={!creationSchemas.length} onClick={startNewObject}><PlusOutlined />New object type</button></>}
         </div>
       </header>
@@ -506,11 +515,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
                 <button type="button" data-group={item.key} aria-pressed={active} aria-expanded={expanded} aria-controls={`ontology-schema-group-${item.key}`} className={active ? 'is-active' : ''} onClick={() => {
                   setExpandedGroup(expanded ? null : item.key);
                   if (!active) updateQuery({ group: item.key === 'all' ? null : item.key, source: null, ...(!selectedTable ? { schema: null } : {}) });
-                }}><RightOutlined rotate={expanded ? 90 : 0} /><span>{item.label}</span><small>{item.key === 'favorites' ? favoriteVisibleCount === null ? '…' : number(favoriteVisibleCount) : menuFacetsReady ? number(item.key === 'all' ? groupTotal : facetGroupCounts[item.key] || 0) : '…'}</small></button>
+                }}><RightOutlined rotate={expanded ? 90 : 0} /><span>{item.label}</span><small>{item.key === 'favorites' ? !favoriteSummaryReady || favoriteVisibleCount === null ? '…' : number(favoriteVisibleCount) : menuFacetsReady ? number(item.key === 'all' ? groupTotal : facetGroupCounts[item.key] || 0) : '…'}</small></button>
                 <div id={`ontology-schema-group-${item.key}`} className={`flow-ontology__schema-collapse${expanded ? ' is-expanded' : ''}`} aria-hidden={!expanded} ref={(element) => { if (element) element.inert = !expanded; }}>
                   <div className="flow-ontology__schema-collapse-content">
                     <div className="flow-ontology__schema-nav" role="group" aria-label={`${item.label} schemas`}>
-                      {schemas.length ? schemas.map((schema) => <button type="button" key={schema} data-schema-filter={schema} aria-pressed={group === item.key && source === schema} className={group === item.key && source === schema ? 'is-active' : ''} onClick={() => updateQuery({ group: item.key === 'all' ? null : item.key, source: schema, ...(!selectedTable ? { schema: null } : {}) })}><span className="flow-ontology__schema-label"><DatabaseOutlined /><span title={schema}>{schema}</span></span><small>{number(counts[schema])}</small></button>) : <span className={`flow-ontology__schema-empty${facetsReady ? '' : ' is-pending'}`} aria-busy={!facetsReady} aria-label={facetsReady ? undefined : 'Schema groups not loaded'}>{facetsReady ? 'No schemas' : <span className="flow-ontology__schema-skeleton" aria-hidden="true" />}</span>}
+                      {schemas.length ? schemas.map((schema) => <button type="button" key={schema} data-schema-filter={schema} data-schema-motion-id={`${item.key}:${schema}`} aria-pressed={group === item.key && source === schema} className={group === item.key && source === schema ? 'is-active' : ''} onClick={() => updateQuery({ group: item.key === 'all' ? null : item.key, source: schema, ...(!selectedTable ? { schema: null } : {}) })}><span className="flow-ontology__schema-label"><DatabaseOutlined /><span title={schema}>{schema}</span></span><small>{number(counts[schema])}</small></button>) : <span className={`flow-ontology__schema-empty${facetsReady ? '' : ' is-pending'}`} aria-busy={!facetsReady} aria-label={facetsReady ? undefined : 'Schema groups not loaded'}>{facetsReady ? 'No schemas' : <span className="flow-ontology__schema-skeleton" aria-hidden="true" />}</span>}
                     </div>
                   </div>
                 </div>
