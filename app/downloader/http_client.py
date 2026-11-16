@@ -27,6 +27,7 @@ from curl_cffi.requests.exceptions import ProxyError, RequestException
 
 from app.base.http import DownloadCleanupError, DownloadError, DownloadResponse
 from app.config.settings import settings
+from app.downloader.resume import DownloadTruncatedError, ResumeProtocolError, ResumeState
 from app.logger import get_logger
 from app.models.template import RequestConfig
 from app.utils.runtime_control import get_crawl_proxy_mode
@@ -746,6 +747,62 @@ class HttpClient:
         chunk_callback=None,
     ) -> DownloadResponse:
         config = config or RequestConfig()
+        method = (config.method or "GET").upper()
+        state = ResumeState() if (method == "GET" and _STREAM_REQUEST_KWARGS
+                                 and not any(key.lower() == "range" for key in config.headers)) else None
+        buffer = BytesIO()
+        total_timeout = max(settings.http_download_timeout, _STREAM_TOTAL_TIMEOUT_FLOOR) if (
+            chunk_callback is not None and _STREAM_REQUEST_KWARGS
+        ) else settings.http_download_timeout
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + total_timeout
+        attempts = 4 if method == "GET" else 1
+        try:
+            for attempt in range(attempts):
+                try:
+                    result = await self._download_response_once(
+                        url, config, use_proxy=use_proxy, _state=state, _buffer=buffer,
+                        _deadline=deadline, _total_timeout=total_timeout,
+                    )
+                except DownloadCleanupError:
+                    raise
+                except Exception as error:
+                    code = getattr(error, "code", None)
+                    status = self._error_status_code(error)
+                    retryable = status in (None, 0, 200, 206) and (
+                        code in (5, 6, 7, 16, 18, 28, 35, 52, 55, 56, 92)
+                        or isinstance(error, (TimeoutError, ConnectionError))
+                    )
+                    delay = max(0.0, settings.http_retry_backoff) * 2 ** attempt
+                    if not retryable or attempt + 1 >= attempts or loop.time() + delay >= deadline:
+                        if isinstance(error, (TimeoutError, DownloadTruncatedError)):
+                            raise DownloadError(url, status, str(error)) from error
+                        raise
+                    logger.warning(
+                        "Download transfer interrupted; retry=%d offset=%d curl_code=%s",
+                        attempt + 1, state.offset if state is not None else 0, code,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                if chunk_callback is not None:
+                    chunk_callback(result.data)
+                return result
+            raise RuntimeError("Download attempts exhausted")
+        finally:
+            buffer.close()
+
+    async def _download_response_once(
+        self,
+        url: str,
+        config: RequestConfig,
+        *,
+        use_proxy: bool | None,
+        _state: ResumeState | None,
+        _buffer: BytesIO,
+        _deadline: float,
+        _total_timeout: float,
+    ) -> DownloadResponse:
+        config = config or RequestConfig()
         task = asyncio.current_task()
         retrying = task in self._retrying_tasks
         if task is not None:
@@ -757,6 +814,13 @@ class HttpClient:
 
         headers = dict(config.headers)
         cookies = dict(config.cookies)
+        if _state is not None:
+            resumed_headers = _state.request_headers()
+            removed = {key.lower() for key in resumed_headers}
+            if "Range" in resumed_headers:
+                removed.update({"if-none-match", "if-modified-since"})
+            headers = {key: value for key, value in headers.items() if key.lower() not in removed}
+            headers.update(resumed_headers)
 
         _init_anti_crawl(use_proxy=effective_use_proxy)
 
@@ -776,7 +840,7 @@ class HttpClient:
         proxy_url, pre_proxy_url = await self._select_proxy(effective_use_proxy, rotate_proxy=retrying)
         logger.debug(
             "Downloading bytes: %s with proxy: %s",
-            url,
+            self._safe_proxy_url(url),
             self._safe_proxy_url(proxy_url),
         )
 
@@ -790,26 +854,23 @@ class HttpClient:
         self._download_operations[task_id] = operations
         if asyncio.current_task() is not None:
             self._download_owners[task_id] = asyncio.current_task()
-        streaming = bool(chunk_callback is not None and _STREAM_REQUEST_KWARGS)
+        streaming = bool(_STREAM_REQUEST_KWARGS)
         completed = cancelled = False
-        buffer = None
+        buffer = _buffer
         try:
-            # With a chunk callback the payload streams chunk-by-chunk: a live
-            # progress bar lands in the task log. Bounded waits do not wait
-            # forever for a stalled read to acknowledge cancellation.
-            total_timeout = max(
-                settings.http_download_timeout, _STREAM_TOTAL_TIMEOUT_FLOOR
-            ) if streaming else settings.http_download_timeout
+            # Every supported transport streams so interrupted resources can
+            # resume even when the caller does not request progress callbacks.
+            total_timeout = _total_timeout
             loop = asyncio.get_running_loop()
             started = loop.time()
-            deadline = started + total_timeout
+            deadline = _deadline
             stream_kwargs = dict(
                 method=config.method or "GET",
                 url=url,
                 headers=headers,
                 params=config.params,
                 cookies=cookies,
-                timeout=total_timeout,
+                timeout=max(0.001, deadline - loop.time()),
             )
 
             if streaming:
@@ -825,7 +886,7 @@ class HttpClient:
             operations.add(request_task)
             ready, _ = await asyncio.wait({request_task}, timeout=max(0.0, deadline - loop.time()))
             if not ready:
-                raise DownloadError(url, message=f"download exceeded its {total_timeout}s budget before response headers")
+                raise TimeoutError("Download exceeded its time budget before response headers")
             response = request_task.result()
             transfer = getattr(response, "astream_task", None)
             if isinstance(transfer, asyncio.Future):
@@ -833,32 +894,47 @@ class HttpClient:
             if response.status_code in settings.http_retry_on_statuses:
                 raise DownloadError(url, response.status_code, "Retryable status code")
 
+            if response.status_code == 416 and _state is not None and "Range" in _state.request_headers():
+                _state.reset()
+                buffer.seek(0)
+                buffer.truncate()
+                raise DownloadTruncatedError("Download range was rejected; restarting the complete object")
             response.raise_for_status()
+            if _state is not None and response.status_code not in (200, 206):
+                if _state.offset:
+                    raise ResumeProtocolError("Unexpected response while resuming an incomplete download")
+                # Preserve conditional 304 and other successful response
+                # semantics; their bodies never append to saved file bytes.
+                _state = None
+            if _state is not None:
+                if _state.start_response(response.status_code, response.headers or {}, str(response.url or url)):
+                    buffer.seek(0)
+                    buffer.truncate()
+            else:
+                buffer.seek(0)
+                buffer.truncate()
             if streaming:
                 length = (response.headers or {}).get("Content-Length") or \
                     (response.headers or {}).get("content-length") or ""
                 total = int(str(length).strip()) if str(length).strip().isdigit() else 0
+                if response.status_code in (204, 304):
+                    total = 0
                 # Refresh roughly every 1% (>=2s); the task-log capture merges
                 # these lines into ONE live progress row.
                 log_step = max(total // 100, 5 << 20) if total else (20 << 20)
                 last_logged_bytes = 0
                 last_logged_time = started
-                buffer = BytesIO()
                 chunk_iter = response.aiter_content()
-                received = 0
+                received = _state.offset if _state is not None else 0
+                if _state is not None:
+                    total = _state.total
                 while True:
                     chunk_task = asyncio.ensure_future(chunk_iter.__anext__())
                     operations.add(chunk_task)
                     remaining = min(_STREAM_CHUNK_IDLE_SECONDS, max(0.0, deadline - loop.time()))
                     ready, _ = await asyncio.wait({chunk_task}, timeout=remaining)
                     if not ready:
-                        raise DownloadError(
-                            url,
-                            message=(
-                                f"download stalled or exceeded its {total_timeout}s budget "
-                                f"after {received} of {total or 'unknown'} bytes"
-                            ),
-                        )
+                        raise TimeoutError("Download stalled or exceeded its time budget")
                     try:
                         chunk = chunk_task.result()
                     except StopAsyncIteration:
@@ -866,6 +942,8 @@ class HttpClient:
                     finally:
                         operations.discard(chunk_task)
                     buffer.write(chunk)
+                    if _state is not None:
+                        _state.advance(len(chunk))
                     received += len(chunk)
                     if (received - last_logged_bytes >= log_step
                             and loop.time() - last_logged_time >= _STREAM_LOG_MIN_SECONDS):
@@ -875,22 +953,26 @@ class HttpClient:
                         logger.info("%s", _download_progress_line(
                             received, total, received / 1048576 / elapsed))
                     if loop.time() > deadline:
-                        raise DownloadError(url, message=f"download exceeded its {total_timeout}s budget after {received} bytes")
-                if total and received != total:
-                    raise DownloadError(url, message=f"download incomplete: {received} of {total} bytes")
+                        raise TimeoutError("Download exceeded its time budget")
+                if _state is not None:
+                    _state.finish()
+                elif total and received != total:
+                    raise DownloadTruncatedError("Download incomplete")
                 elapsed = max(loop.time() - started, 0)
                 logger.info(
                     "download finished:\n  %s 100%% (%.1f MB in %.0fs, %.2f MB/s) - %s",
                     _download_bar(1.0), received / 1048576, elapsed,
-                    received / 1048576 / max(elapsed, 1e-9), url,
+                    received / 1048576 / max(elapsed, 1e-9), self._safe_proxy_url(url),
                 )
                 data = buffer.getvalue()
-                if chunk_callback is not None:
-                    chunk_callback(data)
             else:
                 data = response.content
-                if chunk_callback is not None:
-                    chunk_callback(data)
+                raw_headers = {str(key).lower(): str(value) for key, value in response.headers.items()}
+                length = raw_headers.get("content-length", "")
+                if (length.isascii() and length.isdecimal()
+                        and raw_headers.get("content-encoding", "identity").lower() == "identity"
+                        and len(data) != int(length)):
+                    raise DownloadTruncatedError("Download incomplete")
 
             if effective_use_proxy and _proxy_pool is not None and proxy_url:
                 await _proxy_pool.mark_success(proxy_url)
@@ -898,8 +980,10 @@ class HttpClient:
             result = DownloadResponse(
                 source_url=url,
                 final_url=str(response.url or url),
-                status_code=response.status_code,
-                headers={str(k).lower(): str(v) for k, v in response.headers.items()},
+                status_code=200 if _state is not None else response.status_code,
+                headers=_state.complete_headers() if _state is not None else {
+                    str(k).lower(): str(v) for k, v in response.headers.items()
+                },
                 data=data,
             )
             completed = True
@@ -922,8 +1006,6 @@ class HttpClient:
         finally:
             self._download_operations.pop(task_id, None)
             self._download_owners.pop(task_id, None)
-            if buffer is not None:
-                buffer.close()
             if response is None and request_task is not None and request_task.done() and not request_task.cancelled() and request_task.exception() is None:
                 response = request_task.result()
             transfer = getattr(response, "astream_task", None)
