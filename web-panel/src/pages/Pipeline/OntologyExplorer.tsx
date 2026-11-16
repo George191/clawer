@@ -79,13 +79,13 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const inspectorOpen = !!inspectorId;
   const inspectorClosing = inspectorOpen && !selectedId;
   const inspectorAllProperties = selectedId ? allProperties : inspectedObject.allProperties;
-  const [catalog, setCatalog] = useState<EtlObjectCatalog>(emptyCatalog);
+  const [catalogState, setCatalogState] = useState<{ key: string; data: EtlObjectCatalog }>({ key: '', data: emptyCatalog });
   const [menuGroupSchemaCounts, setMenuGroupSchemaCounts] = useState<EtlObjectCatalog['groupSchemaCounts']>({});
   const [favoriteSchemaCounts, setFavoriteSchemaCounts] = useState<Record<string, number>>({});
   const [favoriteVisibleCount, setFavoriteVisibleCount] = useState<number | null>(null);
   const [favoriteSummaryError, setFavoriteSummaryError] = useState('');
   const [expandedGroup, setExpandedGroup] = useState<Group | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
   const [schemaNames, setSchemaNames] = useState<string[]>([]);
@@ -117,6 +117,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   selectionRef.current = selectedId;
   const favoriteIds = favorites.join(',');
   const favoriteQuery = group === 'favorites' ? favorites.join(',') : '';
+  const catalogKey = JSON.stringify([source, keyword, group, favoriteQuery, favoriteReady, includeHidden]);
+  const catalog = catalogState.key === catalogKey ? catalogState.data : emptyCatalog;
+  const loading = catalogLoading || catalogState.key !== catalogKey;
 
   useEffect(() => { activeRef.current = true; return () => { activeRef.current = false; }; }, []);
 
@@ -197,9 +200,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return () => { active = false; };
   }, [favoriteIds, favoriteReady, includeHidden, version, refreshToken]);
   useEffect(() => {
-    if (group === 'favorites' && !favoriteReady) { setLoading(true); setCatalog(emptyCatalog); return; }
+    if (group === 'favorites' && !favoriteReady) { setCatalogLoading(true); setCatalogState({ key: catalogKey, data: emptyCatalog }); return; }
     let active = true;
-    setLoading(true); setError('');
+    setCatalogLoading(true); setError('');
     const timer = window.setTimeout(async () => {
       try {
         const query = { schema: source || undefined, search: keyword.trim() || undefined, includeHidden };
@@ -241,13 +244,13 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           result = { ...result, items, limit: items.length, offset: 0 };
         }
         if (!active) return;
-        setCatalog(result);
+        setCatalogState({ key: catalogKey, data: result });
         setMenuGroupSchemaCounts(menuCounts);
-      } catch { if (active) setError('Unable to load object types. Refresh to try again.'); }
-      finally { if (active) setLoading(false); }
+      } catch { if (active) { setCatalogState({ key: catalogKey, data: emptyCatalog }); setError('Unable to load object types. Refresh to try again.'); } }
+      finally { if (active) setCatalogLoading(false); }
     }, keyword ? 200 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [source, keyword, group, favoriteQuery, favoriteReady, includeHidden, version, refreshToken]);
+  }, [source, keyword, group, favoriteQuery, favoriteReady, includeHidden, version, refreshToken, catalogKey]);
   useEffect(() => {
     if (selectedId) { setInspectedObject({ schema: selectedSchema, table: selectedTable, allProperties }); return; }
     if (!inspectorId) return;
@@ -453,7 +456,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
         {preview.loading || preview.id !== inspectorId ? <div className="flow-ontology__empty is-compact" role="status"><ReloadOutlined spin /><span>Loading object type</span></div> : preview.error ? <div className="flow-ontology__notice" role="alert"><span>{preview.error}</span><button type="button" onClick={() => setPreviewVersion((value) => value + 1)}>Retry</button>{canManage && !includeHidden && <button type="button" onClick={() => setShowHidden(true)}>Show hidden object types</button>}</div> : data && <>
           <section className="flow-ontology__preview-section"><h3>Description</h3><p className="flow-ontology__muted">{data.description || 'No description provided.'}</p></section>
           <section className="flow-ontology__preview-section"><div className="flow-ontology__visibility"><h3>Visibility</h3><span className={`flow-ontology__visibility-badge is-${data.visibility}`} title={visibilityDescriptions[data.visibility]}><EyeOutlined />{visibilityLabels[data.visibility]}</span></div>
-            {canManage && <div className="flow-ontology__visibility-editor"><Select aria-label="Object type visibility" value={visibilityDraft} disabled={!!visibilitySaving || inspectorClosing} onChange={(value: EtlObjectVisibility) => { setVisibilityDraft(value); setVisibilityError(''); setVisibilityNotice(''); }} options={(Object.keys(visibilityLabels) as EtlObjectVisibility[]).map((value) => ({ value, label: visibilityLabels[value] }))} /><button type="button" className="flow-ontology__button" aria-label="Save visibility" disabled={!!visibilitySaving || visibilityDraft === data.visibility || inspectorClosing} aria-busy={visibilitySaving === inspectorId} onClick={() => void saveVisibility()}>{visibilitySaving === inspectorId ? <><ReloadOutlined spin />Saving…</> : 'Save'}</button></div>}
+            {canManage && <div className="flow-ontology__visibility-editor"><Select className="flow-ontology__select" popupClassName="flow-ontology__select-popup" aria-label="Object type visibility" value={visibilityDraft} disabled={!!visibilitySaving || inspectorClosing} onChange={(value: EtlObjectVisibility) => { setVisibilityDraft(value); setVisibilityError(''); setVisibilityNotice(''); }} options={(Object.keys(visibilityLabels) as EtlObjectVisibility[]).map((value) => ({ value, label: visibilityLabels[value] }))} /><button type="button" className="flow-ontology__button" aria-label="Save visibility" disabled={!!visibilitySaving || visibilityDraft === data.visibility || inspectorClosing} aria-busy={visibilitySaving === inspectorId} onClick={() => void saveVisibility()}>{visibilitySaving === inspectorId ? <><ReloadOutlined spin />Saving…</> : 'Save'}</button></div>}
             <p className="flow-ontology__visibility-help">{visibilityDescriptions[canManage ? visibilityDraft : data.visibility]} {canManage && visibilityDraft !== data.visibility ? 'Changes take effect after saving. ' : ''}Access permissions are managed separately.</p>
             {visibilityError && <p className="flow-ontology__visibility-feedback is-error" role="alert">{visibilityError}</p>}
             {visibilityNotice && <p className="flow-ontology__visibility-feedback" role="status">{visibilityNotice}</p>}
@@ -467,6 +470,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       </div>
       <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>
     </aside></Drawer>
-    <Modal className="flow-surface-modal" title="Choose a schema" open={createOpen} onCancel={() => setCreateOpen(false)} okText="Continue" okButtonProps={{ disabled: !createSchema }} onOk={() => { if (createSchema) { setCreateOpen(false); navigate(`/flow/layers?${new URLSearchParams({ schema: createSchema, create: 'table' })}`); } }}><p>Choose where to create the new object type. The existing data table editor opens next.</p><Select aria-label="New object type schema" popupClassName="flow-select-popup" placeholder="Select a schema" value={createSchema} onChange={setCreateSchema} options={schemaNames.map((schema) => ({ value: schema, label: schema }))} style={{ width: '100%' }} /></Modal>
+    <Modal className="flow-surface-modal" title="Choose a schema" open={createOpen} onCancel={() => setCreateOpen(false)} okText="Continue" okButtonProps={{ disabled: !createSchema }} onOk={() => { if (createSchema) { setCreateOpen(false); navigate(`/flow/layers?${new URLSearchParams({ schema: createSchema, create: 'table' })}`); } }}><p>Choose where to create the new object type. The existing data table editor opens next.</p><Select className="flow-ontology__select" aria-label="New object type schema" popupClassName="flow-ontology__select-popup" placeholder="Select a schema" value={createSchema} onChange={setCreateSchema} options={schemaNames.map((schema) => ({ value: schema, label: schema }))} style={{ width: '100%' }} /></Modal>
   </div>;
 }
