@@ -302,6 +302,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [currentTeam, setCurrentTeam] = useState<string | null>(null);
   const [currentUserContext, setCurrentUserContext] = useState<CurrentUserContext | null>(null);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
 
   const navigate = useNavigate();
   const { mode } = useThemeStore();
@@ -351,6 +352,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [handleResize]);
+
+  useEffect(() => {
+    setProjectMenuOpen(false);
+  }, [location.pathname, isMobile]);
 
   useEffect(() => {
     if (routedProject && routedProject !== currentProject) {
@@ -425,6 +430,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   }, [activeProject.sections, normalizedPath]);
 
   const handleProjectChange = (key: string) => {
+    setProjectMenuOpen(false);
     const nextProject = key as ProjectKey;
     setCurrentProject(nextProject);
     const targetPath = projectConfigs[nextProject].defaultPath;
@@ -784,6 +790,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               </Dropdown>
               <Dropdown
                 trigger={['click']}
+                open={projectMenuOpen}
+                onOpenChange={setProjectMenuOpen}
                 menu={{ items: [] }}
                 popupRender={renderProjectPanel}
               >
