@@ -38,7 +38,7 @@ function useDialog(open: boolean, ref: React.RefObject<HTMLElement>, close: (e?:
     const unlock = lockBody(); dialogStack.push(id);
     const timer = window.setTimeout(() => { if (dialogStack[dialogStack.length - 1] === id && !ref.current?.contains(document.activeElement)) (ref.current?.querySelector<HTMLElement>('[autofocus]') || visibleItems(ref.current)[0] || ref.current)?.focus(); }, 0);
     const key = (event: KeyboardEvent) => {
-      if (dialogStack[dialogStack.length - 1] !== id) return;
+      if (event.defaultPrevented || dialogStack[dialogStack.length - 1] !== id) return;
       if (event.key === 'Escape' && popupStack.length) return;
       if (event.key === 'Escape' && latest.current.keyboard) { event.preventDefault(); event.stopPropagation(); latest.current.close(event); }
       if (event.key === 'Tab') {
@@ -49,8 +49,8 @@ function useDialog(open: boolean, ref: React.RefObject<HTMLElement>, close: (e?:
       }
     };
     const contain = (event: FocusEvent) => { if (dialogStack[dialogStack.length - 1] === id && event.target instanceof Node && !ref.current?.contains(event.target) && !(event.target instanceof Element && event.target.closest('[data-ui-popup]'))) (visibleItems(ref.current)[0] || ref.current)?.focus(); };
-    document.addEventListener('keydown', key, true); document.addEventListener('focusin', contain);
-    return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key, true); document.removeEventListener('focusin', contain); dialogStack.splice(dialogStack.indexOf(id), 1); unlock(); if (previous?.isConnected) previous.focus(); };
+    document.addEventListener('keydown', key); document.addEventListener('focusin', contain);
+    return () => { window.clearTimeout(timer); document.removeEventListener('keydown', key); document.removeEventListener('focusin', contain); dialogStack.splice(dialogStack.indexOf(id), 1); unlock(); if (previous?.isConnected) previous.focus(); };
   }, [open, id, ref]);
 }
 function NativeButton({ children, loading, danger, type, className, icon, ...props }: AnyProps) {
