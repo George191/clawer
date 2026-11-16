@@ -65,6 +65,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const cardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [mobilePreview, setMobilePreview] = useState(() => window.matchMedia('(max-width: 1150px)').matches);
   const [catalog, setCatalog] = useState<EtlObjectCatalog>(emptyCatalog);
+  const [expandedGroup, setExpandedGroup] = useState<Group | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
@@ -212,11 +213,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   }, [catalog.items, group]);
   const renderedObjects = sections.flatMap((section) => section.schemas.flatMap((schema) => schema.items));
   const schemaCounts = useMemo(() => {
-    const counts: Record<string, number> = group !== 'all' && group !== 'favorites' ? { ...catalog.groupSchemaCounts[group] } : {};
-    if (group === 'all' || group === 'favorites') Object.values(catalog.groupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
+    const counts: Record<string, number> = {};
+    Object.values(catalog.groupSchemaCounts).forEach((schemas) => Object.entries(schemas).forEach(([schema, count]) => { counts[schema] = (counts[schema] || 0) + count; }));
     if (source && !(source in counts)) counts[source] = 0;
     return counts;
-  }, [catalog.groupSchemaCounts, group, source]);
+  }, [catalog.groupSchemaCounts, source]);
   const facetGroupCounts = Object.fromEntries(Object.entries(catalog.groupSchemaCounts).map(([key, schemas]) => [key, Object.values(schemas).reduce((sum, count) => sum + count, 0)]));
   const moveCardFocus = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
@@ -252,7 +253,28 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       </header>
       <div className="flow-ontology__body">
         <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav>
-          {groups.map((item) => <React.Fragment key={item.key}>{item.key === 'ingestion' && <div className="flow-ontology__sidebar-title">Object type groups</div>}<button type="button" data-group={item.key} aria-pressed={group === item.key && !source} aria-expanded={group === item.key} className={group === item.key && !source ? 'is-active' : ''} onClick={() => updateQuery({ group: item.key === 'all' ? null : item.key, source: null, ...(!selectedTable ? { schema: null } : {}) })}><RightOutlined rotate={group === item.key ? 90 : 0} /><span>{item.label}</span><small>{number(item.key === 'all' ? groupTotal : item.key === 'favorites' ? favorites.length : facetGroupCounts[item.key] || 0)}</small></button>{group === item.key && Object.keys(schemaCounts).length > 0 && <div className="flow-ontology__schema-nav" role="group" aria-label={`${item.label} schemas`}>{Object.keys(schemaCounts).sort().map((schema) => <button type="button" key={schema} data-schema-filter={schema} aria-pressed={source === schema} className={source === schema ? 'is-active' : ''} onClick={() => updateQuery({ source: schema, ...(!selectedTable ? { schema: null } : {}) })}><span title={schema}>{schema}</span><small>{number(schemaCounts[schema])}</small></button>)}</div>}</React.Fragment>)}
+          {groups.map((item) => {
+            const expanded = expandedGroup === item.key;
+            const active = group === item.key && !source;
+            const counts = item.key === 'all' || item.key === 'favorites' ? schemaCounts : { ...catalog.groupSchemaCounts[item.key] };
+            if (group === item.key && source && !(source in counts)) counts[source] = 0;
+            const schemas = Object.keys(counts).sort();
+            return <React.Fragment key={item.key}>{item.key === 'ingestion' && <div className="flow-ontology__sidebar-title">Object type groups</div>}
+              <div className="flow-ontology__group">
+                <button type="button" data-group={item.key} aria-pressed={active} aria-expanded={expanded} aria-controls={`ontology-schema-group-${item.key}`} className={active ? 'is-active' : ''} onClick={() => {
+                  setExpandedGroup(expanded ? null : item.key);
+                  if (!active) updateQuery({ group: item.key === 'all' ? null : item.key, source: null, ...(!selectedTable ? { schema: null } : {}) });
+                }}><RightOutlined rotate={expanded ? 90 : 0} /><span>{item.label}</span><small>{number(item.key === 'all' ? groupTotal : item.key === 'favorites' ? favorites.length : facetGroupCounts[item.key] || 0)}</small></button>
+                <div id={`ontology-schema-group-${item.key}`} className={`flow-ontology__schema-collapse${expanded ? ' is-expanded' : ''}`} aria-hidden={!expanded} ref={(element) => { if (element) element.inert = !expanded; }}>
+                  <div className="flow-ontology__schema-collapse-content">
+                    <div className="flow-ontology__schema-nav" role="group" aria-label={`${item.label} schemas`}>
+                      {schemas.length ? schemas.map((schema) => <button type="button" key={schema} data-schema-filter={schema} aria-pressed={group === item.key && source === schema} className={group === item.key && source === schema ? 'is-active' : ''} onClick={() => updateQuery({ group: item.key === 'all' ? null : item.key, source: schema, ...(!selectedTable ? { schema: null } : {}) })}><span title={schema}>{schema}</span><small>{number(counts[schema])}</small></button>) : <span className="flow-ontology__schema-empty">{loading ? 'Loading schemas…' : 'No schemas'}</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </React.Fragment>;
+          })}
         </nav><button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/flow/lineage')}><ApartmentOutlined /><span>Lineage &amp; impact</span><ArrowRightOutlined /></button></aside>
         <main className="flow-ontology__main" aria-label="Object types" aria-busy={loading}>
           {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
