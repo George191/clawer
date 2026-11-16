@@ -314,9 +314,9 @@ class SpiderEngine:
                 hook_context = await _hook_mgr.execute(hook_names, hook_context)
                 logger.info("Pre-hooks completed, context: %s", list(hook_context.keys()))
 
-            list_records = await self._crawl_list_pages(
+            list_records = await self._controlled_adapter_call(self._crawl_list_pages(
                 template, result, resume_page, progress_callback
-            )
+            ))
 
             watermark = template._crawl_context.get("incremental_watermark")
             if (
@@ -1046,6 +1046,19 @@ class SpiderEngine:
     @staticmethod
     def _retry_loop():
         return itertools.count()
+
+    @staticmethod
+    async def _controlled_adapter_call(operation):
+        pending = asyncio.ensure_future(operation)
+        try:
+            while not pending.done():
+                await check_control_state()
+                await asyncio.wait({pending}, timeout=0.5)
+            return pending.result()
+        finally:
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
 
     async def close(self) -> None:
         await self._client.close()

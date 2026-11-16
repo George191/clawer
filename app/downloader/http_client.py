@@ -30,7 +30,7 @@ from app.config.settings import settings
 from app.downloader.resume import DownloadTruncatedError, ResumeProtocolError, ResumeState
 from app.logger import get_logger
 from app.models.template import RequestConfig
-from app.utils.runtime_control import get_crawl_proxy_mode
+from app.utils.runtime_control import check_control_state, get_crawl_proxy_mode
 
 logger = get_logger(__name__)
 
@@ -59,6 +59,15 @@ def _is_aws_waf_challenge(status_code: int, text: str) -> bool:
     return status_code == 202 and all(
         marker in text for marker in _AWS_WAF_CHALLENGE_MARKERS
     )
+
+
+async def _wait_for_transfer(operation: asyncio.Future) -> None:
+    """Wait without a deadline while observing pause and cancellation controls."""
+    while True:
+        await check_control_state()
+        done, _ = await asyncio.wait({operation}, timeout=0.5)
+        if done:
+            return
 
 
 # ── 流式大文件下载 ──────────────────────────────────────────────
@@ -668,7 +677,7 @@ class HttpClient:
         if asyncio.current_task() is not None:
             self._download_owners[task_id] = asyncio.current_task()
         try:
-            await asyncio.wait({request_task})
+            await _wait_for_transfer(request_task)
             response = request_task.result()
             completed = True
             if task is not None:
@@ -863,7 +872,7 @@ class HttpClient:
                 stream_kwargs["stream"] = False
             request_task = asyncio.ensure_future(client.request(**stream_kwargs))
             operations.add(request_task)
-            await asyncio.wait({request_task})
+            await _wait_for_transfer(request_task)
             response = request_task.result()
             transfer = getattr(response, "astream_task", None)
             if isinstance(transfer, asyncio.Future):
@@ -908,7 +917,7 @@ class HttpClient:
                 while True:
                     chunk_task = asyncio.ensure_future(chunk_iter.__anext__())
                     operations.add(chunk_task)
-                    await asyncio.wait({chunk_task})
+                    await _wait_for_transfer(chunk_task)
                     try:
                         chunk = chunk_task.result()
                     except StopAsyncIteration:

@@ -12,6 +12,7 @@ from app.base.http import DownloadCleanupError, DownloadError
 from app.downloader import http_client as module
 from app.downloader.resume import DownloadTruncatedError, ResumeProtocolError, ResumeState
 from app.models.template import RequestConfig
+from app.utils.runtime_control import reset_control_checkpoint, set_control_checkpoint
 
 
 URL = "https://fixture.invalid/archive?token=private"
@@ -374,6 +375,71 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
             session.close.assert_awaited_once()
             self.assertEqual(self.http._download_operations, {})
             self.assertEqual(self.http._download_owners, {})
+
+    async def test_page_observes_control_checkpoint_cancellation(self):
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        self.http._before_request = AsyncMock(return_value="fixture")
+
+        async def blocked_response():
+            started.set()
+            await asyncio.Event().wait()
+
+        async def checkpoint():
+            return not cancelled.is_set()
+
+        self.outcomes[:] = [blocked_response]
+        token = set_control_checkpoint(checkpoint)
+        task = asyncio.create_task(self.http.request_page(URL, anti_crawl_enabled=False))
+        try:
+            await started.wait()
+            cancelled.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 1)
+            self.sessions[-1].close.assert_awaited_once()
+            self.assertEqual(self.http._download_operations, {})
+            self.assertEqual(self.http._download_owners, {})
+        finally:
+            reset_control_checkpoint(token)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def test_download_observes_control_checkpoint_cancellation(self):
+        for waiting_for in ("headers", "body"):
+            with self.subTest(waiting_for=waiting_for):
+                started, cancelled, cleaned = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+                async def blocked_response():
+                    started.set()
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        cleaned.set()
+
+                async def blocked_chunks():
+                    await blocked_response()
+                    yield b"unreachable"
+
+                async def checkpoint():
+                    return not cancelled.is_set()
+
+                response = Response()
+                response.aiter_content = blocked_chunks
+                self.outcomes[:] = [blocked_response if waiting_for == "headers" else response]
+                token = set_control_checkpoint(checkpoint)
+                task = asyncio.create_task(self.fetch())
+                try:
+                    await started.wait()
+                    cancelled.set()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await asyncio.wait_for(task, 1)
+                    self.assertTrue(cleaned.is_set())
+                    self.sessions[-1].close.assert_awaited_once()
+                    self.assertEqual(self.http._download_operations, {})
+                    self.assertEqual(self.http._download_owners, {})
+                finally:
+                    reset_control_checkpoint(token)
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
 
     async def test_legacy_transport_retries_complete_payload(self):
         self.outcomes[:] = [TransferError(), Response(content=b"whole", headers={"Content-Length": "5"})]
