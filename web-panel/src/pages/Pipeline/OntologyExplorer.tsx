@@ -406,7 +406,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     updateQuery({ schema: null, table: null, tab: null }, true);
   };
   const openWorkspace = () => {
-    if (selectedId) navigate(`/flow/layers?${new URLSearchParams({ schema: selectedSchema, table: selectedTable })}`);
+    if (selectedId) navigate(`/ontology/layers?${new URLSearchParams({ schema: selectedSchema, table: selectedTable })}`);
   };
   const startNewObject = () => {
     const destination = source || selectedSchema;
@@ -517,7 +517,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
               </div>
             </React.Fragment>;
           })}
-        </nav><button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/flow/lineage')}><ApartmentOutlined /><span>Lineage &amp; impact</span><ArrowRightOutlined /></button></aside>
+        </nav><button type="button" className="flow-ontology__sidebar-link" onClick={() => navigate('/ontology/lineage')}><ApartmentOutlined /><span>Lineage &amp; impact</span><ArrowRightOutlined /></button></aside>
         <main className="flow-ontology__main" aria-label="Object types" aria-busy={loading}>
           {error && <div className="flow-ontology__notice" role="alert"><span>{error}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}
           {favoriteSummaryError && <div className="flow-ontology__notice" role="alert"><span>{favoriteSummaryError}</span><button type="button" onClick={() => setVersion((value) => value + 1)}>Retry</button></div>}

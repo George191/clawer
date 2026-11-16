@@ -121,17 +121,17 @@ const App: React.FC = () => {
             <Route path="/tasks" element={<Navigate to="/automation/runs" replace />} />
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/logs" element={<LogExplorer />} />
-            <Route path="/flow" element={<Pipeline />} />
-            <Route path="/flow/layers" element={<Pipeline />} />
-            <Route path="/flow/lineage" element={<Pipeline />} />
-            <Route path="/flow/transforms" element={<Pipeline />} />
-            <Route path="/flow/runtime" element={<Pipeline />} />
-            <Route path="/flow/quality" element={<Navigate to="/flow/runtime" replace />} />
-            <Route path="/flow/runs" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
-            <Route path="/flow/schedules" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
-            <Route path="/flow/tasks" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
-            <Route path="/flow/templates" element={<Navigate to="/automation/workflows?domain=etl-pipeline" replace />} />
-            <Route path="/flow/schedule" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
+            <Route path="/ontology" element={<Pipeline />} />
+            <Route path="/ontology/layers" element={<Pipeline />} />
+            <Route path="/ontology/lineage" element={<Pipeline />} />
+            <Route path="/ontology/transforms" element={<Pipeline />} />
+            <Route path="/ontology/runtime" element={<Pipeline />} />
+            <Route path="/ontology/quality" element={<Navigate to="/ontology/runtime" replace />} />
+            <Route path="/ontology/runs" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
+            <Route path="/ontology/schedules" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
+            <Route path="/ontology/tasks" element={<Navigate to="/automation/runs?domain=etl-pipeline" replace />} />
+            <Route path="/ontology/templates" element={<Navigate to="/automation/workflows?domain=etl-pipeline" replace />} />
+            <Route path="/ontology/schedule" element={<Navigate to="/automation/schedules?domain=etl-pipeline" replace />} />
             <Route path="/automation" element={<Navigate to="/automation/workflows" replace />} />
             <Route path="/automation/workflows" element={<AutomationCenter />} />
             <Route path="/automation/schedules" element={<AutomationCenter />} />

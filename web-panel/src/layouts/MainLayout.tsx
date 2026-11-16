@@ -180,18 +180,18 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
     shortLabel: 'Ontology',
     enabled: true,
     icon: <ApartmentOutlined />,
-    defaultPath: '/flow',
+    defaultPath: '/ontology',
     accent: '#0EA5E9',
     sections: [
       {
         key: 'lifecycle',
         label: 'Workspace',
         children: [
-          { key: '/flow', icon: <SearchOutlined />, label: 'Discover' },
-          { key: '/flow/layers', icon: <DatabaseOutlined />, label: 'Schemas' },
-          { key: '/flow/transforms', icon: <CodeOutlined />, label: 'Transforms' },
-          { key: '/flow/runtime', icon: <ExperimentOutlined />, label: 'Runtime' },
-          { key: '/flow/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
+          { key: '/ontology', icon: <SearchOutlined />, label: 'Discover' },
+          { key: '/ontology/layers', icon: <DatabaseOutlined />, label: 'Schemas' },
+          { key: '/ontology/transforms', icon: <CodeOutlined />, label: 'Transforms' },
+          { key: '/ontology/runtime', icon: <ExperimentOutlined />, label: 'Runtime' },
+          { key: '/ontology/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
         ],
       },
     ],
@@ -248,7 +248,7 @@ const explicitRouteProject: Record<string, ProjectKey> = {
   '/vault/market': 'data-lake',
   '/explorer': 'data-lake',
   '/data-api': 'data-lake',
-  '/flow': 'etl-pipeline',
+  '/ontology': 'etl-pipeline',
   '/atlas': 'data-cockpit',
   '/atlas/metrics': 'data-cockpit',
   '/atlas/quality': 'data-cockpit',
@@ -292,7 +292,7 @@ interface MainLayoutProps {
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const location = useLocation();
-  const isFlowSurface = location.pathname === '/flow' || location.pathname.startsWith('/flow/');
+  const isFlowSurface = location.pathname === '/ontology' || location.pathname.startsWith('/ontology/');
   const [manualCollapsed, setManualCollapsed] = useState(false);
   const [pinned, setPinned] = useState(true);
   const [isMobile, setIsMobile] = useState(false);

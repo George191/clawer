@@ -479,7 +479,7 @@ const CommandCenter: React.FC = () => {
             </Button>
             <Button
               icon={<BranchesOutlined />}
-              onClick={() => navigate('/flow')}
+              onClick={() => navigate('/ontology')}
               style={{ background: 'transparent', borderColor: palette.border, color: palette.text }}
             >
               打开 ETL 管道
@@ -644,7 +644,7 @@ const CommandCenter: React.FC = () => {
               <Button
                 type="text"
                 icon={<ExperimentOutlined />}
-                onClick={() => navigate('/flow')}
+                onClick={() => navigate('/ontology')}
                 style={{ color: palette.accent }}
               >
                 打开管道画布

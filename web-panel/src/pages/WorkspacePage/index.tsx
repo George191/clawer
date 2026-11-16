@@ -208,7 +208,7 @@ const catalog: Record<string, WorkspaceConfig> = {
     timeline: ['patent_owner 建议映射到 dim_organization', 'navwarn_area 识别为地理维度', 'abstract 字段类型建议为 text'],
     rows: fallbackRows,
   },
-  '/flow/schedule': {
+  '/ontology/schedule': {
     title: '编排调度',
     subtitle: '配置周期调度、依赖关系、并发槽位和失败补偿策略',
     icon: <FieldTimeOutlined />,

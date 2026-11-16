@@ -123,9 +123,9 @@ const Pipeline: React.FC = () => {
     const { pathname } = useLocation();
     return <ConfigProvider locale={enUS}><main className="flow-console flow-console--ontology">
         <section className="flow-core">
-            {pathname === '/flow' ? <OntologyExplorer refreshToken={0} />
-                : pathname === '/flow/lineage' ? <OntologyLineage refreshToken={0} />
-                    : pathname === '/flow/runtime' ? <FlowRuntime />
+            {pathname === '/ontology' ? <OntologyExplorer refreshToken={0} />
+                : pathname === '/ontology/lineage' ? <OntologyLineage refreshToken={0} />
+                    : pathname === '/ontology/runtime' ? <FlowRuntime />
                         : <DataLayersWorkspace />}
         </section>
     </main></ConfigProvider>;
@@ -142,7 +142,7 @@ const FlowRuntime: React.FC = () => {
             .catch(() => { if (active) setError(true); });
         return () => { active = false; };
     }, [version]);
-    return <div className="flow-ontology-runtime" data-testid="ontology-runtime"><div className="flow-ontology-page-heading"><span><Link to="/flow" style={{ color: 'inherit' }}>Object types</Link></span><h1>Runtime status</h1><p>Inspect the current ingestion and consumption infrastructure.</p></div>
+    return <div className="flow-ontology-runtime" data-testid="ontology-runtime"><div className="flow-ontology-page-heading"><span><Link to="/ontology" style={{ color: 'inherit' }}>Object types</Link></span><h1>Runtime status</h1><p>Inspect the current ingestion and consumption infrastructure.</p></div>
         {error ? <div role="alert">Unable to verify your access.<Button onClick={() => setVersion((value) => value + 1)}>Retry</Button></div>
             : allowed === undefined ? <Spin />
                 : allowed ? <CdcStatusPanel /> : <div className="flow-ontology-message">Runtime diagnostics are available to administrators. You can continue exploring data assets and tables.</div>}
@@ -150,7 +150,7 @@ const FlowRuntime: React.FC = () => {
 };
 const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const { search, pathname } = useLocation();
-    const workspacePath = pathname === '/flow/transforms' ? '/flow/transforms' : '/flow/layers';
+    const workspacePath = pathname === '/ontology/transforms' ? '/ontology/transforms' : '/ontology/layers';
     const  navigate  =  useNavigate();
     const [canManage, setCanManage] = useState(false);
     const managePermission = useRef(false);
@@ -353,7 +353,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const visibleSchemas = schemas.filter((item) => `${item.key} ${item.label} ${item.alias || ''} ${item.database || ''}`.toLowerCase().includes(schemaSearch.trim().toLowerCase()));
     const selectedTableAvailable = selectedSchemaAvailable && tablesLoadedSchema === selectedSchema && !closedTables.has(table.name) && serverTables.some((item) => item.name === table.name);
     useEffect(() => {
-        setScriptOpen(pathname === '/flow/transforms' && selectedTableAvailable);
+        setScriptOpen(pathname === '/ontology/transforms' && selectedTableAvailable);
     }, [pathname, selectedSchema, table.name, selectedTableAvailable]);
     const scriptDirty = scriptLoaded && script !== savedScript;
     const closeScript = () => {
@@ -604,7 +604,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             <section  className="flow-layer-main">
                 {(loading || tablesLoading) && <Spin size="small" />}
                 {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
-                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/flow')}>Ontology</button><RightOutlined /><span>{pathname === '/flow/transforms' ? 'Transformations' : 'Schemas'}</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}</nav>
+                <nav className="flow-asset-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={() => navigate('/ontology')}>Ontology</button><RightOutlined /><span>{pathname === '/ontology/transforms' ? 'Transformations' : 'Schemas'}</span>{selectedSchema && <><RightOutlined /><strong>{selectedSchema}</strong></>}</nav>
                 <div className="flow-layer-overview" style={{ '--schema-color': selectedSchema ? schemaColor(selectedSchema) : undefined } as React.CSSProperties}>
                     <div  className="flow-layer-glyph"><PostgresIcon  className="flow-layer-glyph-svg"  /></div>
                     <h3>{schemaAliases[selectedSchema] || selectedSchema || 'No schema selected'}<em>{selectedSchema}{schemaNode?.database ? ` · ${schemaNode.database}` : ''}</em></h3>
