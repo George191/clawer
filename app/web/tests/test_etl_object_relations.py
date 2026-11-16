@@ -12,6 +12,9 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from app.etl.normalizers.social_account import normalize_twitter_author
+from app.etl.normalizers.social_content import normalize_twitter_content
+from app.etl.normalizers.social_identity import twitter_entity_id
 from app.etl.schema.catalogs import table_columns
 from app.etl.schema.object_relations import (
     OBJECT_RELATIONS_DDL,
@@ -27,6 +30,7 @@ from app.web.tests.test_etl_object_types import Result, foreign, service, summar
 ALL_SEEDS = json.loads((Path(__file__).resolve().parents[2] / "etl/schema/object_relations.seed.json").read_text(encoding="utf-8"))
 SEEDS = [row for row in ALL_SEEDS if row["name"].startswith("sec_edgar_")]
 SPACE_SEEDS = [row for row in ALL_SEEDS if row["name"].startswith("space_")]
+SOCIAL_SEEDS = [row for row in ALL_SEEDS if row["name"].startswith("social_twitter_")]
 
 
 def logical(row):
@@ -35,8 +39,8 @@ def logical(row):
             "columns": row["source_fields"], "referenced_columns": row["target_fields"],
             "relationship_kind": row["relationship_kind"], "cardinality": row["cardinality"],
             "description": row["description"], "provenance": row["provenance"], "source_kind": "logical",
-            "source_data_type": "organization" if row["source_table"] == "ods_organization" else "filing",
-            "target_data_type": "filing_document" if row["target_table"] == "ods_filing_document" else "filing"}
+            "source_data_type": row["source_table"].removeprefix("ods_"),
+            "target_data_type": row["target_table"].removeprefix("ods_")}
 
 
 class MetadataPg:
@@ -88,25 +92,148 @@ class MetadataPg:
 
 
 class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
+    def test_social_mappings_join_generated_internal_entity_ids_with_explicit_namespaces(self):
+        expected = {
+            ("content", "author_account_id", "account", "account_id"),
+            ("content", "parent_content_id", "content", "content_id"),
+            ("content", "root_content_id", "content", "content_id"),
+            ("media", "content_id", "content", "content_id"),
+            ("content_hashtag", "content_id", "content", "content_id"),
+            ("content_hashtag", "hashtag_id", "hashtag", "hashtag_id"),
+            ("interaction", "actor_account_id", "account", "account_id"),
+            ("interaction", "source_content_id", "content", "content_id"),
+            ("interaction", "target_content_id", "content", "content_id"),
+        }
+        self.assertEqual(len(SOCIAL_SEEDS), 9)
+        self.assertEqual({(row["source_table"].removeprefix("ods_social_"), row["source_fields"][0],
+                           row["target_table"].removeprefix("ods_social_"), row["target_fields"][0])
+                          for row in SOCIAL_SEEDS}, expected)
+        tweet = {"id": "300", "author_id": "42", "created_at": "2026-11-16T00:00:00Z",
+                 "url": "https://example.invalid/300", "conversation_id": "100",
+                 "referenced_tweets": [{"type": "replied_to", "id": "200"}],
+                 "media": [{"type": "image", "media_key": "image-1"}], "hashtags": ["Space"]}
+        emitted = {"ods_" + row["data_type"]: row for row in normalize_twitter_content(tweet)}
+        emitted["ods_social_account"] = normalize_twitter_author({"id": "42"}, None)
+        for row in SOCIAL_SEEDS:
+            self.assertEqual(validate_definition(row)["cardinality"], "many_to_one")
+            self.assertEqual((row["source_schema"], row["target_schema"]), ("ts_ods", "ts_ods"))
+            self.assertIn("Twitter platform", row["description"])
+            self.assertIn("account_twitter and tweet_twitter are distinct", row["description"])
+            self.assertIn("outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md", row["provenance"])
+            self.assertIn("not a physical uniqueness constraint", row["provenance"])
+            source_field, target_field = row["source_fields"][0], row["target_fields"][0]
+            for side, field in (("source", source_field), ("target", target_field)):
+                sql_type = table_columns("ods", row[side + "_table"].removeprefix("ods_"))[field].split()[0]
+                self.assertIn(sql_type, {"BIGINT", "BIGSERIAL"})
+            source_value = emitted[row["source_table"]][source_field]
+            target_value = emitted[row["target_table"]][target_field]
+            if source_field == "parent_content_id":
+                target_value = normalize_twitter_content({**tweet, "id": "200"})[0][target_field]
+            elif source_field == "root_content_id":
+                target_value = normalize_twitter_content({**tweet, "id": "100"})[0][target_field]
+            elif source_field == "target_content_id":
+                target_value = normalize_twitter_content({**tweet, "id": "200"})[0][target_field]
+            self.assertIsInstance(source_value, int)
+            self.assertGreater(source_value, 0)
+            self.assertEqual(source_value, target_value, row["name"])
+        self.assertNotEqual(twitter_entity_id("account", "42"), twitter_entity_id("content", "42"))
+        self.assertEqual(emitted["ods_social_content"]["content_id"], twitter_entity_id("content", "300"))
+
+    def test_original_social_design_examples_still_produce_the_documented_relationship_ids(self):
+        # Original ODS social design sections 4.4, 5.4, 6.4, 7.1/7.2 and 8.4.
+        # Minimal fixtures below pin the original identity values, not complete historical records.
+        account = normalize_twitter_author({"id": "3247103250"}, None)
+        tweet = {"id": "2102839504629350517", "author_id": "3247103250",
+                 "created_at": "2026-09-23T00:00:00Z", "url": "https://example.invalid/post",
+                 "conversation_id": "2102839504629350517",
+                 "media": [{"type": "image", "media_key": "design-image"}], "hashtags": ["WSBW26"]}
+        rows = {row["data_type"]: row for row in normalize_twitter_content(tweet)}
+        self.assertEqual(account["account_id"], 5961911247415971724)
+        self.assertEqual(rows["social_content"]["content_id"], 6214822210978251955)
+        self.assertEqual(rows["social_content"]["author_account_id"], account["account_id"])
+        self.assertEqual(rows["social_content"]["root_content_id"], rows["social_content"]["content_id"])
+        self.assertEqual(rows["social_media"]["content_id"], rows["social_content"]["content_id"])
+        self.assertEqual(rows["social_content_hashtag"]["content_id"], rows["social_content"]["content_id"])
+        self.assertEqual(rows["social_hashtag"]["hashtag_id"], 2606993089335944644)
+        self.assertEqual(rows["social_content_hashtag"]["hashtag_id"], rows["social_hashtag"]["hashtag_id"])
+        reply = {**tweet, "id": "2105083326751293662",
+                 "referenced_tweets": [{"type": "replied_to", "id": "2105078350507078088"}]}
+        rows = {row["data_type"]: row for row in normalize_twitter_content(reply)}
+        self.assertEqual(rows["social_content"]["content_id"], 4029308573650902319)
+        self.assertEqual(rows["social_content"]["parent_content_id"], 8851059969605173694)
+        self.assertEqual(rows["social_interaction"]["actor_account_id"], account["account_id"])
+        self.assertEqual(rows["social_interaction"]["source_content_id"], rows["social_content"]["content_id"])
+        self.assertEqual(rows["social_interaction"]["target_content_id"], rows["social_content"]["parent_content_id"])
+
+    def test_social_null_references_and_conversation_self_reference_are_not_guessed(self):
+        tweet = {"id": "300", "author_id": "42", "created_at": "2026-11-16T00:00:00Z",
+                 "url": "https://example.invalid/300", "text": "Reply to 200"}
+        emitted = normalize_twitter_content(tweet)
+        content = emitted[0]
+        self.assertIsNone(content["parent_content_id"])
+        self.assertIsNone(content["root_content_id"])
+        self.assertFalse(any(row["data_type"] == "social_interaction" for row in emitted))
+        root = normalize_twitter_content({**tweet, "conversation_id": "300"})[0]
+        self.assertEqual(root["content_id"], root["root_content_id"])
+        self.assertIsNone(twitter_entity_id("content", None))
+
+    async def test_social_apply_adds_only_nine_relations_and_preserves_the_existing_29(self):
+        pg = MetadataPg(installed=True)
+        previous = {row["name"]: deepcopy(row) for row in SEEDS + SPACE_SEEDS}
+        pg.records = deepcopy(previous)
+        check = await manage_object_relations(pg, ALL_SEEDS)
+        self.assertEqual(len(check["changes"]["insert"]), 9)
+        self.assertEqual(len(check["changes"]["unchanged"]), 29)
+        self.assertEqual(check["changes"]["update"], [])
+        self.assertEqual(pg.records, previous)
+        self.assertTrue(all(sql.startswith(("SELECT", "SET TRANSACTION READ ONLY")) for sql, _ in pg.calls))
+        first = await manage_object_relations(pg, ALL_SEEDS, apply=True)
+        self.assertEqual(len(first["changes"]["insert"]), 9)
+        self.assertEqual(len(pg.records), 38)
+        self.assertEqual({name: pg.records[name] for name in previous}, previous)
+        writes = sum(sql.startswith("INSERT") for sql, _ in pg.calls)
+        self.assertEqual(writes, 9)
+        second = await manage_object_relations(pg, ALL_SEEDS, apply=True)
+        self.assertEqual(len(second["changes"]["unchanged"]), 38)
+        self.assertEqual(sum(sql.startswith("INSERT") for sql, _ in pg.calls), writes)
+
+    async def test_social_preview_exposes_typed_incoming_outgoing_and_self_references(self):
+        relations = [logical(row) for row in SOCIAL_SEEDS]
+        instance, _ = service(Result([summary("ts_ods", "ods_social_content", properties_count=0)]),
+                              Result([]), Result(scalar=True), Result(relations))
+        result = await instance.preview("ts_ods", "ods_social_content")
+        linked = {row["table"]: row for row in result["linkedObjectTypes"]}
+        self.assertEqual(set(linked), {"ods_social_account", "ods_social_content", "ods_social_media",
+                                       "ods_social_content_hashtag", "ods_social_interaction"})
+        self.assertEqual(linked["ods_social_account"]["direction"], "outgoing")
+        self.assertEqual(linked["ods_social_account"]["dataType"], "social_account")
+        self.assertEqual(linked["ods_social_interaction"]["direction"], "incoming")
+        self.assertEqual(linked["ods_social_content"]["direction"], "both")
+        self.assertEqual(len(linked["ods_social_content"]["relationships"]), 4)
+        self.assertTrue(all(not row["constraints"] for row in linked.values()))
+        self.assertTrue(all(relation["sourceKind"] == "logical" for row in linked.values()
+                            for relation in row["relationships"]))
+
     async def test_all_documented_space_mappings_are_valid_and_apply_without_duplicate_writes(self):
+        space_and_sec = SEEDS + SPACE_SEEDS
         self.assertEqual(len(SPACE_SEEDS), 25)
-        self.assertEqual(len(ALL_SEEDS), 29)
+        self.assertEqual(len(space_and_sec), 29)
         self.assertEqual({row[side + "_table"] for row in SPACE_SEEDS for side in ("source", "target")},
                          {"ods_" + name for name in ("constellation", "satellite", "orbital", "debrisevents", "debris",
                           "launchvehicles", "launchinfo", "launchsites", "frequency", "groundstations", "organization")})
         pg = MetadataPg(installed=True)
         pg.records = {row["name"]: deepcopy(row) for row in SEEDS}
-        check = await manage_object_relations(pg, ALL_SEEDS)
+        check = await manage_object_relations(pg, space_and_sec)
         self.assertEqual(len(check["changes"]["insert"]), 25)
         self.assertEqual(len(check["changes"]["unchanged"]), 4)
         self.assertEqual(list(pg.records.values()), SEEDS)
         self.assertTrue(all(sql.startswith(("SELECT", "SET TRANSACTION READ ONLY")) for sql, _ in pg.calls))
-        first = await manage_object_relations(pg, ALL_SEEDS, apply=True)
+        first = await manage_object_relations(pg, space_and_sec, apply=True)
         self.assertEqual(len(first["changes"]["insert"]), 25)
         self.assertEqual(len(first["changes"]["unchanged"]), 4)
         self.assertEqual(len(pg.records), 29)
         writes = sum(sql.startswith("INSERT") for sql, _ in pg.calls)
-        second = await manage_object_relations(pg, ALL_SEEDS, apply=True)
+        second = await manage_object_relations(pg, space_and_sec, apply=True)
         self.assertEqual(len(second["changes"]["unchanged"]), 29)
         self.assertEqual(sum(sql.startswith("INSERT") for sql, _ in pg.calls), writes)
 
@@ -332,7 +459,7 @@ class ObjectRelationCliTests(unittest.TestCase):
         self.assertEqual(code, 1)  # An uninstalled registry is reported, never silently created.
         report = json.loads(output.getvalue())
         self.assertFalse(report["applied"])
-        self.assertEqual(report["definitions"], 29)
+        self.assertEqual(report["definitions"], 38)
         self.assertEqual(pg.records, {})
         self.assertTrue(pg.connected and pg.closed)
         self.assertFalse(any(sql.startswith(("CREATE", "INSERT")) for sql, _ in pg.calls))
@@ -341,8 +468,8 @@ class ObjectRelationCliTests(unittest.TestCase):
         pg, output = MetadataPg(), io.StringIO()
         with patch.object(self.tool, "get_pg_client", return_value=pg), patch("sys.argv", ["object_relations.py", "--apply", "--seed-file", str(self.seed_file)]), redirect_stdout(output):
             self.assertEqual(self.tool.main(), 0)
-        self.assertEqual(len(pg.records), 29)
+        self.assertEqual(len(pg.records), 38)
         output = io.StringIO()
         with patch.object(self.tool, "get_pg_client", return_value=pg), patch("sys.argv", ["object_relations.py", "--check", "--seed-file", str(self.seed_file)]), redirect_stdout(output):
             self.assertEqual(self.tool.main(), 0)
-        self.assertEqual(len(json.loads(output.getvalue())["changes"]["unchanged"]), 29)
+        self.assertEqual(len(json.loads(output.getvalue())["changes"]["unchanged"]), 38)

@@ -524,5 +524,167 @@
     "description": "Exact non-null full COSPAR object identifier links debris objects to orbital records. Preserve each source identity and all observed orbital revisions; no one-to-one or latest-only projection is declared.",
     "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 6.3, 8.3; docs/tle-event-history-contract.md Query semantics; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
     "enabled": true
+  },
+  {
+    "name": "social_twitter_content_author",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_content",
+    "source_fields": [
+      "author_account_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_account",
+    "target_fields": [
+      "account_id"
+    ],
+    "relationship_kind": "has_author_account",
+    "cardinality": "many_to_one",
+    "description": "A content row references its author account by the account entity ID. A non-null author_account_id identifies one business account; multiple content rows can reference that account. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 1.1, 4.3, 5.2. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_content.py:_normalize_twitter_content; app/etl/normalizers/social_account.py:normalize_twitter_author; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
+  },
+  {
+    "name": "social_twitter_content_parent",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_content",
+    "source_fields": [
+      "parent_content_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_content",
+    "target_fields": [
+      "content_id"
+    ],
+    "relationship_kind": "has_parent_content",
+    "cardinality": "many_to_one",
+    "description": "A reply content row references its replied_to parent by content entity ID. Null parent_content_id means no parent link; it is not inferred from text or conversation ID. This is a self-referential object type. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 5.2, 5.4, 8.4, 9.1. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_content.py:_normalize_twitter_content; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
+  },
+  {
+    "name": "social_twitter_content_root",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_content",
+    "source_fields": [
+      "root_content_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_content",
+    "target_fields": [
+      "content_id"
+    ],
+    "relationship_kind": "has_root_content",
+    "cardinality": "many_to_one",
+    "description": "A content row references its conversation_id root by content entity ID. Null root_content_id means no root link; a conversation root can reference itself. This is a self-referential object type. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 5.2, 5.4, 9.1. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_content.py:_normalize_twitter_content; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
+  },
+  {
+    "name": "social_twitter_media_content",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_media",
+    "source_fields": [
+      "content_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_content",
+    "target_fields": [
+      "content_id"
+    ],
+    "relationship_kind": "belongs_to_content",
+    "cardinality": "many_to_one",
+    "description": "Each media row references the content entity ID of the tweet that produced it. Multiple media rows can belong to one content entity. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 1.1, 6.2. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_media.py:normalize_twitter_media; app/etl/normalizers/social_content.py:_normalize_twitter_content; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
+  },
+  {
+    "name": "social_twitter_content_hashtag_content",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_content_hashtag",
+    "source_fields": [
+      "content_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_content",
+    "target_fields": [
+      "content_id"
+    ],
+    "relationship_kind": "belongs_to_content",
+    "cardinality": "many_to_one",
+    "description": "Each content-hashtag assignment references its content entity ID. Multiple hashtag assignments can belong to one content entity. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 1.1, 7.2. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_hashtag.py:normalize_twitter_hashtags; app/etl/normalizers/social_content.py:_normalize_twitter_content; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
+  },
+  {
+    "name": "social_twitter_content_hashtag_hashtag",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_content_hashtag",
+    "source_fields": [
+      "hashtag_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_hashtag",
+    "target_fields": [
+      "hashtag_id"
+    ],
+    "relationship_kind": "has_hashtag",
+    "cardinality": "many_to_one",
+    "description": "Each content-hashtag assignment references the hashtag entity ID produced from the casefolded hashtag identity. Multiple content assignments can reference that hashtag; hashtag display text is not the join key. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 1.1, 7.1, 7.2. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_hashtag.py:normalize_twitter_hashtags; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
+  },
+  {
+    "name": "social_twitter_interaction_actor",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_interaction",
+    "source_fields": [
+      "actor_account_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_account",
+    "target_fields": [
+      "account_id"
+    ],
+    "relationship_kind": "has_actor_account",
+    "cardinality": "many_to_one",
+    "description": "Each interaction references its actor account by account entity ID. Multiple interactions can reference one actor account. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 1.1, 4.3, 8.2, 8.4. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_interaction.py:normalize_twitter_interaction; app/etl/normalizers/social_account.py:normalize_twitter_author; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
+  },
+  {
+    "name": "social_twitter_interaction_source_content",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_interaction",
+    "source_fields": [
+      "source_content_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_content",
+    "target_fields": [
+      "content_id"
+    ],
+    "relationship_kind": "has_source_content",
+    "cardinality": "many_to_one",
+    "description": "Each interaction references the source tweet by content entity ID. This is distinct from the replied-to, reposted or quoted target content. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 1.1, 8.2, 8.4. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_interaction.py:normalize_twitter_interaction; app/etl/normalizers/social_content.py:_normalize_twitter_content; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
+  },
+  {
+    "name": "social_twitter_interaction_target_content",
+    "source_schema": "ts_ods",
+    "source_table": "ods_social_interaction",
+    "source_fields": [
+      "target_content_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_social_content",
+    "target_fields": [
+      "content_id"
+    ],
+    "relationship_kind": "has_target_content",
+    "cardinality": "many_to_one",
+    "description": "Each interaction references the replied-to, reposted or quoted target by content entity ID. The normalizer uses quote over repost over reply when multiple reference kinds are present; no unobserved target row is invented. Match only stable internal IDs produced in the Twitter platform and matching entity_type namespace, not platform-ID strings or display names. Preserve each table's data_source; account_twitter and tweet_twitter are distinct sources and must not be equated. Missing targets are allowed; this metadata creates no business foreign key.",
+    "provenance": "Original design \"ODS 社交媒体数据表结构设计与真实示例\": outputs/ods_social_media_design_20261012/ODS社交媒体数据表设计与真实示例.md sections 1.1, 8.2, 8.3, 8.4. The original same-data_source example is superseded by current type-specific producer sources. Declared social normalizer contract: app/etl/normalizers/social_identity.py:twitter_entity_id; app/etl/normalizers/social_interaction.py:normalize_twitter_interaction; app/etl/normalizers/social_content.py:_normalize_twitter_content; app/etl/ts_ods.py:_prepare_payload; app/etl/schema/catalogs.py. Cardinality describes the referenced business entity, not a physical uniqueness constraint or a count of matched rows.",
+    "enabled": true
   }
 ]
