@@ -110,6 +110,131 @@ class Connection:
         raise AssertionError(sql)
 
 
+class FactsConnection(Connection):
+    async def fetch(self, sql, *args):
+        layer = "rds" if "ts_rds" in sql else "ods"
+        if "AS after_sha256" in sql:
+            self.calls.append((sql, args))
+            result = []
+            for rid in args[0]:
+                body = self.rows.get((layer, rid, args[1]))
+                if body is None:
+                    continue
+                row = json.loads(body)
+                routing = layer != "rds" or (row["raw_data"].get("data_source") == args[1]
+                          and row["raw_data"].get("_meta", {}).get("template") == args[1]
+                          and row["raw_data"].get("_meta", {}).get("data_source") == args[1])
+                result.append({"record_id": rid, "after_sha256": migration.pg.sha(body), "routing_valid": routing})
+            return result
+        if "DELETE FROM " in sql and isinstance(args[0], list):
+            self.calls.append((sql, args))
+            if self.fail_delete:
+                raise RuntimeError("injected delete failure")
+            removed = []
+            for rid in args[0]:
+                key = layer, rid, args[1]
+                if key in self.rows:
+                    removed.append({"record_id": rid, "raw": self.rows.pop(key)})
+            return removed
+        if "CROSS JOIN LATERAL(SELECT 1 FROM" in sql:
+            self.calls.append((sql, args))
+            return [{"record_id": key["record_id"], "data_source": key["data_source"]}
+                    for key in json.loads(args[0]) if (layer, key["record_id"], key["data_source"]) in self.rows]
+        return await super().fetch(sql, *args)
+
+
+class FactsDedupTests(unittest.IsolatedAsyncioTestCase):
+    def row(self, *args, **kwargs):
+        return SafeMigrationTests.row(self, *args, **kwargs)
+
+    def document(self, *args, **kwargs):
+        return SafeMigrationTests.document(self, *args, **kwargs)
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.plan = {"kind": "facts", "collection": "financial_fact_sec_edgar", "data_type": "financial_fact",
+                     "aliases": migration.SCOPES["facts"][1], "plan_sha256": "a" * 64, "mongo_uuid": "b" * 32,
+                     "parts": [{"worker": 0, "lower": "0" * 24, "upper": None}]}
+        self.state = {"plan_sha256": self.plan["plan_sha256"], "worker": 0,
+                      "cursor": None, "processed": 0, "pending": None, "done": False}
+
+    def rows(self):
+        return [(layer, self.row(0, source, layer, source)) for layer in ("rds", "ods")
+                for source in [*self.plan["aliases"], self.plan["collection"]]]
+
+    async def apply(self, connection):
+        return await migration.apply_facts_chunk(connection, self.root, self.plan, 0, self.state, [self.document(0)])
+
+    async def test_deletes_only_manifest_old_keys_and_preserves_all_canonical_fields(self):
+        connection = FactsConnection(self.rows())
+        for layer in ("rds", "ods"):
+            row = self.row("unrelated", self.plan["aliases"][0], layer)
+            connection.rows[(layer, "unrelated", row["data_source"])] = raw(row)
+        canonical = {(layer, "0", self.plan["collection"]): connection.rows[(layer, "0", self.plan["collection"])]
+                     for layer in ("rds", "ods")}
+        with patch.object(migration.facts, "prepare_rows", side_effect=AssertionError("must not normalize")), \
+             patch.object(migration, "locked_rows", side_effect=AssertionError("must not transfer canonical bodies")):
+            state = await self.apply(connection)
+        self.assertEqual(state["processed"], 1)
+        self.assertEqual({key: connection.rows[key] for key in canonical}, canonical)
+        self.assertEqual(len(connection.rows), 4)
+        self.assertFalse(any(" SET data_source=" in sql or " SET raw_data=" in sql or "INSERT INTO" in sql
+                             for sql, _ in connection.calls))
+        self.assertEqual(sum("AS after_sha256" in sql for sql, _ in connection.calls), 2)
+        self.assertEqual(sum("CROSS JOIN LATERAL(SELECT 1 FROM" in sql for sql, _ in connection.calls), 2)
+        receipt = migration.pg.read(self.root / state["last_receipt"])
+        self.assertEqual(receipt["after_sha256"], {layer: {"0": migration.pg.sha(canonical[(layer, "0", self.plan["collection"])])}
+                                                 for layer in ("rds", "ods")})
+        archived = [json.loads(line) for line in gzip.decompress((self.root / receipt["archive"]["path"]).read_bytes()).splitlines()]
+        self.assertEqual(len(archived), 4)
+        self.assertEqual({row["row"]["data_source"] for row in archived}, set(self.plan["aliases"]))
+        self.assertEqual(receipt["missing_insert_attempts"], {"rds": 0, "ods": 0})
+
+    async def test_missing_canonical_or_bad_routing_rolls_back_without_deleting_old_rows(self):
+        for fault in ("missing_rds", "missing_ods", "raw_source", "template", "meta_source"):
+            with self.subTest(fault=fault):
+                connection = FactsConnection(self.rows())
+                if fault.startswith("missing"):
+                    connection.rows.pop((fault.split("_")[1], "0", self.plan["collection"]))
+                else:
+                    key = "rds", "0", self.plan["collection"]
+                    row = json.loads(connection.rows[key])
+                    if fault == "raw_source":
+                        row["raw_data"]["data_source"] = "wrong"
+                    else:
+                        row["raw_data"]["_meta"]["template" if fault == "template" else "data_source"] = "wrong"
+                    connection.rows[key] = raw(row)
+                original = dict(connection.rows)
+                with self.assertRaisesRegex(RuntimeError, "canonical coverage is missing|canonical routing differs"):
+                    await self.apply(connection)
+                self.assertEqual(connection.rows, original)
+                self.assertFalse(any("DELETE FROM" in sql for sql, _ in connection.calls))
+                self.assertFalse((self.root / "worker-0.json").exists())
+
+    async def test_delete_failure_rolls_back_canonical_and_old_fields(self):
+        connection = FactsConnection(self.rows())
+        original = dict(connection.rows)
+        connection.fail_delete = True
+        with self.assertRaisesRegex(RuntimeError, "injected delete failure"):
+            await self.apply(connection)
+        self.assertEqual(connection.rows, original)
+        self.assertFalse((self.root / "worker-0.json").exists())
+
+    async def test_lost_ack_reuses_the_original_recovery_protocol(self):
+        connection = FactsConnection(self.rows())
+        connection.lose_commit = True
+        with self.assertRaisesRegex(OSError, "lost commit reply"):
+            await self.apply(connection)
+        pending = migration.pg.read(self.root / "worker-0.json")
+        self.assertEqual(pending["processed"], 0)
+        recovered = await migration.recover_pending(connection, self.root, self.plan, 0, pending)
+        self.assertEqual(recovered["processed"], 1)
+        self.assertIsNone(recovered["pending"])
+        self.assertEqual(await migration.recover_pending(connection, self.root, self.plan, 0, recovered), recovered)
+
+
 class SafeMigrationTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -364,6 +489,31 @@ class WorkerControlTests(unittest.IsolatedAsyncioTestCase):
         checkpoint = migration.pg.read(self.root / "worker-0.json")
         self.assertEqual(checkpoint["processed"], 0)
         self.assertIsNone(checkpoint["cursor"])
+
+    async def test_facts_driver_uses_only_manifest_identities_without_reading_or_normalizing_mongo(self):
+        path = Path(__file__).with_name("facts-burst-manifest-20261116.json")
+        manifest = migration.pg.read(path)
+        self.plan.update(kind="facts", collection="financial_fact_sec_edgar", data_type="financial_fact",
+                         aliases=migration.SCOPES["facts"][1], parts=manifest["parts"],
+                         mongo_uuid=manifest["mongo_uuid_hex"], manifest_path=str(path),
+                         manifest_sha256=migration.pg.sha(path.read_bytes()))
+        self.plan = PlanValidationTests().sign(self.plan)
+        migration.pg.atomic(self.root / "plan.json", self.plan)
+        apply = AsyncMock(side_effect=self.apply)
+        with patch.object(migration.facts, "mongo_client", return_value=MagicMock()), \
+             patch.object(migration, "validate_namespace", return_value=MagicMock()) as namespace, \
+             patch.object(migration.pg, "owned_connection", AsyncMock(return_value=self.connection)), \
+             patch.object(migration.facts, "read_batch", side_effect=AssertionError("must not read Mongo business docs")), \
+             patch.object(migration.facts, "prepare_rows", side_effect=AssertionError("must not normalize")), \
+             patch.object(migration, "apply_chunk", side_effect=AssertionError("must not use generic migration")), \
+             patch.object(migration, "apply_facts_chunk", apply):
+            await migration.worker_run(self.root, 0, canary=True)
+        state = migration.pg.read(self.root / "worker-0.json")
+        self.assertEqual(state["processed"], 500)
+        self.assertTrue(state["canary_complete"])
+        self.assertEqual([len(call.args[-1]) for call in apply.await_args_list], [300, 200])
+        self.assertTrue(all(set(doc) == {"_id", "_meta"} for call in apply.await_args_list for doc in call.args[-1]))
+        namespace.assert_called_once()
 
     async def test_final_range_stops_at_fixed_inclusive_upper_bound(self):
         self.documents = [{"_id": ObjectId(f"{number:024x}"), "_meta": {

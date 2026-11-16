@@ -265,6 +265,77 @@ async def apply_chunk(connection, root, plan, worker, state, docs):
     return advance(root, worker, state, receipt)
 
 
+async def apply_facts_chunk(connection, root, plan, worker, state, docs):
+    require(plan["kind"] == "facts" and 0 < len(docs) <= SQL_BATCH, "invalid bounded facts cleanup")
+    ids = document_ids(docs, plan)
+    token = uuid.uuid4().hex
+    prepared_path, receipt_path = f"transactions/{token}.prepared.json", f"transactions/{token}.committed.json"
+    archive_path = f"transactions/{token}.conflicts.jsonl.gz"
+    after, archives = {}, []
+    async with connection.transaction():
+        await connection.execute("SET LOCAL TIME ZONE 'UTC'")
+        await connection.execute("SET LOCAL lock_timeout='15s'")
+        await connection.execute("SET LOCAL statement_timeout='120s'")
+        locks = sorted("|".join(("ts_" + layer, layer + "_financial_fact", plan["collection"], plan["data_type"], rid))
+                       for layer in ("rds", "ods") for rid in ids)
+        await connection.execute("""WITH k AS MATERIALIZED(SELECT value FROM unnest($1::text[]) x(value) ORDER BY value)
+            SELECT pg_advisory_xact_lock(hashtextextended(value,0)) FROM k""", locks)
+        for layer in ("rds", "ods"):
+            table = table_name(plan, layer)
+            routing = ("t.raw_data->>'data_source'=$2::text AND t.raw_data#>>'{_meta,template}'=$2::text "
+                       "AND t.raw_data#>>'{_meta,data_source}'=$2::text" if layer == "rds" else "true")
+            rows = await connection.fetch(f"""
+                WITH k AS MATERIALIZED(SELECT unnest($1::text[]) AS record_id ORDER BY record_id)
+                SELECT k.record_id,t.after_sha256,t.routing_valid FROM k CROSS JOIN LATERAL(
+                  SELECT encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex') AS after_sha256,
+                    ({routing}) AS routing_valid FROM {table} t
+                  WHERE t.record_id=k.record_id AND t.data_source=$2::text AND t.data_type=$3::text
+                  FOR UPDATE OF t OFFSET 0) t
+            """, sorted(ids), plan["collection"], plan["data_type"])
+            require(len(rows) == len(ids) and {row["record_id"] for row in rows} == set(ids),
+                    "facts canonical coverage is missing: " + table)
+            require(all(row["routing_valid"] is True for row in rows), "facts canonical routing differs: " + table)
+            after[layer] = {row["record_id"]: row["after_sha256"] for row in rows}
+        for layer in ("rds", "ods"):
+            table = table_name(plan, layer)
+            for old in plan["aliases"]:
+                removed = await connection.fetch(f"""
+                    WITH k AS MATERIALIZED(SELECT unnest($1::text[]) AS record_id)
+                    DELETE FROM {table} t USING k WHERE t.record_id=k.record_id
+                      AND t.data_source=$2::text AND t.data_type=$3::text
+                    RETURNING t.record_id,to_jsonb(t)::text AS raw
+                """, ids, old, plan["data_type"])
+                require(len({row["record_id"] for row in removed}) == len(removed)
+                        and {row["record_id"] for row in removed} <= set(ids), "facts DELETE returned unexpected IDs")
+                archives.extend({"table": table, "old_source": old, "raw": row["raw"]} for row in removed)
+            keys = [{"record_id": rid, "data_source": source, "data_type": plan["data_type"]}
+                    for rid in ids for source in [*plan["aliases"], plan["collection"]]]
+            rows = await connection.fetch(f"""
+                WITH k AS MATERIALIZED(SELECT * FROM jsonb_to_recordset($1::jsonb)
+                  AS k(record_id text,data_source text,data_type text))
+                SELECT k.record_id,k.data_source FROM k CROSS JOIN LATERAL(SELECT 1 FROM {table} t
+                  WHERE t.record_id=k.record_id AND t.data_source=k.data_source AND t.data_type=k.data_type OFFSET 0) t
+            """, json.dumps(keys))
+            require(len(rows) == len(ids) and {(row["record_id"], row["data_source"]) for row in rows}
+                    == {(rid, plan["collection"]) for rid in ids}, "facts old-alias deletion verification differs: " + table)
+        archive = None
+        if archives:
+            raw = gzip.compress(("\n".join(json.dumps({"table": r["table"], "old_source": r["old_source"]})[:-1]
+                                + ',"row":' + r["raw"] + "}" for r in archives) + "\n").encode(), mtime=0)
+            pg.immutable(root / archive_path, raw)
+            archive = {"path": archive_path, "sha256": pg.sha(raw), "rows": len(archives)}
+        receipt = {"protocol": PROTOCOL, "plan_sha256": plan["plan_sha256"], "mongo_uuid": plan["mongo_uuid"],
+                   "worker": worker, "part": plan["parts"][worker], "txid_full": int(await connection.fetchval("SELECT txid_current()")),
+                   "previous_cursor": state["cursor"], "previous_processed": state["processed"],
+                   "first_id": str(docs[0]["_id"]), "last_id": str(docs[-1]["_id"]), "rows": len(docs),
+                   "record_ids": ids, "after_sha256": after, "missing_insert_attempts": {"rds": 0, "ods": 0},
+                   "archive": archive, "receipt": receipt_path, "operation": "facts_manifest_dedup"}
+        pg.immutable(root / prepared_path, pg.encoded(receipt))
+        pg.atomic(root / f"worker-{worker}.json", {**state, "pending": prepared_path})
+    pg.immutable(root / receipt_path, pg.encoded({**receipt, "committed": True}))
+    return advance(root, worker, state, receipt)
+
+
 def manifest_records(plan, worker):
     if plan["kind"] != "facts":
         return None
@@ -334,7 +405,13 @@ async def worker_run(root, worker, canary=False):
                     bounds["$lte"] = ObjectId(part["upper_inclusive"])
                 elif part.get("upper"):
                     bounds["$lt"] = ObjectId(part["upper"])
-                docs = SCOPES[plan["kind"]][0].read_batch(collection, {"_id": bounds})
+                if expected is not None:
+                    docs = [{"_id": ObjectId(row["mongo_id"]), "_meta": {
+                        "record_id": row["record_id"], "template": plan["collection"],
+                        "data_source": plan["collection"], "data_type": plan["data_type"]}}
+                        for row in expected[state["processed"]:state["processed"] + PAGE_SIZE]]
+                else:
+                    docs = SCOPES[plan["kind"]][0].read_batch(collection, {"_id": bounds})
                 require(len(docs) <= PAGE_SIZE, "Mongo page exceeds 3000")
                 if not docs:
                     require(expected is None or state["processed"] == len(expected), "facts source ended before manifest")
@@ -355,7 +432,8 @@ async def worker_run(root, worker, canary=False):
                     if expected is not None:
                         actual = [{"mongo_id": str(doc["_id"]), "record_id": rid} for doc, rid in zip(chunk, ids)]
                         require(actual == expected[state["processed"]:state["processed"] + len(chunk)], "Mongo facts differ from approved manifest")
-                    state = await apply_chunk(connection, root, plan, worker, state, chunk)
+                    apply = apply_facts_chunk if expected is not None else apply_chunk
+                    state = await apply(connection, root, plan, worker, state, chunk)
                     failures = 0
             except (asyncpg.PostgresError, OSError, asyncio.TimeoutError, PyMongoError):
                 failures += 1
