@@ -70,5 +70,459 @@
     "description": "Reported financial facts linked to their filing accession number.",
     "provenance": "Declared SEC EDGAR accession contract; app/etl/normalizers/filing.py:accession_number; app/etl/normalizers/financial_fact.py:accn. Physical columns verified before apply.",
     "enabled": true
+  },
+  {
+    "name": "space_constellation_member_satellites",
+    "source_schema": "ts_ods",
+    "source_table": "ods_constellation",
+    "source_fields": [
+      "member_norad_ids"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "norad_id"
+    ],
+    "relationship_kind": "has_member_satellites",
+    "cardinality": "many_to_many",
+    "description": "Each value in the JSONB member_norad_ids array identifies a satellite NORAD number. Array membership, not array-to-scalar equality; missing identifiers produce no match. Preserve the source identity on both sides.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 4.3, 5.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_orbital_satellites_norad_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_orbital",
+    "source_fields": [
+      "norad_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "norad_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null NORAD catalog number identifies satellite records. Preserve each source identity; this identifier is not a globally unique row key, and no name-based match is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 6.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_orbital_satellites_cospar_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_orbital",
+    "source_fields": [
+      "cospar_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "cospar_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null full COSPAR object identifier identifies satellite records. Preserve each source identity; this identifier is not a globally unique row key, and no name-based match is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 6.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debris_satellites_norad_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debris",
+    "source_fields": [
+      "norad_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "norad_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null NORAD catalog number identifies satellite records. Preserve each source identity; this identifier is not a globally unique row key, and no name-based match is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 8.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debris_satellites_cospar_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debris",
+    "source_fields": [
+      "cospar_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "cospar_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null full COSPAR object identifier identifies satellite records. Preserve each source identity; this identifier is not a globally unique row key, and no name-based match is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 8.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_frequency_satellites_norad_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_frequency",
+    "source_fields": [
+      "norad_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "norad_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null NORAD catalog number identifies satellite records. Preserve each source identity; this identifier is not a globally unique row key, and no name-based match is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 12.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_frequency_satellites_cospar_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_frequency",
+    "source_fields": [
+      "cospar_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "cospar_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null full COSPAR object identifier identifies satellite records. Preserve each source identity; this identifier is not a globally unique row key, and no name-based match is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 12.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debrisevents_satellites_norad_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debrisevents",
+    "source_fields": [
+      "norad_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "norad_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null NORAD catalog number identifies satellite records. Preserve each source identity; this identifier is not a globally unique row key, and no name-based match is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 7.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debrisevents_satellites_cospar_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debrisevents",
+    "source_fields": [
+      "cospar_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "cospar_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null full COSPAR object identifier identifies satellite records. Preserve each source identity; this identifier is not a globally unique row key, and no name-based match is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 7.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_frequency_satnogs_satellites",
+    "source_schema": "ts_ods",
+    "source_table": "ods_frequency",
+    "source_fields": [
+      "satnogs_sat_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "satnogs_sat_id"
+    ],
+    "relationship_kind": "identifies_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null SatNOGS satellite identifier within the SatNOGS namespace; do not substitute a NORAD number or a display name. Preserve source identities.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 5.3, 12.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debrisevents_parent_satellites",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debrisevents",
+    "source_fields": [
+      "parent_gcat_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_satellite",
+    "target_fields": [
+      "gcat_id"
+    ],
+    "relationship_kind": "has_parent_satellites",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null GCAT parent object identifier identifies satellite records in the GCAT namespace. Scope both sides to the GCAT catalog; preserve their type-specific source identities.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 5.3, 7.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_satellite_launches",
+    "source_schema": "ts_ods",
+    "source_table": "ods_satellite",
+    "source_fields": [
+      "cospar_launch"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_launchinfo",
+    "target_fields": [
+      "cospar_launch"
+    ],
+    "relationship_kind": "has_launches",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null COSPAR launch prefix links to the launch batch, not to a full COSPAR object identifier. Multiple source records can describe the same batch.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 10.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debrisevents_launches",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debrisevents",
+    "source_fields": [
+      "cospar_launch"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_launchinfo",
+    "target_fields": [
+      "cospar_launch"
+    ],
+    "relationship_kind": "has_launches",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null COSPAR launch prefix links to the launch batch, not to a full COSPAR object identifier. Multiple source records can describe the same batch.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 7.3, 10.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_launchinfo_launchsites",
+    "source_schema": "ts_ods",
+    "source_table": "ods_launchinfo",
+    "source_fields": [
+      "site_code",
+      "pad_name"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_launchsites",
+    "target_fields": [
+      "site_code",
+      "pad_name"
+    ],
+    "relationship_kind": "uses_launchsites",
+    "cardinality": "many_to_many",
+    "description": "Match the complete site_code and pad_name pair within the same GCAT catalog semantics. Require an explicitly provided pad; a site-only record does not imply a pad match. Type-specific data_source values are not equal join keys.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 10.3, 11.3, 16; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_launchinfo_launchvehicles",
+    "source_schema": "ts_ods",
+    "source_table": "ods_launchinfo",
+    "source_fields": [
+      "rocket_name",
+      "vehicle_variant"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_launchvehicles",
+    "target_fields": [
+      "name",
+      "variant"
+    ],
+    "relationship_kind": "uses_launchvehicles",
+    "cardinality": "many_to_many",
+    "description": "Match the complete rocket_name/vehicle_variant to name/variant pair within the same GCAT catalog semantics. Missing or placeholder variants are not real variants; do not match by display name alone. Type-specific data_source values are not equal join keys.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 9.3, 10.3, 16; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_satellite_owner_codes_organizations",
+    "source_schema": "ts_ods",
+    "source_table": "ods_satellite",
+    "source_fields": [
+      "owner_codes"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_organization",
+    "target_fields": [
+      "code"
+    ],
+    "relationship_kind": "has_owner_organizations",
+    "cardinality": "many_to_many",
+    "description": "Each value in the JSONB owner_codes array identifies organization.code in the GCAT organization-code namespace. Array membership, not array-to-scalar equality. Scope source and target to the GCAT catalog; never match organizations by display name.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 14.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_satellite_manufacturer_codes_organizations",
+    "source_schema": "ts_ods",
+    "source_table": "ods_satellite",
+    "source_fields": [
+      "manufacturer_codes"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_organization",
+    "target_fields": [
+      "code"
+    ],
+    "relationship_kind": "has_manufacturer_organizations",
+    "cardinality": "many_to_many",
+    "description": "Each value in the JSONB manufacturer_codes array identifies organization.code in the GCAT organization-code namespace. Array membership, not array-to-scalar equality. Scope source and target to the GCAT catalog; never match organizations by display name.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 5.3, 14.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_launchvehicles_manufacturer_codes_organizations",
+    "source_schema": "ts_ods",
+    "source_table": "ods_launchvehicles",
+    "source_fields": [
+      "manufacturer_codes"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_organization",
+    "target_fields": [
+      "code"
+    ],
+    "relationship_kind": "has_manufacturer_organizations",
+    "cardinality": "many_to_many",
+    "description": "Each value in the JSONB manufacturer_codes array identifies organization.code in the GCAT organization-code namespace. Array membership, not array-to-scalar equality. Scope source and target to the GCAT catalog; never match organizations by display name.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 9.3, 14.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_launchinfo_provider_codes_organizations",
+    "source_schema": "ts_ods",
+    "source_table": "ods_launchinfo",
+    "source_fields": [
+      "provider_codes"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_organization",
+    "target_fields": [
+      "code"
+    ],
+    "relationship_kind": "has_provider_organizations",
+    "cardinality": "many_to_many",
+    "description": "Each value in the JSONB provider_codes array identifies organization.code in the GCAT organization-code namespace. Array membership, not array-to-scalar equality. Scope source and target to the GCAT catalog; never match organizations by display name.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 10.3, 14.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_launchsites_operator_codes_organizations",
+    "source_schema": "ts_ods",
+    "source_table": "ods_launchsites",
+    "source_fields": [
+      "operator_codes"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_organization",
+    "target_fields": [
+      "code"
+    ],
+    "relationship_kind": "has_operator_organizations",
+    "cardinality": "many_to_many",
+    "description": "Each value in the JSONB operator_codes array identifies organization.code in the GCAT organization-code namespace. Array membership, not array-to-scalar equality. Scope source and target to the GCAT catalog; never match organizations by display name.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 11.3, 14.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_organization_parent_codes_organizations",
+    "source_schema": "ts_ods",
+    "source_table": "ods_organization",
+    "source_fields": [
+      "parent_codes"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_organization",
+    "target_fields": [
+      "code"
+    ],
+    "relationship_kind": "has_parent_organizations",
+    "cardinality": "many_to_many",
+    "description": "Each value in the JSONB parent_codes array identifies organization.code in the GCAT organization-code namespace. Array membership, not array-to-scalar equality. Scope source and target to the GCAT catalog; never match organizations by display name.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 14.3, 14.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_frequency_groundstations",
+    "source_schema": "ts_ods",
+    "source_table": "ods_frequency",
+    "source_fields": [
+      "itu_earth_notice_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_groundstations",
+    "target_fields": [
+      "itu_earth_notice_id"
+    ],
+    "relationship_kind": "has_earth_notice_groundstations",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null ITU earth-notice identifier, with compatible ITU edition and source context. Do not mix satellite notices and earth notices; WIC uses earth-notice identifiers only for S notices. A ground station without this identifier has no declared match.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 12.3, 13.3; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debrisevents_related_debris",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debrisevents",
+    "source_fields": [
+      "related_objects"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_debris",
+    "target_fields": [
+      "source_id"
+    ],
+    "relationship_kind": "has_related_debris",
+    "cardinality": "many_to_many",
+    "description": "Within the ESA DISCOS namespace, use the source_id of each related_objects JSONB element only when its resource_type is object, matched to debris.source_id. This is filtered JSON object-array membership, not array-to-scalar equality or an unscoped source_id join.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 1.1, 7.3, 8.3, 16; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debris_orbital_norad_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debris",
+    "source_fields": [
+      "norad_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_orbital",
+    "target_fields": [
+      "norad_id"
+    ],
+    "relationship_kind": "has_orbital_records",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null NORAD catalog number links debris objects to orbital records. Preserve each source identity and all observed orbital revisions; no one-to-one or latest-only projection is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 6.3, 8.3; docs/tle-event-history-contract.md Query semantics; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
+  },
+  {
+    "name": "space_debris_orbital_cospar_id",
+    "source_schema": "ts_ods",
+    "source_table": "ods_debris",
+    "source_fields": [
+      "cospar_id"
+    ],
+    "target_schema": "ts_ods",
+    "target_table": "ods_orbital",
+    "target_fields": [
+      "cospar_id"
+    ],
+    "relationship_kind": "has_orbital_records",
+    "cardinality": "many_to_many",
+    "description": "Exact non-null full COSPAR object identifier links debris objects to orbital records. Preserve each source identity and all observed orbital revisions; no one-to-one or latest-only projection is declared.",
+    "provenance": "Declared Space catalog contract: docs/Space数据表结构设计.md sections 6.3, 8.3; docs/tle-event-history-contract.md Query semantics; app/etl/schema/catalogs.py; app/etl/normalizers/space.py. Table-level field metadata only; does not execute a business-row join. Physical columns and types verified before apply.",
+    "enabled": true
   }
 ]

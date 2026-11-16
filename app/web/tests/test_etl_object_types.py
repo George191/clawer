@@ -94,6 +94,9 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result["total"], result["limit"], result["offset"]), (8, 1, 2))
         self.assertEqual(result["schemaCounts"], {"ts_ods": 5, "ts_custom": 3})
         self.assertEqual(result["groupCounts"], {"ingestion": 5, "processing": 0, "serving": 0, "other": 3})
+        self.assertEqual(result["groupSchemaCounts"], {
+            "ingestion": {"ts_ods": 5}, "processing": {}, "serving": {}, "other": {"ts_custom": 3},
+        })
         item = result["items"][0]
         self.assertEqual(item["id"], "ts_ods.objects")
         self.assertEqual(item["displayName"], "objects")
@@ -119,7 +122,9 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         result = await instance.object_types("ods_hist", needle, "ingestion", 1, 0,
                                              "ts_ods_hist.objects,ts_custom.second")
         self.assertEqual(result["total"], 4)
-        self.assertEqual(result["groupCounts"]["other"], 2)
+        self.assertEqual(result["groupCounts"]["other"], 0)
+        self.assertEqual(result["schemaCounts"], {"ts_ods_hist": 4})
+        self.assertEqual(result["groupSchemaCounts"]["other"], {"ts_custom": 2})
         self.assertEqual(result["items"][0]["dataType"], "")
         count_sql, params = next((sql, params) for sql, params in session.calls if params and "search" in params and "count(*)" in sql)
         self.assertNotIn(needle, count_sql)
@@ -127,6 +132,8 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(params["schema"], "ts_ods_hist")
         self.assertEqual(params["ids"], ["ts_ods_hist.objects", "ts_custom.second"])
         self.assertNotIn("group", params)
+        self.assertNotIn("n.nspname = :schema", count_sql)
+        self.assertIn("n.nspname = :schema", session.calls[-1][0])
         self.assertEqual(session.calls[-1][1]["group"], "ingestion")
         self.assertIn("o.data_type", session.calls[-1][0])
 
@@ -135,6 +142,21 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         result = await instance.object_types(offset=2)
         self.assertEqual(result["items"], [])
         self.assertEqual(result["total"], 2)
+        self.assertEqual(sum("count(*) AS count" in sql for sql, _ in session.calls), 1)
+
+    async def test_schema_navigation_facets_keep_other_schemas_when_current_group_is_empty(self):
+        instance, session = service(Result([
+            {"schema": "ts_ods", "resource_group": "ingestion", "count": 5},
+            {"schema": "ts_dim", "resource_group": "serving", "count": 2},
+            {"schema": "ts_custom", "resource_group": "ingestion", "count": 3},
+        ]))
+        result = await instance.object_types(schema="ts_ods", group="serving", limit=1)
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["schemaCounts"], {"ts_ods": 5})
+        self.assertEqual(result["groupCounts"], {"ingestion": 5, "processing": 0, "serving": 0, "other": 0})
+        self.assertEqual(result["groupSchemaCounts"]["ingestion"], {"ts_ods": 5, "ts_custom": 3})
+        self.assertEqual(result["groupSchemaCounts"]["serving"], {"ts_dim": 2})
         self.assertEqual(sum("count(*) AS count" in sql for sql, _ in session.calls), 1)
 
     async def test_catalog_and_preview_exclude_internal_schemas_and_all_child_tables(self):
@@ -239,6 +261,8 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["schemaCounts"], {"ts_custom": 5})
         self.assertEqual(result["groupCounts"], {"ingestion": 2, "processing": 0, "serving": 3, "other": 0})
         self.assertEqual(result["total"], 3)
+        self.assertEqual(result["groupSchemaCounts"]["ingestion"], {"ts_custom": 2})
+        self.assertEqual(result["groupSchemaCounts"]["serving"], {"ts_custom": 3})
         item = result["items"][0]
         self.assertEqual((item["description"], item["dataType"], item["resourceGroup"]),
                          ("Persisted metadata description", "organization", "serving"))

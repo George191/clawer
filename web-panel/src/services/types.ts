@@ -107,6 +107,7 @@ export interface EtlObjectCatalog {
   offset: number;
   schemaCounts: Record<string, number>;
   groupCounts: Record<string, number>;
+  groupSchemaCounts: Record<string, Record<string, number>>;
 }
 
 export interface EtlObjectProperty {

@@ -246,7 +246,8 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_catalog_and_logical_relationships_use_persisted_ontology_metadata(self):
         await self.migration.migrate(self.pg, apply=True)
-        seeds = json.loads((ROOT / "app/etl/schema/object_relations.seed.json").read_text())
+        seeds = [row for row in json.loads((ROOT / "app/etl/schema/object_relations.seed.json").read_text())
+                 if row["name"].startswith("sec_edgar_")]
         report = await manage_object_relations(self.pg, seeds, apply=True)
         self.assertEqual(len(report["changes"]["insert"]), 4)
         catalog = await self.layers.object_types(limit=100)

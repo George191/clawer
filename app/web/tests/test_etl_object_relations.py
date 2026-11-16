@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from app.etl.schema.catalogs import table_columns
 from app.etl.schema.object_relations import (
     OBJECT_RELATIONS_DDL,
     ObjectRelationsNotInitialized,
@@ -23,7 +24,9 @@ from app.etl.schema.object_relations import (
 )
 from app.web.tests.test_etl_object_types import Result, foreign, service, summary
 
-SEEDS = json.loads((Path(__file__).resolve().parents[2] / "etl/schema/object_relations.seed.json").read_text(encoding="utf-8"))
+ALL_SEEDS = json.loads((Path(__file__).resolve().parents[2] / "etl/schema/object_relations.seed.json").read_text(encoding="utf-8"))
+SEEDS = [row for row in ALL_SEEDS if row["name"].startswith("sec_edgar_")]
+SPACE_SEEDS = [row for row in ALL_SEEDS if row["name"].startswith("space_")]
 
 
 def logical(row):
@@ -42,12 +45,8 @@ class MetadataPg:
         self.commits, self.rollbacks = 0, 0
         self.fail_on_name = None
         self.connected, self.closed = False, False
-        self.catalog = {
-            ("ts_ods", "ods_organization"): {"cik", "name"},
-            ("ts_ods", "ods_filing"): {"cik", "accession_number"},
-            ("ts_ods", "ods_filing_document"): {"cik", "accession_number"},
-            ("ts_ods", "ods_financial_fact"): {"cik", "accn"},
-        }
+        self.catalog = {("ts_ods", table): set(table_columns("ods", table.removeprefix("ods_")))
+                        for table in {row[side + "_table"] for row in ALL_SEEDS for side in ("source", "target")}}
 
     async def connect(self, **_kwargs):
         self.connected = True
@@ -89,6 +88,60 @@ class MetadataPg:
 
 
 class ObjectRelationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_all_documented_space_mappings_are_valid_and_apply_without_duplicate_writes(self):
+        self.assertEqual(len(SPACE_SEEDS), 25)
+        self.assertEqual(len(ALL_SEEDS), 29)
+        self.assertEqual({row[side + "_table"] for row in SPACE_SEEDS for side in ("source", "target")},
+                         {"ods_" + name for name in ("constellation", "satellite", "orbital", "debrisevents", "debris",
+                          "launchvehicles", "launchinfo", "launchsites", "frequency", "groundstations", "organization")})
+        pg = MetadataPg(installed=True)
+        pg.records = {row["name"]: deepcopy(row) for row in SEEDS}
+        check = await manage_object_relations(pg, ALL_SEEDS)
+        self.assertEqual(len(check["changes"]["insert"]), 25)
+        self.assertEqual(len(check["changes"]["unchanged"]), 4)
+        self.assertEqual(list(pg.records.values()), SEEDS)
+        self.assertTrue(all(sql.startswith(("SELECT", "SET TRANSACTION READ ONLY")) for sql, _ in pg.calls))
+        first = await manage_object_relations(pg, ALL_SEEDS, apply=True)
+        self.assertEqual(len(first["changes"]["insert"]), 25)
+        self.assertEqual(len(first["changes"]["unchanged"]), 4)
+        self.assertEqual(len(pg.records), 29)
+        writes = sum(sql.startswith("INSERT") for sql, _ in pg.calls)
+        second = await manage_object_relations(pg, ALL_SEEDS, apply=True)
+        self.assertEqual(len(second["changes"]["unchanged"]), 29)
+        self.assertEqual(sum(sql.startswith("INSERT") for sql, _ in pg.calls), writes)
+
+    def test_space_relationship_types_and_source_qualified_array_semantics_match_documented_contract(self):
+        array_mappings = []
+        for row in SPACE_SEEDS:
+            self.assertEqual(validate_definition(row)["cardinality"], "many_to_many")
+            self.assertEqual(row["source_schema"], "ts_ods")
+            self.assertEqual(row["target_schema"], "ts_ods")
+            self.assertIn("docs/Space数据表结构设计.md", row["provenance"])
+            self.assertTrue(row["enabled"])
+            source = table_columns("ods", row["source_table"].removeprefix("ods_"))
+            target = table_columns("ods", row["target_table"].removeprefix("ods_"))
+            for left, right in zip(row["source_fields"], row["target_fields"]):
+                if source[left] == "JSONB":
+                    array_mappings.append(row)
+                    self.assertIn("membership", row["description"])
+                    self.assertIn(target[right], {"BIGINT", "TEXT"})
+                else:
+                    self.assertEqual(source[left], target[right])
+        self.assertEqual(len(array_mappings), 8)
+        by_name = {row["name"]: row for row in SPACE_SEEDS}
+        esa = by_name["space_debrisevents_related_debris"]
+        self.assertIn("ESA DISCOS", esa["description"])
+        self.assertIn("resource_type is object", esa["description"])
+        itu = by_name["space_frequency_groundstations"]
+        self.assertIn("edition and source context", itu["description"])
+        for row in SPACE_SEEDS:
+            if row["source_fields"][0].endswith("_codes"):
+                self.assertIn("GCAT", row["description"])
+        self.assertEqual(by_name["space_launchinfo_launchsites"]["source_fields"], ["site_code", "pad_name"])
+        self.assertEqual(by_name["space_launchinfo_launchsites"]["target_fields"], ["site_code", "pad_name"])
+        self.assertEqual(by_name["space_launchinfo_launchvehicles"]["source_fields"], ["rocket_name", "vehicle_variant"])
+        self.assertEqual(by_name["space_launchinfo_launchvehicles"]["target_fields"], ["name", "variant"])
+
     async def test_four_verified_sec_seeds_only_reference_actual_ods_fields(self):
         pg = MetadataPg()
         report = await manage_object_relations(pg, SEEDS)
@@ -279,7 +332,7 @@ class ObjectRelationCliTests(unittest.TestCase):
         self.assertEqual(code, 1)  # An uninstalled registry is reported, never silently created.
         report = json.loads(output.getvalue())
         self.assertFalse(report["applied"])
-        self.assertEqual(report["definitions"], 4)
+        self.assertEqual(report["definitions"], 29)
         self.assertEqual(pg.records, {})
         self.assertTrue(pg.connected and pg.closed)
         self.assertFalse(any(sql.startswith(("CREATE", "INSERT")) for sql, _ in pg.calls))
@@ -288,8 +341,8 @@ class ObjectRelationCliTests(unittest.TestCase):
         pg, output = MetadataPg(), io.StringIO()
         with patch.object(self.tool, "get_pg_client", return_value=pg), patch("sys.argv", ["object_relations.py", "--apply", "--seed-file", str(self.seed_file)]), redirect_stdout(output):
             self.assertEqual(self.tool.main(), 0)
-        self.assertEqual(len(pg.records), 4)
+        self.assertEqual(len(pg.records), 29)
         output = io.StringIO()
         with patch.object(self.tool, "get_pg_client", return_value=pg), patch("sys.argv", ["object_relations.py", "--check", "--seed-file", str(self.seed_file)]), redirect_stdout(output):
             self.assertEqual(self.tool.main(), 0)
-        self.assertEqual(len(json.loads(output.getvalue())["changes"]["unchanged"]), 4)
+        self.assertEqual(len(json.loads(output.getvalue())["changes"]["unchanged"]), 29)

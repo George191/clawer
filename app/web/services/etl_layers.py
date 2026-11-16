@@ -201,7 +201,6 @@ class EtlLayers:
             n.nspname || '.' || c.relname || ' ' || {_OBJECT_DESCRIPTION_SQL})) > 0"""
         if schema:
             params["schema"] = _object_schema(schema)
-            where += " AND n.nspname = :schema"
         if ids:
             identifiers = list(dict.fromkeys(ids.split(",")))
             if len(identifiers) > 200:
@@ -214,17 +213,24 @@ class EtlLayers:
                 quote_identifier(parts[1])
             params["ids"] = identifiers
             where += " AND n.nspname || '.' || c.relname = ANY(CAST(:ids AS text[]))"
+        facet_where = where
+        if schema:
+            where += " AND n.nspname = :schema"
         async with self.session() as session:
             await self._require_ontology(session)
             counts = await session.execute(text(f"""
                 SELECT n.nspname AS schema, {_OBJECT_GROUP_SQL} AS resource_group, count(*) AS count
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 {_OBJECT_METADATA_JOIN}
-                WHERE {where} GROUP BY n.nspname, {_OBJECT_GROUP_SQL} ORDER BY n.nspname
+                WHERE {facet_where} GROUP BY n.nspname, {_OBJECT_GROUP_SQL} ORDER BY n.nspname
             """), params)
             schema_counts: dict[str, int] = {}
             group_counts = dict.fromkeys(_OBJECT_GROUPS, 0)
+            group_schema_counts: dict[str, dict[str, int]] = {key: {} for key in _OBJECT_GROUPS}
             for row in counts.mappings():
+                group_schema_counts[row["resource_group"]][row["schema"]] = int(row["count"])
+                if schema and row["schema"] != params["schema"]:
+                    continue
                 schema_counts[row["schema"]] = schema_counts.get(row["schema"], 0) + int(row["count"])
                 group_counts[row["resource_group"]] += int(row["count"])
             total = group_counts[group] if group else sum(schema_counts.values())
@@ -234,7 +240,7 @@ class EtlLayers:
             rows = await self._object_rows(session, where, params) if offset < total else []
         return {"items": [_object_summary(row) for row in rows], "total": total,
                 "limit": limit, "offset": offset, "schemaCounts": schema_counts,
-                "groupCounts": group_counts}
+                "groupCounts": group_counts, "groupSchemaCounts": group_schema_counts}
 
     async def preview(self, layer: str, table: str) -> dict[str, Any]:
         schema = _object_schema(layer)
