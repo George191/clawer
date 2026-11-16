@@ -413,12 +413,16 @@ class EtlWorkspace:
 
     async def create_table(self, layer: str, payload: dict[str, Any]) -> dict[str, Any]:
         schema = resolve_schema(layer)
+        data_type = payload.get("dataType")
+        if not isinstance(data_type, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", data_type):
+            _bad("Data type must be a lowercase identifier of 1 to 63 characters")
         statements = build_table_statements(schema, payload)
         async with self._session() as session:
             await self._schema_exists(session, schema)
             for statement in statements:
                 await session.execute(text(statement.replace(":", r"\:")))
             await sync_object_metadata(session, schema, payload["name"],
+                data_type=data_type, data_type_source="registration",
                 provenance="flow:create_table", description=payload.get("description") or (payload.get("options") or {}).get("comment"),
                 ddl_sql=";\n".join(statements) + ";\n")
         return await self._layers.get_table(schema, payload["name"])

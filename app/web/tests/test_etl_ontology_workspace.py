@@ -105,7 +105,7 @@ def workspace():
     return instance
 
 
-PAYLOAD = {"name": "created", "description": "Created through Flow", "fields": [
+PAYLOAD = {"name": "created", "dataType": "company", "description": "Created through Flow", "fields": [
     {"name": "id", "type": "BIGINT", "primary": True, "nullable": False},
     {"name": "name", "type": "TEXT", "comment": "Display text"}]}
 
@@ -121,6 +121,8 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn((schema, table), pg.state["tables"])
             self.assertEqual(kwargs["provenance"], "flow:create_table")
             self.assertEqual(kwargs["description"], PAYLOAD["description"])
+            self.assertEqual(kwargs["data_type"], "company")
+            self.assertEqual(kwargs["data_type_source"], "registration")
             self.assertIn('CREATE TABLE "ts_custom"."created"', kwargs["ddl_sql"])
             self.assertIn('"id" BIGINT NOT NULL', kwargs["ddl_sql"])
             pg.state["objects"][(schema, table)] = {"id": 3}
@@ -132,6 +134,21 @@ class OntologyWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(pg.active)
         self.assertIn(("ts_custom", "created"), pg.state["objects"])
         instance._layers.get_table.assert_awaited_once_with("ts_custom", "created")
+
+    async def test_create_table_rejects_missing_or_invalid_data_type_before_ddl(self):
+        for value in [None, "", " ", "Company", "company-name", "a" * 64, 1, [], "company;DROP TABLE users"]:
+            with self.subTest(value=value):
+                instance = workspace()
+                before = deepcopy(instance._pg.state)
+                payload = {**PAYLOAD, "dataType": value}
+                with patch("app.web.services.etl_workspace.sync_object_metadata", new=AsyncMock()) as synchronize:
+                    with self.assertRaises(HTTPException) as error:
+                        await instance.create_table("custom", payload)
+                self.assertEqual(error.exception.status_code, 422)
+                synchronize.assert_not_awaited()
+                self.assertEqual(instance._pg.state, before)
+                self.assertEqual((instance._pg.commits, instance._pg.rollbacks), (0, 0))
+                instance._layers.get_table.assert_not_awaited()
 
     async def test_sync_failure_rolls_back_ddl_and_partial_metadata(self):
         instance = workspace()

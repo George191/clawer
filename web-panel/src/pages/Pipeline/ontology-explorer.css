@@ -1,5 +1,5 @@
 /* Compact Object Explorer; colors follow the application theme. */
-.flow-ontology, .flow-ontology__select, .flow-ontology__select-popup {
+.flow-ontology, .flow-ontology__select, .flow-ontology__select-popup, .flow-create-modal, .flow-connections, .flow-create-confirmation {
   --ontology-bg: var(--ui-bg, #1b1e27);
   --ontology-surface: var(--ui-panel, #242836);
   --ontology-elevated: var(--ui-elevated, #2a2e3a);

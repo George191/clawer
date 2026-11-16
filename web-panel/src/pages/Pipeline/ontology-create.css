@@ -1,0 +1,105 @@
+.flow-create-modal, .flow-connections { color: var(--ontology-text); font: 400 12px/18px var(--ontology-font); }
+.flow-create-modal .ui-modal-content, .flow-connections .ui-modal-content { border: 1px solid var(--ontology-border-hover); border-radius: 4px; background: var(--ontology-surface); box-shadow: 0 8px 40px rgb(0 0 0 / 35%); }
+.flow-create-modal .ui-modal-header, .flow-connections .ui-modal-header { padding: 18px 22px 14px; border-bottom: 1px solid var(--ontology-border); }
+.flow-create-modal .ui-modal-title, .flow-connections .ui-modal-title { font-size: 14px; font-weight: 500; }
+.flow-create-modal .ui-modal-body, .flow-connections .ui-modal-body { padding: 0; }
+.flow-create-modal .ui-modal-footer { display: flex; align-items: center; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--ontology-border); }
+.flow-create-modal :is(button,input):focus-visible, .flow-connections :is(button,input):focus-visible { outline: 2px solid var(--ontology-border-hover); outline-offset: 2px; }
+.flow-create-modal .ui-input:focus, .flow-connections .ui-input:focus { border-color: var(--ontology-border-hover); outline: none; box-shadow: none; }
+.flow-create-modal .ui-input, .flow-connections .ui-input { border-radius: 3px; background: var(--ontology-bg); font: inherit; }
+.flow-create-modal .ui-checkbox-wrapper { gap: 5px; font-size: 12px; }
+.flow-create-modal .ui-checkbox-input:focus-visible + .ui-checkbox-inner { outline-color: var(--ontology-border-hover); }
+.flow-create-modal .ui-btn, .flow-connections .ui-btn { min-height: 30px; border-radius: 3px; font-size: 12px; }
+.flow-create-steps { display: flex; gap: 4px; margin: 0; padding: 16px 22px; border-bottom: 1px solid var(--ontology-border); list-style: none; background: var(--ontology-bg); }
+.flow-create-steps > * { flex: 1; min-width: 0; }
+.flow-create-steps > li { display: flex; align-items: center; gap: 8px; min-height: 32px; color: var(--ontology-muted); font-size: 12px; }
+.flow-create-steps .is-current { color: var(--ontology-text); }
+.flow-create-steps .is-complete { color: var(--ontology-muted); }
+.flow-create-steps > li > span:first-child { display: inline-grid; flex: none; place-items: center; width: 22px; height: 22px; border: 1px solid var(--ontology-border-hover); border-radius: 50%; font-size: 11px; }
+.flow-create-steps > li.is-current > span:first-child { background: var(--ontology-elevated); color: var(--ontology-text); }
+.flow-create-modal .flow-create-step { max-height: calc(100dvh - 280px); overflow: auto; overscroll-behavior: contain; }
+.flow-create-section { padding: 20px 22px; }
+.flow-create-section + .flow-create-section { border-top: 1px solid var(--ontology-border); }
+.flow-create-heading { margin-bottom: 18px; }
+.flow-create-heading h3 { margin: 0 0 5px; color: var(--ontology-text); font-size: 13px; font-weight: 500; }
+.flow-create-heading p, .flow-create-help { margin: 5px 0 0; color: var(--ontology-muted); font-size: 12px; line-height: 18px; }
+.flow-create-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 20px; }
+.flow-create-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--ontology-text); font-size: 12px; }
+.flow-create-field.is-wide { grid-column: 1 / -1; }
+.flow-create-field > .ui-select { width: 100%; }
+.flow-create-error { margin: 12px 22px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--ui-error, #ec9da7) 35%, transparent); border-radius: 3px; background: color-mix(in srgb, var(--ui-error, #ec9da7) 6%, var(--ontology-surface)); color: var(--ui-error, #ec9da7); font-size: 12px; }
+.flow-create-table { width: 100%; overflow: auto; }
+.flow-create-table .ui-table { min-width: 850px; background: var(--ontology-surface); }
+.flow-create-table .ui-table-thead > tr > th { padding: 8px; background: var(--ontology-elevated); color: var(--ontology-muted); font-size: 11px; font-weight: 400; white-space: nowrap; }
+.flow-create-table .ui-table-tbody > tr > td { padding: 6px 8px; border-color: var(--ontology-border); font-size: 12px; }
+.flow-create-table .ui-select { min-width: 100px; width: 100%; }
+.flow-create-table .ui-input { min-width: 70px; }
+.flow-create-row-actions { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.flow-create-row-actions button { display: inline-grid; place-items: center; min-width: 26px; min-height: 28px; padding: 3px; }
+.flow-create-advanced { margin: 0 22px 20px; border: 1px solid var(--ontology-border); border-radius: 3px; }
+.flow-create-advanced > summary { padding: 11px 12px; color: var(--ontology-muted); font-size: 12px; cursor: pointer; }
+.flow-create-advanced[open] > summary { border-bottom: 1px solid var(--ontology-border); color: var(--ontology-text); }
+.flow-create-advanced .flow-create-section { padding: 16px; }
+.flow-create-advanced .flow-create-grid { margin: 12px 0 18px; padding: 12px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-bg); }
+.flow-create-summary { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 10px 16px; margin: 0 0 20px; }
+.flow-create-summary dt { color: var(--ontology-muted); }
+.flow-create-summary dd { margin: 0; overflow-wrap: anywhere; }
+.flow-create-review-table .ui-table { min-width: 560px; }
+.flow-connections__layout { display: flex; height: min(590px, calc(100dvh - 260px)); min-height: 300px; }
+.flow-connections__sidebar { display: flex; flex: 0 0 260px; flex-direction: column; gap: 12px; min-width: 0; padding: 18px 14px; border-right: 1px solid var(--ontology-border); background: var(--ontology-bg); }
+.flow-connections__toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.flow-connections__toolbar h3 { margin: 0; font-size: 13px; font-weight: 500; }
+.flow-connections__toolbar h3 small { margin-left: 4px; color: var(--ontology-muted); font-size: 11px; font-weight: 400; }
+.flow-connections__list { display: flex; flex: 1; flex-direction: column; gap: 4px; min-height: 0; overflow: auto; }
+.flow-connections__item { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 50px; padding: 9px; border: 1px solid transparent; border-radius: 3px; background: none; color: var(--ontology-muted); text-align: left; cursor: pointer; }
+.flow-connections__item:hover { background: var(--ontology-elevated); }
+.flow-connections__item.is-active { border-color: var(--ontology-border-hover); background: var(--ontology-elevated); color: var(--ontology-text); }
+.flow-connections__item > span { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.flow-connections__item strong { overflow: hidden; color: var(--ontology-text); font-size: 12px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.flow-connections__item small, .flow-connections__eyebrow { color: var(--ontology-muted); font-size: 11px; }
+.flow-connections__content { flex: 1; min-width: 0; padding: 22px; overflow: auto; overscroll-behavior: contain; }
+.flow-connections__section { margin: 20px 0; }
+.flow-connections__section h3, .flow-connections__section h4 { margin: 0 0 8px; font-size: 13px; font-weight: 500; }
+.flow-connections__section p, .flow-connections__help { margin: 6px 0 12px; color: var(--ontology-muted); font-size: 12px; line-height: 18px; }
+.flow-connections__form { display: flex; flex-direction: column; gap: 18px; }
+.flow-connections__form fieldset { display: flex; flex-direction: column; gap: 16px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.flow-connections__field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.flow-connections__schema-input { display: flex; gap: 8px; }
+.flow-connections__chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.flow-connections__chips > span { display: inline-flex; align-items: center; gap: 8px; padding: 3px 6px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-elevated); color: var(--ontology-muted); font-size: 11px; }
+.flow-connections__chips button { display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
+.flow-connections__schema-list { display: flex; flex-direction: column; gap: 4px; }
+.flow-connections__schema-list button, .flow-connections__type { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-bg); color: var(--ontology-text); text-align: left; cursor: pointer; }
+.flow-connections__schema-list button:hover, .flow-connections__type:hover { border-color: var(--ontology-border-hover); background: var(--ontology-elevated); }
+.flow-connections__type { width: 100%; margin-top: 16px; }
+.flow-connections__type > span { display: flex; flex-direction: column; gap: 4px; }
+.flow-connections__type strong { font-size: 13px; font-weight: 500; }
+.flow-connections__type small { color: var(--ontology-muted); font-size: 12px; }
+.flow-connections__empty { margin: 20px 0; color: var(--ontology-muted); font-size: 12px; line-height: 18px; }
+.flow-connections__empty h3 { color: var(--ontology-text); font-size: 14px; font-weight: 500; }
+.flow-connections__feedback { display: flex; align-items: center; gap: 8px; margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-bg); color: var(--ontology-muted); font-size: 12px; }
+.flow-connections__feedback.is-error { color: var(--ui-error, #ec9da7); }
+.flow-connections__feedback.is-success { color: var(--ui-success, #79c9a5); }
+.flow-connections__footer, .flow-connections__dialog-footer { display: flex; justify-content: flex-end; gap: 8px; }
+.flow-connections__dialog-footer { padding: 12px 22px; border-top: 1px solid var(--ontology-border); }
+@media (max-width: 1150px) { .flow-ontology__topbar { flex-wrap: wrap; } .flow-ontology__search { flex-basis: 100%; } }
+@media (max-width: 700px) {
+  .flow-create-modal .ui-modal-header, .flow-connections .ui-modal-header { padding: 16px; }
+  .flow-create-section { padding: 16px; }
+  .flow-create-steps { padding: 12px 16px; }
+  .flow-create-grid { grid-template-columns: minmax(0, 1fr); }
+  .flow-create-summary { grid-template-columns: 100px minmax(0, 1fr); }
+  .flow-create-modal .flow-create-step { max-height: calc(100dvh - 250px); }
+  .flow-connections__layout { flex-direction: column; height: min(650px, calc(100dvh - 230px)); min-height: 260px; }
+  .flow-connections__sidebar { flex: 0 0 auto; max-height: 190px; padding: 12px 16px; border-right: 0; border-bottom: 1px solid var(--ontology-border); }
+  .flow-connections__content { padding: 16px; }
+}
+
+.flow-create-modal .ui-modal-footer > .ui-btn:first-child { margin-right: auto; }
+
+.flow-create-confirmation .ui-modal-content { border: 1px solid var(--ontology-border-hover); border-radius: 4px; background: var(--ontology-surface); font: 400 12px/18px var(--ontology-font); }
+.flow-create-confirmation .ui-modal-header { padding: 18px 22px 12px; border-bottom: 1px solid var(--ontology-border); }
+.flow-create-confirmation .ui-modal-title { font-size: 14px; font-weight: 500; }
+.flow-create-confirmation .ui-modal-body { padding: 18px 22px; }
+.flow-create-confirmation .ui-modal-footer { padding: 12px 22px; border-top: 1px solid var(--ontology-border); }
+.flow-create-field > small { color: var(--ontology-muted); font-size: 11px; font-weight: 400; }

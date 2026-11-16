@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Checkbox, Drawer, Modal, Select, Tooltip } from '@/components/ui';
+import { Checkbox, Drawer, Select, Tooltip } from '@/components/ui';
 import {
   ApartmentOutlined, AppstoreOutlined, ArrowRightOutlined, BarsOutlined,
   CloseOutlined, DatabaseOutlined, EyeOutlined, InfoCircleOutlined,
@@ -8,10 +8,13 @@ import {
 } from '@/components/ui/icons';
 import { fetchCurrentUserContext, fetchEtlObjectFavorites, fetchEtlObjectPreview, fetchEtlObjectTypes, fetchLayers, importEtlObjectFavorites, updateEtlObjectFavorite, updateEtlObjectVisibility } from '../../services/api';
 import { getSessionState } from '../../services/session';
-import type { EtlObjectCatalog, EtlObjectPreview, EtlObjectType, EtlObjectVisibility } from '../../services/types';
+import type { EtlObjectCatalog, EtlObjectPreview, EtlObjectType, EtlObjectVisibility, LayerNode } from '../../services/types';
 import { layerColors } from '../../theme/tokens';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
+import NewObjectType from './NewObjectType';
+import DataConnections from './DataConnections';
 import './ontology-explorer.css';
+import './ontology-create.css';
 
 type Group = 'all' | 'favorites' | 'ingestion' | 'processing' | 'serving' | 'other';
 const groups: Array<{ key: Group; label: string }> = [
@@ -88,13 +91,14 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
-  const [schemaNames, setSchemaNames] = useState<string[]>([]);
+  const [creationSchemas, setCreationSchemas] = useState<LayerNode[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [currentUserId, setCurrentUserId] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const includeHidden = canManage && showHidden;
   const [createOpen, setCreateOpen] = useState(false);
   const [createSchema, setCreateSchema] = useState<string>();
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [favoriteState, setFavoriteState] = useState<{ userId: string; ids: string[] }>({ userId: '', ids: [] });
   const favorites = favoriteState.userId === currentUserId ? favoriteState.ids : [];
   const favoriteReady = !!currentUserId && favoriteState.userId === currentUserId;
@@ -131,7 +135,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     let active = true;
     Promise.allSettled([fetchLayers(), fetchCurrentUserContext()]).then(([layers, context]) => {
       if (!active || getSessionState().identity !== sessionIdentity) return;
-      if (layers.status === 'fulfilled') setSchemaNames(layers.value.filter((item) => item.status === 'running').map((item) => item.schemaName || (item.key.startsWith('ts_') ? item.key : `ts_${item.key}`)).filter((name) => !['ts_meta', 'ts_meta_hist'].includes(name)));
+      if (layers.status === 'fulfilled') setCreationSchemas(layers.value.filter((item) => item.status === 'running').map((item) => ({ ...item, key: item.schemaName || (item.key.startsWith('ts_') ? item.key : `ts_${item.key}`) })).filter((item) => !['ts_meta', 'ts_meta_hist'].includes(item.key)));
       if (context.status === 'fulfilled') { setCanManage(!!context.value.user.is_superuser); setCurrentUserId(context.value.user.id); }
       else setFavoriteError('Unable to load your account. Retry to load saved favorites.');
     });
@@ -328,8 +332,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   };
   const startNewObject = () => {
     const destination = source || selectedSchema;
-    if (destination && schemaNames.includes(destination)) navigate(`/flow/layers?${new URLSearchParams({ schema: destination, create: 'table' })}`);
-    else { setCreateSchema(undefined); setCreateOpen(true); }
+    setCreateSchema(creationSchemas.some((item) => item.key === destination) ? destination : undefined);
+    setCreateOpen(true);
   };
   useEffect(() => {
     const query = window.matchMedia('(max-width: 1150px)');
@@ -404,7 +408,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           <div className="flow-ontology__view-switch" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
           {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
           <span className="flow-ontology__summary">{number(catalog.total)} object types</span>
-          {canManage && <button type="button" className="flow-ontology__button" disabled={!schemaNames.length} onClick={startNewObject}><PlusOutlined />New object type</button>}
+          {canManage && <><button type="button" className="flow-ontology__button" onClick={() => setConnectionsOpen(true)}><DatabaseOutlined />New data connector</button><button type="button" className="flow-ontology__button" disabled={!creationSchemas.length} onClick={startNewObject}><PlusOutlined />New object type</button></>}
         </div>
       </header>
       <div className="flow-ontology__body">
@@ -470,6 +474,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       </div>
       <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>
     </aside></Drawer>
-    <Modal className="flow-surface-modal" title="Choose a schema" open={createOpen} onCancel={() => setCreateOpen(false)} okText="Continue" okButtonProps={{ disabled: !createSchema }} onOk={() => { if (createSchema) { setCreateOpen(false); navigate(`/flow/layers?${new URLSearchParams({ schema: createSchema, create: 'table' })}`); } }}><p>Choose where to create the new object type. The existing data table editor opens next.</p><Select className="flow-ontology__select" aria-label="New object type schema" popupClassName="flow-ontology__select-popup" placeholder="Select a schema" value={createSchema} onChange={setCreateSchema} options={schemaNames.map((schema) => ({ value: schema, label: schema }))} style={{ width: '100%' }} /></Modal>
+    {createOpen && canManage && <NewObjectType schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setCreateOpen(false)} onCreated={(schema, table) => { setCreateOpen(false); setVersion((value) => value + 1); updateQuery({ q: null, group: null, source: null, schema, table: table.name, tab: null }); }} />}
+    {connectionsOpen && canManage && <DataConnections onCancel={() => setConnectionsOpen(false)} onChanged={() => { setVersion((value) => value + 1); updateQuery({ source: null, schema: null, table: null, tab: null }); }} />}
   </div>;
 }
