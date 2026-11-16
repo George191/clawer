@@ -153,9 +153,9 @@
 .flow-ontology__visibility-badge.is-unconfigured { color: var(--ontology-muted); }
 .flow-ontology__property-list, .flow-ontology__linked-list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
 .flow-ontology__property-row { display: flex; flex: none; align-items: center; gap: 5px; width: 100%; height: 30px; min-height: 30px; padding: 0; border: 0; background: none; color: var(--ontology-text); text-align: left; font-size: 13px; line-height: 18px; }
-.flow-ontology__property-icon { display: inline-flex; flex: 0 0 16px; align-items: center; justify-content: center; width: 16px; height: 16px; margin-right: 1px; border: 1px solid var(--ontology-border); border-radius: 2px; background: var(--ontology-elevated); color: var(--ontology-muted); font-size: 8px; font-weight: 400; line-height: 12px; }
-.flow-ontology__property-icon > svg { display: block; width: 12px; height: 12px; }
-.flow-ontology__property-icon .ui-icon, .flow-ontology__property-icon .ui-icon svg { width: 12px; height: 12px; font-size: 12px; line-height: 1; }
+.flow-ontology__property-icon { display: inline-flex; flex: 0 0 16px; align-items: center; justify-content: center; width: 16px; height: 16px; margin-right: 1px; border: 1px solid var(--ontology-border-hover); border-radius: 2px; background: color-mix(in srgb, var(--ontology-text) 12%, var(--ontology-elevated)); color: color-mix(in srgb, var(--ontology-text) 75%, var(--ontology-muted)); font-size: 8px; font-weight: 400; line-height: 12px; }
+.flow-ontology__property-icon > svg { display: block; width: 11px; height: 11px; }
+.flow-ontology__property-icon .ui-icon, .flow-ontology__property-icon .ui-icon svg { width: 11px; height: 11px; font-size: 11px; line-height: 1; }
 .flow-ontology__property-row > span:not(.flow-ontology__property-icon):not(.flow-ontology__property-badge) { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
 .flow-ontology__property-badge { display: inline-flex; flex: none; align-items: center; height: 20px; padding: 0 5px; border-radius: 2px; background: var(--ontology-elevated); color: var(--ontology-muted); font-size: 11px; font-weight: 400; line-height: 20px; white-space: nowrap; }
 .flow-ontology__property-badge.is-primary { background: color-mix(in srgb, #9f7aea 15%, var(--ontology-surface)); color: color-mix(in srgb, #9f7aea 82%, var(--ontology-text)); }
