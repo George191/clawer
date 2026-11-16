@@ -1,0 +1,9 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG SOURCE_COMMIT
+LABEL org.opencontainers.image.revision=${SOURCE_COMMIT}
+USER root
+COPY --from=history_src pg_worker.py /opt/sec-history/pg_worker.py
+ENV PYTHONPATH=/app
+HEALTHCHECK NONE
+ENTRYPOINT ["python"]
