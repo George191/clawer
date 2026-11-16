@@ -973,13 +973,6 @@
 .flow-data-table .ui-pagination-options .ui-select-arrow{right:6px!important;top:0!important;bottom:0!important;height:100%!important;margin:0!important;display:flex!important;align-items:center!important;justify-content:center;color:#90a0b0!important;opacity:1!important;font-size:8px;transform:none!important;pointer-events:none;line-height:1}
 .flow-data-table .ui-pagination-options .ui-select-arrow span{display:flex;align-items:center;line-height:1}
 
-/* Page size dropdown popup */
-.ui-select-dropdown{background:#1b1d22!important;border:1px solid rgba(148,163,184,.1)!important;border-radius:6px!important;box-shadow:0 8px 24px rgba(0,0,0,.45)!important;padding:3px}
-.ui-select-dropdown .ui-select-item{font-size:9px;color:#90a0b0;border-radius:4px;padding:5px 10px;line-height:1.4;min-height:22px;transition:all .1s ease}
-.ui-select-dropdown .ui-select-item:hover{background:rgba(255,255,255,.06)!important;color:#d0dae4}
-.ui-select-dropdown .ui-select-item-option-selected{background:rgba(139,130,248,.12)!important;color:#c4b5fd!important;font-weight:500}
-.ui-select-dropdown .ui-select-item-option-selected:hover{background:rgba(139,130,248,.18)!important;color:#c4b5fd!important}
-.ui-select-dropdown .ui-select-item-option-state{color:#c4b5fd}
 .flow-data-table .ui-pagination-item{min-width:22px;height:22px;display:flex!important;align-items:center;justify-content:center;border:1px solid transparent;border-radius:4px;background:transparent;color:#90a0b0;font-size:9px;cursor:pointer;transition:all .12s ease}
 .flow-data-table .ui-pagination-item a{display:flex!important;align-items:center;justify-content:center;width:100%;height:100%;line-height:1}
 .flow-data-table .ui-pagination-item:hover{background:rgba(255,255,255,.07);color:#d0dae4}
@@ -1119,9 +1112,6 @@
 .flow-td-fields-table .ui-select-multiple .ui-select-selection-item-remove{display:none!important}
 .flow-td-fields-table .ui-select-multiple .ui-select-selection-overflow-item-suffix{display:none!important}
 .flow-td-fields-table .ui-select-multiple .ui-select-selection-placeholder{color:#475569;font-size:9px}
-
-/* Select dropdown - centered items in designer tabs */
-.ui-select-dropdown .ui-select-item{display:flex;align-items:center;justify-content:center;text-align:center;font-size:9px}
 
 .flow-td-options{padding:10px 4px}
 .flow-td-options-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 16px;max-width:520px}
