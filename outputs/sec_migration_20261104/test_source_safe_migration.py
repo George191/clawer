@@ -3,6 +3,7 @@ import gzip
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -412,6 +413,130 @@ class WorkerControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["stage"], "mongo_coverage_complete")
         self.assertFalse(state["pg_only_alias_sweep_complete"])
         self.assertFalse(state["cdc_replay"])
+
+
+class PatentTailTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.plan = PlanValidationTests().plan()
+        migration.pg.atomic(self.root / "plan.json", self.plan)
+        for worker in range(6):
+            migration.pg.atomic(self.root / f"worker-{worker}.json", {
+                "plan_sha256": self.plan["plan_sha256"], "worker": worker,
+                "processed": 10, "done": True, "pending": None, "last_error": None,
+            })
+
+    async def prepare(self, tail):
+        scope = migration.pg.read(tail / "scope.json")
+        return {"workers": 6, "batch_size": 300, "guard_table": None,
+                "plan_sha256": migration.pg.sha(migration.pg.encoded(scope)),
+                "units": [{"unit": layer_number * 32 + ordinal, "schema": "ts_" + layer,
+                           "table": layer + "_patent", "ordinal": ordinal, "old": "google_patent",
+                           "new": "patent_google", "data_type": "patent"}
+                          for layer_number, layer in enumerate(("rds", "ods")) for ordinal in range(32)]}
+
+    def finish(self, args, *, incomplete=None, pending=None):
+        tail = Path(args.root)
+        plan = migration.asyncio.run(self.prepare(tail))
+        self.assertEqual(migration.pg.read(self.root / "state.json")["stage"], "pg_alias_tail")
+        for unit in plan["units"]:
+            path = tail / "checkpoints" / f"unit-{unit['unit']}.json"
+            if path.exists():
+                self.assertTrue(migration.pg.read(path)["done"])
+            migration.pg.atomic(path, {"plan_sha256": plan["plan_sha256"], "unit": unit["unit"],
+                                "done": unit["unit"] != incomplete, "pending": "pending.json" if unit["unit"] == pending else None,
+                                "last_error": None, "processed": 2})
+
+    def test_full_patent_tail_reuses_pg_six_worker_runner_and_completes_all_64_units(self):
+        with patch.object(migration.pg, "prepare", side_effect=self.prepare), \
+             patch.object(migration.pg, "main", side_effect=self.finish) as run:
+            migration.patent_alias_tail(self.root, self.plan)
+        run.assert_called_once()
+        self.assertFalse(run.call_args.args[0].prepare)
+        self.assertIsNone(run.call_args.args[0].worker)
+        state = migration.pg.read(self.root / "state.json")
+        self.assertEqual((state["stage"], state["tail_units_done"], state["tail_processed"]), ("complete", 64, 128))
+        self.assertTrue(state["pg_only_alias_sweep_complete"])
+        self.assertFalse(state["cdc_replay"])
+        self.assertFalse((self.root / "baseline-ready.json").exists())
+        scope = migration.pg.read(self.root / "pg-alias-tail" / "scope.json")
+        self.assertIsNone(scope["guard_table"])
+        self.assertEqual(scope["scopes"][0]["old"], "google_patent")
+
+    def test_incomplete_or_pending_tail_never_declares_complete(self):
+        for overrides in ({"incomplete": 63}, {"pending": 63}):
+            with self.subTest(overrides=overrides), \
+                 patch.object(migration.pg, "prepare", side_effect=self.prepare), \
+                 patch.object(migration.pg, "main", side_effect=lambda args: self.finish(args, **overrides)):
+                with self.assertRaisesRegex(RuntimeError, "tail checkpoints are incomplete"):
+                    migration.patent_alias_tail(self.root, self.plan)
+                state = migration.pg.read(self.root / "state.json")
+                self.assertEqual(state["stage"], "pg_alias_tail")
+                self.assertFalse(state["pg_only_alias_sweep_complete"])
+                for path in (self.root / "pg-alias-tail" / "checkpoints").glob("*.json"):
+                    path.unlink()
+
+    def test_tail_stop_returns_paused_without_requiring_all_units_done(self):
+        def pause(args):
+            (Path(args.root) / "STOP").touch()
+
+        with patch.object(migration.pg, "prepare", side_effect=self.prepare), \
+             patch.object(migration.pg, "main", side_effect=pause):
+            migration.patent_alias_tail(self.root, self.plan)
+        state = migration.pg.read(self.root / "state.json")
+        self.assertEqual(state["stage"], "paused")
+        self.assertIsNone(state["last_error"])
+        self.assertFalse(state["pg_only_alias_sweep_complete"])
+        self.assertFalse(state["cdc_replay"])
+
+    def test_failed_tail_keeps_journals_and_resumes_same_scope(self):
+        def fail_after_first_unit(args):
+            tail = Path(args.root)
+            plan = migration.asyncio.run(self.prepare(tail))
+            migration.pg.atomic(tail / "checkpoints" / "unit-0.json", {
+                "plan_sha256": plan["plan_sha256"], "unit": 0, "processed": 2, "done": True})
+            raise RuntimeError("tail worker failed")
+
+        with patch.object(migration.pg, "prepare", side_effect=self.prepare), \
+             patch.object(migration.pg, "main", side_effect=fail_after_first_unit):
+            with self.assertRaisesRegex(RuntimeError, "tail worker failed"):
+                migration.patent_alias_tail(self.root, self.plan)
+        scope = (self.root / "pg-alias-tail" / "scope.json").read_bytes()
+        checkpoint = (self.root / "pg-alias-tail" / "checkpoints" / "unit-0.json").read_bytes()
+        with patch.object(migration.pg, "prepare", side_effect=self.prepare), \
+             patch.object(migration.pg, "main", side_effect=self.finish):
+            migration.patent_alias_tail(self.root, self.plan)
+        self.assertEqual((self.root / "pg-alias-tail" / "scope.json").read_bytes(), scope)
+        self.assertTrue(json.loads(checkpoint)["done"])
+
+    def test_main_excludes_canary_facts_incomplete_and_failed_mongo(self):
+        scenarios = [("patent", True, False, 0), ("facts", False, False, 0),
+                     ("patent", False, True, 0), ("patent", False, False, 1)]
+        for kind, canary, incomplete, exitcode in scenarios:
+            with self.subTest(kind=kind, canary=canary, incomplete=incomplete, exitcode=exitcode):
+                plan = copy.deepcopy(self.plan)
+                if kind == "facts":
+                    plan.update(kind="facts")
+                migration.pg.atomic(self.root / "plan.json", plan)
+                for worker in range(6):
+                    migration.pg.atomic(self.root / f"worker-{worker}.json", {
+                        "processed": 13100 if kind == "facts" else 10, "done": not incomplete})
+                processes = [MagicMock(exitcode=exitcode, pid=n + 1) for n in range(6)]
+                for process in processes:
+                    process.is_alive.return_value = False
+                context = SimpleNamespace(Process=MagicMock(side_effect=processes))
+                with patch("sys.argv", ["source_safe_migration", "--root", str(self.root), *(["--canary"] if canary else [])]), \
+                     patch.object(migration, "validate_plan"), \
+                     patch.object(migration.multiprocessing, "get_context", return_value=context), \
+                     patch.object(migration, "patent_alias_tail") as tail:
+                    if exitcode:
+                        with self.assertRaisesRegex(RuntimeError, "worker failed"):
+                            migration.main()
+                    else:
+                        migration.main()
+                    tail.assert_not_called()
 
 
 if __name__ == "__main__":

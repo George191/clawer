@@ -380,7 +380,7 @@ def worker_entry(root, worker, canary=False):
     asyncio.run(worker_run(Path(root), worker, canary))
 
 
-def write_state(root, plan, canary, *, failed=False):
+def write_state(root, plan, canary, *, failed=False, last_error=None):
     states = [pg.read(root / f"worker-{worker}.json", {}) for worker in range(WORKERS)]
     processed = sum(s.get("processed", 0) for s in states)
     all_done = all(s.get("done") is True for s in states)
@@ -394,9 +394,45 @@ def write_state(root, plan, canary, *, failed=False):
              "mongo_uuid": plan["mongo_uuid"], "processed": processed, "workers_done": sum(s.get("done") is True for s in states),
              "workers": WORKERS, "page_size": PAGE_SIZE, "sql_batch_size": SQL_BATCH,
              "pg_only_alias_sweep_complete": False, "cdc_replay": False,
-             "last_error": next((s.get("last_error") for s in states if s.get("last_error")), None)}
+             "last_error": last_error or next((s.get("last_error") for s in states if s.get("last_error")), None)}
     pg.atomic(root / "state.json", value)
     return value
+
+
+def patent_alias_tail(root, plan):
+    tail = root / "pg-alias-tail"
+    scope = {"protocol": "source_safe_patent_alias_tail_v1", "mongo_plan_sha256": plan["plan_sha256"],
+             "workers": WORKERS, "batch_size": SQL_BATCH, "guard_table": None,
+             "scopes": [{"old": "google_patent", "new": "patent_google", "data_type": "patent",
+                         "relations": [{"schema": "ts_" + layer, "name": layer + "_patent", "layer": layer}
+                                       for layer in ("rds", "ods")]}]}
+    state = write_state(root, plan, False)
+    require(plan["kind"] == "patent" and state["workers_done"] == WORKERS, "patent tail requires complete Mongo ranges")
+    if (root / "STOP").exists():
+        pg.atomic(root / "state.json", {**state, "stage": "paused"})
+        return
+    pg.atomic(root / "state.json", {**state, "stage": "pg_alias_tail"})
+    pg.immutable(tail / "scope.json", pg.encoded(scope))
+    tail_plan = asyncio.run(pg.prepare(tail))
+    units = tail_plan["units"]
+    expected = {(schema, table, ordinal) for schema, table in
+                (("ts_rds", "rds_patent"), ("ts_ods", "ods_patent")) for ordinal in range(32)}
+    require(tail_plan["plan_sha256"] == pg.sha(pg.encoded(scope)) and tail_plan["workers"] == WORKERS
+            and tail_plan["batch_size"] == SQL_BATCH and tail_plan.get("guard_table") is None
+            and len(units) == 64 and {u["unit"] for u in units} == set(range(64))
+            and {(u["schema"], u["table"], u["ordinal"]) for u in units} == expected
+            and all(u["old"] == "google_patent" and u["new"] == "patent_google"
+                    and u["data_type"] == "patent" for u in units), "patent tail plan coverage differs")
+    pg.main(argparse.Namespace(root=str(tail), prepare=False, worker=None))
+    if (tail / "STOP").exists():
+        pg.atomic(root / "state.json", {**state, "stage": "paused"})
+        return
+    checkpoints = [pg.read(tail / "checkpoints" / f"unit-{u['unit']}.json", {}) for u in units]
+    require(all(cp.get("plan_sha256") == tail_plan["plan_sha256"] and cp.get("unit") == unit["unit"]
+                and cp.get("done") is True and not cp.get("pending") and not cp.get("last_error")
+                for unit, cp in zip(units, checkpoints)), "patent tail checkpoints are incomplete or differ")
+    pg.atomic(root / "state.json", {**state, "stage": "complete", "pg_only_alias_sweep_complete": True,
+              "tail_units_done": 64, "tail_processed": sum(cp.get("processed", 0) for cp in checkpoints)})
 
 
 def prepare_plan(root, kind, manifest_path=None):
@@ -482,9 +518,11 @@ def main():
             for process in processes:
                 process.join(timeout=0.2)
         require(all(process.exitcode == 0 for process in processes), "worker failed; preserve checkpoints")
-        write_state(root, plan, args.canary)
-    except BaseException:
-        write_state(root, plan, args.canary, failed=True)
+        state = write_state(root, plan, args.canary)
+        if plan["kind"] == "patent" and not args.canary and state["workers_done"] == WORKERS:
+            patent_alias_tail(root, plan)
+    except BaseException as error:
+        write_state(root, plan, args.canary, failed=True, last_error=type(error).__name__)
         raise
     finally:
         for process in processes:
