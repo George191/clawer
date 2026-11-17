@@ -42,6 +42,12 @@ from .embedding import (
     Embedding, EmbeddingBase, EmbeddingCreate, EmbeddingOut, EmbeddingUpdate
 )
 
+from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
+from .ontology_runtime import (
+    OntologyActionEvent as OntologyActionEvent,
+    OntologyRuntimeRecord as OntologyRuntimeRecord,
+)
+
 from pydantic import EmailStr, field_validator
 from sqlmodel import Field, SQLModel
 

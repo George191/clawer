@@ -30,7 +30,6 @@ fileConfig(config.config_file_name)
 # target_metadata = None
 
 from app.web.api.models import SQLModel
-from app.web.api.models import ontology_registry, ontology_runtime  # noqa: F401
 from app.web.core.config import settings # noqa
 
 target_metadata = SQLModel.metadata
