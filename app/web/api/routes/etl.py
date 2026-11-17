@@ -61,6 +61,8 @@ from app.web.api.models.etl import (
     KeywordVersion,
     OffsetUpdate,
     ObjectVisibility,
+    PreviewIndexCoverage,
+    PreviewIndexCoverageRequest,
     PreviewRowsQuery,
     SqlQuery,
 )
@@ -119,6 +121,7 @@ from app.web.services import etl_runtime
 from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
+from app.web.services.preview_index_coverage import preview_index_coverage
 from app.web.services.transfer_observed_lineage import observed_transfer_lineage
 from app.web.services.transfer_plans import list_transfer_plans, preflight_transfer_plan, save_transfer_plan
 from app.web.services.transfer_runs import (
@@ -895,6 +898,17 @@ async def object_preview(layer: str, table: str, includeHidden: bool = False,
     if includeHidden:
         return await get_etl_layers().preview(layer, table, include_hidden=True)
     return await get_etl_layers().preview(layer, table)
+
+
+@read.post("/{schema}/{table}/preview-index-coverage")
+async def get_preview_index_coverage(
+    schema: WarehouseSchema, table: TableName, payload: PreviewIndexCoverageRequest, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PreviewIndexCoverage:
+    if request.query_params:
+        raise HTTPException(422, "Index coverage accepts only the field and operator body")
+    response.headers["Cache-Control"] = "no-store"
+    return await preview_index_coverage(session, schema, table, payload)
 
 
 @write.get("/{schema}/{table}/lineage-observed")

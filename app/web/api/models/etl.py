@@ -58,3 +58,16 @@ class FavoriteMutation(BaseModel):
 class FavoriteImport(BaseModel):
     model_config = ConfigDict(extra="forbid")
     ids: list[str] = Field(max_length=200)
+
+
+class PreviewIndexCoverageRequest(BaseModel):
+    """One catalog-only atomic filter shape: never accept values or SQL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(strict=True, pattern=r"^[a-z_][a-z0-9_]{0,62}$")
+    operator: Literal["eq", "lt", "lte", "gt", "gte", "between"]
+
+
+class PreviewIndexCoverage(BaseModel):
+    state: Literal["candidate", "no_candidate", "unsupported", "unavailable"]

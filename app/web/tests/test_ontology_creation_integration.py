@@ -2,6 +2,7 @@
 
 import os
 import unittest
+from uuid import uuid4
 from copy import deepcopy
 from unittest.mock import patch
 
@@ -12,8 +13,10 @@ from sqlalchemy.engine import make_url
 from app.etl.schema import ontology
 from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL_STATEMENTS
 from app.storage.postgres_client import PostgresClient
+from app.web.api.models.etl import PreviewIndexCoverageRequest
 from app.web.services.etl_layers import EtlLayers
 from app.web.services.etl_workspace import EtlWorkspace
+from app.web.services.preview_index_coverage import preview_index_coverage
 
 
 URL = os.environ.get("ONTOLOGY_TEST_DATABASE_URL")
@@ -76,6 +79,59 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         return {**deepcopy(PAYLOAD), "relations": [{"name": "firms_company", "targetSchema": TARGET_SCHEMA,
             "targetTable": "companies", "sourceFields": ["record_id"], "targetFields": ["record_id"],
             "cardinality": "many_to_one", "description": "Parent company"}]}
+
+    async def test_index_coverage_uses_only_visible_native_leading_keys_and_column_privileges(self):
+        role = "helio_coverage_" + uuid4().hex[:12]
+        async with self.pg.session() as session:
+            for sql in (
+                f"CREATE DOMAIN {SCHEMA}.test_id AS bigint",
+                f"""CREATE TABLE {SCHEMA}.shape (
+                    id bigint PRIMARY KEY, second_key date, happened_at timestamptz, local_time timestamp,
+                    partial_key int, included int, expression_key int, plain int, code text, code_id {SCHEMA}.test_id
+                )""",
+                f"CREATE INDEX ON {SCHEMA}.shape (id, second_key) INCLUDE (included)",
+                f"CREATE INDEX ON {SCHEMA}.shape (happened_at DESC)",
+                f"CREATE INDEX ON {SCHEMA}.shape (partial_key) WHERE partial_key > 0",
+                f"CREATE INDEX ON {SCHEMA}.shape ((expression_key + 1))",
+                f"CREATE INDEX ON {SCHEMA}.shape (plain, (expression_key + 1))",
+                f"CREATE INDEX ON {SCHEMA}.shape (code_id)",
+                f"CREATE ROLE {role} NOLOGIN",
+                f"GRANT SELECT ON public.ontology_objects TO {role}",
+                f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
+                f"GRANT SELECT (id) ON {SCHEMA}.shape TO {role}",
+            ):
+                await session.execute(text(sql))
+
+        async def cleanup():
+            await self.pg.execute(f"DROP OWNED BY {role}")
+            await self.pg.execute(f"DROP ROLE {role}")
+
+        self.addAsyncCleanup(cleanup)
+
+        async def probe(field, operator="eq", as_reader=False, table="shape"):
+            async with self.pg.session() as session:
+                if as_reader:
+                    await session.execute(text(f"SET LOCAL ROLE {role}"))
+                return (await preview_index_coverage(session, SCHEMA, table, PreviewIndexCoverageRequest(
+                    field=field, operator=operator,
+                ))).state
+
+        for operator in ("eq", "lt", "lte", "gt", "gte", "between"):
+            self.assertEqual(await probe("id", operator), "candidate")
+        self.assertEqual(await probe("happened_at", "between"), "candidate")
+        for field in ("second_key", "partial_key", "included", "expression_key", "plain"):
+            self.assertEqual(await probe(field), "no_candidate", field)
+        for field in ("local_time", "code", "code_id"):
+            self.assertEqual(await probe(field), "unsupported", field)
+        self.assertEqual(await probe("id", as_reader=True), "candidate")
+        self.assertEqual(await probe("happened_at", as_reader=True), "unavailable")
+        self.assertEqual(await probe("absent", as_reader=True), "unavailable")
+        await self.workspace.set_object_visibility(SCHEMA, "shape", "hidden", "fixture")
+        for name in ("shape", "absent"):
+            with self.assertRaises(HTTPException) as error:
+                await probe("id", table=name)
+            self.assertEqual((error.exception.status_code, error.exception.detail),
+                             (404, "Table does not exist in this schema"))
 
     async def test_lineage_neighbors_are_direct_typed_visible_and_bounded(self):
         await self.workspace.create_table(SCHEMA, await self.relation_payload())

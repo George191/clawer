@@ -330,3 +330,5 @@ button.flow-ontology__linked-row:hover { background: var(--ontology-elevated); }
   .flow-console--ontology .flow-ontology button:focus-visible, .flow-ontology input:focus-visible, .flow-ontology select:focus-visible { outline-color: Highlight; }
   .flow-ontology__asset, .flow-ontology__search, .flow-ontology__inspector { border-color: CanvasText; }
 }
+.flow-filter-index-coverage{display:flex;align-items:center;flex-wrap:wrap;gap:5px 8px;margin:7px 0}
+.flow-filter-index-coverage p{width:100%;margin:0;color:var(--ontology-muted);font-size:11px}

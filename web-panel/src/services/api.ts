@@ -1206,3 +1206,11 @@ export type ObservedTableLineage = {
 export const fetchObservedTableLineage = (source: TableLineageIdentity, direction: TableLineageDirection, signal?: AbortSignal): Promise<ObservedTableLineage> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-observed`, { params: { direction }, signal })
     .then(r => unwrap<ObservedTableLineage>(r.data));
+
+export type PreviewIndexCoverageOperator = 'eq' | 'lt' | 'lte' | 'gt' | 'gte' | 'between';
+export type PreviewIndexCoverageState = 'candidate' | 'no_candidate' | 'unsupported' | 'unavailable';
+export const checkPreviewIndexCoverage = (
+  schema: string, table: string, request: { field: string; operator: PreviewIndexCoverageOperator }, signal?: AbortSignal,
+): Promise<{ state: PreviewIndexCoverageState }> =>
+  client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview-index-coverage`,
+    { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));

@@ -496,6 +496,23 @@ class ObjectRouteTests(unittest.TestCase):
                                               json={"limit": 101, "offset": 2001}).status_code, 200)
             self.assertFalse(instance.data.await_args.kwargs)
 
+    def test_filter_index_coverage_request_never_accepts_values_or_sql(self):
+        url = "/api/v1/etl/ts_ods/objects/preview-index-coverage"
+        with patch.object(etl, "preview_index_coverage", new=AsyncMock(return_value={"state": "candidate"})) as advisory:
+            for data in (
+                {"field": "id", "operator": "eq", "value": 3},
+                {"field": "id", "operator": "in"},
+                {"field": "id OR TRUE", "operator": "eq"},
+                {"field": "id", "operator": "eq", "sort": "ASC"},
+            ):
+                self.assertEqual(self.client.post(url, json=data).status_code, 422)
+            self.assertEqual(self.client.post(url + "?value=3", json={"field": "id", "operator": "eq"}).status_code, 422)
+            advisory.assert_not_called()
+            response = self.client.post(url, json={"field": "id", "operator": "eq"})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json(), {"state": "candidate"})
+            self.assertEqual(response.headers["cache-control"], "no-store")
+
     def test_lineage_path_routes_require_exact_query_shape_before_service(self):
         root = "/api/v1/etl/ts_ods/objects"
         path = root + "/lineage-path"
