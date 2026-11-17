@@ -16,6 +16,7 @@ from app.web.api.models.etl import (
     KeywordVersion,
     OffsetUpdate,
     ObjectVisibility,
+    PreviewRowsQuery,
     SqlQuery,
 )
 from app.web.api.models.data_connections import DataConnectionPayload
@@ -220,6 +221,11 @@ async def unfavorite_object(layer: str, table: str, payload: FavoriteMutation | 
 @read.post("/{layer}/{table}/data")
 async def filtered_data(layer: str, table: str, payload: DataQuery) -> dict[str, Any]:
     return await get_etl_layers().data(layer, table, payload.model_dump())
+
+
+@read.post("/{layer}/{table}/preview-rows")
+async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery) -> dict[str, Any]:
+    return await get_etl_layers().data(layer, table, payload.model_dump(), preview_rows=True)
 
 
 @write.patch("/{layer}/{table}/rows")

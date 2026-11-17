@@ -241,6 +241,12 @@ export interface QueryResult {
   elapsed: number;
 }
 
+export interface ExplorerPreviewResult extends Omit<QueryResult, 'total' | 'totalEstimated'> {
+  hasMore: boolean;
+  canPageFurther: boolean;
+  stableOrder: boolean;
+}
+
 export interface HandlerCode {
   layer: string;
   table: string;

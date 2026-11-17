@@ -7,6 +7,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+PREVIEW_ROWS_MAX_LIMIT = 100
+PREVIEW_ROWS_MAX_OFFSET = 2000
+
+
 class DataQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     limit: int = Field(default=50, ge=1, le=500)
@@ -15,6 +19,11 @@ class DataQuery(BaseModel):
     search: str = Field(default="", max_length=1000)
     filters: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     sorts: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+
+
+class PreviewRowsQuery(DataQuery):
+    limit: int = Field(default=50, ge=1, le=PREVIEW_ROWS_MAX_LIMIT)
+    offset: int = Field(default=0, ge=0, le=PREVIEW_ROWS_MAX_OFFSET)
 
 
 class OffsetUpdate(BaseModel):

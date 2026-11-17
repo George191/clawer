@@ -341,7 +341,77 @@ class ObjectCatalogTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["totalEstimated"])
         self.assertEqual(result["rowCount"], 1)
         self.assertNotIn("comment", result)
+        self.assertNotIn("hasMore", result)
+        self.assertNotIn("ORDER BY", session.calls[-1][0])
         self.assertEqual(session.calls[-1][1]["limit"], 1)
+
+    async def test_legacy_range_keeps_its_count_and_does_not_append_primary_keys(self):
+        fields = [column("id", "bigint", True, 1, False), column("name")]
+        instance, session = service(Result(fields), Result(scalar=2), Result([{"id": 12}]))
+        result = await instance.data("ods", "objects", {"limit": 1}, scope={
+            "filters": [{"field": "name", "operator": "=", "value": "Scoped"}],
+            "sorts": [{"field": "name", "direction": "desc"}],
+        })
+        self.assertEqual((result["total"], result["totalEstimated"], result["rowCount"]), (2, False, 1))
+        self.assertNotIn("hasMore", result)
+        self.assertIn("count(*)", session.calls[-2][0])
+        sql, params = session.calls[-1]
+        self.assertIn('t."name" = (jsonb_populate_record', sql)
+        self.assertIn('ORDER BY t."name" desc LIMIT', sql)
+        self.assertEqual(params["limit"], 1)
+
+    async def test_preview_rows_share_filters_and_fetch_one_extra_row_without_counting(self):
+        fields = [column("id", "bigint", True, 2, False), column("tenant", "uuid", True, 1, False), column("name")]
+        rows = [{"id": 15}, {"id": 10}]
+        instance, session = service(Result(fields), Result(rows))
+        result = await instance.data("ods", "objects", {
+            "limit": 1, "offset": 2000, "search": "term",
+            "filters": [{"field": "name", "operator": "=", "value": "filter value"}],
+            "sorts": [{"field": "name", "direction": "desc"}, {"field": "id", "direction": "desc"}],
+        }, preview_rows=True)
+        self.assertEqual(result["rows"], rows[:1])
+        self.assertEqual(result["rowCount"], 1)
+        self.assertEqual(result["primaryKey"], ["tenant", "id"])
+        self.assertTrue(result["stableOrder"])
+        self.assertTrue(result["hasMore"])
+        self.assertFalse(result["canPageFurther"])
+        self.assertNotIn("total", result)
+        self.assertNotIn("totalEstimated", result)
+        self.assertEqual(len(session.calls), 2)  # Catalog columns and exactly one business-row SELECT.
+        sql, params = session.calls[-1]
+        self.assertIn('ORDER BY t."name" desc, t."id" desc, t."tenant" asc', sql)
+        self.assertIn('t."name" = (jsonb_populate_record', sql)
+        self.assertIn("row_to_json", sql)
+        self.assertNotIn("count(", sql.lower())
+        self.assertNotIn("explain", sql.lower())
+        self.assertNotIn("filter value", sql)
+        self.assertEqual(params["limit"], 2)
+        self.assertEqual(params["offset"], 2000)
+        self.assertEqual(params["p2"], "%term%")
+
+    async def test_preview_rows_default_order_and_partition_are_respected(self):
+        fields = [column("id", "bigint", True, 2, False), column("tenant", "uuid", True, 1, False)]
+        partitions = [{"name": "objects_p0", "schema": "ts_ods"}]
+        instance, session = service(Result(fields), Result(fields), Result(partitions), Result([{"id": 1}, {"id": 2}]))
+        session.allowed_prefixes = ("SELECT", "WITH")
+        result = await instance.data("ods", "objects", {
+            "limit": 1, "offset": 1999, "partition": "objects_p0",
+        }, preview_rows=True)
+        self.assertEqual(len(session.calls), 4)
+        self.assertIn('FROM "ts_ods"."objects_p0" t ORDER BY t."tenant" asc, t."id" asc',
+                      session.calls[-1][0])
+        self.assertTrue(result["hasMore"])
+        self.assertTrue(result["canPageFurther"])
+        self.assertTrue(result["stableOrder"])
+
+    async def test_preview_rows_without_primary_key_expose_unstable_order_and_actual_end(self):
+        instance, session = service(Result([column("name")]), Result([{"name": "last row"}]))
+        result = await instance.data("ods", "objects", {"limit": 1}, preview_rows=True)
+        self.assertEqual(result["primaryKey"], [])
+        self.assertFalse(result["stableOrder"])
+        self.assertFalse(result["hasMore"])
+        self.assertFalse(result["canPageFurther"])
+        self.assertNotIn("ORDER BY", session.calls[-1][0])
 
     async def test_existing_partition_contract_remains_unchanged_after_column_comments_are_added(self):
         partitions = [{"name": "objects_p0", "schema": "ts_ods", "bounds": "FOR VALUES WITH (modulus 2, remainder 0)"}]
@@ -411,6 +481,21 @@ class ObjectRouteTests(unittest.TestCase):
                 self.assertEqual(self.client.get("/api/v1/etl/object-types?" + query).status_code, 422)
             factory.assert_not_called()
 
+    def test_preview_rows_route_applies_its_own_pagination_budget_only(self):
+        with patch.object(etl, "get_etl_layers", return_value=AsyncMock()) as factory:
+            instance = factory.return_value
+            instance.data.return_value = {}
+            preview = "/api/v1/etl/ods/objects/preview-rows"
+            for payload in ({"limit": 101}, {"offset": 2001}, {"limit": 0}, {"offset": -1}):
+                self.assertEqual(self.client.post(preview, json=payload).status_code, 422)
+            factory.assert_not_called()
+            self.assertEqual(self.client.post(preview, json={"offset": 2000}).status_code, 200)
+            self.assertTrue(instance.data.await_args.kwargs["preview_rows"])
+            self.assertEqual(instance.data.await_args.args[2]["limit"], 50)
+            self.assertEqual(self.client.post("/api/v1/etl/ods/objects/data",
+                                              json={"limit": 101, "offset": 2001}).status_code, 200)
+            self.assertFalse(instance.data.await_args.kwargs)
+
     def test_rejected_authentication_prevents_metadata_routes(self):
         def reject():
             raise HTTPException(401, "Authentication required")
@@ -419,6 +504,8 @@ class ObjectRouteTests(unittest.TestCase):
             for path in ("/api/v1/etl/object-types", "/api/v1/etl/ts_ods/objects/preview",
                          "/api/v1/etl/ts_ods/objects/columns"):
                 self.assertEqual(self.client.get(path).status_code, 401)
+            self.assertEqual(self.client.post("/api/v1/etl/ts_ods/objects/preview-rows",
+                                              json={}).status_code, 401)
             factory.assert_not_called()
 
     def test_preview_identifier_and_hidden_metadata_schema_are_rejected_before_session(self):

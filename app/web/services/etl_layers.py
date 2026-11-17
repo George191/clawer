@@ -19,6 +19,7 @@ from app.etl.schema.object_relations import (
     read_object_relations,
 )
 from app.storage.postgres_client import get_pg_client
+from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
 _OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
@@ -423,7 +424,7 @@ class EtlLayers:
             return [dict(row) for row in result.mappings()]
 
     async def data(self, layer: str, table: str, payload: dict[str, Any] | None = None,
-                   scope: dict[str, Any] | None = None) -> dict[str, Any]:
+                   scope: dict[str, Any] | None = None, *, preview_rows: bool = False) -> dict[str, Any]:
         started = perf_counter()
         payload = payload or {}
         schema = resolve_schema(layer)
@@ -449,9 +450,11 @@ class EtlLayers:
             offset = int(payload.get("offset", 0))
         except (ValueError, TypeError) as exc:
             raise HTTPException(400, "Invalid pagination") from exc
-        if not 1 <= limit <= 500 or not 0 <= offset <= 1_000_000:
+        max_limit = PREVIEW_ROWS_MAX_LIMIT if preview_rows else 500
+        max_offset = PREVIEW_ROWS_MAX_OFFSET if preview_rows else 1_000_000
+        if not 1 <= limit <= max_limit or not 0 <= offset <= max_offset:
             raise HTTPException(400, "Pagination is outside supported bounds")
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit + int(preview_rows), "offset": offset}
         where: list[str] = []
         for restriction in (scope or {}, payload):
             if restriction.get("search"):
@@ -474,31 +477,43 @@ class EtlLayers:
         if not isinstance(sorts, list) or len(sorts) > 20:
             raise HTTPException(400, "Invalid sorts")
         order = []
+        sorted_fields = set()
         for sort in sorts:
             if (not isinstance(sort, dict) or not isinstance(sort.get("field"), str)
                     or sort["field"] not in names or sort.get("direction") not in {"asc", "desc"}):
                 raise HTTPException(400, "Invalid sort field or direction")
             order.append(f't.{quote_identifier(sort["field"])} {sort["direction"]}')
+            sorted_fields.add(sort["field"])
+        primary_key = [column["name"] for column in primary_columns]
+        if preview_rows:
+            order.extend(f't.{quote_identifier(field)} asc' for field in primary_key if field not in sorted_fields)
         predicate = " WHERE " + " AND ".join(f"({item})" for item in where) if where else ""
         ordering = " ORDER BY " + ", ".join(order) if order else ""
         async with self.session() as session:
-            # Opening a preview must not scan or globally sort every partition.
-            total = (await session.execute(text(f"SELECT count(*) FROM (SELECT 1 FROM {target} t{predicate} LIMIT 10001) flow_count"), params)).scalar_one() if where else 0
-            estimated = not where or total > 10000
-            if estimated:
-                plan = (await session.execute(text(f"EXPLAIN (FORMAT JSON) SELECT 1 FROM {target} t{predicate}"), params)).scalar_one()
-                if isinstance(plan, str):
-                    plan = json.loads(plan)
-                total = max(total, int(plan[0]["Plan"]["Plan Rows"]))
+            if not preview_rows:
+                total = (await session.execute(text(f"SELECT count(*) FROM (SELECT 1 FROM {target} t{predicate} LIMIT 10001) flow_count"), params)).scalar_one() if where else 0
+                estimated = not where or total > 10000
+                if estimated:
+                    plan = (await session.execute(text(f"EXPLAIN (FORMAT JSON) SELECT 1 FROM {target} t{predicate}"), params)).scalar_one()
+                    if isinstance(plan, str):
+                        plan = json.loads(plan)
+                    total = max(total, int(plan[0]["Plan"]["Plan Rows"]))
             result = await session.execute(text(f"SELECT t.* FROM {target} t{predicate}{ordering} LIMIT :limit OFFSET :offset"), params)
             rows = [dict(row) for row in result.mappings()]
-        if rows:
-            total = max(total, offset + len(rows))
-        elif offset == 0:
-            total, estimated = 0, False
+        if preview_rows:
+            has_more = len(rows) > limit
+            rows = rows[:limit]
+            page = {"hasMore": has_more, "canPageFurther": has_more and offset + limit <= max_offset,
+                    "stableOrder": bool(primary_key)}
+        else:
+            if rows:
+                total = max(total, offset + len(rows))
+            elif offset == 0:
+                total, estimated = 0, False
+            page = {"total": total, "totalEstimated": estimated}
         return {"columns": [column["name"] for column in columns], "rows": rows,
-                "rowCount": len(rows), "total": total, "totalEstimated": estimated,
-                "primaryKey": [column["name"] for column in primary_columns],
+                "rowCount": len(rows), **page,
+                "primaryKey": primary_key,
                 "columnTypes": {column["name"]: column["type"] for column in columns},
                 "elapsed": round(perf_counter() - started, 4)}
 
