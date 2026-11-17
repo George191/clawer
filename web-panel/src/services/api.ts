@@ -504,7 +504,7 @@ export type AssetQualityCheck = AssetQualityResult & {
   history: (Omit<AssetQualityResult, 'validUntil'> & { id: string; generation: number })[];
 };
 export type AssetQualityIncident = {
-  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job' | 'field_time' | 'minimum_rows';
+  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job' | 'weekly_job' | 'field_time' | 'minimum_rows';
   status: 'open' | 'acknowledged' | 'recovered' | 'superseded';
   reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum' | 'target_rejected' | 'field_lag' | 'row_threshold';
   openedAt: string; lastConfirmedAt: string; acknowledgedAt: string | null; closedAt: string | null;
@@ -564,6 +564,19 @@ export const reviewDailyJobQuality = (schema: string, table: string, request: Da
   client.put(dailyJobQualityPath(schema, table), request).then(r => unwrap<DailyJobQuality>(r.data));
 export const acknowledgeDailyJobQualityIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
   client.post(`${dailyJobQualityPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
+
+type WeeklyJobQualityCandidate = DailyJobQualityCandidate & { plannedWeekdayUtc: number };
+export type WeeklyJobQuality = Omit<DailyJobQuality, 'candidate' | 'binding'> & {
+  candidate: WeeklyJobQualityCandidate | null;
+  binding: (WeeklyJobQualityCandidate & { generation: number; reviewedAt: string }) | null;
+};
+const weeklyJobQualityPath = (schema: string, table: string) => `${assetFreshnessPath(schema, table)}/weekly-job-quality`;
+export const fetchWeeklyJobQuality = (schema: string, table: string, signal?: AbortSignal): Promise<WeeklyJobQuality> =>
+  client.get(weeklyJobQualityPath(schema, table), { signal }).then(r => unwrap<WeeklyJobQuality>(r.data));
+export const reviewWeeklyJobQuality = (schema: string, table: string, request: DailyJobQualityReview): Promise<WeeklyJobQuality> =>
+  client.put(weeklyJobQualityPath(schema, table), request).then(r => unwrap<WeeklyJobQuality>(r.data));
+export const acknowledgeWeeklyJobQualityIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${weeklyJobQualityPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
 
 export const fetchTableData = (
   layer: string,

@@ -323,6 +323,17 @@ async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now
                     await session.execute(text("SET LOCAL statement_timeout='3s'"))
             except Exception:
                 _log.warning("Optional Daily UTC quality check did not settle")
+    if settings.TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED:
+        from app.web.services.asset_weekly_job_quality import evaluate_weekly_job_quality, weekly_job_quality_enabled
+
+        if weekly_job_quality_enabled():
+            try:
+                async with session.begin_nested():
+                    await session.execute(text("SET LOCAL statement_timeout='750ms'"))
+                    await evaluate_weekly_job_quality(session, row, identity, now)
+                    await session.execute(text("SET LOCAL statement_timeout='3s'"))
+            except Exception:
+                _log.warning("Optional Weekly UTC quality check did not settle")
     return state
 
 

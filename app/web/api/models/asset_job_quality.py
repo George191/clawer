@@ -93,6 +93,52 @@ class AssetJobQualityRow(SQLModel, table=True):
     rows_affected: int | None = None
 
 
+
+class WeeklyJobQualityCandidate(JobQualityCandidate):
+    plannedWeekdayUtc: int = ApiField(ge=1, le=7)
+
+
+class WeeklyJobQualityBinding(JobQualityBinding):
+    plannedWeekdayUtc: int = ApiField(ge=1, le=7)
+
+
+class WeeklyJobQualityStatus(AssetJobQualityStatus):
+    candidate: WeeklyJobQualityCandidate | None = None
+    binding: WeeklyJobQualityBinding | None = None
+
+
+class WeeklyJobQualityRow(SQLModel, table=True):
+    __tablename__ = "ontology_asset_weekly_job_quality"
+    __table_args__ = (CheckConstraint(
+        "generation>0 AND freshness_generation>0 AND schedule_generation>0 AND target_oid>0 AND target_filenode>0 "
+        "AND planned_time_utc ~ '^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$' "
+        "AND planned_weekday_utc BETWEEN 1 AND 7 AND state IN ('not_checked','healthy','unhealthy','unknown','superseded')",
+        name="ck_asset_weekly_job_review",
+    ),)
+
+    target_table: str = Field(primary_key=True, foreign_key="ontology_asset_freshness_policies.target_table", max_length=63)
+    generation: int
+    freshness_generation: int
+    schedule_generation: int
+    plan_id: UUID
+    plan_updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    armed_by: UUID
+    target_oid: int = Field(sa_column=Column(BigInteger, nullable=False))
+    target_filenode: int = Field(sa_column=Column(BigInteger, nullable=False))
+    planned_time_utc: str = Field(max_length=5)
+    planned_weekday_utc: int
+    reviewed_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    checked_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    confirmed_slot: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    observed_slot: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    finished_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    job_state: str | None = Field(default=None, max_length=16)
+    state: str = Field(default="not_checked", max_length=16)
+    reason: str | None = Field(default=None, max_length=32)
+    receipt_id: UUID | None = None
+    rows_affected: int | None = None
+
+
 class TransferTargetRejectionRow(SQLModel, table=True):
     __tablename__ = "ontology_transfer_schedule_target_rejections"
     __table_args__ = (CheckConstraint("code='target_constraint' AND target_oid>0 AND target_filenode>0",

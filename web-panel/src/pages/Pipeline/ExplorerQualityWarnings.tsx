@@ -3,7 +3,7 @@ import { Button, Modal } from '@/components/ui';
 import type { AssetFreshness, AssetQualityIncident } from '../../services/api';
 
 const kindLabels: Record<AssetQualityIncident['kind'], string> = {
-  freshness: 'Transfer freshness', schema: 'Schema check', heap_size: 'Heap size check', daily_job: 'Scheduled transfer outcome',
+  freshness: 'Transfer freshness', schema: 'Schema check', heap_size: 'Heap size check', daily_job: 'Scheduled transfer outcome', weekly_job: 'Weekly UTC transfer outcome',
   field_time: 'Field data freshness',
   minimum_rows: 'Minimum row health',
 };

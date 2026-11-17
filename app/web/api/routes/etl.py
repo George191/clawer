@@ -26,7 +26,7 @@ from app.web.api.models.asset_freshness import (
 )
 from app.web.api.models.asset_field_freshness import AssetFieldFreshnessReview, AssetFieldFreshnessStatus
 from app.web.api.models.asset_min_rows import AssetMinRowsReview, AssetMinRowsStatus
-from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJobQualityStatus
+from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJobQualityStatus, WeeklyJobQualityStatus
 from app.web.api.models.batch_lineage import BatchLineageDetail, BatchLineageKind, BatchLineagePage
 from app.web.api.models.batch_source_identity import BatchSourceIdentityReview, BatchSourceIdentityStatus
 from app.web.api.models.batch_syncs import (
@@ -97,6 +97,9 @@ from app.web.services.asset_field_freshness import (
 )
 from app.web.services.asset_min_rows import acknowledge_min_rows, read_min_rows, review_min_rows
 from app.web.services.asset_job_quality import acknowledge_daily_job, read_job_quality, review_job_quality
+from app.web.services.asset_weekly_job_quality import (
+    acknowledge_weekly_job, read_weekly_job_quality, review_weekly_job_quality,
+)
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_lineage import list_batch_lineage, read_batch_lineage
 from app.web.services.batch_source_identity import read_source_identity, verify_source_identity
@@ -407,6 +410,43 @@ async def acknowledge_daily_quality_incident(
         return await acknowledge_daily_job(session, schema, table, incident_id, payload.expectedGeneration, current_user.id)
     except DBAPIError:
         raise HTTPException(503, "Daily UTC acknowledgement could not be confirmed") from None
+
+
+@write.get("/asset-freshness/{schema}/{table}/weekly-job-quality")
+async def get_weekly_job_quality(
+    schema: WarehouseSchema, table: TableName, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> WeeklyJobQualityStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await read_weekly_job_quality(session, schema, table)
+    except DBAPIError:
+        raise HTTPException(503, "Recorded Weekly UTC status is temporarily unavailable") from None
+
+
+@write.put("/asset-freshness/{schema}/{table}/weekly-job-quality")
+async def put_weekly_job_quality(
+    schema: WarehouseSchema, table: TableName, payload: AssetJobQualityReview, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> WeeklyJobQualityStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await review_weekly_job_quality(session, schema, table, payload)
+    except DBAPIError:
+        raise HTTPException(503, "The Weekly UTC review could not be confirmed") from None
+
+
+@write.post("/asset-freshness/{schema}/{table}/weekly-job-quality/incidents/{incident_id}/acknowledge")
+async def acknowledge_weekly_quality_incident(
+    schema: WarehouseSchema, table: TableName, incident_id: UUID, payload: AssetQualityIncidentAck,
+    current_user: CurrentActiveSuperuser, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetQualityIncident:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await acknowledge_weekly_job(session, schema, table, incident_id, payload.expectedGeneration, current_user.id)
+    except DBAPIError:
+        raise HTTPException(503, "Weekly UTC acknowledgement could not be confirmed") from None
 
 
 @write.get("/asset-freshness/{schema}/{table}/field-freshness")

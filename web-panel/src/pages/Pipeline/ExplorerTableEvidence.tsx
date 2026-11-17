@@ -73,7 +73,10 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                         {showReceipts && table === 'field_freshness_fixture' && <>
                             <ExplorerFieldFreshness version={version} /><ExplorerMinimumRowHealth version={version} />
                         </>}
-                        {showReceipts && <ExplorerDailyJobQuality schema={schema} table={table} version={version} />}
+                        {showReceipts && <>
+                            <ExplorerDailyJobQuality schema={schema} table={table} version={version} />
+                            <ExplorerDailyJobQuality schema={schema} table={table} version={version} cadence="weekly" />
+                        </>}
                         {showReceipts && <ExplorerAssetFreshness key={`${schema}.${table}`} schema={schema} table={table} version={version} />}
                         {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>
                         {showReceipts ? <ExplorerTransferTimeline key={`${schema}.${table}:${version}`} schema={schema} table={table} onLatestCurrentReceipt={setLatestCurrentReceipt} />

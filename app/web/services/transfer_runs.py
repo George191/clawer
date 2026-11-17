@@ -31,6 +31,7 @@ from app.web.services.upstream_rules import exact_nested_job, positive_nested_ev
 SANDBOX = "ts_transfer_sandbox"
 MAX_ROWS = 100
 HISTORY_LIMIT = 25
+_TARGET_CONSTRAINT_MESSAGE = "A target constraint rejected the transfer; nothing was committed"
 SCHEDULED_SYSTEM_ACTOR = uuid5(NAMESPACE_URL, "asiral:transfer-scheduler:local")
 UPSTREAM_SYSTEM_ACTOR = uuid5(NAMESPACE_URL, "asiral:transfer-upstream:local")
 logger = logging.getLogger(__name__)
@@ -476,6 +477,56 @@ def _verified_target_diagnostics(error: DBAPIError, name: str) -> bool:
     return False
 
 
+def _weekly_target_constraint(error: DBAPIError, target: str) -> bool:
+    """Recognize only native diagnostics for the exact locked target relation."""
+    sqlstate = getattr(error.orig, "sqlstate", None)
+    diagnostic = {"23502": "column_name", "23505": "constraint_name"}.get(sqlstate)
+    if diagnostic is None:
+        return False
+    return any(
+        (getattr(details, "schema_name", None), getattr(details, "table_name", None)) == (SANDBOX, target)
+        and bool(getattr(details, diagnostic, None))
+        for details in (error.orig, getattr(error.orig, "__cause__", None))
+    )
+
+
+async def _settle_weekly_target_constraint(
+    session: AsyncSession, plan: TransferPlanRow, job: TransferScheduleJobRow, attempt_id: UUID,
+    target: tuple[int, int],
+) -> bool:
+    """Run only after the DML savepoint rolled back, while the actual locks are still held."""
+    from app.web.api.models.asset_job_quality import TransferTargetRejectionRow
+
+    finished = datetime.now(timezone.utc)
+    if (
+        not settings.TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED or not weekly_transfer_enabled()
+        or not job.slot <= finished < job.expires_at
+        or job.state not in ("pending", "dispatched") or job.receipt_id is not None
+    ):
+        return False
+    attempt = TransferAttemptRow
+    changed = await session.execute(update(attempt).where(
+        attempt.id == attempt_id, attempt.status == "started", attempt.receipt_id.is_(None),
+        attempt.scope_trigger == "week_utc", attempt.upstream_job_id.is_(None),
+        attempt.plan_id == plan.id, attempt.plan_updated_at == job.plan_updated_at,
+        attempt.request_id == job.id, attempt.schedule_job_id == job.id,
+        attempt.source_table == plan.source_table, attempt.target_table == plan.target_table,
+        attempt.target_oid == target[0], attempt.target_filenode == target[1],
+        attempt.started_at >= job.slot, attempt.started_at <= finished,
+    ).values(status="rejected", finished_at=finished, message=_TARGET_CONSTRAINT_MESSAGE))
+    if changed.rowcount != 1:
+        return False
+    job.state = "rejected"
+    job.finished_at = finished
+    job.message = _TARGET_CONSTRAINT_MESSAGE
+    session.add(TransferTargetRejectionRow(
+        job_id=job.id, attempt_id=attempt_id, target_oid=target[0], target_filenode=target[1],
+    ))
+    await session.flush()
+    await session.commit()
+    return True
+
+
 async def _lock_schedule_admission(
     session: AsyncSession, plan_id: UUID, request: TransferRunRequest, job_id: UUID, actor_id: UUID,
     now: datetime | None,
@@ -532,6 +583,7 @@ async def run_sandbox_transfer(
     session.add(attempt)
     await session.commit()
     target_stage = None
+    weekly_constraint_settled = False
     try:
         await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
         await session.execute(text("SET LOCAL lock_timeout = '2s'"))
@@ -714,7 +766,7 @@ async def run_sandbox_transfer(
             and settings.TRANSFER_SANDBOX_JOB_QUALITY_ENABLED):
             current_target = catalog[plan.target_table]
             target_stage = plan.target_table, current_target["table_oid"], current_target["table_node"]
-        written = 0 if keys == [] else (await session.execute(text(f"""
+        write_sql = text(f"""
             WITH inserted AS (
                 INSERT INTO {target} ({column_list})
                 {source_sql}
@@ -722,7 +774,30 @@ async def run_sandbox_transfer(
                 RETURNING 1
             )
             SELECT count(*) FROM inserted
-        """), limit_params)).scalar_one()
+        """)
+        prove_weekly = (
+            isinstance(job, TransferScheduleJobRow) and job.schedule_weekday_utc is not None
+            and settings.TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED
+            and scope.get("scope_trigger") == "week_utc" and scope.get("schedule_job_id") == job.id
+        )
+        if keys == []:
+            written = 0
+        elif prove_weekly:
+            try:
+                # Keep the existing plan, job, actor and physical table locks through
+                # an independently rolled-back target statement and its audit settlement.
+                async with session.begin_nested():
+                    written = (await session.execute(write_sql, limit_params)).scalar_one()
+            except DBAPIError as exc:
+                if _weekly_target_constraint(exc, plan.target_table) and await _settle_weekly_target_constraint(
+                    session, plan, job, attempt_id,
+                    (admitted_target["table_oid"], admitted_target["table_node"]),
+                ):
+                    weekly_constraint_settled = True
+                    raise HTTPException(422, _TARGET_CONSTRAINT_MESSAGE) from None
+                raise
+        else:
+            written = (await session.execute(write_sql, limit_params)).scalar_one()
         target_stage = None  # Receipt/flush/COMMIT failures do not prove target-statement rejection.
         if keys:
             if written != len(keys):
@@ -782,7 +857,7 @@ async def run_sandbox_transfer(
         if state == "21000":
             failure = HTTPException(422, "Transfer source contains duplicate projected primary keys; nothing was committed")
         elif state in {"23502", "23503", "23505", "23514"}:
-            failure = HTTPException(422, "A target constraint rejected the transfer; nothing was committed")
+            failure = HTTPException(422, _TARGET_CONSTRAINT_MESSAGE)
         elif state == "42P01":
             failure = HTTPException(422, "A transfer table or required catalog is unavailable")
         elif state in {"55P03", "57014", "40P01"}:
@@ -794,6 +869,8 @@ async def run_sandbox_transfer(
                                     target_rejection=target_rejection)
         raise failure from exc
     except HTTPException as exc:
+        if weekly_constraint_settled:
+            raise
         await session.rollback()
         early_delivery = isinstance(exc.detail, dict) and exc.detail.get("code") == "schedule_not_due"
         await _record_attempt_error(session, attempt_id, exc, scheduled_job_id=scheduled_job_id, upstream_job_id=upstream_job_id,

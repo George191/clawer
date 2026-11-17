@@ -2368,6 +2368,123 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(after_peer_reset["state"], "current", after_peer_reset)
                 self.assertEqual(after_peer_reset["current"]["lastAnalyzedAt"], before_peer_reset["lastAnalyzedAt"])
 
+    async def test_weekly_target_constraint_proof_is_genuine_atomic_and_separately_gated(self):
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.week_src (id int PRIMARY KEY, value text NOT NULL)",
+                "CREATE TABLE ts_transfer_sandbox.week_large (id int PRIMARY KEY, value text NOT NULL)",
+                "INSERT INTO ts_transfer_sandbox.week_src VALUES (1,'would write'), (2,'collision')",
+                "INSERT INTO ts_transfer_sandbox.week_large SELECT id, 'row' FROM generate_series(1,101) id",
+            ):
+                await session.execute(text(sql))
+            for table in ("week_proven", "week_disabled", "week_unproven", "week_audit_fail", "daily_disabled"):
+                await session.execute(text(f"CREATE TABLE ts_transfer_sandbox.{table} "
+                                           "(id int PRIMARY KEY, value text NOT NULL UNIQUE)"))
+                await session.execute(text(f"INSERT INTO ts_transfer_sandbox.{table} VALUES (3,'collision')"))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
+            await session.execute(text("""
+                CREATE FUNCTION ts_transfer_sandbox.reject_week_proof() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM public.ontology_transfer_attempts
+                               WHERE id=NEW.attempt_id AND target_table='week_audit_fail') THEN
+                        RAISE EXCEPTION 'isolated proof ledger fault';
+                    END IF;
+                    RETURN NEW;
+                END $$
+            """))
+            await session.execute(text("""
+                CREATE TRIGGER reject_week_proof BEFORE INSERT ON public.ontology_transfer_schedule_target_rejections
+                FOR EACH ROW EXECUTE FUNCTION ts_transfer_sandbox.reject_week_proof()
+            """))
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+
+        slot = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+        arm_at = slot - timedelta(minutes=1)
+        utc = datetime.now(timezone.utc)
+
+        class ReviewClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return arm_at.astimezone(tz) if tz is not None else arm_at.replace(tzinfo=None)
+
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_JOB_QUALITY_ENABLED", False),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED", True),
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_schedules._utc_now", return_value=arm_at),
+        ):
+            async with api(True, self.session_provider) as client:
+                plans = {}
+                for target in ("week_proven", "week_disabled", "week_unproven", "week_audit_fail", "daily_disabled"):
+                    daily = target == "daily_disabled"
+                    payload = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                               "sourceTable": "week_large" if target == "week_unproven" else "week_src",
+                               "targetTable": target, "writeMode": "upsert", "trigger": "scheduled" if daily else "weekly",
+                               "scheduleTime": slot.strftime("%H:%M"),
+                               **({} if daily else {"scheduleWeekdayUtc": slot.isoweekday()})}
+                    with patch("app.web.services.transfer_plans.datetime", ReviewClock):
+                        saved = await client.post(RUNS, json=payload)
+                    self.assertEqual(saved.status_code, 201, saved.text)
+                    plan = saved.json()
+                    plans[target] = plan
+                    armed = await client.put(f"{RUNS}/{plan['id']}/schedule", json={
+                        "enabled": True, "expectedUpdatedAt": plan["updatedAt"],
+                    })
+                    self.assertEqual(armed.status_code, 200, armed.text)
+
+                async with self.pg.session() as session:
+                    due = await collect_due_transfer_jobs(session, now=utc)
+                self.assertEqual(len(due), 5)
+                jobs = {str(row["plan_id"]): row["id"] for row in await self.pg.fetch_all(
+                    "SELECT id, plan_id FROM ontology_transfer_schedule_jobs",
+                )}
+
+                async def execute(target):
+                    async with self.pg.session() as session:
+                        return await execute_transfer_schedule_job(session, jobs[plans[target]["id"]])
+
+                self.assertEqual(await asyncio.gather(execute("week_proven"), execute("week_proven")),
+                                 ["rejected", "rejected"])
+                self.assertEqual(await execute("week_unproven"), "rejected")
+                self.assertEqual(await execute("week_audit_fail"), "outcome_unknown")
+                self.assertEqual(await execute("daily_disabled"), "rejected")
+                with patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED", False):
+                    self.assertEqual(await execute("week_disabled"), "rejected")
+
+                proof, = await self.pg.fetch_all("""
+                    SELECT proof.code, proof.target_oid, proof.target_filenode, a.scope_trigger, a.status,
+                        a.plan_updated_at, a.request_id, a.schedule_job_id, a.target_table,
+                        j.id AS job_id, j.state, a.finished_at AS attempted, j.finished_at AS finished,
+                        pg_catalog.pg_relation_filenode(proof.target_oid::oid)::bigint AS actual_target
+                    FROM ontology_transfer_schedule_target_rejections proof
+                    JOIN ontology_transfer_attempts a ON a.id=proof.attempt_id
+                    JOIN ontology_transfer_schedule_jobs j ON j.id=proof.job_id
+                """)
+                self.assertEqual((proof["code"], proof["scope_trigger"], proof["target_table"]),
+                                 ("target_constraint", "week_utc", "week_proven"))
+                self.assertEqual(proof["request_id"], proof["schedule_job_id"])
+                self.assertEqual(proof["job_id"], jobs[plans["week_proven"]["id"]])
+                self.assertEqual(proof["plan_updated_at"], datetime.fromisoformat(plans["week_proven"]["updatedAt"]))
+                self.assertEqual(proof["target_filenode"], proof["actual_target"])
+                self.assertEqual((proof["status"], proof["state"]), ("rejected", "rejected"))
+                self.assertEqual(proof["attempted"], proof["finished"])
+                self.assertTrue(slot <= proof["finished"] < slot + timedelta(minutes=5))
+                self.assertEqual(await self.pg.fetch_all("SELECT id FROM ontology_transfer_runs"), [])
+                for table in plans:
+                    rows = await self.pg.fetch_all(f"SELECT id FROM ts_transfer_sandbox.{table}")
+                    self.assertEqual([row["id"] for row in rows], [3])
+
     async def test_daily_job_quality_requires_real_target_proof_and_never_recovers_from_neutral_slots(self):
         from app.web.services.transfer_schedules import collect_due_transfer_jobs, execute_transfer_schedule_job
 
