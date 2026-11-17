@@ -54,6 +54,13 @@ class SnapshotPublicationResult(BaseModel):
     recorded_at: datetime
 
 
+class SnapshotPublicationHead(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    generation: int
+    row_count: int | None = None
+    recorded_at: datetime | None = None
+
+
 def _normalize(rows: Iterable[SnapshotPublicationRow]) -> list[tuple[int, str | None]]:
     canonical: dict[int, str | None] = {}
     size = 0
@@ -99,6 +106,12 @@ async def _replay(connection, prior, *, request_id: UUID, previous: int, digest:
     if (not 1 <= generation <= _MAX_GENERATION or generation != previous + 1 or not 1 <= count <= _MAX_ROWS
         or recorded.tzinfo is None or recorded.year in (1, 9999)):
         raise _unavailable()
+    await _verify_sealed_snapshot(connection, generation=generation, count=count, digest=digest)
+    return SnapshotPublicationResult(request_id=request_id, generation=generation,
+                                     previous_generation=previous, row_count=count, recorded_at=recorded)
+
+
+async def _verify_sealed_snapshot(connection, *, generation: int, count: int, digest: str) -> None:
     # One MVCC statement bounds both bytes and row count before sending payload to the client.
     stored = await connection.fetch(f"""
         WITH snapshot AS MATERIALIZED (
@@ -117,9 +130,6 @@ async def _replay(connection, prior, *, request_id: UUID, previous: int, digest:
         digest, _seal(_normalize(SnapshotPublicationRow(id=str(r["id"]), caption=r["caption"]) for r in stored))
     ):
         raise _unavailable()
-    return SnapshotPublicationResult(request_id=request_id, generation=generation,
-                                     previous_generation=previous, row_count=count, recorded_at=recorded)
-
 
 async def publish_snapshot(
     request_id: UUID, expected_previous_generation: int, rows: Iterable[SnapshotPublicationRow], *,
@@ -239,4 +249,90 @@ async def reconcile_snapshot(
                 return result
     except Exception:
         # No pointer, row, source, or reservation write, including on miss or uncertainty.
+        raise _unavailable() from None
+
+
+
+async def _record_generation_edge(connection, *, descending: bool) -> int | None:
+    order, direction = ("DESC", "Backward") if descending else ("ASC", "Forward")
+    query = f"""SELECT r.generation FROM ONLY {_SCOPE}.records AS r
+                ORDER BY r.generation {order}, r.id {order} LIMIT 1"""
+    raw = await connection.fetchval(f"EXPLAIN (FORMAT JSON, VERBOSE TRUE, ANALYZE FALSE) {query}")
+    root = json.loads(raw)[0]["Plan"]
+    children = root.get("Plans", [])
+    if root.get("Node Type") != "Limit" or len(children) != 1:
+        raise _unavailable()
+    child = children[0]
+    if (child.get("Node Type") not in {"Index Scan", "Index Only Scan"}
+        or child.get("Schema") != _SCOPE or child.get("Relation Name") != "records" or child.get("Alias") != "r"
+        or child.get("Index Name") != "records_pkey" or child.get("Scan Direction") != direction
+        or any(node.get("Parallel Aware") or any(key in node for key in (
+            "Filter", "Recheck Cond", "Index Cond", "InitPlan", "Subplan Name",
+        )) for node in (root, child)) or child.get("Plans")):
+        raise _unavailable()
+    return await connection.fetchval(query)
+
+
+async def read_snapshot_publication_head(
+    *, expected_config_revision: UUID, sender_port: int, sender_database: str, sender_username: str,
+    sender_marker: UUID,
+) -> SnapshotPublicationHead:
+    """Return the receiver's verified head in one snapshot, not authority to publish."""
+    profile = configured_snapshot_publication_profile()
+    if profile is None or not isinstance(expected_config_revision, UUID) or profile.config_revision != expected_config_revision:
+        raise _unavailable()
+    try:
+        async with asyncio.timeout(5):
+            async with snapshot_publication_connection(
+                profile, sender_port=sender_port, sender_database=sender_database,
+                sender_username=sender_username, sender_marker=sender_marker,
+            ) as connection:
+                async with connection.transaction(isolation="repeatable_read", readonly=True):
+                    await connection.execute("SET LOCAL lock_timeout = '400ms'")
+                    await connection.execute("SET LOCAL statement_timeout = '750ms'")
+                    await lock_snapshot_publication_reconciliation(connection)
+                    await recheck_snapshot_publication_receiver(connection, profile)
+                    head = await connection.fetchval(f"""
+                        SELECT current_generation FROM ONLY {_SCOPE}.state WHERE singleton IS TRUE
+                    """)
+                    if head is None or not 0 <= head <= _MAX_GENERATION:
+                        raise _unavailable()
+                    headers = await connection.fetch(f"""
+                        SELECT generation, previous_generation, row_count, recorded_at,
+                               CASE WHEN pg_catalog.octet_length(payload_hash)=64 THEN payload_hash END AS payload_hash,
+                               pg_catalog.isfinite(recorded_at) AS finite
+                        FROM ONLY {_SCOPE}.generations ORDER BY generation LIMIT 17
+                    """)
+                    if len(headers) != head:
+                        raise _unavailable()
+                    for generation, row in enumerate(headers, start=1):
+                        if (row["generation"] != generation or row["previous_generation"] != generation - 1
+                            or not 1 <= row["row_count"] <= _MAX_ROWS or not row["finite"]
+                            or row["recorded_at"].tzinfo is None or row["recorded_at"].year in (1, 9999)
+                            or row["payload_hash"] is None
+                            or not re.fullmatch(r"[0-9a-f]{64}", row["payload_hash"], re.ASCII)):
+                            raise _unavailable()
+                    first_generation = await _record_generation_edge(connection, descending=False)
+                    last_generation = await _record_generation_edge(connection, descending=True)
+                    if head == 0:
+                        if first_generation is not None or last_generation is not None:
+                            raise _unavailable()
+                    elif (first_generation is None or last_generation is None
+                          or not 1 <= first_generation <= last_generation <= head):
+                        raise _unavailable()
+                    if head == 0:
+                        result = SnapshotPublicationHead(generation=0)
+                    else:
+                        header = headers[-1]
+                        await _verify_sealed_snapshot(
+                            connection, generation=head, count=header["row_count"], digest=header["payload_hash"],
+                        )
+                        result = SnapshotPublicationHead(
+                            generation=head, row_count=header["row_count"], recorded_at=header["recorded_at"],
+                        )
+                    await recheck_snapshot_publication_receiver(connection, profile)
+                    if configured_snapshot_publication_profile() != profile:
+                        raise _unavailable()
+                return result
+    except Exception:
         raise _unavailable() from None

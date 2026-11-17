@@ -112,6 +112,32 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
                                 sender_marker=uuid4(),
                             )
 
+                    async def head(*, revision=None):
+                        with (
+                            patch.object(service, "configured_snapshot_publication_profile", return_value=profile),
+                            patch.object(provider, "configured_snapshot_publication_profile", return_value=profile),
+                        ):
+                            return await service.read_snapshot_publication_head(
+                                expected_config_revision=revision or profile.config_revision,
+                                sender_port=port+1, sender_database="test_other_sender",
+                                sender_username="test_other_sender", sender_marker=uuid4(),
+                            )
+
+                    self.assertEqual((await head()).model_dump(),
+                                     {"generation": 0, "row_count": None, "recorded_at": None})
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await head(revision=uuid4())
+                    await data.execute(f"INSERT INTO {_SCHEMA}.records VALUES (1,1,NULL)")
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await head()
+                    await data.execute(f"DELETE FROM {_SCHEMA}.records")
+                    await data.execute(f"""
+                        INSERT INTO {_SCHEMA}.generations VALUES (1,0,gen_random_uuid(),repeat('a',64),1,clock_timestamp())
+                    """)
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await head()
+                    await data.execute(f"DELETE FROM {_SCHEMA}.generations")
+
                     with self.assertRaises(service.SnapshotPublicationUnavailable):
                         await publish(uuid4(), 0, revision=uuid4())
                     with self.assertRaises(service.SnapshotPublicationUnavailable):
@@ -206,6 +232,7 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
                                 with self.assertRaises(service.SnapshotPublicationUnavailable):
                                     await reconcile(second_id, 1, rows[:1])
                                 self.assertEqual(await reconcile(request, 0), first)
+                                self.assertEqual((await head()).generation, 1)
                             finally:
                                 release.set()
                                 with self.assertRaises(service.SnapshotPublicationUnavailable):
@@ -224,7 +251,11 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
                         await data.execute(f"LOCK TABLE {_SCHEMA}.records IN ACCESS EXCLUSIVE MODE")
                         with self.assertRaises(service.SnapshotPublicationUnavailable):
                             await reconcile(second_id, 1, rows[:1])
+                        with self.assertRaises(service.SnapshotPublicationUnavailable):
+                            await head()
                     self.assertEqual(second.generation, 2)
+                    self.assertEqual((await head()).model_dump(),
+                                     {"generation": 2, "row_count": second.row_count, "recorded_at": second.recorded_at})
                     self.assertEqual(await publish(request, 0, list(reversed(rows))), first)
                     self.assertEqual(await data.fetchval(f"SELECT current_generation FROM {_SCHEMA}.state"), 2)
                     for predecessor in range(2, 16):
@@ -239,6 +270,28 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
                         await reconcile(request, 0)
                     with self.assertRaises(service.SnapshotPublicationUnavailable):
                         await publish(request, 0)
+                    self.assertEqual((await head()).generation, 16)  # historical values aren't reported or read
+                    await data.execute(f"UPDATE {_SCHEMA}.generations SET previous_generation=0 WHERE generation=2")
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await head()
+                    await data.execute(f"UPDATE {_SCHEMA}.generations SET previous_generation=1 WHERE generation=2")
+                    await data.execute(f"UPDATE {_SCHEMA}.generations SET recorded_at='infinity' WHERE generation=2")
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await head()
+                    await data.execute(f"UPDATE {_SCHEMA}.generations SET recorded_at=$1 WHERE generation=2", second.recorded_at)
+                    await data.execute(f"UPDATE {_SCHEMA}.records SET caption='tampered' WHERE generation=16")
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await head()
+                    await data.execute(f"UPDATE {_SCHEMA}.records SET caption='甲' WHERE generation=16")
+                    self.assertEqual((await head()).generation, 16)
+                    for orphan in (0, 17):
+                        await data.execute(f"INSERT INTO {_SCHEMA}.records VALUES ($1,1,NULL)", orphan)
+                        with self.assertRaises(service.SnapshotPublicationUnavailable):
+                            await head()
+                        await data.execute(f"DELETE FROM {_SCHEMA}.records WHERE generation=$1", orphan)
+                    await data.execute(f"DELETE FROM {_SCHEMA}.generations WHERE generation=2")
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await head()
                     await data.execute(f"REINDEX INDEX {_SCHEMA}.records_pkey")
                     with self.assertRaises(service.SnapshotPublicationUnavailable):
                         await reconcile(second_id, 1, rows[:1])
