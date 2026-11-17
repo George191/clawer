@@ -41,6 +41,9 @@ from app.web.api.models.cdc_sandbox_versions import (
 )
 from app.web.api.models.push_inbox import PushInboxStatus
 from app.web.api.models.push_inbox_apply import PushApplyRequest, PushApplyResult, PushApplyReview, PushApplyStatus
+from app.web.api.models.pipeline_handoff import (
+    PipelineHandoffCapability, PipelineHandoffEligibility, PipelineHandoffRequest,
+)
 from app.web.api.models.pipeline_sandbox import (
     PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
 )
@@ -104,6 +107,7 @@ from app.web.services.cdc_sandbox import (
     apply_cdc_sandbox, list_cdc_sandbox_receipts, read_cdc_sandbox, review_cdc_sandbox,
 )
 from app.web.services.cdc_sandbox_versions import compare_cdc_versions, list_cdc_versions, read_cdc_version
+from app.web.services.pipeline_handoff import handoff_capability, handoff_eligibility
 from app.web.services.pipeline_sandbox import (
     list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
 )
@@ -279,6 +283,36 @@ async def get_local_pipeline_revision(
     session: SessionDep, current_user: CurrentActiveSuperuser, generation: int = Path(ge=1, le=2147483647),
 ) -> PipelineSandboxRevision:
     return await read_pipeline_revision(session, generation, current_user.id)
+
+
+@write.get("/pipeline-sandbox/handoff")
+async def get_pipeline_handoff(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffCapability:
+    if request.query_params:
+        raise HTTPException(422, "This handoff review uses one fixed synthetic sink")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with fail_after(3):
+            return await handoff_capability(session, current_user.id)
+    except (DBAPIError, TimeoutError):
+        raise HTTPException(503, "Synthetic handoff eligibility is temporarily unavailable") from None
+
+
+@write.post("/pipeline-sandbox/handoff/eligibility")
+async def post_pipeline_handoff_eligibility(
+    payload: PipelineHandoffRequest, request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffEligibility:
+    if request.query_params:
+        raise HTTPException(422, "This handoff review uses one fixed synthetic sink")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with fail_after(3):
+            return await handoff_eligibility(session, current_user.id, payload)
+    except (DBAPIError, TimeoutError):
+        raise HTTPException(503, "Synthetic handoff eligibility is temporarily unavailable") from None
 
 
 @write.get("/pipeline-sandbox/outputs")

@@ -20,6 +20,7 @@ from typing_extensions import Self
 
 from app.storage.postgres_client import _resolved_pg_url
 from app.web.core.config.indexed_sample import IndexedSampleScope
+from app.web.core.config.sandbox_handoff import HandoffClearance, HandoffSinkGrant
 
 def parse_cors(v: Any) -> list[str] | str:
     if isinstance(v, str) and not v.startswith("["):
@@ -69,6 +70,10 @@ class Settings(BaseSettings):
     PUSH_INBOX_SANDBOX_PUBLIC_KEY: SecretStr | None = None
     PUSH_INBOX_SANDBOX_DATABASE_MARKER: UUID | None = None
     ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED: bool = False
+    ONTOLOGY_SANDBOX_HANDOFF_ENABLED: bool = False
+    ONTOLOGY_SANDBOX_HANDOFF_SINK_GENERATION: UUID | None = None
+    ONTOLOGY_SANDBOX_HANDOFF_SINK_CLEARANCE: HandoffClearance | None = None
+    ONTOLOGY_SANDBOX_HANDOFF_SINK_GRANTS: dict[UUID, HandoffSinkGrant] = {}
     ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS: dict[UUID, list[Literal["sandbox-synthetic", "sandbox-restricted"]]] = {}
     CDC_SANDBOX_STREAM_MARKER: UUID | None = None
     BATCH_SYNC_SANDBOX_ENABLED: bool = False

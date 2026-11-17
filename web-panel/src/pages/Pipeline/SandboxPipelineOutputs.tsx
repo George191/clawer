@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
-import { commitSandboxPipelineOutput, fetchSandboxPipelineOutput, fetchSandboxPipelineOutputs } from '../../services/api';
+import { fetchSandboxHandoffCapability, commitSandboxPipelineOutput, fetchSandboxPipelineOutput, fetchSandboxPipelineOutputs } from '../../services/api';
 import type {
-  SandboxPipelineOutput, SandboxPipelineOutputDetail, SandboxPipelineOutputList, SandboxPipelineOutputRequest, SandboxPipelineRevision,
+  SandboxHandoffSink, SandboxPipelineOutput, SandboxPipelineOutputDetail, SandboxPipelineOutputList, SandboxPipelineOutputRequest, SandboxPipelineRevision,
 } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import { SandboxMarkings, sandboxScopeDenied } from './SandboxMarkings';
 import SandboxPipelineOutputComparison from './SandboxPipelineOutputComparison';
+import SandboxPipelineHandoff from './SandboxPipelineHandoff';
 
 type Confirmation = { revision: SandboxPipelineRevision } | { previous: SandboxPipelineOutputRequest };
 const timeText = (value: string) => new Date(value).toLocaleString();
@@ -52,6 +53,8 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const [detail, setDetail] = useState<SandboxPipelineOutputDetail>();
   const [detailFailed, setDetailFailed] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [handoffSink, setHandoffSink] = useState<SandboxHandoffSink>();
+  const [handoffOutput, setHandoffOutput] = useState<SandboxPipelineOutput>();
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -59,7 +62,7 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const invalidate = () => {
     setList(undefined); setLoadFailed(true); setInspecting(undefined); setDetail(undefined);
     setConfirm(undefined); setPendingRequest(undefined); setNotice(undefined);
-    setComparisonOpen(false);
+    setComparisonOpen(false); setHandoffOutput(undefined); setHandoffSink(undefined);
     onScopeDenied?.();
   };
 
@@ -80,6 +83,17 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
     }).catch(() => { if (live(controller.signal)) setLoadFailed(true); });
     return () => controller.abort();
   }, [identity, refresh]);
+
+  useEffect(() => {
+    const read = new AbortController();
+    setHandoffOutput(undefined); setHandoffSink(undefined);
+    if (scopeKey && list?.available && list.outputs.length) {
+      void fetchSandboxHandoffCapability(read.signal).then(value => {
+        if (live(read.signal) && value.available && value.sink?.id === 'synthetic-review-sink') setHandoffSink(value.sink);
+      }).catch(() => { if (live(read.signal)) setHandoffSink(undefined); });
+    }
+    return () => read.abort();
+  }, [scopeKey, list]);
 
   useEffect(() => {
     if (!inspecting) return;
@@ -160,10 +174,13 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
             {list.outputs.length ? <ol aria-label="Committed output receipts" className="flow-sandbox-builder__output-list">
               {list.outputs.map(item => <li key={item.id}>
                 <ReceiptFacts item={item} />
+                {handoffSink && <Button size="small" onClick={() => setHandoffOutput(item)}>Check handoff eligibility</Button>}
                 <Button size="small" onClick={() => { setDetail(undefined); setDetailFailed(false); setInspecting(item); }}>Inspect committed output</Button>
               </li>)}
             </ol> : <p>No committed sandbox output receipts.</p>}
           </>}
+    {handoffOutput && handoffSink && list?.available && <SandboxPipelineHandoff key={`${handoffOutput.id}:${handoffSink.generation}`}
+      output={handoffOutput} sink={handoffSink} onClose={() => setHandoffOutput(undefined)} onScopeDenied={invalidate} />}
     {comparisonOpen && list?.available && <SandboxPipelineOutputComparison outputs={list.outputs}
       onClose={() => setComparisonOpen(false)} onScopeDenied={invalidate} />}
     <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" confirmLoading={busy}

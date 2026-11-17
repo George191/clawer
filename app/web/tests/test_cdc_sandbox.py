@@ -19,6 +19,7 @@ from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReview
 from app.web.api.models.pipeline_sandbox import PipelineSandboxConfig, PipelineSandboxSave
 from app.web.api.models.pipeline_sandbox_outputs import PipelineSandboxCommit
 from app.web.core.config import settings
+from app.web.core.config.sandbox_handoff import HandoffSinkGrant
 from app.web.services.etl_layers import EtlLayers
 from app.web.tests.test_transfer_plans import TEST_ACTOR, api
 
@@ -540,6 +541,104 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 with patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", uuid4()):
                     self.assertFalse((await client.get(_OUTPUTS)).json()["available"])
                     self.assertEqual((await client.get(f"{_OUTPUTS}/{receipt['id']}")).status_code, 403)
+
+    async def test_governed_handoff_qualification_requires_both_grants_and_never_reads_output_rows(self):
+        base, restricted = "sandbox-synthetic", "sandbox-restricted"
+        sink_generation = uuid4()
+        grant = HandoffSinkGrant(scope="synthetic-review-sink", generation=sink_generation, streamMarker=_MARKER,
+                                 clearance=base)
+        route = _BUILDER + "/handoff"
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base, restricted]}),
+            patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_SINK_GENERATION", sink_generation),
+            patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_SINK_CLEARANCE", base),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    await self.produce(session, 1, "captured")
+                captured = await client.post(_ROUTE + "/runs", json=payload(0))
+                self.assertEqual(captured.status_code, 200, captured.text)
+
+                async def output(generation, **options):
+                    saved = await client.post(_BUILDER + "/revisions", json={"expectedGeneration": generation, "config": {
+                        "versionId": captured.json()["id"], "projection": ["id"], "filters": [], **options,
+                    }})
+                    self.assertEqual(saved.status_code, 201, saved.text)
+                    revised = saved.json()
+                    result = await client.post(_OUTPUTS, json={
+                        "requestId": str(uuid4()), "expectedGeneration": revised["generation"],
+                        "expectedConfigHash": revised["configHash"],
+                    })
+                    self.assertEqual(result.status_code, 201, result.text)
+                    return result.json()
+
+                base_output = await output(None)
+                restricted_output = await output(1, additionalMarking=restricted, filters=[
+                    {"field": "id", "operator": "eq", "value": "2"},
+                ])
+                self.assertEqual(restricted_output["outputRows"], 0)
+
+                def review(output, **changes):
+                    return {"outputId": output["id"], "expectedConfigHash": output["configHash"],
+                            "expectedResultHash": output["resultHash"], "expectedSinkGeneration": str(sink_generation),
+                            **changes}
+
+                async def qualify(output=base_output, **changes):
+                    return await client.post(route + "/eligibility", json=review(output, **changes))
+
+                with (
+                    patch("app.web.services.pipeline_sandbox_outputs._stored_rows",
+                          side_effect=AssertionError("handoff read stored output rows")) as output_read,
+                    patch("app.web.services.pipeline_sandbox_outputs._read_records",
+                          side_effect=AssertionError("handoff read CDC rows")) as cdc_read,
+                    patch("app.web.services.pipeline_sandbox_outputs.read_match_ids",
+                          side_effect=AssertionError("handoff read CDC IDs")) as id_read,
+                ):
+                    gap = await qualify()
+                    self.assertEqual(gap.status_code, 404)
+                    self.assertEqual((await client.get(route)).json(), {"available": False})
+                    with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_SINK_GRANTS", {TEST_ACTOR: grant}):
+                        ready = await client.get(route)
+                        self.assertEqual(ready.json()["sink"]["id"], "synthetic-review-sink")
+                        self.assertEqual(ready.headers["cache-control"], "no-store")
+                        same = await qualify()
+                        self.assertEqual(same.status_code, 200, same.text)
+                        self.assertEqual(same.json()["reason"], "eligible_for_review")
+                        self.assertTrue(same.json()["eligible"])
+                        self.assertEqual(same.json()["markings"], [base])
+                        not_clear = await qualify(restricted_output)
+                        self.assertEqual(not_clear.status_code, 200, not_clear.text)
+                        self.assertFalse(not_clear.json()["eligible"])
+                        self.assertEqual(not_clear.json()["reason"], "clearance_mismatch")
+                        self.assertEqual(not_clear.json()["markings"], [base, restricted])
+                        self.assertEqual((await qualify(expectedConfigHash="f" * 64)).status_code, 409)
+                        self.assertEqual((await qualify(expectedResultHash="e" * 64)).status_code, 409)
+                        self.assertEqual((await qualify(destination="ts_anywhere")).status_code, 422)
+
+                        with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base]}):
+                            hidden = await qualify(restricted_output, expectedConfigHash="c" * 64)
+                            missing = await qualify(outputId=str(uuid4()))
+                            self.assertEqual((hidden.status_code, hidden.json()), (404, missing.json()))
+                        with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_SINK_CLEARANCE", restricted):
+                            self.assertEqual((await qualify()).json(), gap.json())
+                        self.assertEqual((await qualify(expectedSinkGeneration=str(uuid4()))).json(), gap.json())
+                        with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_ENABLED", False):
+                            self.assertEqual((await qualify()).json(), gap.json())
+                        with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED", False):
+                            self.assertEqual((await qualify()).json(), gap.json())
+                    for reader in (output_read, cdc_read, id_read):
+                        reader.assert_not_called()
+        async with api(False, self.sessions) as reader:
+            self.assertEqual((await reader.get(route)).status_code, 403)
 
     async def test_compare_sealed_outputs_checks_ancestry_before_rows_and_counts_bounded_changes(self):
         base, restricted = "sandbox-synthetic", "sandbox-restricted"

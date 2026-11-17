@@ -1,5 +1,6 @@
 """Commit only exact reviewed synthetic projections to dedicated immutable output storage."""
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -158,17 +159,28 @@ async def _authorize_comparison_operands(
     ))).all()
     if len(operands) != 2:
         raise _compare_missing()
+    if not await verify_output_ancestry(session, binding, limit, operands):
+        raise _compare_missing()
+    keyed = {item.id: item for item in operands}
+    return keyed[request.fromOutputId], keyed[request.toOutputId]
+
+
+async def verify_output_ancestry(
+    session: AsyncSession, binding: CdcSandboxBindingRow, limit: int | None,
+    operands: Sequence[PipelineSandboxOutputRow],
+) -> bool:
+    """Verify exact immutable review and approved input headers, without any row reads."""
     saved = {row.generation: row for row in (await session.scalars(_revisions(binding, limit).where(
         PipelineSandboxRevisionRow.generation.in_({row.reviewed_generation for row in operands}),
     ))).all()}
     for output in operands:
         revision = saved.get(output.reviewed_generation)
         if revision is None:
-            raise _compare_missing()
+            return False
         try:
             config = _revision(revision).config
         except HTTPException:
-            raise _compare_missing() from None
+            return False
         # The current-match flag controls new execution, not this historical read.
         levels = []
         for identity in (config.versionId, config.matchVersionId):
@@ -176,15 +188,14 @@ async def _authorize_comparison_operands(
                 continue
             header = await session.scalar(_match_version_query(binding, identity, limit))
             if header is None:
-                raise _compare_missing()
+                return False
             levels.append(header.marking_level)
         if (config.projection != output.columns
             or (config.matchVersionId is not None and any(level not in (BASE, RESTRICTED) for level in levels))
             or (max([level or 0 for level in levels] + [RESTRICTED if config.additionalMarking else 0]) or None)
                 != output.marking_level):
-            raise _compare_missing()
-    keyed = {item.id: item for item in operands}
-    return keyed[request.fromOutputId], keyed[request.toOutputId]
+            return False
+    return True
 
 
 def _keyed_output_rows(rows: list[list[str]], id_position: int) -> dict[int, list[str]]:

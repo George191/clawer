@@ -1257,3 +1257,15 @@ export const reviewMinimumRowHealth = (request: MinimumRowHealthReview): Promise
   client.put(minimumRowHealthPath, request).then(r => unwrap<MinimumRowHealth>(r.data));
 export const acknowledgeMinimumRowHealthIncident = (id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
   client.post(`${minimumRowHealthPath}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
+
+export type SandboxHandoffSink = { id: 'synthetic-review-sink'; label: string; generation: string };
+export type SandboxHandoffCapability = { available: boolean; sink?: SandboxHandoffSink };
+export type SandboxHandoffEligibility = {
+  outputId: string; sink: SandboxHandoffSink; eligible: boolean; reason: 'eligible_for_review' | 'clearance_mismatch'; markings: string[];
+};
+export const fetchSandboxHandoffCapability = (signal?: AbortSignal): Promise<SandboxHandoffCapability> =>
+  client.get(`${sandboxPipelinePath}/handoff`, { signal }).then(r => unwrap<SandboxHandoffCapability>(r.data));
+export const checkSandboxHandoffEligibility = (review: {
+  outputId: string; expectedConfigHash: string; expectedResultHash: string; expectedSinkGeneration: string;
+}, signal?: AbortSignal): Promise<SandboxHandoffEligibility> =>
+  client.post(`${sandboxPipelinePath}/handoff/eligibility`, review, { signal }).then(r => unwrap<SandboxHandoffEligibility>(r.data));
