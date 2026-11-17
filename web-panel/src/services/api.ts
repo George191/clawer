@@ -176,6 +176,7 @@ client.interceptors.response.use(
   async (error: AxiosError) => {
     const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean; _loadingCounted?: boolean; _sessionIdentity?: string }) | undefined;
     if (config?._loadingCounted) { setLoading(false); config._loadingCounted = false; }
+    if (axios.isCancel(error)) return Promise.reject(error);
     if (isAuthenticationError(error) && config) {
       if (config._sessionIdentity !== getSessionState().identity) return Promise.reject(error);
       if (!getSessionState().authenticated) { requireLogin(); return Promise.reject(error); }
