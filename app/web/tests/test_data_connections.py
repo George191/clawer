@@ -150,3 +150,32 @@ class DataConnectionProbes(unittest.IsolatedAsyncioTestCase):
         with patch.object(sources, "_probe", side_effect=TimeoutError("test-only-password")):
             timed_out = await service.test(payload())
         self.assertIn("timed out", timed_out["message"])
+
+
+class StoredConnectionCredentialsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_connection_change_requires_explicit_credentials_before_probing(self):
+        service = object.__new__(sources.DataConnections)
+        original = payload()
+        stored = {"engine": original.engine, "config": original.config.model_dump()}
+        changes = (
+            {"host": "other-db.example.test"}, {"port": 6543},
+            {"database": "other"}, {"username": "other"}, {"tls": False},
+        )
+        with patch.object(service, "_stored", return_value=stored), patch.object(service, "_probe_result") as probe:
+            for change in changes:
+                candidate = payload(**change).model_copy(update={"credentials": type(original.credentials)()})
+                with self.subTest(change=change), self.assertRaises(HTTPException) as failure:
+                    await service.test(candidate, "saved")
+                self.assertEqual(failure.exception.status_code, 422)
+            probe.assert_not_called()
+
+    async def test_rename_reuses_same_configuration_and_new_secret_can_be_used_for_change(self):
+        service = object.__new__(sources.DataConnections)
+        original = payload()
+        settings = SimpleNamespace(SECRET_KEY="test-key-for-connection-binding", model_fields_set={"SECRET_KEY"})
+        with patch.object(sources, "settings", settings):
+            encrypted = sources.credential_cipher().encrypt(b'{"password":"stored-demo"}').decode("ascii")
+            stored = {"engine": original.engine, "config": json.dumps(original.config.model_dump()), "credentials_ciphertext": encrypted}
+            renamed = original.model_copy(update={"name": "Renamed", "credentials": type(original.credentials)()})
+            self.assertEqual(await service._credentials(renamed, stored), {"password": "stored-demo"})
+            self.assertEqual(await service._credentials(payload(host="other-db.example.test"), stored), {"password": "test-only-password"})

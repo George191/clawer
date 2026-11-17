@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Table } from '@/components/ui';
-import { ReloadOutlined } from '@/components/ui/icons';
+import { ArrowLeftOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
   fetchPublishedOntologyType, listPublishedOntologyTypes, listOntologyRecords, submitOntologyAction,
@@ -10,7 +10,7 @@ import './ontology-create.css';
 
 const pageSize = 25;
 type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord };
-type Props = { initialId?: string; onCancel: () => void };
+type Props = { selection: string; onSelect: (id: string) => void };
 function show(value: unknown): string {
   if (value == null) return '—';
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
@@ -36,9 +36,9 @@ function parse(value: string, type: string) {
   return value;
 }
 
-export default function PublishedOntology({ initialId = '', onCancel }: Props) {
-  const [selection, setSelection] = useState(initialId);
+export default function PublishedOntology({ selection, onSelect }: Props) {
   const [items, setItems] = useState<PublishedOntologyType[]>();
+  const [search, setSearch] = useState('');
   const [object, setObject] = useState<PublishedOntologyType>();
   const [records, setRecords] = useState<OntologyRecordPage>();
   const [offset, setOffset] = useState(0);
@@ -53,7 +53,6 @@ export default function PublishedOntology({ initialId = '', onCancel }: Props) {
   const active = useRef(true);
   const identity = useRef(getSessionState().identity).current;
   const current = () => active.current && identity === getSessionState().identity;
-  const close = () => { if (!actionLocked.current) onCancel(); };
   const reload = () => setVersion(value => value + 1);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
@@ -107,23 +106,28 @@ export default function PublishedOntology({ initialId = '', onCancel }: Props) {
   };
   const available = records?.actions || [];
   const createAction = available.find(item => item.kind === 'create');
-  const select = (id: string) => { setOffset(0); setSelection(id); };
+  const keyword = search.trim().toLowerCase();
+  const displayed = items?.filter(({ definition }) => !keyword || [definition.name, definition.id, definition.description, definition.source.schema, definition.source.table]
+    .some(value => value?.toLowerCase().includes(keyword))) || [];
   return <>
-    <Modal open centered className="flow-surface-modal flow-create-modal flow-create-object flow-published-ontology" width={1160} title="Published object types" onCancel={close} footer={<>
-      <Button onClick={close}>Close</Button>{selection && <Button onClick={() => select('')}>Back to object types</Button>}
-    </>}>
-      <div className="flow-create-step">
+    <main className="flow-ontology__published" data-testid="published-ontology" aria-label="Published object types" aria-busy={loading}>
+      <header className="flow-ontology__published-header">
+        {selection ? <Button size="small" icon={<ArrowLeftOutlined />} onClick={() => { if (!actionLocked.current) onSelect(''); }}>Back to published types</Button>
+          : <><h2>Published object types</h2><p>Browse published definitions and access the records and actions available to your account.</p></>}
+      </header>
         <section className="flow-create-section">
           {error && <p className="flow-create-error" role="alert">{error}<Button size="small" icon={<ReloadOutlined />} onClick={reload}>Retry</Button></p>}
-          {loading && <p role="status">Loading permitted object types and records…</p>}
-          {!selection && !loading && !error && <Table<PublishedOntologyType> className="flow-create-table flow-create-review-table" size="small" rowKey="id" pagination={false} dataSource={items || []} locale={{ emptyText: 'No published object types are available to this account.' }} columns={[
-            { title: 'Object type', render: (_, item) => <Button type="link" onClick={() => select(item.id)}>{item.definition.name}</Button> },
+          {loading && <p role="status">{selection ? 'Loading published object type and records…' : 'Loading published object types…'}</p>}
+          {!selection && !loading && !error && <>
+            <div className="flow-ontology__published-search"><Input size="small" prefix={<SearchOutlined />} aria-label="Search published types" placeholder="Search published types" value={search} onChange={event => setSearch(event.target.value)} allowClear /></div>
+            <Table<PublishedOntologyType> className="flow-create-table flow-create-review-table" size="small" rowKey="id" pagination={false} dataSource={displayed} locale={{ emptyText: keyword ? 'No published object types match your search.' : 'No published object types are available to this account.' }} columns={[
+            { title: 'Object type', render: (_, item) => <Button type="link" onClick={() => onSelect(item.id)}>{item.definition.name}</Button> },
             { title: 'API ID', render: (_, item) => item.definition.id },
             { title: 'Datasource', render: (_, item) => item.definition.source.mode === 'existing' ? item.definition.source.schema + '.' + item.definition.source.table : 'No backing table' },
             { title: 'Revision', dataIndex: 'revision' },
-          ]} />}
+            ]} /></>}
           {object && <>
-            <header className="flow-create-heading"><h3>{object.definition.name}</h3><p>{object.definition.description}</p></header>
+            <header className="flow-create-heading"><h2>{object.definition.name}</h2><p>{object.definition.description}</p></header>
             <dl className="flow-create-summary"><dt>API ID</dt><dd>{object.definition.id}</dd><dt>Datasource</dt><dd>{object.definition.source.mode === 'existing' ? object.definition.source.schema + '.' + object.definition.source.table : 'Object-managed records'}</dd><dt>Revision</dt><dd>{object.revision}</dd></dl>
             <div className="flow-create-property-heading"><strong>Visible properties</strong></div>
             <Table<PublishedOntologyType['definition']['properties'][number]> className="flow-create-table flow-create-review-table" size="small" rowKey="id" pagination={false} dataSource={object.definition.properties} columns={[
@@ -141,8 +145,7 @@ export default function PublishedOntology({ initialId = '', onCancel }: Props) {
             </div>}
           </>}
         </section>
-      </div>
-    </Modal>
+    </main>
     {operation && <Modal open centered width={520} title={operation.kind === 'create' ? 'Create object' : operation.kind === 'modify' ? 'Modify object' : 'Delete object'} okText={operation.kind === 'delete' ? 'Delete object' : 'Submit action'} onOk={applyAction} onCancel={() => { if (!actionLocked.current) setOperation(undefined); }} confirmLoading={actionPending} maskClosable={!actionPending} closable={!actionPending} keyboard={!actionPending}>
       {actionError && <p role="alert" className="flow-create-error">{actionError}</p>}
       {operation.kind === 'delete' && <p>Delete this object record? The source table, if any, is not modified.</p>}

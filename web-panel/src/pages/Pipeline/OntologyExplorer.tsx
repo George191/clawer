@@ -11,11 +11,9 @@ import { getSessionState } from '../../services/session';
 import type { EtlObjectCatalog, EtlObjectPreview, EtlObjectType, EtlObjectVisibility, LayerNode } from '../../services/types';
 import { layerColors } from '../../theme/tokens';
 import { inferSiteKind, TemplateGlyph } from '../AICollect/WorkspaceDock';
-import NewObjectType from './NewObjectType';
 import SemanticObjectWizard from './SemanticObjectWizard';
 import PublishedOntology from './PublishedOntology';
 import { listOntologyProjects } from '../../services/ontology';
-import DataConnections from './DataConnections';
 import PostgresGlyph from './PostgresGlyph';
 import './ontology-explorer.css';
 import './ontology-create.css';
@@ -135,6 +133,8 @@ export function schemaColor(key: string): string {
 export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: number }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  const publishedCatalog = params.get('catalog') === 'published';
+  const publishedId = publishedCatalog ? params.get('objectType') || '' : '';
   const keyword = params.get('q') || '';
   const group: Group = groups.some((item) => item.key === params.get('group')) ? params.get('group') as Group : 'all';
   const view = params.get('view') === 'list' ? 'list' : 'grid';
@@ -152,7 +152,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const inspectorSchema = selectedId ? selectedSchema : inspectedObject.schema;
   const inspectorTable = selectedId ? selectedTable : inspectedObject.table;
   const inspectorId = inspectorSchema && inspectorTable ? `${inspectorSchema}.${inspectorTable}` : '';
-  const inspectorOpen = !!inspectorId;
+  const inspectorOpen = !publishedCatalog && !!inspectorId;
   const inspectorClosing = inspectorOpen && !selectedId;
   const inspectorAllProperties = selectedId ? allProperties : inspectedObject.allProperties;
   const [catalogState, setCatalogState] = useState<{ key: string; scope: string; userId: string; group: Group; data: EtlObjectCatalog }>({ key: '', scope: '', userId: '', group: 'all', data: emptyCatalog });
@@ -171,11 +171,8 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   const [showHidden, setShowHidden] = useState(false);
   const includeHidden = canManage && showHidden;
   const [createOpen, setCreateOpen] = useState(false);
-  const [legacyCreateOpen, setLegacyCreateOpen] = useState(false);
   const [semanticProjectAccess, setSemanticProjectAccess] = useState(false);
-  const [published, setPublished] = useState<{ id?: string }>();
   const [createSchema, setCreateSchema] = useState<string>();
-  const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [favoriteState, setFavoriteState] = useState<{ userId: string; ids: string[] }>({ userId: '', ids: [] });
   const favorites = favoriteState.userId === currentUserId ? favoriteState.ids : [];
   const favoriteReady = !!currentUserId && favoriteState.userId === currentUserId;
@@ -221,7 +218,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
 
   useEffect(() => {
     rootRef.current?.querySelector<HTMLElement>('.flow-ontology__body')?.scrollTo({ top: 0 });
-  }, [group, source, keyword, view]);
+  }, [group, source, keyword, view, publishedCatalog, publishedId]);
 
   useEffect(() => {
     let active = true;
@@ -244,7 +241,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return () => { alive = false; };
   }, [currentUserId, sessionIdentity, refreshToken]);
   useEffect(() => {
-    if (!currentUserId) return;
+    if (publishedCatalog || !currentUserId) return;
     let active = true;
     const owner = currentUserId;
     const mutation = favoriteMutationRef.current;
@@ -283,11 +280,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     };
     void load();
     return () => { active = false; };
-  }, [currentUserId, sessionIdentity, version, refreshToken]);
+  }, [currentUserId, sessionIdentity, version, refreshToken, publishedCatalog]);
   useEffect(() => {
     let active = true;
     setFavoriteSummaryError('');
-    if (!favoriteReady) return;
+    if (publishedCatalog || !favoriteReady) return;
     const load = async () => {
       try {
         const ids = favoriteIds ? favoriteIds.split(',') : [];
@@ -304,8 +301,9 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     };
     void load();
     return () => { active = false; };
-  }, [favoriteIds, favoriteReady, includeHidden, version, refreshToken, favoriteSummaryKey]);
+  }, [favoriteIds, favoriteReady, includeHidden, version, refreshToken, favoriteSummaryKey, publishedCatalog]);
   useEffect(() => {
+    if (publishedCatalog) return;
     if (!currentUserId || !catalogFavoritesReady) { setCatalogLoading(true); return; }
     let active = true;
     setCatalogLoading(true); setCatalogError({ key: catalogKey, message: '' });
@@ -356,7 +354,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       finally { if (active) setCatalogLoading(false); }
     }, keyword ? 200 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [source, keyword, group, favoriteQuery, catalogFavoritesReady, includeHidden, version, refreshToken, catalogKey, catalogScope, menuFacetKey]);
+  }, [source, keyword, group, favoriteQuery, catalogFavoritesReady, includeHidden, version, refreshToken, catalogKey, catalogScope, menuFacetKey, publishedCatalog]);
   useEffect(() => {
     if (selectedId) { setInspectedObject({ schema: selectedSchema, table: selectedTable, allProperties }); return; }
     if (!inspectorId) return;
@@ -364,6 +362,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     return () => window.clearTimeout(timer);
   }, [selectedId, selectedSchema, selectedTable, allProperties, inspectorId]);
   useEffect(() => {
+    if (publishedCatalog) return;
     if (!inspectorId) { setPreview({ id: '', loading: false, error: '' }); return; }
     if (inspectorClosing) return;
     let active = true;
@@ -372,7 +371,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       if (active) setPreview({ id: inspectorId, data, loading: false, error: '' });
     }).catch(() => { if (active) setPreview({ id: inspectorId, loading: false, error: 'Unable to load this object type. Try again.' }); });
     return () => { active = false; };
-  }, [inspectorId, inspectorSchema, inspectorTable, inspectorClosing, includeHidden, previewVersion, version, refreshToken]);
+  }, [inspectorId, inspectorSchema, inspectorTable, inspectorClosing, includeHidden, previewVersion, version, refreshToken, publishedCatalog]);
   useEffect(() => {
     setVisibilityError(''); setVisibilityNotice('');
   }, [inspectorId]);
@@ -425,6 +424,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     Object.entries(changes).forEach(([key, value]) => value ? next.set(key, value) : next.delete(key));
     return next;
   }, { replace });
+  const selectPublished = (id = '') => updateQuery({ catalog: 'published', objectType: id || null, schema: null, table: null, tab: null });
   const selectObject = (object: { schema: string; table: string }) => updateQuery({ schema: object.schema, table: object.table, tab: null });
   const closeInspector = () => {
     updateQuery({ schema: null, table: null, tab: null }, true);
@@ -507,21 +507,24 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
   return <div ref={rootRef} className="flow-ontology" data-testid="ontology-explorer">
     <div className="flow-ontology__workspace">
       <header className="flow-ontology__hero" aria-label="Object type catalog">
-        <div className={`flow-ontology__topbar${canManage ? ' is-manage' : ''}`}>
+        <div className="flow-ontology__catalog-bar">
+          <nav className="flow-ontology__catalog-navigation" aria-label="Catalog views">
+            <button type="button" aria-pressed={!publishedCatalog} onClick={() => { if (publishedCatalog) updateQuery({ catalog: null, objectType: null }); }}><DatabaseOutlined />Storage-backed</button>
+            <button type="button" aria-pressed={publishedCatalog} onClick={() => { if (!publishedCatalog) selectPublished(); }}><AppstoreOutlined />Published</button>
+          </nav>
+          {(canManage || semanticProjectAccess) && <button type="button" className="flow-ontology__button flow-ontology__button--primary flow-ontology__create-action" onClick={startNewObject}><PlusOutlined />New object type</button>}
+        </div>
+        {!publishedCatalog && <div className={`flow-ontology__topbar${canManage ? ' is-manage' : ''}`}>
           <div className="flow-ontology__search" role="search">
             <SearchOutlined /><input ref={searchRef} data-testid="ontology-search" aria-label="Search object types" value={keyword} onChange={(event) => updateQuery({ q: event.target.value || null }, true)} onKeyDown={(event) => { if (event.key === 'ArrowDown' && renderedObjects.length) { event.preventDefault(); cardRefs.current[renderedObjects[0].id]?.focus(); } }} placeholder="Search object types..." />{keyword && <button type="button" aria-label="Clear search" onClick={() => { updateQuery({ q: null }, true); searchRef.current?.focus(); }}><CloseOutlined /></button>}
           </div>
           <div className="flow-ontology__view-switch" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
           {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
           <span className="flow-ontology__summary" aria-busy={loading} aria-label={confirmedTotal === null ? 'Object type count not loaded' : `${number(confirmedTotal)} object types${loading ? ', updating' : error ? ', last loaded count' : ''}`}><span className="flow-ontology__summary-value">{confirmedTotal === null ? '…' : number(confirmedTotal)}</span><span>object types</span></span>
-          <div className="flow-ontology__catalog-actions" aria-label="Object type actions">
-            <button type="button" className="flow-ontology__button flow-ontology__published-action" onClick={() => setPublished({})}>Published object types</button>
-            {canManage && <><button type="button" className="flow-ontology__button flow-ontology__connector-action" onClick={() => setConnectionsOpen(true)}><DatabaseOutlined />New data connector</button><button type="button" className="flow-ontology__button flow-ontology__storage-action" disabled={!creationSchemas.length} onClick={() => { setCreateSchema(source || selectedSchema || undefined); setLegacyCreateOpen(true); }}>New storage table</button></>}
-            {(canManage || semanticProjectAccess) && <button type="button" className="flow-ontology__button flow-ontology__create-action" onClick={startNewObject}><PlusOutlined />New object type</button>}
-          </div>
-        </div>
+        </div>}
       </header>
       <div className="flow-ontology__body">
+        {publishedCatalog ? <PublishedOntology key={publishedId} selection={publishedId} onSelect={selectPublished} /> : <>
         <aside className="flow-ontology__sidebar" aria-label="Object type groups"><nav aria-busy={loading}>
           {groups.map((item) => {
             const expanded = expandedGroup === item.key;
@@ -562,6 +565,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           </div>}
           <footer className="flow-ontology__catalog-footer"><span>{loading ? 'Updating catalog…' : error ? 'Catalog unavailable' : `${number(catalog.total)} object types`}</span></footer>
         </main>
+        </>}
       </div>
     </div>
     <Drawer open={inspectorOpen} onClose={closeInspector} width="100%" title={`${inspectorId} Object type preview`} closable={false} destroyOnHidden rootClassName={`flow-ontology flow-ontology__drawer${inspectorClosing ? ' is-closing' : ''}`} styles={{ header: { display: 'none' }, body: { display: 'flex', padding: 0, overflow: 'hidden' } }}>
@@ -585,9 +589,6 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
       </div>
       <footer className="flow-ontology__inspector-footer"><button type="button" className="flow-ontology__button flow-ontology__button--primary" disabled={!data || preview.loading} onClick={openWorkspace}>Start exploring <ArrowRightOutlined /></button></footer>
     </aside></Drawer>
-    {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setCreateOpen(false)} onPublished={(object) => { setCreateOpen(false); setPublished({ id: object.id }); }} />}
-    {published && <PublishedOntology initialId={published.id} onCancel={() => setPublished(undefined)} />}
-    {legacyCreateOpen && canManage && <NewObjectType schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setLegacyCreateOpen(false)} onOpenExisting={(object) => { setLegacyCreateOpen(false); if (object.visibility === 'hidden') setShowHidden(true); updateQuery({ q: null, group: null, source: null, schema: object.schema, table: object.table, tab: null }); }} onCreated={(schema, table) => { setLegacyCreateOpen(false); setVersion((value) => value + 1); updateQuery({ q: null, group: null, source: null, schema, table: table.name, tab: null }); }} />}
-    {connectionsOpen && canManage && <DataConnections onCancel={() => setConnectionsOpen(false)} onChanged={() => { setVersion((value) => value + 1); updateQuery({ source: null, schema: null, table: null, tab: null }); }} />}
+    {createOpen && (canManage || semanticProjectAccess) && <SemanticObjectWizard allowedSource={canManage} schemas={creationSchemas} initialSchema={createSchema} onCancel={() => setCreateOpen(false)} onPublished={(object) => { setCreateOpen(false); selectPublished(object.id); }} />}
   </div>;
 }

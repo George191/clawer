@@ -6,11 +6,13 @@ import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined, 
 import  '../ProductWorkspace/workspace.css';
 import CdcStatusPanel from './CdcStatusPanel';
 import OntologyExplorer, { schemaColor } from './OntologyExplorer';
+import DataConnections from './DataConnections';
 import OntologyLineage from './OntologyLineage';
 import PostgresIcon from './PostgresGlyph';
 import './ontology-frame.css';
 import './ontology-workspace.css';
 import ExplorerCatalog from './ExplorerCatalog';
+import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
 import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
@@ -128,6 +130,7 @@ const Pipeline: React.FC = () => {
     return <ConfigProvider locale={enUS}><main className="flow-console flow-console--ontology">
         <section className="flow-core">
             {pathname === '/ontology' ? <OntologyExplorer refreshToken={0} />
+                : pathname === '/ontology/connections' ? <DataConnections />
                 : pathname === '/ontology/lineage' ? <OntologyLineage refreshToken={0} />
                     : pathname === '/ontology/runtime' ? <FlowRuntime />
                         : <DataLayersWorkspace />}
@@ -230,6 +233,23 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     };
 
     const [selectedSchema, setSelectedSchema] = useState('');
+    const [createTableSchema, setCreateTableSchema] = useState('');
+    const creationSchemas = schemas.filter((item) => item.status === 'running' && !['ts_meta', 'ts_meta_hist'].includes(item.key));
+    const canCreateTable = isSchemas && canManage && creationSchemas.some((item) => item.key === selectedSchema);
+    const openTableWizard = () => {
+        if (!canCreateTable) return;
+        if (editingRowKey || scriptDirty || apisDirty || mutationPending.current) { message.warning('Save or cancel current changes before creating a table'); return; }
+        setCreateTableSchema(selectedSchema);
+    };
+    const openWizardTable = (schema: string, name: string) => {
+        setCreateTableSchema('');
+        setClosedTables((current) => { const next = new Set(current); next.delete(name); return next; });
+        setRefreshVersion((value) => value + 1);
+        refreshCatalog().catch((error) => { if (workspaceActive.current) setRequestError(errorText(error)); });
+        const params = new URLSearchParams(search);
+        params.delete('create'); params.set('schema', schema); params.set('table', name);
+        navigate(`${workspacePath}?${params.toString()}`);
+    };
     const [schemaAliases, setSchemaAliases] = useState<Record<string, string>>({});
     const [table, setTable] = useState<LayerTable>({ name: '', rowCount: 0, size: '', updatedAt: '' });
     const  [partition,  setPartition]  =  useState<string>();
@@ -821,7 +841,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         <div  className="flow-layer-layout">
             {isSchemas ? <ExplorerCatalog schemas={schemas} tables={tablesLoadedSchema === selectedSchema ? serverTables : []}
                 selectedSchema={selectedSchema} selectedTable={table.name} catalogLoaded={catalogLoaded} tablesLoading={tablesLoading}
-                requestError={requestError} onRefresh={refreshWorkspace} onSchema={selectSchema} onTable={selectTable} /> :
+                requestError={requestError} onCreateTable={canCreateTable ? openTableWizard : undefined} onRefresh={refreshWorkspace} onSchema={selectSchema} onTable={selectTable} /> :
             <aside className="flow-layer-tree flow-ontology-schema-sidebar">
                 <div className="flow-tree-label flow-tree-label--actions"><span>Schemas</span><button type="button" aria-label="Refresh schemas" title="Refresh schemas" onClick={refreshWorkspace}><ReloadOutlined /></button></div>
                 <Input className="flow-ontology-schema-search" aria-label="Search schemas" placeholder="Search schemas" prefix={<SearchOutlined />} value={schemaSearch} onChange={(event) => setSchemaSearch(event.target.value)} allowClear />
@@ -1028,6 +1048,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 </div>}
             </section>
         </div>
+        {isSchemas && canManage && createTableSchema && creationSchemas.some((item) => item.key === createTableSchema) && <NewObjectType variant="storage" schemas={creationSchemas.filter((item) => item.key === createTableSchema)} initialSchema={createTableSchema} onCancel={() => setCreateTableSchema('')} onOpenExisting={(object) => openWizardTable(object.schema, object.table)} onCreated={(schema, created) => openWizardTable(schema, created.name)} />}
         <Modal  className="flow-surface-modal flow-offset-modal"  title="Adjust  Kafka  offset"  open={offsetOpen}  onCancel={() => { if (!mutationPending.current) setOffsetOpen(false); }}  cancelText="Cancel"  onOk={saveOffset} confirmLoading={mutationLoading} okButtonProps={{ disabled: !canManage || !stream?.available || offsetPartition === undefined || offset === undefined || offset < 0 || !Number.isSafeInteger(offset) }}  okText="Confirm  SET  OFFSET"  width={460}>
             <div  className="flow-offset-modal-body">
                 <div  className="flow-offset-modal-info">

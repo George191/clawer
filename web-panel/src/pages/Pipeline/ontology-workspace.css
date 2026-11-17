@@ -522,3 +522,5 @@
 @media (max-width: 740px), (pointer: coarse) {
   .flow-console--ontology .flow-schema-workbench .flow-preview-page-controls :is(.ui-btn, select) { min-height: 38px; }
 }
+
+.flow-console--ontology .flow-explorer-catalog .flow-catalog-create-table { margin: 0 12px 10px; width: calc(100% - 24px); }
