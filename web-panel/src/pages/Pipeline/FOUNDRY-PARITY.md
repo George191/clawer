@@ -4,7 +4,7 @@
 
 | 核对项 | Palantir 官方行为 | Clawer 当前状态 | 下一步验收标准 |
 | --- | --- | --- | --- |
-| 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；本地 PostgreSQL 试点已将连通性与已保存源身份核验分开，手工和调度在源事务中重新验证；保存连接可显式暂停/恢复且旧审核不自动复用。已保存连接详情分别显示连接测试、目录浏览及三种本地同步方式的配置前提和阻止原因，不替代实际连接或执行检查。 | 继续验收其他连接器的实际可用能力、源网络策略以及源端关系浏览；不把连接测试通过当成可读取或可写入业务资产的证明。 |
+| 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；普通源表可按需查看有权限的一跳原生外键及有序列映射。本地 PostgreSQL 试点已将连通性与已保存源身份核验分开，手工和调度在源事务中重新验证；保存连接可显式暂停/恢复且旧审核不自动复用。已保存连接详情分别显示连接测试、目录浏览及三种本地同步方式的配置前提和阻止原因，不替代实际连接或执行检查。 | 继续验收其他连接器的实际可用能力、源网络策略及跨表关系图；不把连接测试通过当成可读取或可写入业务资产的证明。 |
 | 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度；固定合成源另支持审核明确主键区间后的快照 Upsert，或按已提交批次增量 Upsert；源发布进度与目标已应用位置分开。 | 尚需将有明确提交语义的增量扩展到已授权源和数据集目标，覆盖其他连接器与数据变化模式。 |
 | 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断和固定消费路径；独立本地合成流可按已提交序号回放 after-image，分别记录源最高位点、目标检查点和提交回执。另有独立的本地合成推送收件箱，生产者验签后可持久接收并查看回执；另行授权的手工应用可向固定目标按接收顺序追加，应用位置和结果独立记录。尚无通用可配置入站流。 | 继续验收可配置的生产者身份、流定义和消费策略；不把接收回执或消费位点当作目标提交。 |
 | 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执；当前审核的正数回执已驱动沙箱外发 Lineage。可选第二个预置本地接收端，各自审核、授权和记录，不自动多发或回退。原 Upsert 之外可单独审核只追加模式，遇主键冲突整批拒绝。固定合成标记另有可撤销授权。Published API 仍只是被动读取。 | 验收通用标记策略、更多目标及导出模式，以及另行审核的写回或 Webhook。 |
@@ -58,7 +58,8 @@
 
 - 对照 [Data Connection Source Exploration](https://www.palantir.com/docs/foundry/data-connection/source-exploration/) 的数据源树、搜索和元数据面板。Explore source 放在现有 Data Connections 已保存连接内，不另建导航。
 - 只用已保存的 PostgreSQL 连接和其现有凭证。管理员发起请求，但结果仍受数据源数据库账号的 USAGE / SELECT 权限限制；不显示系统 schema 或不可读的关系。按页读取目录，列通过元数据提供类型、可空性和主键，不读源表的行。
-- 未覆盖其它连接器、外部样本预览、关系图、网络策略配置、列映射、增量同步和调度；目录可读不代表有权限写入目标。
+- 在列详情中显式加载普通表的一跳原生外键，可查看引用和被引用两个方向；复合列按数据库定义顺序显示。所用系统目录字段要求 PostgreSQL 11 或更新版本；验收使用 17。分区表及继承树不在范围内。只显示 PostgreSQL 已验证的约束，两个端点及每一对参与列均须可见；先按权限过滤、再合并完全相同的引用并截断，每个方向最多显示 12 条。请求绑定已保存连接的确切版本，版本过期时不连接新地址，要求重新加载。结果不缓存，下次加载重新检查权限。
+- 此处只读取数据库系统目录，不读取样本行，不展开关系图，不根据列名推断引用，也不把结构引用当成真实传输血缘。其他连接器、外部样本预览和网络策略配置未由该功能覆盖；目录可读不代表有权限写入目标。
 
 ### 已保存连接的能力状态
 

@@ -27,7 +27,8 @@ from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.data_connections import (
     DataConnectionPauseChange, DataConnectionPayload, SavedSourceCapabilities, SavedSourceCapability,
-    SavedSourceCapabilityReason, SourceCatalog, SourceColumn, SourceColumns, SourceRelation,
+    SavedSourceCapabilityReason, SourceCatalog, SourceColumn, SourceColumns, SourceReference,
+    SourceReferenceDirection, SourceReferencePair, SourceReferences, SourceRelation,
 )
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
 from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
@@ -48,6 +49,7 @@ _TIMEOUT = 5
 _CATALOG_TIMEOUT = 8
 _CATALOG_SCHEMA_LIMIT = 100
 _CATALOG_COLUMN_LIMIT = 200
+_CATALOG_REFERENCE_LIMIT = 12
 _CATALOG_KINDS = {
     "r": "table", "p": "partitioned_table", "v": "view", "m": "materialized_view", "f": "foreign_table",
 }
@@ -62,6 +64,13 @@ _CATALOG_RELATION_SCOPE = f"""
     AND CASE WHEN c.relkind IN ('r','p','v','m','f')
         THEN has_table_privilege(c.oid, 'SELECT') OR has_any_column_privilege(c.oid, 'SELECT')
         ELSE false END
+"""
+
+# References are intentionally limited to ordinary tables outside all inheritance trees.
+_REFERENCE_TABLE = """
+    c.relkind = 'r' AND NOT c.relispartition
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits edge
+                    WHERE edge.inhrelid = c.oid OR edge.inhparent = c.oid)
 """
 
 
@@ -463,9 +472,12 @@ class DataConnections:
             return result
 
     @asynccontextmanager
-    async def _postgres_catalog(self, connection_id):
+    async def _postgres_catalog(self, connection_id, *, expected_updated_at: datetime | None = None):
         async with self._session() as session:
             row = await self._stored(connection_id, session=session, lock=" FOR SHARE")
+            if expected_updated_at is not None and row["updated_at"] != expected_updated_at:
+                raise HTTPException(409, {"code": "source_revision_changed",
+                                          "message": "The saved source changed; reload it before browsing references"})
             async with self._postgres_catalog_row(row) as connection:
                 yield connection
 
@@ -540,8 +552,9 @@ class DataConnections:
 
     async def catalog_columns(self, connection_id, *, schema: str, table: str) -> SourceColumns:
         async with self._postgres_catalog(connection_id) as connection:
-            relation = await connection.fetchval(f"""
-                SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            relation = await connection.fetchrow(f"""
+                SELECT c.oid, ({_REFERENCE_TABLE}) AS references_available
+                FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                 WHERE {_CATALOG_RELATION_SCOPE} AND n.nspname::text = $1 AND c.relname::text = $2
             """, schema, table)
             if relation is None:
@@ -558,11 +571,64 @@ class DataConnections:
                   AND has_column_privilege(a.attrelid, a.attnum, 'SELECT')
                 ORDER BY a.attnum
                 LIMIT $2
-            """, relation, _CATALOG_COLUMN_LIMIT + 1)
+            """, relation["oid"], _CATALOG_COLUMN_LIMIT + 1)
         return SourceColumns(schema=schema, table=table, hasMore=len(columns) > _CATALOG_COLUMN_LIMIT,
+                             referencesAvailable=True if relation["references_available"] else None,
                              columns=[SourceColumn(name=row["name"], type=row["type"], nullable=row["nullable"],
                                                    primaryKey=row["primary_key"], position=row["position"])
                                       for row in columns[:_CATALOG_COLUMN_LIMIT]])
+
+    async def catalog_references(
+        self, connection_id: str, *, schema: str, table: str, direction: SourceReferenceDirection,
+        expected_updated_at: datetime,
+    ) -> SourceReferences:
+        # SQL identifiers below come only from the validated direction, never from caller input.
+        root_rel, peer_rel = ("conrelid", "confrelid") if direction == "outgoing" else ("confrelid", "conrelid")
+        async with self._postgres_catalog(connection_id, expected_updated_at=expected_updated_at) as connection:
+            relation = await connection.fetchval(f"""
+                SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                WHERE {_CATALOG_RELATION_SCOPE} AND {_REFERENCE_TABLE}
+                  AND n.nspname::text = $1 AND c.relname::text = $2
+            """, schema, table)
+            if relation is None:
+                raise HTTPException(404, "Source relation is unavailable or not readable")
+            rows = await connection.fetch(f"""
+                SELECT DISTINCT n.nspname::text COLLATE "C" AS peer_schema,
+                       c.relname::text COLLATE "C" AS peer_table,
+                       proof.from_columns COLLATE "C" AS from_columns,
+                       proof.to_columns COLLATE "C" AS to_columns
+                FROM pg_catalog.pg_constraint f
+                JOIN pg_catalog.pg_class c ON c.oid = f.{peer_rel}
+                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                CROSS JOIN LATERAL (
+                    SELECT array_agg(src.attname::text ORDER BY pair.ord) AS from_columns,
+                           array_agg(dst.attname::text ORDER BY pair.ord) AS to_columns
+                    FROM ROWS FROM (pg_catalog.unnest(f.conkey), pg_catalog.unnest(f.confkey)) WITH ORDINALITY AS pair(from_att, to_att, ord)
+                    JOIN pg_catalog.pg_attribute src ON src.attrelid = f.conrelid AND src.attnum = pair.from_att
+                    JOIN pg_catalog.pg_attribute dst ON dst.attrelid = f.confrelid AND dst.attnum = pair.to_att
+                    WHERE src.attnum > 0 AND NOT src.attisdropped
+                      AND dst.attnum > 0 AND NOT dst.attisdropped
+                      AND pg_catalog.has_column_privilege(src.attrelid, src.attnum, 'SELECT')
+                      AND pg_catalog.has_column_privilege(dst.attrelid, dst.attnum, 'SELECT')
+                    HAVING pg_catalog.count(*) = pg_catalog.cardinality(f.conkey)
+                ) proof
+                WHERE f.{root_rel} = $1::oid AND f.contype = 'f' AND f.convalidated AND f.conparentid = 0
+                  AND pg_catalog.cardinality(f.conkey) BETWEEN 1 AND 32
+                  AND pg_catalog.cardinality(f.conkey) = pg_catalog.cardinality(f.confkey)
+                  AND {_CATALOG_RELATION_SCOPE} AND {_REFERENCE_TABLE}
+                ORDER BY peer_schema, peer_table, from_columns, to_columns
+                LIMIT $2
+            """, relation, _CATALOG_REFERENCE_LIMIT + 1)
+        return SourceReferences(
+            direction=direction, hasMore=len(rows) > _CATALOG_REFERENCE_LIMIT,
+            references=[
+                SourceReference(schema=row["peer_schema"], table=row["peer_table"], pairs=[
+                    SourceReferencePair(fromColumn=source, toColumn=target)
+                    for source, target in zip(row["from_columns"], row["to_columns"], strict=True)
+                ])
+                for row in rows[:_CATALOG_REFERENCE_LIMIT]
+            ],
+        )
 
     async def save(self, payload, user_id, connection_id=None):
         if connection_id is None:

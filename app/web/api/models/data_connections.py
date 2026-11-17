@@ -132,3 +132,24 @@ class SourceColumns(BaseModel):
     table: str
     columns: list[SourceColumn]
     hasMore: bool
+    referencesAvailable: Literal[True] | None = None
+
+
+SourceReferenceDirection = Literal["incoming", "outgoing"]
+
+
+class SourceReferencePair(BaseModel):
+    fromColumn: str
+    toColumn: str
+
+
+class SourceReference(BaseModel):
+    schema_name: str = Field(alias="schema")
+    table: str
+    pairs: list[SourceReferencePair]
+
+
+class SourceReferences(BaseModel):
+    direction: SourceReferenceDirection
+    references: list[SourceReference]
+    hasMore: bool

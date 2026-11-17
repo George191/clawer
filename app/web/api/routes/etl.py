@@ -74,7 +74,9 @@ from app.web.api.models.etl import (
     PreviewRowsQuery,
     SqlQuery,
 )
-from app.web.api.models.data_connections import DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns
+from app.web.api.models.data_connections import (
+    DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns, SourceReferenceDirection, SourceReferences,
+)
 from app.web.api.models.transfer_plans import (
     TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
     TransferRunRequest, WarehouseSchema,
@@ -947,12 +949,27 @@ async def browse_data_connection_catalog(
     return await get_data_connections().catalog(str(connection_id), schema=schema, search=search, limit=limit, offset=offset)
 
 
-@write.get("/data-connections/{connection_id}/catalog/columns")
+@write.get("/data-connections/{connection_id}/catalog/columns", response_model_exclude_none=True)
 async def browse_data_connection_columns(
     connection_id: UUID, schema: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
     table: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
 ) -> SourceColumns:
     return await get_data_connections().catalog_columns(str(connection_id), schema=schema, table=table)
+
+
+@write.get("/data-connections/{connection_id}/catalog/references")
+async def browse_data_connection_references(
+    connection_id: UUID, request: Request, response: Response,
+    schema: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
+    table: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
+    direction: SourceReferenceDirection = Query(...), expectedUpdatedAt: AwareDatetime = Query(...),
+) -> SourceReferences:
+    if set(request.query_params) != {"schema", "table", "direction", "expectedUpdatedAt"} or len(request.query_params.multi_items()) != 4:
+        raise HTTPException(422, "Use one exact schema, table, direction and saved source revision")
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_data_connections().catalog_references(
+        str(connection_id), schema=schema, table=table, direction=direction, expected_updated_at=expectedUpdatedAt,
+    )
 
 
 @write.put("/data-connections/{connection_id}")

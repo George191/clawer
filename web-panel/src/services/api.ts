@@ -726,7 +726,7 @@ export interface DataSource extends Omit<DataSourcePayload, 'credentials'> {
 export interface DataSourceTest { ok: boolean; message: string; latencyMs: number; testedAt?: string; }
 export type DataSourceRelation = { name: string; kind: 'table' | 'partitioned_table' | 'view' | 'materialized_view' | 'foreign_table' };
 export type DataSourceCatalog = { schemas: string[]; schema: string | null; relations: DataSourceRelation[]; hasMore: boolean; schemaHasMore: boolean };
-export type DataSourceColumns = { schema: string; table: string; columns: { name: string; type: string; nullable: boolean; primaryKey: boolean; position: number }[]; hasMore: boolean };
+export type DataSourceColumns = { referencesAvailable?: true; schema: string; table: string; columns: { name: string; type: string; nullable: boolean; primaryKey: boolean; position: number }[]; hasMore: boolean };
 const dataSourceCatalogPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/catalog`;
 export const fetchDataSourceCatalog = (
   id: string, params: { schema?: string; search?: string; limit?: number; offset?: number } = {}, signal?: AbortSignal,
@@ -734,6 +734,14 @@ export const fetchDataSourceCatalog = (
   client.get(dataSourceCatalogPath(id), { params, signal }).then((r) => unwrap<DataSourceCatalog>(r.data));
 export const fetchDataSourceColumns = (id: string, schema: string, table: string, signal?: AbortSignal): Promise<DataSourceColumns> =>
   client.get(`${dataSourceCatalogPath(id)}/columns`, { params: { schema, table }, signal }).then((r) => unwrap<DataSourceColumns>(r.data));
+export type SourceReferenceDirection = 'incoming' | 'outgoing';
+export type DataSourceReferences = {
+  direction: SourceReferenceDirection;
+  references: { schema: string; table: string; pairs: { fromColumn: string; toColumn: string }[] }[];
+  hasMore: boolean;
+};
+export const fetchDataSourceReferences = (id: string, schema: string, table: string, direction: SourceReferenceDirection, expectedUpdatedAt: string, signal?: AbortSignal): Promise<DataSourceReferences> =>
+  client.get(`${dataSourceCatalogPath(id)}/references`, { params: { schema, table, direction, expectedUpdatedAt }, signal }).then(r => unwrap<DataSourceReferences>(r.data));
 export type BatchSourceIdentity = {
   state: 'disabled' | 'blocked' | 'paused' | 'unverified' | 'verified' | 'stale'; sourceUpdatedAt: string | null; verifiedAt: string | null;
 };

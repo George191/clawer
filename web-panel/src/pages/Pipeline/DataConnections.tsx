@@ -8,6 +8,8 @@ import { getSessionState } from '../../services/session';
 import PostgresGlyph from './PostgresGlyph';
 import SourceBatchSyncs from './SourceBatchSyncs';
 import SourceIdentity from './SourceIdentity';
+import SourceCatalogReferences from './SourceCatalogReferences';
+import { useSandboxIdentity } from './SandboxMarkings';
 import SavedConnectionCapabilities from './SavedConnectionCapabilities';
 import type { BatchSyncSource } from './SourceBatchSyncs';
 import TableExports from './TableExports';
@@ -48,10 +50,12 @@ function catalogError(failure: unknown) {
   return 'Could not read metadata from the saved connection.';
 }
 
-function SourceCatalog({ sourceId, onSetUpSync }: { sourceId: string; onSetUpSync: (selection: BatchSyncSource) => void }) {
+function SourceCatalog({ sourceId, sourceRevision, onSetUpSync }: { sourceId: string; sourceRevision: string; onSetUpSync: (selection: BatchSyncSource) => void }) {
+  const liveIdentity = useSandboxIdentity();
   const [catalog, setCatalog] = useState<DataSourceCatalog>();
   const [relations, setRelations] = useState<DataSourceCatalog>();
   const [columns, setColumns] = useState<DataSourceColumns>();
+  const [columnRevision, setColumnRevision] = useState<string>();
   const [schema, setSchema] = useState('');
   const [table, setTable] = useState('');
   const [search, setSearch] = useState('');
@@ -76,7 +80,7 @@ function SourceCatalog({ sourceId, onSetUpSync }: { sourceId: string; onSetUpSyn
       setCatalog(value);
     }).catch(failure => { if (current(controller.signal)) setSchemaError(catalogError(failure)); });
     return () => controller.abort();
-  }, [sourceId, refresh]);
+  }, [sourceId, sourceRevision, refresh]);
 
   useEffect(() => {
     if (!schema) return;
@@ -87,7 +91,7 @@ function SourceCatalog({ sourceId, onSetUpSync }: { sourceId: string; onSetUpSyn
       if (current(controller.signal)) setRelations(value);
     }).catch(failure => { if (current(controller.signal)) setRelationError(catalogError(failure)); });
     return () => controller.abort();
-  }, [sourceId, schema, appliedSearch, offset, refresh]);
+  }, [sourceId, sourceRevision, schema, appliedSearch, offset, refresh]);
 
   useEffect(() => {
     if (!schema || !table) return;
@@ -95,10 +99,10 @@ function SourceCatalog({ sourceId, onSetUpSync }: { sourceId: string; onSetUpSyn
     setColumns(undefined);
     setColumnError('');
     void fetchDataSourceColumns(sourceId, schema, table, controller.signal).then(value => {
-      if (current(controller.signal)) setColumns(value);
+      if (current(controller.signal)) { setColumns(value); setColumnRevision(sourceRevision); }
     }).catch(failure => { if (current(controller.signal)) setColumnError(catalogError(failure)); });
     return () => controller.abort();
-  }, [sourceId, schema, table, refresh]);
+  }, [sourceId, sourceRevision, schema, table, refresh]);
 
   const clearTable = () => { setTable(''); setColumns(undefined); setColumnError(''); };
   const changeSchema = (name: string) => {
@@ -151,14 +155,17 @@ function SourceCatalog({ sourceId, onSetUpSync }: { sourceId: string; onSetUpSyn
         <h4>{table ? <code>{schema}.{table}</code> : 'Columns'}</h4>
         {!table ? <p>Select a table or view to inspect its column metadata.</p>
           : columnError ? <p role="alert" className="is-error">{columnError}</p>
-          : !columns ? <p role="status">Loading column metadata…</p>
+          : !columns || columnRevision !== sourceRevision ? <p role="status">Loading column metadata…</p>
           : !columns.columns.length ? <p>No columns are visible with this connection.</p>
           : <><div className="ontology-source-catalog__columns"><table aria-label="Source columns">
             <thead><tr><th scope="col">Column</th><th scope="col">Type</th><th scope="col">Nullable</th><th scope="col">Key</th></tr></thead>
             <tbody>{columns.columns.map(column => <tr key={column.position}><th scope="row"><code>{column.name}</code></th><td><code>{column.type}</code></td><td>{column.nullable ? 'Yes' : 'No'}</td><td>{column.primaryKey ? 'Primary key' : '—'}</td></tr>)}</tbody>
           </table></div>{columns.hasMore && <p role="status">Column list limited to 200 visible results.</p>}
           {!columns.hasMore && relations?.relations.some(relation => relation.name === table && relation.kind === 'table') &&
-            <Button className="ontology-source-catalog__setup" size="small" onClick={() => onSetUpSync({ schema, table })}>Set up batch sync</Button>}</>}
+            <Button className="ontology-source-catalog__setup" size="small" onClick={() => onSetUpSync({ schema, table })}>Set up batch sync</Button>}
+          {liveIdentity && liveIdentity === identity && columns.referencesAvailable === true && columns.schema === schema && columns.table === table &&
+            <SourceCatalogReferences key={JSON.stringify([sourceRevision, schema, table, refresh])} sourceId={sourceId} schema={schema} table={table} sourceRevision={sourceRevision} />}
+          </>}
       </section>
     </div>
   </section>;
@@ -472,7 +479,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
           onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }}
           onVerificationStarted={() => invalidateVerificationCapability(viewedSource.id)}
           onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} />}
-        {!sourcePaused && exploring && viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceCatalog key={viewedSource.id} sourceId={viewedSource.id} onSetUpSync={selection => setSyncSelection({ sourceId: viewedSource.id, selection })} />}
+        {!sourcePaused && exploring && viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceCatalog key={JSON.stringify(["catalog", sessionIdentity, viewedSource.id])} sourceId={viewedSource.id} sourceRevision={viewedSource.updatedAt} onSetUpSync={selection => setSyncSelection({ sourceId: viewedSource.id, selection })} />}
         {(sourcePaused || viewedSource.catalogAvailable && viewedType?.catalogAvailable) && <SourceBatchSyncs key={`sync:${proofKey}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
         <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked} onClick={remove}>Delete source</Button></div>
       </section> : <section className="ontology-connections-inventory" aria-label="Sources">

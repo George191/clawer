@@ -337,6 +337,97 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         after = await self.stored(saved["id"])
         self.assertEqual(before, after)
 
+    async def test_source_catalog_references_prove_order_acl_and_visible_bound(self):
+        role = "source_fk_" + uuid4().hex[:12]
+        password = "isolated-catalog-fk-password"
+        async with self.pg.session() as session:
+            for sql in (
+                f"CREATE ROLE {role} LOGIN PASSWORD '{password}'",
+                "CREATE SCHEMA source_refs",
+                "CREATE SCHEMA source_refs_hidden",
+                "CREATE TABLE source_refs.parent (x bigint, y bigint, PRIMARY KEY (x,y))",
+                "CREATE TABLE source_refs.child (a bigint, b bigint, CONSTRAINT private_constraint "
+                "FOREIGN KEY (b,a) REFERENCES source_refs.parent (x,y), "
+                "FOREIGN KEY (b,a) REFERENCES source_refs.parent (x,y))",
+                "CREATE VIEW source_refs.child_view AS SELECT 1/0",
+                "CREATE TABLE source_refs.derived () INHERITS (source_refs.child)",
+                "CREATE TABLE source_refs.aaa_invalid (a bigint, b bigint)",
+                "ALTER TABLE source_refs.aaa_invalid ADD FOREIGN KEY (b,a) "
+                "REFERENCES source_refs.parent (x,y) NOT VALID",
+                "CREATE TABLE source_refs_hidden.hidden_schema (a bigint, b bigint, "
+                "FOREIGN KEY (b,a) REFERENCES source_refs.parent (x,y))",
+                f"GRANT USAGE ON SCHEMA source_refs TO {role}",
+                f"GRANT SELECT(x,y) ON source_refs.parent TO {role}",
+                f"GRANT SELECT(a,b) ON source_refs.child, source_refs.aaa_invalid, source_refs.derived TO {role}",
+                f"GRANT SELECT(a,b) ON source_refs_hidden.hidden_schema TO {role}",
+                f"GRANT SELECT ON source_refs.child_view TO {role}",
+            ):
+                await session.execute(text(sql))
+
+        # The ordinary child is initially an inheritance parent, not eligible. Remove the child.
+        async def drop_source():
+            async with self.pg.session() as session:
+                await session.execute(text("DROP SCHEMA source_refs_hidden, source_refs CASCADE"))
+                await session.execute(text(f"DROP ROLE {role}"))
+
+        self.addAsyncCleanup(self.pg.close)
+        self.addAsyncCleanup(drop_source)
+        url = make_url(URL)
+        body = DataConnectionPayload(name="FK fixture", engine="postgresql",
+            config={"host": url.host, "port": url.port or 5432, "database": DATABASE,
+                    "username": role, "tls": False}, credentials={"password": password})
+        saved = await self.service.save(body, "isolated-admin")
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_current_active_superuser] = lambda: SimpleNamespace(id="admin", is_superuser=True)
+        with patch("app.web.api.routes.etl.get_data_connections", return_value=self.service):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                path = f"/etl/data-connections/{saved['id']}/catalog"
+                params = dict(schema="source_refs", table="child", direction="outgoing",
+                              expectedUpdatedAt=saved["updatedAt"])
+                stale = {**params, "expectedUpdatedAt": "2025-01-01T00:00:00Z"}
+                with patch.object(self.service, "_credentials", side_effect=AssertionError("unexpected dial")):
+                    self.assertEqual((await client.get(path + "/references", params=stale)).json()["detail"]["code"],
+                                     "source_revision_changed")
+                    self.assertEqual((await client.get(path + "/references", params={**params, "extra": "no"})).status_code, 422)
+                for table in ("child", "derived", "child_view", "missing"):
+                    blocked = await client.get(path + "/references", params={**params, "table": table})
+                    self.assertEqual(blocked.status_code, 404)
+                    self.assertEqual(blocked.json(), {"detail": "Source relation is unavailable or not readable"})
+                async with self.pg.session() as session:
+                    await session.execute(text("DROP TABLE source_refs.derived"))
+                columns = await client.get(path + "/columns", params={"schema": "source_refs", "table": "child"})
+                self.assertIs(columns.json()["referencesAvailable"], True)
+                view = await client.get(path + "/columns", params={"schema": "source_refs", "table": "child_view"})
+                self.assertNotIn("referencesAvailable", view.json())
+                outgoing = await client.get(path + "/references", params=params)
+                self.assertEqual(outgoing.headers["cache-control"], "private, no-store")
+                pairs = [{"fromColumn": "b", "toColumn": "x"}, {"fromColumn": "a", "toColumn": "y"}]
+                self.assertEqual(outgoing.json(), {"direction": "outgoing", "references": [
+                    {"schema": "source_refs", "table": "parent", "pairs": pairs}], "hasMore": False})
+                for hidden in ("private_constraint", password):
+                    self.assertNotIn(hidden, outgoing.text)
+                incoming = await client.get(path + "/references", params={**params, "table": "parent", "direction": "incoming"})
+                self.assertEqual(incoming.json(), {"direction": "incoming", "references": [
+                    {"schema": "source_refs", "table": "child", "pairs": pairs}], "hasMore": False})
+                async with self.pg.session() as session:
+                    await session.execute(text(f"REVOKE SELECT(a) ON source_refs.child FROM {role}"))
+                    for index in range(13):
+                        name = f"visible_{index:02}"
+                        await session.execute(text(f"CREATE TABLE source_refs.{name} (a bigint, b bigint, "
+                                                   "FOREIGN KEY (b,a) REFERENCES source_refs.parent (x,y))"))
+                        await session.execute(text(f"GRANT SELECT(a,b) ON source_refs.{name} TO {role}"))
+                outgoing = await client.get(path + "/references", params=params)
+                self.assertEqual(outgoing.json(), {"direction": "outgoing", "references": [], "hasMore": False})
+                incoming = await client.get(path + "/references", params={**params, "table": "parent", "direction": "incoming"})
+                self.assertEqual([ref["table"] for ref in incoming.json()["references"]], [
+                    f"visible_{index:02}" for index in range(12)])
+                self.assertTrue(incoming.json()["hasMore"])
+                async with self.pg.session() as session:
+                    await session.execute(text(f"REVOKE SELECT(y) ON source_refs.parent FROM {role}"))
+                incoming = await client.get(path + "/references", params={**params, "table": "parent", "direction": "incoming"})
+                self.assertEqual(incoming.json(), {"direction": "incoming", "references": [], "hasMore": False})
+
     async def test_save_performs_its_own_probe_and_failed_probe_never_writes(self):
         self.probe.side_effect = RuntimeError("remote driver echoed " + PAYLOAD["credentials"]["password"])
         failed = await self.service.test(payload())
