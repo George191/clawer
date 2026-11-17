@@ -5,12 +5,14 @@ import copy
 import hashlib
 import io
 import json
+import os
 from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -156,6 +158,60 @@ def add_tail(files, root, parent_plan, complete=False):
 
 
 class ProgressTests(unittest.TestCase):
+    def history_errors(self, error_time):
+        main = next(node for node in ast.parse(progress.PROBE).body
+                    if isinstance(node, ast.AsyncFunctionDef) and node.name == 'main')
+        start = next(n for n, node in enumerate(main.body)
+                     if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'cutoff'
+                                                           for t in node.targets))
+        stop = next(n for n, node in enumerate(main.body)
+                    if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'prefix'
+                                                          for t in node.targets))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            old_start = root / 'started.json'; old_start.write_text('{}')
+            os.utime(old_start, (0, 0))
+            error = root / 'worker-0-error.json'
+            error.write_text(json.dumps({'worker': 0, 'stage': 'failed', 'last_error': 'TimeoutError'}))
+            timestamp = datetime.fromisoformat(error_time).timestamp()
+            os.utime(error, (timestamp, timestamp))
+            environment = {'ROOT': root, 'datetime': datetime, 'json': json, 'errors': [],
+                           '__HISTORY_STARTED_AT__': '2026-11-16T22:38:58.807236074Z'}
+            exec(compile(ast.Module(body=main.body[start:stop], type_ignores=[]),
+                         '<history-error-probe>', 'exec'), environment)
+            self.assertTrue(error.exists())
+            return environment['errors']
+
+    def test_history_error_before_current_container_restart_is_excluded(self):
+        errors = self.history_errors('2026-11-16T22:38:17.663979+00:00')
+        self.assertEqual(errors, [])
+        value = snapshot(); value['worker_errors'] = errors
+        value['backends'] = [{'application_name': 'source-dedup-history-worker-0'}]
+        self.assertEqual(progress.summarize(value)['rows'][0]['stage'], '修复中')
+
+    def test_history_error_after_current_container_restart_remains_visible(self):
+        errors = self.history_errors('2026-11-16T22:39:00+00:00')
+        self.assertEqual(errors, [{'worker': 0, 'unit': None, 'stage': 'failed', 'last_error': 'TimeoutError'}])
+        value = snapshot(); value['worker_errors'] = errors
+        value['backends'] = [{'application_name': 'source-dedup-history-worker-0'}]
+        result = progress.summarize(value)
+        self.assertEqual(result['rows'][0]['stage'], '错误')
+        self.assertIn('TimeoutError', progress.markdown(result))
+
+    def test_history_container_inspection_failure_is_unverified(self):
+        with patch.object(Path, 'read_bytes', return_value=encoded({'new_started': 'current-history'})), \
+             patch.object(subprocess, 'run', return_value=SimpleNamespace(returncode=1, stderr='unavailable')) as run:
+            with self.assertRaisesRegex(RuntimeError, 'Current history container unavailable'):
+                exec(progress.HOST, {'__PROBE__': progress.PROBE})
+        self.assertEqual(run.call_count, 1)
+        client = SimpleNamespace(run=AsyncMock(return_value=SimpleNamespace(exit_status=1,
+            stdout='', stderr='RuntimeError: Current history container unavailable')),
+            close=lambda: None, wait_closed=AsyncMock())
+        ssh = SimpleNamespace(connect=AsyncMock(return_value=client), credentials=lambda: ('space', 'unused'))
+        with patch.dict(sys.modules, {'ssh_inspect': ssh}):
+            with self.assertRaisesRegex(RuntimeError, '只读进度查询未验证.*Current history container unavailable'):
+                asyncio.run(progress.collect())
+
     def test_direct_script_and_module_entrypoint_remain_available(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([sys.executable, '-B', str(Path(progress.__file__).resolve()), '--help'],

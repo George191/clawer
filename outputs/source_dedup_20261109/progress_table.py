@@ -162,7 +162,7 @@ async def main():
   value=json.loads(path.read_text())
   states.append({key:value.get(key) for key in (
    'unit','worker','stage','processed','renamed','deduplicated','done','pending','last_error')})
- started=ROOT/'started.json';cutoff=started.stat().st_mtime if started.exists() else 0
+ cutoff=datetime.fromisoformat(__HISTORY_STARTED_AT__.replace('Z','+00:00')).timestamp()
  for path in ROOT.glob('worker-*-error.json'):
   if path.stat().st_mtime<cutoff:continue
   value=json.loads(path.read_text())
@@ -434,6 +434,7 @@ def plain_table(value):
 
 HOST = r"""
 import hashlib,http.client,io,json,socket,subprocess,tarfile
+from datetime import datetime
 from urllib.parse import quote
 from pathlib import Path
 class Docker(http.client.HTTPConnection):
@@ -441,10 +442,29 @@ class Docker(http.client.HTTPConnection):
  def connect(self):
   self.sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
   self.sock.connect('/var/run/docker.sock')
+history_root=Path('/data/clawer/output/source_dedup_20261109/sec-history-run01')
+history_inside='/app/output/source_dedup_20261109/sec-history-run01'
+history_owner=json.loads((history_root/'git-deployed-20261116.json').read_bytes())['new_started']
+info=subprocess.run(['docker','inspect',history_owner],text=True,capture_output=True,timeout=10)
+if info.returncode:raise RuntimeError('Current history container unavailable')
+history=json.loads(info.stdout)[0]
+if not history['State']['Running'] or history['State']['Pid']<=0:raise ValueError('Current history container is not running')
+if not any(arg==history_inside or repr(history_inside) in arg or json.dumps(history_inside) in arg
+ for arg in history['Config']['Cmd']):raise ValueError('Current history command root differs')
+if not any(m['Type']=='bind' and m['RW'] and Path(history_inside).is_relative_to(Path(m['Destination']))
+ and Path(m['Source'])/Path(history_inside).relative_to(Path(m['Destination']))==history_root
+ for m in history['Mounts']):raise ValueError('Current history output mount differs')
+history_started=history['State']['StartedAt']
+if datetime.fromisoformat(history_started.replace('Z','+00:00')).timestamp()<=0:raise ValueError('Invalid history start time')
 p=subprocess.run(['docker','exec','-i','-u','0','-e','PYTHONPATH=/app','web','python','-B','-'],
- input=__PROBE__,text=True,capture_output=True,timeout=45)
+ input=__PROBE__.replace('__HISTORY_STARTED_AT__',repr(history_started)),text=True,capture_output=True,timeout=45)
 if p.returncode:raise RuntimeError(p.stderr[-1800:])
 result=json.loads(p.stdout)
+info=subprocess.run(['docker','inspect',history_owner],text=True,capture_output=True,timeout=10)
+if info.returncode:raise RuntimeError('Current history container unavailable')
+latest_history=json.loads(info.stdout)[0]
+if latest_history['Id']!=history['Id'] or latest_history['State']['StartedAt']!=history_started or not latest_history['State']['Running']:
+ raise ValueError('Current history container changed during sampling')
 for kind,value in result['migrations'].items():
  if not value.get('verified'):continue
  try:
