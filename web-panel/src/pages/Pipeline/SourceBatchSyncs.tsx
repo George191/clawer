@@ -6,7 +6,7 @@ import {
   fetchBatchSyncAttempts, fetchBatchSyncCapabilities, fetchBatchSyncReceipts, fetchBatchSyncSchedule, fetchBatchSyncScheduleJobs, fetchBatchSyncs, fetchDataSourceColumns,
   fetchEtlObjectTypes, fetchEtlTableColumns, runBatchSync, saveBatchSync, updateBatchSyncSchedule,
 } from '../../services/api';
-import type { BatchSourceIdentity, BatchSyncAttempt, BatchSyncCapabilities, BatchSyncInput, BatchSyncPlan, BatchSyncReceipt, BatchSyncSchedule, DataSource, DataSourceColumns, TransferScheduleJob } from '../../services/api';
+import type { BatchSourceIdentity, BatchSyncAttempt, BatchSyncCapabilities, BatchSyncInput, BatchSyncPlan, BatchSyncReceipt, BatchSyncSchedule, DataSource, DataSourceColumns, BatchSyncScheduleJob } from '../../services/api';
 import type { EtlTableColumn } from '../../services/types';
 import { getSessionState } from '../../services/session';
 import { sameSourceRevision } from './SourceIdentity';
@@ -14,10 +14,14 @@ import { nextLocalTimeForUtcClock } from '../../services/scheduleTime';
 
 export type BatchSyncSource = { schema: string; table: string };
 type RunRequest = { requestId: string; expectedUpdatedAt: string };
-type Draft = { id?: string; name: string; key: string; target: string; mapping: Record<string, string> } & BatchSyncSource;
+type Draft = { id?: string; mode?: 'incremental'; name: string; key: string; target: string; mapping: Record<string, string> } & BatchSyncSource;
 const dateText = (value: string) => new Date(value).toLocaleString();
 const sameRevision = (left: string, right: string) =>
   left.replace(/\+00:00$/, 'Z') === right.replace(/\+00:00$/, 'Z');
+const committedStream = {
+  schema: 'batch_sync_stream', table: 'batches', key: 'id', target: 'committed_batch_fixture',
+  mapping: [{ sourceColumn: 'id', targetColumn: 'id' }, { sourceColumn: 'value', targetColumn: 'value' }],
+} as const;
 const simpleTarget = /^[a-z_][a-z0-9_]{0,62}$/;
 const supportedKey = /^(smallint|integer|bigint|uuid)$/;
 const temporarySyncFailures: Record<string, string> = {
@@ -55,16 +59,24 @@ function forgetRun(key: string) {
   try { sessionStorage.removeItem(key); } catch { /* Retained ID is safe to replay. */ }
 }
 
-function ReceiptList({ receipts }: { receipts: BatchSyncReceipt[] }) {
+function ReceiptList({ receipts, incremental }: { receipts: BatchSyncReceipt[]; incremental: boolean }) {
   return receipts.length ? <ul className="ontology-source-sync__items">{receipts.map(receipt => <li key={receipt.id}>
-    <strong>Committed</strong>{receipt.sourceIdentityVerified && <span>Source identity verified for this run</span>}<span>Rows affected: {receipt.rowsAffected}</span><span>Destination: <code>{receipt.targetTable}</code></span>
-    <span>Recorded at: <time dateTime={receipt.recordedAt}>{dateText(receipt.recordedAt)}</time></span><span>Receipt: <code>{receipt.id}</code></span>
-  </li>)}</ul> : <p>No committed sync receipts.</p>;
+    <strong>{receipt.status === 'no_new_data' ? 'No new data' : 'Committed'}</strong>{receipt.sourceIdentityVerified && <span>Source identity verified for this run</span>}<span>Rows affected: {receipt.rowsAffected}</span>
+    {receipt.status === 'no_new_data' && <span>No data moved; checkpoint unchanged.</span>}
+    {receipt.throughInclusive != null && <span>Committed through: <code>{receipt.throughInclusive}</code></span>}
+    {receipt.sourceHighWater != null && <span>Source head observed at check: <code>{receipt.sourceHighWater}</code></span>}
+    {receipt.status === 'committed' && receipt.fromExclusive != null && <span>Previous checkpoint: <code>{receipt.fromExclusive}</code></span>}
+    {receipt.eventsRead != null && <span>Event rows read: {receipt.eventsRead}</span>}
+    {receipt.manifestHash && <span>Batch manifest: <code>{receipt.manifestHash}</code></span>}
+    <span>Destination: <code>{receipt.targetTable}</code></span>
+    <span>Recorded at: <time dateTime={receipt.recordedAt}>{dateText(receipt.recordedAt)}</time></span><span>{receipt.status === 'no_new_data' ? 'Check record' : 'Receipt'}: <code>{receipt.id}</code></span>
+  </li>)}</ul> : <p>{incremental ? 'No committed batches or empty checks recorded.' : 'No committed sync receipts.'}</p>;
 }
 
 const attemptLabels: Record<BatchSyncAttempt['status'], string> = {
   started: 'Request recorded',
   committed: 'Commit recorded',
+  no_new_data: 'No new data',
   replayed: 'Existing receipt returned',
   rejected: 'Rejected',
   retryable: 'Retry available',
@@ -89,8 +101,8 @@ function AttemptList({ attempts, canRetry, onRetry }: { attempts: BatchSyncAttem
   })}</ul> : <p>No batch sync attempts recorded.</p>;
 }
 
-const scheduleLabels: Record<TransferScheduleJob['state'], string> = {
-  pending: 'Pending dispatch', dispatched: 'Dispatched', committed: 'Committed', rejected: 'Rejected',
+const scheduleLabels: Record<BatchSyncScheduleJob['state'], string> = {
+  pending: 'Pending dispatch', dispatched: 'Dispatched', committed: 'Committed', no_new_data: 'No new data', rejected: 'Rejected',
   outcome_unknown: 'Outcome unknown', expired: 'Expired',
 };
 const utcClock = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
@@ -98,7 +110,7 @@ const utcText = (value: string) => new Date(value).toLocaleString(undefined, { t
 
 function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded }: { plan: BatchSyncPlan; source: DataSource; capability: BatchSyncCapabilities; sourceReviewNeeded: boolean }) {
   const [schedule, setSchedule] = useState<BatchSyncSchedule>();
-  const [jobs, setJobs] = useState<TransferScheduleJob[]>();
+  const [jobs, setJobs] = useState<BatchSyncScheduleJob[]>();
   const [plannedTime, setPlannedTime] = useState('');
   const [stateError, setStateError] = useState('');
   const [jobError, setJobError] = useState('');
@@ -161,20 +173,20 @@ function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded }
         </div>}
     </>}
     <h4>Schedule jobs</h4>
-    <p>Dispatch is not a commit. Only a committed receipt verifies the transfer outcome.</p>
+    <p>{plan.mode === 'incremental' ? 'Dispatch is not a commit. “No new data” does not verify data movement.' : 'Dispatch is not a commit. Only a committed receipt verifies the transfer outcome.'}</p>
     {jobError ? <p role="alert" className="is-error">{jobError}</p> : !jobs ? <p role="status">Loading schedule jobs…</p> :
       jobs.length ? <ul className="ontology-source-sync__items">{jobs.map(job => <li key={job.id}>
         <strong>{scheduleLabels[job.state]}</strong>
         <span>Scheduled slot: <time dateTime={job.slot}>{utcText(job.slot)}</time></span>
         {job.dispatchedAt && <span>Dispatched at: <time dateTime={job.dispatchedAt}>{utcText(job.dispatchedAt)}</time></span>}
         {job.finishedAt && <span>Finished at: <time dateTime={job.finishedAt}>{utcText(job.finishedAt)}</time></span>}
-        {job.receiptId && <span>Receipt: <code>{job.receiptId}</code></span>}
+        {job.receiptId && <span>{job.state === 'no_new_data' ? 'Check record' : 'Receipt'}: <code>{job.receiptId}</code></span>}
         {job.message && <p>{job.message}</p>}
       </li>)}</ul> : <p>No schedule jobs recorded.</p>}
     <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" title={confirm === 'pause' ? 'Pause batch sync schedule?' : 'Arm batch sync schedule?'}
       onCancel={() => setConfirm(undefined)} onOk={changeSchedule} confirmLoading={busy} okText={confirm === 'pause' ? 'Confirm pause' : 'Confirm arm schedule'}>
       {confirm === 'pause' ? <p>Stop future dispatches without reversing committed transfers. A transfer that has already started may still finish.</p> : <>
-        <p>Run this saved plan and source revision daily at {plannedTime} UTC. Each run can read up to {capability.maxRows} rows and {capability.maxBytes.toLocaleString()} bytes into the sandbox.</p>
+        <p>Run this saved plan and source revision daily at {plannedTime} UTC. {plan.mode === 'incremental' ? 'At most one complete published batch is applied; an empty check does not advance the checkpoint.' : `Each run can read up to ${capability.maxRows} rows and ${capability.maxBytes.toLocaleString()} bytes into the sandbox.`}</p>
         <div className="ontology-source-sync__route"><code>{plan.sourceSchema}.{plan.sourceTable}</code><ArrowRightOutlined /><code>{capability.targetSchema}.{plan.targetTable}</code></div>
       </>}
     </Modal>
@@ -218,7 +230,8 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
   };
   const proofCurrent = sourceProof?.state === 'verified' && sameSourceRevision(sourceProof.sourceUpdatedAt, source.updatedAt);
   const proofVersion = `${sourceProof?.state ?? ''}:${sourceProof?.verifiedAt ?? ''}`;
-  const sourceReviewNeeded = (plan: BatchSyncPlan) => (source.engine === 'postgresql' && (!sourceProof || sourceProof.state === 'blocked')) || Boolean(capability?.sourceIdentityRequired &&
+  const committedModeAvailable = Boolean(capability?.incrementalBatchSync && proofCurrent);
+  const sourceReviewNeeded = (plan: BatchSyncPlan) => (plan.mode === 'incremental' && !committedModeAvailable) || (source.engine === 'postgresql' && (!sourceProof || sourceProof.state === 'blocked')) || Boolean(capability?.sourceIdentityRequired &&
     (!proofCurrent || plansForProof !== proofVersion || !plan.sourceIdentityReviewed));
   const storageKey = (planId: string) => `ontology-batch-sync:${identity}:${planId}`;
 
@@ -254,7 +267,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     setSaveError(''); setNotice('');
   }, [selection]);
   useEffect(() => {
-    if (!draft || !capability) return;
+    if (!draft || !capability || draft.mode === 'incremental') return;
     const read = new AbortController();
     setTargets(undefined); setCatalogError('');
     const load = async () => {
@@ -262,7 +275,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
       let offset = 0;
       while (live(read.signal)) {
         const page = await fetchEtlObjectTypes({ schema: capability.targetSchema, limit: 100, offset }, read.signal);
-        names.push(...page.items.map(item => item.table).filter(name => simpleTarget.test(name)));
+        names.push(...page.items.map(item => item.table).filter(name => simpleTarget.test(name) && name !== committedStream.target));
         offset += page.items.length;
         if (!page.items.length || offset >= page.total) break;
       }
@@ -270,7 +283,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     };
     void load().catch(failure => { if (live(read.signal)) setCatalogError(syncError(failure)); });
     return () => read.abort();
-  }, [Boolean(draft), capability?.targetSchema, metadataRevision]);
+  }, [Boolean(draft), draft?.mode, capability?.targetSchema, metadataRevision]);
   const schema = draft?.schema;
   const table = draft?.table;
   const target = draft?.target;
@@ -278,23 +291,23 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     if (schema && table) composer.current?.focus();
   }, [schema, table, draft?.id]);
   useEffect(() => {
-    if (!schema || !table) return;
+    if (!schema || !table || draft?.mode === 'incremental') return;
     const read = new AbortController();
     setSourceColumns(undefined); setSourceError('');
     void fetchDataSourceColumns(source.id, schema, table, read.signal).then(result => {
       if (live(read.signal)) setSourceColumns(result);
     }).catch(failure => { if (live(read.signal)) setSourceError(syncError(failure)); });
     return () => read.abort();
-  }, [source.id, source.updatedAt, schema, table, metadataRevision]);
+  }, [source.id, source.updatedAt, schema, table, draft?.mode, metadataRevision]);
   useEffect(() => {
-    if (!capability || !target) return;
+    if (!capability || !target || draft?.mode === 'incremental') return;
     const read = new AbortController();
     setTargetColumns(undefined); setDestinationError('');
     void fetchEtlTableColumns(capability.targetSchema, target, read.signal).then(result => {
       if (live(read.signal)) setTargetColumns(result);
     }).catch(failure => { if (live(read.signal)) setDestinationError(syncError(failure)); });
     return () => read.abort();
-  }, [capability?.targetSchema, target, metadataRevision]);
+  }, [capability?.targetSchema, target, draft?.mode, metadataRevision]);
   useEffect(() => {
     if (!historyId) return;
     const read = new AbortController();
@@ -323,10 +336,15 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
   const edit = (plan: BatchSyncPlan) => {
     onComposerClosed(); setNotice(''); setSaveError('');
     setSourceColumns(undefined); setTargetColumns(undefined); setSourceError(''); setDestinationError('');
-    setDraft({ id: plan.id, schema: plan.sourceSchema, table: plan.sourceTable, name: plan.name, key: plan.sourceKeyColumn,
+    setDraft({ id: plan.id, mode: plan.mode, schema: plan.sourceSchema, table: plan.sourceTable, name: plan.name, key: plan.sourceKeyColumn,
       target: plan.targetTable, mapping: Object.fromEntries(plan.mapping.map(item => [item.targetColumn, item.sourceColumn])) });
   };
-  const fullyMapped = Boolean(draft && sourceKey && draft.key === sourceKey && targets?.includes(draft.target) && targetKeys.length === 1 &&
+  const prepareCommitted = () => {
+    onComposerClosed(); setNotice(''); setSaveError('');
+    setDraft({ mode: 'incremental', schema: committedStream.schema, table: committedStream.table, key: committedStream.key,
+      target: committedStream.target, mapping: {}, name: '' });
+  };
+  const fullyMapped = draft?.mode === 'incremental' ? committedModeAvailable : Boolean(draft && sourceKey && draft.key === sourceKey && targets?.includes(draft.target) && targetKeys.length === 1 &&
     mappingRows.length && mappingRows.every(({ column, options }) => options.some(item => item.name === draft.mapping[column.name])) &&
     new Set(mappingRows.map(({ column }) => draft.mapping[column.name])).size === mappingRows.length);
   const save = async (event: FormEvent<HTMLFormElement>) => {
@@ -335,7 +353,9 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     const payload: BatchSyncInput = {
       name: draft.name.trim(), connectionId: source.id, expectedSourceUpdatedAt: source.updatedAt,
       sourceSchema: draft.schema, sourceTable: draft.table, sourceKeyColumn: draft.key, targetTable: draft.target,
-      mapping: mappingRows.map(({ column }) => ({ targetColumn: column.name, sourceColumn: draft.mapping[column.name] })),
+      ...(draft.mode === 'incremental' ? { mode: draft.mode } : {}),
+      mapping: draft.mode === 'incremental' ? committedStream.mapping.map(item => ({ ...item }))
+        : mappingRows.map(({ column }) => ({ targetColumn: column.name, sourceColumn: draft.mapping[column.name] })),
     };
     pending.current = true; setBusy('save'); setSaveError('');
     try {
@@ -375,7 +395,8 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
       forgetRun(key);
       if (live()) {
         setHistoryId(plan.id); setHistoryView('receipts'); setReceiptList([receipt]);
-        setNotice(`${previous ? 'Committed receipt verified.' : 'Sandbox sync committed.'} Rows affected: ${receipt.rowsAffected}.`);
+        setNotice(receipt.status === 'no_new_data' ? 'No new data. No rows were written and the checkpoint is unchanged.'
+          : `${previous ? 'Committed receipt verified.' : 'Sandbox sync committed.'} Rows affected: ${receipt.rowsAffected}.`);
       }
     } catch (failure) {
       const { status, code } = syncFailure(failure);
@@ -391,7 +412,9 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
   };
 
   return <section className="ontology-source-catalog ontology-source-sync" aria-label="Batch syncs">
-    <header><div><h3>Batch syncs</h3><p>Snapshot Upsert into the local sandbox only, run manually or on an armed daily schedule. No deletes or incremental reads.</p></div></header>
+    <header><div><h3>Batch syncs</h3><p>{capability?.incrementalBatchSync ? 'Use Snapshot Upsert or the fixed synthetic Committed batch Upsert. Runs are manual or use an armed daily schedule. Neither mode deletes rows.' : 'Snapshot Upsert into the local sandbox only, run manually or on an armed daily schedule. No deletes or incremental reads.'}</p></div>
+      {committedModeAvailable && <Button size="small" disabled={Boolean(draft || busy)} onClick={prepareCommitted}>Set up committed batch sync</Button>}
+    </header>
     <div className="ontology-source-sync__body">
       {sourceProof?.state === 'blocked' && <p role="status">Saving syncs, starting new runs and arming schedules are blocked by the saved source identity policy.</p>}
       {capability?.sourceIdentityRequired && !proofCurrent && sourceProof?.state !== 'blocked' && <p role="status">Verify the current saved source identity before new manual or scheduled sync runs.</p>}
@@ -401,37 +424,46 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
       {notice && <p role="status">{notice}</p>}
       {draft ? <form aria-label="Configure batch sync" className="ontology-source-sync__form" onSubmit={event => void save(event)}>
         <h4 ref={composer} tabIndex={-1}>Configure batch sync</h4>
+        {(draft.mode === 'incremental' || capability?.incrementalBatchSync) && <p>Mode: <strong>{draft.mode === 'incremental' ? 'Committed batch Upsert' : 'Snapshot Upsert'}</strong></p>}
         <p>Source: <code>{draft.schema}.{draft.table}</code>{capability && <> · Destination schema: <code>{capability.targetSchema}</code></>}</p>
         <fieldset disabled={Boolean(busy)}>
           <label>Sync name<Input aria-label="Sync name" required maxLength={120} value={draft.name} onChange={event => change({ name: event.target.value })} /></label>
-          <label>Destination table<select value={draft.target} onChange={event => { setTargetColumns(undefined); setDestinationError(''); change({ target: event.target.value, mapping: {} }); }}>
-            <option value="">{targets ? 'Select a sandbox table' : 'Loading destination tables…'}</option>
-            {draft.target && !targets?.includes(draft.target) && <option value={draft.target} disabled>{draft.target} (saved)</option>}
-            {targets?.map(name => <option key={name} value={name}>{name}</option>)}
-          </select></label>
-          {targets?.length === 0 && <p>No destination tables are available in the local sandbox.</p>}
-          <label>Source primary key<select disabled={!sourceKey} value={draft.key} onChange={event => change({ key: event.target.value })}>
-            <option value="">Select the source primary key</option>
-            {draft.key && draft.key !== sourceKey && <option value={draft.key} disabled>{draft.key} (saved)</option>}
-            {sourceKey && <option value={sourceKey}>{sourceKey}</option>}
-          </select></label>
-          {sourceColumns && !sourceKey && <p>Requires complete source metadata and a single integer or UUID primary key.</p>}
-          {targetColumns && targetKeys.length !== 1 && <p>Choose a destination table with one primary key column.</p>}
-          {mappingRows.length > 0 && <section className="ontology-source-sync__mapping" aria-label="Column mapping">
-            <h4>Column mapping</h4><p>Map every destination column to one same-type source column. The source key must map to the destination primary key.</p>
-            {mappingRows.map(({ column, options }) => <label key={column.name}><span><code>{column.name}</code> · {column.type}{column.primary ? ' · Primary key' : ''}</span>
-              <select aria-label={`Source column for ${column.name}`} value={draft.mapping[column.name] ?? ''} onChange={event => change({ mapping: { ...draft.mapping, [column.name]: event.target.value } })}>
-                <option value="">{options.length ? 'Select source column' : 'No matching source column'}</option>
-                {options.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}
-              </select>
-            </label>)}
-          </section>}
-          {(catalogError || sourceError || destinationError) && <p className="is-error" role="alert">{[catalogError, sourceError, destinationError].filter(Boolean).join(' ')} <Button size="small" onClick={() => setMetadataRevision(value => value + 1)}>Retry metadata</Button></p>}
+          {draft.mode === 'incremental' ? <div>
+            <p>Fixed destination: <code>{capability?.targetSchema}.{committedStream.target}</code></p>
+            <p>Fixed key: <code>id</code>. Mapping: <code>id → id</code>, <code>value → value</code>. A run can apply only the next complete published batch.</p>
+            {!committedModeAvailable && <p role="status">Committed batch setup is unavailable for this saved source.</p>}
+          </div> : <>
+            <label>Destination table<select value={draft.target} onChange={event => { setTargetColumns(undefined); setDestinationError(''); change({ target: event.target.value, mapping: {} }); }}>
+              <option value="">{targets ? 'Select a sandbox table' : 'Loading destination tables…'}</option>
+              {draft.target && !targets?.includes(draft.target) && <option value={draft.target} disabled>{draft.target} (saved)</option>}
+              {targets?.map(name => <option key={name} value={name}>{name}</option>)}
+            </select></label>
+            {targets?.length === 0 && <p>No destination tables are available in the local sandbox.</p>}
+            <label>Source primary key<select disabled={!sourceKey} value={draft.key} onChange={event => change({ key: event.target.value })}>
+              <option value="">Select the source primary key</option>
+              {draft.key && draft.key !== sourceKey && <option value={draft.key} disabled>{draft.key} (saved)</option>}
+              {sourceKey && <option value={sourceKey}>{sourceKey}</option>}
+            </select></label>
+            {sourceColumns && !sourceKey && <p>Requires complete source metadata and a single integer or UUID primary key.</p>}
+            {targetColumns && targetKeys.length !== 1 && <p>Choose a destination table with one primary key column.</p>}
+            {mappingRows.length > 0 && <section className="ontology-source-sync__mapping" aria-label="Column mapping">
+              <h4>Column mapping</h4><p>Map every destination column to one same-type source column. The source key must map to the destination primary key.</p>
+              {mappingRows.map(({ column, options }) => <label key={column.name}><span><code>{column.name}</code> · {column.type}{column.primary ? ' · Primary key' : ''}</span>
+                <select aria-label={`Source column for ${column.name}`} value={draft.mapping[column.name] ?? ''} onChange={event => change({ mapping: { ...draft.mapping, [column.name]: event.target.value } })}>
+                  <option value="">{options.length ? 'Select source column' : 'No matching source column'}</option>
+                  {options.map(item => <option key={item.name} value={item.name}>{item.name}</option>)}
+                </select>
+              </label>)}
+            </section>}
+            {(catalogError || sourceError || destinationError) && <p className="is-error" role="alert">{[catalogError, sourceError, destinationError].filter(Boolean).join(' ')} <Button size="small" onClick={() => setMetadataRevision(value => value + 1)}>Retry metadata</Button></p>}
+          </>}
         </fieldset>
         {saveError && <p role="alert" className="is-error">{saveError}</p>}
         <div className="ontology-source-sync__actions"><Button disabled={Boolean(busy)} onClick={closeDraft}>Cancel</Button><Button type="primary" htmlType="submit" loading={busy === 'save'} disabled={!fullyMapped || !draft.name.trim() || sourceProof?.state === 'blocked'}>Save draft</Button></div>
       </form> : !plans ? !stateError && <p role="status">Loading batch syncs…</p> : plans.length ? <ul className="ontology-source-sync__items">{plans.map(plan => <li key={plan.id}>
-        <div><strong>{plan.name}</strong> · Draft</div>
+        <div><strong>{plan.name}</strong> · {plan.mode === 'incremental' ? 'Committed batch Upsert' : capability?.incrementalBatchSync ? 'Snapshot Upsert' : 'Draft'}</div>
+        {plan.mode === 'incremental' && <p>Committed through: <code>{plan.appliedThrough ?? 'Not recorded'}</code>. This is the saved target checkpoint, not the latest source head.</p>}
+        {plan.mode === 'incremental' && !committedModeAvailable && <p>New committed batch runs and schedule arming are unavailable for this saved source.</p>}
         <div className="ontology-source-sync__route"><code>{plan.sourceSchema}.{plan.sourceTable}</code><ArrowRightOutlined /><code>{capability?.targetSchema}.{plan.targetTable}</code></div>
         {capability?.sourceIdentityRequired && proofCurrent && plansForProof === proofVersion && !plan.sourceIdentityReviewed && <p>Requires review. Review and save this sync again to bind it to the verified source identity.</p>}
         {!sameRevision(plan.sourceUpdatedAt, source.updatedAt) && <p>This source has changed. Review and save the mapping before running.</p>}
@@ -445,14 +477,14 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
         {scheduleId === plan.id && capability && <BatchSyncSchedulePanel key={`${plan.id}:${plan.updatedAt}:${source.updatedAt}:${sourceReviewNeeded(plan)}`} plan={plan} source={source} capability={capability} sourceReviewNeeded={sourceReviewNeeded(plan)} />}
         {historyId === plan.id && <section aria-label="Batch sync history">
           <div className="ontology-source-sync__actions" role="group" aria-label="History view">
-            <Button size="small" aria-pressed={historyView === 'receipts'} onClick={() => { if (historyView !== 'receipts') { setReceiptList(undefined); setHistoryError(''); setHistoryView('receipts'); } }}>Committed receipts</Button>
+            <Button size="small" aria-pressed={historyView === 'receipts'} onClick={() => { if (historyView !== 'receipts') { setReceiptList(undefined); setHistoryError(''); setHistoryView('receipts'); } }}>{plan.mode === 'incremental' ? 'Run results' : 'Committed receipts'}</Button>
             <Button size="small" aria-pressed={historyView === 'attempts'} onClick={() => { if (historyView !== 'attempts') { setAttemptList(undefined); setHistoryError(''); setHistoryView('attempts'); } }}>Attempts</Button>
           </div>
           {historyView === 'attempts' && <p>Attempts record execution requests and outcomes. A recorded request is not proof that a worker is active or that any rows committed.</p>}
           {historyError ? <p role="alert" className="is-error">{historyError} <Button size="small" onClick={() => setRevision(value => value + 1)}>Retry history</Button></p>
             : historyView === 'attempts'
               ? attemptList ? <AttemptList attempts={attemptList.filter(attempt => attempt.planId === plan.id)} canRetry={Boolean(capability?.enabled && !busy)} onRetry={attempt => askRun(plan, attempt)} /> : <p role="status">Loading attempts…</p>
-              : receiptList ? <ReceiptList receipts={receiptList.filter(receipt => receipt.planId === plan.id)} /> : <p role="status">Loading sync history…</p>}
+              : receiptList ? <ReceiptList receipts={receiptList.filter(receipt => receipt.planId === plan.id)} incremental={plan.mode === 'incremental'} /> : <p role="status">Loading sync history…</p>}
         </section>}
       </li>)}</ul> : <p>No saved batch syncs. Select a table in Explore source to set one up.</p>}
     </div>
@@ -463,7 +495,10 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
         <p>Request ID: <code>{retry.requestId}</code></p>
         {retry.expectedUpdatedAt !== confirm.updatedAt && <p>The plan has changed. This request can recover an existing receipt, but cannot run a different revision.</p>}
       </> : <>
-        <p>Upsert a snapshot of the saved source into the local sandbox, limited to {capability?.maxRows} rows and {capability?.maxBytes.toLocaleString()} bytes. This does not delete target rows or change the external source.</p>
+        {confirm.mode === 'incremental' ? <p>Apply at most the next complete published batch to the fixed synthetic destination.
+          {capability?.incrementalMaxRows != null && capability.incrementalMaxBytes != null && <> The batch is rejected if it exceeds {capability.incrementalMaxRows} rows or {capability.incrementalMaxBytes.toLocaleString()} bytes.</>}
+          {' '}An empty check never advances the target checkpoint. This does not delete rows or change the source.</p>
+          : <p>Upsert a snapshot of the saved source into the local sandbox, limited to {capability?.maxRows} rows and {capability?.maxBytes.toLocaleString()} bytes. This does not delete target rows or change the external source.</p>}
         <div className="ontology-source-sync__route"><code>{confirm.sourceSchema}.{confirm.sourceTable}</code><ArrowRightOutlined /><code>{capability?.targetSchema}.{confirm.targetTable}</code></div>
         <p>Source key: <code>{confirm.sourceKeyColumn}</code>. This confirmation applies only to the current saved revision.</p>
       </>)}

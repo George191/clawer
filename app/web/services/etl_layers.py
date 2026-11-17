@@ -20,9 +20,24 @@ from app.etl.schema.object_relations import (
     read_object_relations,
 )
 from app.storage.postgres_client import get_pg_client
+from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
 from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
+
+RESERVED_BATCH_TARGET = (BATCH_TARGET_SCHEMA, INCREMENTAL_TARGET)
+_RESERVED_BATCH_REGCLASS = ".".join(RESERVED_BATCH_TARGET)
+
+
+def require_ordinary_table(schema: str, table: str) -> None:
+    if (schema, table) == RESERVED_BATCH_TARGET:
+        raise HTTPException(404, "Table does not exist in this schema")
+
+
+async def reserved_batch_target_exists(session) -> bool:
+    return bool(await session.scalar(text("SELECT pg_catalog.to_regclass(:name) IS NOT NULL"),
+                                     {"name": _RESERVED_BATCH_REGCLASS}))
+
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
 _OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
@@ -32,6 +47,7 @@ _OBJECT_METADATA_JOIN = """LEFT JOIN public.ontology_objects o
 _OBJECT_DESCRIPTION_SQL = "COALESCE(NULLIF(obj_description(c.oid, 'pg_class'), ''), o.description, '')"
 _OBJECT_TABLE_SQL = f"""n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
     AND n.nspname <> 'ts_meta_hist' AND n.nspname <> '{PROTECTED_SYNTHETIC_SCHEMA}'
+    AND NOT (n.nspname = '{BATCH_TARGET_SCHEMA}' AND c.relname = '{INCREMENTAL_TARGET}')
     AND c.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$' AND c.relkind IN ('r','p')
     AND NOT c.relispartition
     AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
@@ -161,9 +177,11 @@ class EtlLayers:
                 FROM pg_namespace n LEFT JOIN pg_class c
                   ON c.relnamespace = n.oid AND c.relkind IN ('r','p')
                      AND NOT c.relispartition
+                     AND NOT (n.nspname = :batch_schema AND c.relname = :batch_target)
                 WHERE n.nspname LIKE 'ts\_%' ESCAPE '\' AND n.nspname <> :restricted
                 GROUP BY n.oid, n.nspname ORDER BY n.nspname
-            """), {"restricted": PROTECTED_SYNTHETIC_SCHEMA})
+            """), {"restricted": PROTECTED_SYNTHETIC_SCHEMA,
+                    "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET})
             found = {row["schema"]: dict(row) for row in result.mappings()}
         schemas = list(dict.fromkeys([*(f"ts_{layer}" for layer in LAYERS), *found]))
         return [{
@@ -199,8 +217,10 @@ class EtlLayers:
                     FROM descendants d JOIN pg_class physical ON physical.oid = d.relid
                 ) storage
                 WHERE n.nspname = :schema AND c.relkind IN ('r','p')
-                  AND NOT c.relispartition ORDER BY c.relname
-            """), {"schema": schema})
+                  AND NOT c.relispartition
+                  AND NOT (n.nspname = :batch_schema AND c.relname = :batch_target)
+                ORDER BY c.relname
+            """), {"schema": schema, "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET})
             rows = result.mappings().all()
         return [{"name": row["name"], "schemaName": schema, "dataType": row["data_type"] or "",
                  "tableRole": "history" if schema.endswith("_hist") else "current",
@@ -307,6 +327,7 @@ class EtlLayers:
 
     async def preview(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
         schema = _object_schema(layer)
+        require_ordinary_table(schema, table)
         quote_identifier(table)
         async with self.session() as session:
             await self._require_ontology(session)
@@ -343,6 +364,8 @@ class EtlLayers:
                   AND sn.nspname <> 'ts_meta_hist' AND sn.nspname <> :restricted
                   AND tn.nspname ~ '^ts_[a-z0-9_]+$' AND tn.nspname <> 'ts_meta'
                   AND tn.nspname <> 'ts_meta_hist' AND tn.nspname <> :restricted
+                  AND NOT (sn.nspname = :batch_schema AND sc.relname = :batch_target)
+                  AND NOT (tn.nspname = :batch_schema AND tc.relname = :batch_target)
                   AND sc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
                   AND tc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
                   AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
@@ -350,7 +373,8 @@ class EtlLayers:
                   AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = sc.oid)
                   AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = tc.oid)
                 ORDER BY sn.nspname, sc.relname, con.conname, con.oid
-            """), {"oid": row["oid"], "restricted": PROTECTED_SYNTHETIC_SCHEMA})
+            """), {"oid": row["oid"], "restricted": PROTECTED_SYNTHETIC_SCHEMA,
+                    "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET})
             foreign_keys = [dict(item) for item in result.mappings()]
             try:
                 logical = await read_object_relations(session, schema, table)
@@ -392,7 +416,8 @@ class EtlLayers:
                 ("relationships", merge_object_relations(foreign_keys, logical))):
             for relation in relations:
                 if any(not relation[f"{side}_schema"].startswith("ts_") or
-                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA}
+                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA} or
+                       (relation[f"{side}_schema"], relation[f"{side}_table"]) == RESERVED_BATCH_TARGET
                        for side in ("source", "target")):
                     continue
                 for direction, side, peer in (("outgoing", "source", "target"), ("incoming", "target", "source")):
@@ -426,6 +451,7 @@ class EtlLayers:
                 "linkedObjectTypes": [linked[key] for key in sorted(linked)]}
 
     async def get_table(self, layer: str, table: str) -> dict[str, Any]:
+        require_ordinary_table(resolve_schema(layer), table)
         quote_identifier(table)
         tables = await self.tables(layer)
         found = next((item for item in tables if item["name"] == table), None)
@@ -498,6 +524,7 @@ class EtlLayers:
 
     async def evidence(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
         schema = _object_schema(layer)
+        require_ordinary_table(schema, table)
         quote_identifier(table)
         is_financial = (schema, table) == _FINANCIAL_ODS
         filed = None
@@ -551,6 +578,7 @@ class EtlLayers:
 
     async def columns(self, layer: str, table: str) -> list[dict[str, Any]]:
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
         quote_identifier(table)
         async with self.session() as session:
             result = await session.execute(text("""
@@ -575,6 +603,7 @@ class EtlLayers:
 
     async def partitions(self, layer: str, table: str) -> list[dict[str, Any]]:
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
         await self.columns(schema, table)
         async with self.session() as session:
             result = await session.execute(text("""
@@ -600,6 +629,7 @@ class EtlLayers:
         started = perf_counter()
         payload = payload or {}
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
         if (schema, table) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
             raise HTTPException(403, "Use the dedicated index-checked preview for this synthetic table")
         columns = await self.columns(schema, table)
@@ -700,13 +730,14 @@ class EtlLayers:
             # Raw SQL is not a relation sandbox: views and database functions can hide references.
             # Leave the ordinary environment unchanged unless this isolated fixture exists or history is protected.
             fixture, marked_history_column = (await session.execute(text("""
-                SELECT pg_catalog.to_regnamespace(:fixture) IS NOT NULL,
+                SELECT (pg_catalog.to_regnamespace(:fixture) IS NOT NULL
+                        OR pg_catalog.to_regclass(:batch_target) IS NOT NULL),
                        EXISTS (
                            SELECT 1 FROM pg_catalog.pg_attribute
                            WHERE attrelid = pg_catalog.to_regclass('public.ontology_cdc_sandbox_versions')
                              AND attname = 'marking_level' AND attnum > 0 AND NOT attisdropped
                        )
-            """), {"fixture": PROTECTED_SYNTHETIC_SCHEMA})).one()
+            """), {"fixture": PROTECTED_SYNTHETIC_SCHEMA, "batch_target": _RESERVED_BATCH_REGCLASS})).one()
             if fixture or (marked_history_column and await session.scalar(text("""
                 SELECT EXISTS (SELECT 1 FROM public.ontology_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
             """))):

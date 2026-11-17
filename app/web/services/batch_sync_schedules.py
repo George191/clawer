@@ -17,6 +17,7 @@ from app.web.api.models.batch_sync_schedules import (
     BatchSyncScheduleRow, BatchSyncScheduleSummary,
 )
 from app.web.services.batch_source_identity import plan_source_ready_clause, require_plan_source_identity
+from app.web.services.batch_sync_incremental import incremental_ready_clause
 from app.web.services.batch_syncs import _HISTORY_LIMIT, _target_metadata, _verify_source_revision, run_batch_sync, scheduled_batch_sync_enabled
 from app.web.services.batch_sync_scope import local_batch_sync_scope
 
@@ -84,6 +85,8 @@ async def change_batch_sync_schedule(
     if change.enabled:
         await _verify_source_revision(session, plan.connection_id, plan.source_updated_at, lock=True)
         await require_plan_source_identity(session, plan)
+        if not await _source_identity_ready(session, plan.id):
+            raise HTTPException(409, "Review the exact synthetic stream binding before arming this plan")
         target, _ = await _target_metadata(session, plan.target_table)
         if target["table_oid"] != plan.target_oid or target["table_node"] != plan.target_file_node:
             raise HTTPException(409, "The batch target was replaced or rewritten; review and save the plan again")
@@ -122,12 +125,13 @@ async def change_batch_sync_schedule(
 
 async def _source_identity_ready(session: AsyncSession, plan_id: UUID) -> bool:
     return bool(await session.scalar(select(BatchSyncPlanRow.id).where(
-        BatchSyncPlanRow.id == plan_id, plan_source_ready_clause(),
+        BatchSyncPlanRow.id == plan_id, plan_source_ready_clause(), incremental_ready_clause(),
     )))
 
 
 async def list_batch_sync_schedules(session: AsyncSession) -> list[BatchSyncScheduleSummary]:
-    statement = (select(BatchSyncPlanRow, BatchSyncScheduleRow, _REGISTRY.c.updated_at, plan_source_ready_clause())
+    statement = (select(BatchSyncPlanRow, BatchSyncScheduleRow, _REGISTRY.c.updated_at,
+                      plan_source_ready_clause() & incremental_ready_clause())
                  .join(BatchSyncScheduleRow, BatchSyncScheduleRow.plan_id == BatchSyncPlanRow.id)
                  .outerjoin(_REGISTRY, _REGISTRY.c.id == BatchSyncPlanRow.connection_id)
                  .order_by(BatchSyncScheduleRow.updated_at.desc(), BatchSyncPlanRow.id).limit(TICK_LIMIT))
@@ -170,7 +174,7 @@ async def collect_due_batch_sync_jobs(session: AsyncSession, *, now: datetime | 
             BatchSyncScheduleRow.updated_at <= slot,
             BatchSyncScheduleRow.source_updated_at == BatchSyncPlanRow.source_updated_at,
             _REGISTRY.c.updated_at == BatchSyncScheduleRow.source_updated_at,
-            plan_source_ready_clause(),
+            plan_source_ready_clause(), incremental_ready_clause(),
             BatchSyncScheduleRow.planned_time_utc == slot.strftime("%H:%M"),
             ~exists().where(
                 BatchSyncScheduleJobRow.plan_id == BatchSyncScheduleRow.plan_id,
@@ -237,11 +241,11 @@ async def execute_batch_sync_schedule_job(session: AsyncSession, job_id: UUID, *
     if job.state not in OPEN_JOB_STATES:
         return job.state
     try:
-        await run_batch_sync(
+        result = await run_batch_sync(
             session, job.plan_id, BatchSyncRunRequest(requestId=job.id, expectedUpdatedAt=job.plan_updated_at),
             job.armed_by, scheduled_job_id=job.id, scheduled_now=now,
         )
-        return "committed"
+        return result.status
     except HTTPException:
         updated = await session.get(BatchSyncScheduleJobRow, job_id, populate_existing=True)
         return updated.state if updated else "missing"

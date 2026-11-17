@@ -109,7 +109,7 @@ async def read_batch_sync_snapshot(
     identity_marker: UUID | None = None, relation_pin: tuple[int, int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Read all rows of a small approved source table or fail with no partial batch."""
-    if schema in (PROTECTED_SYNTHETIC_SCHEMA, "batch_sync_identity"):
+    if schema in (PROTECTED_SYNTHETIC_SCHEMA, "batch_sync_identity", "batch_sync_stream"):
         raise HTTPException(422, "The reserved synthetic schema is not a batch source")
     relation = f"{_identifier(schema)}.{_identifier(table)}"
     names = [_identifier(column) for column in columns]
@@ -260,7 +260,7 @@ async def review_batch_source(
         await _require_identity_marker(connection, marker)
         if schema is None or table is None:
             return None
-        if schema in (PROTECTED_SYNTHETIC_SCHEMA, "batch_sync_identity"):
+        if schema in (PROTECTED_SYNTHETIC_SCHEMA, "batch_sync_identity", "batch_sync_stream"):
             raise HTTPException(422, "The reserved synthetic schema is not a batch source")
         relation = f"{_identifier(schema)}.{_identifier(table)}"
         state = await connection.fetchrow("""

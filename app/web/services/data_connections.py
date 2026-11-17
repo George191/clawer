@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.storage.postgres_client import get_pg_client
+from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.data_connections import DataConnectionPayload, SourceCatalog, SourceColumn, SourceColumns, SourceRelation
 from app.web.core.config import settings
 
@@ -47,11 +48,12 @@ _CATALOG_KINDS = {
 }
 _CATALOG_SCHEMA_SCOPE = """
     left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
-    AND n.nspname NOT IN ('batch_sync_identity', 'ts_cdc_sandbox')
+    AND n.nspname NOT IN ('batch_sync_identity', 'batch_sync_stream', 'ts_cdc_sandbox')
     AND has_schema_privilege(n.oid, 'USAGE')
 """
 _CATALOG_RELATION_SCOPE = f"""
     {_CATALOG_SCHEMA_SCOPE}
+    AND NOT (n.nspname = '{BATCH_TARGET_SCHEMA}' AND c.relname = '{INCREMENTAL_TARGET}')
     AND CASE WHEN c.relkind IN ('r','p','v','m','f')
         THEN has_table_privilege(c.oid, 'SELECT') OR has_any_column_privilege(c.oid, 'SELECT')
         ELSE false END

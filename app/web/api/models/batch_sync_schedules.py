@@ -39,7 +39,7 @@ class BatchSyncScheduleSummary(BatchSyncSchedule):
 class BatchSyncScheduleJob(BaseModel):
     id: UUID
     slot: datetime
-    state: Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired"]
+    state: Literal["pending", "dispatched", "committed", "no_new_data", "rejected", "outcome_unknown", "expired"]
     dispatchedAt: datetime | None = None
     finishedAt: datetime | None = None
     receiptId: UUID | None = None
@@ -70,9 +70,9 @@ class BatchSyncScheduleJobRow(SQLModel, table=True):
     __tablename__ = "ontology_batch_sync_schedule_jobs"
     __table_args__ = (
         UniqueConstraint("plan_id", "generation", "slot", name="uq_ontology_batch_sync_schedule_jobs_slot"),
-        CheckConstraint("state IN ('pending','dispatched','committed','rejected','outcome_unknown','expired')",
+        CheckConstraint("state IN ('pending','dispatched','committed','no_new_data','rejected','outcome_unknown','expired')",
                         name="ck_ontology_batch_sync_schedule_jobs_state"),
-        CheckConstraint("(state = 'committed') = (receipt_id IS NOT NULL)",
+        CheckConstraint("(state IN ('committed','no_new_data')) = (receipt_id IS NOT NULL)",
                         name="ck_ontology_batch_sync_schedule_job_receipt"),
         Index("ix_ontology_batch_sync_schedule_expiry", "expires_at",
               postgresql_where=text("state IN ('pending','dispatched')")),

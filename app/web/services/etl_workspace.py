@@ -26,7 +26,10 @@ from app.web.core.config import settings as web_settings
 from app.web.services.etl_layers import (
     EtlLayers,
     LAYERS,
+    RESERVED_BATCH_TARGET,
     get_etl_layers,
+    require_ordinary_table,
+    reserved_batch_target_exists,
 )
 from app.web.services.etl_layers import (
     quote_identifier as _quote_identifier,
@@ -379,6 +382,8 @@ class EtlWorkspace:
         async with self._session() as session:
             await self._schema_exists(session, schema)
             if target != schema:
+                if schema == RESERVED_BATCH_TARGET[0] and await reserved_batch_target_exists(session):
+                    raise HTTPException(409, "The schema contains a reserved synthetic batch target")
                 managed = await session.execute(text("""
                     SELECT 1 FROM public.ontology_objects
                     WHERE schema_name = :schema AND ddl_sql <> '' LIMIT 1
@@ -420,6 +425,8 @@ class EtlWorkspace:
             raise HTTPException(409, "Pipeline schemas cannot be deleted")
         async with self._session() as session:
             await self._schema_exists(session, schema)
+            if schema == RESERVED_BATCH_TARGET[0] and await reserved_batch_target_exists(session):
+                raise HTTPException(409, "The schema contains a reserved synthetic batch target")
             await session.execute(text(f"DROP SCHEMA {quote_identifier(schema)} RESTRICT"))
             await session.execute(text("DELETE FROM public.ontology_object_relations WHERE source_schema = :schema OR target_schema = :schema"), {"schema": schema})
             await session.execute(text("DELETE FROM public.ontology_objects WHERE schema_name = :schema"), {"schema": schema})
@@ -433,6 +440,7 @@ class EtlWorkspace:
 
     async def create_table(self, layer: str, payload: dict[str, Any]) -> dict[str, Any]:
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, payload.get("name"))
         data_type = payload.get("dataType")
         if not isinstance(data_type, str) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", data_type):
             _bad("Data type must be a lowercase identifier of 1 to 63 characters")
@@ -455,6 +463,7 @@ class EtlWorkspace:
         targets: dict[tuple[str, str], set[str]] = {}
         for row in rows:
             target = (row["target_schema"], row["target_table"])
+            require_ordinary_table(*target)
             if target not in targets:
                 result = await session.execute(text("""SELECT p.name
                     FROM public.ontology_objects o
@@ -510,6 +519,7 @@ class EtlWorkspace:
 
     async def _ontology_object(self, session, schema: str, table: str, provenance: str, *, allow_missing=False):
         identity = {"schema": schema, "table": table}
+        require_ordinary_table(schema, table)
         physical = (await session.execute(text("""SELECT c.oid
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                 WHERE n.nspname = :schema AND c.relname = :table AND c.relkind IN ('r','p')
@@ -534,6 +544,7 @@ class EtlWorkspace:
     @staticmethod
     def _favorite_identity(layer: str, table: str) -> str:
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
         quote_identifier(table)
         if schema in {"ts_meta", "ts_meta_hist"}:
             raise HTTPException(404, "Schema not found")
@@ -543,7 +554,10 @@ class EtlWorkspace:
     async def _favorite_ids(session, user_id: str) -> list[str]:
         rows = await session.execute(text("""SELECT o.schema_name || '.' || o.table_name AS id
             FROM public.ontology_object_favorites f JOIN public.ontology_objects o ON o.id = f.object_id
-            WHERE f.user_id = CAST(:user_id AS uuid) ORDER BY o.schema_name, o.table_name"""), {"user_id": user_id})
+            WHERE f.user_id = CAST(:user_id AS uuid)
+              AND NOT (o.schema_name = :batch_schema AND o.table_name = :batch_target)
+            ORDER BY o.schema_name, o.table_name"""),
+            {"user_id": user_id, "batch_schema": RESERVED_BATCH_TARGET[0], "batch_target": RESERVED_BATCH_TARGET[1]})
         return [row["id"] for row in rows.mappings()]
 
     async def object_favorites(self, user_id: str) -> dict[str, Any]:
@@ -602,6 +616,7 @@ class EtlWorkspace:
 
     async def _write_row(self, layer: str, table: str, payload: dict[str, Any], delete: bool) -> dict[str, Any]:
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
         if delete and settings.etl_output_mode == "debezium" and schema in cdc_schemas():
             raise HTTPException(409, "CDC current tables require business soft deletion; physical deletion propagation is unavailable")
         qualified = f"{quote_identifier(schema)}.{quote_identifier(table)}"
@@ -647,6 +662,7 @@ class EtlWorkspace:
 
     async def publications(self, layer: str, table: str) -> list[dict[str, Any]]:
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
         await self._layers.get_table(schema, table)
         async with self._session() as session:
             if not await self._exists(session, "flow_publications"):
@@ -669,6 +685,7 @@ class EtlWorkspace:
 
     async def save_publication(self, layer: str, table: str, payload: dict[str, Any], publication_id: str | None = None) -> dict[str, Any]:
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
         columns = await self._layers.columns(schema, table)
         start = self._validity(payload.get("validFrom"))
         end = self._validity(payload.get("validUntil"))
@@ -708,6 +725,7 @@ class EtlWorkspace:
 
     async def delete_publication(self, layer: str, table: str, publication_id: str) -> dict[str, Any]:
         schema = resolve_schema(layer)
+        require_ordinary_table(schema, table)
         async with self._session() as session:
             if not await self._exists(session, "flow_publications"):
                 raise HTTPException(404, "Publication not found")
@@ -725,6 +743,7 @@ class EtlWorkspace:
             if row is None:
                 raise HTTPException(404, "Publication not found or outside its validity window")
             record = dict(row)
+            require_ordinary_table(record["schema_name"], record["table_name"])
         # Only pagination is public input. The stored filters and sort order are authoritative.
         query = {name: payload[name] for name in ("limit", "offset") if name in payload}
         return await self._layers.data(record["schema_name"], record["table_name"], query, scope=record["scope"])

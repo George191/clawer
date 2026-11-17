@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
 import { FieldTimeOutlined, ReloadOutlined } from '@/components/ui/icons';
-import { fetchBatchSyncScheduleJobs, fetchBatchSyncSchedules, fetchCurrentUserContext, fetchTransferScheduleJobs, fetchTransferSchedules, fetchTransferUpstreamJobs, fetchTransferUpstreamTriggers, type BatchSyncScheduleSummary, type TransferScheduleJob, type TransferScheduleSummary, type TransferUpstreamJob, type TransferUpstreamSummary } from '@/services/api';
+import { fetchBatchSyncScheduleJobs, fetchBatchSyncSchedules, fetchCurrentUserContext, fetchTransferScheduleJobs, fetchTransferSchedules, fetchTransferUpstreamJobs, fetchTransferUpstreamTriggers, type BatchSyncScheduleSummary, type BatchSyncScheduleJob, type TransferScheduleJob, type TransferScheduleSummary, type TransferUpstreamJob, type TransferUpstreamSummary } from '@/services/api';
 import { nextLocalTimeForUtcClock } from '@/services/scheduleTime';
 
 type Props = { keyword: string; filter: 'all' | 'enabled' | 'paused' };
@@ -21,7 +21,7 @@ export default function TransferSchedules({ keyword, filter }: Props) {
   const [failed, setFailed] = useState<string[]>([]);
   const [version, setVersion] = useState(0);
   const [historyFor, setHistoryFor] = useState<ScheduleItem>();
-  const [history, setHistory] = useState<(TransferScheduleJob | TransferUpstreamJob)[]>();
+  const [history, setHistory] = useState<(BatchSyncScheduleJob | TransferScheduleJob | TransferUpstreamJob)[]>();
   const [historyError, setHistoryError] = useState(false);
   useEffect(() => {
     const request = new AbortController();
@@ -86,9 +86,9 @@ export default function TransferSchedules({ keyword, filter }: Props) {
                   !latest || Date.parse(event.eventRecordedAt) > Date.parse(latest) ? event.eventRecordedAt : latest, undefined);
                 return <li key={job.id}>
                   {timestamp && <time dateTime={timestamp}>{new Date(timestamp).toLocaleString()}</time>}
-                  <strong>{job.state.replace(/_/g, ' ')}{'events' in job && ` · ${job.operator}`}</strong>
+                  <strong>{job.state === 'no_new_data' ? 'No new data' : job.state.replace(/_/g, ' ')}{'events' in job && ` · ${job.operator}`}</strong>
                   {'events' in job && job.events.map(event => <span key={event.eventId}>Parent receipt: <code>{event.parentReceiptId}</code></span>)}
-                  {job.receiptId && ('events' in job ? <span>Child receipt: <code>{job.receiptId}</code></span> : <code title="Committed receipt">{job.receiptId}</code>)}
+                  {job.receiptId && ('events' in job ? <span>Child receipt: <code>{job.receiptId}</code></span> : <code title={job.state === 'no_new_data' ? 'No new data record' : 'Committed receipt'}>{job.receiptId}</code>)}
                 </li>;
               })}</ol> : <p>No scheduled jobs have been recorded.</p>}
         </section>}

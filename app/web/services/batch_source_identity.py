@@ -6,7 +6,7 @@ from ipaddress import ip_address
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import false, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -129,7 +129,8 @@ async def require_plan_source_identity(session: AsyncSession, plan: BatchSyncPla
         await require_legacy_source_scope(session, plan.connection_id)
         return None
     fingerprint = await require_source_proof(session, plan.connection_id, plan.source_updated_at)
-    if (plan.source_identity_fingerprint != fingerprint or not plan.source_oid or not plan.source_file_node
+    pinned = bool(plan.source_stream_digest) if plan.mode == "incremental" else bool(plan.source_oid and plan.source_file_node)
+    if (plan.source_identity_fingerprint != fingerprint or not pinned
             or settings.BATCH_SYNC_SOURCE_IDENTITY_MARKER is None):
         raise HTTPException(409, "Review and save this batch plan against the verified PostgreSQL source")
     return settings.BATCH_SYNC_SOURCE_IDENTITY_MARKER
@@ -145,7 +146,7 @@ def plan_source_ready_clause():
             proof.fingerprint == expected, proof.is_current.is_(True),
         ).correlate(plan).exists()
     if identity_required():
-        return text("FALSE")
+        return false()
     return plan.source_identity_fingerprint.is_(None) & ~select(proof.connection_id).where(
         proof.connection_id == plan.connection_id,
     ).correlate(plan).exists()

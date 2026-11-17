@@ -663,17 +663,20 @@ export const fetchBatchSourceIdentity = (id: string, signal?: AbortSignal): Prom
   client.get(batchSourceIdentityPath(id), { signal }).then(r => unwrap<BatchSourceIdentity>(r.data));
 export const verifyBatchSourceIdentity = (id: string, expectedSourceUpdatedAt: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
   client.post(batchSourceIdentityPath(id), { expectedSourceUpdatedAt }, { signal, timeout: 45000 }).then(r => unwrap<BatchSourceIdentity>(r.data));
-export type BatchSyncCapabilities = { sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
+export type BatchSyncCapabilities = { incrementalBatchSync?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
 export type BatchSyncMapping = { sourceColumn: string; targetColumn: string };
 export type BatchSyncInput = {
   name: string; connectionId: string; sourceSchema: string; sourceTable: string; sourceKeyColumn: string; targetTable: string;
-  mapping: BatchSyncMapping[]; expectedSourceUpdatedAt: string;
+  mode?: 'incremental'; mapping: BatchSyncMapping[]; expectedSourceUpdatedAt: string;
 };
-export type BatchSyncPlan = Omit<BatchSyncInput, 'expectedSourceUpdatedAt'> & { id: string; updatedAt: string; sourceUpdatedAt: string; sourceIdentityReviewed?: true };
-export type BatchSyncReceipt = { id: string; planId: string; status: 'committed'; rowsAffected: number; recordedAt: string; sourceUpdatedAt: string; targetTable: string; sourceIdentityVerified?: true };
+export type BatchSyncPlan = Omit<BatchSyncInput, 'expectedSourceUpdatedAt'> & { id: string; updatedAt: string; sourceUpdatedAt: string; sourceIdentityReviewed?: true; appliedThrough?: string };
+export type BatchSyncReceipt = {
+  id: string; planId: string; status: 'committed' | 'no_new_data'; rowsAffected: number; recordedAt: string; sourceUpdatedAt: string; targetTable: string;
+  sourceIdentityVerified?: true; fromExclusive?: string; throughInclusive?: string; sourceHighWater?: string; eventsRead?: number; manifestHash?: string | null;
+};
 export type BatchSyncAttempt = {
   id: string; planId: string; requestId: string; planUpdatedAt: string;
-  status: 'started' | 'committed' | 'replayed' | 'rejected' | 'retryable' | 'outcome_unknown';
+  status: 'started' | 'committed' | 'no_new_data' | 'replayed' | 'rejected' | 'retryable' | 'outcome_unknown';
   startedAt: string; finishedAt: string | null; receiptId: string | null; code: string | null; message: string | null;
   scheduledJobId: string | null;
 };
@@ -700,8 +703,9 @@ export const fetchBatchSyncSchedule = (id: string, signal?: AbortSignal): Promis
   client.get(batchSyncSchedulePath(id), { signal }).then((r) => unwrap<BatchSyncSchedule>(r.data));
 export const updateBatchSyncSchedule = (id: string, request: { enabled: boolean; plannedTimeUtc: string; expectedUpdatedAt: string; expectedGeneration: number | null }): Promise<BatchSyncSchedule> =>
   client.put(batchSyncSchedulePath(id), request).then((r) => unwrap<BatchSyncSchedule>(r.data));
-export const fetchBatchSyncScheduleJobs = (id: string, signal?: AbortSignal): Promise<TransferScheduleJob[]> =>
-  client.get(`${batchSyncSchedulePath(id)}/jobs`, { signal }).then((r) => unwrap<TransferScheduleJob[]>(r.data));
+export type BatchSyncScheduleJob = Omit<TransferScheduleJob, 'state'> & { state: TransferScheduleJob['state'] | 'no_new_data' };
+export const fetchBatchSyncScheduleJobs = (id: string, signal?: AbortSignal): Promise<BatchSyncScheduleJob[]> =>
+  client.get(`${batchSyncSchedulePath(id)}/jobs`, { signal }).then((r) => unwrap<BatchSyncScheduleJob[]>(r.data));
 
 const tableExportPath = '/etl/table-export';
 export type TableExportCapabilities = {
@@ -723,7 +727,7 @@ export type TableExportGrantEvent = {
   marking: TableExportGrant['marking']; recordedAt: string; planUpdatedAt: string; reason: string;
 };
 export type TableExportReceipt = { id: string; requestId: string; status: 'committed'; rowsAffected: number; recordedAt: string; grantGeneration: number };
-export type TableExportAttempt = Omit<BatchSyncAttempt, 'planId' | 'scheduledJobId'> & { grantGeneration: number };
+export type TableExportAttempt = Omit<BatchSyncAttempt, 'planId' | 'scheduledJobId' | 'status'> & { grantGeneration: number; status: Exclude<BatchSyncAttempt['status'], 'no_new_data'> };
 export type TableExportLineageReceipt = {
   id: string; recordedAt: string; rowsAffected: number; reviewedAt: string; observed: boolean;
   reviewRelation: 'current_review' | 'earlier_review' | 'different_binding';

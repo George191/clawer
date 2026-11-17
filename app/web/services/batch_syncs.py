@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address
 import logging
+import re
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import HTTPException
@@ -14,9 +15,10 @@ from sqlmodel import select
 
 from app.web.api.models.batch_source_identity import BatchSourceIdentityRow
 from app.web.api.models.batch_syncs import (
-    BATCH_ROWS, MAX_MAPPINGS, TARGET_SCHEMA, BatchSyncAttempt, BatchSyncAttemptRow, BatchSyncCapabilities,
+    BATCH_ROWS, INCREMENTAL_SOURCE_SCHEMA, INCREMENTAL_TARGET, MAX_MAPPINGS, TARGET_SCHEMA,
+    BatchSyncAttempt, BatchSyncAttemptRow, BatchSyncCapabilities,
     BatchSyncPayload, BatchSyncPlan, BatchSyncPlanRow, BatchSyncReceipt, BatchSyncReceiptRow,
-    BatchSyncRequestRow, BatchSyncRunRequest,
+    BatchSyncRequestRow, BatchSyncRunRequest, managed_batch_scope,
 )
 from app.web.api.models.batch_sync_schedules import BatchSyncScheduleJobRow, BatchSyncScheduleRow
 from app.web.api.models.user import User
@@ -27,6 +29,13 @@ from app.web.services.batch_sync_scope import local_batch_sync_scope
 from app.web.services.etl_layers import quote_identifier
 from app.web.services.batch_source_identity import (
     expected_fingerprint, identity_required, require_legacy_source_scope, require_plan_source_identity, require_source_proof,
+)
+from app.web.services.batch_sync_incremental import (
+    bind_incremental_target, incremental_batch_enabled, lock_incremental_target, require_target_shape,
+    same_binding, watermark,
+)
+from app.web.services.postgres_committed_batch_source import (
+    MAX_BATCH_BYTES, MAX_BATCH_ROWS, read_committed_batch, review_committed_batch_source,
 )
 from app.web.services.postgres_sync_source import SourceIdentityMismatch, read_batch_sync_snapshot, review_batch_source
 from app.web.services.transfer_runs import _sandbox_tables
@@ -59,12 +68,16 @@ def scheduled_batch_sync_enabled() -> bool:
 
 def batch_sync_capabilities() -> BatchSyncCapabilities:
     return BatchSyncCapabilities(enabled=_batch_sync_enabled(), scheduledBatchSync=scheduled_batch_sync_enabled(),
-                                 sourceIdentityRequired=True if identity_required() else None)
+                                 sourceIdentityRequired=True if identity_required() else None,
+                                 incrementalBatchSync=True if incremental_batch_enabled() else None,
+                                 incrementalMaxRows=MAX_BATCH_ROWS if incremental_batch_enabled() else None,
+                                 incrementalMaxBytes=MAX_BATCH_BYTES if incremental_batch_enabled() else None)
 
 
-def _plan_response(row: BatchSyncPlanRow, reviewed: bool = False) -> BatchSyncPlan:
+def _plan_response(row: BatchSyncPlanRow, reviewed: bool = False, applied_through: int | None = None) -> BatchSyncPlan:
     return BatchSyncPlan(
-        id=row.id, name=row.name, connectionId=row.connection_id, sourceSchema=row.source_schema,
+        id=row.id, name=row.name, connectionId=row.connection_id, sourceSchema=row.source_schema, mode=row.mode,
+        appliedThrough=str(applied_through) if applied_through is not None else None,
         sourceTable=row.source_table, sourceKeyColumn=row.source_key_column, targetTable=row.target_table,
         mapping=row.mapping, sourceUpdatedAt=row.source_updated_at, updatedAt=row.updated_at,
         sourceIdentityReviewed=True if reviewed else None,
@@ -72,7 +85,13 @@ def _plan_response(row: BatchSyncPlanRow, reviewed: bool = False) -> BatchSyncPl
 
 
 def _receipt_response(row: BatchSyncReceiptRow) -> BatchSyncReceipt:
+    interval = row.from_exclusive is not None
     return BatchSyncReceipt(
+        mode="incremental" if interval else None, status=row.outcome,
+        fromExclusive=str(row.from_exclusive) if interval else None,
+        throughInclusive=str(row.through_inclusive) if interval else None,
+        sourceHighWater=str(row.source_high_water) if interval else None,
+        eventsRead=row.events_read, manifestHash=row.manifest_hash,
         id=row.id, planId=row.plan_id, rowsAffected=row.rows_affected, recordedAt=row.recorded_at,
         sourceUpdatedAt=row.source_updated_at, targetTable=row.target_table,
         sourceIdentityVerified=True if row.source_identity_verified else None,
@@ -90,9 +109,15 @@ async def list_batch_syncs(
     rows = (await session.scalars(
         statement.order_by(BatchSyncPlanRow.updated_at.desc(), BatchSyncPlanRow.id).limit(_PLAN_LIMIT),
     )).all()
+    stream = await watermark(session) if any(item.mode == "incremental" for item in rows) else None
+
+    def scanned(row, reviewed=False):
+        return _plan_response(row, reviewed, stream.applied_through
+                              if row.mode == "incremental" and same_binding(stream, row) else None)
+
     expected = expected_fingerprint()
     if expected is None:
-        return [_plan_response(row) for row in rows]
+        return [scanned(row) for row in rows]
     candidates = {row.connection_id for row in rows if row.source_identity_fingerprint == expected}
     current = (await session.execute(text("""
         SELECT proof.connection_id, proof.source_updated_at
@@ -102,7 +127,7 @@ async def list_batch_syncs(
         WHERE proof.connection_id=ANY(CAST(:ids AS uuid[])) AND proof.fingerprint=:fingerprint AND proof.is_current
     """), {"ids": list(candidates), "fingerprint": expected})).all() if candidates else []
     verified = {tuple(item) for item in current}
-    return [_plan_response(row, row.source_identity_fingerprint == expected
+    return [scanned(row, row.source_identity_fingerprint == expected
                            and (row.connection_id, row.source_updated_at) in verified) for row in rows]
 
 
@@ -269,7 +294,13 @@ async def save_batch_sync(
             raise HTTPException(404, "Batch sync plan does not exist")
     else:
         row = None
+    incremental = payload.mode == "incremental"
+    if row is not None and row.mode != payload.mode:
+        raise HTTPException(409, "The batch plan mode cannot be changed")
+    if incremental and not incremental_batch_enabled():
+        raise HTTPException(403, "Managed incremental batch sync is disabled")
     await _verify_source_revision(session, payload.connectionId, payload.expectedSourceUpdatedAt, lock=True)
+    stream_digest = None
     fingerprint = None
     pin = None
     if identity_required():
@@ -277,24 +308,41 @@ async def save_batch_sync(
         marker = settings.BATCH_SYNC_SOURCE_IDENTITY_MARKER
         if marker is None:
             raise HTTPException(409, "The expected local PostgreSQL source identity is not provisioned")
-        pin = await review_batch_source(
-            get_data_connections(), str(payload.connectionId), payload.expectedSourceUpdatedAt, marker,
-            schema=payload.sourceSchema, table=payload.sourceTable,
-        )
+        if incremental:
+            stream_digest = await review_committed_batch_source(
+                get_data_connections(), str(payload.connectionId), payload.expectedSourceUpdatedAt, marker,
+            )
+        else:
+            pin = await review_batch_source(
+                get_data_connections(), str(payload.connectionId), payload.expectedSourceUpdatedAt, marker,
+                schema=payload.sourceSchema, table=payload.sourceTable,
+            )
     else:
         if row is not None and row.source_identity_fingerprint is not None:
             raise HTTPException(409, "Reenable the reviewed local PostgreSQL source identity policy")
         await require_legacy_source_scope(session, payload.connectionId)
+    if incremental:
+        try:
+            await lock_incremental_target(session)
+        except DBAPIError as error:
+            if getattr(error.orig, "sqlstate", None) in {"55P03", "42P01", "57014"}:
+                await session.rollback()
+                raise HTTPException(409, "The fixed incremental target is missing or busy") from None
+            raise
     target, columns = await _target_metadata(session, payload.targetTable)
+    if incremental:
+        require_target_shape(target, columns)
     _check_target_mapping(payload.mapping, payload.sourceKeyColumn, target, columns)
     attrs = dict(
-        name=payload.name.strip(), connection_id=payload.connectionId, source_schema=payload.sourceSchema,
+        name=payload.name.strip(), mode=payload.mode, source_stream_digest=stream_digest,
+        connection_id=payload.connectionId, source_schema=payload.sourceSchema,
         source_table=payload.sourceTable, source_key_column=payload.sourceKeyColumn, target_table=payload.targetTable,
         mapping=[item.model_dump() for item in payload.mapping], source_updated_at=payload.expectedSourceUpdatedAt,
         target_oid=target["table_oid"], target_file_node=target["table_node"],
         source_identity_fingerprint=fingerprint, source_oid=pin[0] if pin else None,
         source_file_node=pin[1] if pin else None,
     )
+    binding = await bind_incremental_target(session, attrs) if incremental else None
     now = datetime.now(timezone.utc)
     if row is None:
         row = BatchSyncPlanRow(**attrs, updated_at=now)
@@ -303,7 +351,7 @@ async def save_batch_sync(
         for key, value in attrs.items():
             setattr(row, key, value)
         row.updated_at = max(now, row.updated_at + timedelta(microseconds=1))
-    result = _plan_response(row, fingerprint is not None)
+    result = _plan_response(row, fingerprint is not None, binding.applied_through if binding is not None else None)
     await session.commit()
     return result
 
@@ -377,7 +425,7 @@ async def _lock_batch_schedule_job(
         raise _RunFailure(409, "schedule_request_conflict", "The schedule job is not bound to this batch request")
     if not scheduled_batch_sync_enabled():
         raise _RunFailure(403, "schedule_disabled", "Scheduled batch execution is disabled")
-    if job.state == "committed":
+    if job.state in ("committed", "no_new_data"):
         return job
     if job.state not in ("pending", "dispatched"):
         raise _RunFailure(409, "schedule_settled", "This schedule job already has a terminal outcome")
@@ -434,7 +482,7 @@ async def run_batch_sync(
         if previous is not None:
             if previous.plan_updated_at != req.expectedUpdatedAt:
                 raise _RunFailure(409, "request_revision_conflict", "This request ID belongs to a different plan version")
-            if job is not None and (job.state != "committed" or job.receipt_id != previous.id
+            if job is not None and (job.state != previous.outcome or job.receipt_id != previous.id
                                     or previous.initiated_by != _SCHEDULE_ACTOR):
                 raise _RunFailure(409, "schedule_receipt_conflict", "The request already has an unrelated batch receipt")
             result = _receipt_response(previous)
@@ -447,11 +495,19 @@ async def run_batch_sync(
                 if await _rollback(session):
                     await _finish_after_rollback(session, attempt_id, "replayed", receipt_id=result.id)
             return result
-        if job is not None and job.state == "committed":
+        if job is not None and job.state in ("committed", "no_new_data"):
             raise _RunFailure(409, "schedule_receipt_conflict", "The job has no matching committed batch receipt")
         if row.updated_at != req.expectedUpdatedAt:
             raise _RunFailure(409, "plan_changed", "Batch sync plan changed; review it before starting")
         plan = _plan_response(row)
+        incremental = row.mode == "incremental"
+        if incremental:
+            if not incremental_batch_enabled():
+                raise _RunFailure(403, "incremental_disabled", "Managed incremental batch sync is disabled")
+            if not managed_batch_scope(plan):
+                raise _RunFailure(409, "incremental_scope_changed", "The plan no longer matches the fixed synthetic stream")
+        elif plan.targetTable == INCREMENTAL_TARGET or plan.sourceSchema == INCREMENTAL_SOURCE_SCHEMA:
+            raise _RunFailure(409, "incremental_scope_changed", "The managed stream and target require incremental mode")
         qualified = f"{quote_identifier(TARGET_SCHEMA)}.{quote_identifier(plan.targetTable)}"
         await _target_metadata(session, plan.targetTable)
         # This is a physical PostgreSQL lock, not a plan-local mutex. A rival
@@ -462,6 +518,12 @@ async def run_batch_sync(
             raise _RunFailure(409, "target_rewritten",
                               "The reviewed batch target was replaced or rewritten; review and save the plan again")
         _check_target_mapping(plan.mapping, plan.sourceKeyColumn, target, columns)
+        binding = None
+        if incremental:
+            require_target_shape(target, columns)
+            binding = await watermark(session, lock=True)
+            if not same_binding(binding, row):
+                raise _RunFailure(409, "incremental_binding_changed", "The fixed synthetic stream binding differs from its review")
         await _verify_source_revision(session, plan.connectionId, plan.sourceUpdatedAt, lock=True)
         if job is not None:
             _check_job_time(job, scheduled_now)
@@ -471,16 +533,39 @@ async def run_batch_sync(
             raise _RunFailure(409, "source_identity_review_required",
                               "Verify the saved PostgreSQL source and review the batch plan again") from None
         source_columns = [item.sourceColumn for item in plan.mapping]
-        proof_args = {"identity_marker": marker, "relation_pin": (row.source_oid, row.source_file_node)} if marker else {}
+        outcome = "committed"
+        interval = {}
         try:
-            source_rows, source_meta = await read_batch_sync_snapshot(
-                get_data_connections(), str(plan.connectionId), expected_updated_at=plan.sourceUpdatedAt,
-                schema=plan.sourceSchema, table=plan.sourceTable, columns=source_columns, key_column=plan.sourceKeyColumn,
-                **proof_args,
-            )
+            if binding is not None:
+                batch = await read_committed_batch(
+                    get_data_connections(), str(plan.connectionId), expected_updated_at=plan.sourceUpdatedAt,
+                    identity_marker=marker, stream_digest=row.source_stream_digest, cursor=binding.applied_through,
+                )
+                start = binding.applied_through
+                source_rows = batch.rows
+                if batch.ordinal is None:
+                    if batch.published_through != start or batch.digest is not None or source_rows:
+                        raise SourceIdentityMismatch()
+                    outcome = "no_new_data"
+                    end = start
+                else:
+                    end = batch.ordinal
+                    if (end != start + 1 or batch.published_through < end or not source_rows
+                        or len(source_rows) > MAX_BATCH_ROWS or not re.fullmatch(r"[0-9a-f]{64}", batch.digest or "")):
+                        raise SourceIdentityMismatch()
+                interval = dict(from_exclusive=start, through_inclusive=end, source_high_water=batch.published_through,
+                                events_read=len(source_rows), manifest_hash=batch.digest)
+            else:
+                proof_args = {"identity_marker": marker, "relation_pin": (row.source_oid, row.source_file_node)} if marker else {}
+                source_rows, source_meta = await read_batch_sync_snapshot(
+                    get_data_connections(), str(plan.connectionId), expected_updated_at=plan.sourceUpdatedAt,
+                    schema=plan.sourceSchema, table=plan.sourceTable, columns=source_columns, key_column=plan.sourceKeyColumn,
+                    **proof_args,
+                )
         except HTTPException as error:
             raise _source_failure(error) from None
-        _check_source_projection(plan, columns, source_meta)
+        if binding is None:
+            _check_source_projection(plan, columns, source_meta)
         if len(source_rows) > BATCH_ROWS:
             raise _RunFailure(422, "source_limit", "The source exceeds the 100-row batch limit; no batch was written")
         affected = 0
@@ -513,21 +598,23 @@ async def run_batch_sync(
             """), params)).scalar_one()
             if affected != len(source_rows):
                 raise HTTPException(409, "Target did not acknowledge the complete batch")
+        if binding is not None and outcome == "committed":
+            binding.applied_through = interval["through_inclusive"]
         saved = BatchSyncReceiptRow(
             plan_id=plan_id, request_id=req.requestId, initiated_by=effective_actor, connection_id=plan.connectionId,
             source_schema=plan.sourceSchema, source_table=plan.sourceTable, target_table=plan.targetTable,
             plan_updated_at=plan.updatedAt, source_updated_at=plan.sourceUpdatedAt,
             rows_affected=affected, recorded_at=datetime.now(timezone.utc),
-            source_identity_verified=True if marker is not None else None,
+            source_identity_verified=True if marker is not None else None, outcome=outcome, **interval,
         )
         session.add(saved)
         result = _receipt_response(saved)
         await session.flush()
-        if await _finish_attempt(session, attempt_id, "committed", receipt_id=saved.id) != 1:
+        if await _finish_attempt(session, attempt_id, outcome, receipt_id=saved.id) != 1:
             raise _RunFailure(503, "execution_unavailable", "The batch attempt could not settle; retry with the same request ID",
                               "retryable")
         if job is not None:
-            job.state = "committed"
+            job.state = outcome
             job.receipt_id = saved.id
             job.finished_at = scheduled_now or datetime.now(timezone.utc)
         committing = True

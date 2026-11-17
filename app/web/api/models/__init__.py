@@ -45,7 +45,7 @@ from .embedding import (
 from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
 from .asset_freshness import AssetFreshnessPolicyRow as AssetFreshnessPolicyRow
 from .batch_source_identity import BatchSourceIdentityRow as BatchSourceIdentityRow
-from .batch_syncs import BatchSyncPlanRow as BatchSyncPlanRow
+from .batch_syncs import BatchSyncPlanRow as BatchSyncPlanRow, BatchSyncWatermarkRow as BatchSyncWatermarkRow
 from .cdc_sandbox import CdcSandboxBindingRow as CdcSandboxBindingRow
 from .cdc_sandbox_versions import CdcSandboxVersionRow as CdcSandboxVersionRow
 from .pipeline_sandbox import PipelineSandboxRevisionRow as PipelineSandboxRevisionRow

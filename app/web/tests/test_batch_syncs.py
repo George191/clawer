@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from importlib import import_module
 import os
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -100,6 +101,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
         self.attempts_migration = import_module("app.web.alembic.versions.70ac419e8121_ontology_batch_sync_attempts")
         self.schedules_migration = import_module("app.web.alembic.versions.a83a40b7dc19_ontology_batch_sync_schedules")
         identity_migration = import_module("app.web.alembic.versions.0e653c2f6a91_ontology_batch_source_identity")
+        incremental_migration = import_module("app.web.alembic.versions.b8e42d47136f_ontology_batch_sync_incremental")
         await migrate(self.pg, apply=True)
         async with self.pg.session() as session:
             def upgrade(sync_session):
@@ -108,6 +110,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                     self.attempts_migration.upgrade()
                     self.schedules_migration.upgrade()
                     identity_migration.upgrade()
+                    incremental_migration.upgrade()
 
             await session.run_sync(upgrade)
             await session.execute(text("CREATE SCHEMA ts_batch_sync_sandbox"))
@@ -126,7 +129,8 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 "DROP TABLE public.ontology_batch_sync_attempts, public.ontology_batch_sync_requests, "
                 "public.ontology_batch_sync_schedule_jobs, public.ontology_batch_sync_schedules",
                 "DROP TABLE public.ontology_batch_sync_receipts, public.ontology_batch_sync_plans",
-                "DROP TABLE public.ontology_data_connections, public.ontology_batch_source_identities",
+                "DROP TABLE public.ontology_data_connections, public.ontology_batch_source_identities, "
+                "public.ontology_batch_sync_incremental_watermark",
                 "DROP SCHEMA ts_batch_sync_sandbox CASCADE",
             ):
                 await session.execute(text(command))
@@ -500,3 +504,140 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.pg.fetch_one(
                     "SELECT caption FROM ts_batch_sync_sandbox.accounts WHERE id=1",
                 ))["caption"], "origin 1")
+
+    @unittest.skipUnless(IDENTITY_ORIGINS[0], "requires the isolated committed PostgreSQL source")
+    async def test_incremental_real_publications_shared_cursor_atomic_failure_and_schedule_no_data(self):
+        import asyncpg
+
+        source = make_url(IDENTITY_ORIGINS[0])
+        if source.host not in {"127.0.0.1", "::1"} or source.database != "ontology_batch_origin_a" or source.query:
+            self.fail("Refusing any non-fixture source database")
+        admin = await asyncpg.connect(host=source.host, port=source.port, user=source.username,
+                                      password=source.password, database=source.database)
+        self.addAsyncCleanup(admin.close)
+        await admin.execute("""
+            DO $$BEGIN CREATE ROLE batch_identity_fixture_reader LOGIN;
+            EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+            CREATE SCHEMA batch_sync_identity;
+            CREATE TABLE batch_sync_identity.source_identity(marker uuid PRIMARY KEY);
+            GRANT USAGE ON SCHEMA batch_sync_identity TO batch_identity_fixture_reader;
+            GRANT SELECT ON batch_sync_identity.source_identity TO batch_identity_fixture_reader;
+        """)
+        self.addAsyncCleanup(admin.execute, "DROP SCHEMA batch_sync_identity CASCADE")
+        await admin.execute(Path("tools/fixtures/committed_batch_source.sql").read_text())
+        self.addAsyncCleanup(admin.execute, "DROP SCHEMA batch_sync_stream CASCADE")
+        await admin.execute("""
+            GRANT USAGE ON SCHEMA batch_sync_stream TO batch_identity_fixture_reader;
+            GRANT SELECT ON ALL TABLES IN SCHEMA batch_sync_stream TO batch_identity_fixture_reader;
+        """)
+        marker = uuid4()
+        await admin.execute("INSERT INTO batch_sync_identity.source_identity VALUES($1)", marker)
+        await self.pg.execute("""
+            CREATE TABLE ts_batch_sync_sandbox.committed_batch_fixture(id bigint PRIMARY KEY, value text NOT NULL)
+        """)
+        await self.pg.execute("CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')")
+        await self.pg.execute('CREATE TABLE public."user" (id uuid primary key, status public.statustypes, is_superuser boolean)')
+        await self.pg.execute('INSERT INTO public."user" VALUES (:id, \'ENABLE\', true)', {"id": ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+
+        revision = datetime.fromisoformat(PAYLOAD["expectedSourceUpdatedAt"])
+        config = {"host": source.host, "port": source.port, "database": source.database,
+                  "username": "batch_identity_fixture_reader", "auth": "password", "tls": False}
+        connections = SimpleNamespace(_stored=AsyncMock(return_value={
+            "name": "Committed source", "engine": "postgresql", "updated_at": revision, "config": config,
+        }), _credentials=AsyncMock(return_value={"password": "isolated-test-value"}))
+        incremental = {**PAYLOAD, "mode": "incremental", "sourceSchema": "batch_sync_stream", "sourceTable": "batches",
+                       "sourceKeyColumn": "id", "targetTable": "committed_batch_fixture",
+                       "mapping": [{"sourceColumn": name, "targetColumn": name} for name in ("id", "value")]}
+        review_url = f"/etl/data-connections/{PAYLOAD['connectionId']}/batch-source-identity"
+        cursor_sql = "SELECT applied_through AS through FROM ontology_batch_sync_incremental_watermark"
+        slot = datetime(2026, 11, 17, 4, 0, tzinfo=timezone.utc)
+
+        async def request(client, plan, request_id=None):
+            body = {"requestId": str(request_id or uuid4()), "expectedUpdatedAt": plan["updatedAt"]}
+            return await client.post(f"{RUNS}/{plan['id']}/runs", json=body)
+
+        async def publish(value):
+            return await admin.fetchval("SELECT batch_sync_stream.publish($1::jsonb)", value)
+
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "BATCH_SYNC_SANDBOX_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_SOURCE_IDENTITY_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_INCREMENTAL_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_SOURCE_IDENTITY_MARKER", marker),
+            patch.object(settings, "BATCH_SYNC_SANDBOX_SCHEDULER_ENABLED", True),
+            patch("app.web.services.batch_sync_schedules._utc_now", return_value=slot-timedelta(minutes=1)),
+            patch("app.web.services.batch_sync_schedules.local_batch_sync_scope", return_value="incremental-test-scope"),
+            patch("app.web.services.batch_syncs.local_batch_sync_scope", return_value="incremental-test-scope"),
+            patch("app.web.services.batch_source_identity.get_data_connections", return_value=connections),
+            patch("app.web.services.batch_syncs.get_data_connections", return_value=connections),
+        ):
+            async with api(True, self.provider) as client:
+                verify = await client.post(review_url, json={"expectedSourceUpdatedAt": PAYLOAD["expectedSourceUpdatedAt"]})
+                self.assertEqual(verify.status_code, 200, verify.text)
+                self.assertEqual((await client.post(RUNS, json={**incremental, "mode": "snapshot"})).status_code, 422)
+                one = await client.post(RUNS, json=incremental)
+                self.assertEqual(one.status_code, 201, one.text)
+                first = one.json()
+                two = await client.post(RUNS, json={**incremental, "name": "Same fixed binding"})
+                self.assertEqual(two.status_code, 201, two.text)
+                second = two.json()
+                self.assertEqual(first["appliedThrough"], "0")
+                empty_id = uuid4()
+                empty = await request(client, first, empty_id)
+                self.assertEqual(empty.status_code, 200, empty.text)
+                self.assertEqual({key: empty.json()[key] for key in (
+                    "status", "fromExclusive", "throughInclusive", "sourceHighWater", "eventsRead", "rowsAffected",
+                )}, {"status": "no_new_data", "fromExclusive": "0", "throughInclusive": "0", "sourceHighWater": "0",
+                     "eventsRead": 0, "rowsAffected": 0})
+
+                self.assertEqual(await publish('[{"id":"9223372036854775807","value":"first"}]'), 1)
+                self.assertEqual(await publish('[{"id":"9223372036854775807","value":"second"}]'), 2)
+                positive = await request(client, second)
+                self.assertEqual(positive.status_code, 200, positive.text)
+                self.assertEqual((positive.json()["throughInclusive"], positive.json()["sourceHighWater"]), ("1", "2"))
+                self.assertRegex(positive.json()["manifestHash"], r"^[0-9a-f]{64}$")
+                self.assertEqual((await request(client, first, empty_id)).json(), empty.json())
+                self.assertEqual((await self.pg.fetch_one(cursor_sql))["through"], 1)
+
+                await self.pg.execute("""
+                    CREATE FUNCTION ts_batch_sync_sandbox.reject_incremental_receipt() RETURNS trigger LANGUAGE plpgsql AS $$
+                    BEGIN RAISE EXCEPTION 'synthetic fault' USING ERRCODE='23514'; END; $$
+                """)
+                await self.pg.execute("""
+                    CREATE TRIGGER reject_incremental_receipt BEFORE INSERT ON ontology_batch_sync_receipts
+                        FOR EACH ROW EXECUTE FUNCTION ts_batch_sync_sandbox.reject_incremental_receipt();
+                """)
+                rejected_id = uuid4()
+                failed = await request(client, first, rejected_id)
+                self.assertEqual(failed.status_code, 422, failed.text)
+                self.assertEqual((await self.pg.fetch_one(cursor_sql))["through"], 1)
+                self.assertEqual((await self.pg.fetch_one(
+                    "SELECT value FROM ts_batch_sync_sandbox.committed_batch_fixture",
+                ))["value"], "first")
+                await self.pg.execute("DROP TRIGGER reject_incremental_receipt ON ontology_batch_sync_receipts")
+                applied = await request(client, first, rejected_id)
+                self.assertEqual(applied.status_code, 200, applied.text)
+                self.assertEqual((applied.json()["fromExclusive"], applied.json()["throughInclusive"]), ("1", "2"))
+                self.assertEqual((await self.pg.fetch_one(cursor_sql))["through"], 2)
+
+                firstpath = f"{RUNS}/{first['id']}"
+                armed = await client.put(firstpath + "/schedule", json={
+                    "enabled": True, "expectedGeneration": None, "expectedUpdatedAt": first["updatedAt"],
+                    "plannedTimeUtc": "04:00",
+                })
+                self.assertEqual(armed.status_code, 200, armed.text)
+                async with self.pg.session() as session:
+                    job, = await collect_due_batch_sync_jobs(session, now=slot)
+                async with self.pg.session() as session:
+                    status = await execute_batch_sync_schedule_job(session, job, now=slot)
+                self.assertEqual(status, "no_new_data")
+                info, = (await client.get(firstpath + "/schedule/jobs")).json()
+                self.assertEqual(info["state"], "no_new_data")
+                self.assertIsNotNone(info["receiptId"])
+                self.assertEqual((await self.pg.fetch_one(cursor_sql))["through"], 2)
+                attempts = (await client.get(firstpath + "/attempts")).json()
+                self.assertIn(("no_new_data", info["receiptId"]), {(row["status"], row["receiptId"]) for row in attempts})
+                self.assertEqual({item["appliedThrough"] for item in (await client.get(RUNS)).json()}, {"2"})

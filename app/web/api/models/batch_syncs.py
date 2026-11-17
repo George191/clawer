@@ -1,15 +1,20 @@
 """Saved sandbox batch sync plans and durable target transaction receipts."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as DbField, SQLModel
 
 TARGET_SCHEMA = "ts_batch_sync_sandbox"
+INCREMENTAL_TARGET = "committed_batch_fixture"
+INCREMENTAL_SOURCE_SCHEMA = "batch_sync_stream"
+INCREMENTAL_SOURCE_TABLE = "batches"
+BatchSyncMode = Literal["snapshot", "incremental"]
+BatchSyncOutcome = Literal["committed", "no_new_data"]
 BATCH_ROWS = 100
 BATCH_BYTES = 1_048_576
 MAX_MAPPINGS = 32
@@ -32,6 +37,7 @@ class BatchSyncDefinition(BaseModel):
     sourceTable: SourceName
     sourceKeyColumn: SourceName
     targetTable: TargetName
+    mode: BatchSyncMode = Field(default="snapshot", exclude_if=lambda value: value == "snapshot")
     mapping: list[BatchSyncMapping] = Field(min_length=1, max_length=MAX_MAPPINGS)
 
     @model_validator(mode="after")
@@ -52,9 +58,25 @@ class BatchSyncDefinition(BaseModel):
 class BatchSyncPayload(BatchSyncDefinition):
     expectedSourceUpdatedAt: AwareDatetime
 
+    @model_validator(mode="after")
+    def validate_managed_scope(self) -> Self:
+        if self.mode == "incremental":
+            if not managed_batch_scope(self):
+                raise ValueError("Incremental mode requires the fixed synthetic stream and ID/value target mapping")
+        elif self.targetTable == INCREMENTAL_TARGET or self.sourceSchema == INCREMENTAL_SOURCE_SCHEMA:
+            raise ValueError("The committed stream and incremental target are reserved for managed incremental mode")
+        return self
+
+
+def managed_batch_scope(plan: BatchSyncDefinition) -> bool:
+    return (plan.sourceSchema == INCREMENTAL_SOURCE_SCHEMA and plan.sourceTable == INCREMENTAL_SOURCE_TABLE
+            and plan.sourceKeyColumn == "id" and plan.targetTable == INCREMENTAL_TARGET
+            and {(item.sourceColumn, item.targetColumn) for item in plan.mapping} == {("id", "id"), ("value", "value")})
+
 
 class BatchSyncPlan(BatchSyncDefinition):
     id: UUID
+    appliedThrough: str | None = Field(default=None, exclude_if=lambda value: value is None)
     sourceIdentityReviewed: Literal[True] | None = Field(default=None, exclude_if=lambda v: v is None)
     sourceUpdatedAt: datetime
     updatedAt: datetime
@@ -70,7 +92,13 @@ class BatchSyncReceipt(BaseModel):
     id: UUID
     sourceIdentityVerified: Literal[True] | None = Field(default=None, exclude_if=lambda v: v is None)
     planId: UUID
-    status: Literal["committed"] = "committed"
+    status: BatchSyncOutcome = "committed"
+    mode: Literal["incremental"] | None = Field(default=None, exclude_if=lambda value: value is None)
+    fromExclusive: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    throughInclusive: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    sourceHighWater: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    eventsRead: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    manifestHash: str | None = Field(default=None, exclude_if=lambda value: value is None)
     rowsAffected: int
     recordedAt: datetime
     sourceUpdatedAt: datetime
@@ -82,7 +110,7 @@ class BatchSyncAttempt(BaseModel):
     planId: UUID
     requestId: UUID
     planUpdatedAt: datetime
-    status: Literal["started", "committed", "replayed", "rejected", "retryable", "outcome_unknown"]
+    status: Literal["started", "committed", "no_new_data", "replayed", "rejected", "retryable", "outcome_unknown"]
     startedAt: datetime
     finishedAt: datetime | None = None
     receiptId: UUID | None = None
@@ -97,6 +125,9 @@ class BatchSyncCapabilities(BaseModel):
     maxRows: int = BATCH_ROWS
     maxBytes: int = BATCH_BYTES
     scheduledBatchSync: bool = False
+    incrementalBatchSync: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
+    incrementalMaxRows: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    incrementalMaxBytes: int | None = Field(default=None, exclude_if=lambda value: value is None)
     sourceIdentityRequired: Literal[True] | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
@@ -105,9 +136,16 @@ class BatchSyncPlanRow(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("jsonb_typeof(mapping) = 'array' AND jsonb_array_length(mapping) BETWEEN 1 AND 32",
                         name="ck_ontology_batch_sync_mapping"),
-        CheckConstraint("(source_identity_fingerprint IS NULL AND source_oid IS NULL AND source_file_node IS NULL) "
-                        "OR (source_identity_fingerprint ~ '^[0-9a-f]{64}$' AND source_oid > 0 AND source_file_node > 0) IS TRUE",
-                        name="ck_batch_sync_source_identity_pin"),
+        CheckConstraint(
+            """((mode = 'snapshot' AND source_stream_digest IS NULL AND
+                 ((source_identity_fingerprint IS NULL AND source_oid IS NULL AND source_file_node IS NULL) OR
+                  (source_identity_fingerprint ~ '^[0-9a-f]{64}$' AND source_oid > 0 AND source_file_node > 0)))
+                OR (mode = 'incremental' AND source_oid IS NULL AND source_file_node IS NULL
+                    AND source_identity_fingerprint ~ '^[0-9a-f]{64}$' AND source_stream_digest ~ '^[0-9a-f]{64}$'
+                    AND source_schema = 'batch_sync_stream' AND source_table = 'batches'
+                    AND source_key_column = 'id' AND target_table = 'committed_batch_fixture')) IS TRUE""",
+            name="ck_ontology_batch_sync_mode_pin",
+        ),
         Index("ix_ontology_batch_sync_plans_connection", "connection_id", "updated_at"),
     )
 
@@ -118,6 +156,8 @@ class BatchSyncPlanRow(SQLModel, table=True):
     source_table: str = DbField(max_length=128)
     source_key_column: str = DbField(max_length=128)
     target_table: str = DbField(max_length=63)
+    mode: str = DbField(default="snapshot", max_length=16)
+    source_stream_digest: str | None = DbField(default=None, max_length=64)
     source_identity_fingerprint: str | None = DbField(default=None, max_length=64)
     source_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
     source_file_node: int | None = DbField(default=None, sa_column=Column(BigInteger))
@@ -133,7 +173,21 @@ class BatchSyncReceiptRow(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("plan_id", "request_id", name="uq_ontology_batch_sync_request"),
         CheckConstraint("rows_affected BETWEEN 0 AND 100", name="ck_ontology_batch_sync_rows"),
+        CheckConstraint(
+            """((from_exclusive IS NULL AND through_inclusive IS NULL AND source_high_water IS NULL
+                 AND events_read IS NULL AND manifest_hash IS NULL AND outcome = 'committed')
+               OR (from_exclusive >= 0 AND through_inclusive >= from_exclusive
+                   AND source_high_water >= through_inclusive AND source_identity_verified IS TRUE
+                   AND target_table = 'committed_batch_fixture'
+                   AND ((outcome = 'no_new_data' AND rows_affected = 0 AND events_read = 0 AND manifest_hash IS NULL
+                         AND through_inclusive = from_exclusive AND source_high_water = from_exclusive)
+                        OR (outcome = 'committed' AND events_read = rows_affected AND rows_affected BETWEEN 1 AND 50
+                            AND through_inclusive - from_exclusive = 1 AND manifest_hash ~ '^[0-9a-f]{64}$')))) IS TRUE""",
+            name="ck_ontology_batch_sync_receipt_window",
+        ),
         Index("ix_ontology_batch_sync_receipts_plan", "plan_id", "recorded_at"),
+        Index("uq_ontology_batch_sync_incremental_ordinal", "through_inclusive", unique=True,
+              postgresql_where=text("outcome = 'committed' AND through_inclusive IS NOT NULL")),
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
@@ -148,7 +202,30 @@ class BatchSyncReceiptRow(SQLModel, table=True):
     source_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     rows_affected: int
     source_identity_verified: bool | None = None
+    outcome: str = DbField(default="committed", max_length=16)
+    from_exclusive: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    through_inclusive: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    source_high_water: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    events_read: int | None = None
+    manifest_hash: str | None = DbField(default=None, max_length=64)
     recorded_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
+
+
+class BatchSyncWatermarkRow(SQLModel, table=True):
+    __tablename__ = "ontology_batch_sync_incremental_watermark"
+    __table_args__ = (
+        CheckConstraint("singleton IS TRUE AND applied_through >= 0 AND target_oid > 0 AND target_file_node > 0 "
+                        "AND source_identity_fingerprint ~ '^[0-9a-f]{64}$' AND source_stream_digest ~ '^[0-9a-f]{64}$'",
+                        name="ck_ontology_batch_sync_watermark"),
+    )
+
+    singleton: bool = DbField(default=True, primary_key=True)
+    connection_id: UUID
+    source_identity_fingerprint: str = DbField(max_length=64)
+    source_stream_digest: str = DbField(max_length=64)
+    target_oid: int = DbField(sa_column=Column(BigInteger, nullable=False))
+    target_file_node: int = DbField(sa_column=Column(BigInteger, nullable=False))
+    applied_through: int = DbField(default=0, sa_column=Column(BigInteger, nullable=False))
 
 
 class BatchSyncRequestRow(SQLModel, table=True):
@@ -169,7 +246,7 @@ class BatchSyncAttemptRow(SQLModel, table=True):
         ]),
         CheckConstraint(
             "(status = 'started' AND finished_at IS NULL AND receipt_id IS NULL AND code IS NULL AND message IS NULL)"
-            " OR (status IN ('committed','replayed') AND finished_at IS NOT NULL AND receipt_id IS NOT NULL"
+            " OR (status IN ('committed','no_new_data','replayed') AND finished_at IS NOT NULL AND receipt_id IS NOT NULL"
             " AND code IS NULL AND message IS NULL)"
             " OR (status IN ('rejected','retryable','outcome_unknown') AND finished_at IS NOT NULL"
             " AND receipt_id IS NULL AND code IS NOT NULL AND message IS NOT NULL)",
