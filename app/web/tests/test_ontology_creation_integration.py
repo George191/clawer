@@ -324,6 +324,33 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             await path("root", "root")
         self.assertEqual(error.exception.status_code, 422)
 
+    async def test_common_downstream_returns_two_forward_witnesses_not_a_shared_parent(self):
+        async with self.pg.session() as session:
+            for name in ("left_end", "right_end", "shared", "tie", "ancestor", "isolated"):
+                await session.execute(text(f"CREATE TABLE {SCHEMA}.{name} (id bigint PRIMARY KEY)"))
+            await session.execute(text(f"ALTER TABLE {SCHEMA}.right_end ADD FOREIGN KEY (id) REFERENCES {SCHEMA}.shared(id)"))
+            await self.add_lineage_declarations(session, [
+                ("left_end", "right_end"), ("right_end", "shared"), ("right_end", "tie"),
+                ("ancestor", "left_end"), ("ancestor", "right_end"), ("ancestor", "isolated"),
+            ])
+
+        async def search(right="right_end"):
+            return await self.layers.lineage_common_downstream(SCHEMA, "left_end", SCHEMA, right)
+
+        result = (await search()).model_dump(by_alias=True)
+        self.assertEqual((result["state"], result["searchTruncated"], result["descendant"]["table"]),
+                         ("found", False, "shared"))
+        forward = lambda path: [(step["from"]["table"], step["to"]["table"]) for step in path]
+        self.assertEqual(forward(result["leftEdges"]), [("left_end", "right_end"), ("right_end", "shared")])
+        self.assertEqual(forward(result["rightEdges"]), [("right_end", "shared")])
+        self.assertEqual(result["rightEdges"][0]["kinds"], ["foreign_key", "object_relation"])
+        self.assertNotIn("ancestor", result)
+        await self.workspace.set_object_visibility(SCHEMA, "shared", "hidden", "fixture")
+        self.assertEqual((await search()).descendant.table, "tie")
+        await self.workspace.set_object_visibility(SCHEMA, "tie", "hidden", "fixture")
+        self.assertEqual((await search()).state, "none_within_limit")
+        self.assertEqual((await search("isolated")).state, "none_within_limit")
+
     async def test_common_upstream_returns_ranked_forward_witnesses_and_keeps_real_root_connector(self):
         async with self.pg.session() as session:
             for name in ("left_end", "right_end", "a_source", "b_source", "downstream", "isolated"):

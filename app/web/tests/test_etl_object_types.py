@@ -539,10 +539,12 @@ class ObjectRouteTests(unittest.TestCase):
         path = root + "/lineage-path"
         picker = root + "/lineage-path-targets"
         common = root + "/lineage-common-upstream"
+        downstream = root + "/lineage-common-downstream"
         selected = "?targetSchema=ts_dwd&targetTable=related"
         with patch.object(etl, "get_etl_layers", return_value=AsyncMock()) as factory:
             for invalid in (path, path + selected + "&targetTable=other", path + selected + "&includeHidden=true",
                             common, common + selected + "&targetSchema=ts_ods",
+                            downstream, downstream + selected + "&hidden=true",
                             picker + "?search=a&search=b", picker + "?total=true", picker + "?search=" + "x" * 101):
                 self.assertEqual(self.client.get(invalid).status_code, 422)
             factory.assert_not_called()
@@ -562,6 +564,13 @@ class ObjectRouteTests(unittest.TestCase):
             self.assertEqual(result.headers["Cache-Control"], "no-store")
             self.assertIsNone(result.json()["ancestor"])
             service.lineage_common_upstream.assert_awaited_once_with("ts_ods", "objects", "ts_dwd", "related")
+            service.lineage_common_downstream.return_value = {"state": "none_within_limit", "searchTruncated": False}
+            result = self.client.get(downstream + selected)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.headers["Cache-Control"], "no-store")
+            self.assertIsNone(result.json()["descendant"])
+            self.assertNotIn("ancestor", result.json())
+            service.lineage_common_downstream.assert_awaited_once_with("ts_ods", "objects", "ts_dwd", "related")
             service.lineage_path_targets.return_value = {"items": [{"schema": "ts_dwd", "table": "related"}], "truncated": False}
             result = self.client.get(picker + "?search=related")
             self.assertEqual(result.json(), service.lineage_path_targets.return_value)

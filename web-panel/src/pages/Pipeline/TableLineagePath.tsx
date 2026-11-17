@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { fetchTableLineageCommonUpstream, fetchTableLineagePath, fetchTableLineageTargets } from '../../services/api';
+import { fetchTableLineageCommonDownstream, fetchTableLineageCommonUpstream, fetchTableLineagePath, fetchTableLineageTargets } from '../../services/api';
 import type { TableLineageCommonUpstream, TableLineageIdentity, TableLineagePathEdge, TableLineagePathResult, TableLineageReferenceKind } from '../../services/api';
 import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 
@@ -20,7 +20,8 @@ function hasWitness(edges: TableLineagePathEdge[], source: TableLineageIdentity,
 }
 
 type Props = { source: TableLineageIdentity; onScopeDenied: () => void; onEndpointUnavailable: () => void };
-type Mode = 'directed' | 'common';
+type Mode = 'directed' | 'upstream' | 'downstream';
+type SharedResult = Omit<TableLineageCommonUpstream, 'ancestor'> & { mode: Exclude<Mode, 'directed'>; shared: TableLineageIdentity | null };
 export default function TableLineagePath({ source, onScopeDenied, onEndpointUnavailable }: Props) {
   const [open, setOpen] = useState(false);
   return <section className="flow-lineage-reference-path" aria-label="Find a reference path">
@@ -40,7 +41,7 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
   const [searching, setSearching] = useState<Mode>();
   const [error, setError] = useState('');
   const [result, setResult] = useState<TableLineagePathResult>();
-  const [common, setCommon] = useState<TableLineageCommonUpstream>();
+  const [common, setCommon] = useState<SharedResult>();
   const catalogRequest = useRef<AbortController>();
   const pathRequest = useRef<AbortController>();
   useEffect(() => () => { catalogRequest.current?.abort(); pathRequest.current?.abort(); }, []);
@@ -77,17 +78,21 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
     if (!destination || searching === mode) return;
     clearPath(); setError('');
     const request = new AbortController(); pathRequest.current = request;
-    const invalid = mode === 'common' ? 'The common upstream reference could not be verified.' : 'The directed reference path could not be verified.';
+    const invalid = mode === 'directed' ? 'The directed reference path could not be verified.' : `The common ${mode} reference could not be verified.`;
     setSearching(mode);
     try {
-      if (mode === 'common') {
-        const value = await fetchTableLineageCommonUpstream(source, destination, request.signal);
+      if (mode !== 'directed') {
+        const value = mode === 'upstream' ? await fetchTableLineageCommonUpstream(source, destination, request.signal)
+          : await fetchTableLineageCommonDownstream(source, destination, request.signal);
         if (request.signal.aborted) return;
-        if (value.state === 'found' && (!value.ancestor || !ordinary(value.ancestor) ||
-          name(value.ancestor) === name(source) || name(value.ancestor) === name(destination) ||
-          !hasWitness(value.leftEdges, value.ancestor, source) || !hasWitness(value.rightEdges, value.ancestor, destination))) {
+        const shared = 'ancestor' in value ? value.ancestor : value.descendant;
+        if (value.state === 'found' && (!shared || !ordinary(shared) ||
+          name(shared) === name(source) || name(shared) === name(destination) ||
+          !(mode === 'upstream' ? hasWitness(value.leftEdges, shared, source) && hasWitness(value.rightEdges, shared, destination)
+            : hasWitness(value.leftEdges, source, shared) && hasWitness(value.rightEdges, destination, shared)))) {
           setError(invalid);
-        } else setCommon(value);
+        } else setCommon({ state: value.state, searchTruncated: value.searchTruncated, mode, shared,
+          leftEdges: value.leftEdges, rightEdges: value.rightEdges });
       } else {
         const value = await fetchTableLineagePath(source, destination, request.signal);
         if (request.signal.aborted) return;
@@ -110,7 +115,7 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
   };
 
   return <div className="flow-lineage-reference-path__body">
-    <p>Source: <code>{name(source)}</code>. Find an outgoing reference path or a table that references both selections. References are not evidence of data movement.</p>
+    <p>Source: <code>{name(source)}</code>. Find an outgoing path, a table that references both selections, or a table both selections reference. References are not evidence of data movement.</p>
     <form onSubmit={searchCatalog} aria-label="Search for a destination">
       <label>Search destination tables<input type="search" aria-label="Search destination tables" required maxLength={100}
         value={search} onChange={event => { setSearch(event.target.value); clearCatalog(); }} /></label>
@@ -129,12 +134,14 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
           </select></label>
           <div className="flow-lineage-reference-path__actions">
             <button type="submit" className="flow-lineage-action" disabled={!target || searching === 'directed'}>Find reference path</button>
-            <button type="button" className="flow-lineage-action" disabled={!target || searching === 'common'}
-              onClick={() => void find('common')}>Find common upstream reference</button>
+            <button type="button" className="flow-lineage-action" disabled={!target || searching === 'upstream'}
+              onClick={() => void find('upstream')}>Find common upstream reference</button>
+            <button type="button" className="flow-lineage-action" disabled={!target || searching === 'downstream'}
+              onClick={() => void find('downstream')}>Find common downstream reference</button>
           </div>
         </form>}
     </>}
-    {searching && <p role="status">{searching === 'common' ? 'Searching for a common upstream reference…' : 'Searching for a directed reference path…'}</p>}
+    {searching && <p role="status">{searching === 'directed' ? 'Searching for a directed reference path…' : `Searching for a common ${searching} reference…`}</p>}
     {error && <p role="status">{error}</p>}
     {result?.state === 'found' && <section aria-label="Directed reference path">
       <h4>Directed reference path</h4>
@@ -145,18 +152,18 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
     {result?.state === 'not_found_within_limit' && !result.searchTruncated && <p role="status">No visible reference path within four hops. This does not mean the tables are disconnected.</p>}
     {(result?.state === 'incomplete' || result?.state === 'not_found_within_limit' && result.searchTruncated) &&
       <p role="status">Search incomplete. A visible path could not be verified within the search budget.</p>}
-    {common?.state === 'found' && common.ancestor && <section className="flow-lineage-reference-path__witness" aria-label="Common upstream reference">
-      <h4>Common upstream reference</h4>
-      <p role="status">Found a visible common upstream reference: <code>{name(common.ancestor)}</code>.</p>
-      <p>These two directed catalog paths do not verify data flow. Other common references may exist.</p>
+    {common?.state === 'found' && common.shared && <section className="flow-lineage-reference-path__witness" aria-label={`Common ${common.mode} reference`}>
+      <h4>Common {common.mode} reference</h4>
+      <p role="status">Found a visible common {common.mode} reference: <code>{name(common.shared)}</code>.</p>
+      <p>These two directed catalog paths do not verify data flow. They do not establish operational impact. Other common references may exist.</p>
       {common.searchTruncated && <p>The search was limited; only the verified paths below are shown.</p>}
-      <section aria-label="Path to current table"><h4>Path to current table</h4><PathEdges edges={common.leftEdges} /></section>
-      <section aria-label="Path to selected table"><h4>Path to selected table</h4><PathEdges edges={common.rightEdges} /></section>
+      <section aria-label={common.mode === 'upstream' ? 'Path to current table' : 'Path from current table'}><h4>Path {common.mode === 'upstream' ? 'to' : 'from'} current table</h4><PathEdges edges={common.leftEdges} /></section>
+      <section aria-label={common.mode === 'upstream' ? 'Path to selected table' : 'Path from selected table'}><h4>Path {common.mode === 'upstream' ? 'to' : 'from'} selected table</h4><PathEdges edges={common.rightEdges} /></section>
     </section>}
     {common?.state === 'none_within_limit' && !common.searchTruncated &&
-      <p role="status">No common upstream reference found within the search limits. This does not rule out other references.</p>}
+      <p role="status">No common {common.mode} reference found within the search limits. This does not rule out other references.</p>}
     {(common?.state === 'incomplete' || common?.state === 'none_within_limit' && common.searchTruncated) &&
-      <p role="status">Common upstream search incomplete. No shared reference could be verified within the search budget.</p>}
+      <p role="status">Common {common.mode} search incomplete. No shared reference could be verified within the search budget.</p>}
   </div>;
 }
 

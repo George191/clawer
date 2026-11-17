@@ -13,7 +13,8 @@ from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
 from app.web.api.models.lineage_neighbors import (
-    LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath, LineagePathTargets, ObservedLineage,
+    LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
+    LineagePathTargets, ObservedLineage,
 )
 from app.web.api.models.indexed_id_sample import IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
@@ -992,6 +993,16 @@ async def table_lineage_common_upstream(
         raise HTTPException(422, "Specify exactly one destination schema and table")
     response.headers["Cache-Control"] = "no-store"
     return await get_etl_layers().lineage_common_upstream(layer, table, targetSchema, targetTable)
+
+
+@read.get("/{layer}/{table}/lineage-common-downstream")
+async def table_lineage_common_downstream(
+    layer: str, table: str, targetSchema: str, targetTable: str, request: Request, response: Response,
+) -> LineageCommonDownstream:
+    if set(request.query_params) != {"targetSchema", "targetTable"} or len(request.query_params.multi_items()) != 2:
+        raise HTTPException(422, "Specify exactly one destination schema and table")
+    response.headers["Cache-Control"] = "no-store"
+    return await get_etl_layers().lineage_common_downstream(layer, table, targetSchema, targetTable)
 
 
 @read.get("/{layer}/{table}/columns")

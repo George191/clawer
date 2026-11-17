@@ -24,7 +24,7 @@ from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
 from app.web.api.models.lineage_neighbors import (
-    LineageCommonUpstream, LineageDirection, LineageEndpoint, LineageNeighborKind, LineageNeighbors,
+    LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageEndpoint, LineageNeighborKind, LineageNeighbors,
     LineagePath, LineagePathEdge, LineagePathTargets,
 )
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TARGET
@@ -502,7 +502,18 @@ class EtlLayers:
     async def lineage_common_upstream(
         self, schema: str, table: str, target_schema: str, target_table: str,
     ) -> LineageCommonUpstream:
-        left, right = (schema, table), (target_schema, target_table)
+        return LineageCommonUpstream.model_validate(await self._lineage_common(
+            (schema, table), (target_schema, target_table), "incoming",
+        ))
+
+    async def lineage_common_downstream(
+        self, schema: str, table: str, target_schema: str, target_table: str,
+    ) -> LineageCommonDownstream:
+        return LineageCommonDownstream.model_validate(await self._lineage_common(
+            (schema, table), (target_schema, target_table), "outgoing",
+        ))
+
+    async def _lineage_common(self, left: LineageKey, right: LineageKey, direction: LineageDirection) -> dict[str, Any]:
         endpoints_verified = False
         try:
             with fail_after(3):
@@ -514,8 +525,8 @@ class EtlLayers:
                         if left == right:
                             raise HTTPException(422, "Choose a different visible target table")
                         registry = bool(await session.scalar(_LINEAGE_REGISTRY_PRESENT))
-                        left_seen, left_cut = await self._lineage_incoming(session, left, roots[0], registry)
-                        right_seen, right_cut = await self._lineage_incoming(session, right, roots[1], registry)
+                        left_seen, left_cut = await self._lineage_breadth(session, left, roots[0], registry, direction)
+                        right_seen, right_cut = await self._lineage_breadth(session, right, roots[1], registry, direction)
                     except DBAPIError as error:
                         if getattr(error.orig, "sqlstate", None) != "57014":
                             raise
@@ -523,44 +534,43 @@ class EtlLayers:
         except TimeoutError:
             if not endpoints_verified:
                 raise HTTPException(503, "Visible table references are temporarily unavailable") from None
-            return LineageCommonUpstream(state="incomplete", searchTruncated=True)
+            return {"state": "incomplete", "searchTruncated": True}
         except HTTPException as error:
             if not endpoints_verified or error.status_code != 503:
                 raise
-            return LineageCommonUpstream(state="incomplete", searchTruncated=True)
+            return {"state": "incomplete", "searchTruncated": True}
 
         truncated = left_cut or right_cut
         candidates = (left_seen.keys() & right_seen.keys()) - {left, right}
         if not candidates:
-            return LineageCommonUpstream(
-                state="incomplete" if truncated else "none_within_limit", searchTruncated=truncated,
-            )
+            return {"state": "incomplete" if truncated else "none_within_limit", "searchTruncated": truncated}
 
         def rank(key: LineageKey):
             left_depth, right_depth = left_seen[key][2], right_seen[key][2]
             return max(left_depth, right_depth), left_depth + right_depth, key
 
-        ancestor = min(candidates, key=rank)
+        shared = min(candidates, key=rank)
 
         def witness(root, seen):
-            cursor, edges = ancestor, []
+            cursor, edges = shared, []
             while cursor != root:
-                downstream, kinds, _ = seen[cursor]
+                previous, kinds, _ = seen[cursor]
+                source, target = (cursor, previous) if direction == "incoming" else (previous, cursor)
                 edges.append(LineagePathEdge.model_validate({
-                    "from": {"schema": cursor[0], "table": cursor[1]},
-                    "to": {"schema": downstream[0], "table": downstream[1]}, "kinds": kinds,
+                    "from": {"schema": source[0], "table": source[1]},
+                    "to": {"schema": target[0], "table": target[1]}, "kinds": kinds,
                 }))
-                cursor = downstream
-            return edges
+                cursor = previous
+            return edges if direction == "incoming" else edges[::-1]
 
-        return LineageCommonUpstream(
-            state="found", searchTruncated=truncated,
-            ancestor=LineageEndpoint(schema=ancestor[0], table=ancestor[1]),
-            leftEdges=witness(left, left_seen), rightEdges=witness(right, right_seen),
-        )
+        return {
+            "state": "found", "searchTruncated": truncated,
+            "ancestor" if direction == "incoming" else "descendant": LineageEndpoint(schema=shared[0], table=shared[1]),
+            "leftEdges": witness(left, left_seen), "rightEdges": witness(right, right_seen),
+        }
 
-    async def _lineage_incoming(
-        self, session, root: LineageKey, root_oid: int, registry_present: bool,
+    async def _lineage_breadth(
+        self, session, root: LineageKey, root_oid: int, registry_present: bool, direction: LineageDirection,
     ):
         pending = deque([(root, root_oid, 0)])
         seen: dict[LineageKey, tuple[LineageKey, list[LineageNeighborKind], int]] = {}
@@ -570,7 +580,7 @@ class EtlLayers:
                 break
             current, oid, depth = pending.popleft()
             peers, more = await self._lineage_neighbor_rows(
-                session, current, oid, "incoming", registry_present, exclude_peer_oids=(root_oid,),
+                session, current, oid, direction, registry_present, exclude_peer_oids=(root_oid,),
             )
             truncated = truncated or more
             for row in peers:
