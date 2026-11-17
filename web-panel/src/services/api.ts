@@ -543,6 +543,25 @@ export const fetchSandboxCdcReceipts = (signal?: AbortSignal): Promise<SandboxCd
   client.get(`${sandboxCdcPath}/runs`, { signal }).then((r) => unwrap<SandboxCdcReceipt[]>(r.data));
 export const applySandboxCdc = (request: SandboxCdcRunRequest): Promise<SandboxCdcReceipt> =>
   client.post(`${sandboxCdcPath}/runs`, request).then((r) => unwrap<SandboxCdcReceipt>(r.data));
+export type SandboxCdcVersion = {
+  id: string; receiptId: string; generation: number; appliedThrough: string;
+  rowsCaptured: number; bytesCaptured: number; recordedAt: string;
+};
+export type SandboxCdcVersionList = { available: boolean; versions: SandboxCdcVersion[] };
+export type SandboxCdcVersionDetail = SandboxCdcVersion & { rows: { id: string; value: string }[] };
+export type SandboxCdcVersionComparison = {
+  fromVersionId: string; toVersionId: string;
+  changes: { id: string; kind: 'inserted' | 'updated' | 'deleted'; before: string | null; after: string | null }[];
+};
+const sandboxCdcVersionsPath = `${sandboxCdcPath}/versions`;
+export const fetchSandboxCdcVersions = (signal?: AbortSignal): Promise<SandboxCdcVersionList> =>
+  client.get(sandboxCdcVersionsPath, { signal }).then((r) => unwrap<SandboxCdcVersionList>(r.data));
+export const fetchSandboxCdcVersion = (id: string, signal?: AbortSignal): Promise<SandboxCdcVersionDetail> =>
+  client.get(`${sandboxCdcVersionsPath}/${encodeURIComponent(id)}`, { signal }).then((r) => unwrap<SandboxCdcVersionDetail>(r.data));
+export const compareSandboxCdcVersions = (
+  fromVersionId: string, toVersionId: string, signal?: AbortSignal,
+): Promise<SandboxCdcVersionComparison> => client.get(`${sandboxCdcVersionsPath}/compare`, { params: { fromVersionId, toVersionId }, signal })
+  .then((r) => unwrap<SandboxCdcVersionComparison>(r.data));
 
 export const setTableOffset = (layer: string, table: string, partition: number, offset: number, topic?: string): Promise<{ restartRequired: boolean }> =>
   client.put(`/etl/${layer}/${table}/offset`, { partition, offset, topic, confirmation: 'SET OFFSET' }).then((r) => unwrap<{ restartRequired: boolean }>(r.data));

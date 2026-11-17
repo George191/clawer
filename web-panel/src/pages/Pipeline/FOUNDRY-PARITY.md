@@ -13,7 +13,7 @@
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。还未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；未实现事务级历史与列分布统计等。 | 先接运行记录；大表筛选保留查询预算，统计不随页面请求扫描业务表。 |
 | 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警。 | 验收通用 schema、逻辑数据规模、作业状态、数据字段新鲜度及更广的告警范围，不用财报日期冒充同步时间。 |
-| 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分 / 缺失**。有 Handler 编辑和 dry-run，不是可视化数据转换；没有通用事务快照、历史对比或二分查找。 | 先把运行结果、配置版本和事务标识绑定；之后再评估可视化转换与历史快照，不从当前 PostgreSQL 表伪造旧版本。 |
+| 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；独立合成 CDC 现可将真实提交与不可变快照绑定，查看和比较已保存版本。 | 继续验收可视化转换、通用事务快照、历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
 | 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执。 | 继续验收可配置资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
 
 ## 实现顺序
@@ -161,3 +161,9 @@
 - 参考 [Foundry Change data capture](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 的变化事件与增量应用。此轮只在明确开启的本地合成沙箱，用固定审核的 PostgreSQL 日志回放已提交 after-image Upsert，不启用真实连接器、外部推送、删除或现有 Kafka、Debezium 及 WAL 配置。
 - 夹具生产者在源变更同事务分配连续序号、记录事件及源端最高位点，回滚不遗留可见序号。应用只读有界连续前缀（50 条、64 KiB），目标行、应用检查点和提交回执同事务；空批、缺号、未经确认的配置或表替换不推进。源端最高位点可与目标已提交检查点不同。
 - 重放原请求先读取原回执，不读源日志、不再次应用。目标写后回执失败一并回滚；提交确认丢失用原请求恢复。按影响的目标行与已应用事件范围分别表示结果，不把读取或投递当作目标提交。全程不接触生产。
+
+### 已提交合成数据版本与比较的验收口径
+
+- 参考 [Foundry Dataset Preview Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)。仅对明确开启的合成 CDC 目标采集有界版本，不将生产表或历史旧回执纳入，也不从当前表补造历史。
+- 新的目标行、应用检查点、回执与有界版本快照同事务。启用版本记录后，不能在限额内完成快照或写入失败时整批回滚。关闭时原 CDC 回放语义不变；同请求重放返回原回执，不另造版本。版本用不可变回执和检查点标注。
+- 查看和比较均只读已保存快照。新增、更新、删除从两个真实版本的键和值比较得出，不是恢复或删除操作。键用十进制字符串保证 bigint 无损；页面不会提供当前数据变更、恢复、任意表采集或生产历史能力。

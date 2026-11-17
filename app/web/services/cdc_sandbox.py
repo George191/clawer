@@ -274,6 +274,10 @@ async def apply_cdc_sandbox(session: AsyncSession, request: CdcSandboxApply, act
             recorded_at=datetime.now(timezone.utc),
         )
         session.add(row)
+        if settings.CDC_SANDBOX_VERSIONS_ENABLED:
+            from app.web.services.cdc_sandbox_versions import capture_cdc_version
+
+            await capture_cdc_version(session, binding, row)
         result = _receipt(row)
         await session.commit()
         return result

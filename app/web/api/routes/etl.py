@@ -19,6 +19,9 @@ from app.web.api.models.batch_sync_schedules import (
     BatchSyncSchedule, BatchSyncScheduleChange, BatchSyncScheduleJob, BatchSyncScheduleSummary,
 )
 from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReceipt, CdcSandboxReview, CdcSandboxStatus
+from app.web.api.models.cdc_sandbox_versions import (
+    CdcSandboxComparison, CdcSandboxVersionDetail, CdcSandboxVersionsPage,
+)
 from app.web.api.models.table_exports import (
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
     TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
@@ -60,6 +63,7 @@ from app.web.services.batch_sync_schedules import (
 from app.web.services.cdc_sandbox import (
     apply_cdc_sandbox, list_cdc_sandbox_receipts, read_cdc_sandbox, review_cdc_sandbox,
 )
+from app.web.services.cdc_sandbox_versions import compare_cdc_versions, list_cdc_versions, read_cdc_version
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
@@ -108,6 +112,23 @@ async def post_local_cdc_apply(
     payload: CdcSandboxApply, session: SessionDep, current_user: CurrentActiveSuperuser,
 ) -> CdcSandboxReceipt:
     return await apply_cdc_sandbox(session, payload, current_user.id)
+
+
+@write.get("/cdc-sandbox/versions")
+async def get_local_cdc_versions(session: SessionDep) -> CdcSandboxVersionsPage:
+    return await list_cdc_versions(session)
+
+
+@write.get("/cdc-sandbox/versions/compare")
+async def get_local_cdc_comparison(
+    fromVersionId: UUID, toVersionId: UUID, session: SessionDep,
+) -> CdcSandboxComparison:
+    return await compare_cdc_versions(session, fromVersionId, toVersionId)
+
+
+@write.get("/cdc-sandbox/versions/{version_id}")
+async def get_local_cdc_version(version_id: UUID, session: SessionDep) -> CdcSandboxVersionDetail:
+    return await read_cdc_version(session, version_id)
 
 
 @write.get("/asset-freshness/{schema}/{table}/candidates")

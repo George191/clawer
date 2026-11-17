@@ -53,6 +53,8 @@ class CdcSandboxContract(unittest.IsolatedAsyncioTestCase):
         async with api(False) as client:
             self.assertEqual((await client.get(_ROUTE)).status_code, 403)
             self.assertEqual((await client.get(_ROUTE + "/runs")).status_code, 403)
+            self.assertEqual((await client.get(_ROUTE + "/versions")).status_code, 403)
+            self.assertEqual((await client.get(_ROUTE + f"/versions/{uuid4()}")).status_code, 403)
             self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 403)
             self.assertEqual((await client.post(_ROUTE + "/runs", json=payload(0))).status_code, 403)
 
@@ -67,11 +69,14 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
         await self.pg.connect(max_retries=1)
         self.addAsyncCleanup(self.pg.close)
         self.assertEqual((await self.pg.fetch_one("SELECT current_database() AS name"))["name"], _DB)
-        migration = import_module("app.web.alembic.versions.984b2ef31a6c_ontology_cdc_sandbox")
+        migrations = [import_module("app.web.alembic.versions." + name) for name in (
+            "984b2ef31a6c_ontology_cdc_sandbox", "31d9685bf24a_ontology_cdc_sandbox_versions",
+        )]
 
         def upgrade(sync):
             with Operations.context(MigrationContext.configure(sync.connection())):
-                migration.upgrade()
+                for migration in migrations:
+                    migration.upgrade()
 
         async with self.pg.session() as session:
             await session.run_sync(upgrade)
@@ -92,6 +97,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
             yield session
 
     async def drop_fixture(self):
+        await self.pg.execute("DROP TABLE ontology_cdc_sandbox_version_rows, ontology_cdc_sandbox_versions")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_receipts, ontology_cdc_sandbox_binding")
         await self.pg.execute("DROP SCHEMA ts_cdc_sandbox CASCADE")
 
@@ -230,3 +236,118 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.pg.fetch_one("SELECT value FROM ts_cdc_sandbox.target_rows"))["value"], "final")
                 previous, = (await client.get(_ROUTE + "/runs")).json()
                 self.assertEqual((await client.post(_ROUTE + "/runs", json=request)).json(), previous)
+
+
+    async def test_versions_preserve_real_snapshot_history_and_diff_not_live_rows(self):
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", False),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    self.assertEqual(await self.produce(session, 1, "before capture"), 1)
+                legacy_request = payload(0)
+                legacy_response = await client.post(_ROUTE + "/runs", json=legacy_request)
+                self.assertEqual(legacy_response.status_code, 200, legacy_response.text)
+                legacy_id = legacy_response.json()["id"]
+                versions = _ROUTE + "/versions"
+                self.assertEqual((await client.get(versions)).json(), {"available": False, "versions": []})
+                self.assertEqual((await client.get(f"{versions}/{legacy_id}")).status_code, 403)
+
+                with patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True):
+                    self.assertEqual((await client.get(versions)).json(), {"available": True, "versions": []})
+                    self.assertEqual((await client.post(_ROUTE + "/runs", json=legacy_request)).json(),
+                                     legacy_response.json())
+                    self.assertEqual((await client.get(f"{versions}/{legacy_id}")).status_code, 404)
+
+                    async with self.pg.session() as session:
+                        self.assertEqual(await self.produce(session, 1, "first captured"), 2)
+                        self.assertEqual(await self.produce(session, 9223372036854775807, "to remove"), 3)
+                    first_request = payload(1)
+                    first = await client.post(_ROUTE + "/runs", json=first_request)
+                    self.assertEqual(first.status_code, 200, first.text)
+                    old_receipt = first.json()
+                    old = (await client.get(f"{versions}/{old_receipt['id']}")).json()
+                    self.assertEqual(old["receiptId"], old_receipt["id"])
+                    self.assertEqual(old["recordedAt"], old_receipt["recordedAt"])
+                    self.assertEqual(old["rows"], [{"id": "1", "value": "first captured"},
+                                                   {"id": "9223372036854775807", "value": "to remove"}])
+
+                    # Only the isolated fixture simulates an unrelated removal;
+                    # the CDC feature continues to support after-image UPSERT only.
+                    await self.pg.execute("DELETE FROM ts_cdc_sandbox.target_rows WHERE id = 9223372036854775807")
+                    async with self.pg.session() as session:
+                        self.assertEqual(await self.produce(session, 1, "updated"), 4)
+                        self.assertEqual(await self.produce(session, -9223372036854775808, "inserted"), 5)
+                    second = await client.post(_ROUTE + "/runs", json=payload(3))
+                    self.assertEqual(second.status_code, 200, second.text)
+                    current = second.json()
+                    params = {"fromVersionId": old_receipt["id"], "toVersionId": current["id"]}
+                    diff = await client.get(versions + "/compare", params=params)
+                    self.assertEqual(diff.status_code, 200, diff.text)
+                    self.assertEqual(diff.json()["changes"], [
+                        {"id": "-9223372036854775808", "kind": "inserted", "before": None, "after": "inserted"},
+                        {"id": "1", "kind": "updated", "before": "first captured", "after": "updated"},
+                        {"id": "9223372036854775807", "kind": "deleted", "before": "to remove", "after": None},
+                    ])
+                    self.assertEqual((await client.post(_ROUTE + "/runs", json=first_request)).json(), old_receipt)
+                    self.assertEqual(len((await client.get(versions)).json()["versions"]), 2)
+
+                    await self.pg.execute("TRUNCATE ts_cdc_sandbox.target_rows")
+                    self.assertEqual((await client.get(_ROUTE)).json()["state"], "blocked")
+                    self.assertEqual((await client.get(f"{versions}/{old_receipt['id']}")).json(), old)
+                    self.assertEqual((await client.get(versions + "/compare", params=params)).json(), diff.json())
+                    with patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", uuid4()):
+                        self.assertEqual((await client.get(versions)).json(), {"available": False, "versions": []})
+                        self.assertEqual((await client.get(f"{versions}/{old_receipt['id']}")).status_code, 403)
+                        self.assertEqual((await client.get(versions + "/compare", params=params)).status_code, 403)
+
+    async def test_snapshot_over_budget_or_metadata_failure_rolls_back_all_apply_effects(self):
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    await self.produce(session, 101, "would be new")
+                    await session.execute(text(
+                        "INSERT INTO ts_cdc_sandbox.target_rows SELECT x, 'existing' FROM generate_series(1,100) x",
+                    ))
+                request = payload(0)
+                full = await client.post(_ROUTE + "/runs", json=request)
+                self.assertEqual(full.status_code, 422, full.text)
+
+                await self.pg.execute("DELETE FROM ts_cdc_sandbox.target_rows WHERE id > 1")
+                await self.pg.execute("UPDATE ts_cdc_sandbox.target_rows SET value = repeat('x',65536) WHERE id = 1")
+                too_large = await client.post(_ROUTE + "/runs", json=request)
+                self.assertEqual(too_large.status_code, 422, too_large.text)
+
+                async with self.pg.session() as session:
+                    await session.execute(text("UPDATE ts_cdc_sandbox.target_rows SET value = 'existing' WHERE id = 1"))
+                    await session.execute(text("""
+                        CREATE FUNCTION ts_cdc_sandbox.fail_version() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN RAISE EXCEPTION 'fixture refused version'; END;
+                        $$
+                    """))
+                    await session.execute(text("""
+                        CREATE TRIGGER fail_version BEFORE INSERT ON ontology_cdc_sandbox_version_rows
+                        FOR EACH ROW EXECUTE FUNCTION ts_cdc_sandbox.fail_version()
+                    """))
+                refused = await client.post(_ROUTE + "/runs", json=request)
+                self.assertEqual(refused.status_code, 503, refused.text)
+                self.assertEqual((await client.get(_ROUTE)).json()["appliedThrough"], "0")
+                self.assertEqual((await client.get(_ROUTE + "/runs")).json(), [])
+                self.assertEqual((await client.get(_ROUTE + "/versions")).json()["versions"], [])
+                self.assertIsNone(await self.pg.fetch_one("SELECT id FROM ts_cdc_sandbox.target_rows WHERE id=101"))
+
+                await self.pg.execute("DROP TRIGGER fail_version ON ontology_cdc_sandbox_version_rows")
+                delivered = await client.post(_ROUTE + "/runs", json=request)
+                self.assertEqual(delivered.status_code, 200, delivered.text)
+                self.assertEqual((await client.get(_ROUTE + "/versions")).json()["versions"][0]["id"],
+                                 delivered.json()["id"])

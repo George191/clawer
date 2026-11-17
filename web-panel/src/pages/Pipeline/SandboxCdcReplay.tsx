@@ -4,6 +4,7 @@ import { ArrowRightOutlined } from '@/components/ui/icons';
 import { applySandboxCdc, fetchSandboxCdc, fetchSandboxCdcReceipts, reviewSandboxCdc } from '../../services/api';
 import type { SandboxCdcReceipt, SandboxCdcRunRequest, SandboxCdcStatus } from '../../services/api';
 import { getSessionState } from '../../services/session';
+import SandboxCdcVersions from './SandboxCdcVersions';
 
 const states: Record<SandboxCdcStatus['state'], string> = {
   unreviewed: 'Not reviewed', armed: 'Reviewed · manual replay only', blocked: 'Blocked',
@@ -152,6 +153,7 @@ function CdcReplayWorkspace() {
           <span>Receipt ID: <code>{receipt.id}</code></span><span>Original request ID: <code>{receipt.requestId}</code></span>
         </li>)}</ol> : <p>No committed CDC receipts.</p>}
     </section>
+    <SandboxCdcVersions revision={revision} />
     <Modal open={Boolean(decision)} destroyOnHidden className="flow-surface-modal"
       title={decision === 'review' ? 'Review sandbox CDC route?' : decision === 'retry' ? 'Retry original CDC request?' : 'Apply next sandbox CDC batch?'}
       onCancel={() => { if (!busy) setDecision(undefined); }} onOk={submit} confirmLoading={busy}
