@@ -716,9 +716,12 @@ export interface DataSourcePayload {
   name: string; engine: DataConnectorEngine; config: DataSourceConfig;
   credentials: { password?: string; apiKey?: string; token?: string };
 }
+export type DataSourceCapabilityKey = 'connectionTest' | 'catalog' | 'snapshot' | 'committedBatch' | 'reviewedRange';
+export type DataSourceCapability = { status: 'available_to_try' | 'unavailable'; reason?: string | null };
 export interface DataSource extends Omit<DataSourcePayload, 'credentials'> {
   id: string; credentialsConfigured: boolean; catalogAvailable: boolean; createdBy: string;
   createdAt: string; updatedAt: string; testedAt: string | null; pausedAt?: string | null; pauseAvailable?: boolean;
+  capabilities?: Partial<Record<DataSourceCapabilityKey, DataSourceCapability>>;
 }
 export interface DataSourceTest { ok: boolean; message: string; latencyMs: number; testedAt?: string; }
 export type DataSourceRelation = { name: string; kind: 'table' | 'partitioned_table' | 'view' | 'materialized_view' | 'foreign_table' };
@@ -849,8 +852,8 @@ export const runTableExport = (request: { requestId: string; expectedUpdatedAt: 
   client.post(`${tableExportPath}/runs`, request, { params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportReceipt>(r.data));
 export const fetchDataConnectorTypes = (): Promise<DataConnectorType[]> =>
   client.get('/etl/connector-types').then((r) => unwrap<DataConnectorType[]>(r.data));
-export const fetchDataSources = (): Promise<DataSource[]> =>
-  client.get('/etl/data-connections').then((r) => unwrap<DataSource[]>(r.data));
+export const fetchDataSources = (signal?: AbortSignal): Promise<DataSource[]> =>
+  client.get('/etl/data-connections', { signal }).then((r) => unwrap<DataSource[]>(r.data));
 export const testDataSource = (payload: DataSourcePayload, connectionId?: string): Promise<DataSourceTest> =>
   client.post('/etl/data-connections/test', payload, { params: { connectionId }, timeout: 45000 }).then((r) => unwrap<DataSourceTest>(r.data));
 export const createDataSource = (payload: DataSourcePayload): Promise<DataSource> =>

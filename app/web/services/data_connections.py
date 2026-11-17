@@ -26,7 +26,8 @@ from sqlalchemy.exc import DBAPIError
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.data_connections import (
-    DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumn, SourceColumns, SourceRelation,
+    DataConnectionPauseChange, DataConnectionPayload, SavedSourceCapabilities, SavedSourceCapability,
+    SavedSourceCapabilityReason, SourceCatalog, SourceColumn, SourceColumns, SourceRelation,
 )
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
 from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
@@ -120,16 +121,72 @@ class SavedSourcePaused(HTTPException):
         super().__init__(409, {"code": "source_paused", "message": "This saved PostgreSQL source is paused"})
 
 
-def _public(row, *, pause_available: bool = False) -> dict[str, Any]:
+def _driver_available(engine: str) -> bool:
+    if not any(connector["engine"] == engine for connector in CONNECTORS):
+        return False
+    try:
+        _driver(engine)
+        return True
+    except Exception:
+        # Optional compiled drivers can fail during import for reasons besides a missing module.
+        # A readiness hint never propagates the install error or changes live Test semantics.
+        return False
+
+
+def _capability(reason: SavedSourceCapabilityReason | None = None) -> SavedSourceCapability:
+    return SavedSourceCapability(status="unavailable" if reason else "available_to_try", reason=reason)
+
+
+def _saved_capabilities(
+    row, *, driver_available: bool, explicit_local: bool, batch_enabled: bool, numeric_loopback: bool,
+    identity_registry: bool, identity_required: bool, identity_provisioned: bool,
+    committed_enabled: bool, range_enabled: bool,
+) -> SavedSourceCapabilities:
+    postgres = row["engine"] == "postgresql"
+    if row["paused_at"] is not None:
+        paused = _capability("source_paused")
+        return SavedSourceCapabilities(connectionTest=paused, catalog=paused, snapshot=paused,
+                                       committedBatch=paused, reviewedRange=paused)
+
+    supported = any(connector["engine"] == row["engine"] for connector in CONNECTORS)
+    test = _capability("unsupported_engine" if not supported else None if driver_available else "driver_missing")
+    catalog = test if postgres else _capability("unsupported_engine")
+    general = catalog
+    if general.status == "available_to_try":
+        if not explicit_local:
+            general = _capability("explicit_local_required")
+        elif not batch_enabled:
+            general = _capability("mode_disabled")
+        elif not numeric_loopback:
+            general = _capability("numeric_loopback_required")
+
+    def managed(mode_enabled: bool | None) -> SavedSourceCapability:
+        if general.status == "unavailable":
+            return general
+        if mode_enabled is False:
+            return _capability("mode_disabled")
+        if mode_enabled and not identity_required:
+            return _capability("source_identity_policy_disabled")
+        if identity_required and not identity_provisioned:
+            return _capability("source_identity_not_configured")
+        if not identity_registry:
+            return _capability("source_identity_registry_unavailable")
+        if not identity_required:
+            return _capability("source_identity_policy_disabled" if row["has_proof"] else None)
+        if not row["has_proof"]:
+            return _capability("source_identity_unverified")
+        return _capability(None if row["proof_matches"] else "source_identity_stale")
+
+    return SavedSourceCapabilities(connectionTest=test, catalog=catalog, snapshot=managed(None),
+                                   committedBatch=managed(committed_enabled), reviewedRange=managed(range_enabled))
+
+
+def _public(row, *, pause_available: bool = False, driver_available: bool | None = None) -> dict[str, Any]:
     data = dict(row)
     catalog_available = False
     paused = data.get("paused_at")
     if data["engine"] == "postgresql" and paused is None:
-        try:
-            _driver("postgresql")
-            catalog_available = True
-        except HTTPException:
-            pass  # Saved source remains visible when its optional driver is missing.
+        catalog_available = _driver_available("postgresql") if driver_available is None else driver_available
     result = {"id": str(data["id"]), "name": data["name"], "engine": data["engine"],
             "config": json.loads(data["config"]) if isinstance(data["config"], str) else data["config"],
             "credentialsConfigured": True, "catalogAvailable": catalog_available, "createdBy": data["created_by"],
@@ -265,13 +322,51 @@ class DataConnections:
             raise HTTPException(503, "External source registry is unavailable") from error
 
     async def list(self):
+        # Identity also imports the saved-connection service for its explicit external verify action.
+        from app.web.services.batch_source_identity import (
+            _explicit_local_batch, _local_host, expected_fingerprint, identity_required,
+        )
+
+        explicit_local = "ENVIRONMENT" in settings.model_fields_set and settings.ENVIRONMENT == "local"
+        batch_enabled = _explicit_local_batch()
+        required, fingerprint = identity_required(), expected_fingerprint()
         async with self._session() as session:
             can_pause = source_pause_enabled() and await session.scalar(_PAUSE_INSTALLED)
+            identity_registry = bool(batch_enabled and await session.scalar(text("""
+                SELECT pg_catalog.to_regclass('public.ontology_batch_source_identities') IS NOT NULL
+            """)))
+            join = "LEFT JOIN public.ontology_batch_source_identities proof ON proof.connection_id=registry.id" if identity_registry else ""
+            proof_columns = (
+                """proof.connection_id IS NOT NULL AS has_proof, COALESCE(
+                    proof.is_current AND proof.source_updated_at=registry.updated_at
+                    AND proof.fingerprint=:fingerprint, false) AS proof_matches"""
+                if identity_registry else "false AS has_proof, false AS proof_matches"
+            )
+            columns = ", ".join(f"registry.{column}" for column in _PUBLIC_COLUMNS.split(", "))
             rows = (await session.execute(text(f"""
-                SELECT {_PUBLIC_COLUMNS}, {paused_at_sql('registry')} AS paused_at
-                FROM public.ontology_data_connections registry ORDER BY lower(name), id
-            """))).mappings()
-            return [_public(row, pause_available=bool(can_pause)) for row in rows]
+                SELECT {columns}, {paused_at_sql('registry')} AS paused_at,
+                    registry.config->>'host' AS source_host, {proof_columns}
+                FROM public.ontology_data_connections registry {join}
+                ORDER BY lower(registry.name), registry.id
+            """), {"fingerprint": fingerprint} if identity_registry else {})).mappings()
+
+            drivers: dict[str, bool] = {}
+            result = []
+            for row in rows:
+                engine = row["engine"]
+                if row["paused_at"] is None and engine not in drivers:
+                    drivers[engine] = _driver_available(engine)
+                driver = drivers.get(engine, False)
+                item = _public(row, pause_available=bool(can_pause), driver_available=driver)
+                item["capabilities"] = _saved_capabilities(
+                    row, driver_available=driver, explicit_local=explicit_local, batch_enabled=batch_enabled,
+                    numeric_loopback=_local_host(row["source_host"]), identity_registry=identity_registry,
+                    identity_required=required, identity_provisioned=fingerprint is not None,
+                    committed_enabled=bool(batch_enabled and settings.BATCH_SYNC_INCREMENTAL_ENABLED),
+                    range_enabled=bool(batch_enabled and settings.BATCH_SYNC_RANGE_SNAPSHOT_ENABLED),
+                ).model_dump(exclude_none=True)
+                result.append(item)
+            return result
 
     async def _stored(self, connection_id: str, *, session=None, lock: str = ""):
         if session is None:

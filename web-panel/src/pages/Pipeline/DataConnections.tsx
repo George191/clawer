@@ -8,6 +8,7 @@ import { getSessionState } from '../../services/session';
 import PostgresGlyph from './PostgresGlyph';
 import SourceBatchSyncs from './SourceBatchSyncs';
 import SourceIdentity from './SourceIdentity';
+import SavedConnectionCapabilities from './SavedConnectionCapabilities';
 import type { BatchSyncSource } from './SourceBatchSyncs';
 import TableExports from './TableExports';
 import SandboxCdcReplay from './SandboxCdcReplay';
@@ -196,6 +197,10 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const [confirmationError, setConfirmationError] = useState('');
   const active = useRef(true);
   const pendingRef = useRef(false);
+  const metadataRequest = useRef<AbortController>();
+  const metadataPending = useRef(new Set<string>());
+  const metadataEpoch = useRef(new Map<string, number>());
+  const metadataVerifying = useRef(new Set<string>());
   const sessionIdentity = useRef(getSessionState().identity).current;
   const current = () => active.current && getSessionState().identity === sessionIdentity;
   const pending = !!operation;
@@ -216,7 +221,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const canReuseSecret = !!selected?.credentialsConfigured && sameDestination;
   const dirty = !!draft && JSON.stringify(draft) !== baseline;
 
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  useEffect(() => { active.current = true; return () => { active.current = false; metadataRequest.current?.abort(); }; }, []);
   useEffect(() => {
     setExploringSource(''); setSyncSelection(undefined); setSavedTest(null); setSourceProof(undefined);
   }, [sourceId]);
@@ -235,7 +240,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       setCanManage(allowed);
       if (!allowed) return;
       const [types, saved] = await Promise.all([fetchDataConnectorTypes(), fetchDataSources()]);
-      if (valid && current()) { setConnectors(types); setSources(saved); }
+      if (valid && current()) { metadataVerifying.current.clear(); setConnectors(types); setSources(saved); }
     }).catch((failure) => { if (valid && current()) setLoadError(`Unable to load data sources. ${errorText(failure)}`); })
       .finally(() => { if (valid && current()) setLoading(false); });
     return () => { valid = false; };
@@ -308,6 +313,41 @@ export default function DataConnections({ onChanged }: Props = {}) {
       if (current()) setTestResult(result);
     });
   };
+  const refreshCapabilities = (id: string) => {
+    if (!current() || metadataVerifying.current.has(id)) return;
+    metadataPending.current.add(id);
+    metadataRequest.current?.abort();
+    const request = new AbortController(); metadataRequest.current = request;
+    const pendingIds = new Set(metadataPending.current);
+    const epochs = new Map([...pendingIds].map(itemId => [itemId, metadataEpoch.current.get(itemId) ?? 0]));
+    setSources(items => items.map(item => pendingIds.has(item.id) ? { ...item, capabilities: undefined } : item));
+    void fetchDataSources(request.signal).then(saved => {
+      if (!request.signal.aborted && current()) {
+        const byId = new Map(saved.map(item => [item.id, item]));
+        setSources(items => items.map(item => {
+          const updated = byId.get(item.id);
+          return pendingIds.has(item.id) && !metadataVerifying.current.has(item.id) &&
+            epochs.get(item.id) === (metadataEpoch.current.get(item.id) ?? 0) && updated?.updatedAt === item.updatedAt
+            ? { ...item, capabilities: updated.capabilities } : item;
+        }));
+      }
+    }).catch(() => { /* Unavailable metadata is not inferred from the controls. */ })
+      .finally(() => {
+        if (metadataRequest.current === request) {
+          metadataRequest.current = undefined;
+          pendingIds.forEach(id => metadataPending.current.delete(id));
+        }
+      });
+  };
+  const invalidateVerificationCapability = (id: string) => {
+    if (!current()) return;
+    metadataVerifying.current.add(id);
+    const epoch = (metadataEpoch.current.get(id) ?? 0) + 1;
+    metadataEpoch.current.set(id, epoch);
+    metadataPending.current.delete(id);
+    setSources(items => items.map(item => item.id === id ? { ...item, capabilities: undefined } : item));
+    return () => { if (metadataEpoch.current.get(id) === epoch) metadataVerifying.current.delete(id); };
+  };
   const save = async () => {
     const body = payload();
     if (!body) return;
@@ -317,6 +357,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       setSources((items) => [...items.filter((item) => item.id !== source.id), source].sort((a, b) => a.name.localeCompare(b.name)));
       closeWizard();
       selectSource(source.id); setExploringSource(''); setSyncSelection(undefined); setSavedTest(null);
+      refreshCapabilities(source.id);
       setNotice('Source saved. Its connectivity was tested with a read-only request.'); onChanged?.();
     });
   };
@@ -331,6 +372,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       setSavedTest(result);
       if (result.ok && result.testedAt) setSources((items) => items.map((item) => item.id === source.id ? { ...item, testedAt: result.testedAt! } : item));
     });
+    refreshCapabilities(source.id);
   };
   const changePause = () => {
     if (!viewedSource || !pauseAvailable || blocked) return;
@@ -349,6 +391,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
           if (!current()) return;
           setSources(items => items.map(item => item.id === source.id ? updated : item));
           setExploringSource(''); setSyncSelection(undefined); setSavedTest(null); setSourceProof(undefined);
+          refreshCapabilities(source.id);
           setNotice(paused ? 'Connection paused. No new source work can start.'
             : 'Connection resumed. Review affected syncs and explicitly rearm schedules; nothing was started.');
           onChanged?.();
@@ -421,11 +464,14 @@ export default function DataConnections({ onChanged }: Props = {}) {
           <div><dt>Last connectivity test</dt><dd>{formatDate(viewedSource.testedAt)}</dd></div>
           {sourcePaused && <div><dt>Paused at</dt><dd>{formatDate(viewedSource.pausedAt)}</dd></div>}
         </dl>
+        <SavedConnectionCapabilities capabilities={viewedSource.capabilities} />
         {viewedType && !viewedType.driverAvailable && <p className="ontology-connectors__prerequisite" role="status">{viewedType.prerequisite}</p>}
         <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
         {sourcePaused && <p>This source cannot be tested, explored, verified or edited while paused. Sync history remains available.</p>}
         {viewedSource.engine === 'postgresql' && !sourcePaused && <SourceIdentity key={`identity:${proofKey}`} source={viewedSource} identity={activeProof}
-          onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }} disabled={blocked} />}
+          onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }}
+          onVerificationStarted={() => invalidateVerificationCapability(viewedSource.id)}
+          onVerificationSettled={() => { metadataVerifying.current.delete(viewedSource.id); refreshCapabilities(viewedSource.id); }} disabled={blocked} />}
         {!sourcePaused && exploring && viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceCatalog key={viewedSource.id} sourceId={viewedSource.id} onSetUpSync={selection => setSyncSelection({ sourceId: viewedSource.id, selection })} />}
         {(sourcePaused || viewedSource.catalogAvailable && viewedType?.catalogAvailable) && <SourceBatchSyncs key={`sync:${proofKey}`} source={viewedSource} sourceProof={sourcePaused ? undefined : activeProof} selection={!sourcePaused && syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
         <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked} onClick={remove}>Delete source</Button></div>

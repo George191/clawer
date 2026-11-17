@@ -237,3 +237,6 @@
 }
 .ontology-receiver-selection { display: grid; gap: 5px; max-width: 360px; }
 .ontology-receiver-selection select { min-height: 32px; width: 100%; padding: 4px 6px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-bg); color: var(--ontology-text); font: inherit; }
+.ontology-connection-capabilities__list{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px 12px;margin:0;padding:10px 12px}
+.ontology-connection-capabilities__list dt,.ontology-connection-capabilities__list dd>span{color:var(--ontology-muted)}
+.ontology-connection-capabilities__list dd{display:grid;gap:3px;margin:3px 0 0;overflow-wrap:anywhere}
