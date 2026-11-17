@@ -21,6 +21,7 @@ from app.web.services import indexed_id_sample as indexed
 from app.web.services.etl_layers import EtlLayers
 from app.web.services.etl_workspace import EtlWorkspace
 from app.web.services.preview_index_coverage import preview_index_coverage
+from app.web.services.lineage_column_references import read_lineage_column_references
 
 
 URL = os.environ.get("ONTOLOGY_TEST_DATABASE_URL")
@@ -251,6 +252,95 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as error:
                 await self.layers.lineage_neighbors(schema, table, "outgoing")
             self.assertEqual(error.exception.status_code, 404)
+
+    async def test_direct_column_references_zip_validated_composite_keys_and_declared_fields_by_ordinal(self):
+        role = "helio_column_" + uuid4().hex[:12]
+        async with self.pg.session() as session:
+            for sql in (
+                f"CREATE TABLE {SCHEMA}.parent (x bigint, y bigint, z bigint, UNIQUE(y, x))",
+                f"CREATE TABLE {SCHEMA}.child (b bigint, a bigint, extra bigint, FOREIGN KEY(a,b) REFERENCES {SCHEMA}.parent(y,x))",
+                f"""ALTER TABLE {SCHEMA}.child ADD CONSTRAINT unvalidated FOREIGN KEY (extra,a)
+                     REFERENCES {SCHEMA}.parent(y,x) NOT VALID""",
+                f"CREATE TABLE {SCHEMA}.tree (id bigint PRIMARY KEY, parent_id bigint REFERENCES {SCHEMA}.tree(id))",
+                f"CREATE ROLE {role} NOLOGIN",
+                f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
+                f"GRANT SELECT ON public.ontology_objects, public.ontology_object_relations TO {role}",
+                f"GRANT SELECT (a) ON {SCHEMA}.child TO {role}",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""
+                INSERT INTO public.ontology_object_relations (
+                    name, source_schema, source_table, source_fields, target_schema, target_table, target_fields,
+                    relationship_kind, cardinality, provenance
+                ) VALUES
+                    ('column_ordinal_valid', :schema, 'child', ARRAY['a','b'], :schema, 'parent',
+                     ARRAY['y','x'], 'association', 'many_to_one','test'),
+                    ('column_ordinal_broken', :schema, 'child', ARRAY['a','removed'], :schema, 'parent',
+                     ARRAY['z','x'], 'association', 'many_to_one','test')
+            """), {"schema": SCHEMA})
+
+        async def cleanup():
+            await self.pg.execute(f"DROP OWNED BY {role}")
+            await self.pg.execute(f"DROP ROLE {role}")
+
+        self.addAsyncCleanup(cleanup)
+
+        async def refs(table, column, direction, *, as_reader=False):
+            async with self.pg.session() as session:
+                if as_reader:
+                    await session.execute(text(f"SET LOCAL ROLE {role}"))
+                return (await read_lineage_column_references(session, SCHEMA, table, column, direction)).model_dump(by_alias=True)
+
+        dual = ["foreign_key", "object_relation"]
+        self.assertEqual((await refs("child", "a", "outgoing"))["references"],
+                         [{"schema": SCHEMA, "table": "parent", "column": "y", "kinds": dual}])
+        self.assertEqual((await refs("child", "b", "outgoing"))["references"][0]["column"], "x")
+        self.assertEqual((await refs("parent", "x", "incoming"))["references"],
+                         [{"schema": SCHEMA, "table": "child", "column": "b", "kinds": dual}])
+        self.assertEqual((await refs("child", "extra", "outgoing"))["references"], [])
+        self.assertEqual((await refs("tree", "parent_id", "outgoing"))["references"],
+                         [{"schema": SCHEMA, "table": "tree", "column": "id", "kinds": ["foreign_key"]}])
+        self.assertEqual((await refs("child", "a", "outgoing", as_reader=True))["references"], [])
+        for column in ("y", "missing"):
+            with self.assertRaises(HTTPException) as error:
+                await refs("parent", column, "outgoing", as_reader=True)
+            self.assertEqual((error.exception.status_code, error.exception.detail),
+                             (404, "Table or column reference is unavailable"))
+        await self.pg.execute(f"GRANT SELECT (y) ON {SCHEMA}.parent TO {role}")
+        self.assertEqual((await refs("child", "a", "outgoing", as_reader=True))["references"][0]["kinds"], dual)
+        await self.pg.execute(f"REVOKE SELECT ON public.ontology_object_relations FROM {role}")
+        self.assertEqual((await refs("child", "a", "outgoing", as_reader=True))["references"][0]["kinds"], ["foreign_key"])
+        await self.pg.execute(f"REVOKE USAGE ON SCHEMA {SCHEMA} FROM {role}")
+        with self.assertRaises(HTTPException) as error:
+            await refs("child", "a", "outgoing", as_reader=True)
+        self.assertEqual(error.exception.status_code, 404)
+
+        await self.workspace.set_object_visibility(SCHEMA, "parent", "hidden", "fixture")
+        self.assertEqual((await refs("child", "a", "outgoing"))["references"], [])
+        await self.workspace.set_object_visibility(SCHEMA, "parent", "normal", "fixture")
+        await self.pg.execute("DROP TABLE public.ontology_object_relations")
+        self.assertEqual((await refs("child", "a", "outgoing"))["references"][0]["kinds"], ["foreign_key"])
+
+    async def test_column_reference_cap_applies_after_visibility(self):
+        async with self.pg.session() as session:
+            await session.execute(text(f"CREATE TABLE {SCHEMA}.parent (id bigint PRIMARY KEY)"))
+            for i in range(14):
+                await session.execute(text(f"""CREATE TABLE {SCHEMA}.peer_{i:02}
+                    (fk bigint REFERENCES {SCHEMA}.parent(id))"""))
+        await self.workspace.set_object_visibility(SCHEMA, "peer_00", "hidden", "fixture")
+        await self.workspace.set_object_visibility(SCHEMA, "peer_01", "hidden", "fixture")
+
+        async def incoming():
+            async with self.pg.session() as session:
+                return await read_lineage_column_references(session, SCHEMA, "parent", "id", "incoming")
+
+        visible = await incoming()
+        self.assertFalse(visible.truncated)
+        self.assertEqual([node.table for node in visible.references], [f"peer_{i:02}" for i in range(2, 14)])
+        await self.workspace.set_object_visibility(SCHEMA, "peer_01", "normal", "fixture")
+        capped = await incoming()
+        self.assertTrue(capped.truncated)
+        self.assertEqual([node.table for node in capped.references], [f"peer_{i:02}" for i in range(1, 13)])
 
     async def test_lineage_neighbors_keep_native_fk_when_optional_registry_is_absent(self):
         async with self.pg.session() as session:

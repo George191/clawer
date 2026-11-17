@@ -25,6 +25,18 @@ class LineageNeighbors(BaseModel):
     truncated: bool
 
 
+class LineageColumnReference(LineageEndpoint):
+    column: str
+    kinds: list[LineageNeighborKind]
+
+
+class LineageColumnReferences(BaseModel):
+    direction: LineageDirection
+    column: str
+    references: list[LineageColumnReference]
+    truncated: bool
+
+
 class LineagePathEdge(BaseModel):
     from_node: LineageEndpoint = Field(alias="from")
     to: LineageEndpoint

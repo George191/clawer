@@ -1233,3 +1233,11 @@ export const fetchTableLineageCommonDownstream = (source: TableLineageIdentity, 
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-common-downstream`, {
     params: { targetSchema: target.schema, targetTable: target.table }, signal,
   }).then(r => unwrap<TableLineageCommonDownstream>(r.data));
+
+export type ColumnLineageReferences = {
+  direction: TableLineageDirection; column: string; truncated: boolean;
+  references: (TableLineageIdentity & { column: string; kinds: TableLineageReferenceKind[] })[];
+};
+export const fetchColumnLineageReferences = (source: TableLineageIdentity, column: string, direction: TableLineageDirection, signal?: AbortSignal): Promise<ColumnLineageReferences> =>
+  client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-column-references`,
+    { params: { column, direction }, signal }).then(r => unwrap<ColumnLineageReferences>(r.data));

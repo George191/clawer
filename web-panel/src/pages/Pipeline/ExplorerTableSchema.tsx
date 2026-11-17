@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { canonColumn } from './ColumnLineageReferences';
+import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 import { Button, Input } from '@/components/ui';
 import { SearchOutlined } from '@/components/ui/icons';
 import { fetchEtlTableColumns } from '../../services/api';
@@ -26,6 +29,8 @@ export default function ExplorerTableSchema({ schema, table }: Props) {
         return () => controller.abort();
     }, [schema, table, refresh]);
 
+    const referenceEligible = /^ts_[a-z0-9_]{1,60}$/.test(schema) && schema !== 'ts_meta' && !schema.endsWith('_hist') &&
+        (schema !== INDEX_PREVIEW_SCHEMA || table !== INDEX_PREVIEW_TABLE) && canonColumn(table);
     const term = search.trim().toLowerCase();
     const matches = columns?.filter((column) => !term || [column.name, column.type, column.comment, column.primary ? 'primary key pk' : '', !column.nullable ? 'not null' : 'nullable']
         .some((text) => text?.toLowerCase().includes(term)));
@@ -47,7 +52,10 @@ export default function ExplorerTableSchema({ schema, table }: Props) {
                     <div className="flow-schema-column-grid" role="region" aria-label="Column definitions" tabIndex={0}><table>
                     <thead><tr><th scope="col">Name</th><th scope="col">PostgreSQL type</th><th scope="col">Constraints</th><th scope="col">Description</th></tr></thead>
                     <tbody>{matches.map((column) => <tr key={column.name}>
-                        <td><code title={column.name}>{column.name}</code></td>
+                        <td><code title={column.name}>{column.name}</code>{referenceEligible && canonColumn(column.name) && <>
+                            {' '}<Link className="flow-evidence-lineage-link" aria-label={`Open column references: ${column.name}`}
+                                to={`/ontology/lineage?${new URLSearchParams({ schema, table, tableLineage: '1', column: column.name })}`}>Column references</Link>
+                        </>}</td>
                         <td><code>{column.type}</code></td>
                         <td><div className="flow-schema-constraints">
                             {column.primary && <span className="flow-schema-key" title={`Primary key${column.primaryPosition ? `, position ${column.primaryPosition}` : ''}`} aria-label="Primary key">PK</span>}

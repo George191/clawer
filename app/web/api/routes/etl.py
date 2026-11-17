@@ -13,7 +13,7 @@ from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
 from app.web.api.models.lineage_neighbors import (
-    LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
+    LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
     LineagePathTargets, ObservedLineage,
 )
 from app.web.api.models.indexed_id_sample import IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult
@@ -124,6 +124,7 @@ from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
 from app.web.services.indexed_id_sample import indexed_sample_capability, sample_indexed_ids
+from app.web.services.lineage_column_references import read_lineage_column_references
 from app.web.services.preview_index_coverage import preview_index_coverage
 from app.web.services.transfer_observed_lineage import observed_transfer_lineage
 from app.web.services.transfer_plans import list_transfer_plans, preflight_transfer_plan, save_transfer_plan
@@ -954,6 +955,17 @@ async def table_observed_transfer_lineage(
         raise HTTPException(422, "Specify exactly one observed transfer direction")
     response.headers["Cache-Control"] = "no-store"
     return await observed_transfer_lineage(session, schema, table, direction)
+
+
+@read.get("/{schema}/{table}/lineage-column-references")
+async def table_lineage_column_references(
+    schema: WarehouseSchema, table: TableName, column: TableName, direction: LineageDirection,
+    request: Request, response: Response, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> LineageColumnReferences:
+    if set(request.query_params) != {"column", "direction"} or len(request.query_params.multi_items()) != 2:
+        raise HTTPException(422, "Specify exactly one column and reference direction")
+    response.headers["Cache-Control"] = "no-store"
+    return await read_lineage_column_references(session, schema, table, column, direction)
 
 
 @read.get("/{layer}/{table}/lineage-neighbors")

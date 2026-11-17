@@ -10,6 +10,7 @@ import LineageTransferPlans from './LineageTransferPlans';
 import ManagedBatchLineage, { MANAGED_BATCH_ASSET } from './ManagedBatchLineage';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import TableLineageReferences from './TableLineageReferences';
+import ColumnLineageReferences from './ColumnLineageReferences';
 import ObservedTableLineage from './ObservedTableLineage';
 import './ontology-lineage.css';
 
@@ -33,6 +34,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const managedReceipt = params.get('batchReceipt');
   const selected = managedSelected ? '' : params.get('schema') || '';
   const selectedTable = params.get('table') || '';
+  const selectedColumn = params.get('column') || '';
   const ordinaryTableLink = params.get('tableLineage') === '1' && !!selectedTable;
   const selectedSchedule = params.get('transferPlan') || undefined;
   const selectedUpstream = params.get('scheduleKind') === 'upstream';
@@ -75,7 +77,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   }, [version, refreshToken]);
   useEffect(() => {
     if (!loading && !error && selected && !schemas.some((schema) => schema.key === selected)) {
-      setParams((current) => { const next = new URLSearchParams(current); next.delete('schema'); next.delete('table'); next.delete('tableLineage'); next.delete('transferPlan'); next.delete('scheduleKind'); return next; }, { replace: true });
+      setParams((current) => { const next = new URLSearchParams(current); next.delete('schema'); next.delete('table'); next.delete('tableLineage'); next.delete('column'); next.delete('transferPlan'); next.delete('scheduleKind'); return next; }, { replace: true });
     }
   }, [schemas, loading, error, selected, setParams]);
   useEffect(() => {
@@ -162,11 +164,11 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   useEffect(() => setCopyStatus(''), [params]);
   const selectNode = (key: string) => {
     setInspectorOpen(true);
-    updateQuery({ schema: key, managedAsset: null, batchReceipt: null, tableLineage: null, ...(selected === key && !ordinaryTableLink ? {} : { transferPlan: null, scheduleKind: null, table: null }), ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
+    updateQuery({ schema: key, managedAsset: null, batchReceipt: null, tableLineage: null, column: null, ...(selected === key && !ordinaryTableLink ? {} : { transferPlan: null, scheduleKind: null, table: null }), ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
   };
   const closeInspector = () => {
     setInspectorOpen(false);
-    updateQuery({ schema: null, transferPlan: null, scheduleKind: null, table: null, tableLineage: null }, true);
+    updateQuery({ schema: null, transferPlan: null, scheduleKind: null, table: null, tableLineage: null, column: null }, true);
     requestAnimationFrame(() => nodeRefs.current[selected]?.focus());
   };
   const changeZoom = (value: number) => {
@@ -209,7 +211,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     setPanel(next);
     setInspectorOpen(true);
     if ((next !== 'transfers' && selectedSchedule) || (next !== 'details' && selectedTable)) {
-      updateQuery({ ...(next !== 'transfers' ? { transferPlan: null, scheduleKind: null } : {}), ...(next !== 'details' ? { table: null, tableLineage: null } : {}) }, true);
+      updateQuery({ ...(next !== 'transfers' ? { transferPlan: null, scheduleKind: null } : {}), ...(next !== 'details' ? { table: null, tableLineage: null, column: null } : {}) }, true);
     }
   };
   const openWorkspace = () => asset && navigate(`/ontology/explorer?${new URLSearchParams({ schema: asset.key,
@@ -248,7 +250,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
       <span className="flow-lineage-notice" title="Relationships are predefined ETL processor contracts, not discovered data lineage.">Relationships predefined</span>
     </div>
     {canPlanTransfers && <ManagedBatchLineage selected={managedSelected} exactReceipt={managedReceipt} version={version + refreshToken}
-      onSelect={() => { if (!managedSelected) updateQuery({ managedAsset: MANAGED_BATCH_ASSET, batchReceipt: null, schema: null, table: null, tableLineage: null, transferPlan: null, scheduleKind: null }); }}
+      onSelect={() => { if (!managedSelected) updateQuery({ managedAsset: MANAGED_BATCH_ASSET, batchReceipt: null, schema: null, table: null, tableLineage: null, column: null, transferPlan: null, scheduleKind: null }); }}
       onClose={() => updateQuery({ managedAsset: null, batchReceipt: null }, true)} />}
     {error ? <div className="flow-lineage-state" role="alert">Unable to load lineage assets.<button type="button" className="flow-lineage-action" onClick={() => setVersion(value => value + 1)}>Retry</button></div>
       : loading ? <div className="flow-lineage-state"><Spin /></div>
@@ -288,11 +290,12 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
               <div className="flow-lineage-status"><span>{nodes.length} schemas · {links.length} predefined relationships</span><small data-testid="ontology-lineage-motion-status">{motionStatus}</small></div>
               {asset && inspectorOpen && <aside className={`flow-lineage-inspector${activePanel === 'transfers' || showExportTable || showOrdinaryTable ? ' flow-lineage-inspector--transfers' : ''}`} aria-label="Node details"><header><span>{showExportTable || showOrdinaryTable ? 'SELECTED TABLE' : 'SELECTED SCHEMA'}</span><button type="button" aria-label="Close node details" onClick={closeInspector}><CloseOutlined /></button></header><h2>{showExportTable || showOrdinaryTable ? selectedTable : asset.alias || asset.label}</h2><code>{showExportTable || showOrdinaryTable ? `${asset.key}.${selectedTable}` : asset.key}</code>
                 {showOrdinaryTable ? <>
+                  {selectedColumn && <ColumnLineageReferences schema={asset.key} table={selectedTable} column={selectedColumn} version={version + refreshToken} />}
                   <TableLineageReferences schema={asset.key} table={selectedTable} version={version + refreshToken} />
                   {canPlanTransfers && asset.key === 'ts_transfer_sandbox' &&
                     <ObservedTableLineage table={selectedTable} version={version + refreshToken} />}
                   <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open table Evidence in Explorer <ArrowRightOutlined /></button>
-                  <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={() => updateQuery({ table: null, tableLineage: null })}>Back to schema details</button>
+                  <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={() => updateQuery({ table: null, tableLineage: null, column: null })}>Back to schema details</button>
                 </> : showExportTable ? <>
                   <TableExportEvidence mode="lineage" version={version} />
                   <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open table Evidence in Explorer <ArrowRightOutlined /></button>

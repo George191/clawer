@@ -534,6 +534,20 @@ class ObjectRouteTests(unittest.TestCase):
             self.assertEqual(response.json(), {"state": "candidate"})
             self.assertEqual(response.headers["cache-control"], "no-store")
 
+    def test_column_lineage_query_requires_one_canonical_field_and_direction(self):
+        url = "/api/v1/etl/ts_ods/objects/lineage-column-references"
+        selected = "?column=id&direction=incoming"
+        result = {"column": "id", "direction": "incoming", "references": [], "truncated": False}
+        with patch.object(etl, "read_lineage_column_references", new=AsyncMock(return_value=result)) as read:
+            for query in ("", "?column=id", "?column=ID&direction=incoming", "?column=id&direction=sideways",
+                          selected + "&column=other", selected + "&hidden=true"):
+                self.assertEqual(self.client.get(url + query).status_code, 422)
+            read.assert_not_called()
+            response = self.client.get(url + selected)
+            self.assertEqual(response.json(), result)
+            self.assertEqual(response.headers["cache-control"], "no-store")
+            read.assert_awaited_once()
+
     def test_lineage_path_routes_require_exact_query_shape_before_service(self):
         root = "/api/v1/etl/ts_ods/objects"
         path = root + "/lineage-path"
