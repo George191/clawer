@@ -5,6 +5,7 @@ import type {
   SandboxPipelineOutput, SandboxPipelineOutputDetail, SandboxPipelineOutputList, SandboxPipelineOutputRequest, SandboxPipelineRevision,
 } from '../../services/api';
 import { getSessionState } from '../../services/session';
+import { SandboxMarkings, sandboxScopeDenied } from './SandboxMarkings';
 
 type Confirmation = { revision: SandboxPipelineRevision } | { previous: SandboxPipelineOutputRequest };
 const timeText = (value: string) => new Date(value).toLocaleString();
@@ -27,12 +28,15 @@ function ReceiptFacts({ item }: { item: SandboxPipelineOutput }) {
     <span>Source snapshot receipt: <code>{item.versionId}</code></span>
     <span>Output receipt ID: <code>{item.id}</code> · Original request ID: <code>{item.requestId}</code></span>
     <span>Recorded at: <time dateTime={item.recordedAt}>{timeText(item.recordedAt)}</time></span>
+    <SandboxMarkings markings={item.markings} />
   </>;
 }
 
-export default function SandboxPipelineOutputs({ reviewed }: { reviewed?: SandboxPipelineRevision }) {
+export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDenied }: {
+  reviewed?: SandboxPipelineRevision; scopeKey?: string; onScopeDenied?: () => void;
+}) {
   const identity = useRef(getSessionState().identity).current;
-  const storageKey = `ontology-pipeline-output:${identity}`;
+  const storageKey = `ontology-pipeline-output:${identity}${scopeKey ? `:${scopeKey}` : ''}`;
   const active = useRef(false);
   const pendingMutation = useRef(false);
   const [pendingRequest, setPendingRequest] = useState(() => readPending(storageKey));
@@ -48,6 +52,11 @@ export default function SandboxPipelineOutputs({ reviewed }: { reviewed?: Sandbo
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
+  };
+  const invalidate = () => {
+    setList(undefined); setLoadFailed(true); setInspecting(undefined); setDetail(undefined);
+    setConfirm(undefined); setPendingRequest(undefined); setNotice(undefined);
+    onScopeDenied?.();
   };
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
@@ -74,7 +83,11 @@ export default function SandboxPipelineOutputs({ reviewed }: { reviewed?: Sandbo
     void fetchSandboxPipelineOutput(inspecting.id, controller.signal).then(value => {
       if (!live(controller.signal)) return;
       if (value.id === inspecting.id) setDetail(value); else setDetailFailed(true);
-    }).catch(() => { if (live(controller.signal)) setDetailFailed(true); });
+    }).catch(failure => {
+      if (live(controller.signal)) {
+        if (scopeKey && sandboxScopeDenied(failure)) invalidate(); else setDetailFailed(true);
+      }
+    });
     return () => controller.abort();
   }, [identity, inspecting]);
 
@@ -110,7 +123,9 @@ export default function SandboxPipelineOutputs({ reviewed }: { reviewed?: Sandbo
     } catch (failure) {
       if (live()) {
         const status = (failure as { response?: { status?: number } })?.response?.status;
-        if (status === 409 || status === 422) {
+        if (scopeKey && sandboxScopeDenied(failure)) {
+          invalidate();
+        } else if (status === 409 || status === 422) {
           clearPending(storageKey); setPendingRequest(undefined);
           setNotice({ text: 'Output commit rejected. Review the latest saved configuration and its bounds before submitting.', error: true });
         } else setNotice({ text: 'The outcome could not be confirmed. Retry the original request instead of creating a new one.', error: true });
@@ -151,6 +166,7 @@ export default function SandboxPipelineOutputs({ reviewed }: { reviewed?: Sandbo
         If already committed, this returns the original receipt.</p> : <>
         <p>Write immutable sandbox output from saved configuration revision <strong>{confirm.revision.generation}</strong> and captured source receipt <code>{confirm.revision.config.versionId}</code>.</p>
         <p>Reviewed configuration hash: <code>{confirm.revision.configHash}</code>. No live source or arbitrary destination is used.</p>
+        <SandboxMarkings markings={confirm.revision.markings} />
       </>)}
     </Modal>
     <Modal open={Boolean(inspecting)} destroyOnHidden className="flow-surface-modal" title="Immutable committed output"

@@ -550,7 +550,7 @@ export type SandboxCdcStatus = {
 export type SandboxCdcRunRequest = { requestId: string; expectedGeneration: number; expectedAppliedThrough: string };
 export type SandboxCdcReceipt = {
   id: string; requestId: string; generation: number; fromExclusive: string; appliedThrough: string;
-  rowsAffected: number; recordedAt: string;
+  rowsAffected: number; recordedAt: string; markings?: string[];
 };
 const sandboxCdcPath = '/etl/cdc-sandbox';
 export const fetchSandboxCdc = (signal?: AbortSignal): Promise<SandboxCdcStatus> =>
@@ -563,12 +563,13 @@ export const applySandboxCdc = (request: SandboxCdcRunRequest): Promise<SandboxC
   client.post(`${sandboxCdcPath}/runs`, request).then((r) => unwrap<SandboxCdcReceipt>(r.data));
 export type SandboxCdcVersion = {
   id: string; receiptId: string; generation: number; appliedThrough: string;
-  rowsCaptured: number; bytesCaptured: number; recordedAt: string;
+  rowsCaptured: number; bytesCaptured: number; recordedAt: string; markings?: string[];
 };
 export type SandboxCdcVersionList = { available: boolean; versions: SandboxCdcVersion[] };
 export type SandboxCdcVersionDetail = SandboxCdcVersion & { rows: { id: string; value: string }[] };
 export type SandboxCdcVersionComparison = {
   fromVersionId: string; toVersionId: string;
+  markings?: string[];
   changes: { id: string; kind: 'inserted' | 'updated' | 'deleted'; before: string | null; after: string | null }[];
 };
 const sandboxCdcVersionsPath = `${sandboxCdcPath}/versions`;
@@ -585,12 +586,16 @@ export type SandboxPipelineColumn = 'id' | 'value';
 export type SandboxPipelineFilter =
   | { field: 'id'; operator: 'eq' | 'gte' | 'lte'; value: string }
   | { field: 'value'; operator: 'eq' | 'prefix'; value: string };
-export type SandboxPipelineConfig = { versionId: string; filters: SandboxPipelineFilter[]; projection: SandboxPipelineColumn[] };
-export type SandboxPipelineStatus = { available: boolean; latestGeneration: number | null };
-export type SandboxPipelinePreview = {
-  versionId: string; configHash: string; inputRows: number; matchedRows: number; columns: SandboxPipelineColumn[]; rows: string[][];
+export type SandboxPipelineConfig = {
+  versionId: string; filters: SandboxPipelineFilter[]; projection: SandboxPipelineColumn[]; additionalMarking?: 'sandbox-restricted' | null;
 };
-export type SandboxPipelineRevision = { generation: number; configHash: string; config: SandboxPipelineConfig; recordedAt: string };
+export type SandboxPipelineStatus = {
+  available: boolean; latestGeneration: number | null; governanceEnabled?: boolean; allowedMarkings?: string[]; canSave?: boolean;
+};
+export type SandboxPipelinePreview = {
+  versionId: string; configHash: string; inputRows: number; matchedRows: number; columns: SandboxPipelineColumn[]; rows: string[][]; markings?: string[];
+};
+export type SandboxPipelineRevision = { generation: number; configHash: string; config: SandboxPipelineConfig; recordedAt: string; markings?: string[] };
 const sandboxPipelinePath = '/etl/pipeline-sandbox';
 export const fetchSandboxPipelineStatus = (signal?: AbortSignal): Promise<SandboxPipelineStatus> =>
   client.get(sandboxPipelinePath, { signal }).then((r) => unwrap<SandboxPipelineStatus>(r.data));
@@ -602,7 +607,7 @@ export const saveSandboxPipelineRevision = (config: SandboxPipelineConfig, expec
   client.post(`${sandboxPipelinePath}/revisions`, { expectedGeneration, config }).then((r) => unwrap<SandboxPipelineRevision>(r.data));
 export type SandboxPipelineOutput = {
   id: string; requestId: string; reviewedGeneration: number; configHash: string; versionId: string;
-  columns: SandboxPipelineColumn[]; inputRows: number; outputRows: number; recordedAt: string; resultHash: string;
+  columns: SandboxPipelineColumn[]; inputRows: number; outputRows: number; recordedAt: string; resultHash: string; markings?: string[];
 };
 export type SandboxPipelineOutputList = { available: boolean; outputs: SandboxPipelineOutput[] };
 export type SandboxPipelineOutputDetail = SandboxPipelineOutput & { rows: string[][] };

@@ -6,7 +6,7 @@ import json
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -14,10 +14,14 @@ from sqlmodel import select
 from app.web.api.models.cdc_sandbox import (
     CdcSandboxApply, CdcSandboxBindingRow, CdcSandboxReceipt, CdcSandboxReceiptRow, CdcSandboxStatus,
 )
+from app.web.api.models.cdc_sandbox_versions import CdcSandboxVersionRow
 from app.web.core.config import settings
+from app.web.services.synthetic_governance import (
+    BASE, PROTECTED_SYNTHETIC_SCHEMA, allowed_level, marking_limit, markings, require_marking_access,
+)
 from app.web.services.transfer_runs import _require_index_range_plan, _sandbox_tables
 
-SCHEMA = "ts_cdc_sandbox"
+SCHEMA = PROTECTED_SYNTHETIC_SCHEMA
 SOURCE = f"{SCHEMA}.event_log"
 TARGET = f"{SCHEMA}.target_rows"
 HEAD = f"{SCHEMA}.stream_head"
@@ -114,11 +118,11 @@ def _status(
     )
 
 
-def _receipt(row: CdcSandboxReceiptRow) -> CdcSandboxReceipt:
+def _receipt(row: CdcSandboxReceiptRow, level: int | None = None) -> CdcSandboxReceipt:
     return CdcSandboxReceipt(
         id=row.id, requestId=row.request_id, generation=row.generation,
         fromExclusive=str(row.from_exclusive), appliedThrough=str(row.applied_through),
-        rowsAffected=row.rows_affected, recordedAt=row.recorded_at,
+        rowsAffected=row.rows_affected, recordedAt=row.recorded_at, markings=markings(level),
     )
 
 
@@ -135,13 +139,17 @@ def _db_failure(error: Exception) -> HTTPException:
     return HTTPException(503, "Synthetic apply was not confirmed; retry the same request ID")
 
 
-async def read_cdc_sandbox(session: AsyncSession) -> CdcSandboxStatus:
+async def read_cdc_sandbox(session: AsyncSession, actor_id: UUID) -> CdcSandboxStatus:
     """Show the reviewed checkpoint separately from the current source high-water."""
     marker = _configured_marker()
-    if marker is None:
+    limit = marking_limit(actor_id)
+    if marker is None or limit == 0:
         return _status(None, available=False, blocked=True, high_water=None)
     await _limits(session)
     binding = await session.get(CdcSandboxBindingRow, True)
+    if binding is not None and (binding.stream_marker != marker or
+                                (limit is None and await _has_protected_checkpoint(session, binding))):
+        return _status(None, available=False, blocked=True, high_water=None)
     physical = await _catalog(session)
     if physical is None:
         return _status(binding, available=True, blocked=True, high_water=None)
@@ -155,6 +163,7 @@ async def read_cdc_sandbox(session: AsyncSession) -> CdcSandboxStatus:
 async def review_cdc_sandbox(session: AsyncSession, actor_id: UUID) -> CdcSandboxStatus:
     """Review the immutable local binding once, without creating fixture tables or resetting progress."""
     marker = _require_local()
+    require_marking_access(marking_limit(actor_id))
     try:
         await _limits(session)
         if await session.get(CdcSandboxBindingRow, True) is not None:
@@ -177,13 +186,47 @@ async def review_cdc_sandbox(session: AsyncSession, actor_id: UUID) -> CdcSandbo
         raise _db_failure(error) from None
 
 
-async def list_cdc_sandbox_receipts(session: AsyncSession) -> list[CdcSandboxReceipt]:
-    """List recent immutable receipts without reading the source or modifying the checkpoint."""
-    _require_local()
-    rows = (await session.scalars(select(CdcSandboxReceiptRow).order_by(
-        CdcSandboxReceiptRow.recorded_at.desc(), CdcSandboxReceiptRow.id.desc(),
-    ).limit(25))).all()
-    return [_receipt(row) for row in rows]
+def _receipt_version_scope(binding: CdcSandboxBindingRow):
+    return (
+        (CdcSandboxVersionRow.stream_marker == binding.stream_marker)
+        & (CdcSandboxVersionRow.physical_digest == binding.physical_digest)
+        & (CdcSandboxVersionRow.generation == CdcSandboxReceiptRow.generation)
+        & (CdcSandboxVersionRow.applied_through == CdcSandboxReceiptRow.applied_through)
+    )
+
+
+async def _has_protected_checkpoint(session: AsyncSession, binding: CdcSandboxBindingRow) -> bool:
+    return bool(await session.scalar(select(CdcSandboxVersionRow.receipt_id).where(
+        CdcSandboxVersionRow.stream_marker == binding.stream_marker,
+        CdcSandboxVersionRow.physical_digest == binding.physical_digest,
+        CdcSandboxVersionRow.marking_level.is_not(None),
+    ).limit(1)))
+
+
+async def list_cdc_sandbox_receipts(session: AsyncSession, actor_id: UUID) -> list[CdcSandboxReceipt]:
+    """List only receipts whose immutable version classification authorizes this scope."""
+    marker = _require_local()
+    limit = marking_limit(actor_id)
+    require_marking_access(limit)
+    binding = await session.get(CdcSandboxBindingRow, True)
+    if not binding or binding.stream_marker != marker:
+        return []
+    if limit is None and await _has_protected_checkpoint(session, binding):
+        return []
+    query = select(CdcSandboxReceiptRow, CdcSandboxVersionRow.marking_level)
+    linked = CdcSandboxVersionRow.receipt_id == CdcSandboxReceiptRow.id
+    scope = _receipt_version_scope(binding)
+    if limit is None:
+        # A legitimately versionless legacy apply may be listed; a mismatched version may not.
+        query = query.outerjoin(CdcSandboxVersionRow, linked).where(
+            or_(CdcSandboxVersionRow.receipt_id.is_(None), scope),
+        )
+    else:
+        query = query.join(CdcSandboxVersionRow, linked).where(scope)
+    records = (await session.execute(query.where(
+        allowed_level(CdcSandboxVersionRow.marking_level, limit),
+    ).order_by(CdcSandboxReceiptRow.recorded_at.desc(), CdcSandboxReceiptRow.id.desc()).limit(25))).all()
+    return [_receipt(row, level) for row, level in records]
 
 
 _RANGE = f"SELECT ordinal, entity_id, value FROM ONLY {SOURCE} " \
@@ -238,6 +281,9 @@ async def _write_after_images(session: AsyncSession, events: list) -> int:
 async def apply_cdc_sandbox(session: AsyncSession, request: CdcSandboxApply, actor_id: UUID) -> CdcSandboxReceipt:
     """Apply a bounded contiguous prefix, committing sink writes, checkpoint and one receipt atomically."""
     marker = _require_local()
+    limit = marking_limit(actor_id)
+    require_marking_access(limit)
+    level = None if limit is None else BASE
     try:
         await _limits(session)
         binding = await session.scalar(select(CdcSandboxBindingRow).where(
@@ -245,18 +291,27 @@ async def apply_cdc_sandbox(session: AsyncSession, request: CdcSandboxApply, act
         ).with_for_update().execution_options(populate_existing=True))
         if binding is None:
             raise HTTPException(409, "Review this synthetic stream before applying committed events")
+        if binding.stream_marker != marker:
+            raise HTTPException(409, "The reviewed synthetic stream marker changed; no reset is allowed")
+        if limit is None and await _has_protected_checkpoint(session, binding):
+            raise HTTPException(403, "The protected synthetic checkpoint requires local governance access")
         expected = int(request.expectedAppliedThrough)
         receipt = await session.scalar(select(CdcSandboxReceiptRow).where(
             CdcSandboxReceiptRow.request_id == request.requestId,
         ))
         if receipt is not None:
+            version = await session.get(CdcSandboxVersionRow, receipt.id)
+            if (version is None and level is not None) or (version is not None and (
+                version.stream_marker != binding.stream_marker or version.physical_digest != binding.physical_digest
+                or version.generation != receipt.generation or version.applied_through != receipt.applied_through
+                or version.marking_level != level
+            )):
+                raise HTTPException(404, "No authorized synthetic receipt exists for this request")
             if receipt.generation != request.expectedGeneration or receipt.from_exclusive != expected:
                 raise HTTPException(409, "This request ID is bound to a different generation or starting cursor")
-            return _receipt(receipt)  # Never consult the source for an already committed request.
+            return _receipt(receipt, level)  # Never consult the source for an already committed request.
         if binding.generation != request.expectedGeneration or binding.applied_through != expected:
             raise HTTPException(409, "Review the current applied cursor before applying another batch")
-        if binding.stream_marker != marker:
-            raise HTTPException(409, "The reviewed synthetic stream marker changed; no reset is allowed")
         physical, index = await _lock_fixture(session, applying=True)
         if binding.physical_digest != physical:
             raise HTTPException(409, "The reviewed synthetic relations were replaced or rewritten")
@@ -277,8 +332,8 @@ async def apply_cdc_sandbox(session: AsyncSession, request: CdcSandboxApply, act
         if settings.CDC_SANDBOX_VERSIONS_ENABLED:
             from app.web.services.cdc_sandbox_versions import capture_cdc_version
 
-            await capture_cdc_version(session, binding, row)
-        result = _receipt(row)
+            await capture_cdc_version(session, binding, row, level)
+        result = _receipt(row, level)
         await session.commit()
         return result
     except HTTPException:

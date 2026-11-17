@@ -5,6 +5,7 @@ import { applySandboxCdc, fetchSandboxCdc, fetchSandboxCdcReceipts, reviewSandbo
 import type { SandboxCdcReceipt, SandboxCdcRunRequest, SandboxCdcStatus } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import SandboxCdcVersions from './SandboxCdcVersions';
+import { SandboxMarkings, useSandboxIdentity } from './SandboxMarkings';
 
 const states: Record<SandboxCdcStatus['state'], string> = {
   unreviewed: 'Not reviewed', armed: 'Reviewed · manual replay only', blocked: 'Blocked',
@@ -24,12 +25,13 @@ function clearPending(key: string) {
 
 export default function SandboxCdcReplay() {
   const [open, setOpen] = useState(false);
+  const identity = useSandboxIdentity();
   return <section className="ontology-source-catalog ontology-source-sync" aria-label="Sandbox CDC replay">
     <header>
       <div><h3>Sandbox CDC replay</h3><p>Apply a reviewed synthetic change stream manually. No production connection or live consumer.</p></div>
       <Button size="small" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Close sandbox CDC replay' : 'Open sandbox CDC replay'}</Button>
     </header>
-    {open && <CdcReplayWorkspace />}
+    {open && identity && <CdcReplayWorkspace key={identity} />}
   </section>;
 }
 
@@ -135,7 +137,8 @@ function CdcReplayWorkspace() {
         <div><dt>Confirmed applied checkpoint</dt><dd>{status.generation !== null ? <code>{status.appliedThrough}</code> : 'Not reviewed'}</dd></div>
       </dl>
       <p>The source high-water does not prove delivery. Only a committed target receipt verifies an applied range. Each replay is limited to {status.maxRows} events and {status.maxBytes.toLocaleString()} bytes.</p>
-      {pendingRequest && <p>Original request retained: <code>{pendingRequest.requestId}</code>{!canRetry ? ' · replay currently unavailable' : ''}.</p>}
+      {pendingRequest && (canRetry ? <p>Original request retained: <code>{pendingRequest.requestId}</code>.</p>
+        : <p>Replay currently unavailable for the retained request.</p>)}
       <div className="ontology-source-sync__actions">
         {reviewable && <Button size="small" disabled={busy} onClick={() => setDecision('review')}>Review sandbox CDC route</Button>}
         {armed && !pendingRequest && <Button size="small" type="primary" disabled={busy || !canApply} onClick={() => setDecision('apply')}>Apply next change batch</Button>}
@@ -150,10 +153,14 @@ function CdcReplayWorkspace() {
           <span>Range: after <code>{receipt.fromExclusive}</code> through <code>{receipt.appliedThrough}</code></span>
           <span>Rows affected: {receipt.rowsAffected.toLocaleString()}{receipt.rowsAffected === 0 ? ' · No observed movement' : ''}</span>
           <span>Recorded at: <time dateTime={receipt.recordedAt}>{new Date(receipt.recordedAt).toLocaleString()}</time></span>
+          <SandboxMarkings markings={receipt.markings} />
           <span>Receipt ID: <code>{receipt.id}</code></span><span>Original request ID: <code>{receipt.requestId}</code></span>
         </li>)}</ol> : <p>No committed CDC receipts.</p>}
     </section>
-    <SandboxCdcVersions revision={revision} />
+    <SandboxCdcVersions revision={revision} onScopeDenied={() => {
+      setStatus(undefined); setReceipts(undefined); setNotice(undefined); setDecision(undefined);
+      setRevision(value => value + 1);
+    }} />
     <Modal open={Boolean(decision)} destroyOnHidden className="flow-surface-modal"
       title={decision === 'review' ? 'Review sandbox CDC route?' : decision === 'retry' ? 'Retry original CDC request?' : 'Apply next sandbox CDC batch?'}
       onCancel={() => { if (!busy) setDecision(undefined); }} onOk={submit} confirmLoading={busy}

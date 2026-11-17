@@ -10,6 +10,7 @@ import type {
   SandboxPipelineRevision,
 } from '../../services/api';
 import SandboxPipelineOutputs from './SandboxPipelineOutputs';
+import { SandboxMarkings, sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 import './sandbox-pipeline-builder.css';
 
 const fields: SandboxPipelineColumn[] = ['id', 'value'];
@@ -27,6 +28,7 @@ function validFilter(filter: SandboxPipelineFilter) {
 
 function sameConfig(left: SandboxPipelineConfig, right: SandboxPipelineConfig) {
   return left.versionId === right.versionId &&
+    (left.additionalMarking ?? null) === (right.additionalMarking ?? null) &&
     left.projection.length === right.projection.length && left.projection.every((column, index) => column === right.projection[index]) &&
     left.filters.length === right.filters.length && left.filters.every((filter, index) => {
       const reviewed = right.filters[index];
@@ -61,8 +63,15 @@ function FilterRow({ filter, index, disabled, change, remove }: {
 }
 
 export default function SandboxPipelineBuilder() {
+  const identity = useSandboxIdentity();
+  return identity ? <PipelineBuilderWorkspace key={identity} /> : null;
+}
+
+function PipelineBuilderWorkspace() {
   const [allowed, setAllowed] = useState<boolean>();
-  const [loaded, setLoaded] = useState<{ available: boolean; versions: SandboxCdcVersion[] }>();
+  const [loaded, setLoaded] = useState<{
+    available: boolean; versions: SandboxCdcVersion[]; governanceEnabled: boolean; allowedMarkings: string[]; canSave: boolean;
+  }>();
   const [saved, setSaved] = useState<SandboxPipelineRevision[]>([]);
   const [generation, setGeneration] = useState<number | null>(null);
   const [config, setConfig] = useState<SandboxPipelineConfig>(initialConfig);
@@ -90,12 +99,14 @@ export default function SandboxPipelineBuilder() {
         const status = await fetchSandboxPipelineStatus(controller.signal);
         if (!current()) return;
         setGeneration(status.latestGeneration);
-        if (!status.available) { setLoaded({ available: false, versions: [] }); return; }
+        const governance = { governanceEnabled: status.governanceEnabled === true, allowedMarkings: status.allowedMarkings ?? [],
+          canSave: status.governanceEnabled !== true || status.canSave === true };
+        if (!status.available) { setLoaded({ available: false, versions: [], ...governance }); return; }
         const [versions, revisions] = await Promise.all([
           fetchSandboxCdcVersions(controller.signal), fetchSandboxPipelineRevisions(controller.signal),
         ]);
         if (!current()) return;
-        setLoaded({ available: true, versions: versions.available ? versions.versions : [] });
+        setLoaded({ available: true, versions: versions.available ? versions.versions : [], ...governance });
         setSaved(revisions);
       } catch {
         if (current()) setLoadFailed(true);
@@ -104,6 +115,11 @@ export default function SandboxPipelineBuilder() {
     return () => { controller.abort(); previewRequest.current?.abort(); previewRequest.current = undefined; };
   }, [refresh]);
 
+  const clearScope = () => {
+    previewRequest.current?.abort(); previewRequest.current = undefined;
+    setPreviewing(false); setPreview(undefined); setNotice(undefined); setConfig(initialConfig);
+    setLoaded(undefined); setSaved([]); setGeneration(null);
+  };
   const revise = (next: SandboxPipelineConfig) => {
     if (savePending.current) return;
     previewRequest.current?.abort(); previewRequest.current = undefined;
@@ -117,14 +133,17 @@ export default function SandboxPipelineBuilder() {
     try {
       const result = await previewSandboxPipeline(config, controller.signal);
       if (!controller.signal.aborted && result.versionId === config.versionId) setPreview(result);
-    } catch {
-      if (!controller.signal.aborted) setNotice({ text: 'Preview could not be verified for the selected configuration.', error: true });
+    } catch (failure) {
+      if (!controller.signal.aborted) {
+        if (loaded?.governanceEnabled && sandboxScopeDenied(failure)) { clearScope(); setLoadFailed(true); }
+        else setNotice({ text: 'Preview could not be verified for the selected configuration.', error: true });
+      }
     } finally {
       if (previewRequest.current === controller) { previewRequest.current = undefined; setPreviewing(false); }
     }
   };
   const saveRevision = async () => {
-    if (!valid || savePending.current || previewRequest.current) return;
+    if (!valid || !loaded?.canSave || savePending.current || previewRequest.current) return;
     savePending.current = true; setSaving(true); setNotice(undefined);
     try {
       const revision = await saveSandboxPipelineRevision(config, generation);
@@ -135,6 +154,7 @@ export default function SandboxPipelineBuilder() {
       }
     } catch (failure) {
       if (active.current) {
+        if (loaded?.governanceEnabled && sandboxScopeDenied(failure)) { clearScope(); setLoadFailed(true); return; }
         const status = (failure as { response?: { status?: number } })?.response?.status;
         setNotice({ text: status === 409 ? 'Another configuration revision was saved. Review history before saving again.'
           : 'Configuration save could not be confirmed. Review history before retrying.', error: true });
@@ -155,10 +175,13 @@ export default function SandboxPipelineBuilder() {
     [next[index], next[target]] = [next[target], next[index]];
     revise({ ...config, projection: next });
   };
-  const sourceListed = loaded?.versions.some(item => item.id === config.versionId);
-  const reviewed = saved.find(item => item.generation === generation && sameConfig(config, item.config));
+  const source = loaded?.versions.find(item => item.id === config.versionId);
+  const reviewed = loaded?.canSave ? saved.find(item => item.generation === generation && sameConfig(config, item.config)) : undefined;
+  const scopeKey = loaded?.governanceEnabled ? `governed:${[...loaded.allowedMarkings].sort().join(',')}` : undefined;
   return <section className="flow-sandbox-builder flow-foundry-workbench" aria-label="Sandbox Pipeline Builder">
-    <header><h1>Sandbox Pipeline Builder</h1><p>Transform a committed synthetic snapshot. Preview and save configuration only; no destination data is written.</p></header>
+    <header><h1>Sandbox Pipeline Builder</h1><p>Transform a committed synthetic snapshot. Preview and save configuration only; no destination data is written.</p>
+      {loaded?.governanceEnabled && <Button size="small" disabled={saving} onClick={() => { clearScope(); setRefresh(value => value + 1); }}>Refresh authorized scope</Button>}
+    </header>
     {loadFailed ? <div role="alert">Builder could not be loaded. <Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry builder</Button></div>
       : allowed === false ? <p>Sandbox Pipeline Builder is available to administrators only.</p>
         : !loaded ? <p role="status">Loading pipeline builder…</p>
@@ -169,11 +192,12 @@ export default function SandboxPipelineBuilder() {
           <select aria-label="Captured source version" value={config.versionId} disabled={saving || (!loaded.versions.length && !config.versionId)}
             onChange={event => revise({ ...config, versionId: event.target.value })}>
             <option value="">Select a captured version</option>
-            {config.versionId && !sourceListed && <option value={config.versionId}>Source pinned in a configuration revision</option>}
+            {config.versionId && !source && <option value={config.versionId}>Source pinned in a configuration revision</option>}
             {loaded.versions.map(version => <option key={version.id} value={version.id}>Checkpoint {version.appliedThrough} · {timeText(version.recordedAt)}</option>)}
           </select>
         </label>
         {config.versionId && <p>Source receipt: <code>{config.versionId}</code></p>}
+        <SandboxMarkings markings={source?.markings} label="Inherited source markings" />
         {!loaded.versions.length && <p>No captured source versions. Apply a reviewed sandbox CDC batch with capture enabled first.</p>}
       </section>
       <ArrowRightOutlined className="flow-sandbox-builder__arrow" aria-hidden="true" />
@@ -192,20 +216,32 @@ export default function SandboxPipelineBuilder() {
           <Button size="small" aria-label={`Move ${item} down`} disabled={saving || index === config.projection.length - 1} onClick={() => moveColumn(index, 1)}>↓</Button>
         </li>)}</ol>
         {!config.projection.length && <p>Select at least one output column.</p>}
+        {loaded.governanceEnabled && <label>Additional marking
+          <select aria-label="Additional marking" value={config.additionalMarking ?? ''} disabled={saving}
+            onChange={event => {
+              const { additionalMarking: _old, ...base } = config;
+              revise(event.target.value === 'sandbox-restricted' ? { ...base, additionalMarking: 'sandbox-restricted' } : base);
+            }}>
+            <option value="">No additional marking · retain inherited</option>
+            {loaded.allowedMarkings.includes('sandbox-restricted') && <option value="sandbox-restricted">Add sandbox-restricted</option>}
+          </select>
+        </label>}
+        {loaded.governanceEnabled && <p>Inherited source markings cannot be removed.</p>}
       </section>
       <ArrowRightOutlined className="flow-sandbox-builder__arrow" aria-hidden="true" />
       <section aria-label="Output preview"><header><span>03 · Output</span><h2>Output preview</h2></header>
         <p>Read-only preview of the reviewed source snapshot. No target is written.</p>
         <div className="flow-sandbox-builder__actions">
           <Button size="small" type="primary" disabled={!valid || saving} loading={previewing} onClick={runPreview}>Preview pipeline</Button>
-          <Button size="small" disabled={!valid || previewing} loading={saving} onClick={saveRevision}>Save configuration revision</Button>
+          <Button size="small" disabled={!valid || !loaded.canSave || previewing} loading={saving} onClick={saveRevision}>Save configuration revision</Button>
         </div>
+        {!loaded.canSave && <p>Saving and committing are unavailable under the current authorization.</p>}
         {notice && <p role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
         {preview && <><dl className="flow-sandbox-builder__counts">
           <div><dt>Input rows</dt><dd>{preview.inputRows}</dd></div>
           <div><dt>Matched rows</dt><dd>{preview.matchedRows}</dd></div>
           <div><dt>Sample rows</dt><dd>{preview.rows.length}</dd></div>
-        </dl><p>No data written.</p>
+        </dl><p>No data written.</p><SandboxMarkings markings={preview.markings} />
           {preview.rows.length ? <div className="flow-sandbox-builder__table"><table aria-label="Pipeline preview rows">
             <thead><tr>{preview.columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead>
             <tbody>{preview.rows.map((row, index) => <tr key={index}>{row.map((value, position) =>
@@ -219,10 +255,12 @@ export default function SandboxPipelineBuilder() {
       {saved.length ? <ol aria-label="Saved configuration revisions">{saved.map(item => <li key={item.generation}>
         <strong>Revision {item.generation}</strong><time dateTime={item.recordedAt}>{timeText(item.recordedAt)}</time>
         <span>Source receipt: <code>{item.config.versionId}</code></span>
+        <SandboxMarkings markings={item.markings} />
         <Button size="small" disabled={saving} onClick={() => revise(item.config)}>{`Load configuration revision ${item.generation}`}</Button>
       </li>)}</ol> : <p>No configuration revisions saved.</p>}
     </section>
-    <SandboxPipelineOutputs reviewed={saving ? undefined : reviewed} />
+    <SandboxPipelineOutputs key={scopeKey ?? 'legacy'} scopeKey={scopeKey} reviewed={saving ? undefined : reviewed}
+      onScopeDenied={loaded.governanceEnabled ? () => { clearScope(); setLoadFailed(true); } : undefined} />
     </>}
   </section>;
 }

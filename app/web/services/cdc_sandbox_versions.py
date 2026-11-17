@@ -13,7 +13,8 @@ from app.web.api.models.cdc_sandbox_versions import (
     CdcSandboxVersionRecord, CdcSandboxVersionRecordRow, CdcSandboxVersionRow, CdcSandboxVersionsPage,
 )
 from app.web.core.config import settings
-from app.web.services.cdc_sandbox import TARGET, _configured_marker
+from app.web.services.cdc_sandbox import TARGET, _configured_marker, _has_protected_checkpoint
+from app.web.services.synthetic_governance import allowed_level, markings, require_marking_access
 from app.web.services.transfer_runs import _require_index_range_plan
 
 MAX_VERSION_ROWS = 100
@@ -29,11 +30,12 @@ def _view(row: CdcSandboxVersionRow) -> CdcSandboxVersion:
     return CdcSandboxVersion(
         id=row.receipt_id, receiptId=row.receipt_id, generation=row.generation, appliedThrough=str(row.applied_through),
         rowsCaptured=row.rows_captured, bytesCaptured=row.bytes_captured, recordedAt=row.recorded_at,
+        markings=markings(row.marking_level),
     )
 
 
 async def capture_cdc_version(
-    session: AsyncSession, binding: CdcSandboxBindingRow, receipt: CdcSandboxReceiptRow,
+    session: AsyncSession, binding: CdcSandboxBindingRow, receipt: CdcSandboxReceiptRow, level: int | None,
 ) -> None:
     """Store a final target snapshot under the apply transaction's already-held target write lock."""
     index = await session.scalar(text("""
@@ -64,44 +66,48 @@ async def capture_cdc_version(
     session.add(CdcSandboxVersionRow(
         receipt_id=receipt.id, stream_marker=binding.stream_marker, physical_digest=binding.physical_digest,
         generation=binding.generation, applied_through=receipt.applied_through, rows_captured=len(rows),
-        bytes_captured=size, recorded_at=receipt.recorded_at,
+        bytes_captured=size, recorded_at=receipt.recorded_at, marking_level=level,
     ))
     await session.flush()
     session.add_all([CdcSandboxVersionRecordRow(version_id=receipt.id, entity_id=row.id, value=row.value) for row in rows])
 
 
-async def _scope(session: AsyncSession) -> tuple[bool, CdcSandboxBindingRow | None]:
+async def _scope(session: AsyncSession, limit: int | None) -> tuple[bool, CdcSandboxBindingRow | None]:
     marker = _versions_marker()
-    if marker is None:
+    if marker is None or limit == 0:
         return False, None
     binding = await session.get(CdcSandboxBindingRow, True)
-    if binding is not None and binding.stream_marker != marker:
+    if binding is not None and (binding.stream_marker != marker or
+                                (limit is None and await _has_protected_checkpoint(session, binding))):
         return False, None
     # An old version is historical evidence for the exact reviewed scope.
     # Neither its rows nor its existence come from the current target catalog.
     return True, binding
 
 
-def _scoped_query(binding: CdcSandboxBindingRow):
+def _scoped_query(binding: CdcSandboxBindingRow, limit: int | None):
     return select(CdcSandboxVersionRow).where(
         CdcSandboxVersionRow.stream_marker == binding.stream_marker,
         CdcSandboxVersionRow.physical_digest == binding.physical_digest,
+        allowed_level(CdcSandboxVersionRow.marking_level, limit),
     )
 
 
-async def list_cdc_versions(session: AsyncSession) -> CdcSandboxVersionsPage:
+async def list_cdc_versions(session: AsyncSession, limit: int | None) -> CdcSandboxVersionsPage:
     """List recent stored versions independently of the current target's contents."""
-    available, binding = await _scope(session)
+    available, binding = await _scope(session, limit)
     if binding is None:
         return CdcSandboxVersionsPage(available=available, versions=[])
-    rows = (await session.scalars(_scoped_query(binding).order_by(
+    rows = (await session.scalars(_scoped_query(binding, limit).order_by(
         CdcSandboxVersionRow.recorded_at.desc(), CdcSandboxVersionRow.receipt_id.desc(),
     ).limit(_HISTORY_LIMIT))).all()
     return CdcSandboxVersionsPage(available=available, versions=[_view(row) for row in rows])
 
 
-async def _version(session: AsyncSession, binding: CdcSandboxBindingRow | None, identity: UUID) -> CdcSandboxVersionRow:
-    row = (await session.scalar(_scoped_query(binding).where(
+async def _version(
+    session: AsyncSession, binding: CdcSandboxBindingRow | None, identity: UUID, limit: int | None,
+) -> CdcSandboxVersionRow:
+    row = (await session.scalar(_scoped_query(binding, limit).where(
         CdcSandboxVersionRow.receipt_id == identity,
     ))) if binding else None
     if row is None:
@@ -109,8 +115,9 @@ async def _version(session: AsyncSession, binding: CdcSandboxBindingRow | None, 
     return row
 
 
-async def _history_binding(session: AsyncSession) -> CdcSandboxBindingRow | None:
-    available, binding = await _scope(session)
+async def _history_binding(session: AsyncSession, limit: int | None) -> CdcSandboxBindingRow | None:
+    require_marking_access(limit)
+    available, binding = await _scope(session, limit)
     if not available:
         raise HTTPException(403, "Synthetic version history is not available for this local scope")
     return binding
@@ -134,9 +141,9 @@ async def _read_records(session: AsyncSession, version: CdcSandboxVersionRow) ->
     return {row.entity_id: row.value for row in rows}
 
 
-async def read_cdc_version(session: AsyncSession, identity: UUID) -> CdcSandboxVersionDetail:
+async def read_cdc_version(session: AsyncSession, identity: UUID, limit: int | None) -> CdcSandboxVersionDetail:
     """Read an exact stored snapshot; never substitute live rows for a missing version."""
-    row = await _version(session, await _history_binding(session), identity)
+    row = await _version(session, await _history_binding(session, limit), identity, limit)
     values = await _read_records(session, row)
     return CdcSandboxVersionDetail(
         **_view(row).model_dump(),
@@ -144,13 +151,17 @@ async def read_cdc_version(session: AsyncSession, identity: UUID) -> CdcSandboxV
     )
 
 
-async def compare_cdc_versions(session: AsyncSession, before_id: UUID, after_id: UUID) -> CdcSandboxComparison:
+async def compare_cdc_versions(
+    session: AsyncSession, before_id: UUID, after_id: UUID, limit: int | None,
+) -> CdcSandboxComparison:
     """Compute exact, bounded insert/update/delete evidence from two captured versions."""
-    binding = await _history_binding(session)
+    binding = await _history_binding(session, limit)
     if before_id == after_id:
         raise HTTPException(422, "Choose two distinct stored versions to compare")
-    before = await _read_records(session, await _version(session, binding, before_id))
-    after = await _read_records(session, await _version(session, binding, after_id))
+    before_version = await _version(session, binding, before_id, limit)
+    after_version = await _version(session, binding, after_id, limit)
+    before = await _read_records(session, before_version)
+    after = await _read_records(session, after_version)
     changes = []
     for key in sorted(before.keys() | after.keys()):
         previous, current = before.get(key), after.get(key)
@@ -158,4 +169,5 @@ async def compare_cdc_versions(session: AsyncSession, before_id: UUID, after_id:
             continue
         kind = "inserted" if previous is None else "deleted" if current is None else "updated"
         changes.append(CdcSandboxVersionChange(id=str(key), kind=kind, before=previous, after=current))
-    return CdcSandboxComparison(fromVersionId=before_id, toVersionId=after_id, changes=changes)
+    return CdcSandboxComparison(fromVersionId=before_id, toVersionId=after_id, changes=changes,
+                                markings=markings(before_version.marking_level))

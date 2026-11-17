@@ -5,9 +5,11 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as ApiField, field_validator, model_validator
-from sqlalchemy import CheckConstraint, Column, DateTime, Index
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, SmallInteger
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
+
+from app.web.api.models.synthetic_governance import SandboxMarking, SyntheticMarked
 
 BuilderColumn = Literal["id", "value"]
 
@@ -53,6 +55,9 @@ class PipelineSandboxConfig(BaseModel):
     versionId: UUID
     filters: list[PipelineFilter] = ApiField(max_length=3)
     projection: list[BuilderColumn] = ApiField(min_length=1, max_length=2)
+    additionalMarking: Literal["sandbox-restricted"] | None = ApiField(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def canonical_shape(self):
@@ -76,9 +81,12 @@ class PipelineSandboxSave(BaseModel):
 class PipelineSandboxStatus(BaseModel):
     available: bool
     latestGeneration: int | None
+    governanceEnabled: Literal[True] | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    allowedMarkings: list[SandboxMarking] | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    canSave: bool | None = ApiField(default=None, exclude_if=lambda value: value is None)
 
 
-class PipelineSandboxPreview(BaseModel):
+class PipelineSandboxPreview(SyntheticMarked):
     versionId: UUID
     configHash: str
     inputRows: int
@@ -87,7 +95,7 @@ class PipelineSandboxPreview(BaseModel):
     rows: list[list[str]]
 
 
-class PipelineSandboxRevision(BaseModel):
+class PipelineSandboxRevision(SyntheticMarked):
     generation: int
     configHash: str
     config: PipelineSandboxConfig
@@ -101,6 +109,9 @@ class PipelineSandboxRevisionRow(SQLModel, table=True):
                         "AND jsonb_typeof(config) = 'object' AND config ? 'versionId' "
                         "AND config->>'versionId' = input_version_id::text",
                         name="ck_ontology_pipeline_sandbox_revision"),
+        CheckConstraint("(marking_level = 1 AND NOT config ? 'additionalMarking') OR "
+                        "(marking_level = 2 AND (config->>'additionalMarking' = 'sandbox-restricted') IS TRUE)",
+                        name="ck_ontology_builder_revision_marking"),
         Index("ix_ontology_pipeline_sandbox_history", "stream_marker", "physical_digest", "generation"),
     )
 
@@ -109,6 +120,7 @@ class PipelineSandboxRevisionRow(SQLModel, table=True):
     physical_digest: str = Field(max_length=64)
     input_version_id: UUID = Field(foreign_key="ontology_cdc_sandbox_versions.receipt_id")
     config_hash: str = Field(max_length=64)
+    marking_level: int | None = Field(default=None, sa_column=Column(SmallInteger))
     config: dict = Field(sa_column=Column(JSONB, nullable=False))
     recorded_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     saved_by: UUID

@@ -19,7 +19,8 @@ from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReview
 from app.web.api.models.pipeline_sandbox import PipelineSandboxConfig, PipelineSandboxSave
 from app.web.api.models.pipeline_sandbox_outputs import PipelineSandboxCommit
 from app.web.core.config import settings
-from app.web.tests.test_transfer_plans import api
+from app.web.services.etl_layers import EtlLayers
+from app.web.tests.test_transfer_plans import TEST_ACTOR, api
 
 _URL = os.getenv("ONTOLOGY_CDC_SANDBOX_TEST_URL")
 _DB = "ontology_cdc_regression"
@@ -124,6 +125,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
         migrations = [import_module("app.web.alembic.versions." + name) for name in (
             "984b2ef31a6c_ontology_cdc_sandbox", "31d9685bf24a_ontology_cdc_sandbox_versions",
             "f5b873c94d20_ontology_pipeline_sandbox", "b46891e47c52_ontology_pipeline_sandbox_outputs",
+            "8d659760c2b4_ontology_synthetic_markings",
         )]
 
         def upgrade(sync):
@@ -593,3 +595,151 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.post(_OUTPUTS, json=request)).json(), prior)
                 self.assertEqual((await client.get(f"{_OUTPUTS}/{prior['id']}")).json()["rows"], [["1", "captured"]])
                 self.assertEqual((await client.get(_ROUTE+"/runs")).json(), [source.json()])
+
+    async def test_governance_propagates_and_denies_before_access_then_stays_protected_on_disable(self):
+        base, restricted = "sandbox-synthetic", "sandbox-restricted"
+        versions = _ROUTE + "/versions"
+        review_path = _BUILDER + "/revisions"
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base, restricted]}),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    await self.produce(session, 1, "legacy")
+                legacy_request = payload(0)
+                legacy = (await client.post(_ROUTE + "/runs", json=legacy_request)).json()
+                self.assertNotIn("markings", legacy)
+                legacy_config = {"versionId": legacy["id"], "filters": [], "projection": ["id", "value"]}
+                saved = await client.post(review_path, json={"expectedGeneration": None, "config": legacy_config})
+                self.assertEqual(saved.status_code, 201, saved.text)
+
+                with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED", True):
+                    async with self.pg.session() as session:
+                        await self.produce(session, 1, "governed")
+                    request = payload(1)
+                    applied = await client.post(_ROUTE + "/runs", json=request)
+                    self.assertEqual(applied.status_code, 200, applied.text)
+                    version = applied.json()
+                    self.assertEqual(version["markings"], [base])
+                    self.assertEqual((await client.get(_ROUTE + "/runs")).json(), [version])
+                    self.assertEqual((await client.post(_ROUTE + "/runs", json=legacy_request)).status_code, 404)
+                    self.assertEqual((await client.get(f"{versions}/{legacy['id']}")).status_code, 404)
+                    self.assertEqual((await client.get(f"{versions}/{version['id']}")).json()["markings"], [base])
+                    with patch("app.web.services.cdc_sandbox_versions._read_records",
+                               side_effect=AssertionError("read before both operands were authorized")) as read:
+                        rejected = await client.get(versions + "/compare", params={
+                            "fromVersionId": version["id"], "toVersionId": legacy["id"],
+                        })
+                        self.assertEqual(rejected.status_code, 404, rejected.text)
+                        read.assert_not_called()
+                    config = {**legacy_config, "versionId": version["id"], "additionalMarking": restricted}
+                    preview = await client.post(_BUILDER + "/preview", json=config)
+                    self.assertEqual(preview.status_code, 200, preview.text)
+                    self.assertEqual(preview.json()["markings"], [base, restricted])
+                    review = await client.post(review_path, json={"expectedGeneration": None, "config": config})
+                    self.assertEqual(review.status_code, 201, review.text)
+                    saved = review.json()
+                    self.assertEqual(saved["generation"], 2)
+                    self.assertEqual(saved["configHash"], preview.json()["configHash"])
+                    self.assertEqual(saved["markings"], [base, restricted])
+                    commit = {"requestId": str(uuid4()), "expectedGeneration": 2,
+                              "expectedConfigHash": saved["configHash"]}
+                    committed = await client.post(_OUTPUTS, json=commit)
+                    self.assertEqual(committed.status_code, 201, committed.text)
+                    out = committed.json()
+                    self.assertEqual(out["markings"], [base, restricted])
+                    self.assertEqual((await client.post(_OUTPUTS, json=commit)).json(), out)
+                    self.assertEqual((await client.get(f"{_OUTPUTS}/{out['id']}")).json()["rows"], [["1", "governed"]])
+
+                    with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base]}):
+                        head = (await client.get(_BUILDER)).json()
+                        self.assertFalse(head["canSave"])
+                        self.assertIsNone(head["latestGeneration"])
+                        self.assertEqual((await client.get(review_path)).json(), [])
+                        self.assertEqual((await client.get(review_path + "/2")).status_code, 404)
+                        self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
+                        with patch("app.web.services.pipeline_sandbox_outputs._stored_rows",
+                                   side_effect=AssertionError("read an unauthorized output")) as read:
+                            self.assertEqual((await client.get(f"{_OUTPUTS}/{out['id']}")).status_code, 404)
+                            denied = await client.post(_OUTPUTS, json=commit)
+                            missing = await client.post(_OUTPUTS, json={**commit, "requestId": str(uuid4())})
+                            self.assertEqual((denied.status_code, denied.json()), (missing.status_code, missing.json()))
+                            read.assert_not_called()
+                        self.assertEqual((await client.post(_BUILDER + "/preview", json=config)).status_code, 403)
+                        base_config = {key: value for key, value in config.items() if key != "additionalMarking"}
+                        self.assertEqual((await client.post(_BUILDER + "/preview", json=base_config)).json()["markings"],
+                                         [base])
+                        self.assertEqual((await client.post(review_path, json={
+                            "expectedGeneration": None, "config": base_config,
+                        })).status_code, 403)
+
+                    with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {}):
+                        status = (await client.get(_ROUTE)).json()
+                        self.assertFalse(status["available"])
+                        self.assertIsNone(status["generation"])
+                        self.assertIsNone(status["sourceHighWater"])
+                        self.assertEqual((await client.get(_ROUTE + "/runs")).status_code, 403)
+                        self.assertEqual((await client.post(_ROUTE + "/runs", json=request)).status_code, 403)
+
+                    # Tamper only the isolated fixture: a downgraded output header cannot match its immutable review.
+                    await self.pg.execute("UPDATE ontology_pipeline_sandbox_outputs SET marking_level=1")
+                    self.assertEqual((await client.get(f"{_OUTPUTS}/{out['id']}")).status_code, 404)
+                    self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
+
+                # Turning off policy cannot create a new unmarked copy of previously classified target data.
+                async with self.pg.session() as session:
+                    await self.produce(session, 1, "unapplied")
+                status = (await client.get(_ROUTE)).json()
+                self.assertFalse(status["available"])
+                self.assertIsNone(status["sourceHighWater"])
+                self.assertEqual((await client.get(_ROUTE + "/runs")).json(), [])
+                self.assertEqual((await client.post(_ROUTE + "/runs", json=request)).status_code, 403)
+                self.assertEqual((await client.post(_ROUTE + "/runs", json=payload(2))).status_code, 403)
+                self.assertEqual((await client.get(versions)).json(), {"available": False, "versions": []})
+                self.assertFalse((await client.get(_OUTPUTS)).json()["available"])
+                self.assertEqual((await self.pg.fetch_one(
+                    "SELECT value FROM ts_cdc_sandbox.target_rows WHERE id=1",
+                ))["value"], "governed")
+
+    async def test_cdc_mismatched_receipt_scope_is_never_treated_as_versionless(self):
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    await self.produce(session, 1, "archive")
+                request = payload(0)
+                self.assertEqual((await client.post(_ROUTE + "/runs", json=request)).status_code, 200)
+                await self.pg.execute(
+                    "UPDATE ontology_cdc_sandbox_versions SET marking_level=1, physical_digest=repeat('a',64)",
+                )
+                self.assertEqual((await client.get(_ROUTE + "/runs")).json(), [])
+                self.assertEqual((await client.post(_ROUTE + "/runs", json=request)).status_code, 404)
+
+    async def test_no_generic_cdc_schema_or_raw_sql_fixture_bypass(self):
+        layers = EtlLayers()
+        layers._pg = self.pg
+        with patch("app.web.api.routes.etl.get_etl_layers", return_value=layers):
+            async with api(True, self.sessions) as client:
+                for schema in ("ts_cdc_sandbox", "cdc_sandbox"):
+                    root = f"/etl/{schema}"
+                    for endpoint in (root + "/tables", root + "/target_rows/data", root + "/target_rows/preview",
+                                     root + "/target_rows/columns"):
+                        self.assertEqual((await client.get(endpoint)).status_code, 404, endpoint)
+                    self.assertEqual((await client.post(root + "/target_rows/preview-rows", json={})).status_code, 404)
+                response = await client.post("/etl/query", json={"sql": "SELECT * FROM ts_cdc_sandbox.target_rows"})
+                self.assertEqual(response.status_code, 403, response.text)
+                response = await client.get("/etl/layers")
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertNotIn("ts_cdc_sandbox", [layer["schemaName"] for layer in response.json()])

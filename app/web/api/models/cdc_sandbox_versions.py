@@ -5,11 +5,13 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, Text
+from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, SmallInteger, Text
 from sqlmodel import Field, SQLModel
 
+from app.web.api.models.synthetic_governance import SyntheticMarked
 
-class CdcSandboxVersion(BaseModel):
+
+class CdcSandboxVersion(SyntheticMarked):
     id: UUID
     receiptId: UUID
     generation: int
@@ -40,7 +42,7 @@ class CdcSandboxVersionChange(BaseModel):
     after: str | None
 
 
-class CdcSandboxComparison(BaseModel):
+class CdcSandboxComparison(SyntheticMarked):
     fromVersionId: UUID
     toVersionId: UUID
     changes: list[CdcSandboxVersionChange]
@@ -52,6 +54,7 @@ class CdcSandboxVersionRow(SQLModel, table=True):
         CheckConstraint("generation = 1 AND applied_through > 0 AND rows_captured BETWEEN 1 AND 100 "
                         "AND bytes_captured BETWEEN rows_captured * 8 AND 65536",
                         name="ck_ontology_cdc_sandbox_version_bounds"),
+        CheckConstraint("marking_level = 1", name="ck_ontology_cdc_version_marking"),
         Index("ix_ontology_cdc_sandbox_versions_scope", "stream_marker", "physical_digest", "recorded_at", "receipt_id"),
     )
 
@@ -61,6 +64,7 @@ class CdcSandboxVersionRow(SQLModel, table=True):
     generation: int
     applied_through: int = Field(sa_column=Column(BigInteger, nullable=False))
     rows_captured: int
+    marking_level: int | None = Field(default=None, sa_column=Column(SmallInteger))
     bytes_captured: int
     recorded_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
 

@@ -22,6 +22,7 @@ from app.etl.schema.object_relations import (
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
 from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
+from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
 _OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
@@ -29,9 +30,9 @@ _OBJECT_GROUP_SQL = "COALESCE(o.resource_group, 'other')"
 _OBJECT_METADATA_JOIN = """LEFT JOIN public.ontology_objects o
     ON o.schema_name = n.nspname AND o.table_name = c.relname AND o.is_active"""
 _OBJECT_DESCRIPTION_SQL = "COALESCE(NULLIF(obj_description(c.oid, 'pg_class'), ''), o.description, '')"
-_OBJECT_TABLE_SQL = """n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
-    AND n.nspname <> 'ts_meta_hist'
-    AND c.relname ~ '^[a-z_][a-z0-9_]{0,62}$' AND c.relkind IN ('r','p')
+_OBJECT_TABLE_SQL = f"""n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
+    AND n.nspname <> 'ts_meta_hist' AND n.nspname <> '{PROTECTED_SYNTHETIC_SCHEMA}'
+    AND c.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$' AND c.relkind IN ('r','p')
     AND NOT c.relispartition
     AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
 _TRANSFER_ENDPOINT_WHERE = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.visibility, 'normal') <> 'hidden' AND (
@@ -98,6 +99,8 @@ def resolve_schema(layer: str, table_role: str = "current") -> str:
         raise HTTPException(400, "Unsupported table role")
     schema = layer if layer.startswith("ts_") else f"ts_{layer}"
     quote_identifier(schema)
+    if schema == PROTECTED_SYNTHETIC_SCHEMA:
+        raise HTTPException(404, "Schema not found")
     if table_role == "history" and not schema.endswith("_hist"):
         schema += "_hist"
     quote_identifier(schema)
@@ -158,9 +161,9 @@ class EtlLayers:
                 FROM pg_namespace n LEFT JOIN pg_class c
                   ON c.relnamespace = n.oid AND c.relkind IN ('r','p')
                      AND NOT c.relispartition
-                WHERE n.nspname LIKE 'ts\_%' ESCAPE '\'
+                WHERE n.nspname LIKE 'ts\_%' ESCAPE '\' AND n.nspname <> :restricted
                 GROUP BY n.oid, n.nspname ORDER BY n.nspname
-            """))
+            """), {"restricted": PROTECTED_SYNTHETIC_SCHEMA})
             found = {row["schema"]: dict(row) for row in result.mappings()}
         schemas = list(dict.fromkeys([*(f"ts_{layer}" for layer in LAYERS), *found]))
         return [{
@@ -337,9 +340,9 @@ class EtlLayers:
                 WHERE con.contype = 'f' AND con.conparentid = 0
                   AND (sc.oid = CAST(:oid AS oid) OR tc.oid = CAST(:oid AS oid))
                   AND sn.nspname ~ '^ts_[a-z0-9_]+$' AND sn.nspname <> 'ts_meta'
-                  AND sn.nspname <> 'ts_meta_hist'
+                  AND sn.nspname <> 'ts_meta_hist' AND sn.nspname <> :restricted
                   AND tn.nspname ~ '^ts_[a-z0-9_]+$' AND tn.nspname <> 'ts_meta'
-                  AND tn.nspname <> 'ts_meta_hist'
+                  AND tn.nspname <> 'ts_meta_hist' AND tn.nspname <> :restricted
                   AND sc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
                   AND tc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
                   AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
@@ -347,7 +350,7 @@ class EtlLayers:
                   AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = sc.oid)
                   AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = tc.oid)
                 ORDER BY sn.nspname, sc.relname, con.conname, con.oid
-            """), {"oid": row["oid"]})
+            """), {"oid": row["oid"], "restricted": PROTECTED_SYNTHETIC_SCHEMA})
             foreign_keys = [dict(item) for item in result.mappings()]
             try:
                 logical = await read_object_relations(session, schema, table)
@@ -389,7 +392,7 @@ class EtlLayers:
                 ("relationships", merge_object_relations(foreign_keys, logical))):
             for relation in relations:
                 if any(not relation[f"{side}_schema"].startswith("ts_") or
-                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist"}
+                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA}
                        for side in ("source", "target")):
                     continue
                 for direction, side, peer in (("outgoing", "source", "target"), ("incoming", "target", "source")):
@@ -694,6 +697,20 @@ class EtlLayers:
             raise HTTPException(400, "Only a single read-only SELECT query is supported")
         started = perf_counter()
         async with self.session() as session:
+            # Raw SQL is not a relation sandbox: views and database functions can hide references.
+            # Leave the ordinary environment unchanged unless this isolated fixture exists or history is protected.
+            fixture, marked_history_column = (await session.execute(text("""
+                SELECT pg_catalog.to_regnamespace(:fixture) IS NOT NULL,
+                       EXISTS (
+                           SELECT 1 FROM pg_catalog.pg_attribute
+                           WHERE attrelid = pg_catalog.to_regclass('public.ontology_cdc_sandbox_versions')
+                             AND attname = 'marking_level' AND attnum > 0 AND NOT attisdropped
+                       )
+            """), {"fixture": PROTECTED_SYNTHETIC_SCHEMA})).one()
+            if fixture or (marked_history_column and await session.scalar(text("""
+                SELECT EXISTS (SELECT 1 FROM public.ontology_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
+            """))):
+                raise HTTPException(403, "Free-form SQL is unavailable in the protected synthetic workspace")
             result = await session.execute(text(f"SELECT * FROM ({sql}) AS flow_query LIMIT 500".replace(":", r"\:")))
             columns = list(result.keys())
             rows = [dict(row) for row in result.mappings()]

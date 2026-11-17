@@ -85,6 +85,7 @@ from app.web.services.table_exports import (
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
     review_table_export, run_table_export, table_export_capabilities,
 )
+from app.web.services.synthetic_governance import marking_limit
 from app.web.services.transfer_timeline import list_transfer_timeline, read_transfer_timeline_entry
 from app.web.services.transfer_upstream import (
     change_upstream_trigger, list_upstream_candidates, list_upstream_jobs, list_upstream_triggers, read_upstream_trigger,
@@ -120,8 +121,8 @@ async def post_local_index_preview(
 
 
 @write.get("/cdc-sandbox")
-async def get_local_cdc_sandbox(session: SessionDep) -> CdcSandboxStatus:
-    return await read_cdc_sandbox(session)
+async def get_local_cdc_sandbox(session: SessionDep, current_user: CurrentActiveSuperuser) -> CdcSandboxStatus:
+    return await read_cdc_sandbox(session, current_user.id)
 
 
 @write.put("/cdc-sandbox")
@@ -132,8 +133,8 @@ async def put_local_cdc_sandbox(
 
 
 @write.get("/cdc-sandbox/runs")
-async def get_local_cdc_receipts(session: SessionDep) -> list[CdcSandboxReceipt]:
-    return await list_cdc_sandbox_receipts(session)
+async def get_local_cdc_receipts(session: SessionDep, current_user: CurrentActiveSuperuser) -> list[CdcSandboxReceipt]:
+    return await list_cdc_sandbox_receipts(session, current_user.id)
 
 
 @write.post("/cdc-sandbox/runs")
@@ -144,35 +145,37 @@ async def post_local_cdc_apply(
 
 
 @write.get("/cdc-sandbox/versions")
-async def get_local_cdc_versions(session: SessionDep) -> CdcSandboxVersionsPage:
-    return await list_cdc_versions(session)
+async def get_local_cdc_versions(session: SessionDep, current_user: CurrentActiveSuperuser) -> CdcSandboxVersionsPage:
+    return await list_cdc_versions(session, marking_limit(current_user.id))
 
 
 @write.get("/cdc-sandbox/versions/compare")
 async def get_local_cdc_comparison(
-    fromVersionId: UUID, toVersionId: UUID, session: SessionDep,
+    fromVersionId: UUID, toVersionId: UUID, session: SessionDep, current_user: CurrentActiveSuperuser,
 ) -> CdcSandboxComparison:
-    return await compare_cdc_versions(session, fromVersionId, toVersionId)
+    return await compare_cdc_versions(session, fromVersionId, toVersionId, marking_limit(current_user.id))
 
 
 @write.get("/cdc-sandbox/versions/{version_id}")
-async def get_local_cdc_version(version_id: UUID, session: SessionDep) -> CdcSandboxVersionDetail:
-    return await read_cdc_version(session, version_id)
+async def get_local_cdc_version(version_id: UUID, session: SessionDep, current_user: CurrentActiveSuperuser) -> CdcSandboxVersionDetail:
+    return await read_cdc_version(session, version_id, marking_limit(current_user.id))
 
 
 @write.get("/pipeline-sandbox")
-async def get_local_pipeline_sandbox(session: SessionDep) -> PipelineSandboxStatus:
-    return await read_pipeline_sandbox(session)
+async def get_local_pipeline_sandbox(session: SessionDep, current_user: CurrentActiveSuperuser) -> PipelineSandboxStatus:
+    return await read_pipeline_sandbox(session, current_user.id)
 
 
 @write.post("/pipeline-sandbox/preview")
-async def post_local_pipeline_preview(payload: PipelineSandboxConfig, session: SessionDep) -> PipelineSandboxPreview:
-    return await preview_pipeline_sandbox(session, payload)
+async def post_local_pipeline_preview(
+    payload: PipelineSandboxConfig, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> PipelineSandboxPreview:
+    return await preview_pipeline_sandbox(session, payload, current_user.id)
 
 
 @write.get("/pipeline-sandbox/revisions")
-async def get_local_pipeline_revisions(session: SessionDep) -> list[PipelineSandboxRevision]:
-    return await list_pipeline_revisions(session)
+async def get_local_pipeline_revisions(session: SessionDep, current_user: CurrentActiveSuperuser) -> list[PipelineSandboxRevision]:
+    return await list_pipeline_revisions(session, current_user.id)
 
 
 @write.post("/pipeline-sandbox/revisions", status_code=201)
@@ -184,14 +187,14 @@ async def post_local_pipeline_revision(
 
 @write.get("/pipeline-sandbox/revisions/{generation}")
 async def get_local_pipeline_revision(
-    session: SessionDep, generation: int = Path(ge=1, le=2147483647),
+    session: SessionDep, current_user: CurrentActiveSuperuser, generation: int = Path(ge=1, le=2147483647),
 ) -> PipelineSandboxRevision:
-    return await read_pipeline_revision(session, generation)
+    return await read_pipeline_revision(session, generation, current_user.id)
 
 
 @write.get("/pipeline-sandbox/outputs")
-async def get_local_pipeline_outputs(session: SessionDep) -> PipelineSandboxOutputsPage:
-    return await list_pipeline_outputs(session)
+async def get_local_pipeline_outputs(session: SessionDep, current_user: CurrentActiveSuperuser) -> PipelineSandboxOutputsPage:
+    return await list_pipeline_outputs(session, current_user.id)
 
 
 @write.post("/pipeline-sandbox/outputs", status_code=201)
@@ -202,8 +205,10 @@ async def post_local_pipeline_output(
 
 
 @write.get("/pipeline-sandbox/outputs/{output_id}")
-async def get_local_pipeline_output(output_id: UUID, session: SessionDep) -> PipelineSandboxOutputDetail:
-    return await read_pipeline_output(session, output_id)
+async def get_local_pipeline_output(
+    output_id: UUID, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> PipelineSandboxOutputDetail:
+    return await read_pipeline_output(session, output_id, current_user.id)
 
 
 @write.get("/asset-freshness/{schema}/{table}/candidates")

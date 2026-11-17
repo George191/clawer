@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     ONTOLOGY_SANDBOX_PIPELINE_ENABLED: bool = False
     ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED: bool = False
     ONTOLOGY_INDEX_PREVIEW_SANDBOX_ENABLED: bool = False
+    ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED: bool = False
+    ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS: dict[UUID, list[Literal["sandbox-synthetic", "sandbox-restricted"]]] = {}
     CDC_SANDBOX_STREAM_MARKER: UUID | None = None
     BATCH_SYNC_SANDBOX_ENABLED: bool = False
     BATCH_SYNC_SANDBOX_SCHEDULER_ENABLED: bool = False

@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, UUID4, field_validator
 from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index
 from sqlmodel import Field as DbField, SQLModel
+from app.web.api.models.synthetic_governance import SyntheticMarked
 
 
 class CdcSandboxReview(BaseModel):
@@ -40,7 +41,7 @@ class CdcSandboxStatus(BaseModel):
     maxBytes: int
 
 
-class CdcSandboxReceipt(BaseModel):
+class CdcSandboxReceipt(SyntheticMarked):
     id: UUID
     requestId: UUID
     generation: int

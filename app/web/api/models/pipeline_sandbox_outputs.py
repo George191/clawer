@@ -4,10 +4,11 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field as ApiField, UUID4
-from sqlalchemy import ARRAY, CheckConstraint, Column, DateTime, Index, Text
+from sqlalchemy import ARRAY, CheckConstraint, Column, DateTime, Index, SmallInteger, Text
 from sqlmodel import Field, SQLModel
 
 from app.web.api.models.pipeline_sandbox import BuilderColumn
+from app.web.api.models.synthetic_governance import SyntheticMarked
 
 
 class PipelineSandboxCommit(BaseModel):
@@ -18,7 +19,7 @@ class PipelineSandboxCommit(BaseModel):
     expectedConfigHash: str = ApiField(pattern=r"^[0-9a-f]{64}$")
 
 
-class PipelineSandboxOutput(BaseModel):
+class PipelineSandboxOutput(SyntheticMarked):
     id: UUID
     requestId: UUID
     reviewedGeneration: int
@@ -53,6 +54,7 @@ class PipelineSandboxOutputRow(SQLModel, table=True):
                         "AND columns <@ ARRAY['id','value']::text[] "
                         "AND (cardinality(columns) = 1 OR columns[1] <> columns[2])",
                         name="ck_ontology_pipeline_sandbox_output_projection"),
+        CheckConstraint("marking_level IN (1, 2)", name="ck_ontology_builder_output_marking"),
         Index("ix_ontology_pipeline_sandbox_outputs_scope", "stream_marker", "physical_digest", "recorded_at", "id"),
     )
 
@@ -61,6 +63,7 @@ class PipelineSandboxOutputRow(SQLModel, table=True):
     reviewed_generation: int = Field(foreign_key="ontology_pipeline_sandbox_revisions.generation")
     config_hash: str = Field(max_length=64)
     result_hash: str = Field(max_length=64)
+    marking_level: int | None = Field(default=None, sa_column=Column(SmallInteger))
     input_version_id: UUID = Field(foreign_key="ontology_cdc_sandbox_versions.receipt_id")
     stream_marker: UUID
     physical_digest: str = Field(max_length=64)

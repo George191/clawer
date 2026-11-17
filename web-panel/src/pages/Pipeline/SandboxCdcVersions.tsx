@@ -3,6 +3,7 @@ import { Button, Modal } from '@/components/ui';
 import { compareSandboxCdcVersions, fetchSandboxCdcVersion, fetchSandboxCdcVersions } from '../../services/api';
 import type { SandboxCdcVersion, SandboxCdcVersionComparison, SandboxCdcVersionDetail, SandboxCdcVersionList } from '../../services/api';
 import { getSessionState } from '../../services/session';
+import { SandboxMarkings, sandboxScopeDenied } from './SandboxMarkings';
 
 const changeLabels: Record<SandboxCdcVersionComparison['changes'][number]['kind'], string> = {
   inserted: 'Inserted', updated: 'Updated', deleted: 'Deleted',
@@ -19,20 +20,21 @@ function VersionFacts({ version }: { version: SandboxCdcVersion }) {
     <span>Receipt ID: <code>{version.receiptId}</code></span>
     <span>Recorded at: <time dateTime={version.recordedAt}>{dateText(version.recordedAt)}</time></span>
     <span>{version.rowsCaptured.toLocaleString()} captured rows · {version.bytesCaptured.toLocaleString()} bytes</span>
+    <SandboxMarkings markings={version.markings} />
   </>;
 }
 
-export default function SandboxCdcVersions({ revision }: { revision: number }) {
+export default function SandboxCdcVersions({ revision, onScopeDenied }: { revision: number; onScopeDenied?: () => void }) {
   const [open, setOpen] = useState(false);
   return <section className="ontology-cdc-versions" aria-label="CDC dataset versions">
     <header><div><h4>CDC dataset versions</h4><p>Up to 25 recent read-only snapshots captured with committed synthetic target receipts. These are not live table reads.</p></div>
       <Button size="small" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? 'Close version history' : 'Open version history'}</Button>
     </header>
-    {open && <VersionWorkspace key={revision} />}
+    {open && <VersionWorkspace key={revision} onScopeDenied={onScopeDenied} />}
   </section>;
 }
 
-function VersionWorkspace() {
+function VersionWorkspace({ onScopeDenied }: { onScopeDenied?: () => void }) {
   const identity = useRef(getSessionState().identity).current;
   const [list, setList] = useState<SandboxCdcVersionList>();
   const [listFailed, setListFailed] = useState(false);
@@ -50,6 +52,12 @@ function VersionWorkspace() {
     const session = getSessionState();
     return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
   };
+  const invalidate = () => {
+    compareRequest.current?.abort(); compareRequest.current = undefined;
+    setList(undefined); setListFailed(true); setInspecting(undefined); setDetail(undefined);
+    setFrom(''); setTo(''); setComparison(undefined); setComparing(false);
+    onScopeDenied?.();
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,7 +73,11 @@ function VersionWorkspace() {
     void fetchSandboxCdcVersion(inspecting.id, controller.signal).then(value => {
       if (!live(controller.signal)) return;
       if (value.id === inspecting.id) setDetail(value); else setDetailFailed(true);
-    }).catch(() => { if (live(controller.signal)) setDetailFailed(true); });
+    }).catch(failure => {
+      if (live(controller.signal)) {
+        if (sandboxScopeDenied(failure)) invalidate(); else setDetailFailed(true);
+      }
+    });
     return () => controller.abort();
   }, [identity, inspecting]);
 
@@ -83,8 +95,10 @@ function VersionWorkspace() {
       if (!live(controller.signal)) return;
       if (result.fromVersionId === from && result.toVersionId === to) setComparison(result);
       else setCompareFailed(true);
-    } catch {
-      if (live(controller.signal)) setCompareFailed(true);
+    } catch (failure) {
+      if (live(controller.signal)) {
+        if (sandboxScopeDenied(failure)) invalidate(); else setCompareFailed(true);
+      }
     } finally {
       if (compareRequest.current === controller) { compareRequest.current = undefined; setComparing(false); }
     }
@@ -136,7 +150,9 @@ function VersionWorkspace() {
 function Comparison({ result }: { result: SandboxCdcVersionComparison }) {
   const counts = { inserted: 0, updated: 0, deleted: 0 };
   result.changes.forEach(change => { counts[change.kind]++; });
-  return result.changes.length ? <>
+  return <>
+  <SandboxMarkings markings={result.markings} />
+  {result.changes.length ? <>
     <p role="status">{counts.inserted} inserted · {counts.updated} updated · {counts.deleted} deleted</p>
     <p>From receipt <code>{result.fromVersionId}</code> to receipt <code>{result.toVersionId}</code>. No live rows were compared or changed.</p>
     <div className="ontology-cdc-versions__table"><table aria-label="Captured version differences">
@@ -144,5 +160,6 @@ function Comparison({ result }: { result: SandboxCdcVersionComparison }) {
       <tbody>{result.changes.map(change => <tr key={change.id}><th scope="row"><code>{change.id}</code></th>
         <td>{changeLabels[change.kind]}</td><td><SnapshotValue value={change.before} /></td><td><SnapshotValue value={change.after} /></td></tr>)}</tbody>
     </table></div>
-  </> : <p role="status">No differences between these captured versions.</p>;
+  </> : <p role="status">No differences between these captured versions.</p>}
+  </>;
 }

@@ -14,7 +14,7 @@
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；固定合成资产已验证有界主键索引预检和阻断后的零行查询，并能查沙箱运行历史。 | 通用大表仍需扩大可接受的索引路径、查询预算和已收集统计，不能在交互请求中隐式扫描业务表。 |
 | 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警。 | 验收通用 schema、逻辑数据规模、作业状态、数据字段新鲜度及更广的告警范围，不用财报日期冒充同步时间。 |
 | 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；合成 CDC 可查看、比较真实提交快照；沙箱 Builder 可对已存版本筛选、映射和保存不可变配置；另行启用后可明确提交到独立输出存储，获得可复查的结果和回执。 | 继续验收通用图编排、生产资产快照、历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
-| 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执。 | 继续验收可配置资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
+| 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执；隔离 CDC 版本、Builder 配置和输出已验证标记继承、加严和拒绝。 | 继续验收通用资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
 
 ## 实现顺序
 
@@ -185,3 +185,9 @@
 - 普通 `LIMIT` 只限制返回行数，不能证明不会全表扫描。在明确开启的本地合成表中，先校验精确表结构与主键索引，按原绑定参数用 [PostgreSQL EXPLAIN](https://www.postgresql.org/docs/current/using-explain.html) 检查计划，不使用 `ANALYZE`。仅有界行数、主键精确或范围筛选、固定主键顺序以及直接受支持的索引扫描才执行，不允许残余过滤、全表扫描、排序或其他计划回退。
 - 仅检查计划不会查询业务行；没有合格计划、索引被移除、超时或筛选方式不受支持时显示阻断原因，不展示原始计划中的用户参数。执行与预检使用同一 SQL 及参数，并在带短超时的同一只读事务内稳定目录。
 - 验收 10 万级合成行的索引路径、非支持条件无行查询、普通路由不能绕过固定的合成预览、其他表和权限不变。此轮不对生产 Explorer 启用全局保护，也不声明 EXPLAIN 是实际性能测量。
+
+### 合成资产标记继承的验收口径
+
+- 合成版本封存基础标记；Builder 的配置可在审核时添加更严格的标记，不能移除输入保护。由该配置提交的输出封存实际继承后的标记，筛选、列映射甚至零行结果都不能降低保护级别。保存配置和提交结果仍是不同操作。
+- 本地显式授权以当前已认证的人和精确合成范围为准，不能从客户端声明、管理员身份或别的导出授权推断标记许可。开启时，无明确标记的旧记录和不受支持的记录不得自动接纳；关闭开关也不会把已保护的版本公开。
+- 验收列表、详情、双版本比较、试算和重放都在读保护行或执行前校验授权，撤销后旧请求也不能重新取回。此轮只覆盖固定本地合成 CDC 与 Builder 派生关系，外部导出和生产授权不变。
