@@ -31,6 +31,7 @@ from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TA
 from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
 from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
 from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA, HANDOFF_PROTECTED_REGCLASSES
+from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PROTECTED_REGCLASSES
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
 
 RESERVED_BATCH_TARGET = (BATCH_TARGET_SCHEMA, INCREMENTAL_TARGET)
@@ -46,7 +47,7 @@ _PUSH_APPLY_RECEIPTS = "public.ontology_push_inbox_apply_receipts"
 
 
 def require_ordinary_table(schema: str, table: str) -> None:
-    if (schema in (PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA)
+    if (schema in (PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA)
         or (schema, table) in (RESERVED_BATCH_TARGET, RESERVED_BATCH_RANGE_TARGET)):
         raise HTTPException(404, "Table does not exist in this schema")
 
@@ -144,7 +145,7 @@ def quote_identifier(name: str) -> str:
 def resolve_schema(layer: str, table_role: str = "current") -> str:
     if table_role not in {"current", "history"}:
         raise HTTPException(400, "Unsupported table role")
-    if layer in (HANDOFF_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA):
+    if layer in (HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA):
         raise HTTPException(404, "Schema not found")
     schema = layer if layer.startswith("ts_") else f"ts_{layer}"
     quote_identifier(schema)
@@ -692,7 +693,7 @@ class EtlLayers:
                 ("relationships", merge_object_relations(foreign_keys, logical))):
             for relation in relations:
                 if any(not relation[f"{side}_schema"].startswith("ts_") or
-                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA} or
+                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA} or
                        (relation[f"{side}_schema"], relation[f"{side}_table"]) in (RESERVED_BATCH_TARGET, RESERVED_BATCH_RANGE_TARGET)
                        for side in ("source", "target")):
                     continue
@@ -1046,20 +1047,23 @@ class EtlLayers:
             )
             # Only fixed internal identifiers may appear in these SQL strings.
             # Existence and data checks use the caller's same read-only snapshot.
-            handoff_relations = (await session.execute(text("""
+            protected_relations = HANDOFF_PROTECTED_REGCLASSES + SNAPSHOT_INTENT_PROTECTED_REGCLASSES
+            existing_private_relations = (await session.execute(text("""
                 SELECT relation FROM unnest(CAST(:relations AS text[])) AS r(relation)
                  WHERE pg_catalog.to_regclass(relation) IS NOT NULL
-            """), {"relations": list(HANDOFF_PROTECTED_REGCLASSES)})).scalars().all()
-            protected_handoff = False
-            for relation in HANDOFF_PROTECTED_REGCLASSES:
-                if relation in handoff_relations and await session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {relation})")):
-                    protected_handoff = True
+            """), {"relations": list(protected_relations)})).scalars().all()
+            protected_private = False
+            for relation in protected_relations:
+                if relation in existing_private_relations and await session.scalar(
+                    text(f"SELECT EXISTS (SELECT 1 FROM ONLY {relation})")
+                ):
+                    protected_private = True
                     break
             protected_range = batch_receipts and await session.scalar(text(f"""
                 SELECT EXISTS (SELECT 1 FROM {_BATCH_RECEIPTS_REGCLASS}
                                WHERE target_table = '{BATCH_RANGE_TARGET}' AND range_min IS NOT NULL)
             """))
-            if protected_push or protected_handoff or protected_range or (marked_history_column and await session.scalar(text("""
+            if protected_push or protected_private or protected_range or (marked_history_column and await session.scalar(text("""
                 SELECT EXISTS (SELECT 1 FROM public.ontology_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
             """))):
                 raise HTTPException(403, "Free-form SQL is unavailable in the protected synthetic workspace")

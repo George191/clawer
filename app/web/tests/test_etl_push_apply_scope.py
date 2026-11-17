@@ -2,6 +2,7 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from importlib import import_module
 from ipaddress import ip_address
 import os
 from unittest import IsolatedAsyncioTestCase, skipUnless
@@ -9,6 +10,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import asyncpg
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
@@ -19,6 +22,7 @@ from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TA
 from app.web.core.config import settings
 from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
 from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA, HANDOFF_PROTECTED_REGCLASSES
+from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PROTECTED_REGCLASSES
 from app.web.services.postgres_sync_source import read_batch_sync_snapshot, review_batch_source
 from app.web.services.data_connections import DataConnections
 from app.web.services.etl_layers import EtlLayers, _PUSH_APPLY_BINDING, _PUSH_APPLY_RECEIPTS
@@ -93,6 +97,40 @@ class TestImmediatePushScope(IsolatedAsyncioTestCase):
                 await review_batch_source(None, "test", datetime.now(timezone.utc), uuid4(),
                                           schema=private, table="copy_rows")
             self.assertEqual(error.exception.status_code, 422)
+
+    async def test_snapshot_intent_schema_rejects_all_generic_operations_before_io(self):
+        layers, workspace = EtlLayers(), EtlWorkspace()
+        private = SNAPSHOT_INTENT_PRIVATE_SCHEMA
+
+        @asynccontextmanager
+        async def unexpected(*, repeatable_read=False):
+            raise AssertionError("A prohibited generic operation opened a database session")
+            yield
+
+        layers.session = workspace._session = unexpected
+        for method, args in (
+            (layers.tables, (private,)), (layers.object_types, (private,)), (layers.preview, (private, "records")),
+            (layers.data, (private, "records")), (layers.partitions, (private, "records")),
+            (workspace.save_connection, ({"name": "test", "schemas": [private]},)),
+            (workspace.create_table, (private, {"name": "records"})),
+            (workspace.patch_row, (private, "records", {})), (workspace.delete_row, (private, "records", {})),
+            (workspace.publications, (private, "records")), (workspace.save_publication, (private, "records", {})),
+            (workspace.delete_publication, (private, "records", "old")),
+            (workspace.rename_schema, (_OTHER, {"name": private})),
+            (workspace.rename_schema, (private, {"name": _OTHER})), (workspace.delete_schema, (private,)),
+        ):
+            with self.subTest(method=method.__name__), self.assertRaises(HTTPException) as error:
+                await method(*args)
+            self.assertEqual(error.exception.status_code, 404)
+        with patch("app.web.services.postgres_sync_source._saved_loopback_source", side_effect=AssertionError):
+            for method in (
+                review_batch_source(None, "test", datetime.now(timezone.utc), uuid4(), schema=private, table="records"),
+                read_batch_sync_snapshot(None, "test", expected_updated_at=datetime.now(timezone.utc),
+                                         schema=private, table="records", columns=["id"], key_column="id"),
+            ):
+                with self.assertRaises(HTTPException) as denied:
+                    await method
+                self.assertEqual(denied.exception.status_code, 422)
 
     async def test_range_snapshot_is_not_a_generic_snapshot_or_workspace_table(self):
         workspace = EtlWorkspace()
@@ -295,6 +333,70 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
             self.assertEqual(raw.exception.status_code, 403)
             await self._write(f"DROP TABLE {relation}")
         self.assertEqual((await self.layers.query("SELECT 1 AS result"))["rows"], [{"result": 1}])
+
+    async def test_snapshot_intent_never_catalogued_or_public_and_raw_gates_any_surviving_record(self):
+        private = SNAPSHOT_INTENT_PRIVATE_SCHEMA
+        await self._write(
+            f"DROP TABLE {_QUALIFIED}", f"CREATE SCHEMA {private}",
+            *(f"CREATE TABLE {relation} (id int PRIMARY KEY)" for relation in SNAPSHOT_INTENT_PROTECTED_REGCLASSES),
+            "CREATE TABLE public.flow_connections(id text, name text, database_name text, schemas jsonb)",
+            f"""INSERT INTO public.flow_connections VALUES ('old', 'old', current_database(),
+                    '["{private}","{_OTHER}"]')""",
+            f"""INSERT INTO public.flow_publications VALUES ('intent-old', '{private}',
+                'records', '{{}}', now()-interval '1 hour', now()+interval '1 hour')""",
+        )
+        self.addAsyncCleanup(self._write, f"DROP SCHEMA {private} CASCADE", "DROP TABLE public.flow_connections")
+        self.assertEqual((await self.workspace.connections())[0]["schemas"], [_OTHER])
+        self.assertNotIn(private, (await self.connections.catalog("fixture", schema=None, search="", limit=5, offset=0)).schemas)
+        with self.assertRaises(HTTPException) as denied:
+            await self.connections.catalog_columns("fixture", schema=private, table="records")
+        self.assertEqual(denied.exception.status_code, 404)
+        with self.assertRaises(HTTPException) as token:
+            await self.workspace.published_data("intent-old", {"limit": 1})
+        self.assertEqual(token.exception.status_code, 404)
+        self.assertEqual((await self.layers.query("SELECT 1 AS result"))["rows"], [{"result": 1}])
+        # No application flag is enabled. Losing a sibling relation or marker
+        # never exposes an extant private header / frozen row to raw SQL.
+        for relation in SNAPSHOT_INTENT_PROTECTED_REGCLASSES:
+            await self._write(f"INSERT INTO {relation} VALUES (1)")
+            with self.subTest(relation=relation), self.assertRaises(HTTPException) as raw:
+                await self.layers.query(f"SELECT * FROM {relation}")
+            self.assertEqual(raw.exception.status_code, 403)
+            await self._write(f"DROP TABLE {relation}")
+        self.assertEqual((await self.layers.query("SELECT 1 AS result"))["rows"], [{"result": 1}])
+
+    async def test_snapshot_intent_upgrade_empty_and_downgrade_preserves_provisioned_or_populated(self):
+        migration = import_module("app.web.alembic.versions.fb804e491f6d_ontology_private_snapshot_intent")
+        private = SNAPSHOT_INTENT_PRIVATE_SCHEMA
+
+        async def migrate(direction):
+            async with self.engine.begin() as connection:
+                def perform(sync):
+                    with Operations.context(MigrationContext.configure(sync)):
+                        direction()
+                await connection.run_sync(perform)
+
+        await migrate(migration.upgrade)
+        self.addAsyncCleanup(self._write, f"DROP SCHEMA IF EXISTS {private} CASCADE")
+        for name in SNAPSHOT_INTENT_PROTECTED_REGCLASSES:
+            self.assertEqual(await self.conn.fetchval(f"SELECT count(*) FROM {name}"), 0)
+        await migrate(migration.downgrade)
+        self.assertIsNone(await self.conn.fetchval("SELECT to_regnamespace($1)::text", private))
+        await migrate(migration.upgrade)
+        await self._write(f"INSERT INTO {private}.identity VALUES(true, gen_random_uuid())")
+        with self.assertRaisesRegex(RuntimeError, "Refusing"):
+            await migrate(migration.downgrade)
+        self.assertEqual(await self.conn.fetchval(f"SELECT count(*) FROM {private}.identity"), 1)
+        await self._write(
+            f"DELETE FROM {private}.identity",
+            f"""INSERT INTO {private}.intents VALUES (
+                gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),0,gen_random_uuid(),
+                repeat('a',64),repeat('b',64),1,clock_timestamp())""",
+            f"INSERT INTO {private}.records SELECT id, 1, 42, 'private synthetic' FROM {private}.intents",
+        )
+        with self.assertRaisesRegex(RuntimeError, "Refusing"):
+            await migrate(migration.downgrade)
+        self.assertEqual(await self.conn.fetchval(f"SELECT count(*) FROM {private}.records"), 1)
 
     async def test_fixed_target_blocks_raw_even_without_acceptance_tables(self):
         with patch.object(settings, "PUSH_INBOX_SANDBOX_ENABLED", False):

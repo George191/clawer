@@ -21,6 +21,7 @@ from typing_extensions import Self
 from app.storage.postgres_client import _resolved_pg_url
 from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope
 from app.web.core.config.sandbox_handoff import HandoffClearance, HandoffCopyGrant, HandoffSinkGrant
+from app.web.core.config.snapshot_intent import SnapshotIntentGrant
 
 def parse_cors(v: Any) -> list[str] | str:
     if isinstance(v, str) and not v.startswith("["):
@@ -126,6 +127,8 @@ class Settings(BaseSettings):
     TABLE_EXPORT_SNAPSHOT_PREVIEW_PASSWORD: SecretStr | None = None
     TABLE_EXPORT_SNAPSHOT_PREVIEW_MARKER: UUID | None = None
     TABLE_EXPORT_SNAPSHOT_PREVIEW_PROOF_SHA256: str = ""
+    TABLE_EXPORT_SNAPSHOT_INTENT_ENABLED: bool = False
+    TABLE_EXPORT_SNAPSHOT_INTENT_GRANTS: dict[UUID, SnapshotIntentGrant] = {}
     TABLE_EXPORT_SNAPSHOT_PUBLICATION_ENABLED: bool = False
     TABLE_EXPORT_SNAPSHOT_PUBLICATION_CONFIG_REVISION: UUID | None = None
     TABLE_EXPORT_SNAPSHOT_PUBLICATION_HOST: str = ""

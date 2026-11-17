@@ -33,6 +33,7 @@ from app.web.api.models.data_connections import (
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
 from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
 from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA
+from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEMA
 from app.web.core.config import settings
 
 
@@ -55,7 +56,7 @@ _CATALOG_KINDS = {
 }
 _CATALOG_SCHEMA_SCOPE = f"""
     left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
-    AND n.nspname NOT IN ('batch_sync_identity', 'batch_sync_stream', '{BATCH_RANGE_SOURCE_SCHEMA}', 'ts_cdc_sandbox', '{PUSH_APPLY_SCHEMA}', '{HANDOFF_PRIVATE_SCHEMA}')
+    AND n.nspname NOT IN ('batch_sync_identity', 'batch_sync_stream', '{BATCH_RANGE_SOURCE_SCHEMA}', 'ts_cdc_sandbox', '{PUSH_APPLY_SCHEMA}', '{HANDOFF_PRIVATE_SCHEMA}', '{SNAPSHOT_INTENT_PRIVATE_SCHEMA}')
     AND has_schema_privilege(n.oid, 'USAGE')
 """
 _CATALOG_RELATION_SCOPE = f"""
