@@ -574,7 +574,7 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover .ui-se
 .automation-schedule-status-copy > small { display: block; margin-top: 2px; color: var(--schedule-subtle); font-size: 11px; line-height: 17px; }
 .automation-schedule-status-control .ui-switch { flex: none; min-width: 36px; height: 20px; background: #555e6f; box-shadow: none; }
 .automation-schedule-status-control .ui-switch-checked { background: #3d9c77; }
-.automation-schedule-status-control .automation-schedule-status-switch .ui-switch-handle { top: 2px; width: 16px; height: 16px; }
+.automation-schedule-status-control .automation-schedule-status-switch .ui-switch-handle { top: 50%; width: 16px; height: 16px; transform: translateY(-50%); }
 .automation-schedule-status-control .ui-switch-checked .ui-switch-handle { inset-inline-start: calc(100% - 18px); }
 .automation-schedule-status-control .ui-switch-inner { display: none; }
 .automation-schedule-status-control .ui-switch:focus { box-shadow: none; }
