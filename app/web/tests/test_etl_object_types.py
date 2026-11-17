@@ -496,13 +496,40 @@ class ObjectRouteTests(unittest.TestCase):
                                               json={"limit": 101, "offset": 2001}).status_code, 200)
             self.assertFalse(instance.data.await_args.kwargs)
 
+    def test_lineage_path_routes_require_exact_query_shape_before_service(self):
+        root = "/api/v1/etl/ts_ods/objects"
+        path = root + "/lineage-path"
+        picker = root + "/lineage-path-targets"
+        selected = "?targetSchema=ts_dwd&targetTable=related"
+        with patch.object(etl, "get_etl_layers", return_value=AsyncMock()) as factory:
+            for invalid in (path, path + selected + "&targetTable=other", path + selected + "&includeHidden=true",
+                            picker + "?search=a&search=b", picker + "?total=true", picker + "?search=" + "x" * 101):
+                self.assertEqual(self.client.get(invalid).status_code, 422)
+            factory.assert_not_called()
+            service = factory.return_value
+            service.lineage_path.return_value = {"state": "found", "searchTruncated": False, "edges": [
+                {"from": {"schema": "ts_ods", "table": "objects"}, "to": {"schema": "ts_dwd", "table": "related"},
+                 "kinds": ["foreign_key"]},
+            ]}
+            result = self.client.get(path + selected)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertEqual(result.headers["Cache-Control"], "no-store")
+            self.assertEqual(result.json()["edges"][0]["from"], {"schema": "ts_ods", "table": "objects"})
+            service.lineage_path.assert_awaited_once_with("ts_ods", "objects", "ts_dwd", "related")
+            service.lineage_path_targets.return_value = {"items": [{"schema": "ts_dwd", "table": "related"}], "truncated": False}
+            result = self.client.get(picker + "?search=related")
+            self.assertEqual(result.json(), service.lineage_path_targets.return_value)
+            service.lineage_path_targets.assert_awaited_once_with("ts_ods", "objects", "related")
+
     def test_rejected_authentication_prevents_metadata_routes(self):
         def reject():
             raise HTTPException(401, "Authentication required")
         self.app.dependency_overrides[get_current_user] = reject
         with patch.object(etl, "get_etl_layers") as factory:
             for path in ("/api/v1/etl/object-types", "/api/v1/etl/ts_ods/objects/preview",
-                         "/api/v1/etl/ts_ods/objects/columns"):
+                         "/api/v1/etl/ts_ods/objects/columns",
+                         "/api/v1/etl/ts_ods/objects/lineage-path-targets",
+                         "/api/v1/etl/ts_ods/objects/lineage-path?targetSchema=ts_ods&targetTable=other"):
                 self.assertEqual(self.client.get(path).status_code, 401)
             self.assertEqual(self.client.post("/api/v1/etl/ts_ods/objects/preview-rows",
                                               json={}).status_code, 401)

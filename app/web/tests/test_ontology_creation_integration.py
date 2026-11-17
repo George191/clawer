@@ -136,8 +136,131 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 "direction": direction, "truncated": False,
                 "neighbors": [{"schema": SCHEMA, "table": other, "kinds": ["foreign_key"]}],
             })
+        path = await self.layers.lineage_path(SCHEMA, "child", SCHEMA, "parent")
+        self.assertEqual(path.state, "found")
+        self.assertEqual(path.edges[0].kinds, ["foreign_key"])
         self.assertIsNone((await self.pg.fetch_one(
             "SELECT to_regclass('public.ontology_object_relations') AS registry"))["registry"])
+
+    async def add_lineage_declarations(self, session, edges):
+        for start, end in edges:
+            await session.execute(text("""
+                INSERT INTO public.ontology_object_relations
+                    (name, source_schema, source_table, source_fields, target_schema, target_table,
+                     target_fields, relationship_kind, cardinality, provenance)
+                VALUES (:name, :schema, :start, ARRAY['id'], :schema, :end,
+                        ARRAY['id'], 'association', 'many_to_one', 'test')
+            """), {"schema": SCHEMA, "start": start, "end": end, "name": f"path_{start}_{end}"})
+
+    async def test_lineage_path_respects_direction_hop_limit_cycles_and_each_node_visibility(self):
+        async with self.pg.session() as session:
+            for name in ("root", "a", "b", "mid", "tail", "goal", "far"):
+                await session.execute(text(f"CREATE TABLE {SCHEMA}.{name} (id bigint PRIMARY KEY)"))
+            await session.execute(text(f"ALTER TABLE {SCHEMA}.root ADD FOREIGN KEY (id) REFERENCES {SCHEMA}.a(id)"))
+            await self.add_lineage_declarations(session, [
+                ("root", "b"), ("root", "a"), ("a", "mid"), ("b", "mid"),
+                ("mid", "tail"), ("tail", "root"), ("tail", "goal"), ("goal", "far"),
+            ])
+
+        async def path(start, end):
+            return await self.layers.lineage_path(SCHEMA, start, SCHEMA, end)
+
+        def destinations(page):
+            return [edge.to.table for edge in page.edges]
+
+        earliest = await path("root", "goal")
+        self.assertEqual((earliest.state, earliest.searchTruncated, earliest.maxHops), ("found", False, 4))
+        self.assertEqual(earliest.model_dump(by_alias=True)["edges"][0], {
+            "from": {"schema": SCHEMA, "table": "root"}, "to": {"schema": SCHEMA, "table": "a"},
+            "kinds": ["foreign_key", "object_relation"],
+        })
+        self.assertEqual(destinations(earliest), ["a", "mid", "tail", "goal"])
+        self.assertEqual((await path("root", "far")).state, "not_found_within_limit")
+        self.assertEqual((await path("goal", "root")).state, "not_found_within_limit")
+
+        await self.workspace.set_object_visibility(SCHEMA, "a", "hidden", "fixture")
+        self.assertEqual(destinations(await path("root", "goal")), ["b", "mid", "tail", "goal"])
+        await self.workspace.set_object_visibility(SCHEMA, "b", "normal", "fixture")
+        await self.pg.execute("""
+            UPDATE public.ontology_objects SET is_active=false WHERE schema_name=:schema AND table_name='b'
+        """, {"schema": SCHEMA})
+        self.assertEqual((await path("root", "goal")).state, "not_found_within_limit")
+        self.assertEqual((await self.layers.lineage_neighbors(SCHEMA, "root", "outgoing")).neighbors, [])
+        for blocked in ("a", "b", "missing"):
+            for start, end in ((blocked, "goal"), ("root", blocked), (blocked, blocked)):
+                with self.assertRaises(HTTPException) as error:
+                    await path(start, end)
+                self.assertEqual((error.exception.status_code, error.exception.detail),
+                                 (404, "Table does not exist in this schema"))
+        with self.assertRaises(HTTPException) as error:
+            await path("root", "root")
+        self.assertEqual(error.exception.status_code, 422)
+
+    async def test_lineage_path_reports_partial_search_for_neighbor_and_node_caps(self):
+        hops = [f"branch_{i:02}" for i in range(13)]
+        children = [f"child_{i:02}" for i in range(24)]
+        async with self.pg.session() as session:
+            for name in ["root", "goal", "fanout", *hops, *children]:
+                await session.execute(text(f"CREATE TABLE {SCHEMA}.{name} (id bigint PRIMARY KEY)"))
+            await self.add_lineage_declarations(session, [
+                *(("fanout", branch) for branch in hops),
+                *(("root", branch) for branch in hops[:12]),
+                *((hops[index // 2], child) for index, child in enumerate(children)),
+                (children[-1], "goal"),
+            ])
+
+        capped = await self.layers.lineage_path(SCHEMA, "fanout", SCHEMA, hops[-1])
+        self.assertEqual((capped.state, capped.searchTruncated, capped.edges), ("incomplete", True, []))
+        early = await self.layers.lineage_path(SCHEMA, "fanout", SCHEMA, hops[0])
+        self.assertEqual((early.state, early.searchTruncated), ("found", True))
+        inspected = []
+        original = self.layers._lineage_neighbor_rows
+
+        async def track(session, key, *args):
+            inspected.append(key)
+            return await original(session, key, *args)
+
+        with patch.object(self.layers, "_lineage_neighbor_rows", side_effect=track):
+            capped = await self.layers.lineage_path(SCHEMA, "root", SCHEMA, "goal")
+        self.assertEqual((capped.state, capped.searchTruncated, capped.edges), ("incomplete", True, []))
+        self.assertEqual(len(set(inspected)), 24)
+        self.assertNotIn((SCHEMA, children[-1]), inspected)
+
+    async def test_lineage_path_picker_filters_hidden_inactive_and_current_before_its_cap(self):
+        names = [f"choice_{i:02}" for i in range(23)]
+        async with self.pg.session() as session:
+            for name in names:
+                await session.execute(text(f"CREATE TABLE {SCHEMA}.{name} (id bigint PRIMARY KEY)"))
+            await session.execute(text(f"CREATE VIEW {SCHEMA}.choice_view AS SELECT id FROM {SCHEMA}.choice_00"))
+        root = names[-1]
+        page = await self.layers.lineage_path_targets(SCHEMA, root, "choice")
+        self.assertTrue(page.truncated)
+        self.assertEqual([item.table for item in page.items], names[:20])
+        await self.workspace.set_object_visibility(SCHEMA, names[0], "hidden", "fixture")
+        await self.workspace.set_object_visibility(SCHEMA, names[1], "normal", "fixture")
+        await self.pg.execute("""
+            UPDATE public.ontology_objects SET is_active=false WHERE schema_name=:schema AND table_name='choice_01'
+        """, {"schema": SCHEMA})
+        page = await self.layers.lineage_path_targets(SCHEMA, root, f"{SCHEMA.upper()}.CHOICE")
+        self.assertFalse(page.truncated)
+        self.assertEqual([item.table for item in page.items], names[2:-1])
+        empty = await self.layers.lineage_path_targets(SCHEMA, root, "%")
+        self.assertEqual((empty.items, empty.truncated), ([], False))
+        with self.assertRaises(HTTPException) as error:
+            await self.layers.lineage_path_targets(SCHEMA, names[1], "")
+        self.assertEqual(error.exception.status_code, 404)
+
+    async def test_lineage_path_timeout_reports_neutral_incomplete_after_endpoint_admission(self):
+        async with self.pg.session() as session:
+            for name in ("root", "goal"):
+                await session.execute(text(f"CREATE TABLE {SCHEMA}.{name} (id bigint PRIMARY KEY)"))
+
+        async def slow(session, *args):
+            await session.execute(text("SELECT pg_catalog.pg_sleep(2)"))
+
+        with patch.object(self.layers, "_lineage_neighbor_rows", side_effect=slow):
+            page = await self.layers.lineage_path(SCHEMA, "root", SCHEMA, "goal")
+        self.assertEqual((page.state, page.searchTruncated, page.edges), ("incomplete", True, []))
 
     async def test_logical_relation_is_persisted_cross_schema_and_visible_from_both_objects_without_foreign_keys(self):
         payload = await self.relation_payload()

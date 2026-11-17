@@ -100,3 +100,8 @@
 .flow-lineage-table-references__route{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
 .flow-lineage-table-references__expansion{display:grid;gap:7px;margin-top:6px;padding-top:9px;border-top:1px solid var(--ui-border)}
 .flow-lineage-table-references__expansion > button{justify-self:start}
+.flow-lineage-reference-path,.flow-lineage-reference-path__body{display:grid;gap:7px;min-width:0}
+.flow-lineage-reference-path{padding:7px 0;border-block:1px solid var(--ui-border)}
+.flow-lineage-reference-path__body form,.flow-lineage-reference-path__body label{display:grid;gap:4px;min-width:0}
+.flow-lineage-reference-path :is(input,select){width:100%;min-width:0;padding:5px;border:1px solid var(--ui-border);border-radius:2px;background:var(--ui-panel);color:var(--ui-text);font:inherit}
+.flow-lineage-reference-path button{justify-self:start}

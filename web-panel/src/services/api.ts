@@ -1130,3 +1130,16 @@ export type TableLineageNeighborhood = { direction: TableLineageDirection; neigh
 export const fetchTableLineageNeighbors = (schema: string, table: string, direction: TableLineageDirection, signal?: AbortSignal): Promise<TableLineageNeighborhood> =>
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/lineage-neighbors`, { params: { direction }, signal })
     .then(r => unwrap<TableLineageNeighborhood>(r.data));
+
+export type TableLineagePathResult = {
+  state: 'found' | 'not_found_within_limit' | 'incomplete'; searchTruncated: boolean; maxHops: 4;
+  edges: { from: TableLineageIdentity; to: TableLineageIdentity; kinds: TableLineageReferenceKind[] }[];
+};
+export const fetchTableLineageTargets = (source: TableLineageIdentity, search: string, signal?: AbortSignal): Promise<{
+  items: TableLineageIdentity[]; truncated: boolean;
+}> => client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-path-targets`, { params: { search }, signal })
+  .then(r => unwrap<{ items: TableLineageIdentity[]; truncated: boolean }>(r.data));
+export const fetchTableLineagePath = (source: TableLineageIdentity, target: TableLineageIdentity, signal?: AbortSignal): Promise<TableLineagePathResult> =>
+  client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-path`, {
+    params: { targetSchema: target.schema, targetTable: target.table }, signal,
+  }).then(r => unwrap<TableLineagePathResult>(r.data));

@@ -3,6 +3,7 @@ import { fetchTableLineageNeighbors } from '../../services/api';
 import type { TableLineageDirection, TableLineageIdentity, TableLineageNeighborhood, TableLineageReferenceKind } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import { useSandboxIdentity } from './SandboxMarkings';
+import TableLineagePath from './TableLineagePath';
 
 const MAX_NODES = 16;
 const MAX_EDGES = 24;
@@ -122,7 +123,14 @@ function Workspace({ schema, table, identity }: Props & { identity: string }) {
       : status === 'unavailable' ? <><p role="status">Table references are unavailable.</p><button type="button" className="flow-lineage-action" onClick={retry}>Retry table references</button></>
       : <>
         <p role="status">{nodeCount} / {MAX_NODES} tables · {visibleEdges.length} / {MAX_EDGES} directed references · maximum depth 2</p>
-        <ReferenceLists parent={root} references={references} selected={selected} onExpand={expand} />
+        <TableLineagePath source={root} onEndpointUnavailable={() => {
+          branchRequest.current?.abort(); setResult(undefined); setSelected(undefined); setBranch(undefined); setBranchError(false);
+          setBlockedPeers(new Set()); setRevision(value => value + 1);
+        }} onScopeDenied={() => {
+          branchRequest.current?.abort(); setResult(undefined); setSelected(undefined); setBranch(undefined); setStatus('unavailable');
+        }} />
+        {result ? <ReferenceLists parent={root} references={references} selected={selected} onExpand={expand} />
+          : <p role="status">Rechecking visible table references…</p>}
         {result?.truncated && <p>Only the first visible references within this view’s limits are shown.</p>}
         {branchError && !selected && <p role="status">The selected table is no longer available.</p>}
         {selected && <section className="flow-lineage-table-references__expansion" aria-label="Selected neighbor expansion">

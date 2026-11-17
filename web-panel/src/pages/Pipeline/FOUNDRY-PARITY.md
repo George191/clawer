@@ -9,7 +9,7 @@
 | 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断和固定消费路径；独立本地合成流可按已提交序号回放 after-image，分别记录源最高位点、目标检查点和提交回执。另有独立的本地合成推送收件箱，生产者验签后可持久接收并查看回执；另行授权的手工应用可向固定目标按接收顺序追加，应用位置和结果独立记录。尚无通用可配置入站流。 | 继续验收可配置的生产者身份、流定义和消费策略；不把接收回执或消费位点当作目标提交。 |
 | 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执；当前审核的正数回执已驱动沙箱外发 Lineage。可选第二个预置本地接收端，各自审核、授权和记录，不自动多发或回退。固定合成标记另有可撤销授权。Published API 仍只是被动读取。 | 验收通用标记策略、更多目标及导出模式，以及另行审核的写回或 Webhook。 |
 | 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地 1–3 个上游的平面 AND/OR，以及三个上游的有限括号组合，都复用现有 Automation Center；实际使用的上游事件、当时审核的规则与子回执分开。 | 仍需验收时间与事件混合触发、更多层条件、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
-| 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；本地受管增量资产可展开一个已审核上游，区分真实正数提交、未观察及目标身份更换后的历史。财报 Evidence 的声明路径不代表生产逐边验证。普通可见表可从 Explorer 定位并展开有限两跳，分别显示声明关系和物理外键。 | 继续验收多跳路径、公共上下游和字段级影响，并把可验证运行证据与声明分开，不能用草稿绘成已提交的血缘。 |
+| 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；本地受管增量资产可展开一个已审核上游，区分真实正数提交、未观察及目标身份更换后的历史。财报 Evidence 的声明路径不代表生产逐边验证。普通可见表可从 Explorer 定位并展开有限两跳，或选择另一张可见表查找最多四跳的有向引用路径；分别显示声明关系和物理外键。 | 继续验收公共上下游、字段级影响及更广的资源路径，并把可验证运行证据与声明分开，不能用草稿绘成已提交的血缘。 |
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。受管增量资产可查独立回执、无新数据和可精确归因的手工/调度尝试；还未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；固定合成资产已验证有界主键索引预检和阻断后的零行查询，并能查沙箱运行历史。已审核的本地沙箱目标可查看后台存下的表级规划器行数估计。 | 通用大表仍需扩大可接受的索引路径、查询预算和列级已采集统计，不能在交互请求中隐式扫描业务表。 |
 | 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警；另可审核每日 UTC 同步结果，区分确认写入失败、正数提交和未知。 | 验收通用 schema、逻辑数据规模、其他作业/调度类型、数据字段新鲜度及更广的告警范围，不用财报日期冒充同步时间。 |
@@ -266,3 +266,9 @@
 - 连接暂停不删除凭据、配置或历史。用精确连接版本确认暂停；连接已经被使用时先等当前有界操作结束，忙时提示重试，不在尚有远程操作时宣称已暂停。暂停成功后，保存连接的测试、目录、身份复核、手工运行和定时运行不会再打开源。
 - 恢复会生成新的连接版本，旧连通性结果、身份审核、计划和调度不能自动重新生效。需重新验证、审核并启用定时任务；既有已提交原请求仍只读原回执。暂停策略不因关闭新状态操作开关而绕过。
 - 仅管理已保存的 PostgreSQL 连接，不改变其它引擎或独立传入凭据的连接操作。用隔离真实数据库验证双连接、在途操作、过期版本、定时路径以及凭据加密和回执完整性。
+
+### 两张可见表之间的有向引用路径
+
+- 在同一 Lineage 表详情选择第二张已存在的可见表，查找从当前表指向目标的声明或外键路径；顺序与引用类型显式标出。不会把路径、跨表箭头或目标回执当成已发生数据流。
+- 两端与每一步在同一只读元数据快照中复核可见性，隐藏表不参与，也不从它转接到其它表。搜索至多四跳，并限制邻居和总访问量；被限制时显示未查全，不把它说成全局无路径，即使找到路径也不夸大最短性。
+- 验收真实普通表、同长候选、循环、可选注册表缺失、权限、深度和宽度受限、浏览器选择及结果切换。无业务行读取、全局图自动遍历或生产部署。

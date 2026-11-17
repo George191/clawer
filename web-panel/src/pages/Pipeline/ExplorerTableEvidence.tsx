@@ -18,7 +18,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
     const [latestCurrentReceipt, setLatestCurrentReceipt] = useState<TransferRunReceipt | null>(null);
     const showReceipts = canManage && schema === 'ts_transfer_sandbox';
     const showExport = canManage && schema === TABLE_EXPORT_SOURCE.schema && table === TABLE_EXPORT_SOURCE.table;
-    const ordinaryLineage = schema !== 'ts_transfer_sandbox' && !schema.endsWith('_hist') && !table.endsWith('_hist') &&
+    const ordinaryLineage = schema !== 'ts_transfer_sandbox' && !schema.endsWith('_hist') &&
         (schema !== INDEX_PREVIEW_SCHEMA || table !== INDEX_PREVIEW_TABLE);
     const refresh = () => {
         setSnapshot(undefined);

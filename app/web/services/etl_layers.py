@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from time import perf_counter
@@ -22,7 +23,9 @@ from app.etl.schema.object_relations import (
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
-from app.web.api.models.lineage_neighbors import LineageDirection, LineageNeighbors
+from app.web.api.models.lineage_neighbors import (
+    LineageDirection, LineageEndpoint, LineageNeighborKind, LineageNeighbors, LineagePath, LineagePathEdge, LineagePathTargets,
+)
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TARGET
 from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
@@ -58,6 +61,19 @@ _OBJECT_TABLE_SQL = f"""n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
     AND c.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$' AND c.relkind IN ('r','p')
     AND NOT c.relispartition
     AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
+_LINEAGE_METADATA_JOIN = """LEFT JOIN public.ontology_objects o
+    ON o.schema_name = n.nspname AND o.table_name = c.relname"""
+_LINEAGE_VISIBLE_SQL = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.is_active, true)
+    AND COALESCE(o.visibility, 'normal') <> 'hidden'
+    AND right(n.nspname::text, 5) <> '_hist'
+    AND NOT (n.nspname = :index_schema AND c.relname = :index_table)"""
+_LINEAGE_SCOPE = {"index_schema": INDEX_SANDBOX_SCHEMA, "index_table": INDEX_SANDBOX_TABLE}
+_LINEAGE_REGISTRY_PRESENT = text("SELECT pg_catalog.to_regclass('public.ontology_object_relations') IS NOT NULL")
+_LINEAGE_NEIGHBOR_LIMIT = 12
+_LINEAGE_HOP_LIMIT = 4
+_LINEAGE_NODE_LIMIT = 24
+LineageKey = tuple[str, str]
+
 _TRANSFER_ENDPOINT_WHERE = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.visibility, 'normal') <> 'hidden' AND (
     (n.nspname = :source_schema AND c.relname = :source_table) OR
     (n.nspname = :target_schema AND c.relname = :target_table))"""
@@ -333,77 +349,152 @@ class EtlLayers:
                 "limit": limit, "offset": offset, "schemaCounts": schema_counts,
                 "groupCounts": group_counts, "groupSchemaCounts": group_schema_counts}
 
-    async def lineage_neighbors(self, schema: str, table: str, direction: LineageDirection) -> LineageNeighbors:
-        # A stored declaration, URL and Explorer object must all use the exact catalog name.
+    @staticmethod
+    async def _lineage_table_oid(session, key: LineageKey) -> int:
+        schema, table = key
         if not re.fullmatch(r"ts_[a-z0-9_]{1,60}", schema) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", table):
             raise HTTPException(404, "Table does not exist in this schema")
-        ordinary_visible = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.visibility, 'normal') <> 'hidden'
-            AND right(n.nspname::text, 5) <> '_hist'
-            AND NOT (n.nspname = :index_schema AND c.relname = :index_table)"""
+        oid = await session.scalar(text(f"""
+            SELECT c.oid FROM pg_catalog.pg_namespace n
+            JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid
+            {_LINEAGE_METADATA_JOIN}
+            WHERE n.nspname = :schema AND c.relname = :table AND {_LINEAGE_VISIBLE_SQL}
+        """), {**_LINEAGE_SCOPE, "schema": schema, "table": table})
+        if oid is None:
+            raise HTTPException(404, "Table does not exist in this schema")
+        return oid
+
+    @staticmethod
+    async def _lineage_neighbor_rows(
+        session, key: LineageKey, oid: int, direction: LineageDirection, registry_present: bool,
+    ):
         root_end, peer_end, fk_root, fk_peer = (
             ("source", "target", "conrelid", "confrelid") if direction == "outgoing"
             else ("target", "source", "confrelid", "conrelid")
         )
-        limit = 12
-        params = {"schema": schema, "table": table, "limit": limit + 1,
-                  "index_schema": INDEX_SANDBOX_SCHEMA, "index_table": INDEX_SANDBOX_TABLE}
+        # Filter each peer before grouping/limiting. Neither hidden peers nor multiple
+        # declarations/FKs to the same peer can make the visible result appear truncated.
+        declared_neighbors = f"""
+            SELECT n.nspname AS schema, c.relname AS "table", c.oid, 'object_relation' AS kind
+            FROM public.ontology_object_relations r
+            JOIN pg_catalog.pg_namespace n ON n.nspname = r.{peer_end}_schema
+            JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = r.{peer_end}_table
+            {_LINEAGE_METADATA_JOIN}
+            WHERE r.enabled AND r.{root_end}_schema = :schema AND r.{root_end}_table = :table
+              AND {_LINEAGE_VISIBLE_SQL} AND c.oid <> CAST(:oid AS oid)
+              AND cardinality(r.{root_end}_fields) > 0
+              AND cardinality(r.{root_end}_fields) = cardinality(r.{peer_end}_fields)
+              AND NOT EXISTS (
+                  SELECT 1 FROM unnest(r.{root_end}_fields) f(name) WHERE NOT EXISTS (
+                      SELECT 1 FROM pg_catalog.pg_attribute a
+                      WHERE a.attrelid = CAST(:oid AS oid) AND a.attname = f.name
+                        AND a.attnum > 0 AND NOT a.attisdropped))
+              AND NOT EXISTS (
+                  SELECT 1 FROM unnest(r.{peer_end}_fields) f(name) WHERE NOT EXISTS (
+                      SELECT 1 FROM pg_catalog.pg_attribute a
+                      WHERE a.attrelid = c.oid AND a.attname = f.name
+                        AND a.attnum > 0 AND NOT a.attisdropped))
+            UNION ALL
+        """ if registry_present else ""
+        result = await session.execute(text(f"""
+            WITH neighbors(schema, "table", oid, kind) AS (
+                {declared_neighbors}
+                SELECT n.nspname, c.relname, c.oid, 'foreign_key'
+                FROM pg_catalog.pg_constraint f
+                JOIN pg_catalog.pg_class c ON c.oid = f.{fk_peer}
+                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                {_LINEAGE_METADATA_JOIN}
+                WHERE f.contype = 'f' AND f.conparentid = 0 AND f.{fk_root} = CAST(:oid AS oid)
+                  AND {_LINEAGE_VISIBLE_SQL} AND c.oid <> CAST(:oid AS oid)
+            )
+            SELECT schema, "table", oid, array_agg(DISTINCT kind ORDER BY kind) AS kinds
+            FROM neighbors GROUP BY schema, "table", oid
+            ORDER BY schema COLLATE "C", "table" COLLATE "C"
+            LIMIT :limit
+        """), {**_LINEAGE_SCOPE, "schema": key[0], "table": key[1], "oid": oid, "limit": _LINEAGE_NEIGHBOR_LIMIT + 1})
+        rows = result.mappings().all()
+        return rows[:_LINEAGE_NEIGHBOR_LIMIT], len(rows) > _LINEAGE_NEIGHBOR_LIMIT
+
+    async def lineage_neighbors(self, schema: str, table: str, direction: LineageDirection) -> LineageNeighbors:
+        key = schema, table
         async with self.session(repeatable_read=True) as session:
             await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
-            root_oid = await session.scalar(text(f"""
-                SELECT c.oid FROM pg_catalog.pg_namespace n
-                JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid
-                {_OBJECT_METADATA_JOIN}
-                WHERE n.nspname = :schema AND c.relname = :table AND {ordinary_visible}
-            """), params)
-            if root_oid is None:
-                raise HTTPException(404, "Table does not exist in this schema")
+            oid = await self._lineage_table_oid(session, key)
+            registry_present = bool(await session.scalar(_LINEAGE_REGISTRY_PRESENT))
+            rows, truncated = await self._lineage_neighbor_rows(session, key, oid, direction, registry_present)
+        return LineageNeighbors(direction=direction, neighbors=[dict(row) for row in rows], truncated=truncated)
 
-            # Filter each peer before grouping/limiting. Neither hidden peers nor multiple
-            # declarations/FKs to the same peer can make the visible result appear truncated.
-            registry_present = await session.scalar(text(
-                "SELECT pg_catalog.to_regclass('public.ontology_object_relations') IS NOT NULL"
-            ))
-            declared_neighbors = f"""
-                SELECT n.nspname AS schema, c.relname AS "table", 'object_relation' AS kind
-                FROM public.ontology_object_relations r
-                JOIN pg_catalog.pg_namespace n ON n.nspname = r.{peer_end}_schema
-                JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = r.{peer_end}_table
-                {_OBJECT_METADATA_JOIN}
-                WHERE r.enabled AND r.{root_end}_schema = :schema AND r.{root_end}_table = :table
-                  AND {ordinary_visible} AND c.oid <> CAST(:oid AS oid)
-                  AND cardinality(r.{root_end}_fields) > 0
-                  AND cardinality(r.{root_end}_fields) = cardinality(r.{peer_end}_fields)
-                  AND NOT EXISTS (
-                      SELECT 1 FROM unnest(r.{root_end}_fields) f(name) WHERE NOT EXISTS (
-                          SELECT 1 FROM pg_catalog.pg_attribute a
-                          WHERE a.attrelid = CAST(:oid AS oid) AND a.attname = f.name
-                            AND a.attnum > 0 AND NOT a.attisdropped))
-                  AND NOT EXISTS (
-                      SELECT 1 FROM unnest(r.{peer_end}_fields) f(name) WHERE NOT EXISTS (
-                          SELECT 1 FROM pg_catalog.pg_attribute a
-                          WHERE a.attrelid = c.oid AND a.attname = f.name
-                            AND a.attnum > 0 AND NOT a.attisdropped))
-                UNION ALL
-            """ if registry_present else ""
+    async def lineage_path_targets(self, schema: str, table: str, search: str) -> LineagePathTargets:
+        """List only eligible destination identities, not generic catalog metadata or totals."""
+        limit = 20
+        async with self.session(repeatable_read=True) as session:
+            await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
+            oid = await self._lineage_table_oid(session, (schema, table))
             result = await session.execute(text(f"""
-                WITH neighbors(schema, "table", kind) AS (
-                    {declared_neighbors}
-                    SELECT n.nspname, c.relname, 'foreign_key'
-                    FROM pg_catalog.pg_constraint f
-                    JOIN pg_catalog.pg_class c ON c.oid = f.{fk_peer}
-                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-                    {_OBJECT_METADATA_JOIN}
-                    WHERE f.contype = 'f' AND f.conparentid = 0 AND f.{fk_root} = CAST(:oid AS oid)
-                      AND {ordinary_visible} AND c.oid <> CAST(:oid AS oid)
-                )
-                SELECT schema, "table", array_agg(DISTINCT kind ORDER BY kind) AS kinds
-                FROM neighbors GROUP BY schema, "table"
-                ORDER BY schema COLLATE "C", "table" COLLATE "C"
+                SELECT n.nspname::text AS schema, c.relname::text AS "table"
+                FROM pg_catalog.pg_namespace n
+                JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid
+                {_LINEAGE_METADATA_JOIN}
+                WHERE {_LINEAGE_VISIBLE_SQL} AND c.oid <> CAST(:oid AS oid)
+                  AND position(lower(:search) in (n.nspname::text || '.' || c.relname::text)) > 0
+                ORDER BY n.nspname::text COLLATE "C", c.relname::text COLLATE "C"
                 LIMIT :limit
-            """), {**params, "oid": root_oid})
+            """), {**_LINEAGE_SCOPE, "oid": oid, "search": search.strip(), "limit": limit + 1})
             rows = result.mappings().all()
-        return LineageNeighbors(direction=direction, neighbors=[dict(row) for row in rows[:limit]],
-                                truncated=len(rows) > limit)
+        return LineagePathTargets(items=[dict(row) for row in rows[:limit]], truncated=len(rows) > limit)
+
+    async def lineage_path(self, schema: str, table: str, target_schema: str, target_table: str) -> LineagePath:
+        start, end = (schema, table), (target_schema, target_table)
+        async with self.session(repeatable_read=True) as session:
+            await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
+            endpoints_verified = False
+            try:
+                with fail_after(3):
+                    start_oid = await self._lineage_table_oid(session, start)
+                    await self._lineage_table_oid(session, end)
+                    endpoints_verified = True
+                    if start == end:
+                        raise HTTPException(422, "Choose a different visible target table")
+                    return await self._search_lineage_path(session, start, start_oid, end)
+            except (TimeoutError, DBAPIError) as error:
+                if isinstance(error, DBAPIError) and getattr(error.orig, "sqlstate", None) != "57014":
+                    raise
+                if not endpoints_verified:
+                    raise HTTPException(503, "Visible table references are temporarily unavailable") from None
+                await session.rollback()
+                return LineagePath(state="incomplete", searchTruncated=True)
+
+    async def _search_lineage_path(self, session, start: LineageKey, start_oid: int, end: LineageKey) -> LineagePath:
+        registry_present = bool(await session.scalar(_LINEAGE_REGISTRY_PRESENT))
+        pending = deque([(start, start_oid, 0)])
+        predecessor: dict[LineageKey, tuple[LineageKey, list[LineageNeighborKind]]] = {}
+        truncated = False
+        inspected = 0
+        while pending and inspected < _LINEAGE_NODE_LIMIT:
+            key, oid, depth = pending.popleft()
+            inspected += 1
+            peers, more = await self._lineage_neighbor_rows(session, key, oid, "outgoing", registry_present)
+            truncated = truncated or more
+            for row in peers:
+                peer = row["schema"], row["table"]
+                if peer == start or peer in predecessor:
+                    continue
+                predecessor[peer] = key, row["kinds"]
+                if peer == end:
+                    edges = []
+                    tail = end
+                    while tail != start:
+                        parent, kinds = predecessor[tail]
+                        edges.append(LineagePathEdge.model_validate({
+                            "from": LineageEndpoint(schema=parent[0], table=parent[1]),
+                            "to": LineageEndpoint(schema=tail[0], table=tail[1]), "kinds": kinds,
+                        }))
+                        tail = parent
+                    return LineagePath(state="found", searchTruncated=truncated, edges=edges[::-1])
+                if depth + 1 < _LINEAGE_HOP_LIMIT:
+                    pending.append((peer, row["oid"], depth + 1))
+        truncated = truncated or bool(pending)
+        return LineagePath(state="incomplete" if truncated else "not_found_within_limit", searchTruncated=truncated)
 
     async def preview(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
         schema = _object_schema(layer)
