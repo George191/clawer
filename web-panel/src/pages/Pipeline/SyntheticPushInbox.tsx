@@ -90,6 +90,8 @@ function PushInboxStatus({ identity }: { identity: string }) {
     </header>
     <div className="ontology-source-sync__body">
       <p role="status">{checking ? 'Checking intake status…' : paused ? 'Intake paused' : snapshot.state === 'full' ? 'Inbox full' : 'Inbox available'} · Acceptance only</p>
+      {snapshot.secondaryProducerAvailable === true && !checking && <p><strong>Secondary signed producer configuration available.</strong>{' '}
+        It uses the same inbox pause and limits. This status does not verify a producer or show that it sent an accepted event.</p>}
       {paused && !checking && <p>Paused at <AcceptedAt value={snapshot.pausedAt} />. No new events are accepted while paused. Existing receipts and independently eligible application are unchanged.</p>}
       {controllable && <div><Button size="small" disabled={refreshing || saving || Boolean(decision)} onClick={() => setDecision({ paused: !paused, expectedGeneration: generation })}>{paused ? 'Resume intake' : 'Pause intake'}</Button></div>}
       {notice && <p role={noticeIsError ? 'alert' : 'status'}>{notice}</p>}

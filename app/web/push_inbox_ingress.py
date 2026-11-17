@@ -24,7 +24,7 @@ BODY_LIMIT = 4096
 TIMESTAMP_TOLERANCE = 300
 _HEADERS = {
     b"x-inbox-request-id", b"x-inbox-timestamp", b"x-inbox-signature", b"content-type",
-    b"content-length", b"transfer-encoding",
+    b"content-length", b"transfer-encoding", b"x-inbox-producer",
 }
 _DENIED = {b"forwarded", b"x-real-ip", b"via", b"content-encoding"}
 
@@ -37,7 +37,11 @@ def signing_message(timestamp: str, identity: UUID, digest: str) -> bytes:
     return f"synthetic-push-v1\nPOST\n{PATH}\n{timestamp}\n{identity}\n{digest}\n".encode("ascii")
 
 
-def _headers(scope: Scope) -> tuple[UUID, str, bytes, int | None]:
+def secondary_signing_message(timestamp: str, identity: UUID, digest: str) -> bytes:
+    return f"synthetic-push-v2\nPOST\n{PATH}\nsecondary\n{timestamp}\n{identity}\n{digest}\n".encode("ascii")
+
+
+def _headers(scope: Scope) -> tuple[UUID, str, bytes, int | None, bool]:
     peer = scope.get("client")
     if not isinstance(peer, (tuple, list)) or len(peer) != 2 or peer[0] != HOST:
         raise _unauthorized()
@@ -69,7 +73,10 @@ def _headers(scope: Scope) -> tuple[UUID, str, bytes, int | None]:
             raise ValueError
         if length is not None and not re.fullmatch(rb"(?:0|[1-9][0-9]{0,9})", length):
             raise ValueError
-        return identity, raw_stamp, signature, int(length) if length is not None else None
+        slot = recognized.get(b"x-inbox-producer")
+        if slot is not None and slot != b"secondary":
+            raise ValueError
+        return identity, raw_stamp, signature, int(length) if length is not None else None, slot is not None
     except (KeyError, ValueError, UnicodeError):
         raise _unauthorized() from None
 
@@ -141,18 +148,22 @@ def create_ingress(sessions: Callable):
                 raise HTTPException(405, "Method not allowed")
             if not configured():
                 raise HTTPException(404, "Not found")
-            identity, stamp, signature, length = _headers(scope)
-            if not _date_allowed(stamp):
+            identity, stamp, signature, length, secondary = _headers(scope)
+            if not _date_allowed(stamp) or (secondary and producer_key(secondary=True) is None):
                 raise _unauthorized()
             body = await _read_body(Request(scope, receive), length)
             digest = sha256(body).hexdigest()
-            key = producer_key()
+            key = producer_key(secondary=secondary)
             if key is None or not _date_allowed(stamp):
                 raise _unauthorized()
             try:
-                key.verify(signature, signing_message(stamp, identity, digest))
+                framing = secondary_signing_message if secondary else signing_message
+                key.verify(signature, framing(stamp, identity, digest))
             except (InvalidSignature, ValueError):
                 raise _unauthorized() from None
+            if secondary:
+                # The shared UUID namespace can only replay the same authenticated producer slot.
+                digest = sha256(b"synthetic-push-secondary-receipt-v1\0" + bytes.fromhex(digest)).hexdigest()
             payload = _payload(body)
             async with asyncio.timeout(4):
                 async with sessions() as session:

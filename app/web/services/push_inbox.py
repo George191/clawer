@@ -41,15 +41,29 @@ def strict_base64(value: bytes, size: int) -> bytes | None:
         return None
 
 
-def producer_key() -> Ed25519PublicKey | None:
-    configured = settings.PUSH_INBOX_SANDBOX_PUBLIC_KEY
-    if not inbox_opted_in() or configured is None:
+def _public_key_bytes(configured) -> bytes | None:
+    if configured is None:
         return None
     try:
-        value = strict_base64(configured.get_secret_value().encode("ascii"), 32)
-        return Ed25519PublicKey.from_public_bytes(value) if value is not None else None
+        return strict_base64(configured.get_secret_value().encode("ascii"), 32)
     except (AttributeError, UnicodeError, ValueError):
         return None
+
+
+def producer_key(*, secondary: bool = False) -> Ed25519PublicKey | None:
+    if not inbox_opted_in():
+        return None
+    primary = _public_key_bytes(settings.PUSH_INBOX_SANDBOX_PUBLIC_KEY)
+    if primary is None:
+        return None
+    if not secondary:
+        return Ed25519PublicKey.from_public_bytes(primary)
+    if not settings.PUSH_INBOX_SANDBOX_SECONDARY_ENABLED:
+        return None
+    alternate = _public_key_bytes(settings.PUSH_INBOX_SANDBOX_SECONDARY_PUBLIC_KEY)
+    if alternate is None or alternate == primary:
+        return None
+    return Ed25519PublicKey.from_public_bytes(alternate)
 
 
 def local_inbox_database() -> URL | None:
@@ -112,6 +126,7 @@ async def _status(session: AsyncSession, state: PushInboxStateRow) -> PushInboxS
         available=True, state="paused" if paused_at is not None else "full" if state.accepted_count >= TOTAL_LIMIT else "ready",
         acceptedCount=state.accepted_count, intakeControlAvailable=True if changeable else None,
         intakeGeneration=generation if changeable or generation else None, pausedAt=paused_at,
+        secondaryProducerAvailable=True if producer_key(secondary=True) is not None else None,
         recent=[PushInboxAcceptance(id=identity, ordinal=str(ordinal), acceptedAt=at) for identity, ordinal, at in recent],
     )
 

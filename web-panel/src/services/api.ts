@@ -623,7 +623,7 @@ export type SandboxCdcReceipt = {
 const sandboxCdcPath = '/etl/cdc-sandbox';
 export type SyntheticPushInboxStatus = {
   available: boolean; state: 'disabled' | 'unconfigured' | 'ready' | 'full' | 'paused';
-  intakeControlAvailable?: true; intakeGeneration?: number; pausedAt?: string;
+  intakeControlAvailable?: true; intakeGeneration?: number; pausedAt?: string; secondaryProducerAvailable?: true;
   acceptedCount: number; totalLimit: number; windowSeconds: number; windowLimit: number;
   recent: { id: string; ordinal: string; acceptedAt: string }[];
 };

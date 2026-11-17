@@ -43,6 +43,16 @@ def headers(key, body, *, identity=None, stamp=None):
             "X-Inbox-Signature": base64.b64encode(proof).decode("ascii"), "Content-Type": "application/json"}
 
 
+def secondary_headers(key, body, *, identity=None, stamp=None):
+    identity = identity or uuid4()
+    stamp = str(int(time.time())) if stamp is None else str(stamp)
+    # Independent canonical byte construction; avoid coupling the signer to its verifier.
+    digest = sha256(body).hexdigest()
+    proof = key.sign(f"synthetic-push-v2\nPOST\n/synthetic-push/v1/inbox\nsecondary\n{stamp}\n{identity}\n{digest}\n".encode())
+    return {"X-Inbox-Request-Id": str(identity), "X-Inbox-Timestamp": stamp, "X-Inbox-Producer": "secondary",
+            "X-Inbox-Signature": base64.b64encode(proof).decode("ascii"), "Content-Type": "application/json"}
+
+
 def public_key(key):
     return SecretStr(base64.b64encode(key.public_key().public_bytes_raw()).decode("ascii"))
 
@@ -213,6 +223,58 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
                     SELECT entity_id, fixture_value, body_digest, schema_version FROM ontology_push_inbox_receipts
                 """))).one()
                 self.assertEqual(tuple(stored), (2**63-1, "fixture-a", sha256(_BODY).hexdigest(), 1))
+
+    async def test_secondary_current_signature_and_shared_immutable_acceptance(self):
+        other, rotated = Ed25519PrivateKey.generate(), Ed25519PrivateKey.generate()
+        primary_id, secondary_id = uuid4(), uuid4()
+        async with self._producer() as client, api(True, self._admin_session) as admin:
+            async def send(values, body=_BODY):
+                return await client.post(PATH, content=body, headers=values)
+
+            denied = {"detail": "Unauthorized synthetic producer"}
+            for flag, public in ((False, public_key(other)), (True, public_key(self.key)), (True, SecretStr("bad"))):
+                with (patch.object(settings, "PUSH_INBOX_SANDBOX_SECONDARY_ENABLED", flag),
+                      patch.object(settings, "PUSH_INBOX_SANDBOX_SECONDARY_PUBLIC_KEY", public)):
+                    response = await send(secondary_headers(other, _BODY, identity=secondary_id))
+                    self.assertEqual((response.status_code, response.json()), (401, denied))
+                    self.assertNotIn("secondaryProducerAvailable", (await admin.get(_ADMIN)).json())
+
+            primary = await send(headers(self.key, _BODY, identity=primary_id))
+            self.assertEqual(primary.status_code, 201)
+            with (patch.object(settings, "PUSH_INBOX_SANDBOX_SECONDARY_ENABLED", True),
+                  patch.object(settings, "PUSH_INBOX_SANDBOX_SECONDARY_PUBLIC_KEY", public_key(other))):
+                self.assertIs((await admin.get(_ADMIN)).json()["secondaryProducerAvailable"], True)
+                signed = secondary_headers(other, _BODY, identity=secondary_id)
+                missing = {key: value for key, value in signed.items() if key != "X-Inbox-Producer"}
+                for values in (missing, {**signed, "X-Inbox-Producer": "primary"},
+                               {**signed, "X-Inbox-Producer": "Secondary"},
+                               [*signed.items(), ("x-inbox-producer", "secondary")],
+                               {**headers(self.key, _BODY, identity=secondary_id), "X-Inbox-Producer": "secondary"},
+                               secondary_headers(self.key, _BODY, identity=secondary_id),
+                               secondary_headers(other, _BODY, identity=secondary_id, stamp=int(time.time())-301)):
+                    failure = await send(values)
+                    self.assertEqual((failure.status_code, failure.json()), (401, denied))
+
+                self.assertEqual((await send(secondary_headers(other, _BODY, identity=primary_id))).status_code, 409)
+                first, retry = await asyncio.gather(send(signed), send(signed))
+                self.assertEqual((first.status_code, retry.status_code), (201, 201))
+                self.assertEqual(first.json(), retry.json())
+                self.assertEqual(first.json()["ordinal"], "2")
+                self.assertEqual((await send(headers(self.key, _BODY, identity=secondary_id))).status_code, 409)
+                changed = _BODY.replace(b"fixture-a", b"fixture-b")
+                self.assertEqual((await send(secondary_headers(other, changed, identity=secondary_id), changed)).status_code, 409)
+                with patch.object(settings, "PUSH_INBOX_SANDBOX_SECONDARY_PUBLIC_KEY", public_key(rotated)):
+                    self.assertEqual((await send(signed)).status_code, 401)
+                    self.assertEqual((await send(secondary_headers(rotated, _BODY, identity=secondary_id))).json(), first.json())
+                self.assertEqual((await send(headers(self.key, _BODY, identity=primary_id))).json(), primary.json())
+            self.assertEqual((await send(signed)).status_code, 401)
+            self.assertEqual((await admin.get(_ADMIN)).json()["acceptedCount"], 2)
+            async with self.engine.connect() as conn:
+                values = (await conn.execute(text(
+                    "SELECT body_digest FROM public.ontology_push_inbox_receipts ORDER BY ordinal"
+                ))).scalars().all()
+                self.assertEqual(values, [sha256(_BODY).hexdigest(),
+                                          sha256(b"synthetic-push-secondary-receipt-v1\0" + sha256(_BODY).digest()).hexdigest()])
 
     async def test_fault_rolls_back_all_and_exact_retry_reconciles_after_ack_loss_and_quota(self):
         # Force an actual SQL failure at the immutable receipt insertion.

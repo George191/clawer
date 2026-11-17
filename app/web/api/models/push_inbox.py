@@ -33,6 +33,7 @@ class PushInboxStatus(BaseModel):
     intakeControlAvailable: Literal[True] | None = None
     intakeGeneration: int | None = None
     pausedAt: datetime | None = None
+    secondaryProducerAvailable: Literal[True] | None = None
 
 
 class PushInboxIntakeChange(BaseModel):
