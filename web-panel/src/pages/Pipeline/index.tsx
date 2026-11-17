@@ -17,6 +17,7 @@ import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import SandboxPipelineBuilder from './SandboxPipelineBuilder';
+import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
@@ -427,7 +428,9 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const appliedTerms = explorerFilterTerms(appliedQuery.filters);
     const filterCount = countFilterTerms(appliedTerms) + Number(Boolean(appliedQuery.search?.trim()));
     const sortCount = appliedQuery.sorts.length;
-    const showPreview = !isSchemas || resourceView === 'preview';
+    const indexPreviewAsset = selectedSchema === INDEX_PREVIEW_SCHEMA && table.name === INDEX_PREVIEW_TABLE;
+    const showIndexPreview = isSchemas && resourceView === 'preview' && indexPreviewAsset;
+    const showPreview = (!isSchemas || resourceView === 'preview') && !indexPreviewAsset;
     const showStream = !isSchemas || resourceView === 'stream';
     const fieldCount = data?.columns.length ?? 0;
     const filterFields = data?.columns.length ? data.columns : repairFields;
@@ -956,6 +959,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         {canManage && <button type="button" aria-pressed={resourceView === 'api'} onClick={() => selectResourceView('api')}><CodeOutlined /> Published APIs</button>}
                     </nav>}
                     <div className="flow-inspector-body" ref={previewViewport}>
+                        {showIndexPreview && (canManage ? <SandboxIndexPreview /> :
+                            <div className="flow-schema-state" role="status">Index-aware sandbox preview is available to administrators only.</div>)}
                         {showPreview && <div className="flow-navicat-toolbar">
                             <button type="button" className={`flow-tool ${filterOpen ? 'is-active' : ''}`} aria-expanded={filterOpen} onClick={() => activateTool('filter')}>
                                 {isSchemas && <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M2 3h12L9 8.5v4l-2 1v-5L2 3Z" strokeLinejoin="round" /></svg>}

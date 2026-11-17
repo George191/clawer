@@ -21,6 +21,7 @@ from app.etl.schema.object_relations import (
 )
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
+from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
 _OBJECT_GROUPS = ("ingestion", "processing", "serving", "other")
@@ -596,6 +597,8 @@ class EtlLayers:
         started = perf_counter()
         payload = payload or {}
         schema = resolve_schema(layer)
+        if (schema, table) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
+            raise HTTPException(403, "Use the dedicated index-checked preview for this synthetic table")
         columns = await self.columns(schema, table)
         primary_columns = sorted((column for column in columns if column["primary"]),
                                  key=lambda column: column["primaryPosition"])

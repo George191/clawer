@@ -11,7 +11,7 @@
 | 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地 1–3 个上游的平面 AND/OR 提交触发也复用现有 Automation Center，完整上游事件集与子回执分开。 | 验收嵌套或混合触发、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；财报 Evidence 的声明路径不代表生产逐边验证。 | 先接表级运行证据。区分代码声明、配置草稿和已经观察到的执行，不能用草稿绘成已提交的血缘。 |
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。还未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
-| 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；未实现事务级历史与列分布统计等。 | 先接运行记录；大表筛选保留查询预算，统计不随页面请求扫描业务表。 |
+| 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；固定合成资产已验证有界主键索引预检和阻断后的零行查询，并能查沙箱运行历史。 | 通用大表仍需扩大可接受的索引路径、查询预算和已收集统计，不能在交互请求中隐式扫描业务表。 |
 | 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警。 | 验收通用 schema、逻辑数据规模、作业状态、数据字段新鲜度及更广的告警范围，不用财报日期冒充同步时间。 |
 | 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；合成 CDC 可查看、比较真实提交快照；沙箱 Builder 可对已存版本筛选、映射和保存不可变配置；另行启用后可明确提交到独立输出存储，获得可复查的结果和回执。 | 继续验收通用图编排、生产资产快照、历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
 | 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执。 | 继续验收可配置资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
@@ -179,3 +179,9 @@
 - Builder 试算、配置保存和数据提交分别显示。只有本地合成范围、另行显式启用、管理员确认且绑定当前已审核配置版本及指纹，才写入专用的不可变输出存储。输入来自已保存快照，不读写实时业务表，不接受任意输出位置。
 - 结果行和输出回执同事务，读取从存储重现已提交版本；失败不得留下部分行或成功回执。以原请求重放返回同一结果，不再试算或新增版本。零行允许成为真实空结果，但不是写入行或观测数据流。
 - 验收普通预览/保存无输出、取消无提交、并发去重、失去回执后的原请求恢复、旧版本可读与失效审核拒绝新提交。此轮不部署、不恢复生产数据，也不宣称任意 Pipeline 发布。
+
+### 有索引保护的 Explorer 预览验收口径
+
+- 普通 `LIMIT` 只限制返回行数，不能证明不会全表扫描。在明确开启的本地合成表中，先校验精确表结构与主键索引，按原绑定参数用 [PostgreSQL EXPLAIN](https://www.postgresql.org/docs/current/using-explain.html) 检查计划，不使用 `ANALYZE`。仅有界行数、主键精确或范围筛选、固定主键顺序以及直接受支持的索引扫描才执行，不允许残余过滤、全表扫描、排序或其他计划回退。
+- 仅检查计划不会查询业务行；没有合格计划、索引被移除、超时或筛选方式不受支持时显示阻断原因，不展示原始计划中的用户参数。执行与预检使用同一 SQL 及参数，并在带短超时的同一只读事务内稳定目录。
+- 验收 10 万级合成行的索引路径、非支持条件无行查询、普通路由不能绕过固定的合成预览、其他表和权限不变。此轮不对生产 Explorer 启用全局保护，也不声明 EXPLAIN 是实际性能测量。

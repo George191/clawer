@@ -440,6 +440,24 @@ export type ExplorerTableEvidenceSnapshot = {
 export const fetchExplorerTableEvidence = (schema: string, table: string, signal?: AbortSignal): Promise<ExplorerTableEvidenceSnapshot> =>
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/evidence`, { signal }).then((r) => unwrap<ExplorerTableEvidenceSnapshot>(r.data));
 
+export type SandboxIndexPreviewQuery = {
+  mode: 'explain' | 'preview'; idEquals?: string; idFrom?: string; idTo?: string; limit: number;
+};
+export type SandboxIndexPreviewResult = {
+  status: 'allowed' | 'blocked';
+  reason: 'index_path' | 'table_unavailable' | 'primary_index_required' | 'unsupported_plan' | 'query_unavailable';
+  guidance: string;
+  mode: SandboxIndexPreviewQuery['mode'];
+  plan: { scan: 'index' | 'index_only'; key: 'id'; order: 'ascending' } | null;
+  rows: { id: string; label: string }[] | null;
+  hasMore: boolean | null;
+};
+const indexPreviewSandboxPath = '/etl/index-preview-sandbox';
+export const fetchIndexPreviewSandbox = (signal?: AbortSignal): Promise<{ available: boolean }> =>
+  client.get(indexPreviewSandboxPath, { signal }).then((r) => unwrap<{ available: boolean }>(r.data));
+export const queryIndexPreviewSandbox = (request: SandboxIndexPreviewQuery, signal?: AbortSignal): Promise<SandboxIndexPreviewResult> =>
+  client.post(indexPreviewSandboxPath, request, { signal }).then((r) => unwrap<SandboxIndexPreviewResult>(r.data));
+
 type AssetFreshnessAssessment = {
   state: 'not_configured' | 'not_checked' | 'healthy' | 'overdue' | 'unknown' | 'paused';
   reason: string | null;

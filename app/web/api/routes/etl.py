@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from fastapi.responses import Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
+from app.web.api.dependencies.session import get_db
+from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
 from app.web.api.models.asset_freshness import (
     AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse, AssetQualityIncident, AssetQualityIncidentAck,
     AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
@@ -59,6 +62,7 @@ from app.web.services.asset_freshness import (
     acknowledge_quality_incident, capture_schema_baseline, get_asset_freshness, get_asset_freshness_candidates,
     preview_schema_baseline, put_asset_freshness,
 )
+from app.web.services.index_preview_sandbox import index_sandbox_available, run_index_preview
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_syncs import (
     batch_sync_capabilities, list_batch_sync_attempts, list_batch_sync_runs, list_batch_syncs, run_batch_sync, save_batch_sync,
@@ -100,6 +104,19 @@ from app.web.services.transfer_schedules import (
 router = APIRouter(prefix="/etl", tags=["etl"])
 read = APIRouter(dependencies=[Depends(get_current_user)])
 write = APIRouter(dependencies=[Depends(get_current_active_superuser)])
+
+
+@write.get("/index-preview-sandbox")
+async def get_local_index_preview() -> IndexSandboxCapability:
+    return IndexSandboxCapability(available=index_sandbox_available())
+
+
+@write.post("/index-preview-sandbox")
+async def post_local_index_preview(
+    payload: IndexSandboxQuery, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexSandboxPreview:
+    # Authentication already queried in its own session; the sandbox must start its own read-only transaction.
+    return await run_index_preview(session, payload)
 
 
 @write.get("/cdc-sandbox")
