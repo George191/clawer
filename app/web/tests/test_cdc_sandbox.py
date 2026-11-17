@@ -700,6 +700,10 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.post(route + "/copies", json=body)).status_code, 409)
                     source.assert_not_called()
 
+                # Even after replica contents were removed in this isolated fixture,
+                # the recipient can verify the historical receipt, not replica integrity.
+                await self.assert_recipient_handoff_proof(route, receipt, approval)
+
                 restarted = grant.model_copy(update={"generation": uuid4(), "clearance": "sandbox-restricted"})
                 approved = HandoffCopyGrant(**restarted.model_dump(), databaseMarker=marker, physicalDigest=physical)
                 zero = {**empty_payload, "requestId": str(uuid4()), "expectedSinkGeneration": str(restarted.generation)}
@@ -729,9 +733,89 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual((settled.json()["rowsCopied"], settled.json()["markings"]),
                                          (0, ["sandbox-synthetic", "sandbox-restricted"]))
                         source.assert_not_called()
+                    await self.assert_recipient_handoff_proof(route, settled.json(), approved)
         with self.assertRaisesRegex(RuntimeError, "Cannot remove provisioned synthetic handoff"):
             async with self.pg.session() as session:
                 await session.run_sync(migrate, migration.downgrade)
+
+    async def assert_recipient_handoff_proof(self, route, historical, enrollment):
+        recipient = uuid4()
+        endpoint = route + "/recipient-proof"
+        expected = {"receiptId": historical["id"], "expectedSinkGeneration": str(enrollment.generation)}
+        attrs = {
+            "ONTOLOGY_SANDBOX_HANDOFF_COPY_ENABLED": False,
+            "ONTOLOGY_SANDBOX_HANDOFF_COPY_GRANTS": {},
+            "ONTOLOGY_SANDBOX_HANDOFF_SINK_GRANTS": {},
+            "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS": {},
+            "ONTOLOGY_SANDBOX_PIPELINE_ENABLED": False,
+            "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED": False,
+            "CDC_SANDBOX_ENABLED": False,
+            "CDC_SANDBOX_VERSIONS_ENABLED": False,
+            "CDC_SANDBOX_STREAM_MARKER": None,
+            "ONTOLOGY_SANDBOX_HANDOFF_PROOF_ENABLED": True,
+            "ONTOLOGY_SANDBOX_HANDOFF_PROOF_STREAM_MARKER": enrollment.streamMarker,
+            "ONTOLOGY_SANDBOX_HANDOFF_PROOF_GRANTS": {recipient: enrollment},
+        }
+        receipt_selects = []
+        execute = AsyncSession.execute
+
+        async def no_payload(session, query, params=None, **kwargs):
+            sql = " ".join(str(query).lower().split())
+            if sql.startswith("select ") and "from only ontology_handoff_private.copies" in sql:
+                receipt_selects.append(sql)
+            self.assertNotIn("from only ontology_handoff_private.copy_rows", sql)
+            self.assertNotIn("ontology_cdc_sandbox_version_rows", sql)
+            self.assertNotIn("ontology_pipeline_sandbox_output_rows", sql)
+            return await execute(session, query, params, **kwargs)
+
+        with (patch.multiple(settings, **attrs),
+              patch("app.web.tests.test_transfer_plans.TEST_ACTOR", recipient),
+              patch.object(AsyncSession, "execute", no_payload)):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.get(route)).json(), {"available": False})
+                capability = await client.get(endpoint)
+                self.assertEqual(capability.status_code, 200, capability.text)
+                self.assertEqual(capability.json(), {"available": True, "sink": historical["sink"]})
+                self.assertEqual(capability.headers["cache-control"], "private, no-store")
+                self.assertEqual(receipt_selects, [], "capability enumerated receipt IDs")
+                for wrong in ({**expected, "requestId": historical["requestId"]}, {"receiptId": historical["id"]}):
+                    self.assertEqual((await client.post(endpoint, json=wrong)).status_code, 422)
+                self.assertEqual((await client.get(endpoint + "?history=true")).status_code, 422)
+                self.assertEqual((await client.post(endpoint + "?id=anything", json=expected)).status_code, 422)
+                found = await client.post(endpoint, json=expected)
+                self.assertEqual(found.status_code, 200, found.text)
+                self.assertEqual(found.headers["cache-control"], "private, no-store")
+                result = found.json()
+                self.assertEqual(result, {**{key: historical[key] for key in ("id", "sink", "markings", "recordedAt")},
+                                          "rowsRecorded": historical["rowsCopied"]})
+                self.assertEqual(len(receipt_selects), 1)
+                self.assertIn("and marking_level <= :clearance", receipt_selects[0])
+                self.assertTrue(all(name not in receipt_selects[0] for name in ("actor_id", "output_id", "request_id", "result_hash")))
+                missing = await client.post(endpoint, json={**expected, "receiptId": str(uuid4())})
+                self.assertEqual(missing.status_code, 404)
+                count = len(receipt_selects)
+                self.assertEqual((await client.post(endpoint, json={**expected, "expectedSinkGeneration": str(uuid4())})).json(),
+                                 missing.json())
+                with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_PROOF_GRANTS", {}):
+                    self.assertEqual((await client.get(endpoint)).json(), {"available": False})
+                    self.assertEqual((await client.post(endpoint, json=expected)).json(), missing.json())
+                self.assertEqual(len(receipt_selects), count)
+                lower = enrollment.model_copy(update={
+                    "clearance": "sandbox-synthetic" if enrollment.clearance == "sandbox-restricted" else "sandbox-restricted",
+                })
+                with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_PROOF_GRANTS", {recipient: lower}):
+                    self.assertEqual((await client.post(endpoint, json=expected)).json(), missing.json())
+                    self.assertEqual((await client.get(endpoint)).json().get("available"),
+                                     enrollment.clearance == "sandbox-restricted")
+                alternate = enrollment.model_copy(update={"streamMarker": uuid4()})
+                with patch.multiple(settings, ONTOLOGY_SANDBOX_HANDOFF_PROOF_STREAM_MARKER=alternate.streamMarker,
+                                    ONTOLOGY_SANDBOX_HANDOFF_PROOF_GRANTS={recipient: alternate}):
+                    self.assertEqual((await client.post(endpoint, json=expected)).json(), missing.json())
+                with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_PROOF_ENABLED", False):
+                    self.assertEqual((await client.post(endpoint, json=expected)).json(), missing.json())
+            async with api(False, self.sessions) as reader:
+                self.assertEqual((await reader.get(endpoint)).status_code, 403)
+                self.assertEqual((await reader.post(endpoint, json=expected)).status_code, 403)
 
     async def test_compare_sealed_outputs_checks_ancestry_before_rows_and_counts_bounded_changes(self):
         base, restricted = "sandbox-synthetic", "sandbox-restricted"

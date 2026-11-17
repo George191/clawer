@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     ONTOLOGY_SANDBOX_HANDOFF_COPY_DATABASE_MARKER: UUID | None = None
     ONTOLOGY_SANDBOX_HANDOFF_COPY_PHYSICAL_DIGEST: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
     ONTOLOGY_SANDBOX_HANDOFF_COPY_GRANTS: dict[UUID, HandoffCopyGrant] = {}
+    ONTOLOGY_SANDBOX_HANDOFF_PROOF_ENABLED: bool = False
+    ONTOLOGY_SANDBOX_HANDOFF_PROOF_STREAM_MARKER: UUID | None = None
+    ONTOLOGY_SANDBOX_HANDOFF_PROOF_GRANTS: dict[UUID, HandoffCopyGrant] = {}
     ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS: dict[UUID, list[Literal["sandbox-synthetic", "sandbox-restricted"]]] = {}
     CDC_SANDBOX_STREAM_MARKER: UUID | None = None
     BATCH_SYNC_SANDBOX_ENABLED: bool = False

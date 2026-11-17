@@ -44,6 +44,7 @@ from app.web.api.models.push_inbox import PushInboxIntakeChange, PushInboxStatus
 from app.web.api.models.push_inbox_apply import PushApplyRequest, PushApplyResult, PushApplyReview, PushApplyStatus
 from app.web.api.models.pipeline_handoff import (
     PipelineHandoffCapability, PipelineHandoffCopyReceipt, PipelineHandoffCopyRequest, PipelineHandoffEligibility,
+    PipelineHandoffRecipientCapability, PipelineHandoffRecipientProof, PipelineHandoffRecipientRequest,
     PipelineHandoffRequest,
 )
 from app.web.api.models.pipeline_sandbox import (
@@ -118,6 +119,9 @@ from app.web.services.cdc_sandbox import (
 )
 from app.web.services.cdc_sandbox_versions import compare_cdc_versions, list_cdc_versions, read_cdc_version
 from app.web.services.pipeline_handoff_copy import copy_handoff
+from app.web.services.pipeline_handoff_recipient import (
+    read_recipient_proof, recipient_proof_capability, recipient_proof_unavailable,
+)
 from app.web.services.pipeline_handoff import handoff_capability, handoff_eligibility
 from app.web.services.pipeline_sandbox import (
     list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
@@ -338,6 +342,38 @@ async def post_pipeline_handoff_eligibility(
             return await handoff_eligibility(session, current_user.id, payload)
     except (DBAPIError, TimeoutError):
         raise HTTPException(503, "Synthetic handoff eligibility is temporarily unavailable") from None
+
+
+@write.get("/pipeline-sandbox/handoff/recipient-proof")
+async def get_pipeline_handoff_recipient_proof(
+    current_user: CurrentActiveSuperuser, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffRecipientCapability:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        raise HTTPException(422, "Recipient proof uses one fixed synthetic sink", headers=headers)
+    try:
+        with fail_after(3):
+            return await recipient_proof_capability(session, current_user.id)
+    except (DBAPIError, TimeoutError, OSError):
+        return PipelineHandoffRecipientCapability(available=False)
+
+
+@write.post("/pipeline-sandbox/handoff/recipient-proof")
+async def post_pipeline_handoff_recipient_proof(
+    payload: PipelineHandoffRecipientRequest, current_user: CurrentActiveSuperuser, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffRecipientProof:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        raise HTTPException(422, "Recipient proof uses only the supplied receipt and generation", headers=headers)
+    try:
+        with fail_after(3):
+            return await read_recipient_proof(session, current_user.id, payload)
+    except (DBAPIError, TimeoutError, OSError):
+        raise recipient_proof_unavailable() from None
 
 
 @write.post("/pipeline-sandbox/handoff/copies", status_code=201)

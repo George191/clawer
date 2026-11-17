@@ -1332,6 +1332,19 @@ export const checkSandboxHandoffEligibility = (review: {
 }, signal?: AbortSignal): Promise<SandboxHandoffEligibility> =>
   client.post(`${sandboxPipelinePath}/handoff/eligibility`, review, { signal }).then(r => unwrap<SandboxHandoffEligibility>(r.data));
 
+const sandboxHandoffRecipientProofPath = `${sandboxPipelinePath}/handoff/recipient-proof`;
+export type SandboxHandoffRecipientCapability = { available: boolean; sink?: SandboxHandoffSink };
+export type SandboxHandoffRecipientEvidence = {
+  id: string; sink: SandboxHandoffSink; markings: string[]; rowsRecorded: number; recordedAt: string;
+};
+export const fetchSandboxHandoffRecipientCapability = (signal?: AbortSignal): Promise<SandboxHandoffRecipientCapability> =>
+  client.get(sandboxHandoffRecipientProofPath, { signal }).then(r => unwrap<SandboxHandoffRecipientCapability>(r.data));
+export const verifySandboxHandoffRecipientReceipt = (
+  receiptId: string, expectedSinkGeneration: string, signal?: AbortSignal,
+): Promise<SandboxHandoffRecipientEvidence> =>
+  client.post(sandboxHandoffRecipientProofPath, { receiptId, expectedSinkGeneration }, { signal })
+    .then(r => unwrap<SandboxHandoffRecipientEvidence>(r.data));
+
 export type SandboxHandoffCopyRequest = {
   requestId: string; outputId: string; expectedConfigHash: string; expectedResultHash: string; expectedSinkGeneration: string;
 };

@@ -49,3 +49,23 @@ class PipelineHandoffCopyReceipt(BaseModel):
     markings: list[SandboxMarking]
     rowsCopied: int
     recordedAt: datetime
+
+
+class PipelineHandoffRecipientCapability(BaseModel):
+    available: bool
+    sink: PipelineHandoffSink | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class PipelineHandoffRecipientRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receiptId: UUID
+    expectedSinkGeneration: UUID
+
+
+class PipelineHandoffRecipientProof(BaseModel):
+    id: UUID
+    sink: PipelineHandoffSink
+    markings: list[SandboxMarking]
+    rowsRecorded: int = Field(ge=0, le=100)
+    recordedAt: datetime

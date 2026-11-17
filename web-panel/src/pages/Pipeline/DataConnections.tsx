@@ -15,6 +15,7 @@ import type { BatchSyncSource } from './SourceBatchSyncs';
 import TableExports from './TableExports';
 import SandboxCdcReplay from './SandboxCdcReplay';
 import SyntheticPushInbox from './SyntheticPushInbox';
+import SandboxHandoffRecipientProof from './SandboxHandoffRecipientProof';
 import './data-connections.css';
 
 type Props = { onCancel?: () => void; onChanged?: () => void };
@@ -510,6 +511,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
         <SandboxCdcReplay />
         <SyntheticPushInbox />
       </section>)}
+      {canManage && !sourceId && <SandboxHandoffRecipientProof authorizedIdentity={sessionIdentity} />}
     </div>
 
     {!!wizard && canManage && <Modal className="flow-surface-modal ontology-connectors ontology-connectors__wizard" title={editingId ? 'Edit connection' : 'New source'} open
