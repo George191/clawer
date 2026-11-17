@@ -102,6 +102,7 @@
 }
 
 /* Semantic ontology workflow and record review. */
+.flow-published-ontology .ui-modal-body > .flow-create-step { flex: 1; }
 .flow-semantic-saved { margin-top: 20px; }
 .flow-semantic-saved h4, .flow-semantic-issues h4 { margin: 0 0 8px; font-size: 13px; }
 .flow-semantic-saved > .ui-select { width: min(100%, 390px); }

@@ -514,10 +514,11 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
           <div className="flow-ontology__view-switch" aria-label="Catalog view"><button type="button" aria-label="Grid view" aria-pressed={view === 'grid'} className={view === 'grid' ? 'is-active' : ''} onClick={() => updateQuery({ view: null })}><AppstoreOutlined /><span>Grid</span></button><button type="button" aria-label="List view" aria-pressed={view === 'list'} className={view === 'list' ? 'is-active' : ''} onClick={() => updateQuery({ view: 'list' })}><BarsOutlined /><span>List</span></button></div>
           {canManage && <Checkbox className="flow-ontology__show-hidden" checked={includeHidden} onChange={(event) => setShowHidden(event.target.checked)}>Show hidden object types</Checkbox>}
           <span className="flow-ontology__summary" aria-busy={loading} aria-label={confirmedTotal === null ? 'Object type count not loaded' : `${number(confirmedTotal)} object types${loading ? ', updating' : error ? ', last loaded count' : ''}`}><span className="flow-ontology__summary-value">{confirmedTotal === null ? '…' : number(confirmedTotal)}</span><span>object types</span></span>
-          {canManage && <button type="button" className="flow-ontology__button flow-ontology__connector-action" onClick={() => setConnectionsOpen(true)}><DatabaseOutlined />New data connector</button>}
-          <button type="button" className="flow-ontology__button" onClick={() => setPublished({})}>Published object types</button>
-          {(canManage || semanticProjectAccess) && <button type="button" className="flow-ontology__button flow-ontology__create-action" onClick={startNewObject}><PlusOutlined />New object type</button>}
-          {canManage && <button type="button" className="flow-ontology__button" disabled={!creationSchemas.length} onClick={() => { setCreateSchema(source || selectedSchema || undefined); setLegacyCreateOpen(true); }}>New storage table</button>}
+          <div className="flow-ontology__catalog-actions" aria-label="Object type actions">
+            <button type="button" className="flow-ontology__button flow-ontology__published-action" onClick={() => setPublished({})}>Published object types</button>
+            {canManage && <><button type="button" className="flow-ontology__button flow-ontology__connector-action" onClick={() => setConnectionsOpen(true)}><DatabaseOutlined />New data connector</button><button type="button" className="flow-ontology__button flow-ontology__storage-action" disabled={!creationSchemas.length} onClick={() => { setCreateSchema(source || selectedSchema || undefined); setLegacyCreateOpen(true); }}>New storage table</button></>}
+            {(canManage || semanticProjectAccess) && <button type="button" className="flow-ontology__button flow-ontology__create-action" onClick={startNewObject}><PlusOutlined />New object type</button>}
+          </div>
         </div>
       </header>
       <div className="flow-ontology__body">
