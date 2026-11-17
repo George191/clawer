@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index
+from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as DbField, SQLModel
 
@@ -127,12 +127,42 @@ class AssetFreshnessTransition(AssetFreshnessAssessment):
     generation: int
 
 
+AssetQualityIncidentKind = Literal["freshness", "schema", "heap_size"]
+AssetQualityIncidentReason = Literal["write_overdue", "schema_drift", "below_minimum", "above_maximum"]
+AssetQualityIncidentClose = Literal["healthy", "policy_paused", "policy_reviewed", "schema_baseline_captured"]
+
+
+class AssetQualityIncident(BaseModel):
+    id: UUID
+    generation: int
+    kind: AssetQualityIncidentKind
+    status: Literal["open", "acknowledged", "recovered", "superseded"]
+    reason: AssetQualityIncidentReason
+    openedAt: datetime
+    lastConfirmedAt: datetime
+    acknowledgedAt: datetime | None = None
+    closedAt: datetime | None = None
+    closeReason: AssetQualityIncidentClose | None = None
+
+
+class AssetQualityIncidentLists(BaseModel):
+    active: list[AssetQualityIncident] = Field(default_factory=list)
+    history: list[AssetQualityIncident] = Field(default_factory=list)
+
+
+class AssetQualityIncidentAck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expectedGeneration: int = Field(ge=1)
+
+
 class AssetFreshnessResponse(BaseModel):
     available: bool
     policy: AssetFreshnessPolicy | None = None
     assessment: AssetFreshnessAssessment
     history: list[AssetFreshnessTransition] = Field(default_factory=list)
     checks: AssetQualityChecks = Field(default_factory=AssetQualityChecks)
+    incidents: AssetQualityIncidentLists = Field(default_factory=AssetQualityIncidentLists)
 
 
 class AssetFreshnessPolicyRow(SQLModel, table=True):
@@ -222,3 +252,34 @@ class AssetQualityTransitionRow(SQLModel, table=True):
     reason: str | None = DbField(default=None, max_length=40)
     checked_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     heap_bytes: int | None = DbField(default=None, sa_column=Column(BigInteger))
+
+
+class AssetQualityIncidentRow(SQLModel, table=True):
+    __tablename__ = "ontology_asset_quality_incidents"
+    __table_args__ = (
+        CheckConstraint("generation > 0 AND ((kind = 'freshness' AND reason = 'write_overdue') OR "
+                        "(kind = 'schema' AND reason = 'schema_drift') OR "
+                        "(kind = 'heap_size' AND reason IN ('below_minimum','above_maximum')))",
+                        name="ck_ontology_asset_quality_incident_kind"),
+        CheckConstraint("(closed_at IS NULL) = (close_reason IS NULL) AND "
+                        "(close_reason IS NULL OR close_reason IN "
+                        "('healthy','policy_paused','policy_reviewed','schema_baseline_captured')) AND "
+                        "(acknowledged_at IS NULL) = (acknowledged_by IS NULL)",
+                        name="ck_ontology_asset_quality_incident_lifecycle"),
+        Index("uq_ontology_asset_quality_incident_active", "target_table", "kind", unique=True,
+              postgresql_where=text("closed_at IS NULL")),
+        Index("ix_ontology_asset_quality_incident_history", "target_table", "closed_at", "id",
+              postgresql_where=text("closed_at IS NOT NULL")),
+    )
+
+    id: UUID = DbField(default_factory=uuid4, primary_key=True)
+    target_table: str = DbField(foreign_key="ontology_asset_freshness_policies.target_table")
+    generation: int
+    kind: str = DbField(max_length=12)
+    reason: str = DbField(max_length=16)
+    opened_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
+    last_confirmed_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
+    acknowledged_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
+    acknowledged_by: UUID | None = None
+    closed_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
+    close_reason: str | None = DbField(default=None, max_length=24)

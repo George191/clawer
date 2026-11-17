@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Modal } from '@/components/ui';
-import { captureAssetSchemaBaseline, fetchAssetFreshness, fetchAssetFreshnessCandidates, previewAssetSchemaBaseline, updateAssetFreshness } from '../../services/api';
-import type { AssetFreshness, AssetFreshnessCandidate, AssetFreshnessChange, AssetSchemaPreview } from '../../services/api';
+import { acknowledgeAssetQualityIncident, captureAssetSchemaBaseline, fetchAssetFreshness, fetchAssetFreshnessCandidates, previewAssetSchemaBaseline, updateAssetFreshness } from '../../services/api';
+import type { AssetFreshness, AssetFreshnessCandidate, AssetFreshnessChange, AssetQualityIncident, AssetSchemaPreview } from '../../services/api';
 import ExplorerAssetQualityChecks, { AssetSchemaColumns, qualityBounds, readQualityDraft } from './ExplorerAssetQualityChecks';
+import ExplorerQualityWarnings from './ExplorerQualityWarnings';
 
 const stateLabels: Record<AssetFreshness['assessment']['state'], string> = {
   not_configured: 'Not configured',
@@ -151,6 +152,26 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
       if (mounted.current) { setBusy(false); setBaselineReview(undefined); }
     }
   };
+  const acknowledgeWarning = async (incident: AssetQualityIncident) => {
+    if (pending.current || incident.generation !== policy?.generation) return;
+    pending.current = true; setBusy(true); setError('');
+    try {
+      const updated = await acknowledgeAssetQualityIncident(schema, table, incident.id, incident.generation);
+      if (mounted.current) setSnapshot(current => {
+        if (!current || current.policy?.generation !== incident.generation) return current;
+        return { ...current, incidents: { ...current.incidents, active: current.incidents.active.map(item =>
+          item.id === updated.id && item.generation === updated.generation ? updated : item) } };
+      });
+    } catch {
+      if (mounted.current) {
+        setError('Acknowledgment could not be confirmed. Review the refreshed warnings before retrying.');
+        setRevision(value => value + 1);
+      }
+    } finally {
+      pending.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
 
   return <section className="flow-evidence-card flow-evidence-freshness" aria-label="Transfer freshness">
     <header><h4>Transfer freshness</h4><span>Sandbox · confirmed writes</span></header>
@@ -201,6 +222,7 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
               {item.reason && <p>{reasonLabels[item.reason] ?? item.reason}</p>}
             </li>)}</ol> : <p>No freshness transitions recorded.</p>}
         </details>
+        <ExplorerQualityWarnings incidents={snapshot.incidents} generation={policy?.generation} busy={busy} onAcknowledge={acknowledgeWarning} />
       </>}
     <Modal open={Boolean(request)} destroyOnHidden className="flow-surface-modal"
       title={request?.enabled ? 'Save transfer freshness check?' : 'Pause transfer freshness check?'}

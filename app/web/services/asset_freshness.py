@@ -1,6 +1,7 @@
 """Track last confirmed internal writes without reading warehouse business rows."""
 
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -12,12 +13,15 @@ from app.storage.postgres_client import get_pg_client
 from app.web.api.models.asset_freshness import (
     AssetFreshnessAssessment, AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessPolicy,
     AssetFreshnessPolicyRow, AssetFreshnessResponse, AssetFreshnessTransition, AssetFreshnessTransitionRow,
-    AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
+    AssetQualityIncident, AssetQualityIncidentAck, AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
 from app.web.api.models.transfer_plans import TransferPlanRow, TransferRunRow
 from app.web.core.config import settings
 from app.web.services.asset_quality import (
     captured_schema, enabled_heap, evaluate_asset_quality, read_quality_checks, read_schema_preview,
+)
+from app.web.services.asset_quality_incidents import (
+    acknowledge_quality_incident_locked, list_quality_incidents, observe_quality_incident, supersede_quality_incidents,
 )
 from app.web.services.transfer_runs import SANDBOX
 
@@ -117,8 +121,9 @@ async def get_asset_freshness(session: AsyncSession, schema: str, table: str) ->
     history = [AssetFreshnessTransition(id=entry.id, generation=entry.generation, **_evidence(entry))
                for entry in history_rows]
     checks = await read_quality_checks(session, row, context_reason, now)
+    incidents = await list_quality_incidents(session, row)
     return AssetFreshnessResponse(available=available, policy=policy, assessment=assessment,
-                                  history=history, checks=checks)
+                                  history=history, checks=checks, incidents=incidents)
 
 
 async def get_asset_freshness_candidates(session: AsyncSession, schema: str, table: str) -> list[AssetFreshnessCandidate]:
@@ -148,6 +153,7 @@ async def put_asset_freshness(
         if row.plan_id != change.planId or row.plan_updated_at != change.expectedPlanUpdatedAt:
             raise HTTPException(409, "The freshness policy plan binding changed; reload before pausing it")
         if row.enabled:
+            await supersede_quality_incidents(session, row, now, "policy_paused")
             row.enabled = False
             row.generation += 1
             row.updated_at = now
@@ -187,6 +193,7 @@ async def put_asset_freshness(
             if inserted is None:
                 raise HTTPException(409, "The freshness policy changed; reload before updating it")
         else:
+            await supersede_quality_incidents(session, row, now, "policy_reviewed")
             for field, value in values.items():
                 setattr(row, field, value)
     await session.commit()
@@ -241,6 +248,7 @@ async def capture_schema_baseline(
     if preview.fingerprint != request.expectedFingerprint:
         raise HTTPException(409, "The table columns changed after review; preview its metadata again")
     now = _utc_now()
+    await supersede_quality_incidents(session, row, now, "schema_baseline_captured")
     row.schema_baseline = {"target": [row.target_oid, row.target_filenode],
                            "preview": {**preview.model_dump(mode="json"), "capturedAt": now.isoformat()}}
     row.generation += 1
@@ -248,6 +256,23 @@ async def capture_schema_baseline(
     row.next_check_at = now
     await session.commit()
     return await get_asset_freshness(session, schema, table)
+
+
+async def acknowledge_quality_incident(
+    session: AsyncSession, schema: str, table: str, incident_id: UUID, request: AssetQualityIncidentAck, actor_id: UUID,
+) -> AssetQualityIncident:
+    """Record an explicit acknowledgement under the check policy's serialization lock."""
+    _check_schema(schema)
+    if not asset_freshness_enabled():
+        raise HTTPException(403, "Sandbox asset quality checks are disabled")
+    row = await _lock_policy(session, table)
+    if row is None:
+        raise HTTPException(404, "Asset freshness policy does not exist")
+    incident = await acknowledge_quality_incident_locked(
+        session, row, incident_id, request.expectedGeneration, actor_id, _utc_now(),
+    )
+    await session.commit()
+    return incident
 
 
 async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now: datetime) -> str:
@@ -269,6 +294,8 @@ async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now
         state = "unknown"
     else:
         state = "overdue" if now - receipt.recorded_at > timedelta(minutes=row.threshold_minutes) else "healthy"
+    await observe_quality_incident(session, row, "freshness", now, healthy=state == "healthy",
+                                  failure="write_overdue" if state == "overdue" else None)
     if (row.state, row.reason) != (state, reason):
         session.add(AssetFreshnessTransitionRow(
             target_table=row.target_table, generation=row.generation, state=state, reason=reason, checked_at=now,

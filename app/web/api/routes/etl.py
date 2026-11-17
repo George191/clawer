@@ -9,7 +9,7 @@ from fastapi.responses import Response
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.models.asset_freshness import (
-    AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse,
+    AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse, AssetQualityIncident, AssetQualityIncidentAck,
     AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
 from app.web.api.models.batch_syncs import (
@@ -45,7 +45,7 @@ from app.web.api.models.transfer_schedules import (
     TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleSummary,
 )
 from app.web.services.asset_freshness import (
-    capture_schema_baseline, get_asset_freshness, get_asset_freshness_candidates,
+    acknowledge_quality_incident, capture_schema_baseline, get_asset_freshness, get_asset_freshness_candidates,
     preview_schema_baseline, put_asset_freshness,
 )
 from app.web.services.data_connections import connector_types, get_data_connections
@@ -114,6 +114,15 @@ async def capture_freshness_schema_baseline(
 ) -> AssetFreshnessResponse:
     """Capture a metadata snapshot explicitly reviewed by an administrator."""
     return await capture_schema_baseline(session, schema, table, payload)
+
+
+@write.post("/asset-freshness/{schema}/{table}/incidents/{incident_id}/acknowledge")
+async def acknowledge_freshness_incident(
+    schema: WarehouseSchema, table: TableName, incident_id: UUID, payload: AssetQualityIncidentAck,
+    session: SessionDep, user: CurrentActiveSuperuser,
+) -> AssetQualityIncident:
+    """Acknowledge an ongoing exact-target quality incident without resolving it."""
+    return await acknowledge_quality_incident(session, schema, table, incident_id, payload, user.id)
 
 
 @router.get("/published/{token}")

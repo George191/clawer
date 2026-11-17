@@ -119,6 +119,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.compound_migration = import_module("app.web.alembic.versions.b6c45a7e9130_ontology_compound_upstream")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
+        self.incident_migration = import_module(
+            "app.web.alembic.versions.f32194ec7a60_ontology_asset_quality_incidents",
+        )
         async with self.pg.session() as session:
             for sql in (
                 "CREATE SCHEMA ts_rds", "CREATE SCHEMA ts_ods", "CREATE SCHEMA ts_meta",
@@ -141,6 +144,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.compound_migration.upgrade)
             await self.migrate(session, self.freshness_migration.upgrade)
             await self.migrate(session, self.quality_migration.upgrade)
+            await self.migrate(session, self.incident_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -153,6 +157,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def drop_fixtures(self):
         async with self.pg.session() as session:
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_incidents"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_transitions, "
                                        "public.ontology_asset_quality_observations"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_freshness_transitions, "
@@ -262,16 +267,21 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     late = tick + timedelta(minutes=6)
                     self.assertEqual((await check(late))["overdue"], 1)
                     with patch("app.web.services.asset_freshness._utc_now", return_value=late):
-                        assert_state((await client.get(route)).json(), "overdue")
+                        result = (await client.get(route)).json()
+                        assert_state(result, "overdue")
+                        self.assertEqual(result["incidents"]["active"][0]["reason"], "write_overdue")
                     await self.pg.execute("TRUNCATE ts_transfer_sandbox.freshness_target")
                     with patch("app.web.services.asset_freshness._utc_now", return_value=late):
                         drift = (await client.get(route)).json()
                         assert_state(drift, "unknown", "target_changed")
                         self.assertIsNone(drift["assessment"]["receiptId"])
+                        self.assertEqual(drift["incidents"]["active"][0]["status"], "open")
                     with patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", False):
                         paused = await client.put(route, json={**binding, "expectedGeneration": 1, "enabled": False})
                         self.assertEqual(paused.status_code, 200, paused.text)
                         assert_state(paused.json(), "paused")
+                        self.assertFalse(paused.json()["incidents"]["active"])
+                        self.assertEqual(paused.json()["incidents"]["history"][0]["closeReason"], "policy_paused")
 
     async def test_quality_checks_capture_reviewed_schema_and_measure_only_main_heap(self):
         async with self.pg.session() as session:
@@ -356,6 +366,90 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(saved.json()["policy"]["schemaBaseline"]["fingerprint"], preview["fingerprint"])
                 self.assertEqual(saved.json()["policy"]["heapSize"]["maxBytes"], "0")
                 self.assertEqual(saved.json()["checks"]["schema"]["state"], "not_checked")
+
+    async def test_quality_incident_acknowledges_without_recovery_and_preserves_history(self):
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.incident_source (id int PRIMARY KEY, value text)",
+                "CREATE TABLE ts_transfer_sandbox.incident_target (id int PRIMARY KEY, value text)",
+            ):
+                await session.execute(text(sql))
+        config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                  "sourceTable": "incident_source", "targetTable": "incident_target", "writeMode": "upsert"}
+        route = "/etl/asset-freshness/ts_transfer_sandbox/incident_target"
+
+        async def check(now):
+            async with self.pg.session() as session:
+                return await evaluate_due_asset_freshness(session, now=now)
+
+        with (patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+              patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+              patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+              patch.object(settings, "ENVIRONMENT", "local")):
+            async with api(True, self.session_provider) as client:
+                plan = (await client.post(RUNS, json=config)).json()
+                binding = {"planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"],
+                           "expectedGeneration": None, "thresholdMinutes": 5, "enabled": True,
+                           "schemaCheckEnabled": True, "heapSize": {"minBytes": "1"}}
+                saved = await client.put(route, json=binding)
+                self.assertEqual(saved.status_code, 200, saved.text)
+                baseline_route = route + "/schema-baseline"
+                preview = await client.post(baseline_route + "/preview", json={"expectedGeneration": 1})
+                self.assertEqual(preview.status_code, 200, preview.text)
+                captured = await client.post(baseline_route, json={
+                    "expectedGeneration": 1, "expectedFingerprint": preview.json()["fingerprint"],
+                })
+                self.assertEqual(captured.status_code, 200, captured.text)
+                start = datetime.now(timezone.utc)
+                self.assertEqual((await check(start))["checked"], 1)
+                opened = (await client.get(route)).json()["incidents"]
+                self.assertFalse(opened["history"])
+                self.assertEqual(len(opened["active"]), 1)
+                heap = opened["active"][0]
+                self.assertEqual((heap["kind"], heap["status"], heap["reason"]), ("heap_size", "open", "below_minimum"))
+                acknowledgement = f"{route}/incidents/{heap['id']}/acknowledge"
+                self.assertEqual((await client.post(acknowledgement, json={"expectedGeneration": 1})).status_code, 409)
+                async with api(False, self.session_provider) as reader:
+                    self.assertEqual((await reader.post(acknowledgement, json={"expectedGeneration": 2})).status_code, 403)
+                first, replay = await asyncio.gather(*(client.post(acknowledgement, json={"expectedGeneration": 2})
+                                                      for _ in range(2)))
+                self.assertEqual(first.status_code, 200, first.text)
+                self.assertEqual(first.json(), replay.json())
+                self.assertEqual(first.json()["status"], "acknowledged")
+                still_open = await check(start + timedelta(minutes=1))
+                self.assertEqual(still_open["checked"], 1)
+                ongoing = (await client.get(route)).json()["incidents"]["active"]
+                self.assertEqual([(item["id"], item["status"]) for item in ongoing], [(heap["id"], "acknowledged")])
+                await self.pg.execute("ALTER TABLE ts_transfer_sandbox.incident_target ALTER COLUMN value SET NOT NULL")
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.incident_target VALUES (1, 'confirm heap')")
+                await check(start + timedelta(minutes=2))
+                states = (await client.get(route)).json()["incidents"]
+                self.assertEqual([(i["id"], i["status"]) for i in states["history"]], [(heap["id"], "recovered")])
+                again = await client.post(acknowledgement, json={"expectedGeneration": 2})
+                self.assertEqual(again.status_code, 409, again.text)
+                schema = states["active"][0]
+                self.assertEqual((schema["kind"], schema["reason"]), ("schema", "schema_drift"))
+                await self.pg.execute("ALTER TABLE ts_transfer_sandbox.incident_target ALTER COLUMN value DROP NOT NULL")
+                await check(start + timedelta(minutes=3))
+                resolved = (await client.get(route)).json()["incidents"]
+                self.assertFalse(resolved["active"])
+                self.assertEqual(resolved["history"][0]["id"], schema["id"])
+                self.assertEqual(resolved["history"][0]["closeReason"], "healthy")
+                await self.pg.execute("ALTER TABLE ts_transfer_sandbox.incident_target ALTER COLUMN value SET NOT NULL")
+                await check(start + timedelta(minutes=4))
+                new_schema = (await client.get(route)).json()["incidents"]["active"][0]
+                self.assertNotEqual(new_schema["id"], schema["id"])
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.incident_target")
+                await check(start + timedelta(minutes=5))
+                unknown = (await client.get(route)).json()["incidents"]["active"]
+                self.assertEqual([i["id"] for i in unknown], [new_schema["id"]])
+                paused = await client.put(route, json={**binding, "expectedGeneration": 2, "enabled": False})
+                self.assertEqual(paused.status_code, 200, paused.text)
+                incidents = paused.json()["incidents"]
+                self.assertFalse(incidents["active"])
+                ended = next(item for item in incidents["history"] if item["id"] == new_schema["id"])
+                self.assertEqual((ended["status"], ended["closeReason"]), ("superseded", "policy_paused"))
 
     async def test_sandbox_data_and_receipt_commit_together_without_duplicate_replay(self):
         async with self.pg.session() as session:
@@ -464,6 +558,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.incident_migration.downgrade)
             await self.migrate(session, self.quality_migration.downgrade)
             await self.migrate(session, self.freshness_migration.downgrade)
             await self.migrate(session, self.compound_migration.downgrade)

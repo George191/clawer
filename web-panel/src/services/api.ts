@@ -445,6 +445,13 @@ export type AssetQualityResult = {
 export type AssetQualityCheck = AssetQualityResult & {
   history: (Omit<AssetQualityResult, 'validUntil'> & { id: string; generation: number })[];
 };
+export type AssetQualityIncident = {
+  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size';
+  status: 'open' | 'acknowledged' | 'recovered' | 'superseded';
+  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum';
+  openedAt: string; lastConfirmedAt: string; acknowledgedAt: string | null; closedAt: string | null;
+  closeReason: 'healthy' | 'policy_paused' | 'policy_reviewed' | 'schema_baseline_captured' | null;
+};
 export type AssetFreshness = {
   available: boolean;
   policy: {
@@ -455,6 +462,7 @@ export type AssetFreshness = {
   assessment: AssetFreshnessAssessment;
   history: (AssetFreshnessAssessment & { id: string; generation: number })[];
   checks: { schema: AssetQualityCheck; heapSize: AssetQualityCheck };
+  incidents: { active: AssetQualityIncident[]; history: AssetQualityIncident[] };
 };
 export type AssetFreshnessCandidate = { id: string; name: string; updatedAt: string };
 export type AssetFreshnessChange = {
@@ -473,6 +481,8 @@ export const previewAssetSchemaBaseline = (schema: string, table: string, expect
   client.post(`${assetFreshnessPath(schema, table)}/schema-baseline/preview`, { expectedGeneration }, { signal }).then((r) => unwrap<AssetSchemaPreview>(r.data));
 export const captureAssetSchemaBaseline = (schema: string, table: string, expectedGeneration: number, expectedFingerprint: string): Promise<AssetFreshness> =>
   client.post(`${assetFreshnessPath(schema, table)}/schema-baseline`, { expectedGeneration, expectedFingerprint }).then((r) => unwrap<AssetFreshness>(r.data));
+export const acknowledgeAssetQualityIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${assetFreshnessPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then((r) => unwrap<AssetQualityIncident>(r.data));
 
 export const fetchTableData = (
   layer: string,

@@ -14,6 +14,7 @@ from app.web.api.models.asset_freshness import (
     AssetQualityObservationRow, AssetQualityTransition, AssetQualityTransitionRow,
     AssetSchemaBaseline, AssetSchemaColumn, AssetSchemaPreview,
 )
+from app.web.services.asset_quality_incidents import observe_quality_incident
 from app.web.services.transfer_runs import SANDBOX
 
 _MAX_COLUMNS = 128
@@ -194,6 +195,11 @@ async def evaluate_asset_quality(
     if policy.schema_check_enabled:
         state, reason = (("unknown", context_reason) if context_reason else await _schema_result(session, policy))
         await _observe(session, policy, "schema", now, state, reason)
+        await observe_quality_incident(session, policy, "schema", now, healthy=state == "healthy",
+                                      failure="schema_drift" if state == "unhealthy" else None)
     if policy.heap_min_bytes is not None or policy.heap_max_bytes is not None:
         result = (("unknown", context_reason, None) if context_reason else await _heap_result(session, policy))
         await _observe(session, policy, "heap_size", now, *result)
+        state, reason, _ = result
+        await observe_quality_incident(session, policy, "heap_size", now, healthy=state == "healthy",
+                                      failure=reason if state == "unhealthy" else None)

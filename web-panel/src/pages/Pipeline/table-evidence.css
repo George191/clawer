@@ -64,3 +64,6 @@
 .flow-evidence-quality-columns table { border-collapse: collapse; width: 100%; font-size: 12px; }
 .flow-evidence-quality-columns caption { text-align: left; }
 .flow-evidence-quality-columns :is(td, th) { text-align: left; vertical-align: top; padding: 5px; overflow-wrap: anywhere; border-bottom: 1px solid var(--ontology-border); }
+.flow-evidence-quality-warnings { display: grid; gap: 8px; min-width: 0; border-top: 1px solid var(--ontology-border); padding-top: 8px; }
+.flow-evidence-quality-warnings :is(h5, h6, p) { margin: 0; }
+.flow-evidence-quality-warnings .flow-evidence-receipts button { justify-self: start; }
