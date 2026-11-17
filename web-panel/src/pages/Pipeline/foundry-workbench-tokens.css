@@ -1,0 +1,47 @@
+/* Public Blueprint typography baseline for the property and result workbenches.
+   Foundry screenshots guide density and hierarchy, not an inferred font face. */
+.flow-foundry-workbench {
+  --foundry-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", Arial, sans-serif;
+  --foundry-text-size: 14px;
+  --foundry-small-size: 12px;
+  --foundry-title-size: 18px;
+  --foundry-control-height: 30px;
+  font-family: var(--foundry-font);
+  font-size: var(--foundry-text-size);
+  line-height: 1.4;
+}
+
+.flow-foundry-workbench :where(button, input, select, textarea) {
+  font-family: inherit;
+}
+
+.flow-foundry-workbench .ui-btn {
+  min-height: var(--foundry-control-height);
+}
+
+.flow-semantic-type-glyph {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--ontology-link) 14%, var(--ontology-panel));
+  color: var(--ontology-link);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.flow-semantic-type-glyph--preview {
+  width: 44px;
+  height: 44px;
+  font-size: 22px;
+}
+
+.flow-semantic-type-glyph .workspace-glyph {
+  width: auto;
+  height: auto;
+  background: none;
+  color: inherit !important;
+  font-size: inherit;
+}

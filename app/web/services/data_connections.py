@@ -20,11 +20,12 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastapi import HTTPException
 import httpx
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from app.storage.postgres_client import get_pg_client
-from app.web.api.models.data_connections import DataConnectionPayload
+from app.web.api.models.data_connections import DataConnectionPayload, SourceCatalog, SourceColumn, SourceColumns, SourceRelation
 from app.web.core.config import settings
 
 
@@ -38,6 +39,22 @@ CONNECTORS = (
 )
 _PUBLIC_COLUMNS = "id, name, engine, config, created_by, created_at, updated_at, tested_at"
 _TIMEOUT = 5
+_CATALOG_TIMEOUT = 8
+_CATALOG_SCHEMA_LIMIT = 100
+_CATALOG_COLUMN_LIMIT = 200
+_CATALOG_KINDS = {
+    "r": "table", "p": "partitioned_table", "v": "view", "m": "materialized_view", "f": "foreign_table",
+}
+_CATALOG_SCHEMA_SCOPE = """
+    left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
+    AND has_schema_privilege(n.oid, 'USAGE')
+"""
+_CATALOG_RELATION_SCOPE = f"""
+    {_CATALOG_SCHEMA_SCOPE}
+    AND CASE WHEN c.relkind IN ('r','p','v','m','f')
+        THEN has_table_privilege(c.oid, 'SELECT') OR has_any_column_privilege(c.oid, 'SELECT')
+        ELSE false END
+"""
 
 
 def _driver(engine: str):
@@ -56,9 +73,9 @@ def connector_types() -> list[dict[str, Any]]:
         item = {key: value for key, value in connector.items() if key != "driver"}
         try:
             _driver(connector["engine"])
-            item.update(driverAvailable=True, prerequisite="")
+            item.update(driverAvailable=True, prerequisite="", catalogAvailable=connector["engine"] == "postgresql")
         except HTTPException as failure:
-            item.update(driverAvailable=False, prerequisite=failure.detail)
+            item.update(driverAvailable=False, prerequisite=failure.detail, catalogAvailable=False)
         result.append(item)
     return result
 
@@ -78,9 +95,16 @@ def _secrets(payload: DataConnectionPayload) -> dict[str, str]:
 
 def _public(row) -> dict[str, Any]:
     data = dict(row)
+    catalog_available = False
+    if data["engine"] == "postgresql":
+        try:
+            _driver("postgresql")
+            catalog_available = True
+        except HTTPException:
+            pass  # Saved source remains visible when its optional driver is missing.
     return {"id": str(data["id"]), "name": data["name"], "engine": data["engine"],
             "config": json.loads(data["config"]) if isinstance(data["config"], str) else data["config"],
-            "credentialsConfigured": True, "createdBy": data["created_by"],
+            "credentialsConfigured": True, "catalogAvailable": catalog_available, "createdBy": data["created_by"],
             "createdAt": data["created_at"].isoformat(), "updatedAt": data["updated_at"].isoformat(),
             "testedAt": data["tested_at"].isoformat()}
 
@@ -263,6 +287,102 @@ class DataConnections:
                     raise HTTPException(409, "The data source changed during testing; reload its current settings")
         return result
 
+    @asynccontextmanager
+    async def _postgres_catalog(self, connection_id):
+        row = await self._stored(connection_id)
+        if row["engine"] != "postgresql":
+            raise HTTPException(422, "Catalog exploration is supported only for saved PostgreSQL sources")
+        try:
+            config = row["config"]
+            payload = DataConnectionPayload(name=row["name"], engine="postgresql",
+                                            config=json.loads(config) if isinstance(config, str) else config)
+        except (ValidationError, ValueError, TypeError):
+            raise HTTPException(503, "Saved source settings are invalid; verify its connection settings") from None
+        credentials = await self._credentials(payload, row)
+        password = credentials.get("password") if isinstance(credentials, dict) else None
+        if not isinstance(password, str) or not password:
+            raise HTTPException(503, "Stored PostgreSQL credentials are unavailable")
+        config = payload.config
+        driver = _driver("postgresql")
+        connection = None
+        try:
+            with fail_after(_CATALOG_TIMEOUT):
+                connection = await driver.connect(
+                    host=config.host, port=config.port, database=config.database, user=config.username,
+                    password=password, ssl=ssl.create_default_context() if config.tls else False,
+                    timeout=_TIMEOUT, command_timeout=2,
+                    server_settings={"search_path": "pg_catalog", "statement_timeout": "2000",
+                                     "lock_timeout": "1000", "default_transaction_read_only": "on"},
+                )
+                async with connection.transaction(readonly=True, isolation="repeatable_read"):
+                    yield connection
+        except HTTPException:
+            raise
+        except Exception as error:
+            # Neither the upstream error text nor its traceback is an API or logging surface.
+            if isinstance(error, TimeoutError) or getattr(error, "sqlstate", None) == "57014":
+                raise HTTPException(504, "Catalog query timed out; check connectivity and try a narrower search") from None
+            raise HTTPException(502, _failure_message(error)) from None
+        finally:
+            if connection is not None:
+                connection.terminate()
+
+    async def catalog(self, connection_id, *, schema: str | None, search: str, limit: int, offset: int) -> SourceCatalog:
+        async with self._postgres_catalog(connection_id) as connection:
+            schemas = await connection.fetch(f"""
+                SELECT n.nspname::text AS name FROM pg_catalog.pg_namespace n
+                WHERE {_CATALOG_SCHEMA_SCOPE}
+                ORDER BY n.nspname::text COLLATE "C"
+                LIMIT $1
+            """, _CATALOG_SCHEMA_LIMIT + 1)
+            relations = []
+            if schema is not None:
+                allowed = await connection.fetchval(f"""
+                    SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace n
+                                   WHERE {_CATALOG_SCHEMA_SCOPE} AND n.nspname::text = $1)
+                """, schema)
+                if not allowed:
+                    raise HTTPException(404, "Source schema is unavailable or not readable")
+                relations = await connection.fetch(f"""
+                    SELECT c.relname::text AS name, c.relkind::text AS kind
+                    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                    WHERE {_CATALOG_RELATION_SCOPE} AND n.nspname::text = $1
+                      AND ($2::text = '' OR position(lower($2::text) in lower(c.relname::text)) > 0)
+                    ORDER BY c.relname::text COLLATE "C"
+                    LIMIT $3 OFFSET $4
+                """, schema, search, limit + 1, offset)
+        return SourceCatalog(
+            schemas=[row["name"] for row in schemas[:_CATALOG_SCHEMA_LIMIT]], schemaHasMore=len(schemas) > _CATALOG_SCHEMA_LIMIT,
+            schema=schema, relations=[SourceRelation(name=row["name"], kind=_CATALOG_KINDS[row["kind"]])
+                                      for row in relations[:limit]], hasMore=len(relations) > limit,
+        )
+
+    async def catalog_columns(self, connection_id, *, schema: str, table: str) -> SourceColumns:
+        async with self._postgres_catalog(connection_id) as connection:
+            relation = await connection.fetchval(f"""
+                SELECT c.oid FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                WHERE {_CATALOG_RELATION_SCOPE} AND n.nspname::text = $1 AND c.relname::text = $2
+            """, schema, table)
+            if relation is None:
+                raise HTTPException(404, "Source relation is unavailable or not readable")
+            columns = await connection.fetch("""
+                SELECT a.attname::text AS name, format_type(a.atttypid, a.atttypmod) AS type,
+                       NOT a.attnotnull AS nullable, a.attnum AS position,
+                       EXISTS (SELECT 1 FROM unnest(i.indkey) WITH ORDINALITY AS pk(attnum, ord)
+                               WHERE pk.attnum = a.attnum AND pk.ord <= i.indnkeyatts) AS primary_key
+                FROM pg_catalog.pg_attribute a
+                LEFT JOIN pg_catalog.pg_index i ON i.indrelid = a.attrelid AND i.indisprimary
+                  AND i.indisvalid AND i.indisready AND i.indislive
+                WHERE a.attrelid = $1::oid AND a.attnum > 0 AND NOT a.attisdropped
+                  AND has_column_privilege(a.attrelid, a.attnum, 'SELECT')
+                ORDER BY a.attnum
+                LIMIT $2
+            """, relation, _CATALOG_COLUMN_LIMIT + 1)
+        return SourceColumns(schema=schema, table=table, hasMore=len(columns) > _CATALOG_COLUMN_LIMIT,
+                             columns=[SourceColumn(name=row["name"], type=row["type"], nullable=row["nullable"],
+                                                   primaryKey=row["primary_key"], position=row["position"])
+                                      for row in columns[:_CATALOG_COLUMN_LIMIT]])
+
     async def save(self, payload, user_id, connection_id=None):
         cipher = credential_cipher()
         stored = await self._stored(connection_id) if connection_id else None
@@ -282,7 +402,8 @@ class DataConnections:
             if connection_id:
                 sql = f"""UPDATE public.ontology_data_connections SET name=:name, engine=:engine,
                     config=CAST(:config AS jsonb), credentials_ciphertext=:credentials,
-                    updated_at=clock_timestamp(), tested_at=:tested WHERE id=:id AND updated_at=:version RETURNING {_PUBLIC_COLUMNS}"""
+                    updated_at=greatest(clock_timestamp(), updated_at + interval '1 microsecond'),
+                    tested_at=:tested WHERE id=:id AND updated_at=:version RETURNING {_PUBLIC_COLUMNS}"""
             else:
                 sql = f"""INSERT INTO public.ontology_data_connections
                     (id,name,engine,config,credentials_ciphertext,created_by,tested_at)

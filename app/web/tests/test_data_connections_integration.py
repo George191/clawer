@@ -9,6 +9,7 @@ import os
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -145,6 +146,80 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn('"input"', invalid.text)
                 deleted = await client.delete(f"/etl/data-connections/{identifier}")
                 self.assertEqual(deleted.status_code, 200)
+
+    async def test_real_catalog_is_acl_filtered_paged_and_never_queries_view_rows(self):
+        # The explicit isolated fixture is provisioned by a disposable cluster owner.
+        role = "catalog_" + uuid4().hex[:16]
+        password = "isolated-catalog-role-password"
+        async with self.pg.session() as session:
+            for statement in (
+                f"CREATE ROLE {role} LOGIN PASSWORD '{password}'",
+                'CREATE SCHEMA "Catalog Test"',
+                'CREATE SCHEMA "Catalog Unreadable"',
+                'CREATE TABLE "Catalog Test"."Accounts" (id bigint, tenant integer, summary varchar(20), '
+                'protected text, PRIMARY KEY (id, tenant) INCLUDE (summary))',
+                'CREATE VIEW "Catalog Test"."Calculated View" AS SELECT (1 / 0) AS danger',
+                'CREATE TABLE "Catalog Test"."Hidden Table" (id int)',
+                f'GRANT USAGE ON SCHEMA "Catalog Test" TO {role}',
+                f'GRANT SELECT(id, tenant, summary) ON "Catalog Test"."Accounts" TO {role}',
+                f'GRANT SELECT ON "Catalog Test"."Calculated View" TO {role}',
+            ):
+                await session.execute(text(statement))
+
+        async def drop_source():
+            async with self.pg.session() as session:
+                await session.execute(text('DROP SCHEMA "Catalog Test", "Catalog Unreadable" CASCADE'))
+                await session.execute(text(f"DROP ROLE {role}"))
+
+        self.addAsyncCleanup(self.pg.close)
+        self.addAsyncCleanup(drop_source)
+        url = make_url(URL)
+        body = DataConnectionPayload(name="Catalog fixture", engine="postgresql",
+            config={"host": url.host, "port": url.port or 5432, "database": DATABASE,
+                    "username": role, "auth": "password", "tls": False},
+            credentials={"password": password})
+        with patch.object(sources, "_probe", self.real_probe):
+            saved = await self.service.save(body, "isolated-admin")
+        self.assertTrue(saved["catalogAvailable"])
+        before = await self.stored(saved["id"])
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_current_active_superuser] = lambda: SimpleNamespace(id="admin", is_superuser=True)
+        with patch("app.web.api.routes.etl.get_data_connections", return_value=self.service):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                path = f"/etl/data-connections/{saved['id']}/catalog"
+                listed = await client.get(path)
+                self.assertEqual(listed.status_code, 200, listed.text)
+                self.assertIn("Catalog Test", listed.json()["schemas"])
+                self.assertTrue({"Catalog Unreadable", "information_schema", "pg_catalog"}.isdisjoint(listed.json()["schemas"]))
+                self.assertEqual(listed.json()["relations"], [])
+                page = await client.get(path, params={"schema": "Catalog Test", "limit": 1})
+                self.assertEqual(page.json()["relations"], [{"name": "Accounts", "kind": "table"}])
+                self.assertTrue(page.json()["hasMore"])
+                next_page = await client.get(path, params={"schema": "Catalog Test", "limit": 1, "offset": 1})
+                self.assertEqual(next_page.json()["relations"], [{"name": "Calculated View", "kind": "view"}])
+                self.assertFalse(next_page.json()["hasMore"])
+                search = await client.get(path, params={"schema": "Catalog Test", "search": "calculatED"})
+                self.assertEqual(search.json()["relations"], next_page.json()["relations"])
+                literal = await client.get(path, params={"schema": "Catalog Test", "search": "%"})
+                self.assertEqual(literal.json()["relations"], [])  # Search is a literal, not a LIKE expression.
+                columns = await client.get(path + "/columns", params={"schema": "Catalog Test", "table": "Accounts"})
+                self.assertEqual(columns.status_code, 200, columns.text)
+                self.assertEqual([(col["name"], col["primaryKey"], col["position"]) for col in columns.json()["columns"]],
+                                 [("id", True, 1), ("tenant", True, 2), ("summary", False, 3)])
+                self.assertEqual(columns.json()["columns"][-1]["type"], "character varying(20)")
+                view = await client.get(path + "/columns", params={"schema": "Catalog Test", "table": "Calculated View"})
+                self.assertEqual(view.status_code, 200, view.text)  # Evaluating the view would divide by zero.
+                self.assertEqual(view.json()["columns"][0]["name"], "danger")
+                denied = await client.get(path + "/columns", params={"schema": "Catalog Test", "table": "Hidden Table"})
+                self.assertEqual(denied.status_code, 404)
+                denied = await client.get(path, params={"schema": "Catalog Unreadable"})
+                self.assertEqual(denied.status_code, 404)
+                self.assertEqual((await client.get(path, params={"limit": 101})).status_code, 422)
+                self.assertNotIn(password, columns.text)
+        after = await self.stored(saved["id"])
+        self.assertEqual(before, after)
 
     async def test_save_performs_its_own_probe_and_failed_probe_never_writes(self):
         self.probe.side_effect = RuntimeError("remote driver echoed " + PAYLOAD["credentials"]["password"])

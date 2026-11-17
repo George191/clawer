@@ -1,10 +1,13 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowDownOutlined, ArrowLeftOutlined, ArrowRightOutlined, ArrowUpOutlined, BarsOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DatabaseOutlined, ExportOutlined, EyeOutlined, FullscreenOutlined, MinusOutlined, PauseOutlined, PlayFilled, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import { ArrowDownOutlined, ArrowLeftOutlined, ArrowRightOutlined, ArrowUpOutlined, BarsOutlined, BranchesOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DatabaseOutlined, ExportOutlined, EyeOutlined, FullscreenOutlined, MinusOutlined, PauseOutlined, PlayFilled, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { Spin } from '@/components/ui';
-import { fetchLayers } from '../../services/api';
+import { fetchCurrentUserContext, fetchLayers } from '../../services/api';
+import { getSessionState } from '../../services/session';
 import type { LayerNode } from '../../services/types';
 import { schemaColor } from './OntologyExplorer';
+import LineageTransferPlans from './LineageTransferPlans';
+import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import './ontology-lineage.css';
 
 // Current ETL processor contracts: TsOds, TsTask, TsDim, TsDwd and TsDws.
@@ -24,6 +27,9 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const [params, setParams] = useSearchParams();
   const search = params.get('q') || '';
   const selected = params.get('schema') || '';
+  const selectedTable = params.get('table') || '';
+  const selectedSchedule = params.get('transferPlan') || undefined;
+  const selectedUpstream = params.get('scheduleKind') === 'upstream';
   const paused = params.get('motion') === 'off';
   const viewportRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<SVGSVGElement>(null);
@@ -38,7 +44,8 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const [tool, setTool] = useState<'pan' | 'select'>('pan');
   const [legendOpen, setLegendOpen] = useState(() => window.matchMedia('(min-width: 761px)').matches);
   const [inspectorOpen, setInspectorOpen] = useState(Boolean(selected));
-  const [panel, setPanel] = useState<'details' | 'upstream' | 'downstream'>('details');
+  const [panel, setPanel] = useState<'details' | 'upstream' | 'downstream' | 'transfers'>(selectedSchedule ? 'transfers' : 'details');
+  const [canPlanTransfers, setCanPlanTransfers] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'copied' | 'manual' | ''>('');
   const id = useId().replace(/:/g, '');
   const [schemas, setSchemas] = useState<LayerNode[]>([]);
@@ -62,9 +69,18 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   }, [version, refreshToken]);
   useEffect(() => {
     if (!loading && !error && selected && !schemas.some((schema) => schema.key === selected)) {
-      setParams((current) => { const next = new URLSearchParams(current); next.delete('schema'); return next; }, { replace: true });
+      setParams((current) => { const next = new URLSearchParams(current); next.delete('schema'); next.delete('table'); next.delete('transferPlan'); next.delete('scheduleKind'); return next; }, { replace: true });
     }
   }, [schemas, loading, error, selected, setParams]);
+  useEffect(() => {
+    let active = true;
+    const identity = getSessionState().identity;
+    setCanPlanTransfers(false);
+    fetchCurrentUserContext().then(context => {
+      if (active && getSessionState().identity === identity) setCanPlanTransfers(context.user.is_superuser === true);
+    }).catch(() => { if (active) setCanPlanTransfers(false); });
+    return () => { active = false; };
+  }, [version]);
   const visible = schemas.filter((schema) => `${schema.key} ${schema.label} ${schema.alias || ''}`.toLowerCase().includes(search.trim().toLowerCase()));
   const independent = visible.filter((schema) => !stages[schema.key]).sort((a, b) => a.key.localeCompare(b.key));
   const hasPipeline = visible.some((schema) => stages[schema.key]);
@@ -99,7 +115,12 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     return [{ source, target, from, color: schemaColor(source), d: `M${startX},${startY} C${mid},${startY} ${mid},${endY} ${endX},${endY}` }];
   });
   const asset = schemas.find((schema) => schema.key === selected);
-  const liveLinks = links.filter((link) => link.from.metricsAvailable && link.from.rateOut > 0).length;
+  const transferSchemas = schemas.map(item => item.key).filter(key => /^ts_[a-z0-9_]{1,60}$/.test(key) && key !== 'ts_meta_hist');
+  const transferAsset = Boolean(asset && transferSchemas.includes(asset.key));
+  const activePanel = panel === 'transfers' && (!canPlanTransfers || !transferAsset) ? 'details' : panel;
+  const isExportSchema = canPlanTransfers && asset?.key === TABLE_EXPORT_SOURCE.schema;
+  const showExportTable = isExportSchema && selectedTable === TABLE_EXPORT_SOURCE.table && activePanel === 'details';
+  const measuredOutputs = new Set(links.filter(link => link.from.metricsAvailable && link.from.rateOut > 0).map(link => link.source)).size;
   const directionLinks = links.filter((link) => !link.from.metricsAvailable).length;
   const selectedNode = nodes.find((node) => node.key === selected);
   useLayoutEffect(() => {
@@ -122,14 +143,23 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     return () => preference.removeEventListener('change', update);
   }, []);
   useEffect(() => { if (selected) setInspectorOpen(true); }, [selected]);
+  useEffect(() => {
+    if (selected && selectedSchedule) {
+      setPanel('transfers');
+      setInspectorOpen(true);
+    } else if (selected === TABLE_EXPORT_SOURCE.schema && selectedTable === TABLE_EXPORT_SOURCE.table) {
+      setPanel('details');
+      setInspectorOpen(true);
+    }
+  }, [selected, selectedSchedule, selectedTable]);
   useEffect(() => setCopyStatus(''), [params]);
   const selectNode = (key: string) => {
     setInspectorOpen(true);
-    updateQuery({ schema: key, ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
+    updateQuery({ schema: key, ...(selected === key ? {} : { transferPlan: null, scheduleKind: null, table: null }), ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
   };
   const closeInspector = () => {
     setInspectorOpen(false);
-    updateQuery({ schema: null }, true);
+    updateQuery({ schema: null, transferPlan: null, scheduleKind: null, table: null }, true);
     requestAnimationFrame(() => nodeRefs.current[selected]?.focus());
   };
   const changeZoom = (value: number) => {
@@ -159,13 +189,24 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   }, [selectedNode?.key, selectedNode?.x, selectedNode?.y, loading]);
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && selected) { event.preventDefault(); closeInspector(); }
+      if (event.key === 'Escape' && selected && !event.defaultPrevented &&
+          !(event.target instanceof Element && event.target.closest('[role="dialog"][aria-modal="true"]'))) {
+        event.preventDefault();
+        closeInspector();
+      }
     };
     document.addEventListener('keydown', close);
     return () => document.removeEventListener('keydown', close);
   }, [selected, params]);
-  const openPanel = (next: typeof panel) => { setPanel(next); setInspectorOpen(true); };
-  const openWorkspace = () => asset && navigate(`/ontology/explorer?schema=${encodeURIComponent(asset.key)}`);
+  const openPanel = (next: typeof panel) => {
+    setPanel(next);
+    setInspectorOpen(true);
+    if ((next !== 'transfers' && selectedSchedule) || (next !== 'details' && selectedTable)) {
+      updateQuery({ ...(next !== 'transfers' ? { transferPlan: null, scheduleKind: null } : {}), ...(next !== 'details' ? { table: null } : {}) }, true);
+    }
+  };
+  const openWorkspace = () => asset && navigate(`/ontology/explorer?${new URLSearchParams({ schema: asset.key,
+    ...(showExportTable ? { table: TABLE_EXPORT_SOURCE.table, view: 'evidence' } : {}) })}`);
   const copyLink = async () => {
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(window.location.href);
@@ -185,7 +226,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     } catch { setCopyStatus('manual'); }
   };
   const canvasReady = !loading && !error && nodes.length > 0;
-  const motionStatus = reducedMotion ? 'Animations are off because reduced motion is enabled.' : paused ? 'Animation paused' : liveLinks ? `${liveLinks} measured schema outputs${directionLinks ? ` · ${directionLinks} direction previews` : ''}` : directionLinks ? `${directionLinks} direction previews · Output metrics unavailable` : 'No measured output · Motion stopped';
+  const motionStatus = reducedMotion ? 'Animations are off because reduced motion is enabled.' : paused ? 'Animation paused' : measuredOutputs ? `${measuredOutputs} active schema outputs${directionLinks ? ` · ${directionLinks} direction previews` : ''}` : directionLinks ? `${directionLinks} direction previews · Output metrics unavailable` : 'No active schema output · Motion stopped';
   return <div className="flow-lineage" data-testid="ontology-lineage">
     <header className="flow-lineage-context">
       <div className="flow-lineage-context-title"><button type="button" className="flow-lineage-back" aria-label="Back to object types" title="Back to object types" onClick={() => navigate('/ontology')}><ArrowLeftOutlined /></button><h1>Data lineage</h1><span>ETL contract preview</span></div>
@@ -231,19 +272,28 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
                   {nodes.map(node => <button ref={element => { nodeRefs.current[node.key] = element; }} key={node.key} type="button" data-testid="ontology-lineage-node" data-schema={node.key} className={`flow-lineage-node${selected === node.key ? ' is-selected' : ''}`} style={{ left: node.x, top: node.y, '--schema-color': schemaColor(node.key) } as React.CSSProperties} title={`${node.alias || node.label} · ${node.tables ?? '—'} tables · ${node.status === 'running' ? 'Available' : 'Unavailable'}`} aria-label={`${node.key}, ${node.alias || node.label}`} onClick={() => selectNode(node.key)}><DatabaseOutlined /><strong>{node.key}</strong><ArrowRightOutlined /></button>)}
                 </div></div>
               </div>
-              {legendOpen && <aside className="flow-lineage-legend" aria-label="Schema color legend"><header><strong>Schema colors</strong><button type="button" aria-label="Close schema color legend" onClick={() => setLegendOpen(false)}><CloseOutlined /></button></header><div>{schemas.map(schema => <span key={schema.key}><i style={{ background: schemaColor(schema.key) }} />{schema.key}</span>)}</div><p>Node colors identify schemas. Gray arrows show predefined contracts; colored dots show measured output.</p></aside>}
+              {legendOpen && <aside className="flow-lineage-legend" aria-label="Schema color legend"><header><strong>Schema colors</strong><button type="button" aria-label="Close schema color legend" onClick={() => setLegendOpen(false)}><CloseOutlined /></button></header><div>{schemas.map(schema => <span key={schema.key}><i style={{ background: schemaColor(schema.key) }} />{schema.key}</span>)}</div><p>Node colors identify schemas. Gray arrows show predefined contracts. Colored dots show schema-level output activity, not proof of transfers on arrows.</p></aside>}
               <div className="flow-lineage-canvas-tools" aria-label="Lineage canvas tools"><button type="button" aria-label="Fit to view" title="Fit to view (Home)" onClick={fitGraph}><FullscreenOutlined /></button><button type="button" aria-label="Zoom in" title="Zoom in (+)" disabled={zoom >= 1.75} onClick={() => changeZoom(zoom + .1)}><PlusOutlined /></button><button type="button" aria-label="Zoom out" title="Zoom out (-)" disabled={zoom <= .25} onClick={() => changeZoom(zoom - .1)}><MinusOutlined /></button><button type="button" aria-label="Reset view" title="Reset to 100%" onClick={() => { setAutoFit(false); setManualZoom(1); viewportRef.current?.scrollTo({ left: 0, top: 0 }); }}><ReloadOutlined /></button><span className="flow-lineage-zoom-label" aria-live="polite">{Math.round(zoom * 100)}%</span></div>
-              <div className="flow-lineage-dock" role="toolbar" aria-label="Selected schema panels">{([{ key: 'details', label: 'Details', icon: <BarsOutlined /> }, { key: 'upstream', label: 'Upstream', icon: <ArrowUpOutlined /> }, { key: 'downstream', label: 'Downstream', icon: <ArrowDownOutlined /> }] as const).map(item => <button key={item.key} type="button" disabled={!asset} aria-pressed={Boolean(asset && inspectorOpen && panel === item.key)} onClick={() => openPanel(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>
+              <div className="flow-lineage-dock" role="toolbar" aria-label="Selected schema panels">{([{ key: 'details', label: 'Details', icon: <BarsOutlined /> }, { key: 'upstream', label: 'Upstream', icon: <ArrowUpOutlined /> }, { key: 'downstream', label: 'Downstream', icon: <ArrowDownOutlined /> }, { key: 'transfers', label: 'Transfer plans', icon: <BranchesOutlined /> }] as const).filter(item => item.key !== 'transfers' || canPlanTransfers).map(item => <button key={item.key} type="button" disabled={!asset || item.key === 'transfers' && !transferAsset} title={item.key === 'transfers' && !transferAsset ? 'Select a warehouse schema to manage transfer plans' : undefined} aria-pressed={Boolean(asset && inspectorOpen && activePanel === item.key)} onClick={() => openPanel(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>
               <div className="flow-lineage-status"><span>{nodes.length} schemas · {links.length} predefined relationships</span><small data-testid="ontology-lineage-motion-status">{motionStatus}</small></div>
-              {asset && inspectorOpen && <aside className="flow-lineage-inspector" aria-label="Node details"><header><span>SELECTED SCHEMA</span><button type="button" aria-label="Close node details" onClick={closeInspector}><CloseOutlined /></button></header><h2>{asset.alias || asset.label}</h2><code>{asset.key}</code><p className="flow-lineage-inspector-disclosure">ETL contract preview. Relationships are predefined, not discovered data lineage.</p>
-                {panel === 'details' && <dl><dt>Database</dt><dd>{asset.database || '—'}</dd><dt>Tables</dt><dd>{asset.tables ?? '—'}</dd><dt>Input rate</dt><dd>{asset.metricsAvailable ? `${asset.rateIn.toLocaleString('en-US')} /s` : 'Metrics unavailable'}</dd><dt>Output rate</dt><dd>{asset.metricsAvailable ? `${asset.rateOut.toLocaleString('en-US')} /s` : 'Metrics unavailable'}</dd><dt>Relationships</dt><dd>{stages[asset.key] ? 'Predefined processor contract' : 'Unmapped in preview'}</dd></dl>}
-                <div className="flow-lineage-node-relations">{(['upstream', 'downstream'] as const).filter(direction => panel === 'details' || panel === direction).map(direction => {
+              {asset && inspectorOpen && <aside className={`flow-lineage-inspector${activePanel === 'transfers' || showExportTable ? ' flow-lineage-inspector--transfers' : ''}`} aria-label="Node details"><header><span>{showExportTable ? 'SELECTED TABLE' : 'SELECTED SCHEMA'}</span><button type="button" aria-label="Close node details" onClick={closeInspector}><CloseOutlined /></button></header><h2>{showExportTable ? TABLE_EXPORT_SOURCE.table : asset.alias || asset.label}</h2><code>{showExportTable ? `${asset.key}.${TABLE_EXPORT_SOURCE.table}` : asset.key}</code>
+                {showExportTable ? <>
+                  <TableExportEvidence mode="lineage" version={version} />
+                  <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open table Evidence in Explorer <ArrowRightOutlined /></button>
+                  <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={() => updateQuery({ table: null })}>Back to schema details</button>
+                </> : <><p className="flow-lineage-inspector-disclosure">ETL contract preview. Relationships are predefined, not discovered data lineage.</p>
+                {activePanel === 'details' && <dl><dt>Database</dt><dd>{asset.database || '—'}</dd><dt>Tables</dt><dd>{asset.tables ?? '—'}</dd><dt>Input rate</dt><dd>{asset.metricsAvailable ? `${asset.rateIn.toLocaleString('en-US')} /s` : 'Metrics unavailable'}</dd><dt>Output rate</dt><dd>{asset.metricsAvailable ? `${asset.rateOut.toLocaleString('en-US')} /s` : 'Metrics unavailable'}</dd><dt>Relationships</dt><dd>{stages[asset.key] ? 'Predefined processor contract' : 'Unmapped in preview'}</dd></dl>}
+                {isExportSchema && activePanel === 'details' && <button type="button" className="flow-lineage-action" onClick={() => updateQuery({ table: TABLE_EXPORT_SOURCE.table, transferPlan: null, scheduleKind: null })}>Inspect records export</button>}
+                {activePanel === 'transfers'
+                  ? <LineageTransferPlans key={asset.key} schema={asset.key} schemas={transferSchemas} selectedSchedule={selectedSchedule} selectedUpstream={selectedUpstream} />
+                  : <><div className="flow-lineage-node-relations">{(['upstream', 'downstream'] as const).filter(direction => activePanel === 'details' || activePanel === direction).map(direction => {
                   const related = relationships.filter(([source, target]) => direction === 'upstream' ? target === asset.key : source === asset.key).map(([source, target]) => schemas.find(schema => schema.key === (direction === 'upstream' ? source : target))).filter((schema): schema is LayerNode => !!schema);
                   return <section key={direction}><h3>{direction === 'upstream' ? 'Upstream assets' : 'Downstream assets'}</h3>{related.length ? related.map(schema => <button type="button" key={schema.key} onClick={() => selectNode(schema.key)}><i style={{ background: schemaColor(schema.key) }} /><span>{schema.key}</span><ArrowRightOutlined /></button>) : <p>No predefined {direction === 'upstream' ? 'upstream' : 'downstream'} relationships in this preview</p>}</section>;
-                })}</div><button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open data workspace <ArrowRightOutlined /></button>
+                })}</div><button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open data workspace <ArrowRightOutlined /></button></>}
+                </>}
               </aside>}
             </div>
-            <aside className="flow-lineage-tool-rail" aria-label="Lineage side tools"><button type="button" aria-label="Find schemas" title="Find schemas" onClick={() => { searchRef.current?.focus(); searchRef.current?.select(); }}><SearchOutlined /></button><button type="button" aria-label="Show schema details" title="Schema details" disabled={!asset} aria-pressed={Boolean(asset && inspectorOpen && panel === 'details')} onClick={() => openPanel('details')}><BarsOutlined /></button><button type="button" aria-label="Show upstream assets" title="Upstream assets" disabled={!asset} aria-pressed={Boolean(asset && inspectorOpen && panel === 'upstream')} onClick={() => openPanel('upstream')}><ArrowUpOutlined /></button><button type="button" aria-label="Show downstream assets" title="Downstream assets" disabled={!asset} aria-pressed={Boolean(asset && inspectorOpen && panel === 'downstream')} onClick={() => openPanel('downstream')}><ArrowDownOutlined /></button><hr /><button type="button" aria-label="Open selected data workspace" title="Open data workspace" disabled={!asset} onClick={openWorkspace}><DatabaseOutlined /></button><button type="button" aria-label="Open runtime" title="Open runtime" onClick={() => navigate('/ontology/runtime')}><ExportOutlined /></button></aside>
+            <aside className="flow-lineage-tool-rail" aria-label="Lineage side tools"><button type="button" aria-label="Find schemas" title="Find schemas" onClick={() => { searchRef.current?.focus(); searchRef.current?.select(); }}><SearchOutlined /></button><button type="button" aria-label="Show schema details" title="Schema details" disabled={!asset} aria-pressed={Boolean(asset && inspectorOpen && activePanel === 'details')} onClick={() => openPanel('details')}><BarsOutlined /></button><button type="button" aria-label="Show upstream assets" title="Upstream assets" disabled={!asset} aria-pressed={Boolean(asset && inspectorOpen && activePanel === 'upstream')} onClick={() => openPanel('upstream')}><ArrowUpOutlined /></button><button type="button" aria-label="Show downstream assets" title="Downstream assets" disabled={!asset} aria-pressed={Boolean(asset && inspectorOpen && activePanel === 'downstream')} onClick={() => openPanel('downstream')}><ArrowDownOutlined /></button><hr /><button type="button" aria-label="Open selected data workspace" title="Open data workspace" disabled={!asset} onClick={openWorkspace}><DatabaseOutlined /></button><button type="button" aria-label="Open runtime" title="Open runtime" onClick={() => navigate('/ontology/runtime')}><ExportOutlined /></button></aside>
           </div>}
   </div>;
 }

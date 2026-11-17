@@ -15,3 +15,13 @@ playwright>=1.55,<2
 ddgs==9.16.1
 primp==2.0.1
 twscrape==0.20.1
+
+# Shared transfer execution / model validation used by the opt-in sandbox scheduler.
+# Do not pull the Web server, vector database, or AI model stack into this worker.
+fastapi>=0.140.5,<1.0
+sqlmodel>=0.0.21
+email-validator>=2.1
+PyJWT>=2.8
+cryptography>=42.0
+passlib>=1.7
+langchain-core>=1.0,<2

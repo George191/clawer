@@ -76,3 +76,31 @@ class DataConnectionPayload(BaseModel):
             if value is not None and not 1 <= len(value.get_secret_value()) <= 8192:
                 raise ValueError("Credentials must contain between 1 and 8192 characters")
         return self
+
+
+class SourceRelation(BaseModel):
+    name: str
+    kind: Literal["table", "partitioned_table", "view", "materialized_view", "foreign_table"]
+
+
+class SourceCatalog(BaseModel):
+    schemas: list[str]
+    schemaHasMore: bool
+    schema_name: str | None = Field(alias="schema")
+    relations: list[SourceRelation]
+    hasMore: bool
+
+
+class SourceColumn(BaseModel):
+    name: str
+    type: str
+    nullable: bool
+    primaryKey: bool
+    position: int
+
+
+class SourceColumns(BaseModel):
+    schema_name: str = Field(alias="schema")
+    table: str
+    columns: list[SourceColumn]
+    hasMore: bool

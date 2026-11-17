@@ -179,3 +179,54 @@ class StoredConnectionCredentialsTests(unittest.IsolatedAsyncioTestCase):
             renamed = original.model_copy(update={"name": "Renamed", "credentials": type(original.credentials)()})
             self.assertEqual(await service._credentials(renamed, stored), {"password": "stored-demo"})
             self.assertEqual(await service._credentials(payload(host="other-db.example.test"), stored), {"password": "test-only-password"})
+
+
+class SourceCatalogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_uses_saved_credentials_read_only_transaction_and_bound_name(self):
+        service = object.__new__(sources.DataConnections)
+        stored = {"name": "Saved demo", "engine": "postgresql", "config": payload().config.model_dump()}
+        connection = MagicMock()
+        connection.fetch = AsyncMock(side_effect=[[{"name": "demo"}], [{"name": "events", "kind": "r"}]])
+        connection.fetchval = AsyncMock(return_value=True)
+        driver = SimpleNamespace(connect=AsyncMock(return_value=connection))
+        with (
+            patch.object(service, "_stored", return_value=stored),
+            patch.object(service, "_credentials", return_value={"password": "from-saved-record"}) as credentials,
+            patch.object(sources, "_driver", return_value=driver),
+        ):
+            name = """schema'); DELETE FROM user_data; --"""
+            result = await service.catalog("saved", schema=name, search="literal %", limit=1, offset=3)
+        credentials.assert_awaited_once()
+        self.assertIs(credentials.call_args.args[1], stored)
+        self.assertEqual(driver.connect.call_args.kwargs["password"], "from-saved-record")
+        self.assertEqual(driver.connect.call_args.kwargs["server_settings"]["default_transaction_read_only"], "on")
+        self.assertIsInstance(driver.connect.call_args.kwargs["ssl"], ssl.SSLContext)
+        connection.transaction.assert_called_once_with(readonly=True, isolation="repeatable_read")
+        self.assertEqual(connection.fetch.call_args.args[1:], (name, "literal %", 2, 3))
+        self.assertNotIn(name, connection.fetch.call_args.args[0])
+        connection.terminate.assert_called_once()
+        self.assertEqual(result.relations[0].name, "events")
+
+    async def test_non_postgres_is_ineligible_and_upstream_failures_hide_credentials(self):
+        service = object.__new__(sources.DataConnections)
+        stored = {"name": "Saved demo", "engine": "postgresql", "config": payload().config.model_dump()}
+        with (
+            patch.object(service, "_stored", return_value={**stored, "engine": "mysql"}),
+            patch.object(sources, "_driver") as driver,
+            self.assertRaises(HTTPException) as failure,
+        ):
+            await service.catalog("saved", schema=None, search="", limit=50, offset=0)
+        self.assertEqual(failure.exception.status_code, 422)
+        driver.assert_not_called()
+
+        for driver_error, code in ((TimeoutError("private connection string"), 504), (OSError("private connection string"), 502)):
+            driver = SimpleNamespace(connect=AsyncMock(side_effect=driver_error))
+            with (
+                patch.object(service, "_stored", return_value=stored),
+                patch.object(service, "_credentials", return_value={"password": "private connection string"}),
+                patch.object(sources, "_driver", return_value=driver),
+                self.assertRaises(HTTPException) as failure,
+            ):
+                await service.catalog("saved", schema=None, search="", limit=50, offset=0)
+            self.assertEqual(failure.exception.status_code, code)
+            self.assertNotIn("private connection string", failure.exception.detail)

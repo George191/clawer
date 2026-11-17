@@ -1,22 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Select, Table } from '@/components/ui';
-import { CheckOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from '@/components/ui/icons';
-import { fetchEtlObjectPreview, fetchLayerTables, fetchTableData } from '../../services/api';
+import { CheckOutlined, ReloadOutlined } from '@/components/ui/icons';
+import { fetchEtlObjectPreview, fetchLayerTables } from '../../services/api';
 import { getSessionState } from '../../services/session';
-import type { EtlObjectPreview, LayerNode, LayerTable, QueryResult } from '../../services/types';
+import type { EtlObjectPreview, LayerNode, LayerTable } from '../../services/types';
 import {
   createOntologyDraft, fetchOntologyDraft, listOntologyDrafts, listOntologyPrincipals, listOntologyProjects,
   publishOntologyDraft, testOntologyPolicy, updateOntologyDraft, validateOntologyDraft,
   type OntologyDraft, type OntologyIssue, type OntologyPrincipal, type OntologyProject, type OntologyValidation,
   type SemanticDefinition, type SemanticProperty, type SemanticAction, type SemanticSource, type Principal, type PublishedOntologyType,
 } from '../../services/ontology';
+import SemanticPropertiesWorkbench from './SemanticPropertiesWorkbench';
 import './ontology-create.css';
 
 const steps = ['Datasource', 'Metadata', 'Properties', 'Actions', 'Save location', 'Security'] as const;
 const idPattern = /^[a-z][a-z0-9_-]{0,62}$/;
 const warehouseSchemas = new Set(['ts_ods', 'ts_dwd']);
 const selectStyle = { className: 'flow-ontology__select', popupClassName: 'flow-ontology__select-popup' };
-const typeOptions = ['string', 'integer', 'number', 'boolean', 'date', 'datetime', 'json'];
 const actionTypes: SemanticAction['kind'][] = ['create', 'modify', 'delete'];
 const principalKey = (p: Principal) => p.kind + ':' + p.id;
 const opt = (values: readonly string[]) => values.map(value => ({ value, label: value }));
@@ -34,7 +34,6 @@ function problem(failure: unknown, fallback: string) {
   return fallback;
 }
 const fromError = (failure: unknown) => (failure as { response?: { status?: number } }).response?.status;
-function display(v: unknown) { if (v == null) return '—'; return typeof v === 'object' ? JSON.stringify(v) : String(v); }
 function propertyType(dbType: string) {
   if (/bool/i.test(dbType)) return 'boolean';
   if (/int|serial/i.test(dbType)) return 'integer';
@@ -79,7 +78,6 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const [retry, setRetry] = useState(0);
   const [tables, setTables] = useState<Load<LayerTable[]> & { key?: string }>({});
   const [sourcePreview, setSourcePreview] = useState<Load<EtlObjectPreview> & { key?: string }>({});
-  const [rows, setRows] = useState<Load<QueryResult>>({});
   const [validation, setValidation] = useState<OntologyValidation>();
   const [checkedRevision, setCheckedRevision] = useState<number>();
   const [testPrincipal, setTestPrincipal] = useState('');
@@ -128,7 +126,6 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   }, [definition.source.schema, existing, identity, retry]);
   useEffect(() => {
     let alive = true;
-    setRows({});
     setSourcePreview({ key: sourceKey, loading: !!sourceKey });
     if (sourceKey && definition.source.schema && definition.source.table) fetchEtlObjectPreview(definition.source.schema, definition.source.table, true).then(
       data => { if (alive && current()) setSourcePreview({ key: sourceKey, data }); },
@@ -185,8 +182,6 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     const properties = preview.properties.map(makeProperty);
     set({ properties, primaryKey: [...preview.primaryKey], titleKey: preview.titleProperty ?? '', security: { ...definition.security, fieldReaders: {} } });
   };
-  const primaryOptions = definition.properties.filter(item => idPattern.test(item.id) && !['number', 'json'].includes(item.type)).map(item => ({ value: item.id, label: item.name ? item.name + ' · ' + item.id : item.id }));
-  const titleOptions = definition.properties.filter(item => idPattern.test(item.id) && item.type !== 'json').map(item => ({ value: item.id, label: item.name ? item.name + ' · ' + item.id : item.id }));
   const propertyOptions = definition.properties.filter(item => idPattern.test(item.id)).map(item => ({ value: item.id, label: item.name ? item.name + ' · ' + item.id : item.id }));
   function stepError(index: number) {
     if (index === 0 && existing && (!sourceKey || !preview)) return 'Choose a source table and load its columns.';
@@ -246,12 +241,6 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     const result = await testOntologyPolicy(definition, testPrincipal);
     if (current()) setPolicyResult(result);
   });
-  const loadRows = () => void run(async () => {
-    if (!definition.source.schema || !definition.source.table) return;
-    const data = await fetchTableData(definition.source.schema, definition.source.table, 5);
-    if (current()) setRows({ data });
-  });
-
   const changeAction = (kind: SemanticAction['kind'], next: Partial<SemanticAction>) => set({ actions: definition.actions.map(action => action.kind === kind ? { ...action, ...next } : action) });
   const toggleAction = (kind: SemanticAction['kind'], checked: boolean) => {
     const fields = kind === 'create' ? definition.properties.filter(item => item.required).map(item => item.id) : [];
@@ -261,7 +250,6 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const principalOptions = (principals.data || []).map(principal => ({ value: principalKey(principal), label: principal.name + ' · ' + principal.kind }));
   const principalList = (keys: string[]) => (principals.data || []).filter(principal => keys.includes(principalKey(principal))).map(({kind, id}) => ({kind, id}));
   const userOptions = (principals.data || []).filter(principal => principal.kind === 'user').map(principal => ({ value: principal.id, label: principal.name }));
-  const sourceCols = opt(preview?.properties.map(item => item.name) || []);
   const schemaOptions = schemas.filter(schema => warehouseSchemas.has(schema.schemaName || schema.key)).map(schema => ({ value: schema.schemaName || schema.key, label: schema.alias ? schema.alias + ' · ' + (schema.schemaName || schema.key) : schema.schemaName || schema.key }));
   const projectInput = <label className="flow-create-field"><span>Project</span><Select {...selectStyle} aria-label="Destination project" showSearch options={projectOptions} value={definition.projectId || undefined} loading={projects.loading} disabled={busy || projects.loading} placeholder="Select a project" onChange={projectChange} /></label>;
   const retries = () => setRetry(value => value + 1);
@@ -318,30 +306,15 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
             <label className="flow-create-field is-wide"><span>Description</span><Input.TextArea rows={4} value={definition.description} onChange={event => set({ description: event.target.value })} /></label>
           </div>
         </section>}
-        {stage === 'wizard' && step === 2 && <section className="flow-create-section">
-          <Heading title="Create properties" detail={existing ? 'Map source columns to typed object properties and choose the identifier and title.' : 'Define typed properties without a backing dataset.'} />
-          <div className="flow-create-grid flow-create-keys">
-            <label className="flow-create-field"><span>Primary key</span><Select {...selectStyle} aria-label="Primary key properties" mode="multiple" options={primaryOptions} value={definition.primaryKey} onChange={(primaryKey: string[]) => set({ primaryKey, properties: definition.properties.map(item => primaryKey.includes(item.id) ? { ...item, required: true } : item) })} placeholder="Choose one or more properties" /></label>
-            <label className="flow-create-field"><span>Title property</span><Select {...selectStyle} aria-label="Title property" options={titleOptions} value={definition.titleKey || undefined} onChange={(titleKey: string) => set({ titleKey })} placeholder="Choose a readable title" /></label>
-          </div>
-          <div className="flow-create-property-heading"><strong>Properties ({definition.properties.length})</strong><div className="flow-semantic-buttons">
-            {existing && !definition.properties.length && <Button size="small" disabled={!preview} onClick={mapSource}>Map source columns</Button>}
-            <Button size="small" icon={<PlusOutlined />} onClick={() => set({ properties: [...definition.properties, { id: '', name: '', type: 'string', required: false }] })}>Add property</Button>
-          </div></div>
-          <Table<SemanticProperty> className="flow-create-table flow-semantic-props" scroll={{ x: 780 }} size="small" pagination={false} rowKey={(_: SemanticProperty, index?: number) => index ?? 0} dataSource={definition.properties} columns={[
-            ...(existing ? [{ title: 'Source column', width: 152, render: (_: unknown, item: SemanticProperty, index: number) => <Select {...selectStyle} aria-label={'Source column ' + (index + 1)} options={sourceCols} showSearch value={item.sourceColumn || undefined} onChange={(sourceColumn: string) => updateProperty(index, { sourceColumn })} /> }] : []),
-            { title: 'Property ID', width: 160, render: (_, item, index) => <Input aria-label={'Property ID ' + (index + 1)} value={item.id} onChange={event => updateProperty(index, { id: event.target.value })} /> },
-            { title: 'Display name', width: 185, render: (_, item, index) => <Input aria-label={'Property name ' + (index + 1)} value={item.name} onChange={event => updateProperty(index, { name: event.target.value })} /> },
-            { title: 'Type', width: 125, render: (_, item, index) => <Select {...selectStyle} aria-label={'Property type ' + (index + 1)} value={item.type} options={opt(typeOptions)} onChange={(type: string) => updateProperty(index, { type })} /> },
-            { title: 'Required', width: 75, render: (_, item, index) => <Checkbox aria-label={'Required property ' + (index + 1)} checked={item.required} disabled={definition.primaryKey.includes(item.id)} onChange={event => updateProperty(index, { required: event.target.checked })} /> },
-            { title: '', width: 44, render: (_, _item, index) => <span className="flow-create-row-actions"><button type="button" aria-label={'Remove property ' + (index + 1)} onClick={() => removeProperty(index)}><DeleteOutlined /></button></span> },
-          ]} />
-          {existing && <section className="flow-semantic-saved">
-            <div className="flow-create-property-heading"><strong>Source sample</strong><Button size="small" disabled={!preview} loading={busy} onClick={loadRows}>Load 5 rows</Button></div>
-            <p className="flow-create-help">Read-only source records are shown here only to an authorized model builder.</p>
-            {!!rows.data && <Table<Record<string, unknown>> className="flow-create-table flow-create-review-table" pagination={false} size="small" rowKey={(_, index) => index ?? 0} dataSource={rows.data.rows} columns={rows.data.columns.map(column => ({ title: column, render: (_, row) => <span title={display(row[column])}>{display(row[column]).slice(0, 120)}</span> }))} />}
-          </section>}
-        </section>}
+        {stage === 'wizard' && step === 2 && <SemanticPropertiesWorkbench key={sourceKey || 'unbacked'}
+          definition={definition} preview={preview || undefined} busy={busy} onAutoMap={mapSource}
+          onChange={updateProperty} onRemove={removeProperty}
+          onAdd={() => set({ properties: [...definition.properties, { id: '', name: '', type: 'string', required: false }] })}
+          onPrimary={(key, enabled) => set({
+            primaryKey: enabled ? [...definition.primaryKey, key] : definition.primaryKey.filter(item => item !== key),
+            properties: enabled ? definition.properties.map(item => item.id === key ? { ...item, required: true } : item) : definition.properties,
+          })}
+          onTitle={(titleKey) => set({ titleKey })} />}
         {stage === 'wizard' && step === 3 && <section className="flow-create-section">
           <Heading title="Generate action types" detail="Choose how authorized users can create, modify or delete object instances." />
           {existing ? <div className="flow-create-notice">Source-backed objects are read-only. Actions cannot change records in the source table.</div> : <>

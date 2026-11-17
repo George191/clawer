@@ -1,10 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, Modal, Select } from '@/components/ui';
-import { ArrowLeftOutlined, CheckCircleOutlined, DatabaseOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
-import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSources, testDataSource, updateDataSource } from '../../services/api';
-import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceConfig, DataSourcePayload, DataSourceTest } from '../../services/api';
+import { ArrowLeftOutlined, CheckCircleOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
+import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, testDataSource, updateDataSource } from '../../services/api';
+import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceRelation, DataSourceTest } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import PostgresGlyph from './PostgresGlyph';
+import SourceBatchSyncs from './SourceBatchSyncs';
+import type { BatchSyncSource } from './SourceBatchSyncs';
+import TableExports from './TableExports';
 import './data-connections.css';
 
 type Props = { onCancel?: () => void; onChanged?: () => void };
@@ -26,6 +30,135 @@ const formatDate = (value?: string) => value && !Number.isNaN(Date.parse(value))
 const authName = (auth: DataSourceConfig['auth']) => auth === 'api_key' ? 'API key' : auth === 'token' ? 'Token' : 'Username and password';
 const endpoint = (config: DataSourceConfig) => `${config.host.includes(':') && !config.host.startsWith('[') ? `[${config.host}]` : config.host}:${config.port}`;
 
+const relationLabel: Record<DataSourceRelation['kind'], string> = {
+  table: 'Table', partitioned_table: 'Partitioned table', view: 'View', materialized_view: 'Materialized view', foreign_table: 'Foreign table',
+};
+const CATALOG_PAGE_SIZE = 50;
+const CATALOG_LAST_OFFSET = 5000;
+
+function catalogError(failure: unknown) {
+  const status = (failure as { response?: { status?: number }; code?: string })?.response?.status;
+  if (status === 403 || status === 404) return 'The saved connection or this resource is no longer accessible.';
+  if (status === 504 || (failure as { code?: string })?.code === 'ECONNABORTED') return 'The source catalog request timed out.';
+  return 'Could not read metadata from the saved connection.';
+}
+
+function SourceCatalog({ sourceId, onSetUpSync }: { sourceId: string; onSetUpSync: (selection: BatchSyncSource) => void }) {
+  const [catalog, setCatalog] = useState<DataSourceCatalog>();
+  const [relations, setRelations] = useState<DataSourceCatalog>();
+  const [columns, setColumns] = useState<DataSourceColumns>();
+  const [schema, setSchema] = useState('');
+  const [table, setTable] = useState('');
+  const [search, setSearch] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [refresh, setRefresh] = useState(0);
+  const [schemaError, setSchemaError] = useState('');
+  const [relationError, setRelationError] = useState('');
+  const [columnError, setColumnError] = useState('');
+  const identity = useRef(getSessionState().identity).current;
+  const current = (signal: AbortSignal) => {
+    const session = getSessionState();
+    return !signal.aborted && session.authenticated && !session.locked && session.identity === identity;
+  };
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setCatalog(undefined);
+    setSchemaError('');
+    void fetchDataSourceCatalog(sourceId, {}, controller.signal).then(value => {
+      if (!current(controller.signal)) return;
+      setCatalog(value);
+    }).catch(failure => { if (current(controller.signal)) setSchemaError(catalogError(failure)); });
+    return () => controller.abort();
+  }, [sourceId, refresh]);
+
+  useEffect(() => {
+    if (!schema) return;
+    const controller = new AbortController();
+    setRelations(undefined);
+    setRelationError('');
+    void fetchDataSourceCatalog(sourceId, { schema, search: appliedSearch || undefined, limit: CATALOG_PAGE_SIZE, offset }, controller.signal).then(value => {
+      if (current(controller.signal)) setRelations(value);
+    }).catch(failure => { if (current(controller.signal)) setRelationError(catalogError(failure)); });
+    return () => controller.abort();
+  }, [sourceId, schema, appliedSearch, offset, refresh]);
+
+  useEffect(() => {
+    if (!schema || !table) return;
+    const controller = new AbortController();
+    setColumns(undefined);
+    setColumnError('');
+    void fetchDataSourceColumns(sourceId, schema, table, controller.signal).then(value => {
+      if (current(controller.signal)) setColumns(value);
+    }).catch(failure => { if (current(controller.signal)) setColumnError(catalogError(failure)); });
+    return () => controller.abort();
+  }, [sourceId, schema, table, refresh]);
+
+  const clearTable = () => { setTable(''); setColumns(undefined); setColumnError(''); };
+  const changeSchema = (name: string) => {
+    if (schema === name) return;
+    setSchema(name); setSearch(''); setAppliedSearch(''); setOffset(0); setRelations(undefined); setRelationError(''); clearTable();
+  };
+  const changePage = (pageOffset: number) => { setOffset(pageOffset); setRelations(undefined); setRelationError(''); clearTable(); };
+  const searchRelations = (value: string) => {
+    const next = value.trim();
+    if (next === appliedSearch && offset === 0) return;
+    setAppliedSearch(next); changePage(0);
+  };
+  const changeTable = (name: string) => { if (table !== name) { clearTable(); setTable(name); } };
+
+  return <section className="ontology-source-catalog" aria-label="Source catalog">
+    <header><div><h3>Source catalog</h3><p>Read-only metadata. No rows are read or imported. Results depend on the saved database account’s permissions.</p></div><Button size="small" icon={<ReloadOutlined />} onClick={() => setRefresh(value => value + 1)}>Refresh catalog</Button></header>
+    <div className="ontology-source-catalog__layout">
+      <section aria-label="Schemas">
+        <h4>Schemas</h4>
+        {schemaError ? <p role="alert" className="is-error">{schemaError}</p> : !catalog ? <p role="status">Loading schemas…</p> : !catalog.schemas.length ? <p>No visible schemas.</p> : <>
+          <ul className="ontology-source-catalog__list">{catalog.schemas.map(item => <li key={item}>
+            <button type="button" aria-pressed={schema === item} onClick={() => changeSchema(item)}><FolderOutlined /><span>{item}</span></button>
+          </li>)}</ul>
+          {catalog.schemaHasMore && <p role="status">Schema list limited to 100 visible results.</p>}
+        </>}
+      </section>
+      <section aria-label="Source relations">
+        <h4>{schema ? <><code>{schema}</code> · Tables and views</> : 'Tables and views'}</h4>
+        {!schema ? <p>Select a schema to browse its tables and views.</p> : <>
+          <form className="ontology-source-catalog__search" onSubmit={event => { event.preventDefault(); searchRelations(search); }}>
+            <Input aria-label="Search tables and views" prefix={<SearchOutlined />} placeholder="Search tables and views" maxLength={100} value={search} onChange={event => setSearch(event.target.value)} />
+            <Button size="small" htmlType="submit">Search</Button>
+            {(search || appliedSearch) && <Button size="small" onClick={() => { setSearch(''); searchRelations(''); }}>Clear</Button>}
+          </form>
+          {relationError ? <p role="alert" className="is-error">{relationError}</p> : !relations ? <p role="status">Loading tables and views…</p> : relations.relations.length ? <ul className="ontology-source-catalog__list">
+            {relations.relations.map(relation => <li key={relation.name}><button type="button" aria-pressed={table === relation.name} aria-label={`${relation.name} · ${relationLabel[relation.kind]}`} onClick={() => changeTable(relation.name)}>
+              {relation.kind === 'view' || relation.kind === 'materialized_view' ? <EyeOutlined /> : <TableOutlined />}
+              <span>{relation.name}</span><small>{relationLabel[relation.kind]}</small>
+            </button></li>)}
+          </ul> : <p>{appliedSearch ? 'No tables or views match the search.' : 'No visible tables or views in this schema.'}</p>}
+          {relations && (offset > 0 || relations.hasMore) && <div className="ontology-source-catalog__pager" aria-label="Relation pages">
+            <Button size="small" disabled={offset === 0} onClick={() => changePage(offset - CATALOG_PAGE_SIZE)}>Previous page</Button>
+            <span>Page {offset / CATALOG_PAGE_SIZE + 1}</span>
+            <Button size="small" disabled={!relations.hasMore || offset >= CATALOG_LAST_OFFSET} onClick={() => changePage(offset + CATALOG_PAGE_SIZE)}>Next page</Button>
+          </div>}
+          {relations?.hasMore && offset >= CATALOG_LAST_OFFSET && <p>Browsing limit reached. Search to narrow the results.</p>}
+        </>}
+      </section>
+      <section aria-label="Column metadata">
+        <h4>{table ? <code>{schema}.{table}</code> : 'Columns'}</h4>
+        {!table ? <p>Select a table or view to inspect its column metadata.</p>
+          : columnError ? <p role="alert" className="is-error">{columnError}</p>
+          : !columns ? <p role="status">Loading column metadata…</p>
+          : !columns.columns.length ? <p>No columns are visible with this connection.</p>
+          : <><div className="ontology-source-catalog__columns"><table aria-label="Source columns">
+            <thead><tr><th scope="col">Column</th><th scope="col">Type</th><th scope="col">Nullable</th><th scope="col">Key</th></tr></thead>
+            <tbody>{columns.columns.map(column => <tr key={column.position}><th scope="row"><code>{column.name}</code></th><td><code>{column.type}</code></td><td>{column.nullable ? 'Yes' : 'No'}</td><td>{column.primaryKey ? 'Primary key' : '—'}</td></tr>)}</tbody>
+          </table></div>{columns.hasMore && <p role="status">Column list limited to 200 visible results.</p>}
+          {!columns.hasMore && relations?.relations.some(relation => relation.name === table && relation.kind === 'table') &&
+            <Button className="ontology-source-catalog__setup" size="small" onClick={() => onSetUpSync({ schema, table })}>Set up batch sync</Button>}</>}
+      </section>
+    </div>
+  </section>;
+}
+
 export default function DataConnections({ onChanged }: Props = {}) {
   const [connectors, setConnectors] = useState<DataConnectorType[]>([]);
   const [sources, setSources] = useState<DataSource[]>([]);
@@ -37,7 +170,13 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const [search, setSearch] = useState('');
   const [sourceSearch, setSourceSearch] = useState('');
   const [sourceEngine, setSourceEngine] = useState('all');
-  const [sourceId, setSourceId] = useState('');
+  const [params, setParams] = useSearchParams();
+  const sourceId = params.get('sourceId') ?? '';
+  const selectedSchedule = params.get('batchSync') || undefined;
+  const openTableExport = params.get('tableExport') === '1';
+  const [exploringSource, setExploringSource] = useState('');
+  const [syncSelection, setSyncSelection] = useState<{ sourceId: string; selection: BatchSyncSource }>();
+  const exploring = !!sourceId && exploringSource === sourceId;
   const [wizard, setWizard] = useState<'choose' | 'configure' | null>(null);
   const [chosenEngine, setChosenEngine] = useState<DataConnectorEngine>();
   const [savedTest, setSavedTest] = useState<DataSourceTest | null>(null);
@@ -69,6 +208,9 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const dirty = !!draft && JSON.stringify(draft) !== baseline;
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  useEffect(() => {
+    setExploringSource(''); setSyncSelection(undefined); setSavedTest(null);
+  }, [sourceId]);
   useEffect(() => {
     if (!dirty && !pending) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -109,9 +251,14 @@ export default function DataConnections({ onChanged }: Props = {}) {
     setChosenEngine(draft?.engine);
     setDraft(null); setBaseline(''); setWizard('choose'); resetFeedback();
   });
-  const showSource = (source?: DataSource) => navigate(() => {
-    setSourceId(source?.id || ''); setSavedTest(null); resetFeedback();
+  const selectSource = (id?: string) => setParams((currentParams) => {
+    const next = new URLSearchParams(currentParams);
+    if (id) next.set('sourceId', id); else next.delete('sourceId');
+    next.delete('batchSync');
+    next.delete('tableExport');
+    return next;
   });
+  const showSource = (source?: DataSource) => navigate(() => { selectSource(source?.id); resetFeedback(); });
   const configure = (type: DataConnectorType) => {
     const next = initialDraft(type);
     setDraft(next); setBaseline(JSON.stringify(next)); setEditingId(''); setWizard('configure'); resetFeedback();
@@ -159,7 +306,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       if (!current()) return;
       setSources((items) => [...items.filter((item) => item.id !== source.id), source].sort((a, b) => a.name.localeCompare(b.name)));
       closeWizard();
-      setSourceId(source.id); setSavedTest(null);
+      selectSource(source.id); setExploringSource(''); setSyncSelection(undefined); setSavedTest(null);
       setNotice('Source saved. Its connection was verified with a read-only request.'); onChanged?.();
     });
   };
@@ -183,7 +330,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       const done = await mutate('delete', async () => {
         await deleteDataSource(source.id);
         if (!current()) return;
-        setSources((items) => items.filter((item) => item.id !== source.id)); setSourceId(''); setSavedTest(null); setNotice('Data source deleted.'); onChanged?.();
+        setSources((items) => items.filter((item) => item.id !== source.id)); selectSource(); setSavedTest(null); setNotice('Data source deleted.'); onChanged?.();
       });
       return done;
     } });
@@ -210,6 +357,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
         {loading && <p role="status"><ReloadOutlined spin /> Loading data sources…</p>}
         {loadError && <p className="is-error" role="alert"><span>{loadError}</span><Button size="small" onClick={() => setReload((value) => value + 1)} disabled={pending}>Retry</Button></p>}
         {!loading && !loadError && !canManage && <p className="is-error" role="alert">Only administrators can manage data sources.</p>}
+        {!loading && !loadError && canManage && sourceId && !viewedSource && <p role="status">The linked data source is not available.</p>}
         {!wizard && notice && <p className="is-success" role="status"><CheckCircleOutlined />{notice}</p>}
         {!wizard && error && !confirmation && <p className="is-error" role="alert">{error}</p>}
       </div>
@@ -219,6 +367,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
         <header>
           <div><ConnectorMark engine={viewedSource.engine} /><div><span className="ontology-connectors__eyebrow">Source details · {labelFor(viewedSource.engine)}</span><h2>{viewedSource.name}</h2></div></div>
           <div className="ontology-connections-detail__actions">
+            {viewedSource.catalogAvailable && viewedType?.catalogAvailable && <Button aria-expanded={exploring} disabled={blocked} onClick={() => setExploringSource(exploring ? '' : viewedSource.id)}>{exploring ? 'Close source catalog' : 'Explore source'}</Button>}
             <Button disabled={blocked || !viewedType?.driverAvailable} loading={operation === 'test'} onClick={() => void testSaved()}>Test saved connection</Button>
             <Button type="primary" disabled={blocked || !viewedType} onClick={() => openSource(viewedSource)}>Edit connection</Button>
           </div>
@@ -234,6 +383,8 @@ export default function DataConnections({ onChanged }: Props = {}) {
         </dl>
         {viewedType && !viewedType.driverAvailable && <p className="ontology-connectors__prerequisite" role="status">{viewedType.prerequisite}</p>}
         <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
+        {exploring && viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceCatalog key={viewedSource.id} sourceId={viewedSource.id} onSetUpSync={selection => setSyncSelection({ sourceId: viewedSource.id, selection })} />}
+        {viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceBatchSyncs key={viewedSource.id} source={viewedSource} selection={syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
         <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked} onClick={remove}>Delete source</Button></div>
       </section> : <section className="ontology-connections-inventory" aria-label="Sources">
         <header><div><h2>Sources <span>{sources.length}</span></h2><p>Open a source to review its settings or run a read-only check.</p></div><Button size="small" icon={<ReloadOutlined />} disabled={blocked} onClick={() => setReload((value) => value + 1)}>Refresh sources</Button></header>
@@ -254,6 +405,11 @@ export default function DataConnections({ onChanged }: Props = {}) {
           <p>{sources.length ? 'Try another search or connector.' : 'Add a source to save its settings and verify the connection.'}</p>
         </div>}
         <p className="ontology-connectors__scope"><DatabaseOutlined /> Creating a source saves its connection settings only. It does not import or synchronize tables.</p>
+        <TableExports openFromLink={openTableExport} onLinkClose={() => setParams((current) => {
+          const next = new URLSearchParams(current);
+          next.delete('tableExport');
+          return next;
+        }, { replace: true })} />
       </section>)}
     </div>
 

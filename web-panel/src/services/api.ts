@@ -245,8 +245,8 @@ export const DASHBOARD_WS_URL = `${
 export const fetchLayers = (): Promise<LayerNode[]> =>
   client.get('/etl/layers').then((r) => unwrap<LayerNode[]>(r.data));
 
-export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean } = {}): Promise<EtlObjectCatalog> =>
-  client.get('/etl/object-types', { params }).then((r) => unwrap<EtlObjectCatalog>(r.data));
+export const fetchEtlObjectTypes = (params: { schema?: string; search?: string; group?: string; ids?: string; limit?: number; offset?: number; includeHidden?: boolean } = {}, signal?: AbortSignal): Promise<EtlObjectCatalog> =>
+  client.get('/etl/object-types', { params, signal }).then((r) => unwrap<EtlObjectCatalog>(r.data));
 
 export const fetchEtlObjectPreview = (schema: string, table: string, includeHidden = false): Promise<EtlObjectPreview> =>
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview`, { params: { includeHidden } }).then((r) => unwrap<EtlObjectPreview>(r.data));
@@ -273,6 +273,138 @@ export const fetchLayerTables = (layer: string, tableRole = 'current'): Promise<
 
 export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal): Promise<EtlTableColumn[]> =>
   client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal }).then((r) => unwrap<EtlTableColumn[]>(r.data));
+
+export type TransferPlanInput = {
+  name: string;
+  sourceSchema: string;
+  sourceTable: string;
+  targetSchema: string;
+  targetTable: string;
+  writeMode: 'append' | 'upsert';
+  incrementalCursor?: string | null;
+  trigger: 'manual' | 'scheduled' | 'upstream';
+  scheduleTime: string | null;
+};
+
+export type TransferPlan = TransferPlanInput & { id: string; status: 'draft'; updatedAt: string };
+
+export type TransferRunCapabilities = { enabled: boolean; sourceSchema: string; targetSchema: string; maxRows: number; incrementalAppend: boolean; scheduledUpsert: boolean; upstreamUpsert: boolean };
+export type TransferRunReceipt = {
+  id: string;
+  planId: string;
+  status: 'committed';
+  rowsAffected: number;
+  cursorThrough?: string | null;
+  hasMore?: boolean | null;
+  sourceSchema: string;
+  sourceTable: string;
+  targetSchema: string;
+  targetTable: string;
+  recordedAt: string;
+  writeMode: TransferPlanInput['writeMode'];
+};
+export type TransferRunAttempt = {
+  id: string;
+  planId: string;
+  status: 'started' | 'committed' | 'replayed' | 'rejected' | 'outcome_unknown';
+  startedAt: string;
+  finishedAt?: string | null;
+  receiptId?: string | null;
+  message?: string | null;
+  upstreamJobId?: string | null;
+};
+
+export type TransferSchedule = {
+  available: boolean;
+  enabled: boolean;
+  generation: number | null;
+  plannedTimeUtc: string | null;
+  armedForUpdatedAt: string | null;
+  updatedAt: string | null;
+};
+
+export type TransferScheduleJob = {
+  id: string;
+  slot: string;
+  state: 'pending' | 'dispatched' | 'committed' | 'rejected' | 'outcome_unknown' | 'expired';
+  dispatchedAt: string | null;
+  finishedAt: string | null;
+  receiptId: string | null;
+  message: string | null;
+};
+
+export type TransferScheduleSummary = TransferSchedule & { planId: string; planName: string; sourceTable: string; targetTable: string };
+
+export const fetchTransferSchedules = (signal?: AbortSignal): Promise<TransferScheduleSummary[]> =>
+  client.get('/etl/transfer-schedules', { signal }).then((r) => unwrap<TransferScheduleSummary[]>(r.data));
+
+const transferSchedulePath = (planId: string) => `/etl/transfer-plans/${encodeURIComponent(planId)}/schedule`;
+
+export const fetchTransferSchedule = (planId: string, signal?: AbortSignal): Promise<TransferSchedule> =>
+  client.get(transferSchedulePath(planId), { signal }).then((r) => unwrap<TransferSchedule>(r.data));
+
+export const updateTransferSchedule = (planId: string, request: { enabled: boolean; expectedUpdatedAt: string }): Promise<TransferSchedule> =>
+  client.put(transferSchedulePath(planId), request).then((r) => unwrap<TransferSchedule>(r.data));
+
+export const fetchTransferScheduleJobs = (planId: string, signal?: AbortSignal): Promise<TransferScheduleJob[]> =>
+  client.get(`${transferSchedulePath(planId)}/jobs`, { signal }).then((r) => unwrap<TransferScheduleJob[]>(r.data));
+
+export type TransferUpstreamTrigger = {
+  available: boolean; enabled: boolean; configuredEnabled: boolean; generation: number | null;
+  parentPlanId: string | null; parentPlanName: string | null; armedForUpdatedAt: string | null;
+  armedForParentUpdatedAt: string | null; updatedAt: string | null;
+};
+export type TransferUpstreamCandidate = { id: string; name: string; updatedAt: string; sourceTable: string; targetTable: string };
+export type TransferUpstreamJob = Omit<TransferScheduleJob, 'slot'> & {
+  eventRecordedAt: string; eventId: string; parentReceiptId: string;
+};
+export type TransferUpstreamSummary = TransferUpstreamTrigger & {
+  planId: string; planName: string; sourceSchema: string; sourceTable: string; targetSchema: string; targetTable: string;
+};
+const transferUpstreamPath = (planId: string) => `/etl/transfer-plans/${encodeURIComponent(planId)}/upstream-trigger`;
+export const fetchTransferUpstreamTrigger = (planId: string, signal?: AbortSignal): Promise<TransferUpstreamTrigger> =>
+  client.get(transferUpstreamPath(planId), { signal }).then((r) => unwrap<TransferUpstreamTrigger>(r.data));
+export const fetchTransferUpstreamCandidates = (planId: string, signal?: AbortSignal): Promise<TransferUpstreamCandidate[]> =>
+  client.get(`${transferUpstreamPath(planId)}/candidates`, { signal }).then((r) => unwrap<TransferUpstreamCandidate[]>(r.data));
+export const updateTransferUpstreamTrigger = (planId: string, request: {
+  enabled: boolean; parentPlanId: string | null; expectedParentUpdatedAt: string | null; expectedUpdatedAt: string; expectedGeneration: number | null;
+}): Promise<TransferUpstreamTrigger> =>
+  client.put(transferUpstreamPath(planId), request).then((r) => unwrap<TransferUpstreamTrigger>(r.data));
+export const fetchTransferUpstreamJobs = (planId: string, signal?: AbortSignal): Promise<TransferUpstreamJob[]> =>
+  client.get(`${transferUpstreamPath(planId)}/jobs`, { signal }).then((r) => unwrap<TransferUpstreamJob[]>(r.data));
+export const fetchTransferUpstreamTriggers = (signal?: AbortSignal): Promise<TransferUpstreamSummary[]> =>
+  client.get('/etl/transfer-upstream-triggers', { signal }).then((r) => unwrap<TransferUpstreamSummary[]>(r.data));
+
+export const fetchTransferRunCapabilities = (signal?: AbortSignal): Promise<TransferRunCapabilities> =>
+  client.get('/etl/transfer-plans/run-capabilities', { signal }).then((r) => unwrap<TransferRunCapabilities>(r.data));
+
+export const fetchTransferRunHistory = (planId: string, signal?: AbortSignal): Promise<TransferRunReceipt[]> =>
+  client.get(`/etl/transfer-plans/${encodeURIComponent(planId)}/runs`, { signal }).then((r) => unwrap<TransferRunReceipt[]>(r.data));
+
+export const fetchTransferRunAttempts = (planId: string, signal?: AbortSignal): Promise<TransferRunAttempt[]> =>
+  client.get(`/etl/transfer-plans/${encodeURIComponent(planId)}/attempts`, { signal }).then((r) => unwrap<TransferRunAttempt[]>(r.data));
+
+export const fetchExplorerTransferRuns = (schema: string, table: string, signal?: AbortSignal): Promise<TransferRunReceipt[]> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/transfer-runs`, { signal }).then((r) => unwrap<TransferRunReceipt[]>(r.data));
+
+export const runSandboxTransfer = (planId: string, request: { requestId: string; expectedUpdatedAt: string }): Promise<TransferRunReceipt> =>
+  client.post(`/etl/transfer-plans/${encodeURIComponent(planId)}/runs`, request).then((r) => unwrap<TransferRunReceipt>(r.data));
+
+export type TransferPlanPreflight = {
+  status: 'compatible' | 'blocked';
+  issues: { code: string; message: string; column?: string | null }[];
+  checkedColumns: number;
+};
+
+export const fetchTransferPlans = (schema: string, signal?: AbortSignal): Promise<TransferPlan[]> =>
+  client.get('/etl/transfer-plans', { params: { schema }, signal }).then((r) => unwrap<TransferPlan[]>(r.data));
+
+export const checkTransferPlan = (draft: TransferPlanInput, signal?: AbortSignal): Promise<TransferPlanPreflight> =>
+  client.post('/etl/transfer-plans/preflight', draft, { signal }).then((r) => unwrap<TransferPlanPreflight>(r.data));
+
+export const saveTransferPlan = (draft: TransferPlanInput, id?: string): Promise<TransferPlan> =>
+  (id ? client.put(`/etl/transfer-plans/${encodeURIComponent(id)}`, draft) : client.post('/etl/transfer-plans', draft))
+    .then((r) => unwrap<TransferPlan>(r.data));
 
 export type ExplorerTableEvidenceSnapshot = {
   observedAt: string;
@@ -312,7 +444,7 @@ export interface EtlConnection { id: string; name: string; database: string; sch
 export type DataConnectorEngine = 'postgresql' | 'mysql' | 'oracle' | 'dameng' | 'elasticsearch' | 'milvus';
 export interface DataConnectorType {
   engine: DataConnectorEngine; name: string; category: 'relational' | 'non_relational' | 'vector';
-  port: number; description: string; driverAvailable: boolean; prerequisite: string;
+  port: number; description: string; driverAvailable: boolean; prerequisite: string; catalogAvailable: boolean;
 }
 export interface DataSourceConfig {
   host: string; port: number; database: string; username: string;
@@ -323,10 +455,94 @@ export interface DataSourcePayload {
   credentials: { password?: string; apiKey?: string; token?: string };
 }
 export interface DataSource extends Omit<DataSourcePayload, 'credentials'> {
-  id: string; credentialsConfigured: boolean; createdBy: string;
+  id: string; credentialsConfigured: boolean; catalogAvailable: boolean; createdBy: string;
   createdAt: string; updatedAt: string; testedAt: string;
 }
 export interface DataSourceTest { ok: boolean; message: string; latencyMs: number; testedAt?: string; }
+export type DataSourceRelation = { name: string; kind: 'table' | 'partitioned_table' | 'view' | 'materialized_view' | 'foreign_table' };
+export type DataSourceCatalog = { schemas: string[]; schema: string | null; relations: DataSourceRelation[]; hasMore: boolean; schemaHasMore: boolean };
+export type DataSourceColumns = { schema: string; table: string; columns: { name: string; type: string; nullable: boolean; primaryKey: boolean; position: number }[]; hasMore: boolean };
+const dataSourceCatalogPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/catalog`;
+export const fetchDataSourceCatalog = (
+  id: string, params: { schema?: string; search?: string; limit?: number; offset?: number } = {}, signal?: AbortSignal,
+): Promise<DataSourceCatalog> =>
+  client.get(dataSourceCatalogPath(id), { params, signal }).then((r) => unwrap<DataSourceCatalog>(r.data));
+export const fetchDataSourceColumns = (id: string, schema: string, table: string, signal?: AbortSignal): Promise<DataSourceColumns> =>
+  client.get(`${dataSourceCatalogPath(id)}/columns`, { params: { schema, table }, signal }).then((r) => unwrap<DataSourceColumns>(r.data));
+export type BatchSyncCapabilities = { enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
+export type BatchSyncMapping = { sourceColumn: string; targetColumn: string };
+export type BatchSyncInput = {
+  name: string; connectionId: string; sourceSchema: string; sourceTable: string; sourceKeyColumn: string; targetTable: string;
+  mapping: BatchSyncMapping[]; expectedSourceUpdatedAt: string;
+};
+export type BatchSyncPlan = Omit<BatchSyncInput, 'expectedSourceUpdatedAt'> & { id: string; updatedAt: string; sourceUpdatedAt: string };
+export type BatchSyncReceipt = { id: string; planId: string; status: 'committed'; rowsAffected: number; recordedAt: string; sourceUpdatedAt: string; targetTable: string };
+export type BatchSyncAttempt = {
+  id: string; planId: string; requestId: string; planUpdatedAt: string;
+  status: 'started' | 'committed' | 'replayed' | 'rejected' | 'retryable' | 'outcome_unknown';
+  startedAt: string; finishedAt: string | null; receiptId: string | null; code: string | null; message: string | null;
+  scheduledJobId: string | null;
+};
+const batchSyncPath = '/etl/batch-syncs';
+const batchSyncItemPath = (id: string) => `${batchSyncPath}/${encodeURIComponent(id)}`;
+export const fetchBatchSyncCapabilities = (signal?: AbortSignal): Promise<BatchSyncCapabilities> =>
+  client.get(`${batchSyncPath}/capabilities`, { signal }).then((r) => unwrap<BatchSyncCapabilities>(r.data));
+export const fetchBatchSyncs = (connectionId: string, signal?: AbortSignal, planId?: string): Promise<BatchSyncPlan[]> =>
+  client.get(batchSyncPath, { params: { connectionId, planId }, signal }).then((r) => unwrap<BatchSyncPlan[]>(r.data));
+export const saveBatchSync = (payload: BatchSyncInput, id?: string): Promise<BatchSyncPlan> =>
+  (id ? client.put(batchSyncItemPath(id), payload) : client.post(batchSyncPath, payload)).then((r) => unwrap<BatchSyncPlan>(r.data));
+export const fetchBatchSyncReceipts = (id: string, signal?: AbortSignal): Promise<BatchSyncReceipt[]> =>
+  client.get(`${batchSyncItemPath(id)}/runs`, { signal }).then((r) => unwrap<BatchSyncReceipt[]>(r.data));
+export const fetchBatchSyncAttempts = (id: string, signal?: AbortSignal): Promise<BatchSyncAttempt[]> =>
+  client.get(`${batchSyncItemPath(id)}/attempts`, { signal }).then((r) => unwrap<BatchSyncAttempt[]>(r.data));
+export const runBatchSync = (id: string, request: { requestId: string; expectedUpdatedAt: string }): Promise<BatchSyncReceipt> =>
+  client.post(`${batchSyncItemPath(id)}/runs`, request).then((r) => unwrap<BatchSyncReceipt>(r.data));
+export type BatchSyncSchedule = TransferSchedule & { armedForSourceUpdatedAt: string | null; configuredEnabled: boolean };
+export type BatchSyncScheduleSummary = BatchSyncSchedule & { planId: string; planName: string; connectionId: string; sourceTable: string; targetTable: string };
+export const fetchBatchSyncSchedules = (signal?: AbortSignal): Promise<BatchSyncScheduleSummary[]> =>
+  client.get('/etl/batch-sync-schedules', { signal }).then((r) => unwrap<BatchSyncScheduleSummary[]>(r.data));
+const batchSyncSchedulePath = (id: string) => `${batchSyncItemPath(id)}/schedule`;
+export const fetchBatchSyncSchedule = (id: string, signal?: AbortSignal): Promise<BatchSyncSchedule> =>
+  client.get(batchSyncSchedulePath(id), { signal }).then((r) => unwrap<BatchSyncSchedule>(r.data));
+export const updateBatchSyncSchedule = (id: string, request: { enabled: boolean; plannedTimeUtc: string; expectedUpdatedAt: string; expectedGeneration: number | null }): Promise<BatchSyncSchedule> =>
+  client.put(batchSyncSchedulePath(id), request).then((r) => unwrap<BatchSyncSchedule>(r.data));
+export const fetchBatchSyncScheduleJobs = (id: string, signal?: AbortSignal): Promise<TransferScheduleJob[]> =>
+  client.get(`${batchSyncSchedulePath(id)}/jobs`, { signal }).then((r) => unwrap<TransferScheduleJob[]>(r.data));
+
+const tableExportPath = '/etl/table-export';
+export type TableExportCapabilities = {
+  enabled: boolean; provisioned: boolean; sourceSchema: string; sourceTable: string; targetSchema: string; targetTable: string;
+  maxRows: number; maxCaptionBytes: number; mapping: { sourceColumn: string; targetColumn: string; type: string }[];
+};
+export type TableExportPlan = { id: string; name: string; updatedAt: string };
+export type TableExportReceipt = { id: string; requestId: string; status: 'committed'; rowsAffected: number; recordedAt: string };
+export type TableExportAttempt = Omit<BatchSyncAttempt, 'planId' | 'scheduledJobId'>;
+export type TableExportLineageReceipt = {
+  id: string; recordedAt: string; rowsAffected: number; reviewedAt: string; observed: boolean;
+  reviewRelation: 'current_review' | 'earlier_review' | 'different_binding';
+};
+export type TableExportLineage = {
+  source: { schema: string; table: string };
+  destination: { schema: string; table: string; label: string };
+  declaration: { id: string; name: string; reviewedAt: string; state: 'enabled' | 'inactive' | 'stale' } | null;
+  receipts: TableExportLineageReceipt[];
+  latestObservation: TableExportLineageReceipt | null;
+  observed: boolean;
+};
+export const fetchTableExportLineage = (signal?: AbortSignal): Promise<TableExportLineage> =>
+  client.get(`${tableExportPath}/lineage`, { signal }).then((r) => unwrap<TableExportLineage>(r.data));
+export const fetchTableExportCapabilities = (signal?: AbortSignal): Promise<TableExportCapabilities> =>
+  client.get(`${tableExportPath}/capabilities`, { signal }).then((r) => unwrap<TableExportCapabilities>(r.data));
+export const fetchTableExportPlan = (signal?: AbortSignal): Promise<TableExportPlan | null> =>
+  client.get(tableExportPath, { signal }).then((r) => unwrap<TableExportPlan | null>(r.data));
+export const saveTableExportPlan = (request: { name: string; expectedUpdatedAt: string | null }): Promise<TableExportPlan> =>
+  client.put(tableExportPath, request).then((r) => unwrap<TableExportPlan>(r.data));
+export const fetchTableExportReceipts = (signal?: AbortSignal): Promise<TableExportReceipt[]> =>
+  client.get(`${tableExportPath}/runs`, { signal }).then((r) => unwrap<TableExportReceipt[]>(r.data));
+export const fetchTableExportAttempts = (signal?: AbortSignal): Promise<TableExportAttempt[]> =>
+  client.get(`${tableExportPath}/attempts`, { signal }).then((r) => unwrap<TableExportAttempt[]>(r.data));
+export const runTableExport = (request: { requestId: string; expectedUpdatedAt: string }): Promise<TableExportReceipt> =>
+  client.post(`${tableExportPath}/runs`, request).then((r) => unwrap<TableExportReceipt>(r.data));
 export const fetchDataConnectorTypes = (): Promise<DataConnectorType[]> =>
   client.get('/etl/connector-types').then((r) => unwrap<DataConnectorType[]>(r.data));
 export const fetchDataSources = (): Promise<DataSource[]> =>

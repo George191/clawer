@@ -1,16 +1,24 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
-import { fetchExplorerTableEvidence, type ExplorerTableEvidenceSnapshot } from '../../services/api';
+import { fetchExplorerTableEvidence, fetchExplorerTransferRuns, type ExplorerTableEvidenceSnapshot, type TransferRunReceipt } from '../../services/api';
+import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import './table-evidence.css';
 
-export default function ExplorerTableEvidence({ schema, table }: { schema: string; table: string }) {
+export default function ExplorerTableEvidence({ schema, table, canManage }: { schema: string; table: string; canManage: boolean }) {
     const [version, setVersion] = useState(0);
     const [snapshot, setSnapshot] = useState<ExplorerTableEvidenceSnapshot>();
     const [failed, setFailed] = useState(false);
+    const [receipts, setReceipts] = useState<TransferRunReceipt[]>();
+    const [receiptsFailed, setReceiptsFailed] = useState(false);
+    const showReceipts = canManage && schema === 'ts_transfer_sandbox';
+    const showExport = canManage && schema === TABLE_EXPORT_SOURCE.schema && table === TABLE_EXPORT_SOURCE.table;
     const refresh = () => {
         setSnapshot(undefined);
         setFailed(false);
+        setReceipts(undefined);
+        setReceiptsFailed(false);
         setVersion((value) => value + 1);
     };
 
@@ -21,6 +29,17 @@ export default function ExplorerTableEvidence({ schema, table }: { schema: strin
             .catch(() => { if (!request.signal.aborted) setFailed(true); });
         return () => request.abort();
     }, [schema, table, version]);
+
+    useEffect(() => {
+        if (!showReceipts) return;
+        const request = new AbortController();
+        fetchExplorerTransferRuns(schema, table, request.signal)
+            .then(value => { if (!request.signal.aborted) setReceipts(value); })
+            .catch(() => { if (!request.signal.aborted) setReceiptsFailed(true); });
+        return () => request.abort();
+    }, [schema, table, version, showReceipts]);
+
+    const observed = showReceipts && receipts?.find(run => run.rowsAffected > 0);
 
     return (
         <section className="flow-schema-details flow-table-evidence" aria-label="Table evidence">
@@ -51,16 +70,33 @@ export default function ExplorerTableEvidence({ schema, table }: { schema: strin
                             </>}
                             <dl><div><dt>Checked at</dt><dd><time dateTime={snapshot.observedAt}>{new Date(snapshot.observedAt).toLocaleString()}</time></dd></div></dl>
                         </section>
+                        {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>
                         <section className="flow-evidence-card" aria-labelledby="table-evidence-history">
-                            <header><h4 id="table-evidence-history">History</h4><span>Run receipt unavailable</span></header>
-                            <strong>{snapshot.lineage.status === 'declared' ? 'No verified migration receipt' : 'No verified run history'}</strong>
+                            <header><h4 id="table-evidence-history">History</h4><span>{showReceipts ? 'Sandbox transfers' : 'Run receipt unavailable'}</span></header>
+                            {showReceipts ? (
+                                receiptsFailed ? <p role="alert">Transfer receipts could not be loaded. Refresh evidence to retry.</p>
+                                    : !receipts ? <p role="status">Loading committed receipts…</p>
+                                        : receipts.length ? <ul className="flow-evidence-receipts">{receipts.map(run => <li key={run.id}>
+                                            <div><strong>{run.rowsAffected.toLocaleString()} rows affected</strong><span>Committed · {run.writeMode}</span></div>
+                                            <code>{run.sourceSchema}.{run.sourceTable} → {run.targetSchema}.{run.targetTable}</code>
+                                            <div><span>Receipt recorded</span><time dateTime={run.recordedAt}>{new Date(run.recordedAt).toLocaleString()}</time></div>
+                                            <code title="Receipt ID">{run.id}</code>
+                                        </li>)}</ul> : <p>No committed sandbox transfers for this table.</p>
+                            ) : <><strong>{snapshot.lineage.status === 'declared' ? 'No verified migration receipt' : 'No verified run history'}</strong>
                             <p>{snapshot.lineage.status === 'declared'
                                 ? 'This view cannot confirm when the migration ran, which batches completed, or how many rows were written.'
-                                : 'No verified ingestion or transformation runs are available for this table.'}</p>
+                                : 'No verified ingestion or transformation runs are available for this table.'}</p></>}
                         </section>
                         <section className="flow-evidence-card flow-evidence-lineage" aria-labelledby="table-evidence-lineage">
-                            <header><h4 id="table-evidence-lineage">Lineage</h4><span>{snapshot.lineage.status === 'declared' ? 'Declared in code' : 'Evidence unavailable'}</span></header>
-                            {snapshot.lineage.status === 'declared' ? <>
+                            <header><h4 id="table-evidence-lineage">Lineage</h4><span>{observed ? 'Observed in sandbox' : snapshot.lineage.status === 'declared' ? 'Declared in code' : 'Evidence unavailable'}</span></header>
+                            {observed ? <>
+                                <div className="flow-evidence-path">
+                                    <div className="flow-evidence-node"><span>Source table</span><code>{observed.sourceSchema}.{observed.sourceTable}</code></div>
+                                    <span className="flow-evidence-arrow" aria-hidden="true">→</span>
+                                    <div className="flow-evidence-node"><span>Destination table</span><code>{observed.targetSchema}.{observed.targetTable}</code></div>
+                                </div>
+                                <p>Latest committed sandbox transfer affecting rows. This is not evidence of production data movement.</p>
+                            </> : snapshot.lineage.status === 'declared' ? <>
                                 <div className="flow-evidence-path">
                                     <div className="flow-evidence-node"><span>MongoDB collection</span><code>{snapshot.lineage.mongoCollection}</code></div>
                                     <span className="flow-evidence-arrow" aria-hidden="true">→</span>
@@ -71,7 +107,10 @@ export default function ExplorerTableEvidence({ schema, table }: { schema: strin
                                 </div>
                                 <p>The migration code writes directly from MongoDB to each destination. This is not an observed RDS-to-ODS flow and does not verify a specific run or downstream consumer.</p>
                             </> : <><strong>No verified data flow</strong><p>No upstream or downstream flow is available as evidence for this table. This does not imply the table is disconnected.</p></>}
+                            {schema.startsWith('ts_') && schema !== 'ts_meta' &&
+                                <Link className="flow-evidence-lineage-link" to={`/ontology/lineage?${new URLSearchParams({ schema })}`}>Open schema in Lineage</Link>}
                         </section>
+                        </>}
                     </div>}
         </section>
     );

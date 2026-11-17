@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 CLEANUP_TASK_NAME = "app.scheduler.tasks.automation.cleanup_task_logs"
 
 
-async def _dispatch_due_tasks() -> dict[str, int]:
+async def _dispatch_due_tasks() -> dict[str, Any]:
     tasks = await automation_task_store.claim_due_recurring_tasks()
     dispatched = 0
     for task in tasks:
@@ -37,11 +37,29 @@ async def _dispatch_due_tasks() -> dict[str, int]:
             )
         except Exception:
             logger.exception("Failed to write recurring dispatch log for task %s", task_id)
-    return {"claimed": len(tasks), "dispatched": dispatched}
+    result: dict[str, Any] = {"claimed": len(tasks), "dispatched": dispatched}
+    from app.scheduler.tasks.batch_syncs.tasks import dispatch_batch_sync_schedule_jobs
+    from app.scheduler.tasks.transfer_upstream.tasks import dispatch_upstream_transfer_jobs
+    from app.scheduler.tasks.transfers.tasks import dispatch_transfer_schedule_jobs
+
+    for key, dispatch in (
+        ("transferSchedules", dispatch_transfer_schedule_jobs),
+        ("batchSyncSchedules", dispatch_batch_sync_schedule_jobs),
+        ("upstreamTransfers", dispatch_upstream_transfer_jobs),
+    ):
+        try:
+            counts = await dispatch()
+            if counts is not None:
+                result[key] = counts
+        except Exception:
+            # Each durable dispatcher retries on the next minute tick independently.
+            logger.exception("Scheduled dispatch tick failed for %s", key)
+            result[key] = {"error": "dispatch_tick_failed"}
+    return result
 
 
 @app.task(bind=True, name="app.scheduler.tasks.automation.dispatch_due", max_retries=None)
-def dispatch_due(self: Any) -> dict[str, int]:
+def dispatch_due(self: Any) -> dict[str, Any]:
     try:
         return run_async(_dispatch_due_tasks())
     except Exception as exc:

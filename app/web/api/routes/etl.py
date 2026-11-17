@@ -7,7 +7,20 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
-from app.web.api.dependencies.common import get_current_active_superuser, get_current_user
+from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
+from app.web.api.models.batch_syncs import (
+    BatchSyncAttempt, BatchSyncCapabilities, BatchSyncPayload, BatchSyncPlan, BatchSyncReceipt, BatchSyncRunRequest,
+)
+from app.web.api.models.batch_sync_schedules import (
+    BatchSyncSchedule, BatchSyncScheduleChange, BatchSyncScheduleJob, BatchSyncScheduleSummary,
+)
+from app.web.api.models.table_exports import (
+    TableExportAttempt, TableExportCapabilities, TableExportLineage, TableExportPlan, TableExportReceipt,
+    TableExportReview, TableExportRunRequest,
+)
+from app.web.api.models.transfer_upstream import (
+    UpstreamCandidate, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerJob, UpstreamTriggerSummary,
+)
 from app.web.api.models.etl import (
     CodePayload,
     DataQuery,
@@ -19,12 +32,39 @@ from app.web.api.models.etl import (
     PreviewRowsQuery,
     SqlQuery,
 )
-from app.web.api.models.data_connections import DataConnectionPayload
+from app.web.api.models.data_connections import DataConnectionPayload, SourceCatalog, SourceColumns
+from app.web.api.models.transfer_plans import (
+    TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
+    TransferRunRequest, WarehouseSchema,
+)
+from app.web.api.models.transfer_schedules import (
+    TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleSummary,
+)
 from app.web.services.data_connections import connector_types, get_data_connections
+from app.web.services.batch_syncs import (
+    batch_sync_capabilities, list_batch_sync_attempts, list_batch_sync_runs, list_batch_syncs, run_batch_sync, save_batch_sync,
+)
+from app.web.services.batch_sync_schedules import (
+    change_batch_sync_schedule, list_batch_sync_schedule_jobs, list_batch_sync_schedules, read_batch_sync_schedule,
+)
+from app.web.services.table_exports import (
+    get_table_export, get_table_export_lineage, list_table_export_attempts, list_table_export_receipts, review_table_export, run_table_export,
+    table_export_capabilities,
+)
+from app.web.services.transfer_upstream import (
+    change_upstream_trigger, list_upstream_candidates, list_upstream_jobs, list_upstream_triggers, read_upstream_trigger,
+)
 from app.web.services import etl_runtime
 from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
+from app.web.services.transfer_plans import list_transfer_plans, preflight_transfer_plan, save_transfer_plan
+from app.web.services.transfer_runs import (
+    SANDBOX, list_transfer_attempts, list_transfer_runs, run_sandbox_transfer, transfer_run_capabilities,
+)
+from app.web.services.transfer_schedules import (
+    change_transfer_schedule, list_transfer_schedule_jobs, list_transfer_schedules, read_transfer_schedule,
+)
 
 router = APIRouter(prefix="/etl", tags=["etl"])
 read = APIRouter(dependencies=[Depends(get_current_user)])
@@ -106,9 +146,205 @@ async def connections() -> list[dict[str, Any]]:
     return await get_etl_workspace().connections()
 
 
+@write.get("/transfer-plans")
+async def transfer_plans(session: SessionDep, schema: WarehouseSchema | None = None) -> list[TransferPlan]:
+    return await list_transfer_plans(session, schema)
+
+
+@write.post("/transfer-plans", status_code=201)
+async def create_transfer_plan(payload: TransferPlanPayload, session: SessionDep) -> TransferPlan:
+    return await save_transfer_plan(session, payload)
+
+
+@write.post("/transfer-plans/preflight", response_model_exclude_none=True)
+async def transfer_plan_preflight(payload: TransferPlanPayload) -> TransferPreflight:
+    return await preflight_transfer_plan(payload)
+
+
+@write.get("/transfer-plans/run-capabilities")
+async def get_transfer_run_capabilities() -> TransferRunCapabilities:
+    return transfer_run_capabilities()
+
+
+@write.get("/transfer-plans/{plan_id}/runs")
+async def get_transfer_plan_runs(plan_id: UUID, session: SessionDep) -> list[TransferRun]:
+    return await list_transfer_runs(session, plan_id=plan_id)
+
+
+@write.get("/transfer-plans/{plan_id}/attempts")
+async def get_transfer_plan_attempts(plan_id: UUID, session: SessionDep) -> list[TransferAttempt]:
+    return await list_transfer_attempts(session, plan_id)
+
+
+@write.get("/transfer-upstream-triggers")
+async def get_upstream_triggers(session: SessionDep) -> list[UpstreamTriggerSummary]:
+    return await list_upstream_triggers(session)
+
+
+@write.get("/transfer-plans/{plan_id}/upstream-trigger")
+async def get_upstream_trigger(plan_id: UUID, session: SessionDep) -> UpstreamTrigger:
+    return await read_upstream_trigger(session, plan_id)
+
+
+@write.put("/transfer-plans/{plan_id}/upstream-trigger")
+async def put_upstream_trigger(
+    plan_id: UUID, payload: UpstreamTriggerChange, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> UpstreamTrigger:
+    return await change_upstream_trigger(session, plan_id, payload, current_user.id)
+
+
+@write.get("/transfer-plans/{plan_id}/upstream-trigger/candidates")
+async def get_upstream_candidates(plan_id: UUID, session: SessionDep) -> list[UpstreamCandidate]:
+    return await list_upstream_candidates(session, plan_id)
+
+
+@write.get("/transfer-plans/{plan_id}/upstream-trigger/jobs")
+async def get_upstream_jobs(plan_id: UUID, session: SessionDep) -> list[UpstreamTriggerJob]:
+    return await list_upstream_jobs(session, plan_id)
+
+
+@write.get("/transfer-schedules")
+async def get_transfer_schedules(session: SessionDep) -> list[TransferScheduleSummary]:
+    return await list_transfer_schedules(session)
+
+
+@write.get("/transfer-plans/{plan_id}/schedule")
+async def get_transfer_schedule(plan_id: UUID, session: SessionDep) -> TransferSchedule:
+    return await read_transfer_schedule(session, plan_id)
+
+
+@write.put("/transfer-plans/{plan_id}/schedule")
+async def put_transfer_schedule(
+    plan_id: UUID, payload: TransferScheduleChange, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> TransferSchedule:
+    return await change_transfer_schedule(session, plan_id, payload, current_user.id)
+
+
+@write.get("/transfer-plans/{plan_id}/schedule/jobs")
+async def get_transfer_schedule_jobs(plan_id: UUID, session: SessionDep) -> list[TransferScheduleJob]:
+    return await list_transfer_schedule_jobs(session, plan_id)
+
+
+@write.post("/transfer-plans/{plan_id}/runs")
+async def run_transfer_plan(
+    plan_id: UUID, payload: TransferRunRequest, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> TransferRun:
+    return await run_sandbox_transfer(session, plan_id, payload, current_user.id)
+
+
+@write.get("/{layer}/{table}/transfer-runs")
+async def get_table_transfer_runs(layer: str, table: TableName, session: SessionDep) -> list[TransferRun]:
+    if layer != SANDBOX:
+        return []
+    return await list_transfer_runs(session, table=table)
+
+
+@write.put("/transfer-plans/{plan_id}")
+async def update_transfer_plan(plan_id: UUID, payload: TransferPlanPayload, session: SessionDep) -> TransferPlan:
+    return await save_transfer_plan(session, payload, plan_id)
+
+
 @write.get("/connector-types")
 async def available_connector_types() -> list[dict[str, Any]]:
     return connector_types()
+
+
+@write.get("/batch-syncs/capabilities")
+async def get_batch_sync_capabilities() -> BatchSyncCapabilities:
+    return batch_sync_capabilities()
+
+
+@write.get("/table-export/capabilities")
+async def get_table_export_capabilities() -> TableExportCapabilities:
+    return table_export_capabilities()
+
+
+@write.get("/table-export")
+async def get_table_export_review(session: SessionDep) -> TableExportPlan | None:
+    return await get_table_export(session)
+
+
+@write.put("/table-export")
+async def put_table_export_review(
+    payload: TableExportReview, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> TableExportPlan:
+    return await review_table_export(session, payload, current_user.id)
+
+
+@write.get("/table-export/runs")
+async def get_table_export_runs(session: SessionDep) -> list[TableExportReceipt]:
+    return await list_table_export_receipts(session)
+
+
+@write.post("/table-export/runs")
+async def post_table_export_run(
+    payload: TableExportRunRequest, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> TableExportReceipt:
+    return await run_table_export(session, payload, current_user.id)
+
+
+@write.get("/table-export/attempts")
+async def get_table_export_attempts(session: SessionDep) -> list[TableExportAttempt]:
+    return await list_table_export_attempts(session)
+
+
+@write.get("/table-export/lineage")
+async def get_table_export_lineage_evidence(session: SessionDep) -> TableExportLineage:
+    return await get_table_export_lineage(session)
+
+
+@write.get("/batch-syncs")
+async def get_batch_syncs(session: SessionDep, connectionId: UUID | None = None, planId: UUID | None = None) -> list[BatchSyncPlan]:
+    return await list_batch_syncs(session, connectionId, planId)
+
+
+@write.post("/batch-syncs", status_code=201)
+async def create_batch_sync(payload: BatchSyncPayload, session: SessionDep) -> BatchSyncPlan:
+    return await save_batch_sync(session, payload)
+
+
+@write.put("/batch-syncs/{plan_id}")
+async def update_batch_sync(plan_id: UUID, payload: BatchSyncPayload, session: SessionDep) -> BatchSyncPlan:
+    return await save_batch_sync(session, payload, plan_id)
+
+
+@write.get("/batch-syncs/{plan_id}/runs")
+async def get_batch_sync_runs(plan_id: UUID, session: SessionDep) -> list[BatchSyncReceipt]:
+    return await list_batch_sync_runs(session, plan_id)
+
+
+@write.get("/batch-syncs/{plan_id}/attempts")
+async def get_batch_sync_attempts(plan_id: UUID, session: SessionDep) -> list[BatchSyncAttempt]:
+    return await list_batch_sync_attempts(session, plan_id)
+
+
+@write.get("/batch-sync-schedules")
+async def get_batch_sync_schedules(session: SessionDep) -> list[BatchSyncScheduleSummary]:
+    return await list_batch_sync_schedules(session)
+
+
+@write.get("/batch-syncs/{plan_id}/schedule")
+async def get_batch_sync_schedule(plan_id: UUID, session: SessionDep) -> BatchSyncSchedule:
+    return await read_batch_sync_schedule(session, plan_id)
+
+
+@write.put("/batch-syncs/{plan_id}/schedule")
+async def put_batch_sync_schedule(
+    plan_id: UUID, payload: BatchSyncScheduleChange, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> BatchSyncSchedule:
+    return await change_batch_sync_schedule(session, plan_id, payload, current_user.id)
+
+
+@write.get("/batch-syncs/{plan_id}/schedule/jobs")
+async def get_batch_sync_schedule_jobs(plan_id: UUID, session: SessionDep) -> list[BatchSyncScheduleJob]:
+    return await list_batch_sync_schedule_jobs(session, plan_id)
+
+
+@write.post("/batch-syncs/{plan_id}/runs")
+async def run_saved_batch_sync(
+    plan_id: UUID, payload: BatchSyncRunRequest, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> BatchSyncReceipt:
+    return await run_batch_sync(session, plan_id, payload, current_user.id)
 
 
 @write.get("/data-connections")
@@ -130,6 +366,23 @@ async def create_data_connection(payload: DataConnectionPayload,
 @write.post("/data-connections/{connection_id}/test")
 async def test_saved_data_connection(connection_id: UUID) -> dict[str, Any]:
     return await get_data_connections().test_saved(str(connection_id))
+
+
+@write.get("/data-connections/{connection_id}/catalog")
+async def browse_data_connection_catalog(
+    connection_id: UUID, schema: str | None = Query(None, min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
+    search: str = Query("", max_length=128, pattern=r"^[^\x00-\x1f\x7f]*$"),
+    limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0, le=5000),
+) -> SourceCatalog:
+    return await get_data_connections().catalog(str(connection_id), schema=schema, search=search, limit=limit, offset=offset)
+
+
+@write.get("/data-connections/{connection_id}/catalog/columns")
+async def browse_data_connection_columns(
+    connection_id: UUID, schema: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
+    table: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
+) -> SourceColumns:
+    return await get_data_connections().catalog_columns(str(connection_id), schema=schema, table=table)
 
 
 @write.put("/data-connections/{connection_id}")

@@ -1,12 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button, Checkbox, Input, Modal, Table } from '@/components/ui';
-import { ArrowLeftOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
+import { ArrowLeftOutlined, BarsOutlined, CloseOutlined, DatabaseOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
   fetchPublishedOntologyType, listPublishedOntologyTypes, listOntologyRecords, submitOntologyAction,
   type PublishedOntologyType, type SemanticAction, type OntologyRecord, type OntologyRecordPage,
 } from '../../services/ontology';
+import SemanticTypeGlyph from './SemanticTypeGlyph';
 import './ontology-create.css';
+import './published-results.css';
 
 const pageSize = 25;
 type Operation = { kind: SemanticAction['kind']; fields: string[]; record?: OntologyRecord };
@@ -41,6 +43,9 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   const [search, setSearch] = useState('');
   const [object, setObject] = useState<PublishedOntologyType>();
   const [records, setRecords] = useState<OntologyRecordPage>();
+  const [selectedRow, setSelectedRow] = useState<number>();
+  const recordTitles = useRef<Record<number, HTMLButtonElement | null>>({});
+  const [previewTab, setPreviewTab] = useState<'overview' | 'properties'>('overview');
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -57,7 +62,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     let alive = true;
-    setLoading(true); setError(''); setObject(undefined); setRecords(undefined);
+    setLoading(true); setError(''); setObject(undefined); setRecords(undefined); setSelectedRow(undefined); setPreviewTab('overview');
     if (!selection) {
       listPublishedOntologyTypes().then(data => { if (alive && current()) setItems(data); }, failure => { if (alive && current()) setError(describe(failure, 'Unable to load published object types.')); })
         .finally(() => { if (alive && current()) setLoading(false); });
@@ -106,14 +111,35 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   };
   const available = records?.actions || [];
   const createAction = available.find(item => item.kind === 'create');
+  const selectedRecord = selectedRow == null ? undefined : records?.items[selectedRow];
+  const properties = object?.definition.properties ?? [];
+  const resultColumns = properties.filter(prop => prop.id !== object?.definition.titleKey);
+  const visibleSelectedProperties = selectedRecord
+    ? properties.filter(prop => Object.prototype.hasOwnProperty.call(selectedRecord.properties, prop.id))
+    : [];
+  const keyProperties = visibleSelectedProperties.filter(prop => object?.definition.primaryKey.includes(prop.id));
+  const summaryProperties = [...keyProperties, ...visibleSelectedProperties.filter(prop => !keyProperties.includes(prop))]
+    .filter(prop => selectedRecord?.properties[prop.id] != null).slice(0, 4);
+  const chooseRow = (index: number) => {
+    if (selectedRow !== index) setPreviewTab('overview');
+    setSelectedRow(index);
+  };
+  const closePreview = () => {
+    if (selectedRow != null) recordTitles.current[selectedRow]?.focus();
+    setSelectedRow(undefined);
+  };
+  const recordActions = selectedRecord?.id ? available.filter(action => action.kind !== 'create') : [];
+  const returnToTypes = () => { if (!actionLocked.current) { setOffset(0); setSelectedRow(undefined); onSelect(''); } };
   const keyword = search.trim().toLowerCase();
   const displayed = items?.filter(({ definition }) => !keyword || [definition.name, definition.id, definition.description, definition.source.schema, definition.source.table]
     .some(value => value?.toLowerCase().includes(keyword))) || [];
   return <>
-    <main className="flow-ontology__published" data-testid="published-ontology" aria-label="Published object types" aria-busy={loading}>
+    <main className={`flow-ontology__published flow-foundry-workbench${selection ? ' flow-ontology__published--results' : ''}`} data-testid="published-ontology" aria-label={selection ? 'Published object results' : 'Published object types'} aria-busy={loading}>
       <header className="flow-ontology__published-header">
-        {selection ? <Button size="small" icon={<ArrowLeftOutlined />} onClick={() => { if (!actionLocked.current) onSelect(''); }}>Back to published types</Button>
-          : <><h2>Published object types</h2><p>Browse published definitions and access the records and actions available to your account.</p></>}
+        {selection ? <div className="flow-published-results-context">
+          <Button size="small" icon={<ArrowLeftOutlined />} onClick={returnToTypes}>Back to published types</Button>
+          {object && <div className="flow-published-type-title"><SemanticTypeGlyph definition={object.definition} /><h2>{object.definition.name}</h2><code>{object.definition.id}</code></div>}
+        </div> : <><h2>Published object types</h2><p>Browse published definitions and access the records and actions available to your account.</p></>}
       </header>
         <section className="flow-create-section">
           {error && <p className="flow-create-error" role="alert">{error}<Button size="small" icon={<ReloadOutlined />} onClick={reload}>Retry</Button></p>}
@@ -121,29 +147,63 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
           {!selection && !loading && !error && <>
             <div className="flow-ontology__published-search"><Input size="small" prefix={<SearchOutlined />} aria-label="Search published types" placeholder="Search published types" value={search} onChange={event => setSearch(event.target.value)} allowClear /></div>
             <Table<PublishedOntologyType> className="flow-create-table flow-create-review-table" size="small" rowKey="id" pagination={false} dataSource={displayed} locale={{ emptyText: keyword ? 'No published object types match your search.' : 'No published object types are available to this account.' }} columns={[
-            { title: 'Object type', render: (_, item) => <Button type="link" onClick={() => onSelect(item.id)}>{item.definition.name}</Button> },
+            { title: 'Object type', render: (_, item) => <Button type="link" onClick={() => onSelect(item.id)}><SemanticTypeGlyph definition={item.definition} />{item.definition.name}</Button> },
             { title: 'API ID', render: (_, item) => item.definition.id },
             { title: 'Datasource', render: (_, item) => item.definition.source.mode === 'existing' ? item.definition.source.schema + '.' + item.definition.source.table : 'No backing table' },
             { title: 'Revision', dataIndex: 'revision' },
             ]} /></>}
-          {object && <>
-            <header className="flow-create-heading"><h2>{object.definition.name}</h2><p>{object.definition.description}</p></header>
-            <dl className="flow-create-summary"><dt>API ID</dt><dd>{object.definition.id}</dd><dt>Datasource</dt><dd>{object.definition.source.mode === 'existing' ? object.definition.source.schema + '.' + object.definition.source.table : 'Object-managed records'}</dd><dt>Revision</dt><dd>{object.revision}</dd></dl>
-            <div className="flow-create-property-heading"><strong>Visible properties</strong></div>
-            <Table<PublishedOntologyType['definition']['properties'][number]> className="flow-create-table flow-create-review-table" size="small" rowKey="id" pagination={false} dataSource={object.definition.properties} columns={[
-              { title: 'Property', dataIndex: 'name' }, { title: 'ID', dataIndex: 'id' }, { title: 'Type', dataIndex: 'type' },
-              { title: 'Keys', render: (_, prop) => [object.definition.primaryKey.includes(prop.id) ? 'Primary key' : '', object.definition.titleKey === prop.id ? 'Title' : ''].filter(Boolean).join(' · ') || '—' },
-            ]} />
-            {records && <div className="flow-semantic-saved">
-              <div className="flow-create-property-heading"><strong>Visible records</strong>{createAction && <Button size="small" type="primary" onClick={() => startAction('create', createAction.fields)}>Create object</Button>}</div>
-              <Table<OntologyRecord> className="flow-create-table flow-create-review-table" size="small" rowKey={(record, index) => record.id ?? index ?? 0} pagination={false} dataSource={records.items} columns={[
-                { title: 'Title', render: (_, record) => show(record.title) },
-                ...object.definition.properties.map(prop => ({ title: prop.name, render: (_: unknown, record: OntologyRecord) => <span title={show(record.properties[prop.id])}>{show(record.properties[prop.id]).slice(0, 120)}</span> })),
-                ...(available.some(action => action.kind !== 'create') ? [{ title: 'Actions', render: (_: unknown, record: OntologyRecord) => record.id && <div className="flow-semantic-buttons">{available.filter(action => action.kind !== 'create').map(action => <Button key={action.kind} size="small" onClick={() => startAction(action.kind, action.fields, record)}>{action.kind === 'modify' ? 'Modify' : 'Delete'}</Button>)}</div> }] : []),
-              ]} />
-              {(offset > 0 || records.hasMore) && <div className="flow-semantic-buttons flow-semantic-saved"><Button size="small" disabled={!offset || loading} onClick={() => setOffset(value => Math.max(0, value - pageSize))}>Previous page</Button><Button size="small" disabled={!records.hasMore || loading} onClick={() => setOffset(value => value + pageSize)}>Next page</Button></div>}
-            </div>}
-          </>}
+          {object && records && <div className="flow-published-results">
+            <div className="flow-published-results-toolbar">
+              <h3><BarsOutlined /> Results</h3>
+              {selectedRecord && <Button size="small" icon={<CloseOutlined />} onClick={closePreview}>1 selected</Button>}
+              <div className="flow-published-results-toolbar-end">
+                <span title={object.definition.description || undefined}>{object.definition.source.mode === 'existing' ? `${object.definition.source.schema}.${object.definition.source.table} · Read only` : 'Object-managed records'} · Revision {object.revision}</span>
+                {createAction && <Button size="small" type="primary" onClick={() => startAction('create', createAction.fields)}>Create object</Button>}
+              </div>
+            </div>
+            <div className={`flow-published-results-body${selectedRecord ? ' has-selection' : ''}`}>
+              <div className="flow-published-record-pane">
+                <div className="flow-published-record-scroll" tabIndex={0} role="region" aria-label="Object results table">
+                  <table>
+                    <thead><tr><th scope="col"><span className="flow-published-sr-only">Select</span></th><th scope="col">Title</th>{resultColumns.map(prop => <th scope="col" key={prop.id}>{prop.name}</th>)}</tr></thead>
+                    <tbody>
+                      {records.items.map((record, index) => <tr key={record.id ?? index} className={selectedRow === index ? 'is-selected' : undefined} onClick={() => chooseRow(index)}>
+                        <td><input type="checkbox" aria-label={`Select ${show(record.title)}`} checked={selectedRow === index} onClick={event => event.stopPropagation()} onChange={event => event.target.checked ? chooseRow(index) : setSelectedRow(undefined)} /></td>
+                        <th scope="row"><button type="button" className="flow-published-record-title" ref={element => { recordTitles.current[index] = element; }} title={show(record.title)} onClick={event => { event.stopPropagation(); chooseRow(index); }}><SemanticTypeGlyph definition={object.definition} /><span>{show(record.title)}</span></button></th>
+                        {resultColumns.map(prop => {
+                          const value = Object.prototype.hasOwnProperty.call(record.properties, prop.id) ? show(record.properties[prop.id]).slice(0, 120) : '—';
+                          return <td key={prop.id} title={value}>{value}</td>;
+                        })}
+                      </tr>)}
+                      {!records.items.length && <tr><td className="flow-published-results-empty" colSpan={resultColumns.length + 2}>No records are available to this account.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+                <footer className="flow-published-results-pagination">
+                  <span>{records.items.length ? `${offset + 1}–${offset + records.items.length} shown` : '0 shown'}</span>
+                  {(offset > 0 || records.hasMore) && <div><Button size="small" disabled={!offset || loading} onClick={() => setOffset(value => Math.max(0, value - pageSize))}>Previous page</Button><Button size="small" disabled={!records.hasMore || loading} onClick={() => setOffset(value => value + pageSize)}>Next page</Button></div>}
+                </footer>
+              </div>
+              {selectedRecord && <aside className="flow-published-selection" aria-label="Selection Preview">
+                <header><BarsOutlined /><h3>Selection Preview</h3><Button size="small" type="text" aria-label="Close selection preview" icon={<CloseOutlined />} onClick={closePreview} /></header>
+                <div className="flow-published-selection-content">
+                  <div className="flow-published-selection-title"><SemanticTypeGlyph definition={object.definition} size="preview" /><div><span>{object.definition.name}</span><h4>{show(selectedRecord.title)}</h4></div>
+                    {!!recordActions.length && <details key={selectedRow} className="flow-published-record-actions"><summary>Actions</summary><div>{recordActions.map(action => <Button key={action.kind} size="small" onClick={() => startAction(action.kind, action.fields, selectedRecord)}>{action.kind === 'modify' ? 'Modify' : 'Delete'}</Button>)}</div></details>}
+                  </div>
+                  <nav className="flow-published-selection-tabs" aria-label="Selection view">
+                    <button type="button" aria-pressed={previewTab === 'overview'} onClick={() => setPreviewTab('overview')}>Overview</button>
+                    <button type="button" aria-pressed={previewTab === 'properties'} onClick={() => setPreviewTab('properties')}>Properties</button>
+                  </nav>
+                  {previewTab === 'overview' && !!summaryProperties.length && <dl className="flow-published-selection-summary">{summaryProperties.map(prop => <div key={prop.id}><dt>{prop.name}</dt><dd>{show(selectedRecord.properties[prop.id])}</dd></div>)}</dl>}
+                  <section className="flow-published-selection-properties">
+                    <h4><DatabaseOutlined />{previewTab === 'overview' ? 'Key properties' : 'Properties'}</h4>
+                    <dl>{(previewTab === 'overview' ? visibleSelectedProperties.slice(0, 8) : visibleSelectedProperties).map(prop => <div key={prop.id}><dt>{prop.name}</dt><dd>{selectedRecord.properties[prop.id] == null ? <i>No value</i> : show(selectedRecord.properties[prop.id])}</dd></div>)}</dl>
+                    {!visibleSelectedProperties.length && <p>No properties are available for this record.</p>}
+                  </section>
+                </div>
+              </aside>}
+            </div>
+          </div>}
         </section>
     </main>
     {operation && <Modal open centered width={520} title={operation.kind === 'create' ? 'Create object' : operation.kind === 'modify' ? 'Modify object' : 'Delete object'} okText={operation.kind === 'delete' ? 'Delete object' : 'Submit action'} onOk={applyAction} onCancel={() => { if (!actionLocked.current) setOperation(undefined); }} confirmLoading={actionPending} maskClosable={!actionPending} closable={!actionPending} keyboard={!actionPending}>

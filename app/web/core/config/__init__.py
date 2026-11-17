@@ -1,6 +1,7 @@
 import os
 import secrets
 import warnings
+from uuid import UUID
 from typing import Annotated, Any, Literal
 from pydantic import (
     AnyUrl,
@@ -8,6 +9,7 @@ from pydantic import (
     EmailStr,
     HttpUrl,
     PostgresDsn,
+    SecretStr,
     computed_field,
     model_validator,
 )
@@ -40,6 +42,20 @@ class Settings(BaseSettings):
 
     FRONTEND_HOST: str = "http://localhost:5173"
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
+    TRANSFER_SANDBOX_ENABLED: bool = False
+    TRANSFER_SANDBOX_SCHEDULER_ENABLED: bool = False
+    TRANSFER_SANDBOX_UPSTREAM_ENABLED: bool = False
+    BATCH_SYNC_SANDBOX_ENABLED: bool = False
+    BATCH_SYNC_SANDBOX_SCHEDULER_ENABLED: bool = False
+    TABLE_EXPORT_SANDBOX_ENABLED: bool = False
+    TABLE_EXPORT_SOURCE_MARKER: UUID | None = None
+    TABLE_EXPORT_RECEIVER_HOST: str = ""
+    TABLE_EXPORT_RECEIVER_PORT: int = 5432
+    TABLE_EXPORT_RECEIVER_DATABASE: str = ""
+    TABLE_EXPORT_RECEIVER_USERNAME: str = ""
+    TABLE_EXPORT_RECEIVER_PASSWORD: SecretStr | None = None
+    TABLE_EXPORT_RECEIVER_MARKER: UUID | None = None
+    TABLE_EXPORT_RECEIVER_TLS: bool = False
 
     BACKEND_CORS_ORIGINS: Annotated[
         list[AnyUrl] | str, BeforeValidator(parse_cors)

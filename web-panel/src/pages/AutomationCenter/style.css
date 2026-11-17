@@ -692,3 +692,16 @@ html[data-theme='light'] .automation-page .ui-pagination .ui-select:hover .ui-se
   .automation-header > .ui-space { width: 100%; }
   .automation-header > .ui-space .ui-btn { flex: 1; }
 }
+
+.automation-transfer-schedules { margin-block: 0 12px; max-height: 180px; overflow: auto; border: 1px solid var(--ui-border); border-radius: 5px; background: var(--ui-panel); }
+.automation-transfer-schedules > header { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--ui-border); }
+.automation-transfer-schedules h3 { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 13px; }
+.automation-transfer-schedules ul { margin: 0; padding: 0; list-style: none; }
+.automation-transfer-schedules li { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 14px; padding: 8px 12px; border-bottom: 1px solid var(--ui-border); }
+.automation-transfer-schedules li:last-child { border-bottom: 0; }
+.automation-transfer-schedules li > div { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.automation-transfer-schedules :is(code,p) { color: var(--ui-muted); font-size: 12px; overflow-wrap: anywhere; }
+.automation-transfer-schedules > p { margin: 0; padding: 8px 12px; }
+.automation-transfer-schedules li > section { flex: 1 0 100%; }
+.automation-transfer-schedules ol { margin: 0; padding: 0; list-style: none; }
+.automation-transfer-schedules ol > li { justify-content: flex-start; padding: 4px 0; font-size: 12px; }

@@ -33,6 +33,9 @@ _OBJECT_TABLE_SQL = """n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
     AND c.relname ~ '^[a-z_][a-z0-9_]{0,62}$' AND c.relkind IN ('r','p')
     AND NOT c.relispartition
     AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
+_TRANSFER_ENDPOINT_WHERE = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.visibility, 'normal') <> 'hidden' AND (
+    (n.nspname = :source_schema AND c.relname = :source_table) OR
+    (n.nspname = :target_schema AND c.relname = :target_table))"""
 _FINANCIAL_ODS = ("ts_ods", "ods_financial_fact")
 _LATEST_FILED_SQL = (
     "SELECT filed FROM ts_ods.ods_financial_fact "
@@ -425,6 +428,69 @@ class EtlLayers:
         if found is None:
             raise HTTPException(404, "Table does not exist in this schema")
         return found
+
+    async def transfer_endpoints(self, source: tuple[str, str], target: tuple[str, str]) -> dict[tuple[str, str], bool]:
+        """Return eligible visible tables and whether they have a valid primary key."""
+        async with self.session() as session:
+            await session.execute(text("SET LOCAL statement_timeout = '2s'"))
+            await self._require_ontology(session)
+            result = await session.execute(text(f"""
+                SELECT n.nspname AS schema_name, c.relname AS table_name,
+                       EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid
+                               AND i.indisprimary AND i.indisvalid AND i.indisready) AS has_primary_key
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                {_OBJECT_METADATA_JOIN}
+                WHERE {_TRANSFER_ENDPOINT_WHERE}
+            """), {"source_schema": source[0], "source_table": source[1],
+                    "target_schema": target[0], "target_table": target[1]})
+            return {(row["schema_name"], row["table_name"]): row["has_primary_key"] for row in result.mappings()}
+
+    async def transfer_endpoint_columns(
+        self, source: tuple[str, str], target: tuple[str, str],
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Read the metadata for both visible endpoints in one catalog snapshot."""
+        async with self.session() as session:
+            await session.execute(text("SET LOCAL statement_timeout = '2s'"))
+            return await self.transfer_endpoint_columns_in_session(session, source, target)
+
+    async def transfer_endpoint_columns_in_session(
+        self, session, source: tuple[str, str], target: tuple[str, str],
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        await self._require_ontology(session)
+        result = await session.execute(text(f"""
+            WITH endpoints AS (
+                SELECT n.nspname AS schema_name, c.relname AS table_name, c.oid,
+                       p.index_name, p.key_attnum, p.index_name IS NOT NULL AS usable_primary_key
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                LEFT JOIN LATERAL (
+                    SELECT idx.relname AS index_name,
+                           CASE WHEN i.indnkeyatts = 1 AND am.amname = 'btree' THEN i.indkey[0] END AS key_attnum
+                    FROM pg_index i JOIN pg_class idx ON idx.oid = i.indexrelid
+                    JOIN pg_am am ON am.oid = idx.relam
+                    WHERE i.indrelid = c.oid AND i.indisprimary AND i.indisvalid AND i.indisready
+                      AND i.indislive AND i.indimmediate
+                ) p ON true
+                {_OBJECT_METADATA_JOIN}
+                WHERE {_TRANSFER_ENDPOINT_WHERE}
+            )
+            SELECT e.schema_name, e.table_name, e.usable_primary_key, e.index_name,
+                   a.attnum = e.key_attnum AS single_btree_pk, a.attname AS name,
+                   a.atttypid AS type_oid, a.atttypmod AS type_modifier,
+                   format_type(a.atttypid, a.atttypmod) AS type,
+                   a.attnotnull AS not_null, a.attgenerated::text AS generated, a.attidentity::text AS identity
+            FROM endpoints e LEFT JOIN pg_attribute a
+              ON a.attrelid = e.oid AND a.attnum > 0 AND NOT a.attisdropped
+            ORDER BY e.schema_name, e.table_name, a.attnum
+        """), {"source_schema": source[0], "source_table": source[1],
+                "target_schema": target[0], "target_table": target[1]})
+        endpoints: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in result.mappings():
+            endpoint = endpoints.setdefault((row["schema_name"], row["table_name"]),
+                                            {"has_usable_pk": row["usable_primary_key"],
+                                             "index_name": row["index_name"], "columns": {}})
+            if row["name"] is not None:
+                endpoint["columns"][row["name"]] = row
+        return endpoints
 
     async def evidence(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
         schema = _object_schema(layer)

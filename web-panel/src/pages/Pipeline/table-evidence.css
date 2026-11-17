@@ -13,6 +13,11 @@
 .flow-evidence-card dd { margin: 2px 0 0; }
 .flow-evidence-card .flow-evidence-primary { font-size: 19px; line-height: 1.3; }
 .flow-evidence-lineage { grid-column: 1 / -1; }
+.flow-evidence-lineage-link { justify-self: start; color: var(--ontology-primary); font-size: 12px; text-decoration: underline; }
+.flow-evidence-receipts { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+.flow-evidence-receipts li { display:grid; gap:4px; min-width:0; padding:8px; border:1px solid var(--ontology-border); border-radius:3px; }
+.flow-evidence-receipts li > div { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px 8px; }
+.flow-evidence-receipts :is(span,time,code) { color:var(--ontology-muted); font-size:11px; overflow-wrap:anywhere; }
 .flow-evidence-path { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .flow-evidence-node { display: grid; min-width: 0; gap: 3px; padding: 7px 10px; border: 1px solid var(--ontology-border); border-radius: 4px; }
 .flow-evidence-node code { color: var(--ontology-text); font-size: 12px; overflow-wrap: anywhere; }
@@ -29,3 +34,13 @@
 .flow-evidence-card .flow-evidence-catalog { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
 .flow-evidence-catalog dd { font-size: 19px; line-height: 1.3; }
 .flow-evidence-card .flow-evidence-observation { border-top: 1px solid var(--ontology-border); padding-top: 10px; }
+.flow-table-export-evidence { grid-column: 1 / -1; min-width: 0; }
+.flow-table-export-evidence.is-compact .flow-evidence-grid { grid-template-columns: minmax(0, 1fr); }
+.flow-table-export-evidence.is-compact { margin-top: 10px; }
+.flow-table-export-path { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+.flow-table-export-path[data-observed=true] { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
+.flow-table-export-path .flow-evidence-arrow { align-self: center; }
+.flow-table-export-evidence.is-compact .flow-table-export-path { grid-template-columns: minmax(0, 1fr); }
+.flow-table-export-evidence.is-compact .flow-evidence-arrow { justify-self: center; transform: rotate(90deg); }
+.flow-table-export-links { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+@media (max-width: 550px) { .flow-table-export-path[data-observed] { grid-template-columns: minmax(0, 1fr); } }

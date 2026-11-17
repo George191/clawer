@@ -1,10 +1,7 @@
 import { useState } from 'react';
-import type { CSSProperties } from 'react';
 import { Button, Input } from '@/components/ui';
-import { DatabaseOutlined, DownOutlined, ReloadOutlined, RightOutlined, SearchOutlined } from '@/components/ui/icons';
+import { DatabaseOutlined, DownOutlined, FolderOutlined, ReloadOutlined, RightOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import type { LayerNode, LayerTable } from '../../services/types';
-import { TemplateGlyph, inferSiteKind } from '../AICollect/WorkspaceDock';
-import { schemaColor } from './OntologyExplorer';
 
 type Props = {
     schemas: LayerNode[];
@@ -48,13 +45,13 @@ export default function ExplorerCatalog({ schemas, tables, selectedSchema, selec
                         const selected = schema.key === selectedSchema;
                         const expanded = selected && (!!keyword || collapsedSchema !== schema.key);
                         return (
-                            <li key={schema.key} style={{ '--schema-color': schemaColor(schema.key) } as CSSProperties}>
+                            <li key={schema.key}>
                                 <button type="button" className={`flow-catalog-schema${selected ? ' is-selected' : ''}`} aria-expanded={expanded} onClick={() => {
                                     if (selected) setCollapsedSchema(expanded ? schema.key : '');
                                     else { setCollapsedSchema(''); onSchema(schema.key); }
                                 }}>
-                                    {expanded ? <DownOutlined /> : <RightOutlined />}
-                                    <i className="flow-schema-color-dot" aria-hidden="true" />
+                                    {expanded ? <DownOutlined className="flow-catalog-disclosure" /> : <RightOutlined className="flow-catalog-disclosure" />}
+                                    <FolderOutlined className="flow-catalog-resource-icon" />
                                     <strong>{schema.alias || schema.label}</strong>
                                     <code>{schema.key}</code>
                                     <span className="flow-catalog-count">{schema.tables ?? 0}</span>
@@ -63,7 +60,7 @@ export default function ExplorerCatalog({ schemas, tables, selectedSchema, selec
                                     {tablesLoading ? <li className="flow-catalog-empty" role="status">Loading tables…</li> : matchingTables.length ? matchingTables.map((table) => (
                                         <li key={table.name}>
                                             <button type="button" title={table.name} aria-current={table.name === selectedTable ? 'page' : undefined} onClick={() => { onTable(table); setMobileOpen(false); }}>
-                                                <TemplateGlyph kind={inferSiteKind(table.dataType || '', table.name)} source={table.name} />
+                                                <TableOutlined className="flow-catalog-resource-icon" />
                                                 <span>{table.name}</span>
                                             </button>
                                         </li>

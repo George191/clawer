@@ -10,6 +10,7 @@ import DataConnections from './DataConnections';
 import OntologyLineage from './OntologyLineage';
 import PostgresIcon from './PostgresGlyph';
 import './ontology-frame.css';
+import './foundry-workbench-tokens.css';
 import './ontology-workspace.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import NewObjectType from './NewObjectType';
@@ -962,7 +963,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             }))}
                         </div>}
                         {isSchemas && resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} />}
-                        {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} />}
+                        {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} canManage={canManage} />}
                         {isSchemas && resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
                             <header>
                                 <div><h3>Stream</h3><p>Consumer status and partition offsets for this table.</p></div>

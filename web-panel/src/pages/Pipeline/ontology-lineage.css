@@ -17,3 +17,42 @@
 @media(max-width:640px),(pointer:coarse){.flow-lineage-canvas-shell{padding-left:56px}.flow-lineage-tool-rail{width:40px}.flow-lineage-tool-rail>button{width:39px;height:44px}.flow-lineage-canvas-tools{width:44px}.flow-lineage-canvas-tools>button{width:42px;height:44px;min-height:44px}.flow-lineage-context .flow-lineage-action{min-height:32px}.flow-lineage-search{height:34px}.flow-lineage-search>button{width:28px;height:30px}.flow-lineage-node-relations button{min-height:38px}.flow-lineage-inspector>header>button{width:34px;height:34px}.flow-lineage-legend{top:8px;right:8px;width:calc(100% - 16px)}.flow-lineage-legend button{width:32px;height:32px}.flow-lineage-legend>div{max-height:160px}.flow-lineage .flow-lineage-open-workspace{min-height:38px}}
 @media(max-height:600px){.flow-lineage-context{height:36px}.flow-lineage-toolbar{min-height:54px}.flow-lineage-tool-group>button{height:42px}.flow-lineage-inspector dl{gap:9px 8px;margin-block:12px}.flow-lineage-inspector-disclosure{margin-block:10px}}
 @media(prefers-reduced-motion:reduce){.flow-lineage-edges circle{display:none}}
+
+.flow-lineage-inspector--transfers{z-index:8;width:360px}
+.flow-transfer{margin-top:15px;font-size:12px}
+.flow-transfer-heading,.flow-transfer-actions,.flow-transfer-meta,.flow-transfer-list li>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.flow-transfer-heading h3{margin:0;font-size:14px}
+.flow-transfer p{margin:8px 0 12px;color:var(--ui-muted);line-height:1.5}
+.flow-transfer fieldset{display:grid;gap:8px;margin:10px 0 0;padding:0;border:0;min-width:0}
+.flow-transfer legend{padding:0 0 5px;font-weight:600}
+.flow-transfer label{display:grid;gap:4px;min-width:0}
+.flow-transfer input,.flow-transfer select{width:100%;min-width:0;min-height:32px;padding:5px 7px;border:1px solid var(--ui-border);border-radius:4px;background:var(--ui-elevated);color:var(--ui-text);font:inherit}
+.flow-transfer select:disabled{color:var(--ui-muted)}
+.flow-transfer-actions{justify-content:flex-end;margin-top:12px}
+.flow-transfer .flow-lineage-action{min-height:28px;padding:3px 8px;font-size:11px}
+.flow-transfer .flow-transfer-error,.flow-transfer-picker [role=alert]{color:var(--ui-danger,#b12f39);margin-top:8px}
+.flow-transfer .flow-transfer-notice{padding:7px 8px;border:1px solid var(--ui-border);border-radius:4px;background:var(--ui-elevated)}
+.flow-transfer-preflight{margin-top:14px;padding:9px;border:1px solid var(--ui-border);border-radius:4px}
+.flow-transfer-preflight h4{margin:0;font-size:12px}
+.flow-transfer-preflight p{margin:6px 0 0}
+.flow-transfer-preflight-result{display:grid;gap:4px;margin-top:8px}
+.flow-transfer-preflight-result small{color:var(--ui-muted)}
+.flow-transfer-preflight-result ul{display:grid;gap:5px;margin:2px 0;padding-left:16px;overflow-wrap:anywhere}
+.flow-transfer-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.flow-transfer-list>li{display:grid;gap:6px;padding:8px;border:1px solid var(--ui-border);border-radius:4px;background:var(--ui-elevated)}
+.flow-transfer-run-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px}
+.flow-transfer-history-switch{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 6px}
+.flow-transfer-history-switch [aria-pressed=true]{color:var(--ui-text);background:var(--ui-panel);border-color:var(--ui-primary)}
+.flow-transfer-schedule{padding:8px;border:1px solid var(--ui-border);border-radius:4px}
+.flow-transfer-schedule h4{margin:0;font-size:12px}
+.flow-transfer-schedule .flow-transfer-run-actions{margin:6px 0 10px}
+.flow-transfer-upstream label{margin-top:8px}
+.flow-transfer-upstream .flow-transfer-receipts code{overflow-wrap:anywhere}
+.flow-transfer-cursor p{margin:4px 0 0}
+.flow-transfer-receipts{display:grid;gap:6px;margin:3px 0 0;padding:0;list-style:none}
+.flow-transfer-receipts>li{display:grid;gap:4px;padding:7px;border:1px solid var(--ui-border);border-radius:4px;overflow-wrap:anywhere}
+.flow-transfer-list strong,.flow-transfer-route code{overflow-wrap:anywhere}
+.flow-transfer-badge{padding:2px 5px;border:1px solid var(--ui-border);border-radius:4px;color:var(--ui-muted);font-size:10px}
+.flow-transfer-route{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.flow-transfer-meta small{color:var(--ui-muted)}
+@media(max-width:760px){.flow-lineage-inspector--transfers{width:360px}.flow-transfer .flow-lineage-action{min-height:34px}}

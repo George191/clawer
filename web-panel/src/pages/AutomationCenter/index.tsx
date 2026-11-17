@@ -28,6 +28,7 @@ import type {
   AutomationWorkflow, ProductDomain, SchedulerTaskConfig, WorkspaceTask,
 } from '@/services/types';
 import './style.css';
+import TransferSchedules from './TransferSchedules';
 
 type Section = 'workflows' | 'schedules' | 'runs';
 type DomainFilter = ProductDomain | 'all';
@@ -445,6 +446,8 @@ const AutomationCenter: React.FC = () => {
     </div>
 
     {section === 'workflows' && (!connected || !streamAvailable) && <Alert className="automation-load-alert" type="warning" showIcon message="Live updates unavailable. Reconnecting automatically…" />}
+
+    {section === 'schedules' && (domain === 'all' || domain === 'etl-pipeline') && <TransferSchedules keyword={keyword} filter={scheduleFilter} />}
 
     {section === 'runs' ? <Card className="automation-task-panel" styles={{ body: { padding: 0 } }}>
       <WorkspaceDock

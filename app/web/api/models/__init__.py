@@ -43,6 +43,12 @@ from .embedding import (
 )
 
 from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
+from .batch_syncs import BatchSyncPlanRow as BatchSyncPlanRow
+from .batch_sync_schedules import BatchSyncScheduleRow as BatchSyncScheduleRow
+from .table_exports import TableExportPlanRow as TableExportPlanRow
+from .transfer_plans import TransferPlanRow as TransferPlanRow
+from .transfer_schedules import TransferScheduleRow as TransferScheduleRow
+from .transfer_upstream import UpstreamTriggerRow as UpstreamTriggerRow
 from .ontology_runtime import (
     OntologyActionEvent as OntologyActionEvent,
     OntologyRuntimeRecord as OntologyRuntimeRecord,

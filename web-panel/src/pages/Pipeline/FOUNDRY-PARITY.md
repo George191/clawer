@@ -1,0 +1,121 @@
+# Ontology Foundry：对照 Palantir 官方文档
+
+初始核对基线：Clawer `master` `c825e4865ef4dfc5afb72dcd4020a92202f5cf2a`（2026-11-17）。表中状态包含后续本地试点，不代表服务器已部署。范围为 Ontology Foundry 的 11 项数据管理能力，不是对 Palantir 全产品的覆盖声明。
+
+| 核对项 | Palantir 官方行为 | Clawer 当前状态 | 下一步验收标准 |
+| --- | --- | --- | --- |
+| 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；其他连接器能力和统一网络策略仍待覆盖。 | 在选择同步或导出前验证连接器能力和权限；不把连接测试通过当成可读取或可写入业务资产的证明。 |
+| 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度。 | 受控试点不能代替完整的增量检查点、通用数据集目标或其他连接器。 |
+| 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断及代码中固定的消费路径；没有 Foundry 式可配置入站流和逐通道管理。 | 如需入站，隔离接口认证、schema/速率验证、幂等、失败处理；不把消费位点当作下游已经提交的证明。 |
+| 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执。Published API 仍只是被动读取。 | 继续接入回执驱动的 Lineage 证据、按标记校验的外发策略、多目标/模式，以及另行审核的写回或 Webhook。 |
+| 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地单父节点提交触发也复用现有 Automation Center，父/子回执分开。 | 验收多父节点与 AND/OR、通用的运行范围及跨通道路由，不从未启用草稿启动作业。 |
+| 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；财报 Evidence 的声明路径不代表生产逐边验证。 | 先接表级运行证据。区分代码声明、配置草稿和已经观察到的执行，不能用草稿绘成已提交的血缘。 |
+| 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有表级回执、通道历史、批量执行尝试和调度派发记录；未形成覆盖所有资产的 Build Timeline。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
+| 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；未实现事务级历史与列分布统计等。 | 先接运行记录；大表筛选保留查询预算，统计不随页面请求扫描业务表。 |
+| 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。当前 Evidence 有结构计数和受查询预算约束的 SEC 提交日期观察；不是数据/作业新鲜度检查。 | 在后台运行可配置检查并记录结果；分别记录更新时间、源时间和最近一次检查，不用财报日期冒充同步时间。 |
+| 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分 / 缺失**。有 Handler 编辑和 dry-run，不是可视化数据转换；没有通用事务快照、历史对比或二分查找。 | 先把运行结果、配置版本和事务标识绑定；之后再评估可视化转换与历史快照，不从当前 PostgreSQL 表伪造旧版本。 |
+| 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权，但没有跨通道的统一下游限制或外发策略。 | 执行时重新核对源、目标和身份授权；外发前另核对数据标记与目的端批准范围。 |
+
+## 实现顺序
+
+1. **配置**：从 Lineage 节点管理独立的内部表到表草稿，管理员可新建和修改。表端点来自真实目录；仅保存配置，不创建 schedule、不访问目标数据、不修改已存在的血缘；Append / Upsert 是本系统的 PostgreSQL 写入意图，不是 Palantir 表导出模式的同义词。
+2. **执行与取证**：先从一个受控试点建立只读兼容性/写入计划检查，再加入已授权的手动执行、幂等、后台检查点、提交结果和表级观测血缘。执行器不会接管现有财报或专利迁移。
+3. **编排与质量**：再做真实的每日/上游事件触发、运行身份/范围、异常告警与数据检查。外部推送另走 Data Connections，不能从任意图边指定目的地址。
+
+### 当前增量
+
+- **Explorer 资源图标**：[官方 Source Exploration](https://www.palantir.com/docs/foundry/data-connection/source-exploration/) 的 Database Explorer 使用表格图标；[官方 PostgreSQL 连接器截图](https://www.palantir.com/assets/xrfr7uokpv1b/2zAnKGE9fiyJNTZjHoKbDw/50e7b9b68595980c81641614cec89d13/Foundry_Technical_Intro_-_Dec_2021.pdf) 第 11 页用文件夹表示 Schema 分组。Explorer 用 16×16 线框文件夹与统一的表格图标区分两类资源，不再从业务主题推断不同形状，也不以色块区分 Schema。Dataset Preview 内的 Schema 仍是列定义，不是目录里的资源节点。
+- **传输预检**：管理员可对未保存的内部传输草稿运行只读目录检查，无需扫描表数据。参考 Foundry 的[表导出结构要求](https://www.palantir.com/docs/foundry/data-connection/export-overview/#special-considerations-for-table-exports)，当前严格检查同名列、类型/修饰符和目标写入约束；返回逐列问题，不把目录兼容性视为运行成功。不做自动列映射或覆盖生成列。
+- **执行验收仍待实现**：区分目标的追加写入和源端增量读取；同一已提交运行重试不得重复应用，对未变化源重新发起追加必须有明确检查点策略。验证重复 Upsert 键的失败不提交数据，并将数据库合计值称为“受影响行数”。调度派发成功不等于传输提交成功。
+
+### 属性工作台与对象结果界面
+
+- [Ontology Manager 属性编辑](https://www.palantir.com/docs/foundry/object-link-types/edit-properties/)：属性列表和 Column mapping 分开；选择属性，在右侧编辑类型及配置。Primary key 标识实例，Title property 只是显示名称，两者可以指向不同字段。对照截图保留底部源数据预览，但仍使用只读有界查询。
+- [Object Explorer Results](https://www.palantir.com/docs/foundry/object-explorer/view-results/)：选中结果行时在同页右侧显示 Selection Preview；清除选择或收起面板，不需要离开结果列表。对象标题之前是对象类型图标，不是标题字段的 SQL 类型；配置的图标优先，否则用对象类型或来源表的分类，不从实例标题文本猜测。物理表目录仍使用统一表格图标。
+- [Blueprint 排版变量](https://github.com/palantir/blueprint/blob/develop/packages/core/src/common/_variables.scss)：系统字体栈、14 px 正文及 12 px 次要文本作为实现基准；页面标题 18 px、按钮高度 30 px 是根据参考图做的本系统设计选择，不能仅凭截图认定 Foundry 原环境的精确字体。无后端支撑的格式器、跨记录批量修改、图表、保存探索和导出不在本轮伪造入口。
+
+### 受控执行试点的验收口径
+
+- 对照 Foundry [从 Data Lineage 构建](https://www.palantir.com/docs/foundry/data-lineage/build-datasets/)与 [Build Timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/)定义的操作和记录。本试点只覆盖一次明确确认的本地沙箱传输与可追溯的**已提交**记录，不等于其通用 Build 系统。
+- 必须默认关闭、只允许管理员，且输入和目标同时位于专用沙箱 schema。确认前显示确切的表对、写入方式和批量上限，确认绑定配置版本。结构或配置改动须重新确认；查询不到结果时重试同一请求标识，不重复写入。
+- 写入与成功回执在同一个 PostgreSQL 事务内；失败不保留成功回执。不以受影响行数区分新增和更新，也不以回执记录时间冒充数据库提交时刻。没有增量源游标的追加传输不能通过新的请求重复灌入原通道。
+- History 只列真实提交回执；表级观测血缘只从受影响行数大于零的回执导出。试点的观测关系不代表生产流量、全量同步、失败尝试历史、调度、变更数据捕获或外发。
+
+### 增量追加与作业状态的验收口径
+
+- 对照 [Foundry 表导出策略](https://www.palantir.com/docs/foundry/data-connection/export-overview/#table-export-modes)，追加是目标写入方式，增量是源读取范围，两者不能混称。我们的专用沙箱试点使用单列整数主键作为按顺序提交的水位，不是 Foundry 已提交数据集事务或 CDC。
+- 同一通道第一次执行后绑定源表、目标表、模式和游标。每次最多提交 100 行；业务行、检查点、提交回执一起确认。用 201 行验收 100/100/1、无新行、同请求重试，以及失败不得推进水位或留下成功回执。键值落后、数据库更新/删除及回填不属于此模式，不能把数字主键本身当成源端按顺序提交的证明。
+- 运行尝试和提交回执分开。已派发或收到请求不等于当前有运行中的工作，更不等于已提交；只有有影响行的提交回执改变 Explorer 可观测血缘。未确认结果时保留原请求 ID，不用新运行覆盖旧尝试。
+
+### 接入现有自动化调度的验收口径
+
+- 复用现有 Automation Center 的 Schedules 和 Celery 的共同分钟调度入口；不新增产品级调度模块。Lineage 负责绑定传输草稿和授权开启，Automation 展示已绑定的计划，Explorer 仍只展示实际提交的数据流。参考 [Foundry Schedules](https://www.palantir.com/docs/foundry/data-integration/schedules/) 对调度启动与构建结果的区分。
+- 首期仅允许本地专用沙箱中的每日 Upsert，必须明确绑定并默认关闭；内部日程按 UTC，Automation 同时显示浏览器本地时钟。暂停、重新开启、草稿版本变化和超出五分钟窗口不得补跑旧任务。
+- 同一计划代次与 UTC 时间槽只允许一个持久作业。应验证重复派发、消息未确认和工作进程故障，按同一记录恢复，不把消息派发当作写入成功。实际提交必须有数据库回执，重试不能重复写入。
+- 仍未覆盖跨库、生产、批量入站、上游事件触发和任何对外发布。
+
+### 数据源发现的验收口径
+
+- 对照 [Data Connection Source Exploration](https://www.palantir.com/docs/foundry/data-connection/source-exploration/) 的数据源树、搜索和元数据面板。Explore source 放在现有 Data Connections 已保存连接内，不另建导航。
+- 只用已保存的 PostgreSQL 连接和其现有凭证。管理员发起请求，但结果仍受数据源数据库账号的 USAGE / SELECT 权限限制；不显示系统 schema 或不可读的关系。按页读取目录，列通过元数据提供类型、可空性和主键，不读源表的行。
+- 未覆盖其它连接器、外部样本预览、关系图、网络策略配置、列映射、增量同步和调度；目录可读不代表有权限写入目标。
+
+### Managed batch sync 的试点边界
+
+- 对照 Foundry [设置同步](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/) 和 [JDBC 同步优化](https://www.palantir.com/docs/foundry/data-connection/optimize-jdbc-syncs/)。先从现有 Data Connections 选择已保存的 PostgreSQL 表，明确字段和主键映射，保存版本，再确认向已存在的本地沙箱表写入。
+- 首期是有上限的快照 Upsert：只读源端已观测快照，不清空目标，不删除源端缺少的旧目标行，也不把整数主键或更新时间冒充源提交游标。源和目标是两个事务边界，回执仅证明目标接收了一次独立观测到的源快照。
+- 同一物理目标上的重叠请求必须在打开源快照之前串行化或拒绝；用两个不同计划或请求 ID 的旧值/新值竞争测试，防止后提交的旧快照覆盖新值。相同请求重试应直接读取目标回执，不重读源；失败或超出 100 行、单行 8 KiB 的上限不得留下部分写入或成功回执。
+- 试点默认关闭，只在显式本地配置允许、环回 PostgreSQL 源和专用目标 schema 中启用；不连接生产或外部主机。调度、源变更日志、外部导出和下游权限规则不在本次试点中。
+
+### Batch Sync 执行记录与安全重试
+
+- 记录每次执行尝试，区分已记录、已提交、回放既有回执、拒绝、可重试及结果不明。没有结束时间的尝试只表示请求曾被记录，不保证任务仍在运行。[Foundry Job Tracker](https://www.palantir.com/docs/foundry/data-connection/troubleshooting/#job-tracker)
+- 相同请求 ID 绑定同一个已保存版本。若存在提交回执，重试直接返回原回执，不重新读取源或写目标；目标数据、回执与成功执行状态必须同事务提交。可确认没有写入时才显示已拒绝或可重试；最终提交未确认时显示结果不明。
+- 验收覆盖目标繁忙、版本改变、路由或范围超限、源临时不可用及响应丢失；执行尝试与成功回执分别展示，不从没有成功回执的尝试生成血缘。仅限受控沙箱手工运行，不自动重试或另建调度器。
+
+### 批量同步接入现有 Schedules 的验收口径
+
+- 对照 [Set up a batch sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)：保留从已保存源管理或手动运行同步的入口，由现有 Automation Center 的 Schedules 观察定时作业。此试点不创建通用 Foundry Dataset 或构建系统，仅支持已经配置好的环回 PostgreSQL 工单和既有本地沙箱表。
+- 每日按 UTC 派发并同时显示浏览器本地时间。初始默认关闭；启用时需确认源、目标、写入方式和每日时刻，并绑定审核过的同步计划和连接版本。暂停、旧版本、授权失效及超出时间窗口的派发不能开始新写入，不做历史补跑。
+- 同一日程代次及 UTC 时间槽至多一个持久作业，同一作业重投使用原请求标识。派发记录、执行尝试及目标提交回执各自展示；验证竞争、同任务重复投递和重试的结果必须取自实际隔离数据库。目标写入、提交回执和作业成功状态需同事务落库。
+- 不覆盖生产开关、任意周期或上游事件触发、CDC、外发或自动创建目标表。通过真实 PostgreSQL 与模拟消息通道的测试不等于验证了生产部署。
+- 运行前提：启用仅限 API 与 worker 共享同一个已验证的环回网络命名空间、同一目标注册库及凭证密钥的隔离沙箱。标准分容器环境的 `127.0.0.1` 各自独立；不把 API 手动运行通过当作 worker 源端身份已经验证，不在默认部署启用。跨容器源身份绑定是独立后续项。
+
+### 受控 PostgreSQL 表导出的验收口径
+
+- 对照 [Foundry Table exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/#table-exports)：从 Data Connections 查看已批准的目的端、列映射与运行历史。[Outbound webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 是另一种产品能力；Published API 被动响应读取，不是主动发送。本轮不以 Webhook 或 Kafka 派发模拟表导出。
+- 首期只允许在显式开启的隔离环境中，由管理员向预置、经过身份验证的环回 PostgreSQL 发送专用合成源表。目标主机、库、表、列及凭证由部署批准，不能从界面填写任意地址、表名或 SQL。固定映射 `id → id`、`caption → caption`；有界快照 Upsert，不删除接收端独有的行，不实现镜像、截断或增量。
+- 发送方记录计划版本、原请求 ID、执行尝试和受控载荷摘要，不持久化导出原文或凭证。目标业务行和目标自己的回执同事务提交，两个数据库之间不承诺原子性。失去确认后仍用原 ID 先核对接收回执；若接收端没有回执且当前源内容已变，不得用原 ID 发送不同快照。没有匹配接收回执则不能显示已提交或生成已观测的外发血缘。
+- 验收要覆盖权限和开关、目标身份不匹配、超限无部分写入、不同请求的并发、重复/丢失回应后的原请求核对、目标特有行保留，以及接收端提交与界面尝试记录分开展示。生产目标、跨网络、其他格式和上游事件触发不在试点范围。
+
+## 完整验收清单
+
+按上表 11 项逐项验收。表中“部分”表示有可验证的基础，不表示整项已完成。每项关闭前都要记录：可复现的应用入口、实现范围、自动化测试及实际端到端结果、权限拒绝与故障恢复结果，以及仍需部署验证的依赖。真实提交只能来自相关系统的回执或同事务事实；演示数据、模拟 broker 和静态截图各自只证明对应层面。
+
+| # | 核对项 | 整项验收条件 |
+| --- | --- | --- |
+| 1 | 数据源与连接器 | 从同一连接入口按连接器展示支持的能力；能新增、轮换、测试、浏览和撤销。对配置、源侧授权、可达目的地分别校验。验证受限列、无权对象、错误地址和密钥轮换不会泄漏数据或凭证。 |
+| 2 | 批量同步 | 保存源、目标和字段映射，校验类型、键及写入模式。手工/调度均支持相同的版本约束；快照和增量有明确不同的语义。验证失败不推进检查点，重复投递不产生重复应用，成功可追溯到目标回执。 |
+| 3 | 入站与 CDC | 可配置的认证入站和 CDC 通道分开管理；拒绝无权发送、不兼容 schema 或超预算负载。验证消费重放、重复、顺序和冲突规则，按实际提交位点恢复，并证明消费位点不是目标回执。 |
+| 4 | 对外推送与写回 | 从已批准目的地管理表导出与写回，支持经审核的写入模式和数据范围。按标记阻断不允许的外发；凭证隔离。验证接收端拒绝、部分中断、提交确认丢失、原请求恢复和真实回执；不能用被动 API 代替主动交付。 |
+| 5 | 通道与调度 | 在关联资产中配置通道、目标、运行范围、时间和上游提交触发，继续使用 Automation Center。对照 [Foundry 触发类型](https://www.palantir.com/docs/foundry/building-pipelines/triggers-reference/) 验证 AND/OR、时区/到期、启停和重复事件。不得从仅派发、失败或未提交的作业触发后续执行。 |
+| 6 | 血缘与影响分析 | 资源级图可展开上游和下游、追溯影响与相关资源；能区别声明关系、运行确认和未知状态。验证另一路径及权限裁剪，成功证据必须能回到对应版本/回执；零行和失败不生成流动证据。 |
+| 7 | 资产运行历史 | 资产页可查运行时间线，并定位触发、尝试、提交、取消、无新数据及错误；可关联通道、资产、配置版本、回执和源/目标位点。中断、重放和权限边界不能让时间线重复或误报。 |
+| 8 | 数据集查看 | 同一资产上下文包含有界预览、编辑/查询允许的筛选、元数据、运行、质量和已收集统计；大表分页、取消和无索引情况可验证；统计不在交互请求隐式扫描业务表，字段授权贯穿所有子页。 |
+| 9 | 质量与新鲜度 | 可配置 schema、规模、作业状态与新鲜度检查，后台周期或提交后执行；记录检查时间、源时间和上次成功提交并可追溯。验证真实异常、无采集数据与检查未运行三种状态，告警不重复刷屏，支持确认和恢复。 |
+| 10 | 可视化管道与版本 | 图上可编辑输入、转换、输出，版本审核后可运行并产出受保护的持久版本。通过多次已提交版本验证预览、回溯和差异，失败版本不出现；基于 [Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/) 的历史能力不能用当前表伪造。 |
+| 11 | 权限、标记与外发治理 | 执行身份和用户权限分开，检查源、通道、目标、行列及标记，在下游保留/加严限制。验证撤销后不读取或发送新数据、替换目标/轮换凭证需重审、无权用户无法从 UI/API/回执/日志侧面恢复敏感信息。 |
+
+验收顺序：先用真实接收端回执约束外发证据，再用已提交事件补齐调度触发，然后按依赖推进治理、入站/CDC、资产历史/健康、版本及可视化工业化。可并行推进没有同源改动的项；若外部权限或生产环境是某条验收的必要条件，保留原项和具体缺证，先完成不依赖该权限的实现与测试。
+
+### 外发血缘证据
+
+- 按 [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 的资源上下文检查关系。在精确源表的 Lineage 和 Explorer Evidence 里展示受控接收端标签；不在其它表或全局图里误挂固定沙箱通道。图上的声明与观察必须用不同状态，目的节点不暴露主机、端口、数据库、标记或凭证。
+- 不在页面查询期间连接接收端。仅使用发送方已核验并保存的接收回执。当前已审核版本及同一目的绑定中有影响行的回执才产生当前观测边；改版后仍保留带原审核时间的历史，不把旧回执归给新版本。零行只有审计记录；尝试、拒绝、结果未知与草稿都不生成观测流。
+- 此处只覆盖固定沙箱源和管理员核对场景，不是跨系统生产血缘、列级影响分析或对外数据治理的整项验收。
+
+### 上游提交触发的验收口径
+
+- 对照 [Data updated 触发](https://www.palantir.com/docs/foundry/building-pipelines/triggers-reference/)：复用 Automation Center + 现有分钟调度。第一阶段仅支持管理员显式绑定一条沙箱依赖，手动 Upsert 的目标表就是下游 Upsert 的源表。开启时核对两个计划版本及物理表身份；不得自触发或级联，此阶段不支持多父节点 AND/OR 或把 UTC 时刻与事件组合。
+- 上游目标数据、自己的回执和可用事件同事务提交。仅正数受影响行产生事件，不把已派发、回滚、失败、零行或同请求回放当成新事件。受影响行数不等于内容发生变化。开启/重新开启只消费此后提交的合格事件，不扫源业务行寻找变化或用 CDC 偏移代替提交。
+- 下游按绑定代次和原上游事件去重，重复派发使用同一作业标识。暂停、撤权、计划改版、表变更或过期时不能开始新写入；下游成功需要自己的提交回执。下游触发时读取实际执行时可见的已提交表数据，不把上游回执当成可回放的不可变源快照。

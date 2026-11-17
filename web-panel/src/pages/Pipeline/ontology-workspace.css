@@ -437,17 +437,19 @@
 .flow-console--ontology .flow-explorer-catalog .flow-catalog-schema:hover,
 .flow-console--ontology .flow-explorer-catalog .flow-catalog-tables button:hover { background: var(--ontology-hover); }
 .flow-console--ontology .flow-explorer-catalog .flow-catalog-schema.is-selected { background: var(--ontology-hover); }
-.flow-catalog-schema > .ui-icon { flex: none; color: var(--ontology-muted); font-size: 9px; }
+.flow-catalog-disclosure { flex: none; color: var(--ontology-muted); font-size: 9px; }
+.flow-catalog-resource-icon { flex: none; width: 16px; height: 16px; color: var(--ontology-muted); font-size: 16px; }
+.flow-catalog-resource-icon > svg { width: 16px; height: 16px; }
 .flow-catalog-schema strong, .flow-catalog-schema code, .flow-catalog-tables button > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-catalog-schema strong { font-size: 12px; font-weight: 550; }
 .flow-catalog-schema code { color: var(--ontology-muted); font-size: 10px; }
 .flow-catalog-count { flex: none; margin-left: auto; color: var(--ontology-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .flow-catalog-tables { margin: 2px 0 5px 11px; padding-left: 6px; border-left: 1px solid var(--ontology-control-border); }
 .flow-console--ontology .flow-explorer-catalog .flow-catalog-tables button { min-height: 29px; }
-.flow-catalog-tables button > :first-child { flex: none; width: 15px; height: 15px; }
 .flow-console--ontology .flow-explorer-catalog .flow-catalog-tables button[aria-current] {
   border-color: var(--ontology-control-border); background: var(--ontology-selected); color: var(--ontology-link);
 }
+.flow-catalog-tables button[aria-current] > .flow-catalog-resource-icon { color: currentColor; }
 .flow-catalog-list :focus-visible { outline-offset: -2px; }
 .flow-catalog-empty { padding: 6px; color: var(--ontology-muted); font-size: 11px; }
 
