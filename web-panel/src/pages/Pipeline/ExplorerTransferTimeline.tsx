@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
 import { fetchTransferTimeline, fetchTransferTimelineDetail } from '../../services/api';
-import type { TransferRunReceipt, TransferTimelineDetail, TransferTimelineEntry } from '../../services/api';
+import type { TransferRunReceipt, TransferTimelineDetail, TransferTimelineEntry, TransferTimelineFilters } from '../../services/api';
+import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 import { recordedUpstreamRule } from './upstreamRules';
 
 const physicalLabels: Record<TransferTimelineEntry['physicalScope'], string> = {
@@ -42,9 +43,13 @@ function TimelineEntryFacts({ entry }: { entry: TransferTimelineEntry }) {
   </>;
 }
 
-export default function ExplorerTransferTimeline({ schema, table, onLatestCurrentReceipt }: {
-  schema: string; table: string; onLatestCurrentReceipt: (receipt: TransferRunReceipt | null) => void;
-}) {
+type Props = { schema: string; table: string; onLatestCurrentReceipt: (receipt: TransferRunReceipt | null) => void };
+export default function ExplorerTransferTimeline(props: Props) {
+  const identity = useSandboxIdentity();
+  return identity ? <TimelineWorkspace key={JSON.stringify([identity, props.schema, props.table])} {...props} /> : null;
+}
+
+function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
   const [entries, setEntries] = useState<TransferTimelineEntry[]>();
   const [cursor, setCursor] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -55,30 +60,75 @@ export default function ExplorerTransferTimeline({ schema, table, onLatestCurren
   const [detail, setDetail] = useState<TransferTimelineDetail>();
   const [detailFailed, setDetailFailed] = useState(false);
   const olderRequest = useRef<AbortController>();
+  const firstRequest = useRef<AbortController>();
+  const detailRequest = useRef<AbortController>();
+  const [filters, setFilters] = useState<TransferTimelineFilters>({});
+  const [view, setView] = useState<NonNullable<TransferTimelineFilters['view']> | ''>('');
+  const [from, setFrom] = useState('');
+  const [before, setBefore] = useState('');
+  const [filterError, setFilterError] = useState('');
+  const filtered = Boolean(filters.view || filters.from);
+
+  useEffect(() => {
+    onLatestCurrentReceipt(null);
+    return () => onLatestCurrentReceipt(null);
+  }, [onLatestCurrentReceipt]);
+
+  const clearScoped = () => {
+    firstRequest.current?.abort(); olderRequest.current?.abort(); detailRequest.current?.abort();
+    firstRequest.current = undefined; olderRequest.current = undefined; detailRequest.current = undefined;
+    setEntries(undefined); setCursor(null); setSelected(undefined); setDetail(undefined);
+    setLoadingMore(false); setMoreFailed(false); setDetailFailed(false); setFailed(false);
+  };
+  const apply = () => {
+    const start = from ? Date.parse(`${from}Z`) : NaN;
+    const end = before ? Date.parse(`${before}Z`) : NaN;
+    if ((from || before) && (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || end - start > 31 * 86_400_000)) {
+      setFilterError('Choose both UTC times, with To after From and no more than 31 days apart.'); return;
+    }
+    clearScoped(); setFilterError('');
+    setFilters({ ...(view ? { view } : {}), ...(from && before ? { from: new Date(start).toISOString(), before: new Date(end).toISOString() } : {}) });
+  };
+  const reset = () => {
+    clearScoped(); setView(''); setFrom(''); setBefore(''); setFilterError(''); setFilters({});
+  };
 
   useEffect(() => {
     const controller = new AbortController();
-    setEntries(undefined); setCursor(null); setFailed(false); setMoreFailed(false);
-    onLatestCurrentReceipt(null);
-    void fetchTransferTimeline(schema, table, undefined, controller.signal).then(page => {
+    firstRequest.current = controller;
+    setEntries(undefined); setCursor(null); setFailed(false); setMoreFailed(false); setLoadingMore(false);
+    void fetchTransferTimeline(schema, table, undefined, controller.signal, filters).then(page => {
       if (controller.signal.aborted) return;
       setEntries(page.entries); setCursor(page.nextCursor);
       onLatestCurrentReceipt(page.latestCurrentReceipt);
-    }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    }).catch(failure => {
+      if (!controller.signal.aborted) {
+        if (sandboxScopeDenied(failure)) onLatestCurrentReceipt(null);
+        setFailed(true);
+      }
+    });
     return () => {
       controller.abort();
       olderRequest.current?.abort();
       olderRequest.current = undefined;
     };
-  }, [schema, table, revision, onLatestCurrentReceipt]);
+  }, [schema, table, revision, onLatestCurrentReceipt, filters]);
 
   useEffect(() => {
     if (!selected) return;
     const controller = new AbortController();
+    detailRequest.current = controller;
     setDetail(undefined); setDetailFailed(false);
     void fetchTransferTimelineDetail(schema, table, selected.kind, selected.id, controller.signal)
       .then(value => { if (!controller.signal.aborted) setDetail(value); })
-      .catch(() => { if (!controller.signal.aborted) setDetailFailed(true); });
+      .catch(failure => {
+        if (controller.signal.aborted) return;
+        if (sandboxScopeDenied(failure)) {
+          clearScoped();
+          onLatestCurrentReceipt(null);
+          setFailed(true);
+        } else setDetailFailed(true);
+      });
     return () => controller.abort();
   }, [schema, table, selected]);
 
@@ -87,15 +137,18 @@ export default function ExplorerTransferTimeline({ schema, table, onLatestCurren
     const controller = new AbortController();
     olderRequest.current = controller; setLoadingMore(true); setMoreFailed(false);
     try {
-      const page = await fetchTransferTimeline(schema, table, cursor, controller.signal);
+      const page = await fetchTransferTimeline(schema, table, cursor, controller.signal, filters);
       if (controller.signal.aborted) return;
       setEntries(previous => {
         const seen = new Set(previous?.map(keyFor));
         return [...(previous ?? []), ...page.entries.filter(entry => !seen.has(keyFor(entry)))];
       });
       setCursor(page.nextCursor);
-    } catch {
-      if (!controller.signal.aborted) setMoreFailed(true);
+    } catch (failure) {
+      if (!controller.signal.aborted) {
+        if (sandboxScopeDenied(failure)) { clearScoped(); onLatestCurrentReceipt(null); setFailed(true); }
+        else setMoreFailed(true);
+      }
     } finally {
       if (olderRequest.current === controller) { olderRequest.current = undefined; setLoadingMore(false); }
     }
@@ -104,6 +157,21 @@ export default function ExplorerTransferTimeline({ schema, table, onLatestCurren
   return <section className="flow-evidence-card flow-evidence-timeline" aria-label="Transfer timeline">
     <header><h4>Transfer timeline</h4><span>Sandbox destination · newest first</span></header>
     <p>Attempts and dispatches do not prove a write. Receipts record committed transfers and identify whether the physical destination matches this table.</p>
+    <form className="flow-evidence-freshness-form" aria-label="Transfer timeline filters" onSubmit={event => { event.preventDefault(); apply(); }}>
+      <label>Timeline view<select aria-label="Timeline view" value={view} onChange={event => setView(event.target.value as typeof view)}>
+        <option value="">All</option><option value="receipts">Committed receipts</option>
+        <option value="rejected_attempts">Rejected attempts</option><option value="unconfirmed_attempts">Outcome unconfirmed</option>
+      </select></label>
+      <label>From (UTC)<input type="datetime-local" aria-label="From (UTC)" value={from} onChange={event => setFrom(event.target.value)} /></label>
+      <label>To (UTC)<input type="datetime-local" aria-label="To (UTC)" value={before} onChange={event => setBefore(event.target.value)} /></label>
+      <p>Enter both times in UTC. From is included and To is excluded; maximum 31 days. Entry times are shown in your local time.</p>
+      {filterError && <p role="alert">{filterError}</p>}
+      <div className="flow-evidence-freshness-actions">
+        <Button size="small" htmlType="submit">Apply timeline filters</Button>
+        <Button size="small" onClick={reset}>Reset timeline filters</Button>
+      </div>
+      {filtered && <p role="status">Showing filtered timeline entries.</p>}
+    </form>
     {failed ? <><p role="alert">Transfer timeline unavailable.</p><Button size="small" onClick={() => setRevision(value => value + 1)}>Retry timeline</Button></>
       : !entries ? <p role="status">Loading transfer timeline…</p> : entries.length ? <>
         <ol className="flow-evidence-receipts" aria-label="Transfer timeline entries">
@@ -114,7 +182,7 @@ export default function ExplorerTransferTimeline({ schema, table, onLatestCurren
         </ol>
         {moreFailed && <p role="alert">Older entries could not be loaded.</p>}
         {cursor && <Button size="small" loading={loadingMore} onClick={loadOlder}>{moreFailed ? 'Retry older entries' : 'Load older entries'}</Button>}
-      </> : <p>No scoped transfer activity recorded for this destination.</p>}
+      </> : <p>{filtered ? 'No scoped transfer activity matches these filters.' : 'No scoped transfer activity recorded for this destination.'}</p>}
     <Modal open={Boolean(selected)} destroyOnHidden className="flow-surface-modal" title="Transfer timeline detail"
       onCancel={() => setSelected(undefined)} footer={null}>
       {detailFailed ? <p role="alert">This scoped entry could not be verified. Close the detail and refresh Evidence.</p>

@@ -417,8 +417,9 @@ export type TransferTimelineDetail = TransferTimelineEntry & {
 type TransferTimelinePage = { entries: TransferTimelineEntry[]; nextCursor: string | null; latestCurrentReceipt: TransferRunReceipt | null };
 const transferTimelinePath = (schema: string, table: string) =>
   `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/transfer-timeline`;
-export const fetchTransferTimeline = (schema: string, table: string, cursor?: string, signal?: AbortSignal): Promise<TransferTimelinePage> =>
-  client.get(transferTimelinePath(schema, table), { params: { limit: 25, cursor }, signal }).then((r) => unwrap<TransferTimelinePage>(r.data));
+export type TransferTimelineFilters = { view?: 'receipts' | 'rejected_attempts' | 'unconfirmed_attempts'; from?: string; before?: string };
+export const fetchTransferTimeline = (schema: string, table: string, cursor?: string, signal?: AbortSignal, filters?: TransferTimelineFilters): Promise<TransferTimelinePage> =>
+  client.get(transferTimelinePath(schema, table), { params: { limit: 25, cursor, ...filters }, signal }).then((r) => unwrap<TransferTimelinePage>(r.data));
 export const fetchTransferTimelineDetail = (
   schema: string, table: string, kind: TransferTimelineEntry['kind'], id: string, signal?: AbortSignal,
 ): Promise<TransferTimelineDetail> => client.get(`${transferTimelinePath(schema, table)}/${kind}/${encodeURIComponent(id)}`, { signal })

@@ -2,19 +2,21 @@
 
 import base64
 import binascii
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import json
+import re
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import text, tuple_
+from sqlalchemy import and_, or_, text, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.web.api.models.transfer_plans import TransferAttemptRow, TransferRunRow
 from app.web.api.models.transfer_schedules import TransferScheduleJobRow
 from app.web.api.models.transfer_timeline import (
-    TimelineKind, TransferTimelineDetail, TransferTimelineEntry, TransferTimelineJob, TransferTimelinePage,
+    TimelineKind, TimelineView, TransferTimelineDetail, TransferTimelineEntry, TransferTimelineJob, TransferTimelinePage,
 )
 from app.web.api.models.transfer_upstream import (
     TransferCommitEventRow, UpstreamTriggerEvent, UpstreamTriggerJobEventRow, UpstreamTriggerJobRow,
@@ -29,22 +31,76 @@ Record = TransferAttemptRow | TransferRunRow
 Job = TransferScheduleJobRow | UpstreamTriggerJobRow
 
 
+_FILTER_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
+)
+_SCOPE_FIELDS = ("plan_id", "request_id", "plan_updated_at", "target_table", "source_table")
+
+
+@dataclass(frozen=True, slots=True)
+class TimelineFilters:
+    view: TimelineView | None
+    start: datetime | None
+    before: datetime | None
+
+    def lens(self) -> list[str | None]:
+        return [self.view, self.start.isoformat() if self.start else None, self.before.isoformat() if self.before else None]
+
+
+def parse_timeline_filters(view: TimelineView | None, start: str | None, before: str | None) -> TimelineFilters | None:
+    if start is None and before is None:
+        return TimelineFilters(view, None, None) if view else None
+    try:
+        if start is None or before is None or not _FILTER_TIMESTAMP.fullmatch(start) or not _FILTER_TIMESTAMP.fullmatch(before):
+            raise ValueError("Paired explicit timestamps required")
+        lower, upper = (datetime.fromisoformat(value).astimezone(timezone.utc) for value in (start, before))
+        if not timedelta(0) < upper - lower <= timedelta(days=31):
+            raise ValueError("Invalid timeline window")
+    except (ValueError, OverflowError):
+        raise HTTPException(422, "Provide paired timezone-aware timeline bounds spanning at most 31 days") from None
+    return TimelineFilters(view, lower, upper)
+
+
 def _kind(row: Record) -> TimelineKind:
     return "attempt" if isinstance(row, TransferAttemptRow) else "receipt"
 
 
-def _encode_cursor(table: str, entry: TransferTimelineEntry) -> str:
-    body = json.dumps([table, entry.occurredAt.isoformat(), str(entry.id), entry.kind], separators=(",", ":"))
+def _encode_cursor(table: str, entry: TransferTimelineEntry, filters: TimelineFilters | None = None) -> str:
+    position = [entry.occurredAt.isoformat(), str(entry.id), entry.kind]
+    payload = [table, *position]
+    if filters is not None:
+        position[0] = entry.occurredAt.astimezone(timezone.utc).isoformat()
+        payload = [2, table, *filters.lens(), *position]
+    body = json.dumps(payload, separators=(",", ":"))
     return base64.urlsafe_b64encode(body.encode()).decode()
 
 
-def _decode_cursor(table: str, token: str) -> tuple[datetime, UUID, TimelineKind]:
+def _decode_cursor(table: str, token: str, filters: TimelineFilters | None = None) -> tuple[datetime, UUID, TimelineKind]:
     try:
-        scope, stamp, identity, kind = json.loads(base64.b64decode(token, altchars=b"-_", validate=True))
+        raw = base64.b64decode(token, altchars=b"-_", validate=True)
+        data = json.loads(raw)
+        if filters is None:
+            if not isinstance(data, list) or len(data) != 4:
+                raise ValueError("Invalid legacy position")
+            scope, stamp, identity, kind = data
+        else:
+            if (not isinstance(data, list) or len(data) != 8 or type(data[0]) is not int or data[0] != 2
+                or data[2:5] != filters.lens() or base64.urlsafe_b64encode(raw).decode() != token
+                or json.dumps(data, separators=(",", ":")).encode() != raw):
+                raise ValueError("Invalid filtered scope")
+            scope, stamp, identity, kind = data[1], *data[5:]
         parsed = datetime.fromisoformat(stamp)
         if scope != table or not parsed.tzinfo or kind not in ("attempt", "receipt"):
             raise ValueError("Invalid scope or data")
-        return parsed, UUID(identity), kind
+        cursor_id = UUID(identity)
+        if filters is not None and (
+            parsed.astimezone(timezone.utc).isoformat() != stamp or str(cursor_id) != identity
+            or (filters.view == "receipts" and kind != "receipt")
+            or (filters.view in ("rejected_attempts", "unconfirmed_attempts") and kind != "attempt")
+            or (filters.start is not None and not filters.start <= parsed < filters.before)
+        ):
+            raise ValueError("Invalid filtered position")
+        return parsed, cursor_id, kind
     except (TypeError, ValueError, AttributeError, OverflowError, binascii.Error):
         raise HTTPException(422, "Invalid transfer timeline cursor for this destination") from None
 
@@ -134,9 +190,7 @@ async def _manual_receipts(session: AsyncSession, rows: list[Record]) -> set[UUI
 
 
 def _same_attempt_scope(attempt: TransferAttemptRow, receipt: TransferRunRow) -> bool:
-    return (attempt.plan_id == receipt.plan_id and attempt.request_id == receipt.request_id
-            and attempt.plan_updated_at == receipt.plan_updated_at and attempt.target_table == receipt.target_table
-            and attempt.source_table == receipt.source_table)
+    return all(getattr(attempt, name) == getattr(receipt, name) for name in _SCOPE_FIELDS)
 
 
 async def _checked_attempt_receipts(session: AsyncSession, table: str, rows: list[Record]) -> dict[UUID, UUID]:
@@ -183,18 +237,44 @@ def _keyset(query, stamp, identity, kind: TimelineKind, cursor: tuple[datetime, 
     return query.order_by(stamp.desc(), identity.desc())
 
 
+def _timeline_scopes(table: str, filters: TimelineFilters | None, position):
+    attempts, receipts = TransferAttemptRow, TransferRunRow
+    view = filters.view if filters else None
+    if view != "receipts":
+        attempt_query = _attempt_query(table)
+        if view == "rejected_attempts":
+            attempt_query = attempt_query.where(attempts.status == "rejected")
+        elif view == "unconfirmed_attempts":
+            # Use the same destination and immutable attribution fields that
+            # classify the returned attempt: never rely on a claimed status alone.
+            proof = _receipt_query(table).with_only_columns(receipts.id).where(
+                receipts.id == attempts.receipt_id,
+                *(getattr(receipts, field) == getattr(attempts, field) for field in _SCOPE_FIELDS),
+            ).correlate(attempts).exists()
+            attempt_query = attempt_query.where(or_(
+                attempts.status == "outcome_unknown",
+                and_(attempts.status.in_(("committed", "replayed")), ~proof),
+            ))
+        if filters and filters.start is not None:
+            attempt_query = attempt_query.where(attempts.started_at >= filters.start, attempts.started_at < filters.before)
+        yield _keyset(attempt_query, attempts.started_at, attempts.id, "attempt", position)
+    if view not in ("rejected_attempts", "unconfirmed_attempts"):
+        receipt_query = _receipt_query(table)
+        if filters and filters.start is not None:
+            receipt_query = receipt_query.where(receipts.recorded_at >= filters.start, receipts.recorded_at < filters.before)
+        yield _keyset(receipt_query, receipts.recorded_at, receipts.id, "receipt", position)
+
+
 async def list_transfer_timeline(
-    session: AsyncSession, layer: str, table: str, limit: int, cursor: str | None,
+    session: AsyncSession, layer: str, table: str, limit: int, cursor: str | None, filters: TimelineFilters | None = None,
 ) -> TransferTimelinePage:
     """Page immutable destination receipts and independently scoped attempts."""
-    position = _decode_cursor(table, cursor) if cursor else None
+    position = _decode_cursor(table, cursor, filters) if cursor else None
+    await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+    await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
     physical = await _asset_identity(session, layer, table)
-    attempts = TransferAttemptRow
     receipts = TransferRunRow
-    scopes = (
-        _keyset(_attempt_query(table), attempts.started_at, attempts.id, "attempt", position),
-        _keyset(_receipt_query(table), receipts.recorded_at, receipts.id, "receipt", position),
-    )
+    scopes = _timeline_scopes(table, filters, position)
     rows: list[Record] = []
     for query in scopes:
         rows.extend((await session.scalars(query.limit(limit + 1))).all())
@@ -217,7 +297,7 @@ async def list_transfer_timeline(
         entries = [_entry(row, final, jobs.get((_kind(row), row.id)), manual, att_receipts) for row in page]
         latest = None
     return TransferTimelinePage(entries=entries,
-                                nextCursor=_encode_cursor(table, entries[-1]) if len(rows) > limit else None,
+                                nextCursor=_encode_cursor(table, entries[-1], filters) if len(rows) > limit else None,
                                 latestCurrentReceipt=_run_response(latest) if latest is not None else None)
 
 

@@ -10,6 +10,7 @@ from app.web.api.models.transfer_plans import TransferRun
 from app.web.api.models.transfer_upstream import Operator, UpstreamGroup, UpstreamTriggerEvent
 
 TimelineKind = Literal["attempt", "receipt"]
+TimelineView = Literal["receipts", "rejected_attempts", "unconfirmed_attempts"]
 TimelineTrigger = Literal["manual", "daily_utc", "upstream"]
 
 

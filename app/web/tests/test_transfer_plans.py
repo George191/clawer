@@ -1,6 +1,8 @@
 """Transfer draft validation, authorization and optional isolated PostgreSQL checks."""
 
 import asyncio
+import base64
+import json
 from importlib import import_module
 from datetime import datetime, timedelta, timezone
 import os
@@ -1148,6 +1150,67 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(damaged["receiptId"])
                 manual_without_proof = (await client.get(f"{route}/receipt/{receipt['id']}")).json()
                 self.assertIsNone(manual_without_proof["trigger"])
+
+                stamp = datetime.fromisoformat(receipt["recordedAt"])
+                legacy_payload = json.loads(base64.urlsafe_b64decode(first_page["nextCursor"]))
+                self.assertEqual(legacy_payload, ["timeline_target", stamp.isoformat(), receipt["id"], "receipt"])
+                invalid_link, unknown, started = uuid4(), uuid4(), uuid4()
+                async with self.pg.session() as session:
+                    for identity, request_id, status, receipt_id, source, seconds in (
+                        (invalid_link, request["requestId"], "replayed", receipt["id"], "wrong_source", 1),
+                        (unknown, str(uuid4()), "outcome_unknown", None, "timeline_source", 2),
+                        (started, str(uuid4()), "started", None, "timeline_source", 9),
+                    ):
+                        await session.execute(text("""
+                            INSERT INTO ontology_transfer_attempts (
+                                id, plan_id, request_id, status, started_at, receipt_id, plan_updated_at,
+                                target_table, source_table, scope_trigger, target_oid, target_filenode
+                            )
+                            SELECT :id, plan_id, CAST(:request AS uuid), :status, :stamp, CAST(:receipt AS uuid),
+                                   plan_updated_at, target_table, :source, 'manual', target_oid, target_filenode
+                            FROM ontology_transfer_attempts WHERE id = CAST(:template AS uuid)
+                        """), {"id": identity, "request": request_id, "status": status, "receipt": receipt_id,
+                                "stamp": stamp + timedelta(seconds=seconds), "source": source, "template": receipt["id"]})
+
+                selected = {"view": "unconfirmed_attempts", "from": stamp.isoformat(),
+                            "before": (stamp + timedelta(seconds=10)).isoformat(), "limit": 1}
+                result = (await client.get(route, params=selected)).json()
+                self.assertEqual([(item["id"], item["status"]) for item in result["entries"]],
+                                 [(str(unknown), "outcome_unknown")])
+                self.assertEqual(result["latestCurrentReceipt"], receipt)
+                scoped = result["nextCursor"]
+                self.assertEqual(json.loads(base64.urlsafe_b64decode(scoped))[:5], [
+                    2, "timeline_target", "unconfirmed_attempts", selected["from"], selected["before"],
+                ])
+                offset = timezone(timedelta(hours=8))
+                normalized = {**selected, "cursor": scoped, "limit": 25,
+                              "from": stamp.astimezone(offset).isoformat(),
+                              "before": (stamp + timedelta(seconds=10)).astimezone(offset).isoformat()}
+                response = await client.get(route, params=normalized)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual([(item["id"], item["status"], item["receiptId"]) for item in response.json()["entries"]],
+                                 [(str(invalid_link), "outcome_unknown", None), (receipt["id"], "outcome_unknown", None)])
+                for changed_filter in (
+                    {"cursor": scoped}, {**selected, "view": "rejected_attempts", "cursor": scoped},
+                    {**selected, "from": (stamp - timedelta(seconds=1)).isoformat(), "cursor": scoped},
+                    {**selected, "cursor": first_page["nextCursor"]}, {"view": "started"},
+                    {"from": selected["from"]}, {"before": selected["before"]},
+                    {"from": stamp.replace(tzinfo=None).isoformat(), "before": selected["before"]},
+                    {"from": selected["from"], "before": (stamp + timedelta(days=32)).isoformat()},
+                ):
+                    self.assertEqual((await client.get(route, params=changed_filter)).status_code, 422)
+                for query in ("?limit=1&limit=2", "?unknown=1", "?view=receipts&view=receipts"):
+                    self.assertEqual((await client.get(route + query)).status_code, 422)
+                only_receipts = (await client.get(route, params={"view": "receipts"})).json()
+                self.assertEqual([(row["kind"], row["id"]) for row in only_receipts["entries"]],
+                                 [("receipt", receipt["id"])])
+                only_rejected = (await client.get(route, params={"view": "rejected_attempts"})).json()
+                self.assertEqual([row["status"] for row in only_rejected["entries"]], ["rejected"])
+                no_rows = (await client.get(route, params={
+                    "view": "receipts", "from": (stamp - timedelta(seconds=1)).isoformat(), "before": stamp.isoformat(),
+                })).json()
+                self.assertEqual(no_rows["entries"], [])
+                self.assertEqual(no_rows["latestCurrentReceipt"], receipt)
 
                 changed = await client.put(f"{RUNS}/{plan['id']}", json={**proposed, "targetTable": "timeline_other"})
                 self.assertEqual(changed.status_code, 200, changed.text)

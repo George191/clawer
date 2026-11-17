@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
+from anyio import fail_after
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import AwareDatetime
@@ -51,7 +52,7 @@ from app.web.api.models.table_exports import (
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
     TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
 )
-from app.web.api.models.transfer_timeline import TimelineKind, TransferTimelineDetail, TransferTimelinePage
+from app.web.api.models.transfer_timeline import TimelineKind, TimelineView, TransferTimelineDetail, TransferTimelinePage
 from app.web.api.models.transfer_upstream import (
     UpstreamCandidate, UpstreamMixedSlot, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerJob, UpstreamTriggerSummary,
 )
@@ -115,7 +116,7 @@ from app.web.services.table_exports import (
     review_table_export, run_table_export, table_export_capabilities,
 )
 from app.web.services.synthetic_governance import marking_limit
-from app.web.services.transfer_timeline import list_transfer_timeline, read_transfer_timeline_entry
+from app.web.services.transfer_timeline import list_transfer_timeline, parse_timeline_filters, read_transfer_timeline_entry
 from app.web.services.transfer_upstream import (
     change_upstream_trigger, list_upstream_candidates, list_upstream_jobs, list_upstream_mixed_slots, list_upstream_triggers, read_upstream_trigger,
 )
@@ -613,11 +614,22 @@ async def get_table_transfer_runs(layer: str, table: TableName, session: Session
 
 @write.get("/{layer}/{table}/transfer-timeline")
 async def get_transfer_timeline(
-    layer: str, table: TableName, session: SessionDep,
+    layer: str, table: TableName, request: Request,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
     limit: int = Query(25, ge=1, le=50), cursor: str | None = Query(None, min_length=1, max_length=512),
+    view: TimelineView | None = None, start: str | None = Query(None, alias="from", max_length=32),
+    before: str | None = Query(None, max_length=32),
 ) -> TransferTimelinePage:
     """Read bounded runtime evidence persisted for an exact destination table."""
-    return await list_transfer_timeline(session, layer, table, limit, cursor)
+    params = request.query_params
+    if set(params) - {"limit", "cursor", "view", "from", "before"} or len(params) != len(params.multi_items()):
+        raise HTTPException(422, "Invalid or duplicate transfer timeline filter")
+    filters = parse_timeline_filters(view, start, before)
+    try:
+        with fail_after(4):
+            return await list_transfer_timeline(session, layer, table, limit, cursor, filters)
+    except (TimeoutError, DBAPIError):
+        raise HTTPException(503, "Transfer timeline evidence is temporarily unavailable") from None
 
 
 @write.get("/{layer}/{table}/transfer-timeline/{kind}/{entry_id}")
