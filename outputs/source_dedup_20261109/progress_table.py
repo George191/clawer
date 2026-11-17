@@ -433,7 +433,7 @@ def plain_table(value):
 
 
 HOST = r"""
-import hashlib,http.client,io,json,socket,subprocess,tarfile
+import hashlib,http.client,io,json,re,socket,subprocess,tarfile
 from datetime import datetime
 from urllib.parse import quote
 from pathlib import Path
@@ -455,9 +455,10 @@ if not any(m['Type']=='bind' and m['RW'] and Path(history_inside).is_relative_to
  and Path(m['Source'])/Path(history_inside).relative_to(Path(m['Destination']))==history_root
  for m in history['Mounts']):raise ValueError('Current history output mount differs')
 history_started=history['State']['StartedAt']
-if datetime.fromisoformat(history_started.replace('Z','+00:00')).timestamp()<=0:raise ValueError('Invalid history start time')
+history_started_iso=re.sub(r'(\.\d{6})\d+(?=Z|[+-]|$)',r'\1',history_started)
+if datetime.fromisoformat(history_started_iso.replace('Z','+00:00')).timestamp()<=0:raise ValueError('Invalid history start time')
 p=subprocess.run(['docker','exec','-i','-u','0','-e','PYTHONPATH=/app','web','python','-B','-'],
- input=__PROBE__.replace('__HISTORY_STARTED_AT__',repr(history_started)),text=True,capture_output=True,timeout=45)
+ input=__PROBE__.replace('__HISTORY_STARTED_AT__',repr(history_started_iso)),text=True,capture_output=True,timeout=45)
 if p.returncode:raise RuntimeError(p.stderr[-1800:])
 result=json.loads(p.stdout)
 info=subprocess.run(['docker','inspect',history_owner],text=True,capture_output=True,timeout=10)

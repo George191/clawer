@@ -212,6 +212,42 @@ class ProgressTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, '只读进度查询未验证.*Current history container unavailable'):
                 asyncio.run(progress.collect())
 
+    def test_history_docker_start_time_is_normalized_for_python310(self):
+        inside = '/app/output/source_dedup_20261109/sec-history-run01'
+
+        def python310_iso(value):
+            if '.' in value and len(value.split('.', 1)[1].split('+', 1)[0]) > 6:
+                raise ValueError('Python 3.10 rejects fractional nanoseconds')
+            return datetime.fromisoformat(value)
+
+        cases = (('2026-11-16T22:38:58.807236074Z', '2026-11-16T22:38:58.807236Z'),
+                 ('2026-11-16T22:38:58.807236Z', '2026-11-16T22:38:58.807236Z'),
+                 ('2026-11-16T22:38:58Z', '2026-11-16T22:38:58Z'), ('invalid', None))
+        for started, expected in cases:
+            with self.subTest(started=started):
+                container = {'Id': 'current-id', 'State': {'Running': True, 'Pid': 100, 'StartedAt': started},
+                             'Config': {'Cmd': ['-c', "exec(['--root'," + repr(inside) + '])']},
+                             'Mounts': [{'Type': 'bind', 'RW': True, 'Source': '/data/clawer/output',
+                                         'Destination': '/app/output'}]}
+                inspected = SimpleNamespace(returncode=0, stdout=json.dumps([container]))
+                sampled = SimpleNamespace(returncode=0, stdout=json.dumps({'migrations': {}}))
+                environment = {'__PROBE__': progress.PROBE}
+                with patch.object(Path, 'read_bytes', return_value=encoded({'new_started': 'current-history'})), \
+                     patch.object(subprocess, 'run', side_effect=[inspected, sampled, inspected]) as run, \
+                     patch('datetime.datetime', SimpleNamespace(fromisoformat=python310_iso)), \
+                     redirect_stdout(io.StringIO()):
+                    if expected is None:
+                        with self.assertRaises(ValueError):
+                            exec(progress.HOST, environment)
+                        self.assertEqual(run.call_count, 1)
+                    else:
+                        exec(progress.HOST, environment)
+                        self.assertEqual(environment['history_started'], started)
+                        self.assertEqual(environment['history_started_iso'], expected)
+                        source = run.call_args_list[1].kwargs['input']
+                        self.assertIn('datetime.fromisoformat(' + repr(expected) + '.replace', source)
+                        self.assertNotIn('__HISTORY_STARTED_AT__', source)
+
     def test_direct_script_and_module_entrypoint_remain_available(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([sys.executable, '-B', str(Path(progress.__file__).resolve()), '--help'],
