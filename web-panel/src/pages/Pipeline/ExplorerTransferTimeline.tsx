@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
 import { fetchTransferTimeline, fetchTransferTimelineDetail } from '../../services/api';
 import type { TransferRunReceipt, TransferTimelineDetail, TransferTimelineEntry } from '../../services/api';
+import { recordedUpstreamRule } from './upstreamRules';
 
 const physicalLabels: Record<TransferTimelineEntry['physicalScope'], string> = {
   current: 'Current table identity',
@@ -124,6 +125,9 @@ export default function ExplorerTransferTimeline({ schema, table, onLatestCurren
           {detail.job ? <section aria-label="Dispatch provenance">
             <h5>Dispatch provenance</h5>
             <p>{triggerLabels[detail.job.kind]} · {labelStatus(detail.job.state)}</p>
+            {detail.job.group && detail.job.operator && <p>Recorded condition: <strong>{recordedUpstreamRule({
+              operator: detail.job.operator, group: detail.job.group, ruleParentPlanIds: detail.job.ruleParentPlanIds,
+            }).expression}</strong></p>}
             <p>Job ID: <code>{detail.job.id}</code></p>
             {detail.job.dueAt && <p>{detail.job.kind === 'daily_utc' ? 'Scheduled for' : 'Event set ready at'}: <TimelineTime value={detail.job.dueAt} /></p>}
             {detail.job.parentEvents.length > 0 && <ul className="flow-evidence-receipts" aria-label="Parent events">

@@ -350,15 +350,16 @@ export const fetchTransferScheduleJobs = (planId: string, signal?: AbortSignal):
   client.get(`${transferSchedulePath(planId)}/jobs`, { signal }).then((r) => unwrap<TransferScheduleJob[]>(r.data));
 
 export type TransferUpstreamOperator = 'AND' | 'OR';
+export type TransferUpstreamGroup = { operator: TransferUpstreamOperator; parentPlanIds: [string, string] };
+export type TransferUpstreamRecordedRule = { operator: TransferUpstreamOperator; group?: TransferUpstreamGroup | null; ruleParentPlanIds?: [string, string, string] };
 export type TransferUpstreamTrigger = {
   available: boolean; enabled: boolean; configuredEnabled: boolean; generation: number | null;
-  operator: TransferUpstreamOperator;
+  operator: TransferUpstreamOperator; group?: TransferUpstreamGroup | null;
   parents: { planId: string; planName: string; armedForUpdatedAt: string }[];
   armedForUpdatedAt: string | null; updatedAt: string | null;
 };
 export type TransferUpstreamCandidate = { id: string; name: string; updatedAt: string; sourceTable: string; targetTable: string };
-export type TransferUpstreamJob = Omit<TransferScheduleJob, 'slot'> & {
-  operator: TransferUpstreamOperator;
+export type TransferUpstreamJob = Omit<TransferScheduleJob, 'slot'> & TransferUpstreamRecordedRule & {
   events: { eventRecordedAt: string; eventId: string; parentPlanId: string; parentReceiptId: string }[];
 };
 export type TransferUpstreamSummary = TransferUpstreamTrigger & {
@@ -370,7 +371,7 @@ export const fetchTransferUpstreamTrigger = (planId: string, signal?: AbortSigna
 export const fetchTransferUpstreamCandidates = (planId: string, signal?: AbortSignal): Promise<TransferUpstreamCandidate[]> =>
   client.get(`${transferUpstreamPath(planId)}/candidates`, { signal }).then((r) => unwrap<TransferUpstreamCandidate[]>(r.data));
 export const updateTransferUpstreamTrigger = (planId: string, request: {
-  enabled: boolean; operator: TransferUpstreamOperator; parents: { planId: string; expectedUpdatedAt: string }[];
+  enabled: boolean; operator: TransferUpstreamOperator; group?: TransferUpstreamGroup; parents: { planId: string; expectedUpdatedAt: string }[];
   expectedUpdatedAt: string; expectedGeneration: number | null;
 }): Promise<TransferUpstreamTrigger> =>
   client.put(transferUpstreamPath(planId), request).then((r) => unwrap<TransferUpstreamTrigger>(r.data));
@@ -395,7 +396,7 @@ export type TransferTimelineEntry = {
   sourceSchema: string | null; sourceTable: string | null; finishedAt: string | null; message: string | null;
 };
 export type TransferTimelineDetail = TransferTimelineEntry & {
-  job: { id: string; kind: 'daily_utc' | 'upstream'; dueAt: string | null; state: string;
+  job: Partial<TransferUpstreamRecordedRule> & { id: string; kind: 'daily_utc' | 'upstream'; dueAt: string | null; state: string;
     parentEvents: { eventId: string; parentPlanId: string; parentReceiptId: string; eventRecordedAt: string }[];
   } | null;
 };

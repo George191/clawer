@@ -7,7 +7,7 @@ import os
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -103,7 +103,8 @@ class TransferPlanTests(unittest.IsolatedAsyncioTestCase):
 @unittest.skipUnless(TRANSFERS_URL, "Requires an isolated ontology_transfers_regression PostgreSQL database")
 class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
-        if make_url(TRANSFERS_URL).database != TEST_DB:
+        fixture = make_url(TRANSFERS_URL)
+        if fixture.database != TEST_DB or fixture.host not in {"127.0.0.1", "::1", "localhost"} or fixture.query:
             raise RuntimeError(f"Transfer tests refuse any database other than {TEST_DB}")
         self.pg = PostgresClient(TRANSFERS_URL)
         await self.pg.connect(max_retries=1)
@@ -117,6 +118,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.schedule_migration = import_module("app.web.alembic.versions.e427be5f90e2_ontology_transfer_schedules")
         self.upstream_migration = import_module("app.web.alembic.versions.5bef50bc72c9_ontology_transfer_upstream")
         self.compound_migration = import_module("app.web.alembic.versions.b6c45a7e9130_ontology_compound_upstream")
+        self.nested_migration = import_module("app.web.alembic.versions.0f8b2e641a5d_ontology_nested_upstream")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
         self.incident_migration = import_module(
@@ -143,6 +145,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.schedule_migration.upgrade)
             await self.migrate(session, self.upstream_migration.upgrade)
             await self.migrate(session, self.compound_migration.upgrade)
+            await self.migrate(session, self.nested_migration.upgrade)
             await self.migrate(session, self.freshness_migration.upgrade)
             await self.migrate(session, self.quality_migration.upgrade)
             await self.migrate(session, self.incident_migration.upgrade)
@@ -969,3 +972,130 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(item["physicalScope"] == "historical" for item in historical["entries"]))
         async with api(False, self.session_provider) as reader:
             self.assertEqual((await reader.get(route)).status_code, 403)
+
+    async def test_nested_upstream_exact_witness_fresh_choice_retains_alternative_and_rejects_tamper(self):
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                "CREATE SCHEMA ts_transfer_sandbox",
+                *(f"CREATE TABLE ts_transfer_sandbox.{name}(id integer PRIMARY KEY, value text NOT NULL)"
+                  for name in ("a", "b", "c", "middle", "target")),
+                *(f"INSERT INTO ts_transfer_sandbox.{name} VALUES ({index},'{name}')"
+                  for index, name in enumerate("abc", 1)),
+            ):
+                await session.execute(text(sql))
+            await session.execute(text('INSERT INTO public."user" VALUES (:id, \'ENABLE\', true)'), {"id": TEST_ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+
+        async def collect():
+            async with self.pg.session() as session:
+                return await collect_due_upstream_transfer_jobs(session, now=datetime.now(timezone.utc))
+
+        async def execute(identity):
+            async with self.pg.session() as session:
+                return await execute_upstream_transfer_job_in_session(session, identity)
+
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_UPSTREAM_ENABLED", True),
+        ):
+            async with api(True, self.session_provider) as client:
+                async def create(source, target, trigger):
+                    response = await client.post(RUNS, json={
+                        **PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                        "sourceTable": source, "targetTable": target, "writeMode": "upsert", "trigger": trigger,
+                    })
+                    self.assertEqual(response.status_code, 201, response.text)
+                    return response.json()
+
+                async def commit(plan, *, stale=False):
+                    response = await client.post(f"{RUNS}/{plan['id']}/runs", json={
+                        "requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"],
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+                    receipt = response.json()["id"]
+                    if stale:
+                        params = {"receipt": UUID(receipt)}
+                        async with self.pg.session() as session:
+                            await session.execute(text("UPDATE ontology_transfer_runs SET recorded_at=recorded_at - "
+                                                       "interval '6 minutes' WHERE id=:receipt"), params)
+                            await session.execute(text("UPDATE ontology_transfer_commit_events SET recorded_at=recorded_at - "
+                                                       "interval '6 minutes' WHERE parent_receipt_id=:receipt"), params)
+                    return receipt
+
+                a, b, c = [await create(name, "middle", "manual") for name in "abc"]
+                child = await create("middle", "target", "upstream")
+                path = f"{RUNS}/{child['id']}/upstream-trigger"
+                group = {"operator": "AND", "parentPlanIds": [a["id"], b["id"]]}
+                body = {"enabled": True, "operator": "OR", "group": group, "expectedUpdatedAt": child["updatedAt"],
+                        "expectedGeneration": None, "parents": [
+                            {"planId": item["id"], "expectedUpdatedAt": item["updatedAt"]} for item in (a, b, c)
+                        ]}
+                invalid = await client.put(path, json={**body, "group": {**group, "operator": "OR"}})
+                self.assertEqual(invalid.status_code, 422)
+                armed = await client.put(path, json=body)
+                self.assertEqual(armed.status_code, 200, armed.text)
+                self.assertEqual(armed.json()["group"]["parentPlanIds"], sorted(group["parentPlanIds"]))
+                reordered = await client.put(path, json={**body, "expectedGeneration": 1, "group": {
+                    **group, "parentPlanIds": group["parentPlanIds"][::-1],
+                }})
+                self.assertEqual(reordered.json()["generation"], 1)
+                a1 = await commit(a, stale=True)
+                self.assertEqual(await collect(), [])
+                c1 = await commit(c)
+                single, = await collect()
+                self.assertEqual(await execute(single), "committed")
+                b1 = await commit(b, stale=True)
+                b2 = await commit(b)
+                live, = await collect()
+                self.assertEqual(await execute(live), "committed")
+                a2 = await commit(a)
+                retained, = await collect()
+                self.assertEqual(await execute(retained), "committed")
+                jobs = {row["id"]: row for row in (await client.get(path + "/jobs")).json()}
+                for identity, receipts in ((single, {c1}), (live, {a1, b2}), (retained, {a2, b1})):
+                    self.assertEqual({item["parentReceiptId"] for item in jobs[str(identity)]["events"]}, receipts)
+                    self.assertEqual(jobs[str(identity)]["ruleParentPlanIds"], sorted(item["id"] for item in (a, b, c)))
+
+                # Switching operator/group seals a new generation, leaving all historical descriptors intact.
+                conjunction = {**body, "expectedGeneration": 1, "operator": "AND",
+                               "group": {"operator": "OR", "parentPlanIds": [b["id"], c["id"]]}}
+                updated = await client.put(path, json=conjunction)
+                self.assertEqual(updated.status_code, 200, updated.text)
+                self.assertEqual(updated.json()["generation"], 2)
+                self.assertEqual(await collect(), [])
+                cb, cc = await commit(b), await commit(c)
+                self.assertEqual(await collect(), [])
+                ca = await commit(a)
+                first, = await collect()
+                self.assertEqual(await execute(first), "committed")
+                ca2 = await commit(a)
+                second, = await collect()
+                self.assertEqual(await execute(second), "committed")
+                jobs = {row["id"]: row for row in (await client.get(path + "/jobs")).json()}
+                self.assertEqual({item["parentReceiptId"] for item in jobs[str(first)]["events"]}, {ca, cb})
+                self.assertEqual({item["parentReceiptId"] for item in jobs[str(second)]["events"]}, {ca2, cc})
+                self.assertEqual(jobs[str(live)]["group"]["operator"], "AND")
+                timeline = "/etl/ts_transfer_sandbox/target/transfer-timeline/receipt/"
+                linked = (await client.get(timeline + jobs[str(second)]["receiptId"])).json()["job"]
+                self.assertEqual(linked["group"]["operator"], "OR")
+                self.assertEqual(len(linked["parentEvents"]), 2)
+
+                # Swap the optional leaf for a different complete witness, keeping even the original anchor.
+                await commit(c)
+                replacement = await commit(b)
+                await commit(a)
+                adversarial, = await collect()
+                async with self.pg.session() as session:
+                    await session.execute(text("""
+                        UPDATE ontology_transfer_upstream_job_events AS link SET event_id=e.id
+                        FROM ontology_transfer_commit_events AS e, ontology_transfer_upstream_jobs AS job
+                        WHERE link.job_id=:job AND job.id=link.job_id AND link.event_id<>job.event_id
+                          AND e.parent_receipt_id=:replacement
+                    """), {"job": adversarial, "replacement": UUID(replacement)})
+                self.assertEqual(await execute(adversarial), "rejected")
+                self.assertNotIn(str(adversarial), {row["id"] for row in (await client.get(path + "/jobs")).json()})

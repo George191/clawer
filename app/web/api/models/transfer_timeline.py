@@ -4,10 +4,10 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.web.api.models.transfer_plans import TransferRun
-from app.web.api.models.transfer_upstream import UpstreamTriggerEvent
+from app.web.api.models.transfer_upstream import Operator, UpstreamGroup, UpstreamTriggerEvent
 
 TimelineKind = Literal["attempt", "receipt"]
 TimelineTrigger = Literal["manual", "daily_utc", "upstream"]
@@ -36,6 +36,9 @@ class TransferTimelineJob(BaseModel):
     dueAt: datetime
     state: Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired"]
     parentEvents: list[UpstreamTriggerEvent]
+    operator: Operator | None = Field(default=None, exclude_if=lambda value: value is None)
+    group: UpstreamGroup | None = Field(default=None, exclude_if=lambda value: value is None)
+    ruleParentPlanIds: list[UUID] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TransferTimelineDetail(TransferTimelineEntry):

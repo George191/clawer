@@ -5,11 +5,24 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field as ApiField, model_validator
-from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Identity, Index, UniqueConstraint, text
+from sqlalchemy import ARRAY, BigInteger, CheckConstraint, Column, DateTime, ForeignKey, ForeignKeyConstraint, Identity, Index, UniqueConstraint, Uuid, text
 from sqlmodel import Field, SQLModel
 
 
 Operator = Literal["AND", "OR"]
+
+
+class UpstreamGroup(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operator: Operator
+    parentPlanIds: tuple[UUID, UUID]
+
+    @model_validator(mode="after")
+    def canonical(self):
+        if self.parentPlanIds[0] == self.parentPlanIds[1]:
+            raise ValueError("Choose two distinct grouped upstream plans")
+        self.parentPlanIds = tuple(sorted(self.parentPlanIds))
+        return self
 
 
 class UpstreamParentReview(BaseModel):
@@ -22,6 +35,7 @@ class UpstreamTriggerChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: bool
     operator: Operator
+    group: UpstreamGroup | None = None
     parents: list[UpstreamParentReview] = ApiField(max_length=3)
     expectedUpdatedAt: AwareDatetime
     expectedGeneration: int | None = ApiField(ge=1)
@@ -31,6 +45,11 @@ class UpstreamTriggerChange(BaseModel):
         ids = {parent.planId for parent in self.parents}
         if self.enabled and (not ids or len(ids) != len(self.parents)):
             raise ValueError("Choose one to three distinct reviewed upstream plans")
+        if self.group is not None and (
+            not self.enabled or len(ids) != 3 or self.group.operator == self.operator
+            or not set(self.group.parentPlanIds).issubset(ids)
+        ):
+            raise ValueError("A nested rule requires three approved parents and a two-parent opposite-operator group")
         if not self.enabled and self.parents:
             raise ValueError("Pausing must not change the reviewed upstream plans")
         return self
@@ -47,6 +66,7 @@ class UpstreamTrigger(BaseModel):
     enabled: bool
     configuredEnabled: bool
     operator: Operator = "OR"
+    group: UpstreamGroup | None = ApiField(default=None, exclude_if=lambda value: value is None)
     parents: list[UpstreamTriggerParent] = ApiField(default_factory=list)
     generation: int | None = None
     armedForUpdatedAt: datetime | None = None
@@ -80,6 +100,8 @@ class UpstreamTriggerEvent(BaseModel):
 class UpstreamTriggerJob(BaseModel):
     id: UUID
     operator: Operator
+    group: UpstreamGroup | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    ruleParentPlanIds: list[UUID] | None = ApiField(default=None, exclude_if=lambda value: value is None)
     events: list[UpstreamTriggerEvent]
     state: Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired"]
     dispatchedAt: datetime | None = None
@@ -111,12 +133,18 @@ class UpstreamTriggerRow(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("generation > 0 AND operator IN ('AND','OR')",
                         name="ck_ontology_transfer_upstream_trigger"),
+        CheckConstraint("""((group_operator IS NULL AND group_parent_ids IS NULL)
+ OR (group_operator IN ('AND','OR') AND group_operator <> operator
+     AND array_ndims(group_parent_ids)=1 AND array_lower(group_parent_ids,1)=1
+     AND cardinality(group_parent_ids)=2 AND group_parent_ids[1] < group_parent_ids[2])) IS TRUE""", name="ck_ontology_transfer_upstream_trigger_group"),
     )
 
     plan_id: UUID = Field(primary_key=True, foreign_key="ontology_transfer_plans.id")
     generation: int
     enabled: bool
     operator: str = Field(max_length=3)
+    group_operator: str | None = Field(default=None, max_length=3)
+    group_parent_ids: list[UUID] | None = Field(default=None, sa_column=Column(ARRAY(Uuid)))
     armed_by: UUID
     child_updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     physical_digest: str = Field(max_length=64)
@@ -142,6 +170,13 @@ class UpstreamTriggerJobRow(SQLModel, table=True):
         UniqueConstraint("plan_id", "generation", "event_id", name="uq_ontology_transfer_upstream_jobs_event"),
         UniqueConstraint("id", "plan_id", "generation", name="uq_ontology_transfer_upstream_job_scope"),
         CheckConstraint("operator IN ('AND','OR')", name="ck_ontology_transfer_upstream_job_operator"),
+        CheckConstraint("""((group_operator IS NULL AND group_parent_ids IS NULL AND rule_parent_ids IS NULL)
+ OR (group_operator IN ('AND','OR') AND group_operator <> operator
+     AND array_ndims(group_parent_ids)=1 AND array_lower(group_parent_ids,1)=1
+     AND cardinality(group_parent_ids)=2 AND group_parent_ids[1] < group_parent_ids[2]
+     AND array_ndims(rule_parent_ids)=1 AND array_lower(rule_parent_ids,1)=1
+     AND cardinality(rule_parent_ids)=3 AND rule_parent_ids[1] < rule_parent_ids[2]
+     AND rule_parent_ids[2] < rule_parent_ids[3] AND rule_parent_ids @> group_parent_ids)) IS TRUE""", name="ck_ontology_transfer_upstream_job_group"),
         CheckConstraint("state IN ('pending','dispatched','committed','rejected','outcome_unknown','expired')",
                         name="ck_ontology_transfer_upstream_job_state"),
         CheckConstraint("(state = 'committed') = (receipt_id IS NOT NULL)",
@@ -157,6 +192,9 @@ class UpstreamTriggerJobRow(SQLModel, table=True):
     event_id: int = Field(sa_column=Column(BigInteger, ForeignKey("ontology_transfer_commit_events.id"), nullable=False))
     generation: int
     operator: str = Field(max_length=3)
+    group_operator: str | None = Field(default=None, max_length=3)
+    group_parent_ids: list[UUID] | None = Field(default=None, sa_column=Column(ARRAY(Uuid)))
+    rule_parent_ids: list[UUID] | None = Field(default=None, sa_column=Column(ARRAY(Uuid)))
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     child_updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     armed_by: UUID

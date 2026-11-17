@@ -25,6 +25,7 @@ from app.web.api.utils.models import StatusTypes
 from app.web.core.config import settings
 from app.web.services.etl_layers import get_etl_layers, quote_identifier
 from app.web.services.transfer_plans import _response, compare_transfer_endpoints
+from app.web.services.upstream_rules import exact_nested_job, positive_nested_events, valid_witness
 
 SANDBOX = "ts_transfer_sandbox"
 MAX_ROWS = 100
@@ -335,9 +336,14 @@ async def _lock_upstream_job(
         raise HTTPException(409, "The upstream job is not bound to this request")
     events = list((await session.scalars(select(TransferCommitEventRow)
                   .join(UpstreamTriggerJobEventRow, UpstreamTriggerJobEventRow.event_id == TransferCommitEventRow.id)
-                  .where(UpstreamTriggerJobEventRow.job_id == job_id))).all())
+                  .where(UpstreamTriggerJobEventRow.job_id == job_id, UpstreamTriggerJobEventRow.plan_id == job.plan_id,
+                         UpstreamTriggerJobEventRow.generation == job.generation).limit(4))).all())
     if not events or max(event.id for event in events) != job.event_id:
         raise HTTPException(409, "The upstream job has no matching parent commit event set")
+    if job.group_operator is not None and (
+        not exact_nested_job(job, events) or not await positive_nested_events(session, events)
+    ):
+        raise HTTPException(409, "The immutable upstream witness is not valid for this nested rule")
     if job.state == "committed":
         return job, events, None, []
     if job.state not in ("pending", "dispatched"):
@@ -349,14 +355,16 @@ async def _lock_upstream_job(
         raise HTTPException(409, {"code": "schedule_expired", "message": "Upstream event dispatch window expired"})
     binding = await session.get(UpstreamTriggerRow, child.id, populate_existing=True)
     reviewed = {member.parent_plan_id: member for member in (await session.scalars(
-        select(UpstreamTriggerParentRow).where(UpstreamTriggerParentRow.plan_id == child.id),
+        select(UpstreamTriggerParentRow).where(UpstreamTriggerParentRow.plan_id == child.id).limit(4),
     )).all()}
     parents = [locked_plans.get(parent_id) for parent_id in sorted(reviewed)]
-    expected_event_count = len(reviewed) if job.operator == "AND" else 1
     if (binding is None or not binding.enabled or binding.generation != job.generation
         or binding.armed_by != actor_id or binding.operator != job.operator or not 1 <= len(reviewed) <= 3
+        or binding.group_operator != job.group_operator or binding.group_parent_ids != job.group_parent_ids
+        or (job.group_operator is not None and job.rule_parent_ids != sorted(reviewed))
         or binding.child_updated_at != child.updated_at or child.updated_at != job.child_updated_at
-        or len(events) != expected_event_count or len({event.parent_plan_id for event in events}) != len(events)
+        or not valid_witness(job.operator, job.group_operator, job.group_parent_ids, reviewed.keys(),
+                             [event.parent_plan_id for event in events])
         or any(parent is None or not upstream_pair_eligible(child, parent)
                or reviewed[parent.id].parent_updated_at != parent.updated_at for parent in parents)
         or len({parent.source_table for parent in parents}) != len(parents)
@@ -404,8 +412,13 @@ async def run_sandbox_transfer(
         upstream_binding = None
         if upstream_job_id is not None:
             parent_ids = list((await session.scalars(select(UpstreamTriggerParentRow.parent_plan_id)
-                               .where(UpstreamTriggerParentRow.plan_id == plan_id))).all())
-            locked = await lock_transfer_plans(session, plan_id, *parent_ids)
+                               .where(UpstreamTriggerParentRow.plan_id == plan_id).limit(4))).all())
+            if len(parent_ids) > 3:
+                raise HTTPException(409, "The upstream trigger has an invalid reviewed parent set")
+            historical_parent_ids = await session.scalar(select(UpstreamTriggerJobRow.rule_parent_ids).where(
+                UpstreamTriggerJobRow.id == upstream_job_id, UpstreamTriggerJobRow.plan_id == plan_id,
+            ))
+            locked = await lock_transfer_plans(session, plan_id, *set(parent_ids).union(historical_parent_ids or []))
             plan = locked.get(plan_id)
         else:
             plan = (await lock_transfer_plans(session, plan_id)).get(plan_id)

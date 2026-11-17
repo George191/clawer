@@ -4,6 +4,7 @@ import { Button } from '@/components/ui';
 import { FieldTimeOutlined, ReloadOutlined } from '@/components/ui/icons';
 import { fetchBatchSyncScheduleJobs, fetchBatchSyncSchedules, fetchCurrentUserContext, fetchTransferScheduleJobs, fetchTransferSchedules, fetchTransferUpstreamJobs, fetchTransferUpstreamTriggers, type BatchSyncScheduleSummary, type BatchSyncScheduleJob, type TransferScheduleJob, type TransferScheduleSummary, type TransferUpstreamJob, type TransferUpstreamSummary } from '@/services/api';
 import { nextLocalTimeForUtcClock } from '@/services/scheduleTime';
+import { recordedUpstreamRule, upstreamExpression } from '../Pipeline/upstreamRules';
 
 type Props = { keyword: string; filter: 'all' | 'enabled' | 'paused' };
 type ScheduleItem = ({ kind: 'transfer' } & TransferScheduleSummary) | ({ kind: 'batch' } & BatchSyncScheduleSummary) | ({ kind: 'upstream' } & TransferUpstreamSummary);
@@ -67,7 +68,9 @@ export default function TransferSchedules({ keyword, filter }: Props) {
       : matching.length ? <ul>{matching.map(item => <li key={itemKey(item)}>
         <div><strong>{item.planName}</strong>{item.kind === 'batch' && <span>Batch sync</span>}{item.kind === 'upstream' && <span>Upstream trigger</span>}<code>{item.sourceTable} → {item.targetTable}</code></div>
         <div>
-          <span>{item.kind === 'upstream' ? `On upstream commit · ${item.operator}: ${item.parents.map(parent => parent.planName).join(', ')}`
+          <span>{item.kind === 'upstream' ? item.group ? `On upstream commit · ${upstreamExpression(item.operator,
+            item.parents.map(parent => ({ id: parent.planId, label: parent.planName })), item.group)}`
+            : `On upstream commit · ${item.operator}: ${item.parents.map(parent => parent.planName).join(', ')}`
             : item.plannedTimeUtc ? `Daily at ${item.plannedTimeUtc} UTC · local time ${nextLocalTimeForUtcClock(item.plannedTimeUtc)}` : 'No daily time configured'}</span>
           <span className={`automation-schedule-status ${item.enabled && item.available ? 'is-enabled' : ''}`}><i />{configured(item) ? (item.enabled && item.available ? 'Armed' : 'Armed · blocked') : 'Paused'}</span>
           <Button size="small" aria-expanded={historyFor && itemKey(historyFor) === itemKey(item)} onClick={() => {
@@ -84,9 +87,11 @@ export default function TransferSchedules({ keyword, filter }: Props) {
               : history.length ? <ol>{history.map(job => {
                 const timestamp = 'slot' in job ? job.slot : job.events.reduce<string | undefined>((latest, event) =>
                   !latest || Date.parse(event.eventRecordedAt) > Date.parse(latest) ? event.eventRecordedAt : latest, undefined);
+                const recorded = 'events' in job ? recordedUpstreamRule(job) : undefined;
                 return <li key={job.id}>
                   {timestamp && <time dateTime={timestamp}>{new Date(timestamp).toLocaleString()}</time>}
-                  <strong>{job.state === 'no_new_data' ? 'No new data' : job.state.replace(/_/g, ' ')}{'events' in job && ` · ${job.operator}`}</strong>
+                  <strong>{job.state === 'no_new_data' ? 'No new data' : job.state.replace(/_/g, ' ')}{recorded && ` · ${recorded.expression}`}</strong>
+                  {recorded?.parents.map(parent => <span key={parent.id}>Rule producer {parent.label}: <code>{parent.id}</code></span>)}
                   {'events' in job && job.events.map(event => <span key={event.eventId}>Parent receipt: <code>{event.parentReceiptId}</code></span>)}
                   {job.receiptId && ('events' in job ? <span>Child receipt: <code>{job.receiptId}</code></span> : <code title={job.state === 'no_new_data' ? 'No new data record' : 'Committed receipt'}>{job.receiptId}</code>)}
                 </li>;

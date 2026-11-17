@@ -19,6 +19,7 @@ from app.web.api.models.transfer_timeline import (
 from app.web.api.models.transfer_upstream import (
     TransferCommitEventRow, UpstreamTriggerEvent, UpstreamTriggerJobEventRow, UpstreamTriggerJobRow,
 )
+from app.web.services.upstream_rules import canonical_group, exact_nested_job, positive_nested_events
 from app.web.services.transfer_runs import (
     SANDBOX, SCHEDULED_SYSTEM_ACTOR, UPSTREAM_SYSTEM_ACTOR, _run_response, transfer_target_identity,
 )
@@ -85,7 +86,7 @@ async def _linked_jobs(session: AsyncSession, rows: list[Record]) -> dict[tuple[
     upstream = {job.id: job for job in (await session.scalars(select(UpstreamTriggerJobRow).where(
         UpstreamTriggerJobRow.id.in_(upstream_ids),
     ))).all()} if upstream_ids else {}
-    linked = {}
+    linked, checked_nested = {}, {}
     for row in rows:
         if isinstance(row, TransferAttemptRow):
             job = (daily.get(row.schedule_job_id) if row.scope_trigger == "daily_utc" else
@@ -98,8 +99,14 @@ async def _linked_jobs(session: AsyncSession, rows: list[Record]) -> dict[tuple[
         if job is None or job.id != row.request_id or job.plan_id != row.plan_id:
             continue
         revision = job.plan_updated_at if isinstance(job, TransferScheduleJobRow) else job.child_updated_at
-        if revision == row.plan_updated_at:
-            linked[_kind(row), row.id] = job
+        if revision != row.plan_updated_at:
+            continue
+        if isinstance(job, UpstreamTriggerJobRow) and job.group_operator is not None:
+            if job.id not in checked_nested:
+                checked_nested[job.id] = await _job_detail(session, job) is not None
+            if not checked_nested[job.id]:
+                continue
+        linked[_kind(row), row.id] = job
     return linked
 
 
@@ -214,12 +221,19 @@ async def _job_detail(session: AsyncSession, job: Job) -> TransferTimelineJob | 
         UpstreamTriggerJobEventRow, UpstreamTriggerJobEventRow.event_id == TransferCommitEventRow.id,
     ).where(UpstreamTriggerJobEventRow.job_id == job.id, UpstreamTriggerJobEventRow.plan_id == job.plan_id,
             UpstreamTriggerJobEventRow.generation == job.generation).order_by(TransferCommitEventRow.id).limit(4))).all()
-    if (not 1 <= len(events) <= (3 if job.operator == "AND" else 1)
-        or max(event.id for event in events) != job.event_id
-        or len({event.parent_plan_id for event in events}) != len(events)):
+    nested = job.group_operator is not None
+    if nested:
+        if not exact_nested_job(job, events) or not await positive_nested_events(session, events):
+            return None
+    elif (not 1 <= len(events) <= (3 if job.operator == "AND" else 1)
+          or max(event.id for event in events) != job.event_id
+          or len({event.parent_plan_id for event in events}) != len(events)):
         return None
     return TransferTimelineJob(
         id=job.id, kind="upstream", dueAt=max(event.recorded_at for event in events), state=job.state,
+        operator=job.operator if nested else None,
+        group=canonical_group(job.operator, job.group_operator, job.group_parent_ids, job.rule_parent_ids) if nested else None,
+        ruleParentPlanIds=job.rule_parent_ids if nested else None,
         parentEvents=[UpstreamTriggerEvent(eventId=str(event.id), eventRecordedAt=event.recorded_at,
                                          parentPlanId=event.parent_plan_id, parentReceiptId=event.parent_receipt_id)
                       for event in events],
