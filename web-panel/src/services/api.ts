@@ -421,8 +421,9 @@ export type TransferTimelineFilters = { view?: 'receipts' | 'rejected_attempts' 
 export const fetchTransferTimeline = (schema: string, table: string, cursor?: string, signal?: AbortSignal, filters?: TransferTimelineFilters): Promise<TransferTimelinePage> =>
   client.get(transferTimelinePath(schema, table), { params: { limit: 25, cursor, ...filters }, signal }).then((r) => unwrap<TransferTimelinePage>(r.data));
 export const fetchTransferTimelineDetail = (
-  schema: string, table: string, kind: TransferTimelineEntry['kind'], id: string, signal?: AbortSignal,
-): Promise<TransferTimelineDetail> => client.get(`${transferTimelinePath(schema, table)}/${kind}/${encodeURIComponent(id)}`, { signal })
+  schema: string, table: string, kind: TransferTimelineEntry['kind'], id: string, signal?: AbortSignal, requireVisible?: true,
+): Promise<TransferTimelineDetail> => client.get(`${transferTimelinePath(schema, table)}/${kind}/${encodeURIComponent(id)}`,
+  { signal, params: requireVisible ? { requireVisible: true } : undefined })
   .then((r) => unwrap<TransferTimelineDetail>(r.data));
 
 export const runSandboxTransfer = (planId: string, request: { requestId: string; expectedUpdatedAt: string }): Promise<TransferRunReceipt> =>

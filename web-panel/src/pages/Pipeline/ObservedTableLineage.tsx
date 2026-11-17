@@ -1,4 +1,6 @@
 import { useEffect, useId, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { canonicalTransferReceipt } from './transferReceiptFocus';
 import { fetchObservedTableLineage } from '../../services/api';
 import type { ObservedTableLineage as Observation, TableLineageDirection, TableLineageIdentity } from '../../services/api';
 import { useSandboxIdentity } from './SandboxMarkings';
@@ -68,6 +70,9 @@ function ObservedDirection({ table, direction }: { table: string; direction: Tab
         <span aria-label="transferred to"> → </span><code>{name(direction === 'incoming' ? source : item)}</code></span>
       <span>Rows affected: {item.rowsAffected.toLocaleString()}</span>
       <span>Receipt: <code>{item.receiptId}</code></span>
+      {canonicalTransferReceipt(item.receiptId) && <Link className="flow-evidence-lineage-link" to={`/ontology/explorer?${new URLSearchParams({
+        schema: source.schema, table: direction === 'incoming' ? table : item.table, view: 'evidence', transferReceipt: item.receiptId,
+      })}`}>Open receipt in Explorer</Link>}
       <span>Receipt recorded at: <time dateTime={item.receiptRecordedAt}>{new Date(item.receiptRecordedAt).toLocaleString(undefined, { timeZone: 'UTC', timeZoneName: 'short' })}</time></span>
     </li>)}</ol> : <p role="status">No current observed manual transfers in this direction.</p>}
     {snapshot.truncated && rows.length > 0 && <p>Only the first bounded set of observed neighbors is shown.</p>}

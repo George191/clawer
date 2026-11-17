@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from anyio import fail_after
@@ -670,10 +670,25 @@ async def get_transfer_timeline(
 
 @write.get("/{layer}/{table}/transfer-timeline/{kind}/{entry_id}")
 async def get_transfer_timeline_entry(
-    layer: str, table: TableName, kind: TimelineKind, entry_id: UUID, session: SessionDep,
+    layer: str, table: TableName, kind: TimelineKind, entry_id: UUID, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    require_visible: Literal["true"] | None = Query(None, alias="requireVisible"),
 ) -> TransferTimelineDetail:
     """Read scheduler provenance for an exact persisted attempt or receipt."""
-    return await read_transfer_timeline_entry(session, layer, table, kind, entry_id)
+    if require_visible is None:
+        return await read_transfer_timeline_entry(session, layer, table, kind, entry_id)
+    if kind != "receipt" or list(request.query_params.multi_items()) != [("requireVisible", "true")]:
+        raise HTTPException(422, "The exact visibility option is supported only for receipt links")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with fail_after(3):
+            return await read_transfer_timeline_entry(session, layer, table, kind, entry_id, require_visible=True)
+    except DBAPIError as error:
+        if getattr(error.orig, "sqlstate", None) in {"42P01", "3F000", "42809"}:
+            raise HTTPException(404, "Transfer timeline entry is not present for this destination") from None
+        raise HTTPException(503, "Visible transfer receipt is temporarily unavailable") from None
+    except TimeoutError:
+        raise HTTPException(503, "Visible transfer receipt is temporarily unavailable") from None
 
 
 @write.put("/transfer-plans/{plan_id}")

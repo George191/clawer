@@ -1,5 +1,7 @@
 """Current physical evidence of completed manual sandbox transfers, not declared edges."""
 
+from uuid import UUID
+
 from anyio import fail_after
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -37,6 +39,55 @@ _PIN = text(_PHYSICAL + """
 """)
 
 
+async def visible_observed_table_identity(session: AsyncSession, schema: str, table: str) -> tuple[int, int] | None:
+    """Gate a protected receipt link with the same exact current catalog policy."""
+    if schema != SANDBOX:
+        return None
+    root = (await session.execute(_ROOT, {**_LINEAGE_SCOPE, "table": table})).one_or_none()
+    if root is None or root.node is None:
+        return None
+    await session.execute(text(f'LOCK TABLE ONLY ts_transfer_sandbox.{quote_identifier(table)} IN ACCESS SHARE MODE NOWAIT'))
+    pinned = (await session.execute(_PIN, {**_LINEAGE_SCOPE, "tables": [table]})).one_or_none()
+    if pinned is None or (pinned.oid, pinned.node) != (root.oid, root.node):
+        return None
+    return pinned.oid, pinned.node
+
+
+_POSITIVE_MANUAL_PROOF = """
+    r.source_schema = 'ts_transfer_sandbox' AND r.target_schema = 'ts_transfer_sandbox'
+    AND r.source_table <> r.target_table
+    AND r.rows_affected BETWEEN 1 AND 100 AND r.write_mode = 'upsert'
+    AND r.cursor_through IS NULL AND r.has_more IS NULL
+    AND r.initiated_by NOT IN (:daily_actor, :upstream_actor)
+    AND r.recorded_at <= pg_catalog.statement_timestamp() AND r.plan_updated_at <= r.recorded_at
+    AND r.target_oid = e.target_oid AND r.target_filenode = e.target_node
+    AND e.parent_plan_id = r.plan_id AND e.parent_updated_at = r.plan_updated_at AND e.recorded_at = r.recorded_at
+    AND e.source_oid > 0 AND e.source_node > 0 AND e.target_oid > 0 AND e.target_node > 0
+    AND EXISTS (
+        SELECT 1 FROM public.ontology_transfer_attempts a
+        WHERE a.receipt_id = r.id AND a.receipt_id IS NOT NULL
+          AND a.scope_trigger = 'manual' AND a.status = 'committed'
+          AND a.schedule_job_id IS NULL AND a.upstream_job_id IS NULL
+          AND a.plan_id = r.plan_id AND a.request_id = r.request_id AND a.plan_updated_at = r.plan_updated_at
+          AND a.source_table = r.source_table AND a.target_table = r.target_table
+          AND a.target_oid = r.target_oid AND a.target_filenode = r.target_filenode
+          AND a.started_at <= r.recorded_at AND a.finished_at >= r.recorded_at
+    )
+"""
+_PROOF_ACTORS = {"daily_actor": SCHEDULED_SYSTEM_ACTOR, "upstream_actor": UPSTREAM_SYSTEM_ACTOR}
+_LINK_PROOF = text(f"""
+    SELECT e.source_oid, e.source_node, e.target_oid, e.target_node
+    FROM public.ontology_transfer_runs r
+    JOIN public.ontology_transfer_commit_events e ON e.parent_receipt_id=r.id
+    WHERE r.id=:receipt_id AND r.target_table=:table AND {_POSITIVE_MANUAL_PROOF}
+""")
+
+
+async def observed_receipt_physical_proof(session: AsyncSession, table: str, receipt_id: UUID):
+    """An existing capture remains historical proof independent of current plan/date window."""
+    return (await session.execute(_LINK_PROOF, {**_PROOF_ACTORS, "receipt_id": receipt_id, "table": table})).one_or_none()
+
+
 def _receipt_query(direction: LineageDirection):
     current, remote = ("source", "target") if direction == "outgoing" else ("target", "source")
     return text(f"""
@@ -50,27 +101,12 @@ def _receipt_query(direction: LineageDirection):
             JOIN physical dst ON dst.name = r.target_table AND dst.oid = e.target_oid AND dst.node = e.target_node
             JOIN physical peer ON peer.name = r.{remote}_table
             WHERE r.{current}_schema = 'ts_transfer_sandbox' AND r.{current}_table = :table
-              AND r.{remote}_schema = 'ts_transfer_sandbox' AND r.source_table <> r.target_table
-              AND r.recorded_at > pg_catalog.statement_timestamp() - interval '7 days' AND r.recorded_at <= pg_catalog.statement_timestamp()
-              AND r.rows_affected BETWEEN 1 AND 100 AND r.write_mode = 'upsert'
-              AND r.cursor_through IS NULL AND r.has_more IS NULL
-              AND r.initiated_by NOT IN (:daily_actor, :upstream_actor)
-              AND r.target_oid = e.target_oid AND r.target_filenode = e.target_node
-              AND e.parent_plan_id = p.id AND e.parent_updated_at = p.updated_at AND e.recorded_at = r.recorded_at
-              AND p.updated_at = r.plan_updated_at AND p.updated_at <= r.recorded_at
+              AND r.recorded_at > pg_catalog.statement_timestamp() - interval '7 days'
+              AND {_POSITIVE_MANUAL_PROOF}
+              AND p.updated_at = r.plan_updated_at
               AND p.source_schema = r.source_schema AND p.source_table = r.source_table
               AND p.target_schema = r.target_schema AND p.target_table = r.target_table
               AND p.trigger = 'manual' AND p.write_mode = 'upsert' AND p.incremental_cursor IS NULL
-              AND EXISTS (
-                  SELECT 1 FROM public.ontology_transfer_attempts a
-                  WHERE a.receipt_id = r.id AND a.receipt_id IS NOT NULL
-                    AND a.scope_trigger = 'manual' AND a.status = 'committed'
-                    AND a.schedule_job_id IS NULL AND a.upstream_job_id IS NULL
-                    AND a.plan_id = p.id AND a.request_id = r.request_id AND a.plan_updated_at = p.updated_at
-                    AND a.source_table = r.source_table AND a.target_table = r.target_table
-                    AND a.target_oid = r.target_oid AND a.target_filenode = r.target_filenode
-                    AND a.started_at <= r.recorded_at AND a.finished_at >= r.recorded_at
-              )
             ORDER BY peer.name COLLATE "C", r.recorded_at DESC, r.id DESC
         )
         SELECT name, oid, node, id, recorded_at, rows_affected FROM by_peer
@@ -95,8 +131,7 @@ async def observed_transfer_lineage(
             if root is None or root.node is None:
                 raise HTTPException(404, "Table does not exist in this schema")
             rows = (await session.execute(_receipt_query(direction), {
-                **_LINEAGE_SCOPE, "table": table, "daily_actor": SCHEDULED_SYSTEM_ACTOR,
-                "upstream_actor": UPSTREAM_SYSTEM_ACTOR, "limit": _LIMIT + 1,
+                **_LINEAGE_SCOPE, **_PROOF_ACTORS, "table": table, "limit": _LIMIT + 1,
             })).all()
             # Resolve every returned identity under an exact no-wait read fence.
             # The sentinel affects truncation but is never returned as evidence.

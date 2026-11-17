@@ -1178,6 +1178,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
                 patch.object(settings, "ENVIRONMENT", "local"),
                 patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+                patch.object(settings, "TRANSFER_SANDBOX_UPSTREAM_ENABLED", True),
+                patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", True),
             ):
                 proposed = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "sourceTable": "timeline_source",
                             "targetSchema": "ts_transfer_sandbox", "targetTable": "timeline_target",
@@ -1190,6 +1192,39 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 sent = await client.post(action, json=request)
                 self.assertEqual(sent.status_code, 200, sent.text)
                 receipt = sent.json()
+                link = f"{route}/receipt/{receipt['id']}"
+                protected = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(protected.status_code, 200, protected.text)
+                self.assertEqual(protected.headers["cache-control"], "no-store")
+                self.assertEqual(protected.json(), (await client.get(link)).json())
+                self.assertEqual(protected.json()["physicalScope"], "current")
+                for query in ("?requireVisible=false", "?requireVisible=TRUE", "?requireVisible=true&requireVisible=true",
+                              "?requireVisible=true&ignored=1"):
+                    self.assertEqual((await client.get(link + query)).status_code, 422)
+                await self.pg.execute("""INSERT INTO public.ontology_objects
+                    VALUES ('ts_transfer_sandbox','timeline_target',true,'hidden')""")
+                hidden = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(hidden.status_code, 404, hidden.text)
+                self.assertEqual((await client.get(link)).status_code, 200)
+                for asset, receipt_id in (("timeline_other", receipt["id"]), ("timeline_target", str(uuid4())),
+                                          ("unknown_target", receipt["id"])):
+                    nope = await client.get(f"/etl/ts_transfer_sandbox/{asset}/transfer-timeline/receipt/{receipt_id}",
+                                            params={"requireVisible": "true"})
+                    self.assertEqual((nope.status_code, nope.json()), (404, hidden.json()))
+                await self.pg.execute("""UPDATE public.ontology_objects SET is_active=false,visibility='normal'
+                    WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_target'""")
+                self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
+                await self.pg.execute("""DELETE FROM public.ontology_objects
+                    WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_target'""")
+                await self.pg.execute("""INSERT INTO public.ontology_objects
+                    VALUES ('ts_transfer_sandbox','timeline_source',true,'hidden')""")
+                self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
+                self.assertEqual((await client.get(link)).status_code, 200)
+                await self.pg.execute("""DELETE FROM public.ontology_objects
+                    WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_source'""")
+                with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
+                    self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
+                    self.assertEqual((await client.get(link)).status_code, 200)
                 self.assertEqual((await client.post(action, json=request)).json(), receipt)
                 stale = await client.post(action, json={**request, "requestId": str(uuid4()),
                                                         "expectedUpdatedAt": "2020-01-01T00:00:00Z"})
@@ -1314,6 +1349,16 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(no_rows["entries"], [])
                 self.assertEqual(no_rows["latestCurrentReceipt"], receipt)
 
+                # An archived focus is not a substitute for missing manual commit proof.
+                self.assertEqual((await client.get(link, params={"requireVisible": "true"})).status_code, 404)
+                await self.pg.execute("UPDATE ontology_transfer_attempts SET receipt_id=id WHERE id=CAST(:id AS uuid)",
+                                      {"id": receipt["id"]})
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.timeline_source")
+                source_replaced = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(source_replaced.status_code, 200, source_replaced.text)
+                self.assertEqual(source_replaced.json()["physicalScope"], "historical")
+                self.assertEqual((await client.get(link)).json()["physicalScope"], "current")
+
                 changed = await client.put(f"{RUNS}/{plan['id']}", json={**proposed, "targetTable": "timeline_other"})
                 self.assertEqual(changed.status_code, 200, changed.text)
                 other = (await client.get("/etl/ts_transfer_sandbox/timeline_other/transfer-timeline")).json()
@@ -1322,8 +1367,33 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 historical = (await client.get(route)).json()
                 self.assertIsNone(historical["latestCurrentReceipt"])
                 self.assertTrue(all(item["physicalScope"] == "historical" for item in historical["entries"]))
+                archived_link = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(archived_link.status_code, 200, archived_link.text)
+                self.assertEqual((archived_link.json()["id"], archived_link.json()["physicalScope"]),
+                                 (receipt["id"], "historical"))
+                self.assertEqual((await client.get(f"{route}/attempt/{receipt['id']}?requireVisible=true")).status_code, 422)
+                # The focused exact link is not limited to the current edge's 7-day coverage.
+                async with self.pg.session() as session:
+                    for update in (
+                        "UPDATE ontology_transfer_runs SET recorded_at=recorded_at-interval '8 days', "
+                        "plan_updated_at=plan_updated_at-interval '8 days' WHERE id=:id",
+                        "UPDATE ontology_transfer_attempts SET started_at=started_at-interval '8 days', "
+                        "finished_at=finished_at-interval '8 days', plan_updated_at=plan_updated_at-interval '8 days' "
+                        "WHERE id=:id",
+                        "UPDATE ontology_transfer_commit_events SET recorded_at=recorded_at-interval '8 days', "
+                        "parent_updated_at=parent_updated_at-interval '8 days' WHERE parent_receipt_id=:id",
+                    ):
+                        await session.execute(text(update), {"id": UUID(receipt["id"])})
+                aged_link = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(aged_link.status_code, 200, aged_link.text)
+                self.assertEqual(aged_link.json()["physicalScope"], "historical")
+                await self.pg.execute("DELETE FROM ontology_transfer_commit_events WHERE parent_receipt_id=:id",
+                                      {"id": UUID(receipt["id"])})
+                self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
+                self.assertEqual((await client.get(link)).status_code, 200)
         async with api(False, self.session_provider) as reader:
             self.assertEqual((await reader.get(route)).status_code, 403)
+            self.assertEqual((await reader.get(link, params={"requireVisible": "true"})).status_code, 403)
 
     async def test_cancel_exact_waiting_daily_job_preserves_next_schedule_and_never_starts_worker(self):
         from app.web.api.models.transfer_plans import TransferRunRequest

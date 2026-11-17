@@ -21,10 +21,11 @@ from app.web.api.models.transfer_timeline import (
 from app.web.api.models.transfer_upstream import (
     TransferCommitEventRow, UpstreamTriggerEvent, UpstreamTriggerJobEventRow, UpstreamTriggerJobRow,
 )
+from app.web.services.transfer_observed_lineage import observed_receipt_physical_proof, visible_observed_table_identity
 from app.web.services.upstream_mixed_rules import exact_mixed_job
 from app.web.services.upstream_rules import canonical_group, exact_nested_job, positive_nested_events
 from app.web.services.transfer_runs import (
-    SANDBOX, SCHEDULED_SYSTEM_ACTOR, UPSTREAM_SYSTEM_ACTOR, _run_response, transfer_target_identity,
+    SANDBOX, SCHEDULED_SYSTEM_ACTOR, UPSTREAM_SYSTEM_ACTOR, _run_response, observed_lineage_enabled, transfer_target_identity,
 )
 
 Record = TransferAttemptRow | TransferRunRow
@@ -333,18 +334,42 @@ async def _job_detail(session: AsyncSession, job: Job) -> TransferTimelineJob | 
 
 
 async def read_transfer_timeline_entry(
-    session: AsyncSession, layer: str, table: str, kind: TimelineKind, identity: UUID,
+    session: AsyncSession, layer: str, table: str, kind: TimelineKind, identity: UUID, *, require_visible: bool = False,
 ) -> TransferTimelineDetail:
-    """Read one exact destination entry and its verified scheduler relation."""
-    await _asset_identity(session, layer, table)
+    """Read one exact destination entry, optionally only for a visible receipt link."""
+    unavailable = HTTPException(404, "Transfer timeline entry is not present for this destination")
+    physical = None
+    if require_visible:
+        if kind != "receipt" or not observed_lineage_enabled():
+            raise unavailable
+        await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+        await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
+        physical = await visible_observed_table_identity(session, layer, table)
+        if physical is None:
+            raise unavailable
+    else:
+        await _asset_identity(session, layer, table)
     query = (_attempt_query(table).where(TransferAttemptRow.id == identity) if kind == "attempt" else
              _receipt_query(table).where(TransferRunRow.id == identity))
     row = await session.scalar(query)
     if row is None:
-        raise HTTPException(404, "Transfer timeline entry is not present for this destination")
+        raise unavailable
+    if require_visible:
+        proof = await observed_receipt_physical_proof(session, table, identity)
+        if proof is None:
+            raise unavailable
+        source = await visible_observed_table_identity(session, row.source_schema, row.source_table)
+        if source is None:
+            raise unavailable
+        entry = _entry(row, physical, None, {row.id}, {})
+        if source != (proof.source_oid, proof.source_node) or physical != (proof.target_oid, proof.target_node):
+            entry.physicalScope = "historical"
+        return TransferTimelineDetail(**entry.model_dump())
+
     link = (await _linked_jobs(session, [row])).get((kind, row.id))
     report = await _job_detail(session, link) if link is not None else None
-    physical = await _asset_identity(session, layer, table)
+    if physical is None:
+        physical = await _asset_identity(session, layer, table)
     manual = await _manual_receipts(session, [row])
     att_receipts = await _checked_attempt_receipts(session, table, [row])
     entry = _entry(row, physical, link if report is not None else None, manual, att_receipts)
