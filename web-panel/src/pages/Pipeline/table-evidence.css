@@ -1,0 +1,31 @@
+.flow-table-evidence { max-width: 1060px; }
+.flow-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.flow-evidence-card {
+    display: grid; align-content: start; gap: 10px; min-width: 0; padding: 14px 16px;
+    border: 1px solid var(--ontology-border); border-radius: 6px; background: var(--ontology-bg);
+}
+.flow-evidence-card > header { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.flow-evidence-card h4 { margin: 0; color: var(--ontology-text); font-size: 13px; }
+.flow-evidence-card > header span, .flow-evidence-node span { color: var(--ontology-muted); font-size: 11px; }
+.flow-evidence-card strong, .flow-evidence-card dd { color: var(--ontology-text); font-size: 13px; }
+.flow-evidence-card dl { display: grid; gap: 9px; margin: 0; }
+.flow-evidence-card dt { color: var(--ontology-muted); font-size: 12px; }
+.flow-evidence-card dd { margin: 2px 0 0; }
+.flow-evidence-card .flow-evidence-primary { font-size: 19px; line-height: 1.3; }
+.flow-evidence-lineage { grid-column: 1 / -1; }
+.flow-evidence-path { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.flow-evidence-node { display: grid; min-width: 0; gap: 3px; padding: 7px 10px; border: 1px solid var(--ontology-border); border-radius: 4px; }
+.flow-evidence-node code { color: var(--ontology-text); font-size: 12px; overflow-wrap: anywhere; }
+.flow-evidence-targets { display: grid; gap: 5px; min-width: 0; }
+.flow-evidence-current { border-color: var(--ontology-primary); }
+.flow-evidence-arrow { font-size: 17px; color: var(--ontology-muted); }
+@media (max-width: 700px) {
+    .flow-evidence-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 550px) {
+    .flow-evidence-path { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; }
+    .flow-evidence-arrow { justify-self: center; transform: rotate(90deg); }
+}
+.flow-evidence-card .flow-evidence-catalog { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
+.flow-evidence-catalog dd { font-size: 19px; line-height: 1.3; }
+.flow-evidence-card .flow-evidence-observation { border-top: 1px solid var(--ontology-border); padding-top: 10px; }

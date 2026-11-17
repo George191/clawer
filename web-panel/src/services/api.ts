@@ -273,6 +273,18 @@ export const fetchLayerTables = (layer: string, tableRole = 'current'): Promise<
 export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal): Promise<EtlTableColumn[]> =>
   client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal }).then((r) => unwrap<EtlTableColumn[]>(r.data));
 
+export type ExplorerTableEvidenceSnapshot = {
+  observedAt: string;
+  latestFiledDate: string | null;
+  observation: 'observed' | 'no_filed_date' | 'safe_plan_unavailable' | 'metadata_only';
+  quality: { source: 'postgres_catalog'; columnCount: number; primaryKeyColumnCount: number; notNullColumnCount: number };
+  history: { status: 'unavailable' };
+  lineage: { status: 'unavailable' } | { status: 'declared'; mongoCollection: string; rdsTable: string; odsTable: string };
+};
+
+export const fetchExplorerTableEvidence = (schema: string, table: string, signal?: AbortSignal): Promise<ExplorerTableEvidenceSnapshot> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/evidence`, { signal }).then((r) => unwrap<ExplorerTableEvidenceSnapshot>(r.data));
+
 export const fetchTableData = (
   layer: string,
   table: string,

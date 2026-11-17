@@ -200,6 +200,14 @@ async def table_columns(layer: str, table: str) -> list[dict[str, Any]]:
     return await get_etl_layers().columns(layer, table)
 
 
+@read.get("/{layer}/{table}/evidence")
+async def table_evidence(layer: str, table: str,
+                         current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    return await get_etl_layers().evidence(
+        layer, table, include_hidden=bool(getattr(current_user, "is_superuser", False)),
+    )
+
+
 @write.put("/{layer}/{table}/visibility")
 async def set_object_visibility(layer: str, table: str, payload: ObjectVisibility,
                                 current_user: Any = Depends(get_current_user)) -> dict[str, Any]:

@@ -38,11 +38,12 @@ import {
   SettingOutlined,
   ThunderboltOutlined,
 } from '@/components/ui/icons';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useThemeStore } from '@/stores/settings';
 import { fetchCurrentUserContext } from '@/services/api';
 import { clearSession } from '@/services/session';
 import type { CurrentUserContext } from '@/services/types';
+import './ontology-workspace-navigation.css';
 
 const { Header, Content } = Layout;
 
@@ -814,20 +815,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
         <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 4 }}>
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', gap: 2, marginRight: 6, paddingRight: 8, borderRight: `1px solid ${palette.border}` }}>
-            {isFlowSurface && currentUserContext?.user.is_superuser && (
-              <Button
-                type="text"
-                aria-label="Data Connections"
-                aria-current={location.pathname === '/ontology/connections' ? 'page' : undefined}
-                title="Data Connections"
-                onClick={() => navigate('/ontology/connections')}
-                className="header-shortcut-button"
-                style={{ color: location.pathname === '/ontology/connections' ? palette.text : palette.secondary, background: location.pathname === '/ontology/connections' ? palette.hover : 'transparent', border: 'none', display: 'inline-flex', alignItems: 'center', gap: 5, lineHeight: 1 }}
-              >
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 14, height: 16, lineHeight: 0 }}><DatabaseOutlined style={{ display: 'block', fontSize: 14 }} /></span>
-                <span className="header-shortcut-label" style={{ display: 'inline-flex', alignItems: 'center', height: 16, lineHeight: 1 }}>Connections</span>
-              </Button>
-            )}
             <Button
               type="text"
               aria-label="Automation"
@@ -904,6 +891,18 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       </Header>
 
       <div style={{ height: HEADER_H, flexShrink: 0 }} />
+      {isFlowSurface && (
+        <nav className="ontology-workspace-navigation" aria-label="Ontology Foundry workspace">
+          {projectConfigs['etl-pipeline'].sections[0].children.map((item) => (
+            <React.Fragment key={item.key}>
+              <NavLink to={item.key} end>{item.icon}<span>{item.label}</span></NavLink>
+              {item.key === '/ontology/explorer' && currentUserContext?.user.is_superuser && (
+                <NavLink to="/ontology/connections" end><DatabaseOutlined /><span>Data Connections</span></NavLink>
+              )}
+            </React.Fragment>
+          ))}
+        </nav>
+      )}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {isMobile && !collapsed && !hideSidebar && (
           <button

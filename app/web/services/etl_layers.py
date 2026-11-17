@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from time import perf_counter
 from typing import Any
 
@@ -32,6 +33,54 @@ _OBJECT_TABLE_SQL = """n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
     AND c.relname ~ '^[a-z_][a-z0-9_]{0,62}$' AND c.relkind IN ('r','p')
     AND NOT c.relispartition
     AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
+_FINANCIAL_ODS = ("ts_ods", "ods_financial_fact")
+_LATEST_FILED_SQL = (
+    "SELECT filed FROM ts_ods.ods_financial_fact "
+    "WHERE filed IS NOT NULL ORDER BY filed DESC LIMIT 1"
+)
+
+
+def _bounded_filed_plan(explained: Any) -> bool:
+    """Accept only a single-row Limit and a bounded fan-out of ordered index reads."""
+    if isinstance(explained, str):
+        try:
+            explained = json.loads(explained)
+        except ValueError:
+            return False
+    if not isinstance(explained, list) or len(explained) != 1 or not isinstance(explained[0], dict):
+        return False
+    root = explained[0].get("Plan")
+    if not isinstance(root, dict) or root.get("Node Type") != "Limit" or root.get("Plan Rows") != 1:
+        return False
+    pending = root.get("Plans")
+    if not isinstance(pending, list) or len(pending) != 1:
+        return False
+    pending = list(pending)
+    visited = 0
+    while pending:
+        node = pending.pop()
+        visited += 1
+        if visited > 128 or not isinstance(node, dict) or "Filter" in node or "Recheck Cond" in node:
+            return False
+        children = node.get("Plans", [])
+        if not isinstance(children, list):
+            return False
+        node_type = node.get("Node Type")
+        if node_type in ("Index Scan", "Index Only Scan"):
+            if children or not node.get("Index Name"):
+                return False
+            condition = node.get("Index Cond")
+            if condition is not None and (not isinstance(condition, str) or not re.fullmatch(
+                r'\((?:"?[A-Za-z0-9_]+"?\.)?"?filed"? IS NOT NULL\)', condition
+            )):
+                return False
+        elif node_type == "Merge Append":
+            if not children or len(children) + len(pending) + visited > 128:
+                return False
+            pending.extend(children)
+        else:
+            return False
+    return True
 
 
 def quote_identifier(name: str) -> str:
@@ -376,6 +425,59 @@ class EtlLayers:
         if found is None:
             raise HTTPException(404, "Table does not exist in this schema")
         return found
+
+    async def evidence(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
+        schema = _object_schema(layer)
+        quote_identifier(table)
+        is_financial = (schema, table) == _FINANCIAL_ODS
+        filed = None
+        observation = "safe_plan_unavailable" if is_financial else "metadata_only"
+        async with self.session() as session:
+            await session.execute(text("SET LOCAL statement_timeout = '2s'"))
+            await self._require_ontology(session)
+            target = (await session.execute(text(f"""
+                SELECT attributes.column_count, attributes.primary_key_column_count,
+                       attributes.not_null_column_count, attributes.filed_is_date
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                {_OBJECT_METADATA_JOIN}
+                CROSS JOIN LATERAL (
+                    SELECT count(*) AS column_count,
+                           count(*) FILTER (WHERE a.attnotnull) AS not_null_column_count,
+                           count(*) FILTER (WHERE array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts)
+                               AS primary_key_column_count,
+                           bool_or(a.attname = 'filed' AND a.atttypid = 'date'::regtype) AS filed_is_date
+                    FROM pg_attribute a
+                    LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary
+                    WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+                ) attributes
+                WHERE {_OBJECT_TABLE_SQL} AND n.nspname = :schema AND c.relname = :table
+                    AND (:include_hidden OR COALESCE(o.visibility, 'normal') <> 'hidden')
+            """), {"schema": schema, "table": table, "include_hidden": include_hidden})).mappings().first()
+            if target is None:
+                raise HTTPException(404, "Evidence is not available for this table")
+            if is_financial and target["filed_is_date"]:
+                plan = (await session.execute(text("EXPLAIN (FORMAT JSON) " + _LATEST_FILED_SQL))).scalar_one()
+                if _bounded_filed_plan(plan):
+                    filed = (await session.execute(text(_LATEST_FILED_SQL))).scalar_one_or_none()
+                    observation = "observed" if filed is not None else "no_filed_date"
+        return {
+            "observedAt": datetime.now(timezone.utc).isoformat(),
+            "latestFiledDate": filed.isoformat() if filed is not None else None,
+            "observation": observation,
+            "quality": {
+                "source": "postgres_catalog",
+                "columnCount": target["column_count"],
+                "primaryKeyColumnCount": target["primary_key_column_count"],
+                "notNullColumnCount": target["not_null_column_count"],
+            },
+            "history": {"status": "unavailable"},
+            "lineage": {
+                "status": "declared",
+                "mongoCollection": "financial_fact_sec_edgar",
+                "rdsTable": "ts_rds.rds_financial_fact",
+                "odsTable": "ts_ods.ods_financial_fact",
+            } if is_financial else {"status": "unavailable"},
+        }
 
     async def columns(self, layer: str, table: str) -> list[dict[str, Any]]:
         schema = resolve_schema(layer)
