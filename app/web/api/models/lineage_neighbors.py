@@ -39,3 +39,11 @@ class LineagePath(BaseModel):
 class LineagePathTargets(BaseModel):
     items: list[LineageEndpoint]
     truncated: bool
+
+
+class LineageCommonUpstream(BaseModel):
+    state: Literal["found", "none_within_limit", "incomplete"]
+    searchTruncated: bool
+    ancestor: LineageEndpoint | None = None
+    leftEdges: list[LineagePathEdge] = Field(default_factory=list)
+    rightEdges: list[LineagePathEdge] = Field(default_factory=list)

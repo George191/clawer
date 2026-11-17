@@ -24,7 +24,8 @@ from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
 from app.web.api.models.lineage_neighbors import (
-    LineageDirection, LineageEndpoint, LineageNeighborKind, LineageNeighbors, LineagePath, LineagePathEdge, LineagePathTargets,
+    LineageCommonUpstream, LineageDirection, LineageEndpoint, LineageNeighborKind, LineageNeighbors,
+    LineagePath, LineagePathEdge, LineagePathTargets,
 )
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TARGET
 from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
@@ -367,6 +368,7 @@ class EtlLayers:
     @staticmethod
     async def _lineage_neighbor_rows(
         session, key: LineageKey, oid: int, direction: LineageDirection, registry_present: bool,
+        *, exclude_peer_oids: tuple[int, ...] = (),
     ):
         root_end, peer_end, fk_root, fk_peer = (
             ("source", "target", "conrelid", "confrelid") if direction == "outgoing"
@@ -408,10 +410,11 @@ class EtlLayers:
                   AND {_LINEAGE_VISIBLE_SQL} AND c.oid <> CAST(:oid AS oid)
             )
             SELECT schema, "table", oid, array_agg(DISTINCT kind ORDER BY kind) AS kinds
-            FROM neighbors GROUP BY schema, "table", oid
+            FROM neighbors WHERE oid <> ALL(CAST(:excluded AS oid[])) GROUP BY schema, "table", oid
             ORDER BY schema COLLATE "C", "table" COLLATE "C"
             LIMIT :limit
-        """), {**_LINEAGE_SCOPE, "schema": key[0], "table": key[1], "oid": oid, "limit": _LINEAGE_NEIGHBOR_LIMIT + 1})
+        """), {**_LINEAGE_SCOPE, "schema": key[0], "table": key[1], "oid": oid, "limit": _LINEAGE_NEIGHBOR_LIMIT + 1,
+              "excluded": list(exclude_peer_oids)})
         rows = result.mappings().all()
         return rows[:_LINEAGE_NEIGHBOR_LIMIT], len(rows) > _LINEAGE_NEIGHBOR_LIMIT
 
@@ -495,6 +498,89 @@ class EtlLayers:
                     pending.append((peer, row["oid"], depth + 1))
         truncated = truncated or bool(pending)
         return LineagePath(state="incomplete" if truncated else "not_found_within_limit", searchTruncated=truncated)
+
+    async def lineage_common_upstream(
+        self, schema: str, table: str, target_schema: str, target_table: str,
+    ) -> LineageCommonUpstream:
+        left, right = (schema, table), (target_schema, target_table)
+        endpoints_verified = False
+        try:
+            with fail_after(3):
+                async with self.session(repeatable_read=True) as session:
+                    await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
+                    try:
+                        roots = await self._lineage_table_oid(session, left), await self._lineage_table_oid(session, right)
+                        endpoints_verified = True
+                        if left == right:
+                            raise HTTPException(422, "Choose a different visible target table")
+                        registry = bool(await session.scalar(_LINEAGE_REGISTRY_PRESENT))
+                        left_seen, left_cut = await self._lineage_incoming(session, left, roots[0], registry)
+                        right_seen, right_cut = await self._lineage_incoming(session, right, roots[1], registry)
+                    except DBAPIError as error:
+                        if getattr(error.orig, "sqlstate", None) != "57014":
+                            raise
+                        raise TimeoutError from error
+        except TimeoutError:
+            if not endpoints_verified:
+                raise HTTPException(503, "Visible table references are temporarily unavailable") from None
+            return LineageCommonUpstream(state="incomplete", searchTruncated=True)
+        except HTTPException as error:
+            if not endpoints_verified or error.status_code != 503:
+                raise
+            return LineageCommonUpstream(state="incomplete", searchTruncated=True)
+
+        truncated = left_cut or right_cut
+        candidates = (left_seen.keys() & right_seen.keys()) - {left, right}
+        if not candidates:
+            return LineageCommonUpstream(
+                state="incomplete" if truncated else "none_within_limit", searchTruncated=truncated,
+            )
+
+        def rank(key: LineageKey):
+            left_depth, right_depth = left_seen[key][2], right_seen[key][2]
+            return max(left_depth, right_depth), left_depth + right_depth, key
+
+        ancestor = min(candidates, key=rank)
+
+        def witness(root, seen):
+            cursor, edges = ancestor, []
+            while cursor != root:
+                downstream, kinds, _ = seen[cursor]
+                edges.append(LineagePathEdge.model_validate({
+                    "from": {"schema": cursor[0], "table": cursor[1]},
+                    "to": {"schema": downstream[0], "table": downstream[1]}, "kinds": kinds,
+                }))
+                cursor = downstream
+            return edges
+
+        return LineageCommonUpstream(
+            state="found", searchTruncated=truncated,
+            ancestor=LineageEndpoint(schema=ancestor[0], table=ancestor[1]),
+            leftEdges=witness(left, left_seen), rightEdges=witness(right, right_seen),
+        )
+
+    async def _lineage_incoming(
+        self, session, root: LineageKey, root_oid: int, registry_present: bool,
+    ):
+        pending = deque([(root, root_oid, 0)])
+        seen: dict[LineageKey, tuple[LineageKey, list[LineageNeighborKind], int]] = {}
+        truncated = False
+        for _ in range(12):
+            if not pending:
+                break
+            current, oid, depth = pending.popleft()
+            peers, more = await self._lineage_neighbor_rows(
+                session, current, oid, "incoming", registry_present, exclude_peer_oids=(root_oid,),
+            )
+            truncated = truncated or more
+            for row in peers:
+                peer = row["schema"], row["table"]
+                if peer in seen:
+                    continue
+                seen[peer] = current, row["kinds"], depth + 1
+                if depth + 1 < _LINEAGE_HOP_LIMIT:
+                    pending.append((peer, row["oid"], depth + 1))
+        return seen, truncated or bool(pending)
 
     async def preview(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
         schema = _object_schema(layer)

@@ -1149,9 +1149,14 @@ export const fetchTableLineageNeighbors = (schema: string, table: string, direct
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/lineage-neighbors`, { params: { direction }, signal })
     .then(r => unwrap<TableLineageNeighborhood>(r.data));
 
+export type TableLineagePathEdge = { from: TableLineageIdentity; to: TableLineageIdentity; kinds: TableLineageReferenceKind[] };
 export type TableLineagePathResult = {
   state: 'found' | 'not_found_within_limit' | 'incomplete'; searchTruncated: boolean; maxHops: 4;
-  edges: { from: TableLineageIdentity; to: TableLineageIdentity; kinds: TableLineageReferenceKind[] }[];
+  edges: TableLineagePathEdge[];
+};
+export type TableLineageCommonUpstream = {
+  state: 'found' | 'none_within_limit' | 'incomplete'; searchTruncated: boolean; ancestor: TableLineageIdentity | null;
+  leftEdges: TableLineagePathEdge[]; rightEdges: TableLineagePathEdge[];
 };
 export const fetchTableLineageTargets = (source: TableLineageIdentity, search: string, signal?: AbortSignal): Promise<{
   items: TableLineageIdentity[]; truncated: boolean;
@@ -1161,3 +1166,7 @@ export const fetchTableLineagePath = (source: TableLineageIdentity, target: Tabl
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-path`, {
     params: { targetSchema: target.schema, targetTable: target.table }, signal,
   }).then(r => unwrap<TableLineagePathResult>(r.data));
+export const fetchTableLineageCommonUpstream = (source: TableLineageIdentity, target: TableLineageIdentity, signal?: AbortSignal): Promise<TableLineageCommonUpstream> =>
+  client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-common-upstream`, {
+    params: { targetSchema: target.schema, targetTable: target.table }, signal,
+  }).then(r => unwrap<TableLineageCommonUpstream>(r.data));

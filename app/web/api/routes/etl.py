@@ -12,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
-from app.web.api.models.lineage_neighbors import LineageDirection, LineageNeighbors, LineagePath, LineagePathTargets
+from app.web.api.models.lineage_neighbors import (
+    LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath, LineagePathTargets,
+)
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
 from app.web.api.models.asset_collected_stats import AssetCollectedStats
 from app.web.api.models.asset_freshness import (
@@ -870,6 +872,16 @@ async def table_lineage_path(
         raise HTTPException(422, "Specify exactly one destination schema and table")
     response.headers["Cache-Control"] = "no-store"
     return await get_etl_layers().lineage_path(layer, table, targetSchema, targetTable)
+
+
+@read.get("/{layer}/{table}/lineage-common-upstream")
+async def table_lineage_common_upstream(
+    layer: str, table: str, targetSchema: str, targetTable: str, request: Request, response: Response,
+) -> LineageCommonUpstream:
+    if set(request.query_params) != {"targetSchema", "targetTable"} or len(request.query_params.multi_items()) != 2:
+        raise HTTPException(422, "Specify exactly one destination schema and table")
+    response.headers["Cache-Control"] = "no-store"
+    return await get_etl_layers().lineage_common_upstream(layer, table, targetSchema, targetTable)
 
 
 @read.get("/{layer}/{table}/columns")

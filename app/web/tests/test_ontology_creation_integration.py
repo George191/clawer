@@ -196,6 +196,51 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
             await path("root", "root")
         self.assertEqual(error.exception.status_code, 422)
 
+    async def test_common_upstream_returns_ranked_forward_witnesses_and_keeps_real_root_connector(self):
+        async with self.pg.session() as session:
+            for name in ("left_end", "right_end", "a_source", "b_source", "downstream", "isolated"):
+                await session.execute(text(f"CREATE TABLE {SCHEMA}.{name} (id bigint PRIMARY KEY)"))
+            await session.execute(text(f"ALTER TABLE {SCHEMA}.a_source ADD FOREIGN KEY (id) REFERENCES {SCHEMA}.left_end(id)"))
+            await self.add_lineage_declarations(session, [
+                ("a_source", "left_end"), ("b_source", "left_end"),
+                ("left_end", "right_end"), ("left_end", "downstream"), ("right_end", "downstream"),
+            ])
+
+        async def search(right="right_end"):
+            return await self.layers.lineage_common_upstream(SCHEMA, "left_end", SCHEMA, right)
+
+        result = await search()
+        self.assertEqual((result.state, result.searchTruncated, result.ancestor.table), ("found", False, "a_source"))
+        self.assertEqual(result.leftEdges[0].kinds, ["foreign_key", "object_relation"])
+        self.assertEqual([edge.to.table for edge in result.rightEdges], ["left_end", "right_end"])
+        await self.workspace.set_object_visibility(SCHEMA, "a_source", "hidden", "fixture")
+        self.assertEqual((await search()).ancestor.table, "b_source")
+        await self.workspace.set_object_visibility(SCHEMA, "b_source", "hidden", "fixture")
+        self.assertEqual((await search()).state, "none_within_limit")
+        self.assertEqual((await search("isolated")).state, "none_within_limit")
+        with self.assertRaises(HTTPException) as failure:
+            await search("a_source")
+        self.assertEqual(failure.exception.status_code, 404)
+
+    async def test_common_upstream_reports_truncated_instead_of_false_absence_or_complete_ranking(self):
+        branches = [f"branch_{i:02}" for i in range(13)]
+        async with self.pg.session() as session:
+            for name in ("left_end", "right_end", *branches):
+                await session.execute(text(f"CREATE TABLE {SCHEMA}.{name} (id bigint PRIMARY KEY)"))
+            await self.add_lineage_declarations(session, [
+                *((name, "left_end") for name in branches), (branches[-1], "right_end"),
+            ])
+
+        async def search():
+            return await self.layers.lineage_common_upstream(SCHEMA, "left_end", SCHEMA, "right_end")
+
+        result = await search()
+        self.assertEqual((result.state, result.searchTruncated, result.ancestor), ("incomplete", True, None))
+        async with self.pg.session() as session:
+            await self.add_lineage_declarations(session, [(branches[0], "right_end")])
+        result = await search()
+        self.assertEqual((result.state, result.searchTruncated, result.ancestor.table), ("found", True, branches[0]))
+
     async def test_lineage_path_reports_partial_search_for_neighbor_and_node_caps(self):
         hops = [f"branch_{i:02}" for i in range(13)]
         children = [f"child_{i:02}" for i in range(24)]

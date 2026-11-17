@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { fetchTableLineagePath, fetchTableLineageTargets } from '../../services/api';
-import type { TableLineageIdentity, TableLineagePathResult, TableLineageReferenceKind } from '../../services/api';
+import { fetchTableLineageCommonUpstream, fetchTableLineagePath, fetchTableLineageTargets } from '../../services/api';
+import type { TableLineageCommonUpstream, TableLineageIdentity, TableLineagePathEdge, TableLineagePathResult, TableLineageReferenceKind } from '../../services/api';
 import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 
 const CATALOG_LIMIT = 20;
@@ -12,8 +12,7 @@ const ordinary = ({ schema, table }: TableLineageIdentity) =>
   /^ts_[a-z0-9_]{1,60}$/.test(schema) && /^[a-z_][a-z0-9_]{0,62}$/.test(table) && !schema.endsWith('_hist') &&
   !(schema === INDEX_PREVIEW_SCHEMA && table === INDEX_PREVIEW_TABLE);
 
-function hasWitness(result: TableLineagePathResult, source: TableLineageIdentity, target: TableLineageIdentity) {
-  const { edges } = result;
+function hasWitness(edges: TableLineagePathEdge[], source: TableLineageIdentity, target: TableLineageIdentity) {
   return edges.length >= 1 && edges.length <= 4 && name(edges[0].from) === name(source) &&
     name(edges[edges.length - 1].to) === name(target) && edges.every((edge, index) =>
       edge.kinds.some(kind => Object.prototype.hasOwnProperty.call(kinds, kind)) &&
@@ -21,6 +20,7 @@ function hasWitness(result: TableLineagePathResult, source: TableLineageIdentity
 }
 
 type Props = { source: TableLineageIdentity; onScopeDenied: () => void; onEndpointUnavailable: () => void };
+type Mode = 'directed' | 'common';
 export default function TableLineagePath({ source, onScopeDenied, onEndpointUnavailable }: Props) {
   const [open, setOpen] = useState(false);
   return <section className="flow-lineage-reference-path" aria-label="Find a reference path">
@@ -37,13 +37,16 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
   const [limited, setLimited] = useState(false);
   const [target, setTarget] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(false);
-  const [pathLoading, setPathLoading] = useState(false);
+  const [searching, setSearching] = useState<Mode>();
   const [error, setError] = useState('');
   const [result, setResult] = useState<TableLineagePathResult>();
+  const [common, setCommon] = useState<TableLineageCommonUpstream>();
   const catalogRequest = useRef<AbortController>();
   const pathRequest = useRef<AbortController>();
   useEffect(() => () => { catalogRequest.current?.abort(); pathRequest.current?.abort(); }, []);
-  const clearPath = () => { pathRequest.current?.abort(); pathRequest.current = undefined; setResult(undefined); setPathLoading(false); };
+  const clearPath = () => {
+    pathRequest.current?.abort(); pathRequest.current = undefined; setResult(undefined); setCommon(undefined); setSearching(undefined);
+  };
   const clearCatalog = () => {
     catalogRequest.current?.abort(); catalogRequest.current = undefined; setCatalogLoading(false);
     setOptions(undefined); setTarget(''); setLimited(false); clearPath(); setError('');
@@ -69,19 +72,29 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
       else setError('Visible destination tables could not be loaded.');
     }).finally(() => { if (!request.signal.aborted) setCatalogLoading(false); });
   };
-  const find = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const find = async (mode: Mode) => {
     const destination = options?.find(option => name(option) === target);
-    if (!destination || pathLoading) return;
+    if (!destination || searching === mode) return;
     clearPath(); setError('');
     const request = new AbortController(); pathRequest.current = request;
-    setPathLoading(true);
-    void fetchTableLineagePath(source, destination, request.signal).then(value => {
-      if (request.signal.aborted) return;
-      if (value.state === 'found' && !hasWitness(value, source, destination)) {
-        setError('The directed reference path could not be verified.');
-      } else setResult(value);
-    }).catch(failure => {
+    const invalid = mode === 'common' ? 'The common upstream reference could not be verified.' : 'The directed reference path could not be verified.';
+    setSearching(mode);
+    try {
+      if (mode === 'common') {
+        const value = await fetchTableLineageCommonUpstream(source, destination, request.signal);
+        if (request.signal.aborted) return;
+        if (value.state === 'found' && (!value.ancestor || !ordinary(value.ancestor) ||
+          name(value.ancestor) === name(source) || name(value.ancestor) === name(destination) ||
+          !hasWitness(value.leftEdges, value.ancestor, source) || !hasWitness(value.rightEdges, value.ancestor, destination))) {
+          setError(invalid);
+        } else setCommon(value);
+      } else {
+        const value = await fetchTableLineagePath(source, destination, request.signal);
+        if (request.signal.aborted) return;
+        if (value.state === 'found' && !hasWitness(value.edges, source, destination)) setError(invalid);
+        else setResult(value);
+      }
+    } catch (failure) {
       if (request.signal.aborted) return;
       const status = code(failure);
       if (status === 401 || status === 403) { clearCatalog(); onScopeDenied(); }
@@ -90,12 +103,14 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
         setError('The selected path endpoints are no longer available. Search visible tables again.');
         onEndpointUnavailable();
       }
-      else setError('The directed reference path could not be verified.');
-    }).finally(() => { if (!request.signal.aborted) setPathLoading(false); });
+      else setError(invalid);
+    } finally {
+      if (pathRequest.current === request) { pathRequest.current = undefined; setSearching(undefined); }
+    }
   };
 
   return <div className="flow-lineage-reference-path__body">
-    <p>Source: <code>{name(source)}</code>. Search outgoing references for up to four hops; they are not evidence of data movement.</p>
+    <p>Source: <code>{name(source)}</code>. Find an outgoing reference path or a table that references both selections. References are not evidence of data movement.</p>
     <form onSubmit={searchCatalog} aria-label="Search for a destination">
       <label>Search destination tables<input type="search" aria-label="Search destination tables" required maxLength={100}
         value={search} onChange={event => { setSearch(event.target.value); clearCatalog(); }} /></label>
@@ -105,29 +120,49 @@ function PathSearch({ source, onScopeDenied, onEndpointUnavailable }: Props) {
     {options && <>
       {limited && <p>Showing at most the first {CATALOG_LIMIT} visible matches. Refine the search to see a different set.</p>}
       {!options.length ? <p role="status">No eligible visible destination in these results.</p> :
-        <form onSubmit={find} aria-label="Find a directed reference path">
+        <form onSubmit={event => { event.preventDefault(); void find('directed'); }} aria-label="Find a directed reference path">
           <label>Destination table<select aria-label="Destination table" value={target} onChange={event => {
             clearPath(); setError(''); setTarget(event.target.value);
           }}>
             <option value="">Select a visible destination</option>
             {options.map(option => <option key={name(option)} value={name(option)}>{name(option)}</option>)}
           </select></label>
-          <button type="submit" className="flow-lineage-action" disabled={!target || pathLoading}>Find reference path</button>
+          <div className="flow-lineage-reference-path__actions">
+            <button type="submit" className="flow-lineage-action" disabled={!target || searching === 'directed'}>Find reference path</button>
+            <button type="button" className="flow-lineage-action" disabled={!target || searching === 'common'}
+              onClick={() => void find('common')}>Find common upstream reference</button>
+          </div>
         </form>}
     </>}
-    {pathLoading && <p role="status">Searching for a directed reference path…</p>}
+    {searching && <p role="status">{searching === 'common' ? 'Searching for a common upstream reference…' : 'Searching for a directed reference path…'}</p>}
     {error && <p role="status">{error}</p>}
     {result?.state === 'found' && <section aria-label="Directed reference path">
       <h4>Directed reference path</h4>
       <p role="status">Found a visible directed reference path ({result.edges.length} {result.edges.length === 1 ? 'hop' : 'hops'}).</p>
       {result.searchTruncated && <p>The search was limited. Other paths may exist.</p>}
-      <ol className="flow-lineage-table-references__list">{result.edges.map((edge, index) => <li key={`${index}:${name(edge.from)}:${name(edge.to)}`}>
-        <span className="flow-lineage-table-references__route"><code>{name(edge.from)}</code><span aria-label="references"> → </span><code>{name(edge.to)}</code></span>
-        <span>{edge.kinds.map(kind => kinds[kind]).filter(Boolean).join(' · ')}</span>
-      </li>)}</ol>
+      <PathEdges edges={result.edges} />
     </section>}
     {result?.state === 'not_found_within_limit' && !result.searchTruncated && <p role="status">No visible reference path within four hops. This does not mean the tables are disconnected.</p>}
     {(result?.state === 'incomplete' || result?.state === 'not_found_within_limit' && result.searchTruncated) &&
       <p role="status">Search incomplete. A visible path could not be verified within the search budget.</p>}
+    {common?.state === 'found' && common.ancestor && <section className="flow-lineage-reference-path__witness" aria-label="Common upstream reference">
+      <h4>Common upstream reference</h4>
+      <p role="status">Found a visible common upstream reference: <code>{name(common.ancestor)}</code>.</p>
+      <p>These two directed catalog paths do not verify data flow. Other common references may exist.</p>
+      {common.searchTruncated && <p>The search was limited; only the verified paths below are shown.</p>}
+      <section aria-label="Path to current table"><h4>Path to current table</h4><PathEdges edges={common.leftEdges} /></section>
+      <section aria-label="Path to selected table"><h4>Path to selected table</h4><PathEdges edges={common.rightEdges} /></section>
+    </section>}
+    {common?.state === 'none_within_limit' && !common.searchTruncated &&
+      <p role="status">No common upstream reference found within the search limits. This does not rule out other references.</p>}
+    {(common?.state === 'incomplete' || common?.state === 'none_within_limit' && common.searchTruncated) &&
+      <p role="status">Common upstream search incomplete. No shared reference could be verified within the search budget.</p>}
   </div>;
+}
+
+function PathEdges({ edges }: { edges: TableLineagePathEdge[] }) {
+  return <ol className="flow-lineage-table-references__list">{edges.map((edge, index) => <li key={`${index}:${name(edge.from)}:${name(edge.to)}`}>
+    <span className="flow-lineage-table-references__route"><code>{name(edge.from)}</code><span aria-label="references"> → </span><code>{name(edge.to)}</code></span>
+    <span>{edge.kinds.map(kind => kinds[kind]).filter(Boolean).join(' · ')}</span>
+  </li>)}</ol>;
 }
