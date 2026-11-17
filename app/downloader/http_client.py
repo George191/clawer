@@ -94,7 +94,6 @@ except Exception:
 _STREAM_CHUNK_IDLE_SECONDS = 300
 _STREAM_LOG_MIN_SECONDS = 2.0
 _STREAM_BAR_WIDTH = 22
-_DOWNLOAD_CLEANUP_SECONDS = 5.0
 
 
 def _download_bar(fraction: float) -> str:
@@ -196,6 +195,9 @@ class HttpClient:
     async def _select_proxy(
         self, use_proxy: bool, rotate_proxy: bool = False, adapter_name: str | None = None,
     ) -> tuple[str, str | None]:
+        proxy_mode = get_crawl_proxy_mode()
+        if proxy_mode is not None:
+            use_proxy = proxy_mode
         front_proxy = settings.proxy_pre_proxy_url or settings.tunnel_proxy_url
         if not front_proxy:
             raise ProxyError("The front proxy is required for collection requests")
@@ -241,8 +243,16 @@ class HttpClient:
     ) -> None:
         if not tasks:
             return
+        done, pending = set(), set(tasks)
         try:
-            done, pending = await asyncio.wait(tasks, timeout=_DOWNLOAD_CLEANUP_SECONDS)
+            while pending:
+                finished, pending = await asyncio.wait(pending, timeout=0.5)
+                done.update(finished)
+                if any(task.cancelled() or task.exception() is not None
+                       for task in cleanup_tasks or () if task in finished):
+                    break
+                if pending:
+                    await check_control_state()
         except asyncio.CancelledError:
             for task in tasks:
                 if not task.done():
@@ -257,11 +267,14 @@ class HttpClient:
             task.cancel()
             self._download_pending_tasks.add(task)
             task.add_done_callback(self._consume_download_task)
-        failed = any(task.cancelled() or task.exception() is not None
-                     for task in cleanup_tasks or () if task in done)
+        failed = next((task for task in cleanup_tasks or () if task in done
+                       and (task.cancelled() or task.exception() is not None)), None)
         if pending or failed:
             self._download_cleanup_blocked.add(asyncio.current_task())
-            raise DownloadCleanupError(url, message="HTTP cleanup unconfirmed; this download task cannot start another request")
+            cause = None if failed is None or failed.cancelled() else failed.exception()
+            raise DownloadCleanupError(
+                url, message="HTTP cleanup unconfirmed; this download task cannot start another request",
+            ) from cause
 
     @staticmethod
     def _error_status_code(error: Exception) -> int | None:
@@ -766,7 +779,6 @@ class HttpClient:
                         code in (5, 6, 7, 16, 18, 28, 35, 52, 55, 56, 92)
                         or isinstance(error, (TimeoutError, ConnectionError))
                     )
-                    delay = max(0.0, settings.http_retry_backoff) * 2 ** attempt
                     if not retryable or attempt + 1 >= attempts:
                         if isinstance(error, (TimeoutError, DownloadTruncatedError)):
                             raise DownloadError(url, status, str(error)) from error
@@ -775,7 +787,6 @@ class HttpClient:
                         "Download transfer interrupted; retry=%d offset=%d curl_code=%s",
                         attempt + 1, state.offset if state is not None else 0, code,
                     )
-                    await asyncio.sleep(delay)
                     continue
                 if chunk_callback is not None:
                     chunk_callback(result.data)

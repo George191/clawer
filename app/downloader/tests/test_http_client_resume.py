@@ -75,7 +75,6 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(module, "_delayer", None),
             patch.object(module, "_proxy_pool", None),
             patch.object(module, "_STREAM_REQUEST_KWARGS", {"stream": True}),
-            patch.object(module, "_DOWNLOAD_CLEANUP_SECONDS", 0.03),
             patch.object(module.settings, "http_retry_backoff", 0),
             patch.object(module.settings, "http_download_timeout", 1),
         )
@@ -250,22 +249,21 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.requests), 1)
         self.assertEqual(self.http._download_operations, {})
 
-    async def test_close_during_retry_backoff_cancels_outer_download(self):
-        backoff_started = asyncio.Event()
+    async def test_close_during_retried_request_cancels_outer_download(self):
+        retry_started = asyncio.Event()
 
-        async def blocked_backoff(*args):
-            backoff_started.set()
+        async def blocked_retry():
+            retry_started.set()
             await asyncio.Event().wait()
 
-        self.outcomes[:] = [TransferError(), self.resumed()]
-        with patch.object(module.asyncio, "sleep", blocked_backoff):
-            task = asyncio.create_task(self.fetch())
-            await backoff_started.wait()
-            self.assertIs(self.http._download_owners[id(task)], task)
-            await self.http.close()
-            with self.assertRaises(asyncio.CancelledError):
-                await task
-        self.assertEqual(len(self.requests), 1)
+        self.outcomes[:] = [TransferError(), blocked_retry]
+        task = asyncio.create_task(self.fetch())
+        await retry_started.wait()
+        self.assertIs(self.http._download_owners[id(task)], task)
+        await self.http.close()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(len(self.requests), 2)
         self.assertEqual(self.http._download_owners, {})
 
     async def test_head_content_length_describes_object_not_response_body(self):
@@ -278,14 +276,23 @@ class DownloadResumeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.headers["content-length"], "999")
                 self.assertEqual(result.data, b"")
 
-    async def test_retry_backoff_does_not_consume_download_budget(self):
-        self.outcomes[:] = [TransferError() for _ in range(5)]
+    async def test_interrupted_transfer_resumes_immediately_with_proxy_rotation(self):
+        self.outcomes[:] = [self.interrupted(), self.resumed()]
+        self.http._select_proxy.side_effect = [
+            ("http://192.0.2.1:8080", "socks5h://front.invalid:1080"),
+            ("http://192.0.2.2:8080", "socks5h://front.invalid:1080"),
+        ]
         with patch.object(module.settings, "http_retry_backoff", 2), \
                 patch.object(module.asyncio, "sleep", AsyncMock()) as sleep:
-            with self.assertRaises(TransferError):
-                await self.fetch()
-        self.assertEqual(len(self.requests), 4)
-        self.assertEqual([call.args[0] for call in sleep.await_args_list], [2, 4, 8])
+            result = await self.http.download_response(URL, use_proxy=True)
+            sleep.assert_not_awaited()
+        self.assertEqual(result.data, b"abcdef")
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.requests[1]["headers"]["Range"], "bytes=3-")
+        self.assertEqual(
+            [call.kwargs["rotate_proxy"] for call in self.http._select_proxy.await_args_list],
+            [False, True],
+        )
 
     async def test_slow_response_headers_have_no_download_deadline(self):
         for transport in ({"stream": True}, {}):
