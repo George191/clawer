@@ -105,6 +105,48 @@ class ProxyReloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await pool.lease_proxy(3, 'site-b'), first)
         self.assertEqual(source.calls, 1)
 
+    async def test_exhausted_adapter_does_not_reuse_failed_exits_during_refresh_cooldown(self):
+        first, second = 'http://192.0.2.1:8080', 'http://192.0.2.2:8080'
+        source = Source(responses=[[ProxyInfo(first), ProxyInfo(second)]])
+        pool = ProxyPool()
+        pool.register_adapter(source)
+        self.assertEqual(await pool.lease_proxy(1, 'site-a'), first)
+        await pool.mark_failure(first, 'site-a')
+        self.assertEqual(await pool.lease_proxy(1, 'site-a'), second)
+        await pool.mark_failure(second, 'site-a')
+        pool._last_adapter_exhaustion_reload = time.monotonic()
+
+        self.assertIsNone(await pool.lease_proxy(1, 'site-a'))
+        self.assertEqual(source.calls, 1)
+        self.assertEqual(pool._adapter_failures, {first: {'site-a'}, second: {'site-a'}})
+        self.assertEqual(await pool.lease_proxy(2, 'site-b'), first)
+
+    async def test_refresh_rejects_returned_failed_exit_and_leases_new_ip(self):
+        first, second = 'http://192.0.2.1:8080', 'http://192.0.2.2:8080'
+        source = Source(responses=[[ProxyInfo(first)], [ProxyInfo(first), ProxyInfo(second)]])
+        pool = ProxyPool()
+        pool.register_adapter(source)
+        self.assertEqual(await pool.lease_proxy(1, 'site-a'), first)
+        await pool.mark_failure(first, 'site-a')
+
+        self.assertEqual(await pool.lease_proxy(2, 'site-a'), second)
+        self.assertEqual(source.calls, 2)
+        self.assertEqual(pool._adapter_failures, {first: {'site-a'}})
+        self.assertEqual(await pool.lease_proxy(3, 'site-b'), first)
+
+    async def test_refresh_with_only_failed_exits_keeps_failure_and_returns_none(self):
+        first = 'http://192.0.2.1:8080'
+        source = Source(responses=[[ProxyInfo(first)]])
+        pool = ProxyPool()
+        pool.register_adapter(source)
+        self.assertEqual(await pool.lease_proxy(1, 'site-a'), first)
+        await pool.mark_failure(first, 'site-a')
+
+        self.assertIsNone(await pool.lease_proxy(2, 'site-a'))
+        self.assertIsNone(await pool.lease_proxy(2, 'site-a'))
+        self.assertEqual(source.calls, 2)
+        self.assertEqual(pool._adapter_failures, {first: {'site-a'}})
+
 
 if __name__ == '__main__':
     logging.disable(logging.CRITICAL)

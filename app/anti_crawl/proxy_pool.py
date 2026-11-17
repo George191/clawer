@@ -208,11 +208,16 @@ class ProxyPool:
             self._proxies.clear()
             self._healthy.clear()
             self._unhealthy.clear()
-            self._adapter_failures.clear()
             self._current_proxy = None
             self._index = 0
             self._loaded = False
             await self._load_from_adapters()
+            if self._proxies:
+                current_urls = {proxy.url for proxy in self._proxies}
+                self._adapter_failures = {
+                    url: adapters for url, adapters in self._adapter_failures.items()
+                    if url in current_urls
+                }
             self._loaded = True
 
     # ── 代理获取 ────────────────────────────────────────────────────────────
@@ -383,18 +388,6 @@ class ProxyPool:
                     for p in self._healthy
                     if adapter_name not in self._adapter_failures.get(p.url, set())
                     and (not excluded_host or urlsplit(p.url).hostname != excluded_host)
-                ]
-            elif adapter_name:
-                logger.warning(
-                    "No proxy available for adapter %s; reusing the current pool during the %.0fs reload cooldown",
-                    adapter_name,
-                    _ADAPTER_EXHAUSTION_RELOAD_COOLDOWN_SECONDS,
-                )
-                for failed_adapters in self._adapter_failures.values():
-                    failed_adapters.discard(adapter_name)
-                candidates = [
-                    p for p in self._healthy
-                    if not excluded_host or urlsplit(p.url).hostname != excluded_host
                 ]
 
         # 优先选择未被其他协程使用的健康代理
