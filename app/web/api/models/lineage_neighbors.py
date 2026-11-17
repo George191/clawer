@@ -1,6 +1,8 @@
 """Bounded, declared Explorer table relationships (not movement evidence)."""
 
+from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -47,3 +49,16 @@ class LineageCommonUpstream(BaseModel):
     ancestor: LineageEndpoint | None = None
     leftEdges: list[LineagePathEdge] = Field(default_factory=list)
     rightEdges: list[LineagePathEdge] = Field(default_factory=list)
+
+
+class ObservedLineageNeighbor(LineageEndpoint):
+    receiptId: UUID
+    receiptRecordedAt: datetime
+    rowsAffected: int
+
+
+class ObservedLineage(BaseModel):
+    available: bool
+    direction: LineageDirection
+    neighbors: list[ObservedLineageNeighbor]
+    truncated: bool

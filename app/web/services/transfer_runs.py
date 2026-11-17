@@ -53,6 +53,11 @@ def upstream_transfer_enabled() -> bool:
             and settings.TRANSFER_SANDBOX_ENABLED and settings.TRANSFER_SANDBOX_UPSTREAM_ENABLED)
 
 
+def observed_lineage_enabled() -> bool:
+    return ("ENVIRONMENT" in settings.model_fields_set and settings.ENVIRONMENT == "local"
+            and settings.TRANSFER_SANDBOX_ENABLED and settings.TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED)
+
+
 def is_sandbox_upsert(plan: TransferPlanRow, trigger: str) -> bool:
     return (plan.trigger == trigger and plan.write_mode == "upsert" and plan.incremental_cursor is None
             and plan.source_schema == plan.target_schema == SANDBOX)

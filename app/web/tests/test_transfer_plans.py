@@ -841,6 +841,74 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         target = await self.pg.fetch_all("SELECT id FROM ts_ods.ods_financial_fact ORDER BY id")
         self.assertEqual([row["id"] for row in target], [3])
 
+    async def test_observed_lineage_requires_exact_existing_manual_proof_and_both_current_visible_heaps(self):
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.a (id integer PRIMARY KEY, value text)",
+                "CREATE TABLE ts_transfer_sandbox.b (id integer PRIMARY KEY, value text)",
+            ):
+                await session.execute(text(sql))
+        root = "/etl/ts_transfer_sandbox"
+        params = {"direction": "outgoing"}
+        source_path = root + "/a/lineage-observed"
+        target_path = root + "/b/lineage-observed"
+        config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                  "sourceTable": "a", "targetTable": "b", "writeMode": "upsert"}
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", True),
+        ):
+            async with api(False, self.session_provider) as reader:
+                self.assertEqual((await reader.get(source_path, params=params)).status_code, 403)
+            async with api(True, self.session_provider) as client:
+                response = await client.post(RUNS, json=config)
+                self.assertEqual(response.status_code, 201, response.text)
+                plan = response.json()
+
+                async def run():
+                    result = await client.post(f"{RUNS}/{plan['id']}/runs", json={
+                        "expectedUpdatedAt": plan["updatedAt"], "requestId": str(uuid4()),
+                    })
+                    self.assertEqual(result.status_code, 200, result.text)
+                    return result.json()
+
+                async def incoming():
+                    result = await client.get(target_path, params={"direction": "incoming"})
+                    self.assertEqual(result.status_code, 200, result.text)
+                    return result.json()["neighbors"]
+
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.a VALUES (1, 'observed')")
+                with patch.object(settings, "TRANSFER_SANDBOX_UPSTREAM_ENABLED", False):
+                    self.assertEqual((await run())["rowsAffected"], 1)
+                    self.assertEqual(await incoming(), [])
+                with patch.object(settings, "TRANSFER_SANDBOX_UPSTREAM_ENABLED", True):
+                    await run()
+                    receipt = await run()
+
+                actual = await client.get(source_path, params=params)
+                self.assertEqual(actual.status_code, 200, actual.text)
+                self.assertEqual(actual.headers["Cache-Control"], "no-store")
+                expected = {"schema": "ts_transfer_sandbox", "table": "b", "receiptId": receipt["id"],
+                            "receiptRecordedAt": receipt["recordedAt"], "rowsAffected": 1}
+                self.assertEqual(actual.json(), {"available": True, "direction": "outgoing", "truncated": False,
+                                                 "neighbors": [expected]})
+                self.assertEqual(await incoming(), [{**expected, "table": "a"}])
+                self.assertEqual((await client.get(source_path + "?direction=outgoing&direction=incoming")).status_code, 422)
+                self.assertEqual((await client.get(source_path.replace("ts_transfer_sandbox", "ts_ods"), params=params)).status_code, 404)
+                with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
+                    self.assertFalse((await client.get(source_path, params=params)).json()["available"])
+                await self.pg.execute("INSERT INTO public.ontology_objects VALUES ('ts_transfer_sandbox','a',true,'hidden')")
+                self.assertEqual((await client.get(source_path, params=params)).status_code, 404)
+                self.assertEqual(await incoming(), [])
+                await self.pg.execute("DELETE FROM public.ontology_objects WHERE schema_name='ts_transfer_sandbox'")
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.a")
+                self.assertEqual(await incoming(), [])
+                self.assertEqual((await client.get(source_path, params=params)).json()["neighbors"], [])
+
     async def test_upstream_commit_events_and_compound_bindings_execute_only_reviewed_sets(self):
         async with self.pg.session() as session:
             for sql in (

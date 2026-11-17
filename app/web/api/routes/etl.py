@@ -13,7 +13,7 @@ from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
 from app.web.api.models.lineage_neighbors import (
-    LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath, LineagePathTargets,
+    LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath, LineagePathTargets, ObservedLineage,
 )
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
 from app.web.api.models.asset_collected_stats import AssetCollectedStats
@@ -119,6 +119,7 @@ from app.web.services import etl_runtime
 from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
+from app.web.services.transfer_observed_lineage import observed_transfer_lineage
 from app.web.services.transfer_plans import list_transfer_plans, preflight_transfer_plan, save_transfer_plan
 from app.web.services.transfer_runs import (
     SANDBOX, list_transfer_attempts, list_transfer_runs, run_sandbox_transfer, transfer_run_capabilities,
@@ -894,6 +895,17 @@ async def object_preview(layer: str, table: str, includeHidden: bool = False,
     if includeHidden:
         return await get_etl_layers().preview(layer, table, include_hidden=True)
     return await get_etl_layers().preview(layer, table)
+
+
+@write.get("/{schema}/{table}/lineage-observed")
+async def table_observed_transfer_lineage(
+    schema: WarehouseSchema, table: TableName, direction: LineageDirection, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> ObservedLineage:
+    if set(request.query_params) != {"direction"} or len(request.query_params.getlist("direction")) != 1:
+        raise HTTPException(422, "Specify exactly one observed transfer direction")
+    response.headers["Cache-Control"] = "no-store"
+    return await observed_transfer_lineage(session, schema, table, direction)
 
 
 @read.get("/{layer}/{table}/lineage-neighbors")

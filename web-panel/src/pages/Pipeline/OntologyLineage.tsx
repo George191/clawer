@@ -10,6 +10,7 @@ import LineageTransferPlans from './LineageTransferPlans';
 import ManagedBatchLineage, { MANAGED_BATCH_ASSET } from './ManagedBatchLineage';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import TableLineageReferences from './TableLineageReferences';
+import ObservedTableLineage from './ObservedTableLineage';
 import './ontology-lineage.css';
 
 // Current ETL processor contracts: TsOds, TsTask, TsDim, TsDwd and TsDws.
@@ -288,6 +289,8 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
               {asset && inspectorOpen && <aside className={`flow-lineage-inspector${activePanel === 'transfers' || showExportTable || showOrdinaryTable ? ' flow-lineage-inspector--transfers' : ''}`} aria-label="Node details"><header><span>{showExportTable || showOrdinaryTable ? 'SELECTED TABLE' : 'SELECTED SCHEMA'}</span><button type="button" aria-label="Close node details" onClick={closeInspector}><CloseOutlined /></button></header><h2>{showExportTable || showOrdinaryTable ? selectedTable : asset.alias || asset.label}</h2><code>{showExportTable || showOrdinaryTable ? `${asset.key}.${selectedTable}` : asset.key}</code>
                 {showOrdinaryTable ? <>
                   <TableLineageReferences schema={asset.key} table={selectedTable} version={version + refreshToken} />
+                  {canPlanTransfers && asset.key === 'ts_transfer_sandbox' &&
+                    <ObservedTableLineage table={selectedTable} version={version + refreshToken} />}
                   <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open table Evidence in Explorer <ArrowRightOutlined /></button>
                   <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={() => updateQuery({ table: null, tableLineage: null })}>Back to schema details</button>
                 </> : showExportTable ? <>

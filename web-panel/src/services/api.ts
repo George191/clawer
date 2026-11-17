@@ -1193,3 +1193,11 @@ export const reviewFieldFreshness = (request: FieldFreshnessReview): Promise<Fie
   client.put(fieldFreshnessPath, request).then(r => unwrap<FieldFreshness>(r.data));
 export const acknowledgeFieldFreshnessIncident = (id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
   client.post(`${fieldFreshnessPath}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
+
+export type ObservedTableLineage = {
+  available: boolean; direction: TableLineageDirection; truncated: boolean;
+  neighbors: (TableLineageIdentity & { receiptId: string; receiptRecordedAt: string; rowsAffected: number })[];
+};
+export const fetchObservedTableLineage = (source: TableLineageIdentity, direction: TableLineageDirection, signal?: AbortSignal): Promise<ObservedTableLineage> =>
+  client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-observed`, { params: { direction }, signal })
+    .then(r => unwrap<ObservedTableLineage>(r.data));
