@@ -129,6 +129,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.upstream_migration = import_module("app.web.alembic.versions.5bef50bc72c9_ontology_transfer_upstream")
         self.compound_migration = import_module("app.web.alembic.versions.b6c45a7e9130_ontology_compound_upstream")
         self.nested_migration = import_module("app.web.alembic.versions.0f8b2e641a5d_ontology_nested_upstream")
+        self.mixed_migration = import_module("app.web.alembic.versions.67bd926fa4d1_ontology_mixed_upstream")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
         self.incident_migration = import_module(
@@ -164,6 +165,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.timeline_migration.upgrade)
             await self.migrate(session, self.stats_migration.upgrade)
             await self.migrate(session, self.job_quality_migration.upgrade)
+            await self.migrate(session, self.mixed_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -187,6 +189,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_attempts"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedule_jobs"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedules"))
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_mixed_slots"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_job_events, "
                                        "public.ontology_transfer_upstream_parents"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_jobs, "
@@ -580,6 +583,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.mixed_migration.downgrade)
             await self.migrate(session, self.job_quality_migration.downgrade)
             await self.migrate(session, self.stats_migration.downgrade)
             await self.migrate(session, self.nested_migration.downgrade)
@@ -992,6 +996,175 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(item["physicalScope"] == "historical" for item in historical["entries"]))
         async with api(False, self.session_provider) as reader:
             self.assertEqual((await reader.get(route)).status_code, 403)
+
+    async def test_mixed_utc_requires_visible_pre_slot_witness_and_checks_db_expiry_before_write(self):
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                "CREATE SCHEMA ts_transfer_sandbox",
+                *(f"CREATE TABLE ts_transfer_sandbox.{name}(id integer PRIMARY KEY, value text NOT NULL)"
+                  for name in ("a", "b", "c", "middle", "success", "missed", "expired")),
+                *(f"INSERT INTO ts_transfer_sandbox.{name} VALUES ({index},'{name}')"
+                  for index, name in enumerate("abc", 1)),
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+
+        slot = datetime.now(timezone.utc).replace(second=0, microsecond=0) + timedelta(minutes=3)
+        wall = slot - timedelta(minutes=4)
+
+        async def db_clock(_):
+            return wall
+
+        async def collect():
+            async with self.pg.session() as session:
+                # The old injected dispatch time cannot qualify a mixed observation or decision.
+                return await collect_due_upstream_transfer_jobs(session, now=slot + timedelta(hours=10))
+
+        async def execute(job_id):
+            async with self.pg.session() as session:
+                return await execute_upstream_transfer_job_in_session(session, job_id, now=slot - timedelta(minutes=1))
+
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.upstream_mixed_rules.mixed_db_now", side_effect=db_clock) as clock,
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_UPSTREAM_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_MIXED_UPSTREAM_ENABLED", True),
+        ):
+            async with api(True, self.session_provider) as client:
+                async def plan(source, target, trigger):
+                    response = await client.post(RUNS, json={
+                        **PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                        "sourceTable": source, "targetTable": target, "writeMode": "upsert", "trigger": trigger,
+                    })
+                    self.assertEqual(response.status_code, 201, response.text)
+                    return response.json()
+
+                async def commit(parent):
+                    response = await client.post(f"{RUNS}/{parent['id']}/runs", json={
+                        "requestId": str(uuid4()), "expectedUpdatedAt": parent["updatedAt"],
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+
+                first, second, late = [await plan(name, "middle", "manual") for name in "abc"]
+                passing, missing, timing_out = [await plan("middle", target, "upstream")
+                                               for target in ("success", "missed", "expired")]
+                scheduled = f"{RUNS}/{passing['id']}/schedule"
+                passing_path = f"{RUNS}/{passing['id']}/upstream-trigger"
+                await self.pg.execute("""
+                    INSERT INTO public.ontology_transfer_schedules
+                        (plan_id, generation, enabled, armed_by, armed_for_updated_at, updated_at)
+                    VALUES (CAST(:plan AS uuid),1,true,:actor,CAST(:version AS timestamptz),NOW())
+                """, {"plan": UUID(passing["id"]), "actor": TEST_ACTOR,
+                      "version": datetime.fromisoformat(passing["updatedAt"])})
+
+                def review(child, parents):
+                    rule = {"enabled": True, "operator": "AND", "mixedTimeUtc": slot.strftime("%H:%M"),
+                            "expectedUpdatedAt": child["updatedAt"], "expectedGeneration": None,
+                            "parents": [{"planId": parent["id"], "expectedUpdatedAt": parent["updatedAt"]}
+                                        for parent in parents]}
+                    if len(parents) == 3:
+                        rule.update(operator="OR", group={"operator": "AND", "parentPlanIds": [
+                            parents[0]["id"], parents[1]["id"],
+                        ]})
+                    return rule
+
+                forced = await client.put(passing_path, json=review(passing, [first, second, late]))
+                self.assertEqual(forced.status_code, 409, forced.text)
+                daily = {"enabled": False, "expectedUpdatedAt": passing["updatedAt"]}
+                self.assertEqual((await client.put(scheduled, json=daily)).status_code, 200)
+                for child, parents in ((passing, [first, second, late]), (missing, [first, late]), (timing_out, [first, second])):
+                    route = f"{RUNS}/{child['id']}/upstream-trigger"
+                    request = review(child, parents)
+                    armed = await client.put(route, json=request)
+                    self.assertEqual(armed.status_code, 200, armed.text)
+                    self.assertEqual(armed.json()["mixedTimeUtc"], request["mixedTimeUtc"])
+                    legacy = {key: value for key, value in request.items() if key != "mixedTimeUtc"}
+                    retry = await client.put(route, json={**legacy, "expectedGeneration": 1})
+                    self.assertEqual(retry.json(), armed.json())
+                reverse = await client.put(scheduled, json={**daily, "enabled": True})
+                self.assertEqual(reverse.status_code, 409, reverse.text)
+
+                with self.assertRaisesRegex(RuntimeError, "mixed upstream scheduling evidence"):
+                    async with self.pg.session() as session:
+                        await self.migrate(session, self.mixed_migration.downgrade)
+
+                await commit(first)
+                wall = slot - timedelta(seconds=35)
+                self.assertEqual(await collect(), [])
+                self.assertEqual(await self.pg.fetch_all("SELECT event_ids FROM ontology_transfer_upstream_mixed_slots"), [])
+                await commit(second)
+                self.assertEqual(await collect(), [])
+                pre = await self.pg.fetch_all("SELECT observed_at, event_ids FROM ontology_transfer_upstream_mixed_slots")
+                self.assertEqual(len(pre), 2)
+                self.assertTrue(all(row["observed_at"] == wall and len(row["event_ids"]) == 2 for row in pre))
+                self.assertEqual((await client.get(passing_path + "/slots")).json(), [])
+
+                wall = slot + timedelta(seconds=3)
+                job_ids = await collect()
+                self.assertEqual(len(job_ids), 2)
+                captured = (await client.get(passing_path + "/slots")).json()
+                self.assertEqual([item["state"] for item in captured], ["admitted"])
+                self.assertLess(datetime.fromisoformat(captured[0]["witnessObservedAt"]), slot)
+                missed_route = f"{RUNS}/{missing['id']}/upstream-trigger"
+                check = (await client.get(missed_route + "/slots")).json()
+                self.assertEqual([item["state"] for item in check], ["no_witness"])
+                self.assertNotIn("jobId", check[0])
+                await commit(late)  # actual app's event recorded_at is before slot, but first visible now is too late.
+                self.assertEqual(await collect(), [])
+                self.assertEqual((await client.get(missed_route + "/slots")).json(), check)
+                self.assertEqual((await client.get(missed_route + "/jobs")).json(), [])
+
+                admitted = UUID(captured[0]["jobId"])
+                expired = next(identity for identity in job_ids if identity != admitted)
+                await self.pg.execute("""
+                    UPDATE ontology_transfer_upstream_mixed_slots SET decided_at=decided_at + INTERVAL '1 second'
+                    WHERE job_id=:job
+                """, {"job": admitted})
+                self.assertEqual((await client.get(passing_path + "/jobs")).json(), [])
+                self.assertEqual((await client.get(passing_path + "/slots")).json(), [])
+                await self.pg.execute("""
+                    UPDATE ontology_transfer_upstream_mixed_slots SET decided_at=:decision WHERE job_id=:job
+                """, {"job": admitted, "decision": datetime.fromisoformat(captured[0]["decidedAt"])})
+                with patch.object(settings, "TRANSFER_SANDBOX_MIXED_UPSTREAM_ENABLED", False):
+                    self.assertEqual(await execute(admitted), "disabled")
+                self.assertEqual(await execute(admitted), "committed")
+                prior_side_effect = clock.side_effect
+                clock.side_effect = [slot + timedelta(seconds=4), slot + timedelta(seconds=5), slot + timedelta(minutes=5)]
+                try:
+                    self.assertEqual(await execute(expired), "expired")
+                finally:
+                    clock.side_effect = prior_side_effect
+                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS n FROM ts_transfer_sandbox.expired"))["n"], 0)
+
+                history = (await client.get(passing_path + "/jobs")).json()
+                self.assertEqual(len(history), 1)
+                self.assertEqual((history[0]["state"], len(history[0]["events"])), ("committed", 2))
+                self.assertEqual(datetime.fromisoformat(history[0]["mixedSlot"]), slot)
+                receipt_route = f"{RUNS}/{passing['id']}/runs"
+                self.assertEqual(len((await client.get(receipt_route)).json()), 1)
+
+                legacy_child = await plan("middle", "missed", "upstream")
+                legacy_route = f"{RUNS}/{legacy_child['id']}/upstream-trigger"
+                legacy_review = {**review(legacy_child, [first]), "mixedTimeUtc": None}
+                self.assertEqual((await client.put(legacy_route, json=legacy_review)).status_code, 200)
+                await commit(first)
+
+                async def mixed_fault(session):
+                    await session.execute(text("SELECT 1/0"))
+
+                with patch("app.web.services.transfer_upstream.collect_mixed_slot_decisions", side_effect=mixed_fault):
+                    async with self.pg.session() as session:
+                        eager, = await collect_due_upstream_transfer_jobs(session)
+                eager_history = (await client.get(legacy_route + "/jobs")).json()
+                self.assertEqual(eager_history[0]["id"], str(eager))
+                self.assertNotIn("mixedSlot", eager_history[0])
 
     async def test_nested_upstream_exact_witness_fresh_choice_retains_alternative_and_rejects_tamper(self):
         async with self.pg.session() as session:

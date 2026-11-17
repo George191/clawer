@@ -47,7 +47,7 @@ from app.web.api.models.table_exports import (
 )
 from app.web.api.models.transfer_timeline import TimelineKind, TransferTimelineDetail, TransferTimelinePage
 from app.web.api.models.transfer_upstream import (
-    UpstreamCandidate, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerJob, UpstreamTriggerSummary,
+    UpstreamCandidate, UpstreamMixedSlot, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerJob, UpstreamTriggerSummary,
 )
 from app.web.api.models.etl import (
     CodePayload,
@@ -104,7 +104,7 @@ from app.web.services.table_exports import (
 from app.web.services.synthetic_governance import marking_limit
 from app.web.services.transfer_timeline import list_transfer_timeline, read_transfer_timeline_entry
 from app.web.services.transfer_upstream import (
-    change_upstream_trigger, list_upstream_candidates, list_upstream_jobs, list_upstream_triggers, read_upstream_trigger,
+    change_upstream_trigger, list_upstream_candidates, list_upstream_jobs, list_upstream_mixed_slots, list_upstream_triggers, read_upstream_trigger,
 )
 from app.web.services import etl_runtime
 from app.web.services import vulnerability_keywords as keyword_files
@@ -488,6 +488,11 @@ async def get_upstream_candidates(plan_id: UUID, session: SessionDep) -> list[Up
 @write.get("/transfer-plans/{plan_id}/upstream-trigger/jobs")
 async def get_upstream_jobs(plan_id: UUID, session: SessionDep) -> list[UpstreamTriggerJob]:
     return await list_upstream_jobs(session, plan_id)
+
+
+@write.get("/transfer-plans/{plan_id}/upstream-trigger/slots")
+async def get_upstream_mixed_slots(plan_id: UUID, session: SessionDep) -> list[UpstreamMixedSlot]:
+    return await list_upstream_mixed_slots(session, plan_id)
 
 
 @write.get("/transfer-schedules")

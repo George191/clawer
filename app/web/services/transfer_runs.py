@@ -25,6 +25,7 @@ from app.web.api.utils.models import StatusTypes
 from app.web.core.config import settings
 from app.web.services.etl_layers import get_etl_layers, quote_identifier
 from app.web.services.transfer_plans import _response, compare_transfer_endpoints
+from app.web.services import upstream_mixed_rules as mixed
 from app.web.services.upstream_rules import exact_nested_job, positive_nested_events, valid_witness
 
 SANDBOX = "ts_transfer_sandbox"
@@ -315,6 +316,9 @@ async def _lock_schedule_job(
         or plan.incremental_cursor is not None or plan.schedule_time != job.slot.astimezone(timezone.utc).strftime("%H:%M")
         or plan.source_schema != SANDBOX or plan.target_schema != SANDBOX):
         raise HTTPException(409, "The scheduled transfer was paused or its draft binding changed")
+    upstream = await session.get(UpstreamTriggerRow, plan.id, populate_existing=True)
+    if upstream is not None and upstream.enabled and upstream.mixed_time_utc is not None:
+        raise HTTPException(409, "An independent Daily UTC job cannot run while a mixed upstream trigger is armed")
     actor = await session.scalar(select(User.id).where(
         User.id == actor_id, User.status == StatusTypes.ENABLE, User.is_superuser.is_(True),
     ).with_for_update(read=True))
@@ -355,7 +359,10 @@ async def _lock_upstream_job(
                          UpstreamTriggerJobEventRow.generation == job.generation).limit(4))).all())
     if not events or max(event.id for event in events) != job.event_id:
         raise HTTPException(409, "The upstream job has no matching parent commit event set")
-    if job.group_operator is not None and (
+    observed = await mixed.exact_mixed_job(session, job, events) if job.mixed_slot is not None else None
+    if job.mixed_slot is not None and observed is None:
+        raise HTTPException(409, "The immutable mixed upstream witness did not match its UTC slot")
+    if job.mixed_slot is None and job.group_operator is not None and (
         not exact_nested_job(job, events) or not await positive_nested_events(session, events)
     ):
         raise HTTPException(409, "The immutable upstream witness is not valid for this nested rule")
@@ -363,9 +370,12 @@ async def _lock_upstream_job(
         return job, events, None, []
     if job.state not in ("pending", "dispatched"):
         raise HTTPException(409, "This upstream job already has a terminal outcome")
-    current = now or datetime.now(timezone.utc)
-    if current < max(event.recorded_at for event in events):
-        raise HTTPException(409, {"code": "schedule_not_due", "message": "Upstream event time has not arrived"})
+    if observed is not None and not mixed.mixed_upstream_enabled():
+        raise HTTPException(403, "Mixed UTC and upstream execution is disabled")
+    current = await mixed.mixed_db_now(session) if observed is not None else now or datetime.now(timezone.utc)
+    due_at = job.mixed_slot if observed is not None else max(event.recorded_at for event in events)
+    if current < due_at:
+        raise HTTPException(409, {"code": "schedule_not_due", "message": "Upstream dispatch time has not arrived"})
     if current >= job.expires_at:
         raise HTTPException(409, {"code": "schedule_expired", "message": "Upstream event dispatch window expired"})
     binding = await session.get(UpstreamTriggerRow, child.id, populate_existing=True)
@@ -387,6 +397,17 @@ async def _lock_upstream_job(
                or event.id <= reviewed[event.parent_plan_id].cutoff_event_id
                or event.parent_updated_at != reviewed[event.parent_plan_id].parent_updated_at for event in events)):
         raise HTTPException(409, "The upstream trigger was paused or its reviewed plan versions changed")
+    if observed is not None:
+        daily = await session.get(TransferScheduleRow, child.id, populate_existing=True)
+        if ((daily is not None and daily.enabled)
+            or binding.mixed_time_utc != job.mixed_slot.astimezone(timezone.utc).strftime("%H:%M")
+            or observed.rule_parent_ids != sorted(reviewed)
+            or observed.rule_digest != mixed.mixed_rule_digest(binding, reviewed.values(), observed.slot)
+            or any(event.recorded_at <= mixed.mixed_lower_bound(binding, observed.slot) for event in events)
+            or not await positive_nested_events(session, events, parents_by_id=locked_plans)):
+            raise HTTPException(409, "The scoped UTC gate or reviewed upstream proof changed; review and arm again")
+    elif binding.mixed_time_utc is not None:
+        raise HTTPException(409, "This upstream review requires a previously observed UTC slot witness")
     actor = await session.scalar(select(User.id).where(
         User.id == actor_id, User.status == StatusTypes.ENABLE, User.is_superuser.is_(True),
     ).with_for_update(read=True))
@@ -504,7 +525,9 @@ async def run_sandbox_transfer(
                     event.source_oid, event.source_node, event.target_oid, event.target_node,
                 ):
                     raise HTTPException(409, "An approved physical upstream table changed; review and arm again")
-            if (scheduled_now or datetime.now(timezone.utc)) >= job.expires_at:
+            upstream_now = (await mixed.mixed_db_now(session) if job.mixed_slot is not None
+                            else scheduled_now or datetime.now(timezone.utc))
+            if upstream_now >= job.expires_at:
                 raise HTTPException(409, {"code": "schedule_expired", "message": "Upstream dispatch window closed before reading"})
 
         incremental = plan.incremental_cursor is not None
@@ -594,7 +617,10 @@ async def run_sandbox_transfer(
             await _require_index_range_plan(
                 session, source_sql, limit_params, endpoints[source_ref]["index_name"], ranged=True,
             )
-        if job is not None and (scheduled_now or datetime.now(timezone.utc)) >= job.expires_at:
+        job_now = (await mixed.mixed_db_now(session)
+                   if isinstance(job, UpstreamTriggerJobRow) and job.mixed_slot is not None
+                   else scheduled_now or datetime.now(timezone.utc))
+        if job is not None and job_now >= job.expires_at:
             raise HTTPException(409, {"code": "schedule_expired", "message": "UTC dispatch window closed before writing"})
         if scheduled_job_id is not None and upstream_job_id is None and settings.TRANSFER_SANDBOX_JOB_QUALITY_ENABLED:
             current_target = catalog[plan.target_table]

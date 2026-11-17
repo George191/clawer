@@ -17,6 +17,7 @@ from app.web.api.models.transfer_schedules import (
     TransferScheduleSummary,
 )
 from app.web.core.config import settings
+from app.web.api.models.transfer_upstream import UpstreamTriggerRow
 from app.web.services.transfer_runs import (
     HISTORY_LIMIT, SANDBOX, run_sandbox_transfer, scheduled_transfer_enabled,
 )
@@ -74,6 +75,10 @@ async def change_transfer_schedule(
         raise HTTPException(409, "The transfer draft changed. Reload it before changing the schedule")
     if change.enabled and not scheduled_transfer_enabled():
         raise HTTPException(403, "Automatic sandbox transfer execution is disabled")
+    if change.enabled:
+        upstream = await session.get(UpstreamTriggerRow, plan_id, populate_existing=True)
+        if upstream is not None and upstream.enabled and upstream.mixed_time_utc is not None:
+            raise HTTPException(409, "Pause the mixed upstream trigger before arming the independent Daily UTC schedule")
     if change.enabled and not _eligible(plan):
         raise HTTPException(422, "Only daily UTC Upsert plans in the dedicated local sandbox can be scheduled")
 

@@ -5,6 +5,7 @@ import { fetchTransferUpstreamCandidates, fetchTransferUpstreamJobs, fetchTransf
 import type { TransferPlan, TransferUpstreamCandidate, TransferUpstreamGroup, TransferUpstreamJob, TransferUpstreamOperator, TransferUpstreamTrigger } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import { oppositeOperator, recordedUpstreamRule, upstreamExpression } from './upstreamRules';
+import UpstreamSlotHistory, { UpstreamUtcTime } from './UpstreamSlotHistory';
 
 const labels: Record<TransferUpstreamJob['state'], string> = {
   pending: 'Pending dispatch', dispatched: 'Dispatched', committed: 'Committed', rejected: 'Rejected',
@@ -12,6 +13,7 @@ const labels: Record<TransferUpstreamJob['state'], string> = {
 };
 const utcText = (value: string) => new Date(value).toLocaleString(undefined, { timeZone: 'UTC', timeZoneName: 'short' });
 const maxParents = 3;
+const utcClock = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 
 export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
   plan: TransferPlan; maxRows: number; formatError: (failure: unknown) => string;
@@ -23,6 +25,8 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
   const [operator, setOperator] = useState<TransferUpstreamOperator>('OR');
   const [groupEnabled, setGroupEnabled] = useState(false);
   const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [gateEnabled, setGateEnabled] = useState(false);
+  const [gateTime, setGateTime] = useState('');
   const [bindingError, setBindingError] = useState('');
   const [candidatesError, setCandidatesError] = useState('');
   const [jobsError, setJobsError] = useState('');
@@ -51,6 +55,8 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
         setOperator(value.operator);
         setGroupEnabled(Boolean(value.group));
         setGroupIds(value.group?.parentPlanIds ?? []);
+        setGateEnabled(Boolean(value.mixedTimeUtc));
+        setGateTime(value.mixedTimeUtc ?? '');
       }
     }).catch(failure => { if (live(read.signal)) setBindingError(formatError(failure)); });
     void fetchTransferUpstreamCandidates(plan.id, read.signal).then(value => {
@@ -70,7 +76,8 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
     ? { operator: oppositeOperator(operator), parentPlanIds: [groupIds[0], groupIds[1]] } : undefined;
   const expression = groupEnabled && !group ? undefined : upstreamExpression(operator, selected.map(parent => ({ id: parent.id, label: parent.name })), group);
   const canArm = Boolean(binding?.available && !binding.configuredEnabled && selected.length >= 1 &&
-    selected.length === parentIds.length && parentIds.length <= maxParents && (!groupEnabled || group));
+    selected.length === parentIds.length && parentIds.length <= maxParents && (!groupEnabled || group) &&
+    (!gateEnabled || binding.mixedAvailable && utcClock.test(gateTime)));
   const toggleParent = (id: string, checked: boolean) => {
     setParentIds(previous => checked && !previous.includes(id) && previous.length < maxParents ? [...previous, id]
       : checked ? previous : previous.filter(item => item !== id));
@@ -89,6 +96,7 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
         enabled,
         operator: enabled ? operator : binding.operator,
         ...(enabled && group ? { group } : {}),
+        ...(enabled && gateEnabled ? { mixedTimeUtc: gateTime } : enabled && binding.mixedTimeUtc ? { mixedTimeUtc: null } : {}),
         parents: enabled ? selected.map(parent => ({ planId: parent.id, expectedUpdatedAt: parent.updatedAt })) : [],
         expectedUpdatedAt: plan.updatedAt,
         expectedGeneration: binding.generation,
@@ -109,6 +117,7 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
     {bindingError ? <p role="alert" className="flow-transfer-error">{bindingError}</p> : !binding ? <p role="status">Loading upstream trigger…</p> : <>
       <strong role="status">{binding.configuredEnabled ? binding.enabled && binding.available ? 'Upstream trigger armed' : 'Upstream trigger armed · blocked' : binding.generation == null ? 'Upstream trigger not armed' : 'Upstream trigger paused'}</strong>
       {!binding.available && <p>Upstream execution is unavailable for this plan or environment.</p>}
+      {binding.mixedTimeUtc && <p>Bound UTC time gate: <strong>{binding.mixedTimeUtc} UTC AND an eligible upstream witness</strong>.</p>}
       {binding.parents.length > 0 && <><p>Bound condition: <strong>{binding.group ? upstreamExpression(binding.operator, binding.parents.map(parent => ({
         id: parent.planId, label: parent.planName,
       })), binding.group) : binding.operator}</strong></p>
@@ -124,7 +133,7 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
             <option value="OR">{groupEnabled ? 'OR · Either branch' : 'OR · Any producer commits'}</option>
             <option value="AND">{groupEnabled ? 'AND · Both branches' : 'AND · All producers commit'}</option>
           </select></label>
-          {!groupEnabled && <p>{operator === 'AND' ? 'Each job consumes one eligible, unused commit from every selected producer.' : 'Each eligible, unused producer commit can start its own job.'}</p>}
+          {!groupEnabled && !gateEnabled && <p>{operator === 'AND' ? 'Each job consumes one eligible, unused commit from every selected producer.' : 'Each eligible, unused producer commit can start its own job.'}</p>}
           {candidates && (candidates.length > 0 || unlisted.length > 0) && <fieldset className="flow-transfer-parent-options" disabled={busy || !binding.available}>
             <legend>Eligible manual producers ({parentIds.length}/{maxParents} selected)</legend>
             {unlisted.map(item => <label key={item.planId}><input type="checkbox" checked onChange={() => toggleParent(item.planId, false)} />{item.planName} (unavailable)</label>)}
@@ -150,6 +159,18 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
           </fieldset>}
           {groupEnabled && <><p role="status">Condition preview: <strong>{expression ?? 'Select two producers for the group.'}</strong></p>
             <p>Only eligible, unused parent commits that satisfy this specific expression are consumed. Other eligible commits remain available.</p></>}
+          {(binding.mixedAvailable || gateEnabled) && <fieldset className="flow-transfer-time-gate" disabled={busy || !binding.available}>
+            <legend>Optional UTC time gate</legend>
+            <label><input type="checkbox" checked={gateEnabled} onChange={event => setGateEnabled(event.target.checked)} />Require a UTC time slot</label>
+            {gateEnabled && <>
+              <label>Daily time gate (UTC) <input type="time" step={60} aria-label="Daily time gate (UTC)"
+                value={gateTime} disabled={!binding.mixedAvailable} onChange={event => setGateTime(event.target.value)} /></label>
+              <p role="status">Time gate preview: <strong>{utcClock.test(gateTime) ? `${gateTime} UTC` : 'Choose an exact HH:mm UTC time'} AND {expression && selected.length ? `(${expression})` : 'an eligible upstream witness'}.</strong></p>
+            </>}
+            <p>Automation checks for a qualifying witness in the last five minutes before the slot. Eligible commits may be earlier in the daily interval. Late observations do not backfill past slots, and a slot without a witness does not start a run.</p>
+            {!binding.mixedAvailable && !binding.mixedConflict && <p>The saved time gate is unavailable here. Remove it explicitly to review an event-only condition.</p>}
+          </fieldset>}
+          {binding.mixedConflict && <p>The independent Daily UTC schedule is armed. Pause it before arming a UTC time gate on this trigger.</p>}
           {candidatesError ? <p role="alert" className="flow-transfer-error">{candidatesError}</p> : !candidates ? <p role="status">Loading upstream producers…</p> :
             !candidates.length && <p>No eligible manual producer writes to this source table.</p>}
           <div className="flow-transfer-run-actions"><button type="button" className="flow-lineage-action is-primary" disabled={busy || !canArm} onClick={() => setConfirm('arm')}>Arm upstream trigger</button></div>
@@ -162,6 +183,10 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
         const recorded = recordedUpstreamRule(job);
         return <li key={job.id}>
           <strong>{labels[job.state]} · {recorded.expression}</strong>
+          {job.mixedSlot && <><div>Recorded mode: UTC time gate AND upstream witness</div>
+            <div>UTC slot: <UpstreamUtcTime value={job.mixedSlot} /></div>
+            {job.witnessObservedAt && <div>Witness observed at: <UpstreamUtcTime value={job.witnessObservedAt} /></div>}
+          </>}
           {recorded.parents.length > 0 && <ul aria-label="Recorded rule producers" className="flow-transfer-parent-events">{recorded.parents.map(parent => <li key={parent.id}>
             {parent.label}: <code>{parent.id}</code>
           </li>)}</ul>}
@@ -176,11 +201,14 @@ export default function LineageUpstreamTrigger({ plan, maxRows, formatError }: {
           {job.message && <p>{job.message}</p>}
         </li>;
       })}</ol> : <p>No upstream jobs recorded.</p>}
+    {(binding?.mixedTimeUtc || binding?.mixedHasHistory || jobs?.some(job => job.mixedSlot)) &&
+      <UpstreamSlotHistory planId={plan.id} version={version} />}
     <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" title={confirm === 'pause' ? 'Pause sandbox upstream trigger?' : 'Arm sandbox upstream trigger?'}
       onCancel={() => setConfirm(undefined)} onOk={submit} confirmLoading={busy} okText={confirm === 'pause' ? 'Confirm pause' : 'Confirm arm trigger'}>
       {confirm === 'pause' ? <p>Prevent queued jobs from starting new writes. Already running work may still finish.</p> :
         <>{group ? <p>Allow Automation to dispatch this saved child Upsert when eligible commits satisfy <strong>{expression}</strong>. Only matching commits are consumed. A child run can write up to {maxRows} sandbox rows.</p>
           : <p>Allow Automation to dispatch this saved child Upsert after <strong>{operator === 'AND' ? 'each selected producer' : 'any selected producer'}</strong> commits an eligible run. A child run can write up to {maxRows} sandbox rows.</p>}
+          {gateEnabled && <p>Also require a daily slot at <strong>{gateTime} UTC</strong>. Automation checks for a qualifying witness in the five minutes before the slot; late observations do not backfill past slots.</p>}
           <ul>{selected.map(parent => <li key={parent.id}><strong>{parent.name}</strong> · Parent revision: <time dateTime={parent.updatedAt}>{utcText(parent.updatedAt)}</time></li>)}</ul>
           <p>Child revision: <time dateTime={plan.updatedAt}>{utcText(plan.updatedAt)}</time></p>
           <div className="flow-transfer-route"><code>{plan.sourceSchema}.{plan.sourceTable}</code><ArrowRightOutlined /><code>{plan.targetSchema}.{plan.targetTable}</code></div></>}

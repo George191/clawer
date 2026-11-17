@@ -70,7 +70,9 @@ def exact_nested_job(job: UpstreamTriggerJobRow, events: list[TransferCommitEven
             and max(event.recorded_at for event in events) + EVENT_WINDOW == job.expires_at)
 
 
-async def positive_nested_events(session: AsyncSession, events: list[TransferCommitEventRow]) -> bool:
+async def positive_nested_events(
+    session: AsyncSession, events: list[TransferCommitEventRow], *, parents_by_id=None,
+) -> bool:
     """The selected witness must link to exact immutable positive manual parent receipts."""
     receipts = {row.id: row for row in (await session.scalars(select(TransferRunRow).where(
         TransferRunRow.id.in_({event.parent_receipt_id for event in events}),
@@ -81,5 +83,7 @@ async def positive_nested_events(session: AsyncSession, events: list[TransferCom
         and row.recorded_at == event.recorded_at and row.write_mode == "upsert" and row.rows_affected > 0
         and row.initiated_by not in _SYSTEM_ACTORS and row.source_schema == row.target_schema == "ts_transfer_sandbox"
         and (row.target_oid, row.target_filenode) == (event.target_oid, event.target_node)
+        and (parents_by_id is None or ((parent := parents_by_id.get(event.parent_plan_id)) is not None
+             and (row.source_table, row.target_table) == (parent.source_table, parent.target_table)))
         for event in events
     )

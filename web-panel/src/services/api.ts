@@ -354,13 +354,18 @@ export type TransferUpstreamGroup = { operator: TransferUpstreamOperator; parent
 export type TransferUpstreamRecordedRule = { operator: TransferUpstreamOperator; group?: TransferUpstreamGroup | null; ruleParentPlanIds?: [string, string, string] };
 export type TransferUpstreamTrigger = {
   available: boolean; enabled: boolean; configuredEnabled: boolean; generation: number | null;
+  mixedAvailable?: true; mixedConflict?: true; mixedHasHistory?: true; mixedTimeUtc?: string | null;
   operator: TransferUpstreamOperator; group?: TransferUpstreamGroup | null;
   parents: { planId: string; planName: string; armedForUpdatedAt: string }[];
   armedForUpdatedAt: string | null; updatedAt: string | null;
 };
 export type TransferUpstreamCandidate = { id: string; name: string; updatedAt: string; sourceTable: string; targetTable: string };
 export type TransferUpstreamJob = Omit<TransferScheduleJob, 'slot'> & TransferUpstreamRecordedRule & {
+  mixedSlot?: string | null; witnessObservedAt?: string | null;
   events: { eventRecordedAt: string; eventId: string; parentPlanId: string; parentReceiptId: string }[];
+};
+export type TransferUpstreamSlot = {
+  slot: string; decidedAt: string; state: 'admitted' | 'no_witness'; jobId?: string | null; witnessObservedAt?: string | null;
 };
 export type TransferUpstreamSummary = TransferUpstreamTrigger & {
   planId: string; planName: string; sourceSchema: string; sourceTable: string; targetSchema: string; targetTable: string;
@@ -372,11 +377,13 @@ export const fetchTransferUpstreamCandidates = (planId: string, signal?: AbortSi
   client.get(`${transferUpstreamPath(planId)}/candidates`, { signal }).then((r) => unwrap<TransferUpstreamCandidate[]>(r.data));
 export const updateTransferUpstreamTrigger = (planId: string, request: {
   enabled: boolean; operator: TransferUpstreamOperator; group?: TransferUpstreamGroup; parents: { planId: string; expectedUpdatedAt: string }[];
-  expectedUpdatedAt: string; expectedGeneration: number | null;
+  expectedUpdatedAt: string; expectedGeneration: number | null; mixedTimeUtc?: string | null;
 }): Promise<TransferUpstreamTrigger> =>
   client.put(transferUpstreamPath(planId), request).then((r) => unwrap<TransferUpstreamTrigger>(r.data));
 export const fetchTransferUpstreamJobs = (planId: string, signal?: AbortSignal): Promise<TransferUpstreamJob[]> =>
   client.get(`${transferUpstreamPath(planId)}/jobs`, { signal }).then((r) => unwrap<TransferUpstreamJob[]>(r.data));
+export const fetchTransferUpstreamSlots = (planId: string, signal?: AbortSignal): Promise<TransferUpstreamSlot[]> =>
+  client.get(`${transferUpstreamPath(planId)}/slots`, { signal }).then((r) => unwrap<TransferUpstreamSlot[]>(r.data));
 export const fetchTransferUpstreamTriggers = (signal?: AbortSignal): Promise<TransferUpstreamSummary[]> =>
   client.get('/etl/transfer-upstream-triggers', { signal }).then((r) => unwrap<TransferUpstreamSummary[]>(r.data));
 

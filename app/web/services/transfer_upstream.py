@@ -1,11 +1,12 @@
 """One-hop sandbox trigger over durable, positive manual Upsert commit events."""
 
 from datetime import datetime, timedelta, timezone
+import logging
 from itertools import product
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import case, delete, exists, func, text, update
+from sqlalchemy import and_, case, delete, exists, func, or_, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +14,9 @@ from sqlmodel import select
 
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.transfer_plans import TransferPlanRow, TransferRunRequest
+from app.web.api.models.transfer_schedules import TransferScheduleRow
 from app.web.api.models.transfer_upstream import (
-    TransferCommitEventRow, UpstreamCandidate, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerEvent,
+    TransferCommitEventRow, UpstreamCandidate, UpstreamMixedSlot, UpstreamMixedSlotRow, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerEvent,
     UpstreamTriggerJob, UpstreamTriggerJobEventRow, UpstreamTriggerJobRow, UpstreamTriggerParent,
     UpstreamTriggerParentRow, UpstreamTriggerRow, UpstreamTriggerSummary,
 )
@@ -22,6 +24,8 @@ from app.web.services.transfer_runs import (
     HISTORY_LIMIT, SANDBOX, is_sandbox_upsert, lock_transfer_plans, run_sandbox_transfer,
     upstream_catalog, upstream_catalog_digest, upstream_pair_eligible, upstream_transfer_enabled,
 )
+from app.web.services import upstream_mixed_rules as mixed
+from app.web.services.transfer_mixed import collect_mixed_slot_decisions
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.upstream_rules import (
     EVENT_WINDOW, canonical_group, exact_nested_job, positive_nested_events, valid_witness, witness_id,
@@ -32,6 +36,7 @@ _OPEN = ("pending", "dispatched")
 _WINDOW = EVENT_WINDOW
 _LEASE = timedelta(seconds=45)
 _LIMIT = 100
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
@@ -40,7 +45,7 @@ def _utc_now() -> datetime:
 
 def _response(
     child: TransferPlanRow, binding: UpstreamTriggerRow | None,
-    reviewed: list[tuple[UpstreamTriggerParentRow, TransferPlanRow]],
+    reviewed: list[tuple[UpstreamTriggerParentRow, TransferPlanRow]], *, conflict: bool = False, history: bool = False,
 ) -> UpstreamTrigger:
     available = upstream_transfer_enabled() and is_sandbox_upsert(child, "upstream")
     group = None
@@ -53,7 +58,11 @@ def _response(
             valid = False
     return UpstreamTrigger(
         available=available, configuredEnabled=bool(binding and binding.enabled),
+        mixedAvailable=True if available and not conflict and mixed.mixed_upstream_enabled() else None,
+        mixedConflict=True if available and conflict and mixed.mixed_upstream_enabled() else None,
+        mixedTimeUtc=binding.mixed_time_utc if binding else None, mixedHasHistory=True if history else None,
         enabled=bool(available and valid and binding and binding.enabled and binding.child_updated_at == child.updated_at
+                     and (binding.mixed_time_utc is None or (mixed.mixed_upstream_enabled() and not conflict))
                      and 1 <= len(reviewed) <= 3 and len({parent.source_table for _, parent in reviewed}) == len(reviewed)
                      and all(upstream_pair_eligible(child, parent)
                      and member.parent_updated_at == parent.updated_at for member, parent in reviewed)),
@@ -87,11 +96,26 @@ async def _need_plan(session: AsyncSession, plan_id: UUID) -> TransferPlanRow:
     return row
 
 
+async def _mixed_context(session: AsyncSession, ids: list[UUID]) -> tuple[set[UUID], set[UUID]]:
+    conflicts = set()
+    if mixed.mixed_upstream_enabled() and ids:
+        conflicts = set((await session.scalars(select(TransferScheduleRow.plan_id).where(
+            TransferScheduleRow.plan_id.in_(ids), TransferScheduleRow.enabled,
+        ))).all())
+    history = set((await session.scalars(select(UpstreamTriggerRow.plan_id).where(
+        UpstreamTriggerRow.plan_id.in_(ids), exists().where(
+            UpstreamMixedSlotRow.plan_id == UpstreamTriggerRow.plan_id, UpstreamMixedSlotRow.decided_at.is_not(None),
+        ),
+    ))).all()) if ids else set()
+    return conflicts, history
+
+
 async def read_upstream_trigger(session: AsyncSession, plan_id: UUID) -> UpstreamTrigger:
     child = await _need_plan(session, plan_id)
     binding = await session.get(UpstreamTriggerRow, plan_id)
     reviewed = (await _reviewed_parents(session, [plan_id])).get(plan_id, [])
-    return _response(child, binding, reviewed)
+    conflicts, history = await _mixed_context(session, [plan_id])
+    return _response(child, binding, reviewed, conflict=plan_id in conflicts, history=plan_id in history)
 
 
 async def list_upstream_candidates(session: AsyncSession, plan_id: UUID) -> list[UpstreamCandidate]:
@@ -132,14 +156,24 @@ async def change_upstream_trigger(
     if change.expectedGeneration != (binding.generation if binding else None):
         raise HTTPException(409, "The upstream trigger changed; reload it")
     reviewed = (await _reviewed_parents(session, [plan_id])).get(plan_id, [])
+    conflicts, history = await _mixed_context(session, [plan_id])
+    response_state = {"conflict": plan_id in conflicts, "history": plan_id in history}
     if not change.enabled:
         if binding and binding.enabled:
             binding.enabled = False
             binding.generation += 1
             binding.updated_at = _utc_now()
-        result = _response(child, binding, reviewed)
+        result = _response(child, binding, reviewed, **response_state)
         await session.commit()
         return result
+
+    clock = (change.mixedTimeUtc if "mixedTimeUtc" in change.model_fields_set
+             else binding.mixed_time_utc if binding is not None else None)
+    if clock is not None:
+        if not mixed.mixed_upstream_enabled():
+            raise HTTPException(403, "Mixed UTC and upstream execution requires explicit local opt-in")
+        if response_state["conflict"]:
+            raise HTTPException(409, "Pause the independent Daily UTC schedule before arming the mixed upstream trigger")
 
     parents = [locked.get(pid) for pid in sorted(selected)]
     if any(parent is None or not upstream_pair_eligible(child, parent) for parent in parents):
@@ -158,7 +192,7 @@ async def change_upstream_trigger(
     nested = change.group.operator if change.group else None
     paired = list(change.group.parentPlanIds) if change.group else None
     if (binding is None or not binding.enabled or binding.operator != change.operator or binding.armed_by != actor_id
-        or binding.group_operator != nested or binding.group_parent_ids != paired
+        or binding.group_operator != nested or binding.group_parent_ids != paired or binding.mixed_time_utc != clock
         or binding.child_updated_at != child.updated_at or binding.physical_digest != physical
         or {member.parent_plan_id: member.parent_updated_at for member, _ in reviewed} != selected):
         # Each producer is locked until its own commit event settles. This
@@ -166,8 +200,10 @@ async def change_upstream_trigger(
         cutoffs = dict((await session.execute(select(TransferCommitEventRow.parent_plan_id,
                        func.max(TransferCommitEventRow.id)).where(TransferCommitEventRow.parent_plan_id.in_(selected))
                        .group_by(TransferCommitEventRow.parent_plan_id))).all())
-        fields = dict(enabled=True, operator=change.operator, group_operator=nested, group_parent_ids=paired, generation=binding.generation + 1 if binding else 1,
-                      armed_by=actor_id, child_updated_at=child.updated_at, physical_digest=physical, updated_at=_utc_now())
+        armed_at = await mixed.mixed_db_now(session) if clock is not None else _utc_now()
+        fields = dict(enabled=True, operator=change.operator, group_operator=nested, group_parent_ids=paired,
+                      generation=binding.generation + 1 if binding else 1, mixed_time_utc=clock,
+                      armed_by=actor_id, child_updated_at=child.updated_at, physical_digest=physical, updated_at=armed_at)
         if binding is None:
             binding = UpstreamTriggerRow(plan_id=plan_id, **fields)
             session.add(binding)
@@ -180,7 +216,7 @@ async def change_upstream_trigger(
                      parent_updated_at=parent.updated_at, cutoff_event_id=cutoffs.get(parent.id, 0)), parent)
                     for parent in parents]
         session.add_all([member for member, _ in reviewed])
-    result = _response(child, binding, reviewed)
+    result = _response(child, binding, reviewed, **response_state)
     await session.commit()
     return result
 
@@ -190,12 +226,56 @@ async def list_upstream_triggers(session: AsyncSession) -> list[UpstreamTriggerS
                  .join(UpstreamTriggerRow, UpstreamTriggerRow.plan_id == TransferPlanRow.id)
                  .order_by(UpstreamTriggerRow.updated_at.desc(), TransferPlanRow.id).limit(_LIMIT))
     rows = (await session.execute(statement)).all()
-    reviewed = await _reviewed_parents(session, [child.id for child, _ in rows])
+    ids = [child.id for child, _ in rows]
+    reviewed = await _reviewed_parents(session, ids)
+    conflicts, history = await _mixed_context(session, ids)
     return [UpstreamTriggerSummary(planId=child.id, planName=child.name, sourceSchema=child.source_schema,
                                    sourceTable=child.source_table, targetSchema=child.target_schema,
                                    targetTable=child.target_table,
-                                   **_response(child, binding, reviewed.get(child.id, [])).model_dump())
+                                   **_response(child, binding, reviewed.get(child.id, []),
+                                               conflict=child.id in conflicts, history=child.id in history).model_dump())
             for child, binding in rows]
+
+
+async def list_upstream_mixed_slots(session: AsyncSession, plan_id: UUID) -> list[UpstreamMixedSlot]:
+    await _need_plan(session, plan_id)
+    rows = (await session.scalars(select(UpstreamMixedSlotRow).where(
+        UpstreamMixedSlotRow.plan_id == plan_id, UpstreamMixedSlotRow.decided_at.is_not(None),
+    ).order_by(UpstreamMixedSlotRow.slot.desc(), UpstreamMixedSlotRow.generation.desc()).limit(HISTORY_LIMIT))).all()
+    job_ids = [row.job_id for row in rows if row.job_id is not None]
+    jobs = {row.id: row for row in (await session.scalars(select(UpstreamTriggerJobRow).where(
+        UpstreamTriggerJobRow.id.in_(job_ids),
+    ))).all()} if job_ids else {}
+    events = await _history_job_events(session, job_ids)
+    output = []
+    for row in rows:
+        if row.job_id is not None:
+            job = jobs.get(row.job_id)
+            if job is None or (job.plan_id, job.generation, job.mixed_slot) != (row.plan_id, row.generation, row.slot):
+                continue
+            if not await mixed.exact_mixed_job(session, job, events.get(job.id, [])):
+                continue
+        output.append(UpstreamMixedSlot(
+            slot=row.slot, decidedAt=row.decided_at, state="admitted" if row.job_id else "no_witness",
+            jobId=row.job_id, witnessObservedAt=row.observed_at if row.job_id else None,
+        ))
+    return output
+
+
+async def _history_job_events(session: AsyncSession, job_ids: list[UUID]):
+    if not job_ids:
+        return {}
+    link = UpstreamTriggerJobEventRow
+    bounded = select(link.job_id, link.event_id, func.row_number().over(
+        partition_by=link.job_id, order_by=link.event_id,
+    ).label("position")).where(link.job_id.in_(job_ids)).subquery()
+    event_query = (select(bounded.c.job_id, TransferCommitEventRow)
+                   .join(TransferCommitEventRow, TransferCommitEventRow.id == bounded.c.event_id)
+                   .where(bounded.c.position <= 4).order_by(TransferCommitEventRow.id))
+    events = {}
+    for job_id, event in (await session.execute(event_query)).all():
+        events.setdefault(job_id, []).append(event)
+    return events
 
 
 async def list_upstream_jobs(session: AsyncSession, plan_id: UUID) -> list[UpstreamTriggerJob]:
@@ -206,30 +286,26 @@ async def list_upstream_jobs(session: AsyncSession, plan_id: UUID) -> list[Upstr
     jobs = (await session.scalars(statement)).all()
     if not jobs:
         return []
-    link = UpstreamTriggerJobEventRow
-    bounded = select(link.job_id, link.event_id, func.row_number().over(
-        partition_by=link.job_id, order_by=link.event_id,
-    ).label("position")).where(link.job_id.in_([job.id for job in jobs])).subquery()
-    event_query = (select(bounded.c.job_id, TransferCommitEventRow)
-                   .join(TransferCommitEventRow, TransferCommitEventRow.id == bounded.c.event_id)
-                   .where(bounded.c.position <= 4).order_by(TransferCommitEventRow.id))
-    events = {}
-    for job_id, event in (await session.execute(event_query)).all():
-        events.setdefault(job_id, []).append(event)
+    events = await _history_job_events(session, [job.id for job in jobs])
     output = []
     for job in jobs:
         chosen = events.get(job.id, [])
-        if job.group_operator is not None and (
+        observed = await mixed.exact_mixed_job(session, job, chosen) if job.mixed_slot is not None else None
+        if job.mixed_slot is not None and observed is None:
+            continue
+        if job.mixed_slot is None and job.group_operator is not None and (
             not exact_nested_job(job, chosen) or not await positive_nested_events(session, chosen)
         ):
             continue
-        if job.group_operator is None and not valid_witness(
+        if job.mixed_slot is None and job.group_operator is None and not valid_witness(
             job.operator, None, None, [], [event.parent_plan_id for event in chosen], historic_flat=True,
         ):
             continue
         group = canonical_group(job.operator, job.group_operator, job.group_parent_ids, job.rule_parent_ids or [])
         output.append(UpstreamTriggerJob(
-            id=job.id, operator=job.operator, group=group, ruleParentPlanIds=job.rule_parent_ids,
+            id=job.id, operator=job.operator, group=group,
+            ruleParentPlanIds=observed.rule_parent_ids if observed else job.rule_parent_ids,
+            mixedSlot=job.mixed_slot, witnessObservedAt=observed.observed_at if observed else None,
             events=[UpstreamTriggerEvent(eventId=str(event.id), eventRecordedAt=event.recorded_at,
                                          parentReceiptId=event.parent_receipt_id, parentPlanId=event.parent_plan_id)
                     for event in chosen],
@@ -302,7 +378,7 @@ _READY_BINDINGS = text("""
                         least(CASE WHEN c.grouped_ready = 2 THEN c.group_anchor END, c.single_first))
                     ELSE coalesce(choices.common_live, greatest(c.single_first, c.alternate_first)) END AS priority
     ) witness
-    WHERE t.enabled AND child.updated_at = t.child_updated_at AND c.unchanged
+    WHERE t.enabled AND t.mixed_time_utc IS NULL AND child.updated_at = t.child_updated_at AND c.unchanged
       AND CASE WHEN t.group_operator IS NULL THEN c.members BETWEEN 1 AND 3
                     AND CASE t.operator WHEN 'AND' THEN c.ready = c.members ELSE c.ready > 0 END
                ELSE c.members = 3 AND c.grouped_members = 2 AND
@@ -396,7 +472,8 @@ async def _admit_upstream_jobs(session: AsyncSession, now: datetime) -> None:
         binding = await session.get(UpstreamTriggerRow, plan_id, populate_existing=True)
         child = await session.get(TransferPlanRow, plan_id, populate_existing=True)
         members = reviewed.get(plan_id, [])
-        if binding is None or child is None or not _response(child, binding, members).enabled:
+        if (binding is None or binding.mixed_time_utc is not None or child is None
+            or not _response(child, binding, members).enabled):
             continue
         sets = await _select_job_sets(session, binding, members, now, remaining // (len(ids) - index))
         for events in sets:
@@ -429,24 +506,40 @@ async def collect_due_upstream_transfer_jobs(session: AsyncSession, *, now: date
     now = (now or _utc_now()).astimezone(timezone.utc)
     await session.execute(text("SET LOCAL lock_timeout = '3s'"))
     await session.execute(text("SET LOCAL statement_timeout = '5s'"))
-    expired = (await session.scalars(select(UpstreamTriggerJobRow).where(
-        UpstreamTriggerJobRow.state.in_(_OPEN), UpstreamTriggerJobRow.expires_at <= now,
-    ).order_by(UpstreamTriggerJobRow.expires_at).limit(_LIMIT).with_for_update(skip_locked=True))).all()
-    for job in expired:
-        job.state = "expired"
-        job.finished_at = now
-        job.message = "The event dispatch window closed before an outcome was confirmed"
+    job = UpstreamTriggerJobRow
+    mixed_enabled = mixed.mixed_upstream_enabled()
+    mixed_now = await mixed.mixed_db_now(session) if mixed_enabled else None
+    expiry_clock = mixed_now if mixed_now is not None else func.clock_timestamp()
+    expired = (await session.scalars(select(job).where(
+        job.state.in_(_OPEN), or_(and_(job.mixed_slot.is_(None), job.expires_at <= now),
+                                  and_(job.mixed_slot.is_not(None), job.expires_at <= expiry_clock)),
+    ).order_by(job.expires_at).limit(_LIMIT).with_for_update(skip_locked=True))).all()
+    if mixed_now is None and any(row.mixed_slot is not None for row in expired):
+        mixed_now = await mixed.mixed_db_now(session)
+    for expired_job in expired:
+        expired_job.state = "expired"
+        expired_job.finished_at = mixed_now if expired_job.mixed_slot is not None else now
+        expired_job.message = "The event dispatch window closed before an outcome was confirmed"
 
     await _admit_upstream_jobs(session, now)
-    jobs = (await session.scalars(select(UpstreamTriggerJobRow).where(
-        UpstreamTriggerJobRow.state.in_(_OPEN), UpstreamTriggerJobRow.expires_at > now,
-        UpstreamTriggerJobRow.dispatch_after <= now,
-    ).order_by(UpstreamTriggerJobRow.dispatch_after, UpstreamTriggerJobRow.id)
-        .limit(_LIMIT).with_for_update(skip_locked=True))).all()
+    if mixed_enabled:
+        try:
+            async with session.begin_nested():
+                await session.execute(text("SET LOCAL statement_timeout = '1s'"))
+                await collect_mixed_slot_decisions(session)
+                await session.execute(text("SET LOCAL statement_timeout = '5s'"))
+        except Exception:
+            logger.warning("Mixed upstream slot evaluation did not settle; existing upstream work continues")
+        mixed_now = await mixed.mixed_db_now(session)
+    ready = and_(job.mixed_slot.is_(None), job.expires_at > now, job.dispatch_after <= now)
+    if mixed_enabled:
+        ready = or_(ready, and_(job.mixed_slot.is_not(None), job.expires_at > mixed_now, job.dispatch_after <= mixed_now))
+    jobs = (await session.scalars(select(job).where(job.state.in_(_OPEN), ready)
+            .order_by(job.dispatch_after, job.id).limit(_LIMIT).with_for_update(skip_locked=True))).all()
     ids = []
-    for job in jobs:
-        job.dispatch_after = now + _LEASE
-        ids.append(job.id)
+    for queued in jobs:
+        queued.dispatch_after = (mixed_now if queued.mixed_slot is not None else now) + _LEASE
+        ids.append(queued.id)
     await session.commit()
     return ids
 
@@ -466,7 +559,8 @@ async def record_upstream_transfer_job_dispatched(job_id: UUID) -> None:
         await session.execute(update(UpstreamTriggerJobRow).where(
             UpstreamTriggerJobRow.id == job_id, UpstreamTriggerJobRow.dispatched_at.is_(None),
         ).values(state=case((UpstreamTriggerJobRow.state == "pending", "dispatched"), else_=UpstreamTriggerJobRow.state),
-                 dispatched_at=_utc_now()))
+                 dispatched_at=case((UpstreamTriggerJobRow.mixed_slot.is_not(None), func.clock_timestamp()),
+                                    else_=_utc_now())))
 
 
 async def execute_upstream_transfer_job_in_session(session: AsyncSession, job_id: UUID, *, now: datetime | None = None) -> str:
@@ -477,6 +571,8 @@ async def execute_upstream_transfer_job_in_session(session: AsyncSession, job_id
         return "missing"
     if job.state not in _OPEN:
         return job.state
+    if job.mixed_slot is not None and not mixed.mixed_upstream_enabled():
+        return "disabled"
     try:
         await run_sandbox_transfer(session, job.plan_id, TransferRunRequest(
             requestId=job.id, expectedUpdatedAt=job.child_updated_at,

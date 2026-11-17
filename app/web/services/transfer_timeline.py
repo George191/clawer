@@ -19,6 +19,7 @@ from app.web.api.models.transfer_timeline import (
 from app.web.api.models.transfer_upstream import (
     TransferCommitEventRow, UpstreamTriggerEvent, UpstreamTriggerJobEventRow, UpstreamTriggerJobRow,
 )
+from app.web.services.upstream_mixed_rules import exact_mixed_job
 from app.web.services.upstream_rules import canonical_group, exact_nested_job, positive_nested_events
 from app.web.services.transfer_runs import (
     SANDBOX, SCHEDULED_SYSTEM_ACTOR, UPSTREAM_SYSTEM_ACTOR, _run_response, transfer_target_identity,
@@ -222,7 +223,11 @@ async def _job_detail(session: AsyncSession, job: Job) -> TransferTimelineJob | 
     ).where(UpstreamTriggerJobEventRow.job_id == job.id, UpstreamTriggerJobEventRow.plan_id == job.plan_id,
             UpstreamTriggerJobEventRow.generation == job.generation).order_by(TransferCommitEventRow.id).limit(4))).all()
     nested = job.group_operator is not None
-    if nested:
+    observed = await exact_mixed_job(session, job, events) if job.mixed_slot is not None else None
+    if job.mixed_slot is not None:
+        if observed is None:
+            return None
+    elif nested:
         if not exact_nested_job(job, events) or not await positive_nested_events(session, events):
             return None
     elif (not 1 <= len(events) <= (3 if job.operator == "AND" else 1)
@@ -230,10 +235,10 @@ async def _job_detail(session: AsyncSession, job: Job) -> TransferTimelineJob | 
           or len({event.parent_plan_id for event in events}) != len(events)):
         return None
     return TransferTimelineJob(
-        id=job.id, kind="upstream", dueAt=max(event.recorded_at for event in events), state=job.state,
-        operator=job.operator if nested else None,
+        id=job.id, kind="upstream", dueAt=job.mixed_slot or max(event.recorded_at for event in events), state=job.state,
+        witnessObservedAt=observed.observed_at if observed else None, operator=job.operator if nested or observed else None,
         group=canonical_group(job.operator, job.group_operator, job.group_parent_ids, job.rule_parent_ids) if nested else None,
-        ruleParentPlanIds=job.rule_parent_ids if nested else None,
+        ruleParentPlanIds=observed.rule_parent_ids if observed else job.rule_parent_ids if nested else None,
         parentEvents=[UpstreamTriggerEvent(eventId=str(event.id), eventRecordedAt=event.recorded_at,
                                          parentPlanId=event.parent_plan_id, parentReceiptId=event.parent_receipt_id)
                       for event in events],

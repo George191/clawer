@@ -36,6 +36,7 @@ class UpstreamTriggerChange(BaseModel):
     enabled: bool
     operator: Operator
     group: UpstreamGroup | None = None
+    mixedTimeUtc: str | None = ApiField(default=None, pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")
     parents: list[UpstreamParentReview] = ApiField(max_length=3)
     expectedUpdatedAt: AwareDatetime
     expectedGeneration: int | None = ApiField(ge=1)
@@ -50,7 +51,7 @@ class UpstreamTriggerChange(BaseModel):
             or not set(self.group.parentPlanIds).issubset(ids)
         ):
             raise ValueError("A nested rule requires three approved parents and a two-parent opposite-operator group")
-        if not self.enabled and self.parents:
+        if not self.enabled and (self.parents or self.mixedTimeUtc is not None):
             raise ValueError("Pausing must not change the reviewed upstream plans")
         return self
 
@@ -65,6 +66,10 @@ class UpstreamTrigger(BaseModel):
     available: bool
     enabled: bool
     configuredEnabled: bool
+    mixedTimeUtc: str | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    mixedAvailable: Literal[True] | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    mixedConflict: Literal[True] | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    mixedHasHistory: Literal[True] | None = ApiField(default=None, exclude_if=lambda value: value is None)
     operator: Operator = "OR"
     group: UpstreamGroup | None = ApiField(default=None, exclude_if=lambda value: value is None)
     parents: list[UpstreamTriggerParent] = ApiField(default_factory=list)
@@ -99,6 +104,8 @@ class UpstreamTriggerEvent(BaseModel):
 
 class UpstreamTriggerJob(BaseModel):
     id: UUID
+    mixedSlot: datetime | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    witnessObservedAt: datetime | None = ApiField(default=None, exclude_if=lambda value: value is None)
     operator: Operator
     group: UpstreamGroup | None = ApiField(default=None, exclude_if=lambda value: value is None)
     ruleParentPlanIds: list[UUID] | None = ApiField(default=None, exclude_if=lambda value: value is None)
@@ -108,6 +115,14 @@ class UpstreamTriggerJob(BaseModel):
     finishedAt: datetime | None = None
     receiptId: UUID | None = None
     message: str | None = None
+
+
+class UpstreamMixedSlot(BaseModel):
+    slot: datetime
+    decidedAt: datetime
+    state: Literal["admitted", "no_witness"]
+    jobId: UUID | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    witnessObservedAt: datetime | None = ApiField(default=None, exclude_if=lambda value: value is None)
 
 
 class TransferCommitEventRow(SQLModel, table=True):
@@ -133,6 +148,9 @@ class UpstreamTriggerRow(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("generation > 0 AND operator IN ('AND','OR')",
                         name="ck_ontology_transfer_upstream_trigger"),
+        CheckConstraint("mixed_time_utc ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'", name="ck_transfer_upstream_mixed_clock"),
+        Index("ix_transfer_upstream_mixed_active", "mixed_time_utc", "plan_id",
+              postgresql_where=text("enabled AND mixed_time_utc IS NOT NULL")),
         CheckConstraint("""((group_operator IS NULL AND group_parent_ids IS NULL)
  OR (group_operator IN ('AND','OR') AND group_operator <> operator
      AND array_ndims(group_parent_ids)=1 AND array_lower(group_parent_ids,1)=1
@@ -145,6 +163,7 @@ class UpstreamTriggerRow(SQLModel, table=True):
     operator: str = Field(max_length=3)
     group_operator: str | None = Field(default=None, max_length=3)
     group_parent_ids: list[UUID] | None = Field(default=None, sa_column=Column(ARRAY(Uuid)))
+    mixed_time_utc: str | None = Field(default=None, max_length=5)
     armed_by: UUID
     child_updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     physical_digest: str = Field(max_length=64)
@@ -169,6 +188,9 @@ class UpstreamTriggerJobRow(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("plan_id", "generation", "event_id", name="uq_ontology_transfer_upstream_jobs_event"),
         UniqueConstraint("id", "plan_id", "generation", name="uq_ontology_transfer_upstream_job_scope"),
+        UniqueConstraint("plan_id", "generation", "mixed_slot", name="uq_transfer_upstream_mixed_job_slot"),
+        CheckConstraint("mixed_slot IS NULL OR expires_at = mixed_slot + interval '5 minutes'",
+                        name="ck_transfer_upstream_mixed_job_slot"),
         CheckConstraint("operator IN ('AND','OR')", name="ck_ontology_transfer_upstream_job_operator"),
         CheckConstraint("""((group_operator IS NULL AND group_parent_ids IS NULL AND rule_parent_ids IS NULL)
  OR (group_operator IN ('AND','OR') AND group_operator <> operator
@@ -195,6 +217,7 @@ class UpstreamTriggerJobRow(SQLModel, table=True):
     group_operator: str | None = Field(default=None, max_length=3)
     group_parent_ids: list[UUID] | None = Field(default=None, sa_column=Column(ARRAY(Uuid)))
     rule_parent_ids: list[UUID] | None = Field(default=None, sa_column=Column(ARRAY(Uuid)))
+    mixed_slot: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     child_updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     armed_by: UUID
@@ -220,3 +243,35 @@ class UpstreamTriggerJobEventRow(SQLModel, table=True):
     generation: int = Field(primary_key=True)
     event_id: int = Field(sa_column=Column(BigInteger, ForeignKey("ontology_transfer_commit_events.id"), primary_key=True))
     job_id: UUID
+
+
+class UpstreamMixedSlotRow(SQLModel, table=True):
+    __tablename__ = "ontology_transfer_upstream_mixed_slots"
+    __table_args__ = (
+        CheckConstraint("generation > 0 AND slot = date_trunc('minute', slot)",
+                        name="ck_transfer_upstream_mixed_slot"),
+        CheckConstraint("""(
+            (observed_at IS NULL AND rule_digest IS NULL AND event_ids IS NULL AND rule_parent_ids IS NULL
+                AND decided_at IS NOT NULL)
+            OR
+            (observed_at >= slot - interval '5 minutes' AND observed_at < slot
+              AND rule_digest ~ '^[0-9a-f]{64}$' AND cardinality(event_ids) BETWEEN 1 AND 3
+              AND array_position(event_ids, NULL) IS NULL AND cardinality(rule_parent_ids) BETWEEN 1 AND 3
+              AND array_position(rule_parent_ids, NULL) IS NULL)
+        ) IS TRUE""", name="ck_transfer_upstream_mixed_observation"),
+        CheckConstraint("""(decided_at IS NULL OR (decided_at >= slot AND decided_at < slot + interval '1 minute'))
+            AND (job_id IS NULL OR (decided_at IS NOT NULL AND observed_at IS NOT NULL))""",
+                        name="ck_transfer_upstream_mixed_decision"),
+        Index("ix_transfer_upstream_mixed_history", "plan_id", "slot", "generation",
+              postgresql_where=text("decided_at IS NOT NULL")),
+    )
+
+    plan_id: UUID = Field(primary_key=True, foreign_key="ontology_transfer_upstream_triggers.plan_id")
+    generation: int = Field(primary_key=True)
+    slot: datetime = Field(sa_column=Column(DateTime(timezone=True), primary_key=True))
+    observed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    rule_digest: str | None = Field(default=None, max_length=64)
+    event_ids: list[int] | None = Field(default=None, sa_column=Column(ARRAY(BigInteger)))
+    rule_parent_ids: list[UUID] | None = Field(default=None, sa_column=Column(ARRAY(Uuid)))
+    decided_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True)))
+    job_id: UUID | None = Field(default=None, foreign_key="ontology_transfer_upstream_jobs.id", unique=True)
