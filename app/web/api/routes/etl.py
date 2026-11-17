@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from fastapi.responses import Response
 
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
@@ -21,6 +21,9 @@ from app.web.api.models.batch_sync_schedules import (
 from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReceipt, CdcSandboxReview, CdcSandboxStatus
 from app.web.api.models.cdc_sandbox_versions import (
     CdcSandboxComparison, CdcSandboxVersionDetail, CdcSandboxVersionsPage,
+)
+from app.web.api.models.pipeline_sandbox import (
+    PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
 )
 from app.web.api.models.table_exports import (
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
@@ -64,6 +67,9 @@ from app.web.services.cdc_sandbox import (
     apply_cdc_sandbox, list_cdc_sandbox_receipts, read_cdc_sandbox, review_cdc_sandbox,
 )
 from app.web.services.cdc_sandbox_versions import compare_cdc_versions, list_cdc_versions, read_cdc_version
+from app.web.services.pipeline_sandbox import (
+    list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
+)
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
@@ -129,6 +135,35 @@ async def get_local_cdc_comparison(
 @write.get("/cdc-sandbox/versions/{version_id}")
 async def get_local_cdc_version(version_id: UUID, session: SessionDep) -> CdcSandboxVersionDetail:
     return await read_cdc_version(session, version_id)
+
+
+@write.get("/pipeline-sandbox")
+async def get_local_pipeline_sandbox(session: SessionDep) -> PipelineSandboxStatus:
+    return await read_pipeline_sandbox(session)
+
+
+@write.post("/pipeline-sandbox/preview")
+async def post_local_pipeline_preview(payload: PipelineSandboxConfig, session: SessionDep) -> PipelineSandboxPreview:
+    return await preview_pipeline_sandbox(session, payload)
+
+
+@write.get("/pipeline-sandbox/revisions")
+async def get_local_pipeline_revisions(session: SessionDep) -> list[PipelineSandboxRevision]:
+    return await list_pipeline_revisions(session)
+
+
+@write.post("/pipeline-sandbox/revisions", status_code=201)
+async def post_local_pipeline_revision(
+    payload: PipelineSandboxSave, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> PipelineSandboxRevision:
+    return await save_pipeline_revision(session, payload, current_user.id)
+
+
+@write.get("/pipeline-sandbox/revisions/{generation}")
+async def get_local_pipeline_revision(
+    session: SessionDep, generation: int = Path(ge=1, le=2147483647),
+) -> PipelineSandboxRevision:
+    return await read_pipeline_revision(session, generation)
 
 
 @write.get("/asset-freshness/{schema}/{table}/candidates")

@@ -563,6 +563,26 @@ export const compareSandboxCdcVersions = (
 ): Promise<SandboxCdcVersionComparison> => client.get(`${sandboxCdcVersionsPath}/compare`, { params: { fromVersionId, toVersionId }, signal })
   .then((r) => unwrap<SandboxCdcVersionComparison>(r.data));
 
+export type SandboxPipelineColumn = 'id' | 'value';
+export type SandboxPipelineFilter =
+  | { field: 'id'; operator: 'eq' | 'gte' | 'lte'; value: string }
+  | { field: 'value'; operator: 'eq' | 'prefix'; value: string };
+export type SandboxPipelineConfig = { versionId: string; filters: SandboxPipelineFilter[]; projection: SandboxPipelineColumn[] };
+export type SandboxPipelineStatus = { available: boolean; latestGeneration: number | null };
+export type SandboxPipelinePreview = {
+  versionId: string; configHash: string; inputRows: number; matchedRows: number; columns: SandboxPipelineColumn[]; rows: string[][];
+};
+export type SandboxPipelineRevision = { generation: number; configHash: string; config: SandboxPipelineConfig; recordedAt: string };
+const sandboxPipelinePath = '/etl/pipeline-sandbox';
+export const fetchSandboxPipelineStatus = (signal?: AbortSignal): Promise<SandboxPipelineStatus> =>
+  client.get(sandboxPipelinePath, { signal }).then((r) => unwrap<SandboxPipelineStatus>(r.data));
+export const previewSandboxPipeline = (config: SandboxPipelineConfig, signal?: AbortSignal): Promise<SandboxPipelinePreview> =>
+  client.post(`${sandboxPipelinePath}/preview`, config, { signal }).then((r) => unwrap<SandboxPipelinePreview>(r.data));
+export const fetchSandboxPipelineRevisions = (signal?: AbortSignal): Promise<SandboxPipelineRevision[]> =>
+  client.get(`${sandboxPipelinePath}/revisions`, { signal }).then((r) => unwrap<SandboxPipelineRevision[]>(r.data));
+export const saveSandboxPipelineRevision = (config: SandboxPipelineConfig, expectedGeneration: number | null): Promise<SandboxPipelineRevision> =>
+  client.post(`${sandboxPipelinePath}/revisions`, { expectedGeneration, config }).then((r) => unwrap<SandboxPipelineRevision>(r.data));
+
 export const setTableOffset = (layer: string, table: string, partition: number, offset: number, topic?: string): Promise<{ restartRequired: boolean }> =>
   client.put(`/etl/${layer}/${table}/offset`, { partition, offset, topic, confirmation: 'SET OFFSET' }).then((r) => unwrap<{ restartRequired: boolean }>(r.data));
 

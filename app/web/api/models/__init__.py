@@ -47,6 +47,7 @@ from .asset_freshness import AssetFreshnessPolicyRow as AssetFreshnessPolicyRow
 from .batch_syncs import BatchSyncPlanRow as BatchSyncPlanRow
 from .cdc_sandbox import CdcSandboxBindingRow as CdcSandboxBindingRow
 from .cdc_sandbox_versions import CdcSandboxVersionRow as CdcSandboxVersionRow
+from .pipeline_sandbox import PipelineSandboxRevisionRow as PipelineSandboxRevisionRow
 from .batch_sync_schedules import BatchSyncScheduleRow as BatchSyncScheduleRow
 from .table_exports import TableExportPlanRow as TableExportPlanRow
 from .transfer_plans import TransferPlanRow as TransferPlanRow

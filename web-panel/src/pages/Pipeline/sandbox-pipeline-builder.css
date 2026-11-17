@@ -1,0 +1,36 @@
+.flow-transform-workspace, .flow-transform-workspace__content { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.flow-transform-workspace { flex-direction: column; }
+.flow-transform-workspace__content > .flow-layers { flex: 1; }
+.flow-transform-modes { display: flex; flex-wrap: wrap; gap: 4px 14px; flex: none; padding: 8px 15px 0; border-bottom: 1px solid var(--ontology-border); }
+.flow-transform-modes a { padding: 6px 2px; color: var(--ontology-muted); text-decoration: none; border-bottom: 2px solid transparent; }
+.flow-transform-modes a[aria-current=page] { border-color: var(--ontology-link); color: var(--ontology-text); }
+.flow-sandbox-builder { display: grid; align-content: start; flex: 1; min-width: 0; overflow: auto; gap: 14px; padding: 18px; color: var(--ontology-text); }
+.flow-sandbox-builder :is(h1, h2, p) { margin: 0; }
+.flow-sandbox-builder h1 { font-size: 18px; }
+.flow-sandbox-builder h2 { font-size: 14px; }
+.flow-sandbox-builder > header p { margin-top: 4px; color: var(--ontology-muted); }
+.flow-sandbox-builder__graph { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.25fr) auto minmax(0, 1.1fr); align-items: start; gap: 9px; }
+.flow-sandbox-builder__graph > section, .flow-sandbox-builder__history { display: grid; align-content: start; gap: 8px; min-width: 0; padding: 11px; border: 1px solid var(--ontology-border); border-radius: 5px; background: var(--ontology-bg); overflow-wrap: anywhere; }
+.flow-sandbox-builder__graph > section > header > span { color: var(--ontology-muted); font-size: 12px; }
+.flow-sandbox-builder__arrow { margin-top: 18px; color: var(--ontology-muted); }
+.flow-sandbox-builder label { display: grid; gap: 3px; min-width: 0; }
+.flow-sandbox-builder select { width: 100%; min-width: 0; min-height: 30px; padding: 4px 6px; color: inherit; background: var(--ontology-bg); border: 1px solid var(--ontology-border); border-radius: 4px; }
+.flow-sandbox-builder ol { display: grid; gap: 6px; margin: 0; padding-left: 17px; }
+.flow-sandbox-builder__filter { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 5px; }
+.flow-sandbox-builder__filter label:nth-child(3), .flow-sandbox-builder__filter small { grid-column: 1 / -1; }
+.flow-sandbox-builder fieldset { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 4px 8px 6px; border: 1px solid var(--ontology-border); }
+.flow-sandbox-builder fieldset label { display: flex; align-items: center; gap: 4px; }
+.flow-sandbox-builder__graph ol[aria-label="Projection order"] button { margin-left: 4px; }
+.flow-sandbox-builder__actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.flow-sandbox-builder__counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin: 0; }
+.flow-sandbox-builder__counts dt { color: var(--ontology-muted); font-size: 12px; }
+.flow-sandbox-builder__counts dd { margin: 0; }
+.flow-sandbox-builder__table { overflow: auto; }
+.flow-sandbox-builder__table table { width: 100%; border-collapse: collapse; }
+.flow-sandbox-builder__table :is(th, td) { text-align: left; vertical-align: top; border-bottom: 1px solid var(--ontology-border); padding: 4px; }
+.flow-sandbox-builder__table code { white-space: pre-wrap; }
+.flow-sandbox-builder__history li { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 9px; }
+@media (max-width: 920px) {
+  .flow-sandbox-builder__graph { grid-template-columns: minmax(0, 1fr); }
+  .flow-sandbox-builder__arrow { justify-self: center; margin: 0; transform: rotate(90deg); }
+}

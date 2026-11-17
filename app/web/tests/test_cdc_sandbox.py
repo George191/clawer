@@ -16,12 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.storage.postgres_client import PostgresClient
 from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReview
+from app.web.api.models.pipeline_sandbox import PipelineSandboxConfig, PipelineSandboxSave
 from app.web.core.config import settings
 from app.web.tests.test_transfer_plans import api
 
 _URL = os.getenv("ONTOLOGY_CDC_SANDBOX_TEST_URL")
 _DB = "ontology_cdc_regression"
 _ROUTE = "/etl/cdc-sandbox"
+_BUILDER = "/etl/pipeline-sandbox"
 _MARKER = uuid4()
 _REVIEW = {"expectedGeneration": None}
 
@@ -59,6 +61,38 @@ class CdcSandboxContract(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await client.post(_ROUTE + "/runs", json=payload(0))).status_code, 403)
 
 
+    def test_builder_rejects_arbitrary_operations_and_noncanonical_bigints(self):
+        good = {"versionId": str(uuid4()), "filters": [], "projection": ["id", "value"]}
+        PipelineSandboxSave.model_validate({"expectedGeneration": None, "config": good})
+        for change in (
+            {"sql": "SELECT arbitrary"}, {"schema": "public"}, {"graph": []},
+            {"projection": ["id", "id"]}, {"projection": []}, {"projection": ["id", "*"]},
+            {"filters": [{"field": "id", "operator": "eq", "value": "9223372036854775808"}]},
+            {"filters": [{"field": "id", "operator": "eq", "value": "-0"}]},
+            {"filters": [{"field": "id", "operator": "lte", "value": 1}]},
+            {"filters": [{"field": "id", "operator": "prefix", "value": "1"}]},
+            {"filters": [{"field": "value", "operator": "gte", "value": "a"}]},
+            {"filters": [{"field": "value", "operator": "prefix", "value": "a" * 129}]},
+            {"filters": [{"field": "value", "operator": "eq", "value": "bad\x00text"}]},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValidationError):
+                PipelineSandboxConfig.model_validate({**good, **change})
+
+    async def test_builder_is_default_off_and_reader_cannot_access(self):
+        config = {"versionId": str(uuid4()), "filters": [], "projection": ["id"]}
+        with patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", False):
+            async with api(True) as client:
+                self.assertEqual((await client.get(_BUILDER)).json(), {"available": False, "latestGeneration": None})
+                self.assertEqual((await client.post(_BUILDER+"/preview", json=config)).status_code, 403)
+                self.assertEqual((await client.get(_BUILDER+"/revisions")).status_code, 403)
+        async with api(False) as client:
+            self.assertEqual((await client.get(_BUILDER)).status_code, 403)
+            self.assertEqual((await client.post(_BUILDER+"/preview", json=config)).status_code, 403)
+            self.assertEqual((await client.post(
+                _BUILDER+"/revisions", json={"expectedGeneration": None, "config": config},
+            )).status_code, 403)
+
+
 @unittest.skipUnless(_URL, "Requires an isolated ontology_cdc_regression PostgreSQL database")
 class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -71,6 +105,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.pg.fetch_one("SELECT current_database() AS name"))["name"], _DB)
         migrations = [import_module("app.web.alembic.versions." + name) for name in (
             "984b2ef31a6c_ontology_cdc_sandbox", "31d9685bf24a_ontology_cdc_sandbox_versions",
+            "f5b873c94d20_ontology_pipeline_sandbox",
         )]
 
         def upgrade(sync):
@@ -97,6 +132,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
             yield session
 
     async def drop_fixture(self):
+        await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_revisions")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_version_rows, ontology_cdc_sandbox_versions")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_receipts, ontology_cdc_sandbox_binding")
         await self.pg.execute("DROP SCHEMA ts_cdc_sandbox CASCADE")
@@ -351,3 +387,73 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(delivered.status_code, 200, delivered.text)
                 self.assertEqual((await client.get(_ROUTE + "/versions")).json()["versions"][0]["id"],
                                  delivered.json()["id"])
+
+
+    async def test_builder_projects_stored_int64_rows_and_optimistically_appends_config_only(self):
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.get(_BUILDER)).json(), {"available": True, "latestGeneration": None})
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    await self.produce(session, 9223372036854775807, "alpha")
+                    await self.produce(session, 9223372036854775806, "alphabet")
+                    await self.produce(session, -9223372036854775808, "alpha")
+                    await self.produce(session, 0, "beta")
+                data = await client.post(_ROUTE + "/runs", json=payload(0))
+                self.assertEqual(data.status_code, 200, data.text)
+                receipt = data.json()
+                config = {
+                    "versionId": receipt["id"],
+                    "filters": [
+                        {"field": "value", "operator": "prefix", "value": "alpha"},
+                        {"field": "id", "operator": "gte", "value": "9223372036854775806"},
+                    ],
+                    "projection": ["value", "id"],
+                }
+                preview = await client.post(_BUILDER + "/preview", json=config)
+                self.assertEqual(preview.status_code, 200, preview.text)
+                before = preview.json()
+                self.assertEqual(before["inputRows"], 4)
+                self.assertEqual(before["matchedRows"], 2)
+                self.assertEqual(before["columns"], ["value", "id"])
+                self.assertEqual(before["rows"], [
+                    ["alphabet", "9223372036854775806"], ["alpha", "9223372036854775807"],
+                ])
+                reversed_filters = {**config, "filters": list(reversed(config["filters"]))}
+                self.assertEqual((await client.post(_BUILDER+"/preview", json=reversed_filters)).json(), before)
+                unknown = await client.post(_BUILDER + "/preview", json={**config, "versionId": str(uuid4())})
+                self.assertEqual(unknown.status_code, 404)
+                self.assertEqual((await client.get(_BUILDER + "/revisions")).json(), [])
+
+                payloads = [{"expectedGeneration": None, "config": candidate} for candidate in (config, reversed_filters)]
+                left, right = await asyncio.gather(*[client.post(_BUILDER+"/revisions", json=item) for item in payloads])
+                self.assertEqual(sorted([left.status_code, right.status_code]), [201, 409], (left.text, right.text))
+                first = (left if left.status_code == 201 else right).json()
+                self.assertEqual(first["generation"], 1)
+                self.assertEqual(first["configHash"], before["configHash"])
+                self.assertEqual((await client.get(_BUILDER + "/revisions/1")).json(), first)
+
+                second_config = {**config, "projection": ["id"]}
+                second = await client.post(_BUILDER + "/revisions",
+                                           json={"expectedGeneration": 1, "config": second_config})
+                self.assertEqual(second.status_code, 201, second.text)
+                self.assertEqual([rev["generation"] for rev in (await client.get(_BUILDER + "/revisions")).json()], [2, 1])
+                self.assertNotEqual(second.json()["configHash"], before["configHash"])
+                self.assertEqual((await client.get(_BUILDER + "/revisions/1")).json(), first)
+                self.assertEqual((await client.get(_ROUTE + "/runs")).json(), [receipt])
+                self.assertEqual((await client.get(_ROUTE)).json()["appliedThrough"], "4")
+                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS n FROM ts_cdc_sandbox.target_rows"))["n"], 4)
+
+                await self.pg.execute("TRUNCATE ts_cdc_sandbox.target_rows")
+                self.assertEqual((await client.get(_ROUTE)).json()["state"], "blocked")
+                self.assertEqual((await client.post(_BUILDER+"/preview", json=config)).json(), before)
+                with patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", uuid4()):
+                    self.assertFalse((await client.get(_BUILDER)).json()["available"])
+                    self.assertEqual((await client.get(_BUILDER+"/revisions/1")).status_code, 403)
+                    self.assertEqual((await client.post(_BUILDER+"/preview", json=config)).status_code, 403)

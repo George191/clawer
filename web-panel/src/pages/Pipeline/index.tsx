@@ -16,6 +16,7 @@ import ExplorerCatalog from './ExplorerCatalog';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
+import SandboxPipelineBuilder from './SandboxPipelineBuilder';
 import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
@@ -135,9 +136,27 @@ const Pipeline: React.FC = () => {
                 : pathname === '/ontology/connections' ? <DataConnections />
                 : pathname === '/ontology/lineage' ? <OntologyLineage refreshToken={0} />
                     : pathname === '/ontology/runtime' ? <FlowRuntime />
-                        : <DataLayersWorkspace />}
+                        : pathname === '/ontology/transforms' ? <TransformWorkspace /> : <DataLayersWorkspace />}
         </section>
     </main></ConfigProvider>;
+};
+
+const TransformWorkspace: React.FC = () => {
+    const { pathname, search } = useLocation();
+    const builder = new URLSearchParams(search).get('mode') === 'builder';
+    const modeLink = (showBuilder: boolean) => {
+        const params = new URLSearchParams(search);
+        if (showBuilder) params.set('mode', 'builder'); else params.delete('mode');
+        const query = params.toString();
+        return query ? `${pathname}?${query}` : pathname;
+    };
+    return <div className="flow-transform-workspace">
+        <nav aria-label="Transform modes" className="flow-transform-modes">
+            <Link to={modeLink(false)} aria-current={!builder ? 'page' : undefined}>Handler</Link>
+            <Link to={modeLink(true)} aria-current={builder ? 'page' : undefined}>Sandbox Pipeline Builder</Link>
+        </nav>
+        <div className="flow-transform-workspace__content">{builder ? <SandboxPipelineBuilder /> : <DataLayersWorkspace />}</div>
+    </div>;
 };
 
 const FlowRuntime: React.FC = () => {
