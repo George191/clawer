@@ -14,6 +14,7 @@ import './ontology-workspace.css';
 import ExplorerCatalog from './ExplorerCatalog';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
+import ExplorerTableEvidence from './ExplorerTableEvidence';
 import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
@@ -160,7 +161,6 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const isSchemas = pathname === '/ontology/explorer';
     const workspacePath = pathname === '/ontology/transforms' ? '/ontology/transforms' : '/ontology/explorer';
     const requestedView = new URLSearchParams(search).get('view');
-    const resourceView = isSchemas && (requestedView === 'schema' || requestedView === 'stream' || requestedView === 'api') ? requestedView : 'preview';
     const  navigate  =  useNavigate();
     const [canManage, setCanManage] = useState(false);
     const managePermission = useRef(false);
@@ -280,7 +280,6 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const  sortConditionsRef  =  useRef<HTMLDivElement>(null);
     const  [sortConditionsOverflow,  setSortConditionsOverflow]  =  useState(false);
     const  previousSortConditionCount  =  useRef(sortConditions.length);
-    useLayoutEffect(()  =>  {  const  element  =  sortConditionsRef.current;  if  (!element)  return;  const  update  =  ()  =>  setSortConditionsOverflow(element.scrollWidth  >  element.clientWidth  +  1);  update();  const  observer  =  new  ResizeObserver(update);  observer.observe(element);  return  ()  =>  observer.disconnect();  },  [sortConditions.length, sortField, filterOpen, resourceView]);
     useLayoutEffect(()  =>  {  if  (sortConditions.length  >  previousSortConditionCount.current)  sortConditionsRef.current?.scrollTo({ left: sortConditionsRef.current.scrollWidth, behavior: 'smooth' });  previousSortConditionCount.current = sortConditions.length;  },  [sortConditions.length]);
     useEffect(()  =>  {
         // Wheel over the tab strip scrolls horizontally; the scrollbar stays hidden.
@@ -389,6 +388,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const selectedTableAvailable = selectedSchemaAvailable && tablesLoadedSchema === selectedSchema
         && (!isSchemas || requestedTable === null || requestedTable === table.name)
         && !closedTables.has(table.name) && serverTables.some((item) => item.name === table.name);
+    const resourceView = isSchemas && (requestedView === 'schema' || requestedView === 'stream' || requestedView === 'api' || requestedView === 'evidence') ? requestedView : 'preview';
+    useLayoutEffect(()  =>  {  const  element  =  sortConditionsRef.current;  if  (!element)  return;  const  update  =  ()  =>  setSortConditionsOverflow(element.scrollWidth  >  element.clientWidth  +  1);  update();  const  observer  =  new  ResizeObserver(update);  observer.observe(element);  return  ()  =>  observer.disconnect();  },  [sortConditions.length, sortField, filterOpen, resourceView]);
     useEffect(() => {
         setScriptOpen(pathname === '/ontology/transforms' && selectedTableAvailable);
     }, [pathname, selectedSchema, table.name, selectedTableAvailable]);
@@ -931,6 +932,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         <button type="button" aria-pressed={resourceView === 'preview'} onClick={() => selectResourceView('preview')}><DatabaseOutlined /> Data preview</button>
                         <button type="button" aria-pressed={resourceView === 'schema'} onClick={() => selectResourceView('schema')}><SettingOutlined /> Schema</button>
                         <button type="button" aria-pressed={resourceView === 'stream'} onClick={() => selectResourceView('stream')}><DownloadOutlined /> Stream</button>
+                        <button type="button" aria-pressed={resourceView === 'evidence'} onClick={() => selectResourceView('evidence')}><AlertOutlined /> Evidence</button>
                         {canManage && <button type="button" aria-pressed={resourceView === 'api'} onClick={() => selectResourceView('api')}><CodeOutlined /> Published APIs</button>}
                     </nav>}
                     <div className="flow-inspector-body" ref={previewViewport}>
@@ -960,6 +962,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             }))}
                         </div>}
                         {isSchemas && resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} />}
+                        {isSchemas && resourceView === 'evidence' && <ExplorerTableEvidence key={tableDescription} schema={selectedSchema} table={table.name} />}
                         {isSchemas && resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
                             <header>
                                 <div><h3>Stream</h3><p>Consumer status and partition offsets for this table.</p></div>
