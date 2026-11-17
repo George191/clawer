@@ -126,6 +126,12 @@
 .ontology-source-sync__route { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; overflow-wrap: anywhere; }
 .ontology-source-sync__items { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
 .ontology-source-sync__items li { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--ontology-border); border-radius: 4px; overflow-wrap: anywhere; }
+.ontology-cdc-replay__body { display: grid; gap: 9px; min-width: 0; }
+.ontology-cdc-replay__body :is(h4, p) { margin: 0; }
+.ontology-cdc-replay__body h4 { margin-bottom: 6px; }
+.ontology-cdc-replay__facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 8px; margin: 0; }
+.ontology-cdc-replay__facts dt { color: var(--ontology-muted); font-size: 12px; }
+.ontology-cdc-replay__facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
 @media (max-width: 920px) {
   .ontology-source-catalog__layout { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
   .ontology-source-catalog__layout > section:last-child { grid-column: 1 / -1; border-top: 1px solid var(--ontology-border); border-left: 0; }

@@ -9,6 +9,7 @@ import PostgresGlyph from './PostgresGlyph';
 import SourceBatchSyncs from './SourceBatchSyncs';
 import type { BatchSyncSource } from './SourceBatchSyncs';
 import TableExports from './TableExports';
+import SandboxCdcReplay from './SandboxCdcReplay';
 import './data-connections.css';
 
 type Props = { onCancel?: () => void; onChanged?: () => void };
@@ -410,6 +411,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
           next.delete('tableExport');
           return next;
         }, { replace: true })} />
+        <SandboxCdcReplay />
       </section>)}
     </div>
 

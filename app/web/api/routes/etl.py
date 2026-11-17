@@ -18,6 +18,7 @@ from app.web.api.models.batch_syncs import (
 from app.web.api.models.batch_sync_schedules import (
     BatchSyncSchedule, BatchSyncScheduleChange, BatchSyncScheduleJob, BatchSyncScheduleSummary,
 )
+from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReceipt, CdcSandboxReview, CdcSandboxStatus
 from app.web.api.models.table_exports import (
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
     TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
@@ -56,6 +57,9 @@ from app.web.services.batch_syncs import (
 from app.web.services.batch_sync_schedules import (
     change_batch_sync_schedule, list_batch_sync_schedule_jobs, list_batch_sync_schedules, read_batch_sync_schedule,
 )
+from app.web.services.cdc_sandbox import (
+    apply_cdc_sandbox, list_cdc_sandbox_receipts, read_cdc_sandbox, review_cdc_sandbox,
+)
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
@@ -80,6 +84,30 @@ from app.web.services.transfer_schedules import (
 router = APIRouter(prefix="/etl", tags=["etl"])
 read = APIRouter(dependencies=[Depends(get_current_user)])
 write = APIRouter(dependencies=[Depends(get_current_active_superuser)])
+
+
+@write.get("/cdc-sandbox")
+async def get_local_cdc_sandbox(session: SessionDep) -> CdcSandboxStatus:
+    return await read_cdc_sandbox(session)
+
+
+@write.put("/cdc-sandbox")
+async def put_local_cdc_sandbox(
+    payload: CdcSandboxReview, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> CdcSandboxStatus:
+    return await review_cdc_sandbox(session, current_user.id)
+
+
+@write.get("/cdc-sandbox/runs")
+async def get_local_cdc_receipts(session: SessionDep) -> list[CdcSandboxReceipt]:
+    return await list_cdc_sandbox_receipts(session)
+
+
+@write.post("/cdc-sandbox/runs")
+async def post_local_cdc_apply(
+    payload: CdcSandboxApply, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> CdcSandboxReceipt:
+    return await apply_cdc_sandbox(session, payload, current_user.id)
 
 
 @write.get("/asset-freshness/{schema}/{table}/candidates")

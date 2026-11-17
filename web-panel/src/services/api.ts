@@ -518,6 +518,32 @@ export const fetchTablePartitions = (layer: string, table: string): Promise<EtlP
 export const fetchTableStream = (layer: string, table: string, topic?: string): Promise<EtlStreamState> =>
   client.get(`/etl/${layer}/${table}/stream`, { params: { topic } }).then((r) => unwrap<EtlStreamState>(r.data));
 
+export type SandboxCdcStatus = {
+  available: boolean;
+  state: 'unreviewed' | 'armed' | 'blocked';
+  generation: number | null;
+  appliedThrough: string;
+  sourceHighWater: string | null;
+  source: string;
+  target: string;
+  maxRows: number;
+  maxBytes: number;
+};
+export type SandboxCdcRunRequest = { requestId: string; expectedGeneration: number; expectedAppliedThrough: string };
+export type SandboxCdcReceipt = {
+  id: string; requestId: string; generation: number; fromExclusive: string; appliedThrough: string;
+  rowsAffected: number; recordedAt: string;
+};
+const sandboxCdcPath = '/etl/cdc-sandbox';
+export const fetchSandboxCdc = (signal?: AbortSignal): Promise<SandboxCdcStatus> =>
+  client.get(sandboxCdcPath, { signal }).then((r) => unwrap<SandboxCdcStatus>(r.data));
+export const reviewSandboxCdc = (): Promise<SandboxCdcStatus> =>
+  client.put(sandboxCdcPath, { expectedGeneration: null }).then((r) => unwrap<SandboxCdcStatus>(r.data));
+export const fetchSandboxCdcReceipts = (signal?: AbortSignal): Promise<SandboxCdcReceipt[]> =>
+  client.get(`${sandboxCdcPath}/runs`, { signal }).then((r) => unwrap<SandboxCdcReceipt[]>(r.data));
+export const applySandboxCdc = (request: SandboxCdcRunRequest): Promise<SandboxCdcReceipt> =>
+  client.post(`${sandboxCdcPath}/runs`, request).then((r) => unwrap<SandboxCdcReceipt>(r.data));
+
 export const setTableOffset = (layer: string, table: string, partition: number, offset: number, topic?: string): Promise<{ restartRequired: boolean }> =>
   client.put(`/etl/${layer}/${table}/offset`, { partition, offset, topic, confirmation: 'SET OFFSET' }).then((r) => unwrap<{ restartRequired: boolean }>(r.data));
 

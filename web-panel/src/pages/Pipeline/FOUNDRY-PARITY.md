@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；其他连接器能力和统一网络策略仍待覆盖。 | 在选择同步或导出前验证连接器能力和权限；不把连接测试通过当成可读取或可写入业务资产的证明。 |
 | 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度。 | 受控试点不能代替完整的增量检查点、通用数据集目标或其他连接器。 |
-| 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断及代码中固定的消费路径；没有 Foundry 式可配置入站流和逐通道管理。 | 如需入站，隔离接口认证、schema/速率验证、幂等、失败处理；不把消费位点当作下游已经提交的证明。 |
+| 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断和固定消费路径；独立本地合成流可按已提交序号回放 after-image，分别记录源最高位点、目标检查点和提交回执。尚无通用可配置入站流。 | 如需入站，隔离接口认证、schema/速率验证、幂等、失败处理；不把消费位点当作下游已经提交的证明。 |
 | 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执；当前审核的正数回执已驱动沙箱外发 Lineage。固定合成标记另有可撤销授权。Published API 仍只是被动读取。 | 验收通用标记策略、多目标/模式，以及另行审核的写回或 Webhook。 |
 | 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地 1–3 个上游的平面 AND/OR 提交触发也复用现有 Automation Center，完整上游事件集与子回执分开。 | 验收嵌套或混合触发、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；财报 Evidence 的声明路径不代表生产逐边验证。 | 先接表级运行证据。区分代码声明、配置草稿和已经观察到的执行，不能用草稿绘成已提交的血缘。 |
@@ -155,3 +155,9 @@
 - 参考 [Foundry Build Timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/)。管理员在现有 Explorer Evidence 查看精确沙箱目标表，分页区分已提交回执、可归属的执行尝试和相关触发详情。没有回执的尝试不报提交或行数；零行回执保留但不证明数据流动。
 - 版本及目标归属从写入或请求接受时的不可变记录取得。改计划、重建表或重新使用相同名称不迁移历史；缺少物理身份的旧回执只作历史，旧失败记录不能引用现版本反推归属。UTC 槽、上游父回执集合仅从真实关联查出，不能从 ID 格式或当前计划触发配置推断。
 - 验收同时间排序的有界翻页、跨表隔离、空回执与结果未知，以及物理替换后的证据标识。未确认归属的作业仍在 Automation 各自历史中，不伪造资产归属。
+
+### 合成 CDC 回放的验收口径
+
+- 参考 [Foundry Change data capture](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 的变化事件与增量应用。此轮只在明确开启的本地合成沙箱，用固定审核的 PostgreSQL 日志回放已提交 after-image Upsert，不启用真实连接器、外部推送、删除或现有 Kafka、Debezium 及 WAL 配置。
+- 夹具生产者在源变更同事务分配连续序号、记录事件及源端最高位点，回滚不遗留可见序号。应用只读有界连续前缀（50 条、64 KiB），目标行、应用检查点和提交回执同事务；空批、缺号、未经确认的配置或表替换不推进。源端最高位点可与目标已提交检查点不同。
+- 重放原请求先读取原回执，不读源日志、不再次应用。目标写后回执失败一并回滚；提交确认丢失用原请求恢复。按影响的目标行与已应用事件范围分别表示结果，不把读取或投递当作目标提交。全程不接触生产。
