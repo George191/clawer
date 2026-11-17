@@ -1,5 +1,6 @@
 """Transfer draft validation, authorization and optional isolated PostgreSQL checks."""
 
+import asyncio
 from importlib import import_module
 from datetime import datetime, timedelta, timezone
 import os
@@ -22,6 +23,7 @@ from app.web.api.dependencies.session import get_db
 from app.web.api.models.transfer_plans import TransferPlanPayload
 from app.web.api.routes.etl import router
 from app.web.core.config import settings
+from app.web.services.asset_freshness import evaluate_due_asset_freshness
 from app.web.services.etl_layers import EtlLayers
 from app.web.services.transfer_schedules import collect_due_transfer_jobs
 from app.web.services.transfer_upstream import collect_due_upstream_transfer_jobs, execute_upstream_transfer_job_in_session
@@ -87,6 +89,10 @@ class TransferPlanTests(unittest.IsolatedAsyncioTestCase):
                 path = f"{RUNS}/{uuid4()}/runs"
                 self.assertEqual((await client.get(f"{RUNS}/run-capabilities")).status_code, 403)
                 self.assertEqual((await client.get("/etl/transfer-upstream-triggers")).status_code, 403)
+                for suffix in ("", "/candidates"):
+                    self.assertEqual((await client.get(
+                        f"/etl/asset-freshness/ts_transfer_sandbox/to_rows{suffix}",
+                    )).status_code, 403)
                 self.assertEqual((await client.get(path)).status_code, 403)
                 self.assertEqual((await client.post(path, json={
                     "requestId": str(uuid4()), "expectedUpdatedAt": datetime.now(timezone.utc).isoformat(),
@@ -110,6 +116,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.incremental_migration = import_module("app.web.alembic.versions.b29e8b8d4521_ontology_incremental_transfer")
         self.schedule_migration = import_module("app.web.alembic.versions.e427be5f90e2_ontology_transfer_schedules")
         self.upstream_migration = import_module("app.web.alembic.versions.5bef50bc72c9_ontology_transfer_upstream")
+        self.compound_migration = import_module("app.web.alembic.versions.b6c45a7e9130_ontology_compound_upstream")
+        self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         async with self.pg.session() as session:
             for sql in (
                 "CREATE SCHEMA ts_rds", "CREATE SCHEMA ts_ods", "CREATE SCHEMA ts_meta",
@@ -129,6 +137,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.incremental_migration.upgrade)
             await self.migrate(session, self.schedule_migration.upgrade)
             await self.migrate(session, self.upstream_migration.upgrade)
+            await self.migrate(session, self.compound_migration.upgrade)
+            await self.migrate(session, self.freshness_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -141,9 +151,13 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def drop_fixtures(self):
         async with self.pg.session() as session:
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_freshness_transitions, "
+                                       "public.ontology_asset_freshness_policies"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedule_jobs"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedules"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_attempts"))
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_job_events, "
+                                       "public.ontology_transfer_upstream_parents"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_jobs, "
                                        "public.ontology_transfer_upstream_triggers, public.ontology_transfer_commit_events"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_checkpoints"))
@@ -153,6 +167,107 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             for schema in ("ts_rds", "ts_ods", "ts_meta"):
                 await session.execute(text(f"DROP SCHEMA {schema} CASCADE"))
             await session.execute(text("DROP SCHEMA IF EXISTS ts_transfer_sandbox CASCADE"))
+
+    async def test_freshness_confirms_exact_physical_receipts_and_handles_stale_checks(self):
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.freshness_source (id int PRIMARY KEY, value text)",
+                "CREATE TABLE ts_transfer_sandbox.freshness_target (id int PRIMARY KEY, value text)",
+            ):
+                await session.execute(text(sql))
+        config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                  "sourceTable": "freshness_source", "targetTable": "freshness_target", "writeMode": "upsert"}
+        route = "/etl/asset-freshness/ts_transfer_sandbox/freshness_target"
+
+        async def check(now):
+            async with self.pg.session() as session:
+                return await evaluate_due_asset_freshness(session, now=now)
+
+        def assert_state(value, state, reason=None):
+            self.assertEqual((value["assessment"]["state"], value["assessment"]["reason"]), (state, reason))
+
+        with (patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+              patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+              patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+              patch.object(settings, "ENVIRONMENT", "local")):
+            async with api(True, self.session_provider) as client:
+                created = await client.post(RUNS, json=config)
+                self.assertEqual(created.status_code, 201, created.text)
+                plan = created.json()
+                binding = {"planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"],
+                           "expectedGeneration": None, "thresholdMinutes": 5, "enabled": True}
+                with patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", False):
+                    self.assertFalse((await client.get(route)).json()["available"])
+                    self.assertEqual((await client.put(route, json=binding)).status_code, 403)
+                    self.assertEqual((await check(datetime.now(timezone.utc)))["checked"], 0)
+                with patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True):
+                    self.assertEqual((await client.get(route + "/candidates")).json()[0]["id"], plan["id"])
+                    self.assertEqual((await client.get(route.replace("ts_transfer_sandbox", "ts_rds"))).status_code, 404)
+                    response = await client.put(route, json=binding)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    assert_state(response.json(), "not_checked")
+                    self.assertEqual((await client.put(route, json=binding)).status_code, 409)
+                    transfer_path = f"{RUNS}/{plan['id']}/runs"
+
+                    async def run():
+                        result = await client.post(transfer_path, json={
+                            "requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"],
+                        })
+                        self.assertEqual(result.status_code, 200, result.text)
+                        return result.json()
+
+                    async with self.pg.session() as session:
+                        await session.execute(text("""
+                            INSERT INTO ontology_transfer_runs (
+                                id, plan_id, request_id, initiated_by, plan_updated_at, source_schema, source_table,
+                                target_schema, target_table, write_mode, rows_affected, recorded_at
+                            ) VALUES (
+                                :id, :plan, :request, :actor, :revision, 'ts_transfer_sandbox', 'freshness_source',
+                                'ts_transfer_sandbox', 'freshness_target', 'upsert', 1, clock_timestamp()
+                            )
+                        """), {"id": uuid4(), "plan": plan["id"], "request": uuid4(), "actor": TEST_ACTOR,
+                                "revision": datetime.fromisoformat(plan["updatedAt"])})
+                    self.assertEqual((await run())["rowsAffected"], 0)
+                    started = datetime.now(timezone.utc)
+                    self.assertEqual((await check(started))["unknown"], 1)
+                    assert_state((await client.get(route)).json(), "unknown", "no_verified_write")
+                    await self.pg.execute("INSERT INTO ts_transfer_sandbox.freshness_source VALUES (1, 'first')")
+                    positive = await run()
+                    self.assertEqual(positive["rowsAffected"], 1)
+                    tick = started + timedelta(minutes=1)
+                    results = await asyncio.gather(check(tick), check(tick))
+                    self.assertEqual(sum(item["healthy"] for item in results), 1)
+                    with patch("app.web.services.asset_freshness._utc_now", return_value=tick):
+                        healthy = (await client.get(route)).json()
+                        assert_state(healthy, "healthy")
+                        self.assertEqual(healthy["assessment"]["receiptId"], positive["id"])
+                        self.assertEqual(len(healthy["history"]), 2)
+                    # A recent sample near its threshold cannot stay green after the threshold itself expires.
+                    near_threshold = datetime.fromisoformat(positive["recordedAt"]) + timedelta(minutes=4, seconds=50)
+                    self.assertEqual((await check(near_threshold))["healthy"], 1)
+                    validity = near_threshold + timedelta(seconds=10)
+                    with patch("app.web.services.asset_freshness._utc_now", return_value=near_threshold):
+                        valid = (await client.get(route)).json()
+                        self.assertEqual(datetime.fromisoformat(valid["assessment"]["validUntil"]), validity)
+                    with patch("app.web.services.asset_freshness._utc_now", return_value=validity + timedelta(seconds=1)):
+                        stale = (await client.get(route)).json()
+                        assert_state(stale, "unknown", "evaluation_stale")
+                        self.assertIsNone(stale["assessment"]["receiptId"])
+                        self.assertIsNotNone(stale["assessment"]["checkedAt"])
+                    late = tick + timedelta(minutes=6)
+                    self.assertEqual((await check(late))["overdue"], 1)
+                    with patch("app.web.services.asset_freshness._utc_now", return_value=late):
+                        assert_state((await client.get(route)).json(), "overdue")
+                    await self.pg.execute("TRUNCATE ts_transfer_sandbox.freshness_target")
+                    with patch("app.web.services.asset_freshness._utc_now", return_value=late):
+                        drift = (await client.get(route)).json()
+                        assert_state(drift, "unknown", "target_changed")
+                        self.assertIsNone(drift["assessment"]["receiptId"])
+                    with patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", False):
+                        paused = await client.put(route, json={**binding, "expectedGeneration": 1, "enabled": False})
+                        self.assertEqual(paused.status_code, 200, paused.text)
+                        assert_state(paused.json(), "paused")
 
     async def test_sandbox_data_and_receipt_commit_together_without_duplicate_replay(self):
         async with self.pg.session() as session:
@@ -261,6 +376,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.freshness_migration.downgrade)
+            await self.migrate(session, self.compound_migration.downgrade)
             await self.migrate(session, self.upstream_migration.downgrade)
             await self.migrate(session, self.schedule_migration.downgrade)
             await self.migrate(session, self.incremental_migration.downgrade)
@@ -415,7 +532,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         target = await self.pg.fetch_all("SELECT id FROM ts_ods.ods_financial_fact ORDER BY id")
         self.assertEqual([row["id"] for row in target], [3])
 
-    async def test_upstream_events_cut_off_history_and_run_one_real_child_without_cascading(self):
+    async def test_upstream_commit_events_and_compound_bindings_execute_only_reviewed_sets(self):
         async with self.pg.session() as session:
             for sql in (
                 "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
@@ -465,7 +582,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 first = await run(parent, uuid4())
                 self.assertEqual(first.status_code, 200, first.text)
                 self.assertEqual([row["id"] for row in (await client.get(path + "/candidates")).json()], [parent["id"]])
-                desired = {"enabled": True, "parentPlanId": parent["id"], "expectedParentUpdatedAt": parent["updatedAt"],
+                desired = {"enabled": True, "operator": "OR",
+                           "parents": [{"planId": parent["id"], "expectedUpdatedAt": parent["updatedAt"]}],
                            "expectedUpdatedAt": child["updatedAt"], "expectedGeneration": None}
                 armed = await client.put(path, json=desired)
                 self.assertEqual(armed.status_code, 200, armed.text)
@@ -485,15 +603,15 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await execute(job), "committed")
                 self.assertEqual(await execute(job), "committed")
                 jobs = (await client.get(path + "/jobs")).json()
-                self.assertEqual(jobs[0]["parentReceiptId"], after_arm.json()["id"])
-                self.assertNotEqual(jobs[0]["receiptId"], jobs[0]["parentReceiptId"])
+                self.assertEqual(jobs[0]["events"][0]["parentReceiptId"], after_arm.json()["id"])
+                self.assertNotEqual(jobs[0]["receiptId"], jobs[0]["events"][0]["parentReceiptId"])
                 self.assertEqual(len((await client.get(f"{RUNS}/{child['id']}/runs")).json()), 1)
                 self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS count FROM ontology_transfer_commit_events"))["count"], 2)
                 self.assertEqual((await self.pg.fetch_one("SELECT value FROM ts_transfer_sandbox.c"))["value"], "actual event")
                 await self.pg.execute("UPDATE ts_transfer_sandbox.a SET value='paused'")
                 self.assertEqual((await run(parent, uuid4())).status_code, 200)
                 queued, = await collect()
-                pause = await client.put(path, json={**desired, "enabled": False, "expectedGeneration": 1})
+                pause = await client.put(path, json={**desired, "enabled": False, "parents": [], "expectedGeneration": 1})
                 self.assertEqual(pause.status_code, 200, pause.text)
                 self.assertEqual(await execute(queued), "rejected")
                 self.assertEqual((await self.pg.fetch_one("SELECT value FROM ts_transfer_sandbox.c"))["value"], "actual event")
@@ -513,3 +631,56 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await collect(datetime.now(timezone.utc) + timedelta(minutes=6)), [])
                 self.assertEqual((await client.get(path + "/jobs")).json()[0]["state"], "expired")
                 self.assertEqual(await self.pg.fetch_all("SELECT * FROM ts_transfer_sandbox.c"), [])
+
+                # A genuine AND set retains an earlier unmatched event across
+                # the five-minute horizon and emits exactly one child job.
+                await self.pg.execute("CREATE TABLE ts_transfer_sandbox.d (id integer PRIMARY KEY, value text)")
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.d VALUES (2,'second producer')")
+                second = await create("d", "b", "manual")
+                compound = {**desired, "operator": "AND", "expectedGeneration": 4,
+                            "parents": [*desired["parents"], {"planId": second["id"], "expectedUpdatedAt": second["updatedAt"]}]}
+                duplicate = await client.put(path, json={**compound, "parents": compound["parents"] + desired["parents"]})
+                self.assertEqual(duplicate.status_code, 422, duplicate.text)
+                armed = await client.put(path, json=compound)
+                self.assertEqual(armed.status_code, 200, armed.text)
+                self.assertEqual(armed.json()["operator"], "AND")
+                self.assertEqual(len(armed.json()["parents"]), 2)
+                first = await run(parent, uuid4())
+                self.assertEqual(first.status_code, 200, first.text)
+                async with self.pg.session() as session:
+                    await session.execute(text(
+                        "UPDATE ontology_transfer_commit_events SET recorded_at = recorded_at - interval '6 minutes' "
+                        "WHERE parent_receipt_id = :receipt"
+                    ), {"receipt": first.json()["id"]})
+                self.assertEqual(await collect(), [])
+                second_receipt = await run(second, uuid4())
+                self.assertEqual(second_receipt.status_code, 200, second_receipt.text)
+                left, right = await asyncio.gather(collect(), collect())
+                job, = left + right
+                self.assertEqual(await execute(job), "committed")
+                self.assertEqual(await execute(job), "committed")
+                self.assertEqual(await collect(), [])
+                jobs = (await client.get(path + "/jobs")).json()
+                self.assertEqual(jobs[0]["operator"], "AND")
+                self.assertEqual({event["parentReceiptId"] for event in jobs[0]["events"]},
+                                 {first.json()["id"], second_receipt.json()["id"]})
+                self.assertIsNotNone(jobs[0]["receiptId"])
+                first_extra = await run(parent, uuid4())
+                self.assertEqual(first_extra.status_code, 200, first_extra.text)
+                self.assertEqual(await collect(), [])  # Prior second event was already consumed.
+
+                # Changing operator starts a new reviewed generation. OR does
+                # not replay the prior unpaired event, and emits one per input.
+                or_change = {**compound, "operator": "OR", "expectedGeneration": 5}
+                changed = await client.put(path, json=or_change)
+                self.assertEqual(changed.status_code, 200, changed.text)
+                self.assertEqual(await collect(), [])
+                a, d = await run(parent, uuid4()), await run(second, uuid4())
+                self.assertEqual((a.status_code, d.status_code), (200, 200))
+                or_jobs = await collect()
+                self.assertEqual(len(or_jobs), 2)
+                self.assertEqual([await execute(job) for job in or_jobs], ["committed", "committed"])
+                jobs = (await client.get(path + "/jobs")).json()
+                self.assertTrue(all(job["operator"] == "OR" and len(job["events"]) == 1 for job in jobs[:2]))
+                self.assertEqual({job["events"][0]["parentReceiptId"] for job in jobs[:2]}, {a.json()["id"], d.json()["id"]})
+                self.assertEqual(await collect(), [])

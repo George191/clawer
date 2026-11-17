@@ -1,5 +1,6 @@
 """Outbound sender contracts; two-database receipt integration is tested separately."""
 
+import asyncio
 from datetime import datetime, timezone
 from importlib import import_module
 import os
@@ -20,7 +21,7 @@ from sqlalchemy.exc import DBAPIError
 from app.storage.postgres_client import PostgresClient
 from app.web.api.dependencies.common import get_current_user
 from app.web.api.dependencies.session import get_db
-from app.web.api.models.table_exports import TableExportReview
+from app.web.api.models.table_exports import TableExportGrantChange, TableExportReview
 from app.web.api.routes.etl import router
 from app.web.core.config import settings
 from app.web.services.table_export_receiver import ReceiverFailure, ReceiverReceipt
@@ -47,15 +48,23 @@ class TableExportContracts(unittest.IsolatedAsyncioTestCase):
             with self.subTest(payload=payload), self.assertRaises(ValidationError):
                 TableExportReview.model_validate(payload)
 
+    def test_grant_disallows_unclassified_and_wildcard_markings(self):
+        base = {"approved": True, "expectedPlanUpdatedAt": datetime.now(timezone.utc),
+                "expectedGeneration": None, "reason": "Synthetic pilot"}
+        for marking in ("unclassified", "*", "internal", ""):
+            with self.subTest(marking=marking), self.assertRaises(ValidationError):
+                TableExportGrantChange.model_validate({**base, "marking": marking})
+
     async def test_disabled_and_reader_gates(self):
         with patch.object(settings, "TABLE_EXPORT_SANDBOX_ENABLED", False):
             async with api(True) as client:
                 self.assertFalse((await client.get(ENDPOINT + "/capabilities")).json()["enabled"])
                 self.assertEqual((await client.post(ENDPOINT + "/runs", json={
                     "requestId": str(uuid4()), "expectedUpdatedAt": datetime.now(timezone.utc).isoformat(),
+                    "expectedGrantGeneration": 1,
                 })).status_code, 403)
             async with api(False) as client:
-                for route in ("", "/capabilities", "/runs", "/attempts", "/lineage"):
+                for route in ("", "/capabilities", "/grant", "/grant/history", "/runs", "/attempts", "/lineage"):
                     self.assertEqual((await client.get(ENDPOINT + route)).status_code, 403)
 
 
@@ -69,11 +78,15 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(self.pg.close)
         if (await self.pg.fetch_one("SELECT current_database() AS name"))["name"] != DATABASE:
             raise RuntimeError("Connected to a non-fixture sender database")
-        migration = import_module("app.web.alembic.versions.b31c72f6a9de_ontology_table_exports")
+        migrations = (
+            import_module("app.web.alembic.versions.b31c72f6a9de_ontology_table_exports"),
+            import_module("app.web.alembic.versions.aa4c7d2e1f90_ontology_table_export_grants"),
+        )
         async with self.pg.session() as session:
             def upgrade(sync_session):
                 with Operations.context(MigrationContext.configure(sync_session.connection())):
-                    migration.upgrade()
+                    for migration in migrations:
+                        migration.upgrade()
 
             await session.run_sync(upgrade)
             await session.execute(text("CREATE SCHEMA ts_table_export_sandbox"))
@@ -94,11 +107,18 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
     async def drop_fixture(self):
         async with self.pg.session() as session:
             await session.execute(text("DROP TABLE ontology_table_export_attempts, ontology_table_export_receipts, ontology_table_export_requests, ontology_table_export_plan"))
+            await session.execute(text("DROP TABLE ontology_table_export_grants"))
             await session.execute(text("DROP SCHEMA ts_table_export_sandbox CASCADE"))
 
     async def provider(self):
         async with self.pg.session() as session:
             yield session
+
+    async def decision(self, client, version, *, approved=True, generation=None):
+        return await client.put(ENDPOINT + "/grant", json={
+            "approved": approved, "expectedPlanUpdatedAt": version, "expectedGeneration": generation,
+            "marking": "sandbox-synthetic", "reason": "Verified synthetic receiver and projection",
+        })
 
     async def test_durable_pin_drift_and_lost_receiver_ack_reconcile_without_reread(self):
         receipts = {}
@@ -130,9 +150,12 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                 reviewed = await client.put(ENDPOINT, json={"name": "Synthetic pilot", "expectedUpdatedAt": None})
                 self.assertEqual(reviewed.status_code, 200, reviewed.text)
                 version = reviewed.json()["updatedAt"]
+                self.assertEqual((await self.decision(client, version)).status_code, 200)
 
                 async def run(key):
-                    return await client.post(ENDPOINT + "/runs", json={"requestId": str(key), "expectedUpdatedAt": version})
+                    return await client.post(ENDPOINT + "/runs", json={
+                        "requestId": str(key), "expectedUpdatedAt": version, "expectedGrantGeneration": 1,
+                    })
 
                 first = uuid4()
                 busy = await run(first)
@@ -168,10 +191,11 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
 
         async with api(True, self.provider) as client:
             review = (await client.put(ENDPOINT, json={"name": "Synthetic pilot", "expectedUpdatedAt": None})).json()
+            self.assertEqual((await self.decision(client, review["updatedAt"])).status_code, 200)
             with (patch("app.web.services.table_exports.find_export_receipt", side_effect=rogue),
                   patch("app.web.services.table_exports._source_rows") as source):
                 response = await client.post(ENDPOINT + "/runs", json={
-                    "requestId": str(uuid4()), "expectedUpdatedAt": review["updatedAt"],
+                    "requestId": str(uuid4()), "expectedUpdatedAt": review["updatedAt"], "expectedGrantGeneration": 1,
                 })
             self.assertEqual(response.status_code, 409, response.text)
             self.assertEqual(response.json()["detail"]["code"], "receipt_conflict")
@@ -191,6 +215,8 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(before["observed"])
             reviewed = (await client.put(ENDPOINT, json={"name": "Initial review", "expectedUpdatedAt": None})).json()
             version = reviewed["updatedAt"]
+            self.assertEqual((await client.get(path)).json()["declaration"]["state"], "blocked")
+            self.assertEqual((await self.decision(client, version)).status_code, 200)
             self.assertEqual((await client.get(path)).json()["declaration"]["state"], "enabled")
             with (
                 patch("app.web.services.table_exports.find_export_receipt", return_value=None) as lookup,
@@ -198,7 +224,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 async def export():
                     response = await client.post(ENDPOINT + "/runs", json={
-                        "requestId": str(uuid4()), "expectedUpdatedAt": version,
+                        "requestId": str(uuid4()), "expectedUpdatedAt": version, "expectedGrantGeneration": 1,
                     })
                     self.assertEqual(response.status_code, 200, response.text)
                     return response.json()
@@ -232,10 +258,11 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                 history = (await client.get(path)).json()
                 self.assertFalse(history["observed"])
                 self.assertIsNone(history["latestObservation"])
-                old = next(item for item in history["receipts"] if item["id"] == visible["id"])
-                self.assertEqual((old["reviewRelation"], old["reviewedAt"], old["observed"]),
-                                 ("earlier_review", version, True))
-                self.assertEqual(old["recordedAt"], visible["recordedAt"])
+                self.assertEqual(history["receipts"], [])
+                self.assertEqual(history["declaration"]["state"], "blocked")
+                retained = await self.pg.fetch_one("SELECT recorded_at FROM ontology_table_export_receipts WHERE id=:id",
+                                                   {"id": visible["id"]})
+                self.assertEqual(retained["recorded_at"], recorded)
                 with patch.object(settings, "TABLE_EXPORT_RECEIVER_MARKER", uuid4()):
                     stale = (await client.get(path)).json()
                     self.assertEqual(stale["declaration"]["state"], "stale")
@@ -243,6 +270,79 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                                                               "expectedUpdatedAt": renamed["updatedAt"]})
                     self.assertEqual(rebound.status_code, 200, rebound.text)
                     different = (await client.get(path)).json()
-                self.assertTrue(all(r["reviewRelation"] == "different_binding" for r in different["receipts"]))
+                self.assertEqual(different["receipts"], [])
                 self.assertFalse(different["observed"])
                 self.assertEqual((lookup.await_count, target.await_count), (2, 2))  # Evidence never opens receiver.
+
+    async def test_revocation_serializes_with_admitted_run_and_fences_future_contact(self):
+        admitted = asyncio.Event()
+        release = asyncio.Event()
+        version: str
+        key = str(uuid4())
+
+        async def receive(config, request_id, plan_version, digest, rows):
+            admitted.set()
+            await release.wait()
+            return ReceiverReceipt(request_id, plan_version, digest, len(rows), datetime.now(timezone.utc))
+
+        async with api(True, self.provider) as client:
+            review = await client.put(ENDPOINT, json={"name": "Synthetic pilot", "expectedUpdatedAt": None})
+            version = review.json()["updatedAt"]
+
+            async def run(generation, request_id=key):
+                return await client.post(ENDPOINT + "/runs", json={
+                    "requestId": request_id, "expectedUpdatedAt": version, "expectedGrantGeneration": generation,
+                })
+
+            with (
+                patch("app.web.services.table_exports.find_export_receipt", return_value=None) as lookup,
+                patch("app.web.services.table_exports.apply_export_rows", side_effect=receive) as receiver,
+                patch("app.web.services.table_exports.read_table_export_source",
+                      return_value=[(1, "synthetic source")]) as source,
+            ):
+                self.assertEqual((await run(1)).json()["detail"]["code"], "grant_required")
+                self.assertEqual((lookup.await_count, source.await_count, receiver.await_count), (0, 0, 0))
+                self.assertEqual((await self.decision(client, version)).json()["generation"], 1)
+                task = asyncio.create_task(run(1))
+                await asyncio.wait_for(admitted.wait(), timeout=5)
+                try:
+                    attempted = await self.decision(client, version, approved=False, generation=1)
+                    self.assertEqual(attempted.status_code, 409, attempted.text)
+                    self.assertEqual(attempted.json()["detail"]["code"], "target_busy")
+                finally:
+                    release.set()
+                settled = await asyncio.wait_for(task, timeout=5)
+                self.assertEqual(settled.status_code, 200, settled.text)
+                self.assertEqual(settled.json()["grantGeneration"], 1)
+
+                with patch.object(settings, "TABLE_EXPORT_RECEIVER_MARKER", uuid4()):
+                    grant = (await client.get(ENDPOINT + "/grant")).json()
+                    self.assertEqual(grant["status"], "stale")
+                    self.assertFalse(grant["available"])
+                    self.assertEqual((await run(1)).json()["detail"]["code"], "grant_required")
+                    revoked = await self.decision(client, version, approved=False, generation=1)
+                self.assertEqual(revoked.json()["status"], "revoked")
+                self.assertEqual(revoked.json()["generation"], 2)
+                self.assertEqual((await run(1)).json()["detail"]["code"], "grant_required")
+                self.assertEqual((await client.get(ENDPOINT + "/runs")).json(), [])
+                self.assertEqual((await client.get(ENDPOINT + "/attempts")).json(), [])
+                self.assertEqual((await client.get(ENDPOINT + "/lineage")).json()["receipts"], [])
+                self.assertIsNotNone(await self.pg.fetch_one(
+                    "SELECT id FROM ontology_table_export_receipts WHERE request_id=:id", {"id": key},
+                ))
+
+                legacy = str(uuid4())
+                await self.pg.execute(
+                    "INSERT INTO ontology_table_export_requests(request_id, plan_updated_at, binding_digest) "
+                    "SELECT CAST(:id AS uuid), updated_at, binding_digest FROM ontology_table_export_plan", {"id": legacy},
+                )
+                self.assertEqual((await self.decision(client, version, generation=2)).json()["generation"], 3)
+                self.assertEqual((await run(1)).json()["detail"]["code"], "grant_changed")
+                self.assertEqual((await run(3)).json()["detail"]["code"], "request_grant_changed")
+                self.assertEqual((await run(3, legacy)).json()["detail"]["code"], "request_grant_changed")
+                self.assertEqual((lookup.await_count, source.await_count, receiver.await_count), (1, 1, 1))
+                audit = (await client.get(ENDPOINT + "/grant/history")).json()
+                self.assertEqual([(item["generation"], item["action"]) for item in audit],
+                                 [(3, "approved"), (2, "revoked"), (1, "approved")])
+                self.assertNotIn("scope_digest", str(audit))
+                self.assertNotIn(key, str(audit))

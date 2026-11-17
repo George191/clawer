@@ -17,7 +17,9 @@ from app.web.api.models.transfer_plans import (
     TransferRunCapabilities, TransferRunRequest, TransferRunRow,
 )
 from app.web.api.models.transfer_schedules import TransferScheduleJobRow, TransferScheduleRow
-from app.web.api.models.transfer_upstream import TransferCommitEventRow, UpstreamTriggerJobRow, UpstreamTriggerRow
+from app.web.api.models.transfer_upstream import (
+    TransferCommitEventRow, UpstreamTriggerJobEventRow, UpstreamTriggerJobRow, UpstreamTriggerParentRow, UpstreamTriggerRow,
+)
 from app.web.api.models.user import User
 from app.web.api.utils.models import StatusTypes
 from app.web.core.config import settings
@@ -258,12 +260,13 @@ async def _lock_schedule_job(
     return job
 
 
-async def upstream_catalog(session: AsyncSession, child: TransferPlanRow, parent: TransferPlanRow) -> dict:
-    rows = await _sandbox_tables(session, parent.source_table, parent.target_table)
-    rows += await _sandbox_tables(session, child.source_table, child.target_table)
+async def upstream_catalog(session: AsyncSession, child: TransferPlanRow, parents: list[TransferPlanRow]) -> dict:
+    rows = await _sandbox_tables(session, child.source_table, child.target_table)
+    for parent in parents:
+        rows += await _sandbox_tables(session, parent.source_table, parent.target_table)
     catalog = {item["name"]: item for item in rows}
-    if set(catalog) != {parent.source_table, child.source_table, child.target_table}:
-        raise HTTPException(422, "The upstream route must use three ordinary sandbox tables")
+    if set(catalog) != {child.source_table, child.target_table, *(parent.source_table for parent in parents)}:
+        raise HTTPException(422, "The upstream route must use ordinary sandbox tables")
     return catalog
 
 
@@ -273,32 +276,44 @@ def upstream_catalog_digest(catalog: dict) -> str:
 
 
 async def _lock_upstream_job(
-    session: AsyncSession, child: TransferPlanRow, parent: TransferPlanRow, request: TransferRunRequest,
+    session: AsyncSession, child: TransferPlanRow, locked_plans: dict[UUID, TransferPlanRow], request: TransferRunRequest,
     job_id: UUID, actor_id: UUID, now: datetime | None,
-) -> tuple[UpstreamTriggerJobRow, TransferCommitEventRow, UpstreamTriggerRow | None]:
+) -> tuple[UpstreamTriggerJobRow, list[TransferCommitEventRow], UpstreamTriggerRow | None, list[TransferPlanRow]]:
     job = (await session.scalars(select(UpstreamTriggerJobRow).where(UpstreamTriggerJobRow.id == job_id)
                                  .with_for_update().execution_options(populate_existing=True))).one_or_none()
     if (job is None or job.plan_id != child.id or job.id != request.requestId or job.armed_by != actor_id
         or job.child_updated_at != request.expectedUpdatedAt):
         raise HTTPException(409, "The upstream job is not bound to this request")
-    event = await session.get(TransferCommitEventRow, job.event_id)
-    if event is None or event.parent_plan_id != parent.id:
-        raise HTTPException(409, "The upstream job has no matching parent commit event")
+    events = list((await session.scalars(select(TransferCommitEventRow)
+                  .join(UpstreamTriggerJobEventRow, UpstreamTriggerJobEventRow.event_id == TransferCommitEventRow.id)
+                  .where(UpstreamTriggerJobEventRow.job_id == job_id))).all())
+    if not events or max(event.id for event in events) != job.event_id:
+        raise HTTPException(409, "The upstream job has no matching parent commit event set")
     if job.state == "committed":
-        return job, event, None
+        return job, events, None, []
     if job.state not in ("pending", "dispatched"):
         raise HTTPException(409, "This upstream job already has a terminal outcome")
     current = now or datetime.now(timezone.utc)
-    if current < event.recorded_at:
+    if current < max(event.recorded_at for event in events):
         raise HTTPException(409, {"code": "schedule_not_due", "message": "Upstream event time has not arrived"})
     if current >= job.expires_at:
         raise HTTPException(409, {"code": "schedule_expired", "message": "Upstream event dispatch window expired"})
     binding = await session.get(UpstreamTriggerRow, child.id, populate_existing=True)
+    reviewed = {member.parent_plan_id: member for member in (await session.scalars(
+        select(UpstreamTriggerParentRow).where(UpstreamTriggerParentRow.plan_id == child.id),
+    )).all()}
+    parents = [locked_plans.get(parent_id) for parent_id in sorted(reviewed)]
+    expected_event_count = len(reviewed) if job.operator == "AND" else 1
     if (binding is None or not binding.enabled or binding.generation != job.generation
-        or binding.parent_plan_id != parent.id or binding.armed_by != actor_id or event.id <= binding.cutoff_event_id
+        or binding.armed_by != actor_id or binding.operator != job.operator or not 1 <= len(reviewed) <= 3
         or binding.child_updated_at != child.updated_at or child.updated_at != job.child_updated_at
-        or binding.parent_updated_at != parent.updated_at or event.parent_updated_at != parent.updated_at
-        or not upstream_pair_eligible(child, parent)):
+        or len(events) != expected_event_count or len({event.parent_plan_id for event in events}) != len(events)
+        or any(parent is None or not upstream_pair_eligible(child, parent)
+               or reviewed[parent.id].parent_updated_at != parent.updated_at for parent in parents)
+        or len({parent.source_table for parent in parents}) != len(parents)
+        or any(event.parent_plan_id not in reviewed
+               or event.id <= reviewed[event.parent_plan_id].cutoff_event_id
+               or event.parent_updated_at != reviewed[event.parent_plan_id].parent_updated_at for event in events)):
         raise HTTPException(409, "The upstream trigger was paused or its reviewed plan versions changed")
     actor = await session.scalar(select(User.id).where(
         User.id == actor_id, User.status == StatusTypes.ENABLE, User.is_superuser.is_(True),
@@ -307,7 +322,7 @@ async def _lock_upstream_job(
         raise HTTPException(403, "The administrator who armed this upstream trigger is no longer eligible")
     if job.dispatched_at is None:
         job.dispatched_at = current
-    return job, event, binding
+    return job, events, binding, parents
 
 
 async def run_sandbox_transfer(
@@ -332,17 +347,13 @@ async def run_sandbox_transfer(
         await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
         await session.execute(text("SET LOCAL lock_timeout = '2s'"))
         await session.execute(text("SET LOCAL statement_timeout = '5s'"))
-        parent = None
-        upstream_event = None
+        parents = []
+        upstream_events = []
         upstream_binding = None
         if upstream_job_id is not None:
-            parent_id = await session.scalar(select(TransferCommitEventRow.parent_plan_id).join(
-                UpstreamTriggerJobRow, UpstreamTriggerJobRow.event_id == TransferCommitEventRow.id,
-            ).where(UpstreamTriggerJobRow.id == upstream_job_id))
-            if parent_id is None:
-                raise HTTPException(404, "Upstream job does not exist")
-            locked = await lock_transfer_plans(session, plan_id, parent_id)
-            parent = locked.get(parent_id)
+            parent_ids = list((await session.scalars(select(UpstreamTriggerParentRow.parent_plan_id)
+                               .where(UpstreamTriggerParentRow.plan_id == plan_id))).all())
+            locked = await lock_transfer_plans(session, plan_id, *parent_ids)
             plan = locked.get(plan_id)
         else:
             plan = (await lock_transfer_plans(session, plan_id)).get(plan_id)
@@ -351,10 +362,8 @@ async def run_sandbox_transfer(
         job = (await _lock_schedule_job(session, plan, request, scheduled_job_id, actor_id, scheduled_now)
                if scheduled_job_id is not None else None)
         if upstream_job_id is not None:
-            if parent is None:
-                raise HTTPException(404, "Approved parent plan does not exist")
-            job, upstream_event, upstream_binding = await _lock_upstream_job(
-                session, plan, parent, request, upstream_job_id, actor_id, scheduled_now,
+            job, upstream_events, upstream_binding, parents = await _lock_upstream_job(
+                session, plan, locked, request, upstream_job_id, actor_id, scheduled_now,
             )
         existing = (await session.scalars(select(TransferRunRow).where(
             TransferRunRow.plan_id == plan_id, TransferRunRow.request_id == request.requestId,
@@ -389,19 +398,23 @@ async def run_sandbox_transfer(
         # SHARE ROW EXCLUSIVE serializes all writes/append checks to the target.
         table_locks = [(source, "SHARE"), (target, "SHARE ROW EXCLUSIVE")]
         if upstream_binding is not None:
-            await upstream_catalog(session, plan, parent)  # Refuse nonordinary tables before taking an actual lock.
-            parent_source = ".".join(map(quote_identifier, (SANDBOX, parent.source_table)))
-            table_locks.append((parent_source, "ACCESS SHARE"))
+            await upstream_catalog(session, plan, parents)  # Refuse nonordinary tables before taking an actual lock.
+            parent_sources = {".".join(map(quote_identifier, (SANDBOX, parent.source_table))) for parent in parents}
+            table_locks.extend((name, "ACCESS SHARE") for name in parent_sources)
         for name, mode in sorted(table_locks):
             await session.execute(text(f"LOCK TABLE ONLY {name} IN {mode} MODE"))
         if upstream_binding is not None:
-            physical = await upstream_catalog(session, plan, parent)
-            p_source = physical[parent.source_table]
-            p_target = physical[parent.target_table]
-            if (upstream_catalog_digest(physical) != upstream_binding.physical_digest
-                or (p_source["table_oid"], p_source["table_node"], p_target["table_oid"], p_target["table_node"]) !=
-                   (upstream_event.source_oid, upstream_event.source_node, upstream_event.target_oid, upstream_event.target_node)):
+            physical = await upstream_catalog(session, plan, parents)
+            if upstream_catalog_digest(physical) != upstream_binding.physical_digest:
                 raise HTTPException(409, "An approved physical upstream table changed; review and arm again")
+            for event in upstream_events:
+                parent = locked[event.parent_plan_id]
+                p_source = physical[parent.source_table]
+                p_target = physical[parent.target_table]
+                if (p_source["table_oid"], p_source["table_node"], p_target["table_oid"], p_target["table_node"]) != (
+                    event.source_oid, event.source_node, event.target_oid, event.target_node,
+                ):
+                    raise HTTPException(409, "An approved physical upstream table changed; review and arm again")
             if (scheduled_now or datetime.now(timezone.utc)) >= job.expires_at:
                 raise HTTPException(409, {"code": "schedule_expired", "message": "Upstream dispatch window closed before reading"})
 
@@ -508,6 +521,8 @@ async def run_sandbox_transfer(
                           SCHEDULED_SYSTEM_ACTOR if job is not None else actor_id),
             source_schema=SANDBOX, source_table=plan.source_table,
             target_schema=SANDBOX, target_table=plan.target_table,
+            target_oid=catalog[plan.target_table]["table_oid"],
+            target_filenode=catalog[plan.target_table]["table_node"],
             write_mode=plan.write_mode, rows_affected=written, recorded_at=datetime.now(timezone.utc),
             cursor_through=checkpoint.cursor_through if incremental else None, has_more=has_more,
         )

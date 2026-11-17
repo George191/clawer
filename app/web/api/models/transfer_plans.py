@@ -147,6 +147,11 @@ class TransferRunRow(SQLModel, table=True):
         CheckConstraint("write_mode IN ('append', 'upsert')", name="ck_ontology_transfer_runs_mode"),
         CheckConstraint("source_schema = 'ts_transfer_sandbox' AND target_schema = 'ts_transfer_sandbox' "
                         "AND source_table <> target_table", name="ck_ontology_transfer_runs_sandbox"),
+        CheckConstraint("(target_oid IS NULL) = (target_filenode IS NULL)",
+                        name="ck_ontology_transfer_runs_physical_target"),
+        Index("ix_ontology_transfer_runs_freshness", "plan_id", "plan_updated_at", "target_oid",
+              "target_filenode", "recorded_at", "id", postgresql_where=text(
+                  "rows_affected > 0 AND target_oid IS NOT NULL AND target_filenode IS NOT NULL")),
         Index("ix_ontology_transfer_runs_plan", "plan_id", "recorded_at"),
         Index("ix_ontology_transfer_runs_source", "source_schema", "source_table", "recorded_at"),
         Index("ix_ontology_transfer_runs_target", "target_schema", "target_table", "recorded_at"),
@@ -163,6 +168,8 @@ class TransferRunRow(SQLModel, table=True):
     source_table: str = DbField(max_length=63)
     target_schema: str = DbField(max_length=63)
     target_table: str = DbField(max_length=63)
+    target_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    target_filenode: int | None = DbField(default=None, sa_column=Column(BigInteger))
     write_mode: str = DbField(max_length=6)
     rows_affected: int
     recorded_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))

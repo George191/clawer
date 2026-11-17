@@ -56,7 +56,7 @@ export default function TransferSchedules({ keyword, filter }: Props) {
   if (!authorized) return null;
   const query = keyword.trim().toLowerCase();
   const matching = items?.filter(item => (filter === 'all' || configured(item) === (filter === 'enabled')) &&
-    (!query || `${item.planName} ${item.sourceTable} ${item.targetTable} ${item.kind === 'upstream' ? item.parentPlanName ?? '' : ''}`.toLowerCase().includes(query)));
+    (!query || `${item.planName} ${item.sourceTable} ${item.targetTable} ${item.kind === 'upstream' ? item.parents.map(parent => parent.planName).join(' ') : ''}`.toLowerCase().includes(query)));
 
   return <section className="automation-transfer-schedules" aria-label="Ontology transfer schedules">
     <header><h3><FieldTimeOutlined />Transfer schedules</h3>
@@ -67,7 +67,7 @@ export default function TransferSchedules({ keyword, filter }: Props) {
       : matching.length ? <ul>{matching.map(item => <li key={itemKey(item)}>
         <div><strong>{item.planName}</strong>{item.kind === 'batch' && <span>Batch sync</span>}{item.kind === 'upstream' && <span>Upstream trigger</span>}<code>{item.sourceTable} → {item.targetTable}</code></div>
         <div>
-          <span>{item.kind === 'upstream' ? `On upstream commit · ${item.parentPlanName ?? 'Parent unavailable'}`
+          <span>{item.kind === 'upstream' ? `On upstream commit · ${item.operator}: ${item.parents.map(parent => parent.planName).join(', ')}`
             : item.plannedTimeUtc ? `Daily at ${item.plannedTimeUtc} UTC · local time ${nextLocalTimeForUtcClock(item.plannedTimeUtc)}` : 'No daily time configured'}</span>
           <span className={`automation-schedule-status ${item.enabled && item.available ? 'is-enabled' : ''}`}><i />{configured(item) ? (item.enabled && item.available ? 'Armed' : 'Armed · blocked') : 'Paused'}</span>
           <Button size="small" aria-expanded={historyFor && itemKey(historyFor) === itemKey(item)} onClick={() => {
@@ -82,12 +82,13 @@ export default function TransferSchedules({ keyword, filter }: Props) {
           {historyError ? <p role="alert">Dispatch history could not be loaded. Refresh schedules to retry.</p>
             : !history ? <p role="status">Loading dispatch history…</p>
               : history.length ? <ol>{history.map(job => {
-                const timestamp = 'slot' in job ? job.slot : job.eventRecordedAt;
+                const timestamp = 'slot' in job ? job.slot : job.events.reduce<string | undefined>((latest, event) =>
+                  !latest || Date.parse(event.eventRecordedAt) > Date.parse(latest) ? event.eventRecordedAt : latest, undefined);
                 return <li key={job.id}>
-                  <time dateTime={timestamp}>{new Date(timestamp).toLocaleString()}</time>
-                  <strong>{job.state.replace(/_/g, ' ')}</strong>
-                  {'parentReceiptId' in job && <span>Parent receipt: <code>{job.parentReceiptId}</code></span>}
-                  {job.receiptId && ('parentReceiptId' in job ? <span>Child receipt: <code>{job.receiptId}</code></span> : <code title="Committed receipt">{job.receiptId}</code>)}
+                  {timestamp && <time dateTime={timestamp}>{new Date(timestamp).toLocaleString()}</time>}
+                  <strong>{job.state.replace(/_/g, ' ')}{'events' in job && ` · ${job.operator}`}</strong>
+                  {'events' in job && job.events.map(event => <span key={event.eventId}>Parent receipt: <code>{event.parentReceiptId}</code></span>)}
+                  {job.receiptId && ('events' in job ? <span>Child receipt: <code>{job.receiptId}</code></span> : <code title="Committed receipt">{job.receiptId}</code>)}
                 </li>;
               })}</ol> : <p>No scheduled jobs have been recorded.</p>}
         </section>}

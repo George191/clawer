@@ -4,6 +4,7 @@ import { Button } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchExplorerTableEvidence, fetchExplorerTransferRuns, type ExplorerTableEvidenceSnapshot, type TransferRunReceipt } from '../../services/api';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
+import ExplorerAssetFreshness from './ExplorerAssetFreshness';
 import './table-evidence.css';
 
 export default function ExplorerTableEvidence({ schema, table, canManage }: { schema: string; table: string; canManage: boolean }) {
@@ -70,6 +71,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                             </>}
                             <dl><div><dt>Checked at</dt><dd><time dateTime={snapshot.observedAt}>{new Date(snapshot.observedAt).toLocaleString()}</time></dd></div></dl>
                         </section>
+                        {showReceipts && <ExplorerAssetFreshness key={`${schema}.${table}`} schema={schema} table={table} version={version} />}
                         {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>
                         <section className="flow-evidence-card" aria-labelledby="table-evidence-history">
                             <header><h4 id="table-evidence-history">History</h4><span>{showReceipts ? 'Sandbox transfers' : 'Run receipt unavailable'}</span></header>

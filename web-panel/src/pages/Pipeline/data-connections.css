@@ -107,6 +107,9 @@
 .ontology-source-catalog__setup { margin-top: 7px; }
 .ontology-source-sync__body { padding: 11px; }
 .ontology-table-export__mapping { margin-bottom: 10px; }
+.ontology-table-export__authorization { margin: 10px 0; padding: 9px; border: 1px solid var(--ontology-border); border-radius: 4px; }
+.ontology-table-export__authorization :is(h4, strong) { color: var(--ontology-text); }
+.ontology-table-export__authorization p { margin: 4px 0; }
 .ontology-table-export__mapping .ontology-source-catalog__columns { max-width: 620px; margin: 7px 0; }
 .ontology-source-sync__form fieldset { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
 .ontology-source-sync__form :is(label, .ontology-source-sync__mapping) { display: grid; gap: 3px; min-width: 0; }

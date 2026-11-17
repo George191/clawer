@@ -43,6 +43,7 @@ from .embedding import (
 )
 
 from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
+from .asset_freshness import AssetFreshnessPolicyRow as AssetFreshnessPolicyRow
 from .batch_syncs import BatchSyncPlanRow as BatchSyncPlanRow
 from .batch_sync_schedules import BatchSyncScheduleRow as BatchSyncScheduleRow
 from .table_exports import TableExportPlanRow as TableExportPlanRow

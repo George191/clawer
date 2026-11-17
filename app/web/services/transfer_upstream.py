@@ -4,18 +4,18 @@ from datetime import datetime, timedelta, timezone
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import HTTPException
-from sqlalchemy import case, exists, func, text, update
+from sqlalchemy import case, delete, exists, func, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 from sqlmodel import select
 
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.transfer_plans import TransferPlanRow, TransferRunRequest
 from app.web.api.models.transfer_upstream import (
-    TransferCommitEventRow, UpstreamCandidate, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerJob,
-    UpstreamTriggerJobRow, UpstreamTriggerRow, UpstreamTriggerSummary,
+    TransferCommitEventRow, UpstreamCandidate, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerEvent,
+    UpstreamTriggerJob, UpstreamTriggerJobEventRow, UpstreamTriggerJobRow, UpstreamTriggerParent,
+    UpstreamTriggerParentRow, UpstreamTriggerRow, UpstreamTriggerSummary,
 )
 from app.web.services.transfer_runs import (
     HISTORY_LIMIT, SANDBOX, is_sandbox_upsert, lock_transfer_plans, run_sandbox_transfer,
@@ -34,18 +34,38 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _response(child: TransferPlanRow, binding: UpstreamTriggerRow | None, parent: TransferPlanRow | None) -> UpstreamTrigger:
+def _response(
+    child: TransferPlanRow, binding: UpstreamTriggerRow | None,
+    reviewed: list[tuple[UpstreamTriggerParentRow, TransferPlanRow]],
+) -> UpstreamTrigger:
     available = upstream_transfer_enabled() and is_sandbox_upsert(child, "upstream")
     return UpstreamTrigger(
         available=available, configuredEnabled=bool(binding and binding.enabled),
-        enabled=bool(available and binding and binding.enabled and parent and upstream_pair_eligible(child, parent)
-                     and binding.child_updated_at == child.updated_at and binding.parent_updated_at == parent.updated_at),
+        enabled=bool(available and binding and binding.enabled and binding.child_updated_at == child.updated_at
+                     and 1 <= len(reviewed) <= 3 and len({parent.source_table for _, parent in reviewed}) == len(reviewed)
+                     and all(upstream_pair_eligible(child, parent)
+                     and member.parent_updated_at == parent.updated_at for member, parent in reviewed)),
+        operator=binding.operator if binding else "OR",
+        parents=[UpstreamTriggerParent(planId=member.parent_plan_id, planName=parent.name,
+                                       armedForUpdatedAt=member.parent_updated_at) for member, parent in reviewed],
         generation=binding.generation if binding else None,
-        parentPlanId=binding.parent_plan_id if binding else None, parentPlanName=parent.name if parent else None,
         armedForUpdatedAt=binding.child_updated_at if binding else None,
-        armedForParentUpdatedAt=binding.parent_updated_at if binding else None,
         updatedAt=binding.updated_at if binding else None,
     )
+
+
+async def _reviewed_parents(
+    session: AsyncSession, ids: list[UUID],
+) -> dict[UUID, list[tuple[UpstreamTriggerParentRow, TransferPlanRow]]]:
+    if not ids:
+        return {}
+    statement = (select(UpstreamTriggerParentRow, TransferPlanRow)
+                 .join(TransferPlanRow, TransferPlanRow.id == UpstreamTriggerParentRow.parent_plan_id)
+                 .where(UpstreamTriggerParentRow.plan_id.in_(ids)).order_by(UpstreamTriggerParentRow.parent_plan_id))
+    grouped = {}
+    for member, parent in (await session.execute(statement)).all():
+        grouped.setdefault(member.plan_id, []).append((member, parent))
+    return grouped
 
 
 async def _need_plan(session: AsyncSession, plan_id: UUID) -> TransferPlanRow:
@@ -58,8 +78,8 @@ async def _need_plan(session: AsyncSession, plan_id: UUID) -> TransferPlanRow:
 async def read_upstream_trigger(session: AsyncSession, plan_id: UUID) -> UpstreamTrigger:
     child = await _need_plan(session, plan_id)
     binding = await session.get(UpstreamTriggerRow, plan_id)
-    parent = await session.get(TransferPlanRow, binding.parent_plan_id) if binding else None
-    return _response(child, binding, parent)
+    reviewed = (await _reviewed_parents(session, [plan_id])).get(plan_id, [])
+    return _response(child, binding, reviewed)
 
 
 async def list_upstream_candidates(session: AsyncSession, plan_id: UUID) -> list[UpstreamCandidate]:
@@ -81,13 +101,13 @@ async def change_upstream_trigger(
 ) -> UpstreamTrigger:
     if change.enabled and not upstream_transfer_enabled():
         raise HTTPException(403, "Upstream sandbox transfer execution is disabled")
-    if change.enabled and (change.parentPlanId is None or change.expectedParentUpdatedAt is None):
-        raise HTTPException(422, "Choose one reviewed manual Upsert parent")
     await session.execute(text("SET LOCAL lock_timeout = '3s'"))
     await session.execute(text("SET LOCAL statement_timeout = '5s'"))
-    ids = (plan_id, change.parentPlanId) if change.enabled else (plan_id,)
+    selected = {item.planId: item.expectedUpdatedAt for item in change.parents}
     try:
-        locked = await lock_transfer_plans(session, *ids)
+        locked = await lock_transfer_plans(session, plan_id, *selected)
+        binding = (await session.scalars(select(UpstreamTriggerRow).where(UpstreamTriggerRow.plan_id == plan_id)
+                                        .with_for_update().execution_options(populate_existing=True))).one_or_none()
     except DBAPIError as failure:
         if getattr(failure.orig, "sqlstate", None) == "55P03":
             raise HTTPException(409, "A transfer is settling; retry changing this trigger") from None
@@ -97,76 +117,189 @@ async def change_upstream_trigger(
         raise HTTPException(404, "Transfer draft does not exist")
     if child.updated_at != change.expectedUpdatedAt:
         raise HTTPException(409, "The downstream draft changed; reload it before changing the trigger")
-    binding = await session.get(UpstreamTriggerRow, plan_id)
     if change.expectedGeneration != (binding.generation if binding else None):
         raise HTTPException(409, "The upstream trigger changed; reload it")
+    reviewed = (await _reviewed_parents(session, [plan_id])).get(plan_id, [])
     if not change.enabled:
-        parent = await session.get(TransferPlanRow, binding.parent_plan_id) if binding else None
         if binding and binding.enabled:
             binding.enabled = False
             binding.generation += 1
             binding.updated_at = _utc_now()
-        result = _response(child, binding, parent)
+        result = _response(child, binding, reviewed)
         await session.commit()
         return result
-    parent = locked.get(change.parentPlanId)
-    if parent is None or not upstream_pair_eligible(child, parent):
-        raise HTTPException(422, "Choose a manual Upsert parent whose target is this source, with a distinct downstream target")
-    if parent.updated_at != change.expectedParentUpdatedAt:
-        raise HTTPException(409, "The upstream draft changed; choose its reviewed version again")
-    physical = upstream_catalog_digest(await upstream_catalog(session, child, parent))
-    for plan in (parent, child):
+
+    parents = [locked.get(pid) for pid in sorted(selected)]
+    if any(parent is None or not upstream_pair_eligible(child, parent) for parent in parents):
+        raise HTTPException(422, "Choose manual Upsert parents whose target is this source, with a distinct downstream target")
+    if len({parent.source_table for parent in parents}) != len(parents):
+        raise HTTPException(422, "Choose distinct source tables for the reviewed upstream plans")
+    if any(parent.updated_at != selected[parent.id] for parent in parents):
+        raise HTTPException(409, "An upstream draft changed; choose its reviewed version again")
+    physical = upstream_catalog_digest(await upstream_catalog(session, child, parents))
+    for plan in [*parents, child]:
         endpoints = await get_etl_layers().transfer_endpoint_columns_in_session(
             session, (SANDBOX, plan.source_table), (SANDBOX, plan.target_table),
         )
         if compare_transfer_endpoints(plan_response(plan), endpoints).status != "compatible":
-            raise HTTPException(422, "Both transfers must pass current sandbox structure preflight")
-    if (binding is None or not binding.enabled or binding.parent_plan_id != parent.id or binding.armed_by != actor_id
-        or binding.child_updated_at != child.updated_at or binding.parent_updated_at != parent.updated_at
-        or binding.physical_digest != physical):
-        # Producer holds the same parent lock while committing each event.
-        # Sequence cutoffs are therefore ordered for this parent even if other parents run concurrently.
-        cutoff = await session.scalar(select(func.coalesce(func.max(TransferCommitEventRow.id), 0)).where(
-            TransferCommitEventRow.parent_plan_id == parent.id,
-        ))
-        fields = dict(
-            enabled=True, generation=binding.generation + 1 if binding else 1, armed_by=actor_id,
-            parent_plan_id=parent.id, parent_updated_at=parent.updated_at, child_updated_at=child.updated_at,
-            physical_digest=physical, cutoff_event_id=cutoff, updated_at=_utc_now(),
-        )
+            raise HTTPException(422, "Every transfer must pass current sandbox structure preflight")
+    if (binding is None or not binding.enabled or binding.operator != change.operator or binding.armed_by != actor_id
+        or binding.child_updated_at != child.updated_at or binding.physical_digest != physical
+        or {member.parent_plan_id: member.parent_updated_at for member, _ in reviewed} != selected):
+        # Each producer is locked until its own commit event settles. This
+        # generation therefore cannot consume any earlier producer event.
+        cutoffs = dict((await session.execute(select(TransferCommitEventRow.parent_plan_id,
+                       func.max(TransferCommitEventRow.id)).where(TransferCommitEventRow.parent_plan_id.in_(selected))
+                       .group_by(TransferCommitEventRow.parent_plan_id))).all())
+        fields = dict(enabled=True, operator=change.operator, generation=binding.generation + 1 if binding else 1,
+                      armed_by=actor_id, child_updated_at=child.updated_at, physical_digest=physical, updated_at=_utc_now())
         if binding is None:
             binding = UpstreamTriggerRow(plan_id=plan_id, **fields)
             session.add(binding)
+            await session.flush()
         else:
             for field, value in fields.items():
                 setattr(binding, field, value)
-    result = _response(child, binding, parent)
+            await session.execute(delete(UpstreamTriggerParentRow).where(UpstreamTriggerParentRow.plan_id == plan_id))
+        reviewed = [(UpstreamTriggerParentRow(plan_id=plan_id, parent_plan_id=parent.id,
+                     parent_updated_at=parent.updated_at, cutoff_event_id=cutoffs.get(parent.id, 0)), parent)
+                    for parent in parents]
+        session.add_all([member for member, _ in reviewed])
+    result = _response(child, binding, reviewed)
     await session.commit()
     return result
 
 
 async def list_upstream_triggers(session: AsyncSession) -> list[UpstreamTriggerSummary]:
-    parent_alias = aliased(TransferPlanRow)
-    statement = (select(TransferPlanRow, UpstreamTriggerRow, parent_alias)
+    statement = (select(TransferPlanRow, UpstreamTriggerRow)
                  .join(UpstreamTriggerRow, UpstreamTriggerRow.plan_id == TransferPlanRow.id)
-                 .join(parent_alias, parent_alias.id == UpstreamTriggerRow.parent_plan_id)
                  .order_by(UpstreamTriggerRow.updated_at.desc(), TransferPlanRow.id).limit(_LIMIT))
+    rows = (await session.execute(statement)).all()
+    reviewed = await _reviewed_parents(session, [child.id for child, _ in rows])
     return [UpstreamTriggerSummary(planId=child.id, planName=child.name, sourceSchema=child.source_schema,
                                    sourceTable=child.source_table, targetSchema=child.target_schema,
-                                   targetTable=child.target_table, **_response(child, binding, parent).model_dump())
-            for child, binding, parent in (await session.execute(statement)).all()]
+                                   targetTable=child.target_table,
+                                   **_response(child, binding, reviewed.get(child.id, [])).model_dump())
+            for child, binding in rows]
 
 
 async def list_upstream_jobs(session: AsyncSession, plan_id: UUID) -> list[UpstreamTriggerJob]:
     await _need_plan(session, plan_id)
-    statement = (select(UpstreamTriggerJobRow, TransferCommitEventRow)
-                 .join(TransferCommitEventRow, TransferCommitEventRow.id == UpstreamTriggerJobRow.event_id)
-                 .where(UpstreamTriggerJobRow.plan_id == plan_id)
-                 .order_by(UpstreamTriggerJobRow.event_id.desc(), UpstreamTriggerJobRow.generation.desc()).limit(HISTORY_LIMIT))
-    return [UpstreamTriggerJob(id=job.id, eventId=str(event.id), eventRecordedAt=event.recorded_at,
-                               parentReceiptId=event.parent_receipt_id, state=job.state, receiptId=job.receipt_id,
-                               dispatchedAt=job.dispatched_at, finishedAt=job.finished_at, message=job.message)
-            for job, event in (await session.execute(statement)).all()]
+    statement = (select(UpstreamTriggerJobRow).where(UpstreamTriggerJobRow.plan_id == plan_id)
+                 .order_by(UpstreamTriggerJobRow.event_id.desc(), UpstreamTriggerJobRow.generation.desc())
+                 .limit(HISTORY_LIMIT))
+    jobs = (await session.scalars(statement)).all()
+    if not jobs:
+        return []
+    event_query = (select(UpstreamTriggerJobEventRow.job_id, TransferCommitEventRow)
+                   .join(TransferCommitEventRow, TransferCommitEventRow.id == UpstreamTriggerJobEventRow.event_id)
+                   .where(UpstreamTriggerJobEventRow.job_id.in_([job.id for job in jobs]))
+                   .order_by(TransferCommitEventRow.id))
+    events = {}
+    for job_id, event in (await session.execute(event_query)).all():
+        events.setdefault(job_id, []).append(UpstreamTriggerEvent(
+            eventId=str(event.id), eventRecordedAt=event.recorded_at,
+            parentReceiptId=event.parent_receipt_id, parentPlanId=event.parent_plan_id))
+    return [UpstreamTriggerJob(id=job.id, operator=job.operator, events=events[job.id], state=job.state,
+                               receiptId=job.receipt_id, dispatchedAt=job.dispatched_at,
+                               finishedAt=job.finished_at, message=job.message) for job in jobs]
+
+
+# Lock each ready binding before selecting events. The lock serializes pollers
+# and arm/pause; the membership ledger independently enforces non-reuse.
+_READY_BINDINGS = text("""
+    SELECT t.plan_id
+    FROM ontology_transfer_upstream_triggers t
+    JOIN ontology_transfer_plans child ON child.id = t.plan_id
+    CROSS JOIN LATERAL (
+        SELECT count(*) AS members, count(e.id) AS ready, min(e.id) AS oldest, max(e.recorded_at) AS latest,
+               bool_and(p.updated_at = m.parent_updated_at) AS unchanged
+        FROM ontology_transfer_upstream_parents m
+        JOIN ontology_transfer_plans p ON p.id = m.parent_plan_id
+        LEFT JOIN LATERAL (
+            SELECT e.id, e.recorded_at FROM ontology_transfer_commit_events e
+            WHERE e.parent_plan_id = m.parent_plan_id AND e.parent_updated_at = m.parent_updated_at
+              AND e.id > m.cutoff_event_id AND e.recorded_at <= :now
+              AND NOT EXISTS (
+                  SELECT 1 FROM ontology_transfer_upstream_job_events j
+                  WHERE j.plan_id = t.plan_id AND j.generation = t.generation AND j.event_id = e.id
+              )
+            ORDER BY CASE WHEN t.operator = 'OR' AND e.recorded_at <= :window_start THEN 1 ELSE 0 END, e.id
+            LIMIT 1
+        ) e ON true
+        WHERE m.plan_id = t.plan_id
+    ) candidates
+    WHERE t.enabled AND child.updated_at = t.child_updated_at AND candidates.unchanged
+      AND candidates.members BETWEEN 1 AND 3
+      AND CASE t.operator WHEN 'AND' THEN candidates.ready = candidates.members ELSE candidates.ready > 0 END
+    ORDER BY candidates.latest <= :window_start, candidates.oldest, t.plan_id
+    LIMIT :limit FOR UPDATE OF t SKIP LOCKED
+""")
+
+
+async def _select_job_sets(
+    session: AsyncSession, binding: UpstreamTriggerRow, reviewed: list[tuple[UpstreamTriggerParentRow, TransferPlanRow]],
+    now: datetime, budget: int,
+) -> list[list[TransferCommitEventRow]]:
+    events = TransferCommitEventRow
+    by_parent = []
+    for member, _ in reviewed:
+        waiting = select(events).where(
+            events.parent_plan_id == member.parent_plan_id, events.parent_updated_at == member.parent_updated_at,
+            events.id > member.cutoff_event_id, events.recorded_at <= now,
+            ~exists().where(UpstreamTriggerJobEventRow.plan_id == binding.plan_id,
+                            UpstreamTriggerJobEventRow.generation == binding.generation,
+                            UpstreamTriggerJobEventRow.event_id == events.id),
+        ).order_by(events.id)
+        if binding.operator == "AND":
+            by_parent.append((await session.scalars(waiting.limit(budget))).all())
+        else:
+            window_start = now - _WINDOW
+            fresh = list((await session.scalars(waiting.where(events.recorded_at > window_start).limit(budget))).all())
+            if len(fresh) < budget:
+                fresh += (await session.scalars(waiting.where(events.recorded_at <= window_start)
+                                               .limit(budget - len(fresh)))).all()
+            by_parent.append(fresh)
+    if binding.operator == "AND":
+        return [list(group) for group in zip(*by_parent)]
+    ordered = sorted((event for matches in by_parent for event in matches),
+                     key=lambda event: (event.recorded_at + _WINDOW <= now, event.id))
+    return [[event] for event in ordered[:budget]]
+
+
+async def _admit_upstream_jobs(session: AsyncSession, now: datetime) -> None:
+    ids = list((await session.execute(_READY_BINDINGS, {"now": now, "window_start": now - _WINDOW,
+                                                        "limit": _LIMIT})).scalars().all())
+    if not ids:
+        return
+    reviewed = await _reviewed_parents(session, ids)
+    # Give every reserved binding a turn; one active binding can still fill
+    # the entire per-tick work budget when nothing else is ready.
+    remaining = _LIMIT
+    for index, plan_id in enumerate(ids):
+        binding = await session.get(UpstreamTriggerRow, plan_id, populate_existing=True)
+        child = await session.get(TransferPlanRow, plan_id, populate_existing=True)
+        members = reviewed.get(plan_id, [])
+        if binding is None or child is None or not _response(child, binding, members).enabled:
+            continue
+        sets = await _select_job_sets(session, binding, members, now, remaining // (len(ids) - index))
+        for events in sets:
+            anchor = max(event.id for event in events)
+            deadline = max(event.recorded_at for event in events) + _WINDOW
+            missed = deadline <= now
+            key = ":".join(str(event.id) for event in sorted(events, key=lambda item: item.id))
+            job_id = uuid5(NAMESPACE_URL, f"asiral:upstream:{binding.plan_id}:{binding.generation}:{key}")
+            await session.execute(insert(UpstreamTriggerJobRow).values(
+                id=job_id, plan_id=binding.plan_id, generation=binding.generation, event_id=anchor,
+                operator=binding.operator, child_updated_at=binding.child_updated_at, armed_by=binding.armed_by,
+                expires_at=deadline, state="expired" if missed else "pending", dispatch_after=now,
+                finished_at=now if missed else None, message="The event dispatch window closed before dispatch" if missed else None,
+            ))
+            await session.execute(insert(UpstreamTriggerJobEventRow).values([
+                dict(job_id=job_id, plan_id=binding.plan_id, generation=binding.generation, event_id=event.id)
+                for event in events
+            ]))
+        remaining -= len(sets)
 
 
 async def collect_due_upstream_transfer_jobs(session: AsyncSession, *, now: datetime | None = None) -> list[UUID]:
@@ -183,42 +316,7 @@ async def collect_due_upstream_transfer_jobs(session: AsyncSession, *, now: date
         job.finished_at = now
         job.message = "The event dispatch window closed before an outcome was confirmed"
 
-    parent = aliased(TransferPlanRow)
-    due = (select(UpstreamTriggerRow, TransferCommitEventRow)
-           .join(TransferCommitEventRow, TransferCommitEventRow.parent_plan_id == UpstreamTriggerRow.parent_plan_id)
-           .join(TransferPlanRow, TransferPlanRow.id == UpstreamTriggerRow.plan_id)
-           .join(parent, parent.id == UpstreamTriggerRow.parent_plan_id)
-           .where(UpstreamTriggerRow.enabled, UpstreamTriggerRow.child_updated_at == TransferPlanRow.updated_at,
-                  UpstreamTriggerRow.parent_updated_at == parent.updated_at,
-                  TransferCommitEventRow.parent_updated_at == UpstreamTriggerRow.parent_updated_at,
-                  TransferCommitEventRow.id > UpstreamTriggerRow.cutoff_event_id,
-                  TransferCommitEventRow.recorded_at <= now,
-                  ~exists().where(UpstreamTriggerJobRow.plan_id == UpstreamTriggerRow.plan_id,
-                                  UpstreamTriggerJobRow.generation == UpstreamTriggerRow.generation,
-                                  UpstreamTriggerJobRow.event_id == TransferCommitEventRow.id))
-           .order_by(TransferCommitEventRow.id, UpstreamTriggerRow.plan_id))
-    window_start = now - _WINDOW
-    candidates = (await session.execute(
-        due.where(TransferCommitEventRow.recorded_at > window_start).limit(_LIMIT),
-    )).all()
-    if len(candidates) < _LIMIT:
-        candidates += (await session.execute(
-            due.where(TransferCommitEventRow.recorded_at <= window_start).limit(_LIMIT - len(candidates)),
-        )).all()
-    if candidates:
-        values = []
-        for binding, event in candidates:
-            deadline = event.recorded_at + _WINDOW
-            missed = deadline <= now
-            values.append(dict(
-                id=uuid5(NAMESPACE_URL, f"asiral:upstream:{binding.plan_id}:{binding.generation}:{event.id}"),
-                plan_id=binding.plan_id, generation=binding.generation, event_id=event.id,
-                child_updated_at=binding.child_updated_at, armed_by=binding.armed_by, expires_at=deadline,
-                state="expired" if missed else "pending", dispatch_after=now,
-                finished_at=now if missed else None,
-                message="The event dispatch window closed before dispatch" if missed else None,
-            ))
-        await session.execute(insert(UpstreamTriggerJobRow).values(values).on_conflict_do_nothing())
+    await _admit_upstream_jobs(session, now)
     jobs = (await session.scalars(select(UpstreamTriggerJobRow).where(
         UpstreamTriggerJobRow.state.in_(_OPEN), UpstreamTriggerJobRow.expires_at > now,
         UpstreamTriggerJobRow.dispatch_after <= now,

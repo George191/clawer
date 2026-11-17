@@ -349,14 +349,17 @@ export const updateTransferSchedule = (planId: string, request: { enabled: boole
 export const fetchTransferScheduleJobs = (planId: string, signal?: AbortSignal): Promise<TransferScheduleJob[]> =>
   client.get(`${transferSchedulePath(planId)}/jobs`, { signal }).then((r) => unwrap<TransferScheduleJob[]>(r.data));
 
+export type TransferUpstreamOperator = 'AND' | 'OR';
 export type TransferUpstreamTrigger = {
   available: boolean; enabled: boolean; configuredEnabled: boolean; generation: number | null;
-  parentPlanId: string | null; parentPlanName: string | null; armedForUpdatedAt: string | null;
-  armedForParentUpdatedAt: string | null; updatedAt: string | null;
+  operator: TransferUpstreamOperator;
+  parents: { planId: string; planName: string; armedForUpdatedAt: string }[];
+  armedForUpdatedAt: string | null; updatedAt: string | null;
 };
 export type TransferUpstreamCandidate = { id: string; name: string; updatedAt: string; sourceTable: string; targetTable: string };
 export type TransferUpstreamJob = Omit<TransferScheduleJob, 'slot'> & {
-  eventRecordedAt: string; eventId: string; parentReceiptId: string;
+  operator: TransferUpstreamOperator;
+  events: { eventRecordedAt: string; eventId: string; parentPlanId: string; parentReceiptId: string }[];
 };
 export type TransferUpstreamSummary = TransferUpstreamTrigger & {
   planId: string; planName: string; sourceSchema: string; sourceTable: string; targetSchema: string; targetTable: string;
@@ -367,7 +370,8 @@ export const fetchTransferUpstreamTrigger = (planId: string, signal?: AbortSigna
 export const fetchTransferUpstreamCandidates = (planId: string, signal?: AbortSignal): Promise<TransferUpstreamCandidate[]> =>
   client.get(`${transferUpstreamPath(planId)}/candidates`, { signal }).then((r) => unwrap<TransferUpstreamCandidate[]>(r.data));
 export const updateTransferUpstreamTrigger = (planId: string, request: {
-  enabled: boolean; parentPlanId: string | null; expectedParentUpdatedAt: string | null; expectedUpdatedAt: string; expectedGeneration: number | null;
+  enabled: boolean; operator: TransferUpstreamOperator; parents: { planId: string; expectedUpdatedAt: string }[];
+  expectedUpdatedAt: string; expectedGeneration: number | null;
 }): Promise<TransferUpstreamTrigger> =>
   client.put(transferUpstreamPath(planId), request).then((r) => unwrap<TransferUpstreamTrigger>(r.data));
 export const fetchTransferUpstreamJobs = (planId: string, signal?: AbortSignal): Promise<TransferUpstreamJob[]> =>
@@ -417,6 +421,33 @@ export type ExplorerTableEvidenceSnapshot = {
 
 export const fetchExplorerTableEvidence = (schema: string, table: string, signal?: AbortSignal): Promise<ExplorerTableEvidenceSnapshot> =>
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/evidence`, { signal }).then((r) => unwrap<ExplorerTableEvidenceSnapshot>(r.data));
+
+type AssetFreshnessAssessment = {
+  state: 'not_configured' | 'not_checked' | 'healthy' | 'overdue' | 'unknown' | 'paused';
+  reason: string | null;
+  checkedAt: string | null;
+  validUntil: string | null;
+  receiptRecordedAt: string | null;
+  receiptId: string | null;
+};
+export type AssetFreshness = {
+  available: boolean;
+  policy: { planId: string; planUpdatedAt: string; thresholdMinutes: number; enabled: boolean; generation: number; updatedAt: string } | null;
+  assessment: AssetFreshnessAssessment;
+  history: (AssetFreshnessAssessment & { id: string; generation: number })[];
+};
+export type AssetFreshnessCandidate = { id: string; name: string; updatedAt: string };
+export type AssetFreshnessChange = {
+  planId: string; expectedPlanUpdatedAt: string; expectedGeneration: number | null; thresholdMinutes: number; enabled: boolean;
+};
+const assetFreshnessPath = (schema: string, table: string) =>
+  `/etl/asset-freshness/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`;
+export const fetchAssetFreshness = (schema: string, table: string, signal?: AbortSignal): Promise<AssetFreshness> =>
+  client.get(assetFreshnessPath(schema, table), { signal }).then((r) => unwrap<AssetFreshness>(r.data));
+export const fetchAssetFreshnessCandidates = (schema: string, table: string, signal?: AbortSignal): Promise<AssetFreshnessCandidate[]> =>
+  client.get(`${assetFreshnessPath(schema, table)}/candidates`, { signal }).then((r) => unwrap<AssetFreshnessCandidate[]>(r.data));
+export const updateAssetFreshness = (schema: string, table: string, request: AssetFreshnessChange): Promise<AssetFreshness> =>
+  client.put(assetFreshnessPath(schema, table), request).then((r) => unwrap<AssetFreshness>(r.data));
 
 export const fetchTableData = (
   layer: string,
@@ -515,8 +546,21 @@ export type TableExportCapabilities = {
   maxRows: number; maxCaptionBytes: number; mapping: { sourceColumn: string; targetColumn: string; type: string }[];
 };
 export type TableExportPlan = { id: string; name: string; updatedAt: string };
-export type TableExportReceipt = { id: string; requestId: string; status: 'committed'; rowsAffected: number; recordedAt: string };
-export type TableExportAttempt = Omit<BatchSyncAttempt, 'planId' | 'scheduledJobId'>;
+export type TableExportGrant = {
+  marking: 'sandbox-synthetic'; available: boolean; effective: boolean; generation: number | null;
+  status: 'not_granted' | 'active' | 'stale' | 'revoked';
+  planUpdatedAt: string | null; approvedAt: string | null; revokedAt: string | null;
+};
+export type TableExportGrantChange = {
+  approved: boolean; expectedPlanUpdatedAt: string; expectedGeneration: number | null;
+  marking: TableExportGrant['marking']; reason: string;
+};
+export type TableExportGrantEvent = {
+  id: string; action: 'approved' | 'revoked'; generation: number;
+  marking: TableExportGrant['marking']; recordedAt: string; planUpdatedAt: string; reason: string;
+};
+export type TableExportReceipt = { id: string; requestId: string; status: 'committed'; rowsAffected: number; recordedAt: string; grantGeneration: number };
+export type TableExportAttempt = Omit<BatchSyncAttempt, 'planId' | 'scheduledJobId'> & { grantGeneration: number };
 export type TableExportLineageReceipt = {
   id: string; recordedAt: string; rowsAffected: number; reviewedAt: string; observed: boolean;
   reviewRelation: 'current_review' | 'earlier_review' | 'different_binding';
@@ -524,7 +568,7 @@ export type TableExportLineageReceipt = {
 export type TableExportLineage = {
   source: { schema: string; table: string };
   destination: { schema: string; table: string; label: string };
-  declaration: { id: string; name: string; reviewedAt: string; state: 'enabled' | 'inactive' | 'stale' } | null;
+  declaration: { id: string; name: string; reviewedAt: string; state: 'enabled' | 'inactive' | 'stale' | 'blocked' } | null;
   receipts: TableExportLineageReceipt[];
   latestObservation: TableExportLineageReceipt | null;
   observed: boolean;
@@ -537,11 +581,17 @@ export const fetchTableExportPlan = (signal?: AbortSignal): Promise<TableExportP
   client.get(tableExportPath, { signal }).then((r) => unwrap<TableExportPlan | null>(r.data));
 export const saveTableExportPlan = (request: { name: string; expectedUpdatedAt: string | null }): Promise<TableExportPlan> =>
   client.put(tableExportPath, request).then((r) => unwrap<TableExportPlan>(r.data));
+export const fetchTableExportGrant = (signal?: AbortSignal): Promise<TableExportGrant> =>
+  client.get(`${tableExportPath}/grant`, { signal }).then((r) => unwrap<TableExportGrant>(r.data));
+export const updateTableExportGrant = (request: TableExportGrantChange): Promise<TableExportGrant> =>
+  client.put(`${tableExportPath}/grant`, request).then((r) => unwrap<TableExportGrant>(r.data));
+export const fetchTableExportGrantHistory = (signal?: AbortSignal): Promise<TableExportGrantEvent[]> =>
+  client.get(`${tableExportPath}/grant/history`, { signal }).then((r) => unwrap<TableExportGrantEvent[]>(r.data));
 export const fetchTableExportReceipts = (signal?: AbortSignal): Promise<TableExportReceipt[]> =>
   client.get(`${tableExportPath}/runs`, { signal }).then((r) => unwrap<TableExportReceipt[]>(r.data));
 export const fetchTableExportAttempts = (signal?: AbortSignal): Promise<TableExportAttempt[]> =>
   client.get(`${tableExportPath}/attempts`, { signal }).then((r) => unwrap<TableExportAttempt[]>(r.data));
-export const runTableExport = (request: { requestId: string; expectedUpdatedAt: string }): Promise<TableExportReceipt> =>
+export const runTableExport = (request: { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number }): Promise<TableExportReceipt> =>
   client.post(`${tableExportPath}/runs`, request).then((r) => unwrap<TableExportReceipt>(r.data));
 export const fetchDataConnectorTypes = (): Promise<DataConnectorType[]> =>
   client.get('/etl/connector-types').then((r) => unwrap<DataConnectorType[]>(r.data));

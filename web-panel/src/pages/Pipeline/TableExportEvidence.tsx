@@ -6,7 +6,10 @@ import './table-evidence.css';
 export const TABLE_EXPORT_SOURCE = { schema: 'ts_table_export_sandbox', table: 'records' } as const;
 export const tableExportLineagePath = `/ontology/lineage?${new URLSearchParams(TABLE_EXPORT_SOURCE)}`;
 const manageExportPath = '/ontology/connections?tableExport=1';
-const stateLabels = { enabled: 'Configured · execution enabled', inactive: 'Configured · execution disabled', stale: 'Blocked · review is stale' };
+const stateLabels = {
+  enabled: 'Configured · execution enabled', inactive: 'Configured · execution disabled',
+  stale: 'Blocked · review is stale', blocked: 'Blocked · effective approval required',
+};
 const reviewLabels: Record<TableExportLineageReceipt['reviewRelation'], string> = {
   current_review: 'Current review', earlier_review: 'Earlier review', different_binding: 'Different receiver binding',
 };
@@ -57,7 +60,9 @@ export default function TableExportEvidence({ mode, version }: { mode: 'explorer
             <div><span>Receiver recorded</span><time dateTime={receipt.recordedAt}>{displayTime(receipt.recordedAt)}</time></div>
             {receipt.rowsAffected === 0 && <span>No observed data movement</span>}
             <code title="Receipt ID">{receipt.id}</code>
-          </li>)}</ul> : <p>No receiver-confirmed receipts.</p>}
+          </li>)}</ul> : <p>{record.declaration?.state === 'blocked'
+            ? 'Delivery history is not available without an effective approval.'
+            : 'No receiver-confirmed receipts.'}</p>}
       </section>
     </div>
   </section>;

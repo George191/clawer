@@ -1,5 +1,6 @@
 """Scheduling and system handlers backed by shared automation task records."""
 
+import os
 from typing import Any
 
 from app.logger import get_logger
@@ -11,6 +12,22 @@ from app.web.services.automation_task_store import automation_task_store
 
 logger = get_logger(__name__)
 CLEANUP_TASK_NAME = "app.scheduler.tasks.automation.cleanup_task_logs"
+
+
+async def _evaluate_transfer_freshness_checks() -> dict[str, int] | None:
+    truthy = {"1", "true", "on", "yes"}
+    if (
+        os.environ.get("ENVIRONMENT") != "local"
+        or os.environ.get("TRANSFER_SANDBOX_ENABLED", "").strip().lower() not in truthy
+        or os.environ.get("TRANSFER_SANDBOX_FRESHNESS_ENABLED", "").strip().lower() not in truthy
+    ):
+        return None
+
+    from app.web.services.asset_freshness import dispatch_asset_freshness_checks
+
+    # A bounded DB-only evaluation can run directly in the existing minute
+    # task. It does not need another beat entry or another broker delivery.
+    return await dispatch_asset_freshness_checks()
 
 
 async def _dispatch_due_tasks() -> dict[str, Any]:
@@ -46,6 +63,7 @@ async def _dispatch_due_tasks() -> dict[str, Any]:
         ("transferSchedules", dispatch_transfer_schedule_jobs),
         ("batchSyncSchedules", dispatch_batch_sync_schedule_jobs),
         ("upstreamTransfers", dispatch_upstream_transfer_jobs),
+        ("transferFreshnessChecks", _evaluate_transfer_freshness_checks),
     ):
         try:
             counts = await dispatch()

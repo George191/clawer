@@ -44,3 +44,12 @@
 .flow-table-export-evidence.is-compact .flow-evidence-arrow { justify-self: center; transform: rotate(90deg); }
 .flow-table-export-links { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 @media (max-width: 550px) { .flow-table-export-path[data-observed] { grid-template-columns: minmax(0, 1fr); } }
+.flow-evidence-freshness-facts { grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); }
+.flow-evidence-freshness-form { display: grid; gap: 8px; }
+.flow-evidence-freshness-form label { display: grid; gap: 4px; color: var(--ontology-text); font-size: 12px; }
+.flow-evidence-freshness-form select {
+    min-width: 0; width: 100%; min-height: 30px; padding: 4px 6px; color: var(--ontology-text);
+    border: 1px solid var(--ontology-border); border-radius: 4px; background: var(--ontology-bg);
+}
+.flow-evidence-freshness-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.flow-evidence-freshness summary { cursor: pointer; color: var(--ontology-text); font-size: 12px; }

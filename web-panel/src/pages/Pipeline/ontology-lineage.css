@@ -48,6 +48,10 @@
 .flow-transfer-schedule .flow-transfer-run-actions{margin:6px 0 10px}
 .flow-transfer-upstream label{margin-top:8px}
 .flow-transfer-upstream .flow-transfer-receipts code{overflow-wrap:anywhere}
+.flow-transfer-parent-options{min-width:0;margin:8px 0;padding:8px 10px;border:1px solid var(--ui-border)}
+.flow-transfer-parent-options label{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:6px;cursor:pointer}
+.flow-transfer-parent-options input{width:auto;margin-top:2px}
+.flow-transfer-parent-events{margin:0;padding-left:16px;list-style:disc}
 .flow-transfer-cursor p{margin:4px 0 0}
 .flow-transfer-receipts{display:grid;gap:6px;margin:3px 0 0;padding:0;list-style:none}
 .flow-transfer-receipts>li{display:grid;gap:4px;padding:7px;border:1px solid var(--ui-border);border-radius:4px;overflow-wrap:anywhere}

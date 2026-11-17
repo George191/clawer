@@ -8,6 +8,9 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from sqlalchemy import CheckConstraint, Column, DateTime, Index
 from sqlmodel import Field as DbField, SQLModel
 
+SYNTHETIC_EXPORT_MARKING = "sandbox-synthetic"
+ExportMarking = Literal["sandbox-synthetic"]
+
 ExportOutcome = Literal["started", "committed", "replayed", "rejected", "retryable", "outcome_unknown"]
 
 
@@ -27,6 +30,37 @@ class TableExportRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     requestId: UUID
     expectedUpdatedAt: AwareDatetime
+    expectedGrantGeneration: int = Field(ge=1)
+
+
+class TableExportGrantChange(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    approved: bool = Field(strict=True)
+    expectedPlanUpdatedAt: AwareDatetime
+    expectedGeneration: int | None = Field(ge=1)
+    marking: ExportMarking
+    reason: str = Field(min_length=1, max_length=240, pattern=r"^[^\x00-\x1f\x7f]+$")
+
+
+class TableExportGrant(BaseModel):
+    marking: ExportMarking = SYNTHETIC_EXPORT_MARKING
+    available: bool
+    effective: bool
+    generation: int | None = None
+    status: Literal["not_granted", "active", "stale", "revoked"]
+    planUpdatedAt: datetime | None = None
+    approvedAt: datetime | None = None
+    revokedAt: datetime | None = None
+
+
+class TableExportGrantEvent(BaseModel):
+    id: UUID
+    action: Literal["approved", "revoked"]
+    generation: int
+    marking: ExportMarking
+    recordedAt: datetime
+    planUpdatedAt: datetime
+    reason: str
 
 
 class TableExportMapping(BaseModel):
@@ -53,12 +87,14 @@ class TableExportReceipt(BaseModel):
     status: Literal["committed"] = "committed"
     rowsAffected: int
     recordedAt: datetime
+    grantGeneration: int
 
 
 class TableExportAttempt(BaseModel):
     id: UUID
     requestId: UUID
     planUpdatedAt: datetime
+    grantGeneration: int
     status: ExportOutcome
     startedAt: datetime
     finishedAt: datetime | None = None
@@ -80,7 +116,7 @@ class TableExportLineageDeclaration(BaseModel):
     id: UUID
     name: str
     reviewedAt: datetime
-    state: Literal["enabled", "inactive", "stale"]
+    state: Literal["enabled", "inactive", "stale", "blocked"]
 
 
 class TableExportLineageReceipt(BaseModel):
@@ -113,6 +149,27 @@ class TableExportPlanRow(SQLModel, table=True):
     updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
 
 
+class TableExportGrantRow(SQLModel, table=True):
+    """Immutable approval or revocation event for the singleton export scope."""
+
+    __tablename__ = "ontology_table_export_grants"
+    __table_args__ = (
+        CheckConstraint("generation > 0", name="ck_ontology_table_export_grant_generation"),
+        CheckConstraint("marking = 'sandbox-synthetic'", name="ck_ontology_table_export_grant_marking"),
+        CheckConstraint("action IN ('approved', 'revoked')", name="ck_ontology_table_export_grant_action"),
+    )
+
+    generation: int = DbField(primary_key=True)
+    id: UUID = DbField(default_factory=uuid4, unique=True)
+    action: str = DbField(max_length=8)
+    marking: str = DbField(max_length=17)
+    reason: str = DbField(max_length=240)
+    actor_id: UUID
+    scope_digest: str = DbField(max_length=64)
+    plan_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
+    recorded_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
+
+
 class TableExportRequestRow(SQLModel, table=True):
     __tablename__ = "ontology_table_export_requests"
 
@@ -120,6 +177,7 @@ class TableExportRequestRow(SQLModel, table=True):
     plan_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     binding_digest: str = DbField(max_length=64)
     payload_digest: str | None = DbField(default=None, max_length=64)
+    grant_generation: int | None = DbField(default=None, foreign_key="ontology_table_export_grants.generation", index=True)
 
 
 class TableExportReceiptRow(SQLModel, table=True):

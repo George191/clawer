@@ -8,6 +8,9 @@ from fastapi.responses import Response
 
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
+from app.web.api.models.asset_freshness import (
+    AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse,
+)
 from app.web.api.models.batch_syncs import (
     BatchSyncAttempt, BatchSyncCapabilities, BatchSyncPayload, BatchSyncPlan, BatchSyncReceipt, BatchSyncRunRequest,
 )
@@ -15,8 +18,8 @@ from app.web.api.models.batch_sync_schedules import (
     BatchSyncSchedule, BatchSyncScheduleChange, BatchSyncScheduleJob, BatchSyncScheduleSummary,
 )
 from app.web.api.models.table_exports import (
-    TableExportAttempt, TableExportCapabilities, TableExportLineage, TableExportPlan, TableExportReceipt,
-    TableExportReview, TableExportRunRequest,
+    TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
+    TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
 )
 from app.web.api.models.transfer_upstream import (
     UpstreamCandidate, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerJob, UpstreamTriggerSummary,
@@ -40,6 +43,7 @@ from app.web.api.models.transfer_plans import (
 from app.web.api.models.transfer_schedules import (
     TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleSummary,
 )
+from app.web.services.asset_freshness import get_asset_freshness, get_asset_freshness_candidates, put_asset_freshness
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_syncs import (
     batch_sync_capabilities, list_batch_sync_attempts, list_batch_sync_runs, list_batch_syncs, run_batch_sync, save_batch_sync,
@@ -48,8 +52,9 @@ from app.web.services.batch_sync_schedules import (
     change_batch_sync_schedule, list_batch_sync_schedule_jobs, list_batch_sync_schedules, read_batch_sync_schedule,
 )
 from app.web.services.table_exports import (
-    get_table_export, get_table_export_lineage, list_table_export_attempts, list_table_export_receipts, review_table_export, run_table_export,
-    table_export_capabilities,
+    change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
+    list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
+    review_table_export, run_table_export, table_export_capabilities,
 )
 from app.web.services.transfer_upstream import (
     change_upstream_trigger, list_upstream_candidates, list_upstream_jobs, list_upstream_triggers, read_upstream_trigger,
@@ -69,6 +74,26 @@ from app.web.services.transfer_schedules import (
 router = APIRouter(prefix="/etl", tags=["etl"])
 read = APIRouter(dependencies=[Depends(get_current_user)])
 write = APIRouter(dependencies=[Depends(get_current_active_superuser)])
+
+
+@write.get("/asset-freshness/{schema}/{table}/candidates")
+async def freshness_candidates(schema: WarehouseSchema, table: TableName, session: SessionDep) -> list[AssetFreshnessCandidate]:
+    """List candidate reviewed plans for this sandbox target."""
+    return await get_asset_freshness_candidates(session, schema, table)
+
+
+@write.get("/asset-freshness/{schema}/{table}")
+async def read_freshness(schema: WarehouseSchema, table: TableName, session: SessionDep) -> AssetFreshnessResponse:
+    """Read local verified-write cadence and bounded evidence history."""
+    return await get_asset_freshness(session, schema, table)
+
+
+@write.put("/asset-freshness/{schema}/{table}")
+async def write_freshness(
+    schema: WarehouseSchema, table: TableName, payload: AssetFreshnessChange, session: SessionDep,
+) -> AssetFreshnessResponse:
+    """Version or pause the one exact-target check."""
+    return await put_asset_freshness(session, schema, table, payload)
 
 
 @router.get("/published/{token}")
@@ -269,6 +294,23 @@ async def put_table_export_review(
     payload: TableExportReview, session: SessionDep, current_user: CurrentActiveSuperuser,
 ) -> TableExportPlan:
     return await review_table_export(session, payload, current_user.id)
+
+
+@write.get("/table-export/grant")
+async def get_export_grant(session: SessionDep) -> TableExportGrant:
+    return await get_table_export_grant(session)
+
+
+@write.put("/table-export/grant")
+async def put_export_grant(
+    payload: TableExportGrantChange, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> TableExportGrant:
+    return await change_table_export_grant(session, payload, current_user.id)
+
+
+@write.get("/table-export/grant/history")
+async def get_export_grant_history(session: SessionDep) -> list[TableExportGrantEvent]:
+    return await list_table_export_grant_history(session)
 
 
 @write.get("/table-export/runs")

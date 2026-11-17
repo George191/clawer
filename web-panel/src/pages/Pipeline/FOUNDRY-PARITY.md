@@ -8,13 +8,13 @@
 | 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度。 | 受控试点不能代替完整的增量检查点、通用数据集目标或其他连接器。 |
 | 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断及代码中固定的消费路径；没有 Foundry 式可配置入站流和逐通道管理。 | 如需入站，隔离接口认证、schema/速率验证、幂等、失败处理；不把消费位点当作下游已经提交的证明。 |
 | 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执。Published API 仍只是被动读取。 | 继续接入回执驱动的 Lineage 证据、按标记校验的外发策略、多目标/模式，以及另行审核的写回或 Webhook。 |
-| 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地单父节点提交触发也复用现有 Automation Center，父/子回执分开。 | 验收多父节点与 AND/OR、通用的运行范围及跨通道路由，不从未启用草稿启动作业。 |
+| 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地 1–3 个上游的平面 AND/OR 提交触发也复用现有 Automation Center，完整上游事件集与子回执分开。 | 验收嵌套或混合触发、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；财报 Evidence 的声明路径不代表生产逐边验证。 | 先接表级运行证据。区分代码声明、配置草稿和已经观察到的执行，不能用草稿绘成已提交的血缘。 |
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有表级回执、通道历史、批量执行尝试和调度派发记录；未形成覆盖所有资产的 Build Timeline。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；未实现事务级历史与列分布统计等。 | 先接运行记录；大表筛选保留查询预算，统计不随页面请求扫描业务表。 |
-| 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。当前 Evidence 有结构计数和受查询预算约束的 SEC 提交日期观察；不是数据/作业新鲜度检查。 | 在后台运行可配置检查并记录结果；分别记录更新时间、源时间和最近一次检查，不用财报日期冒充同步时间。 |
+| 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度检查、阈值、未知/超期/恢复状态和历史。 | 验收通用 schema、规模、作业状态、数据字段新鲜度和可确认的告警，不用财报日期冒充同步时间。 |
 | 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分 / 缺失**。有 Handler 编辑和 dry-run，不是可视化数据转换；没有通用事务快照、历史对比或二分查找。 | 先把运行结果、配置版本和事务标识绑定；之后再评估可视化转换与历史快照，不从当前 PostgreSQL 表伪造旧版本。 |
-| 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权，但没有跨通道的统一下游限制或外发策略。 | 执行时重新核对源、目标和身份授权；外发前另核对数据标记与目的端批准范围。 |
+| 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执。 | 继续验收可配置资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
 
 ## 实现顺序
 
@@ -119,3 +119,21 @@
 - 对照 [Data updated 触发](https://www.palantir.com/docs/foundry/building-pipelines/triggers-reference/)：复用 Automation Center + 现有分钟调度。第一阶段仅支持管理员显式绑定一条沙箱依赖，手动 Upsert 的目标表就是下游 Upsert 的源表。开启时核对两个计划版本及物理表身份；不得自触发或级联，此阶段不支持多父节点 AND/OR 或把 UTC 时刻与事件组合。
 - 上游目标数据、自己的回执和可用事件同事务提交。仅正数受影响行产生事件，不把已派发、回滚、失败、零行或同请求回放当成新事件。受影响行数不等于内容发生变化。开启/重新开启只消费此后提交的合格事件，不扫源业务行寻找变化或用 CDC 偏移代替提交。
 - 下游按绑定代次和原上游事件去重，重复派发使用同一作业标识。暂停、撤权、计划改版、表变更或过期时不能开始新写入；下游成功需要自己的提交回执。下游触发时读取实际执行时可见的已提交表数据，不把上游回执当成可回放的不可变源快照。
+
+### 外发授权与撤销的验收口径
+
+- 对照 [Foundry Exportable markings](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 和[访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)。导出配置、对象/字段可读或普通管理员身份，不代表已经授权外发。只有经单独审核的固定合成资产、明确的字段与类型映射、批准的接收绑定和 `sandbox-synthetic` 标记可执行，默认拒绝。
+- 授权绑定审核版本、当前部署范围及授权代次。版本或目标变更、撤销、未分类或不匹配均拒绝在源表或接收端进行新的 I/O；结果不明的重试也受同一授权约束。撤销与已获准执行串行化，成功撤销不能撤回此前已经提交的数据。
+- 旧回执与授权审计不被修改；普通受控历史和 Lineage 不再展示失效授权的细节或观测边。不得以调试日志、快照、连接主机或凭证泄漏代替审计。此试点不宣称覆盖通用资产标记继承或生产治理。
+
+### 多上游组合条件的验收口径
+
+- 对照 [Foundry 触发类型](https://www.palantir.com/docs/foundry/building-pipelines/triggers-reference/)：本轮只覆盖同一层的 AND／OR，1–3 个明确审核的沙箱手动 Upsert 上游，且它们写入同一个下游源表。不包含嵌套表达式、跨资产编排、UTC 与事件组合。
+- AND 等到每个已审核上游都至少有一条未消费的正数提交事件，再各取一条作为一个固定集合；先到的事件不能因等待另一条同组事件而被静默丢弃。OR 每次只取一个上游的下一条合格事件。一个事件在同一下游和代次内只能进入一个作业；并发分配、发布失败和 worker 重投不会重复消费或重复提交。
+- 每条父回执和下游提交回执分开显示。暂停、换父节点、换 AND/OR 或版本改动需启用新代次；旧作业不能重新使用当前授权执行。迁移前的单上游配置和已提交作业保留原有回执关系。当前仍是从执行时可见的已提交表读取，不等同于固定历史快照。
+
+### 资产写入新鲜度的验收口径
+
+- 对照 [Foundry Checks reference](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 的更新时间类检查。本轮配置的是「距上次已确认写入」，不是业务字段、源端或生产数据的通用新鲜度。仅在精确内部沙箱目标及绑定计划的审核版本下，由管理员保存阈值和启停。
+- 仅以当前物理目标的正数、已提交回执作为有效观测。没有可信回执、旧版本、表被重建或评估已滞后时显示未知，不能将旧回执补认成新物理表的更新。零行、派发、拒绝和结果未知不会刷新时间。界面区分回执记录时间、检查时间和阈值。
+- 复用现有 Automation 分钟任务在后台读取有界目录与索引内的回执，不扫描源或目标业务数据，不联系外部系统。验证进入超期、恢复、暂停、并发去重和最近状态变更；本轮不发送外部告警。
