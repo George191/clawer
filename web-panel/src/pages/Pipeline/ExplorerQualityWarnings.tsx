@@ -4,6 +4,7 @@ import type { AssetFreshness, AssetQualityIncident } from '../../services/api';
 
 const kindLabels: Record<AssetQualityIncident['kind'], string> = {
   freshness: 'Transfer freshness', schema: 'Schema check', heap_size: 'Heap size check', daily_job: 'Scheduled transfer outcome',
+  field_time: 'Field data freshness',
 };
 const statusLabels: Record<AssetQualityIncident['status'], string> = {
   open: 'Open', acknowledged: 'Acknowledged · still open', recovered: 'Recovered', superseded: 'Superseded',
@@ -14,6 +15,7 @@ const reasonLabels: Record<AssetQualityIncident['reason'], string> = {
   below_minimum: 'The heap is smaller than the configured minimum.',
   above_maximum: 'The heap exceeds the configured maximum.',
   target_rejected: 'The reviewed scheduled job was definitively rejected by its target.',
+  field_lag: 'The confirmed sync and field timestamp were farther apart than the reviewed lag threshold.',
 };
 const closeLabels: Record<NonNullable<AssetQualityIncident['closeReason']>, string> = {
   healthy: 'A later evaluation confirmed recovery.',
@@ -21,6 +23,7 @@ const closeLabels: Record<NonNullable<AssetQualityIncident['closeReason']>, stri
   policy_reviewed: 'Policy changed. This does not confirm recovery.',
   schema_baseline_captured: 'A new schema baseline was captured. This does not confirm recovery.',
   schedule_changed: 'The reviewed schedule changed. This does not confirm recovery.',
+  target_changed: 'The reviewed target changed. This does not confirm recovery.',
 };
 
 function Time({ value }: { value: string }) {

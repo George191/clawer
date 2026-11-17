@@ -23,6 +23,7 @@ from app.web.api.dependencies.session import get_db
 from app.web.api.models.transfer_plans import TransferPlanPayload
 from app.web.api.routes.etl import router
 from app.web.core.config import settings
+from app.web.services.asset_field_freshness import _verified_plan
 from app.web.services.asset_freshness import evaluate_due_asset_freshness
 from app.web.services.etl_layers import EtlLayers
 from app.web.services.transfer_schedules import collect_due_transfer_jobs
@@ -131,6 +132,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.nested_migration = import_module("app.web.alembic.versions.0f8b2e641a5d_ontology_nested_upstream")
         self.mixed_migration = import_module("app.web.alembic.versions.67bd926fa4d1_ontology_mixed_upstream")
         self.cancel_migration = import_module("app.web.alembic.versions.21fe23589f8d_ontology_daily_job_cancel")
+        self.field_freshness_migration = import_module("app.web.alembic.versions.68ff119daf40_ontology_field_freshness")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
         self.incident_migration = import_module(
@@ -168,6 +170,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.job_quality_migration.upgrade)
             await self.migrate(session, self.mixed_migration.upgrade)
             await self.migrate(session, self.cancel_migration.upgrade)
+            await self.migrate(session, self.field_freshness_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -182,6 +185,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         async with self.pg.session() as session:
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_daily_job_quality, "
                                        "public.ontology_transfer_schedule_target_rejections"))
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_field_freshness"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_collected_stats"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_incidents"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_transitions, "
@@ -203,6 +207,93 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             for schema in ("ts_rds", "ts_ods", "ts_meta"):
                 await session.execute(text(f"DROP SCHEMA {schema} CASCADE"))
             await session.execute(text("DROP SCHEMA IF EXISTS ts_transfer_sandbox CASCADE"))
+
+    async def test_indexed_field_time_uses_new_exact_receipts_and_tied_times_are_neutral(self):
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.field_source (id int PRIMARY KEY, source_recorded_at timestamptz NOT NULL)",
+                "CREATE TABLE ts_transfer_sandbox.field_freshness_fixture (LIKE ts_transfer_sandbox.field_source INCLUDING ALL)",
+                "CREATE INDEX field_proof_idx ON ts_transfer_sandbox.field_freshness_fixture(source_recorded_at)",
+            ):
+                await session.execute(text(sql))
+            # Empty post-migrate downgrade is reversible; a real review below must block it.
+            await self.migrate(session, self.field_freshness_migration.downgrade)
+            await self.migrate(session, self.field_freshness_migration.upgrade)
+        route = "/etl/asset-freshness/ts_transfer_sandbox/field_freshness_fixture"
+        field = route + "/field-freshness"
+        config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                  "sourceTable": "field_source", "targetTable": "field_freshness_fixture", "writeMode": "upsert"}
+        tick = datetime.now(timezone.utc) + timedelta(minutes=1)
+
+        async def check():
+            nonlocal tick
+            async with self.pg.session() as session:
+                await evaluate_due_asset_freshness(session, now=tick)
+            tick += timedelta(minutes=1)
+
+        with (patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+              patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+              patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+              patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+              patch.object(settings, "TRANSFER_SANDBOX_FIELD_FRESHNESS_ENABLED", True),
+              patch.object(settings, "ENVIRONMENT", "local")):
+            async with api(True, self.session_provider) as client:
+                created = await client.post(RUNS, json=config)
+                self.assertEqual(created.status_code, 201, created.text)
+                plan = created.json()
+                policy = {"planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"],
+                          "expectedGeneration": None, "thresholdMinutes": 5, "enabled": True}
+                self.assertEqual((await client.put(route, json=policy)).status_code, 200)
+                review = await client.put(field, json={"expectedGeneration": 0, "policyGeneration": 1, "maxLagSeconds": 60})
+                self.assertEqual(review.status_code, 200, review.text)
+                self.assertEqual(review.json()["reason"], "no_verified_receipt")
+
+                async def transfer():
+                    response = await client.post(f"{RUNS}/{plan['id']}/runs", json={
+                        "requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"],
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+                    return response.json()
+
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.field_source VALUES (1, clock_timestamp() - interval '120s')")
+                first = await transfer()
+                self.assertEqual(first["rowsAffected"], 1)
+                with patch("app.web.services.asset_field_freshness._verified_plan",
+                           wraps=_verified_plan) as proof:
+                    await check()
+                    self.assertTrue(proof.called, "No exact EXPLAIN plan was evaluated")
+                stale = (await client.get(field)).json()
+                self.assertEqual(stale["state"], "stale", stale)
+                self.assertEqual(stale["incident"]["reason"], "field_lag")
+                self.assertGreaterEqual(stale["lagSeconds"], 120)
+                await check()
+                same = (await client.get(field)).json()
+                self.assertEqual(same["checkedAt"], stale["checkedAt"])
+                self.assertEqual(same["incident"]["lastConfirmedAt"], stale["incident"]["lastConfirmedAt"])
+                await self.pg.execute("UPDATE ts_transfer_sandbox.field_source SET source_recorded_at=clock_timestamp()")
+                second = await transfer()
+                self.assertEqual(second["rowsAffected"], 1)
+                await check()
+                fresh = (await client.get(field)).json()
+                self.assertEqual((fresh["state"], fresh["incident"]["status"]), ("fresh", "recovered"), fresh)
+                await self.pg.execute("""
+                    INSERT INTO ontology_transfer_runs
+                    (id, plan_id, request_id, initiated_by, plan_updated_at, source_schema, source_table, target_schema,
+                     target_table, target_oid, target_filenode, write_mode, rows_affected, recorded_at)
+                    SELECT :copyid, plan_id, :request, initiated_by, plan_updated_at, source_schema, source_table,
+                           target_schema, target_table, target_oid, target_filenode, write_mode, rows_affected, recorded_at
+                    FROM ontology_transfer_runs WHERE id=:id
+                """, {"copyid": uuid4(), "request": uuid4(), "id": UUID(second["id"])})
+                await check()
+                neutral = (await client.get(field)).json()
+                self.assertEqual((neutral["state"], neutral["fieldRecordedAt"]), ("unknown", None))
+                await self.pg.execute("REINDEX INDEX ts_transfer_sandbox.field_proof_idx")
+                self.assertEqual((await client.get(field)).json()["state"], "superseded")
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot remove reviewed field freshness"):
+            async with self.pg.session() as session:
+                await self.migrate(session, self.field_freshness_migration.downgrade)
 
     async def test_freshness_confirms_exact_physical_receipts_and_handles_stale_checks(self):
         async with self.pg.session() as session:
@@ -585,6 +676,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.field_freshness_migration.downgrade)
             await self.migrate(session, self.cancel_migration.downgrade)
             await self.migrate(session, self.mixed_migration.downgrade)
             await self.migrate(session, self.job_quality_migration.downgrade)

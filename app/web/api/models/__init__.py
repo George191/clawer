@@ -44,6 +44,7 @@ from .embedding import (
 
 from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
 from .asset_collected_stats import AssetCollectedStatRow as AssetCollectedStatRow
+from .asset_field_freshness import AssetFieldFreshnessRow as AssetFieldFreshnessRow
 from .asset_job_quality import AssetJobQualityRow as AssetJobQualityRow, TransferTargetRejectionRow as TransferTargetRejectionRow
 from .asset_freshness import AssetFreshnessPolicyRow as AssetFreshnessPolicyRow
 from .push_inbox_apply import PushApplyBindingRow as PushApplyBindingRow, PushApplyResultRow as PushApplyResultRow

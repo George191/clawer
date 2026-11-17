@@ -342,6 +342,19 @@ async def evaluate_due_asset_freshness(session: AsyncSession, *, now: datetime |
         state = await _evaluate_one(session, row, now)
         counts["checked"] += 1
         counts[state] += 1
+    if settings.TRANSFER_SANDBOX_FIELD_FRESHNESS_ENABLED:
+        from app.web.services.asset_field_freshness import TABLE, evaluate_field_freshness
+
+        if (field_policy := next((row for row in rows if row.target_table == TABLE), None)) is not None:
+            # Run last: a successful SHARE fence is retained through this bounded write/commit,
+            # never while probing other assets. Failure rolls the optional check back independently.
+            try:
+                async with session.begin_nested():
+                    await session.execute(text("SET LOCAL statement_timeout='750ms'"))
+                    await evaluate_field_freshness(session, field_policy)
+                    await session.execute(text("SET LOCAL statement_timeout='3s'"))
+            except Exception:
+                _log.warning("Optional field-time freshness check did not settle")
     await session.commit()
     return counts
 

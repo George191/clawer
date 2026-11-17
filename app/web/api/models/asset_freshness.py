@@ -127,8 +127,8 @@ class AssetFreshnessTransition(AssetFreshnessAssessment):
     generation: int
 
 
-AssetQualityIncidentKind = Literal["freshness", "schema", "heap_size", "daily_job"]
-AssetQualityIncidentReason = Literal["write_overdue", "schema_drift", "below_minimum", "above_maximum", "target_rejected"]
+AssetQualityIncidentKind = Literal["freshness", "schema", "heap_size", "daily_job", "field_time"]
+AssetQualityIncidentReason = Literal["write_overdue", "schema_drift", "below_minimum", "above_maximum", "target_rejected", "field_lag"]
 AssetQualityIncidentClose = Literal["healthy", "policy_paused", "policy_reviewed", "schema_baseline_captured", "schedule_changed", "target_changed"]
 
 
@@ -260,7 +260,8 @@ class AssetQualityIncidentRow(SQLModel, table=True):
         CheckConstraint("generation > 0 AND ((kind = 'freshness' AND reason = 'write_overdue') OR "
                         "(kind = 'schema' AND reason = 'schema_drift') OR "
                         "(kind = 'heap_size' AND reason IN ('below_minimum','above_maximum')) OR "
-                        "(kind = 'daily_job' AND reason = 'target_rejected'))",
+                        "(kind = 'daily_job' AND reason = 'target_rejected') OR "
+                        "(kind = 'field_time' AND reason = 'field_lag'))",
                         name="ck_ontology_asset_quality_incident_kind"),
         CheckConstraint("(closed_at IS NULL) = (close_reason IS NULL) AND "
                         "(close_reason IS NULL OR close_reason IN "

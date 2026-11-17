@@ -21,6 +21,7 @@ from app.web.api.models.asset_freshness import (
     AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse, AssetQualityIncident, AssetQualityIncidentAck,
     AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
+from app.web.api.models.asset_field_freshness import AssetFieldFreshnessReview, AssetFieldFreshnessStatus
 from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJobQualityStatus
 from app.web.api.models.batch_lineage import BatchLineageDetail, BatchLineageKind, BatchLineagePage
 from app.web.api.models.batch_source_identity import BatchSourceIdentityReview, BatchSourceIdentityStatus
@@ -77,6 +78,9 @@ from app.web.services.asset_freshness import (
 )
 from app.web.services.index_preview_sandbox import (
     index_range_pagination_available, index_sandbox_available, run_index_preview_until_disconnect,
+)
+from app.web.services.asset_field_freshness import (
+    acknowledge_field_freshness, read_field_freshness, review_field_freshness,
 )
 from app.web.services.asset_job_quality import acknowledge_daily_job, read_job_quality, review_job_quality
 from app.web.services.data_connections import connector_types, get_data_connections
@@ -314,6 +318,40 @@ async def acknowledge_daily_quality_incident(
         return await acknowledge_daily_job(session, schema, table, incident_id, payload.expectedGeneration, current_user.id)
     except DBAPIError:
         raise HTTPException(503, "Daily UTC acknowledgement could not be confirmed") from None
+
+
+@write.get("/asset-freshness/{schema}/{table}/field-freshness")
+async def get_field_freshness(
+    schema: WarehouseSchema, table: TableName, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetFieldFreshnessStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await read_field_freshness(session, schema, table)
+    except DBAPIError:
+        raise HTTPException(503, "Recorded field-time freshness is temporarily unavailable") from None
+
+
+@write.put("/asset-freshness/{schema}/{table}/field-freshness")
+async def put_field_freshness(
+    schema: WarehouseSchema, table: TableName, payload: AssetFieldFreshnessReview,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetFieldFreshnessStatus:
+    try:
+        return await review_field_freshness(session, schema, table, payload)
+    except DBAPIError:
+        raise HTTPException(503, "The field-time review could not be confirmed") from None
+
+
+@write.post("/asset-freshness/{schema}/{table}/field-freshness/incidents/{incident_id}/acknowledge")
+async def acknowledge_field_time_incident(
+    schema: WarehouseSchema, table: TableName, incident_id: UUID, payload: AssetQualityIncidentAck,
+    current_user: CurrentActiveSuperuser, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetQualityIncident:
+    try:
+        return await acknowledge_field_freshness(session, schema, table, incident_id, payload.expectedGeneration, current_user.id)
+    except DBAPIError:
+        raise HTTPException(503, "The field-time acknowledgement could not be confirmed") from None
 
 
 @write.get("/asset-freshness/{schema}/{table}/collected-stats")

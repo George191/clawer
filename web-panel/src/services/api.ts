@@ -499,11 +499,11 @@ export type AssetQualityCheck = AssetQualityResult & {
   history: (Omit<AssetQualityResult, 'validUntil'> & { id: string; generation: number })[];
 };
 export type AssetQualityIncident = {
-  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job';
+  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job' | 'field_time';
   status: 'open' | 'acknowledged' | 'recovered' | 'superseded';
-  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum' | 'target_rejected';
+  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum' | 'target_rejected' | 'field_lag';
   openedAt: string; lastConfirmedAt: string; acknowledgedAt: string | null; closedAt: string | null;
-  closeReason: 'healthy' | 'policy_paused' | 'policy_reviewed' | 'schema_baseline_captured' | 'schedule_changed' | null;
+  closeReason: 'healthy' | 'policy_paused' | 'policy_reviewed' | 'schema_baseline_captured' | 'schedule_changed' | 'target_changed' | null;
 };
 export type AssetFreshness = {
   available: boolean;
@@ -1170,3 +1170,18 @@ export const fetchTableLineageCommonUpstream = (source: TableLineageIdentity, ta
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-common-upstream`, {
     params: { targetSchema: target.schema, targetTable: target.table }, signal,
   }).then(r => unwrap<TableLineageCommonUpstream>(r.data));
+
+export type FieldFreshness = {
+  enabled: boolean; generation: number; policyGeneration: number | null; maxLagSeconds: number | null;
+  state: 'unconfigured' | 'unknown' | 'fresh' | 'stale' | 'superseded'; reason: string | null;
+  fieldRecordedAt: string | null; receiptRecordedAt: string | null; checkedAt: string | null; validUntil: string | null;
+  lagSeconds: number | null; incident: AssetQualityIncident | null;
+};
+export type FieldFreshnessReview = { expectedGeneration: number; policyGeneration: number; maxLagSeconds: number };
+const fieldFreshnessPath = `${assetFreshnessPath('ts_transfer_sandbox', 'field_freshness_fixture')}/field-freshness`;
+export const fetchFieldFreshness = (signal?: AbortSignal): Promise<FieldFreshness> =>
+  client.get(fieldFreshnessPath, { signal }).then(r => unwrap<FieldFreshness>(r.data));
+export const reviewFieldFreshness = (request: FieldFreshnessReview): Promise<FieldFreshness> =>
+  client.put(fieldFreshnessPath, request).then(r => unwrap<FieldFreshness>(r.data));
+export const acknowledgeFieldFreshnessIncident = (id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${fieldFreshnessPath}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
