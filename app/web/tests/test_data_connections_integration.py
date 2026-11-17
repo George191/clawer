@@ -4,6 +4,8 @@ Other engines' network probes are explicitly mocked. Refuses every database exce
 the disposable ontology_creation_regression instance.
 """
 
+import asyncio
+from importlib import import_module
 import json
 import os
 from types import SimpleNamespace
@@ -11,15 +13,18 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 import httpx
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 
 from app.storage.postgres_client import PostgresClient
 from app.web.api.dependencies.common import get_current_active_superuser
-from app.web.api.models.data_connections import DataConnectionPayload
+from app.web.api.models.data_connections import DataConnectionPauseChange, DataConnectionPayload
 from app.web.api.routes.etl import router
 from app.web.core.exceptions import request_exception_handler
 from app.web.services import data_connections as sources
@@ -243,7 +248,7 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(replaced["id"], saved["id"])
             self.assertTrue((await self.service.test(payload(credentials={}), saved["id"]))["ok"])
 
-    async def test_one_credential_snapshot_is_probed_and_concurrent_edits_are_rejected(self):
+    async def test_one_credential_snapshot_is_probed_and_concurrent_edits_are_serialized(self):
         saved = await self.service.save(payload(), "admin")
         original_stored = self.service._stored
         self.probe.reset_mock()
@@ -255,11 +260,110 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
 
         async def edit_during_probe(body, credentials):
             self.assertEqual(credentials, PAYLOAD["credentials"])
-            async with self.pg.session() as session:
-                await session.execute(text("UPDATE public.ontology_data_connections SET name='Concurrent edit', updated_at=clock_timestamp() WHERE id=CAST(:id AS uuid)"), {"id": saved["id"]})
+            with self.assertRaises(DBAPIError) as cannot_edit:
+                async with self.pg.session() as session:
+                    await session.execute(text("SET LOCAL lock_timeout = '100ms'"))
+                    await session.execute(text("""
+                        UPDATE public.ontology_data_connections SET name='Concurrent edit', updated_at=clock_timestamp()
+                        WHERE id=CAST(:id AS uuid)
+                    """), {"id": saved["id"]})
+            self.assertEqual(cannot_edit.exception.orig.sqlstate, "55P03")
 
         self.probe.side_effect = edit_during_probe
-        with self.assertRaises(HTTPException) as failure:
-            await self.service.save(payload(name="Stale save", credentials={}), "admin", saved["id"])
-        self.assertEqual(failure.exception.status_code, 409)
-        self.assertEqual((await self.stored(saved["id"]))["name"], "Concurrent edit")
+        result = await self.service.save(payload(name="Settled edit", credentials={}), "admin", saved["id"])
+        self.assertEqual(result["name"], "Settled edit")
+
+    async def test_postgres_pause_waits_for_saved_probe_then_stays_effective_when_switch_is_off(self):
+        enabled = SimpleNamespace(SECRET_KEY=SETTINGS.SECRET_KEY, ENVIRONMENT="local",
+                                  ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED=True,
+                                  model_fields_set={"SECRET_KEY", "ENVIRONMENT"})
+        saved = await self.service.save(payload(), "admin")
+        original = await self.stored(saved["id"])
+        entered, release, completed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def held_probe(body, credentials):
+            entered.set()
+            try:
+                await release.wait()
+            finally:
+                completed.set()
+
+        self.probe.side_effect = held_probe
+        with patch.object(sources, "settings", enabled):
+            req = DataConnectionPauseChange(paused=True, expectedUpdatedAt=saved["updatedAt"])
+            probed = asyncio.create_task(self.service.test_saved(saved["id"]))
+            await asyncio.wait_for(entered.wait(), timeout=3)
+            pending = asyncio.create_task(self.service.change_pause(saved["id"], req))
+            try:
+                await asyncio.sleep(0.15)
+                self.assertFalse(pending.done())
+            finally:
+                release.set()
+            self.assertTrue((await probed)["ok"])
+            paused = await pending
+            self.assertTrue(completed.is_set())
+            self.assertTrue(paused["pausedAt"])
+            self.assertTrue(paused["pauseAvailable"])
+            self.assertIsNone(paused["testedAt"])
+            self.assertNotEqual(paused["updatedAt"], saved["updatedAt"])
+            persisted = await self.stored(saved["id"])
+            self.assertEqual(persisted["credentials_ciphertext"], original["credentials_ciphertext"])
+            self.assertEqual(persisted["config"], original["config"])
+            with self.assertRaises(HTTPException) as stale:
+                await self.service.change_pause(saved["id"], req)
+            self.assertEqual(stale.exception.detail["code"], "source_revision_changed")
+
+            with patch.object(enabled, "ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED", False), patch.object(
+                self.service, "_credentials", side_effect=AssertionError("paused source decrypted")
+            ) as decrypt, patch.object(sources, "_driver", side_effect=AssertionError("paused source loaded driver")):
+                self.assertFalse((await self.service.list())[0]["pauseAvailable"])
+                actions = (
+                    self.service.test_saved(saved["id"]), self.service.test(payload(), saved["id"]),
+                    self.service.save(payload(), "admin", saved["id"]),
+                    self.service.catalog(saved["id"], schema=None, search="", limit=10, offset=0),
+                    self.service.catalog_columns(saved["id"], schema="public", table="records"),
+                )
+                for action in actions:
+                    with self.assertRaises(HTTPException) as denied:
+                        await action
+                    self.assertEqual(denied.exception.detail["code"], "source_paused")
+                decrypt.assert_not_called()
+                with self.assertRaises(HTTPException) as flag_off:
+                    await self.service.change_pause(saved["id"], DataConnectionPauseChange(
+                        paused=False, expectedUpdatedAt=paused["updatedAt"],
+                    ))
+                self.assertEqual(flag_off.exception.status_code, 403)
+
+            resumed = await self.service.change_pause(saved["id"], DataConnectionPauseChange(
+                paused=False, expectedUpdatedAt=paused["updatedAt"],
+            ))
+            self.assertIsNone(resumed["pausedAt"])
+            self.assertIsNone(resumed["testedAt"])
+            self.assertNotEqual(resumed["updatedAt"], paused["updatedAt"])
+            self.assertEqual((await self.stored(saved["id"]))["credentials_ciphertext"], original["credentials_ciphertext"])
+
+    async def test_legacy_registry_upgrade_and_guarded_downgrade(self):
+        saved = await self.service.save(payload(), "admin")
+        migration = import_module("app.web.alembic.versions.b66fbad735c2_ontology_pg_source_pause")
+
+        def apply(session, action):
+            with Operations.context(MigrationContext.configure(session.connection())):
+                action()
+
+        async with self.pg.session() as session:
+            await session.run_sync(apply, migration.downgrade)
+        self.assertEqual((await self.service.list())[0], saved)
+        self.assertFalse((await migrate(self.pg))["ready"])
+        self.assertTrue((await migrate(self.pg, apply=True))["ready"])
+        self.assertEqual((await self.service.list())[0], saved)
+        enabled = SimpleNamespace(SECRET_KEY=SETTINGS.SECRET_KEY, ENVIRONMENT="local",
+                                  ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED=True,
+                                  model_fields_set={"SECRET_KEY", "ENVIRONMENT"})
+        with patch.object(sources, "settings", enabled):
+            paused = await self.service.change_pause(saved["id"], DataConnectionPauseChange(
+                paused=True, expectedUpdatedAt=saved["updatedAt"],
+            ))
+        with self.assertRaisesRegex(RuntimeError, "source pause or untested"):
+            async with self.pg.session() as session:
+                await session.run_sync(apply, migration.downgrade)
+        self.assertEqual((await self.service.list())[0]["pausedAt"], paused["pausedAt"])

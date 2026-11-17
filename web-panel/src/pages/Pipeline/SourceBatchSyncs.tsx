@@ -167,7 +167,7 @@ function BatchSyncSchedulePanel({ plan, source, capability, sourceReviewNeeded }
       <p role="status"><strong>{schedule.configuredEnabled ? (schedule.available && schedule.enabled && !sourceReviewNeeded ? 'Schedule armed' : 'Schedule armed · blocked') : schedule.generation == null ? 'Schedule not armed' : 'Schedule paused'}</strong>
         {schedule.plannedTimeUtc && <> · Daily at {schedule.plannedTimeUtc} UTC · local time {nextLocalTimeForUtcClock(schedule.plannedTimeUtc)}</>}</p>
       {sourceChanged && <p>Review and save the changed source revision before arming a schedule.</p>}
-      {sourceReviewNeeded && <p>A current verified source identity and freshly reviewed sync are required to arm a schedule.</p>}
+      {sourceReviewNeeded && <p>{source.pausedAt ? 'The saved source is paused. New schedule arming is blocked.' : 'A current verified source identity and freshly reviewed sync are required to arm a schedule.'}</p>}
       {!capability.scheduledBatchSync || !schedule.available ? <p>Scheduled execution is unavailable for this plan or environment.</p> : null}
       {schedule.configuredEnabled ? <Button size="small" disabled={busy || !schedule.plannedTimeUtc} onClick={() => setConfirm('pause')}>Pause schedule</Button> :
         <div className="ontology-source-sync__actions">
@@ -232,9 +232,10 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
   };
   const proofCurrent = sourceProof?.state === 'verified' && sameSourceRevision(sourceProof.sourceUpdatedAt, source.updatedAt);
+  const sourcePaused = source.engine === 'postgresql' && (Boolean(source.pausedAt) || sourceProof?.state === 'paused');
   const proofVersion = `${sourceProof?.state ?? ''}:${sourceProof?.verifiedAt ?? ''}`;
-  const committedModeAvailable = Boolean(capability?.incrementalBatchSync && proofCurrent);
-  const sourceReviewNeeded = (plan: BatchSyncPlan) => (plan.mode === 'incremental' && !committedModeAvailable) || (source.engine === 'postgresql' && (!sourceProof || sourceProof.state === 'blocked')) || Boolean(capability?.sourceIdentityRequired &&
+  const committedModeAvailable = Boolean(!sourcePaused && capability?.incrementalBatchSync && proofCurrent);
+  const sourceReviewNeeded = (plan: BatchSyncPlan) => sourcePaused || (plan.mode === 'incremental' && !committedModeAvailable) || (source.engine === 'postgresql' && (!sourceProof || sourceProof.state === 'blocked')) || Boolean(capability?.sourceIdentityRequired &&
     (!proofCurrent || plansForProof !== proofVersion || !plan.sourceIdentityReviewed));
   const storageKey = (planId: string) => `ontology-batch-sync:${identity}:${planId}`;
 
@@ -258,7 +259,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     return () => read.abort();
   }, [source.id, selectedSchedule, revision, identity, proofVersion]);
   useEffect(() => {
-    if (!selection) return;
+    if (!selection || sourcePaused) return;
     if (draft) {
       setNotice('Save or cancel the current draft before configuring another sync.');
       onComposerClosed();
@@ -270,7 +271,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     setSaveError(''); setNotice('');
   }, [selection]);
   useEffect(() => {
-    if (!draft || !capability || draft.mode === 'incremental') return;
+    if (!draft || !capability || sourcePaused || draft.mode === 'incremental') return;
     const read = new AbortController();
     setTargets(undefined); setCatalogError('');
     const load = async () => {
@@ -286,7 +287,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     };
     void load().catch(failure => { if (live(read.signal)) setCatalogError(syncError(failure)); });
     return () => read.abort();
-  }, [Boolean(draft), draft?.mode, capability?.targetSchema, metadataRevision]);
+  }, [Boolean(draft), draft?.mode, capability?.targetSchema, metadataRevision, sourcePaused]);
   const schema = draft?.schema;
   const table = draft?.table;
   const target = draft?.target;
@@ -294,23 +295,23 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     if (schema && table) composer.current?.focus();
   }, [schema, table, draft?.id]);
   useEffect(() => {
-    if (!schema || !table || draft?.mode === 'incremental') return;
+    if (!schema || !table || sourcePaused || draft?.mode === 'incremental') return;
     const read = new AbortController();
     setSourceColumns(undefined); setSourceError('');
     void fetchDataSourceColumns(source.id, schema, table, read.signal).then(result => {
       if (live(read.signal)) setSourceColumns(result);
     }).catch(failure => { if (live(read.signal)) setSourceError(syncError(failure)); });
     return () => read.abort();
-  }, [source.id, source.updatedAt, schema, table, draft?.mode, metadataRevision]);
+  }, [source.id, source.updatedAt, schema, table, draft?.mode, metadataRevision, sourcePaused]);
   useEffect(() => {
-    if (!capability || !target || draft?.mode === 'incremental') return;
+    if (!capability || !target || sourcePaused || draft?.mode === 'incremental') return;
     const read = new AbortController();
     setTargetColumns(undefined); setDestinationError('');
     void fetchEtlTableColumns(capability.targetSchema, target, read.signal).then(result => {
       if (live(read.signal)) setTargetColumns(result);
     }).catch(failure => { if (live(read.signal)) setDestinationError(syncError(failure)); });
     return () => read.abort();
-  }, [capability?.targetSchema, target, draft?.mode, metadataRevision]);
+  }, [capability?.targetSchema, target, draft?.mode, metadataRevision, sourcePaused]);
   useEffect(() => {
     if (!historyId) return;
     const read = new AbortController();
@@ -337,6 +338,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
   const change = (patch: Partial<Draft>) => { setSaveError(''); setDraft(value => value && { ...value, ...patch }); };
   const closeDraft = () => { setDraft(undefined); onComposerClosed(); };
   const edit = (plan: BatchSyncPlan) => {
+    if (sourcePaused) return;
     onComposerClosed(); setNotice(''); setSaveError('');
     setSourceColumns(undefined); setTargetColumns(undefined); setSourceError(''); setDestinationError('');
     setDraft({ id: plan.id, mode: plan.mode, schema: plan.sourceSchema, table: plan.sourceTable, name: plan.name, key: plan.sourceKeyColumn,
@@ -352,7 +354,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
     new Set(mappingRows.map(({ column }) => draft.mapping[column.name])).size === mappingRows.length);
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!draft || pending.current || !fullyMapped || !live() || !draft.name.trim() || sourceProof?.state === 'blocked') return;
+    if (!draft || pending.current || !fullyMapped || !live() || !draft.name.trim() || sourcePaused || sourceProof?.state === 'blocked') return;
     const payload: BatchSyncInput = {
       name: draft.name.trim(), connectionId: source.id, expectedSourceUpdatedAt: source.updatedAt,
       sourceSchema: draft.schema, sourceTable: draft.table, sourceKeyColumn: draft.key, targetTable: draft.target,
@@ -419,9 +421,10 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
       {committedModeAvailable && <Button size="small" disabled={Boolean(draft || busy)} onClick={prepareCommitted}>Set up committed batch sync</Button>}
     </header>
     <div className="ontology-source-sync__body">
-      {sourceProof?.state === 'blocked' && <p role="status">Saving syncs, starting new runs and arming schedules are blocked by the saved source identity policy.</p>}
-      {capability?.sourceIdentityRequired && !proofCurrent && sourceProof?.state !== 'blocked' && <p role="status">Verify the current saved source identity before new manual or scheduled sync runs.</p>}
-      {capability && !capability.enabled && <p role="status">Sandbox sync execution is disabled. Drafts can still be configured.</p>}
+      {sourcePaused && <p role="status">The saved source is paused. New syncs and schedule arming are blocked. An exact retry can only recover an existing receipt.</p>}
+      {!sourcePaused && sourceProof?.state === 'blocked' && <p role="status">Saving syncs, starting new runs and arming schedules are blocked by the saved source identity policy.</p>}
+      {!sourcePaused && capability?.sourceIdentityRequired && !proofCurrent && sourceProof?.state !== 'blocked' && <p role="status">Verify the current saved source identity before new manual or scheduled sync runs.</p>}
+      {!sourcePaused && capability && !capability.enabled && <p role="status">Sandbox sync execution is disabled. Drafts can still be configured.</p>}
       {stateError && <p className="is-error" role="alert">{stateError} <Button size="small" onClick={() => setRevision(value => value + 1)}>Retry</Button></p>}
       {selectedSchedule && plans && !plans.some(plan => plan.id === selectedSchedule) && <p role="status">The linked batch sync is not available under this source.</p>}
       {notice && <p role="status">{notice}</p>}
@@ -429,7 +432,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
         <h4 ref={composer} tabIndex={-1}>Configure batch sync</h4>
         {(draft.mode === 'incremental' || capability?.incrementalBatchSync) && <p>Mode: <strong>{draft.mode === 'incremental' ? 'Committed batch Upsert' : 'Snapshot Upsert'}</strong></p>}
         <p>Source: <code>{draft.schema}.{draft.table}</code>{capability && <> · Destination schema: <code>{capability.targetSchema}</code></>}</p>
-        <fieldset disabled={Boolean(busy)}>
+        <fieldset disabled={Boolean(busy) || sourcePaused}>
           <label>Sync name<Input aria-label="Sync name" required maxLength={120} value={draft.name} onChange={event => change({ name: event.target.value })} /></label>
           {draft.mode === 'incremental' ? <div>
             <p>Fixed destination: <code>{capability?.targetSchema}.{committedStream.target}</code></p>
@@ -462,7 +465,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
           </>}
         </fieldset>
         {saveError && <p role="alert" className="is-error">{saveError}</p>}
-        <div className="ontology-source-sync__actions"><Button disabled={Boolean(busy)} onClick={closeDraft}>Cancel</Button><Button type="primary" htmlType="submit" loading={busy === 'save'} disabled={!fullyMapped || !draft.name.trim() || sourceProof?.state === 'blocked'}>Save draft</Button></div>
+        <div className="ontology-source-sync__actions"><Button disabled={Boolean(busy)} onClick={closeDraft}>Cancel</Button><Button type="primary" htmlType="submit" loading={busy === 'save'} disabled={sourcePaused || !fullyMapped || !draft.name.trim() || sourceProof?.state === 'blocked'}>Save draft</Button></div>
       </form> : !plans ? !stateError && <p role="status">Loading batch syncs…</p> : plans.length ? <ul className="ontology-source-sync__items">{plans.map(plan => <li key={plan.id}>
         <div><strong>{plan.name}</strong> · {plan.mode === 'incremental' ? 'Committed batch Upsert' : capability?.incrementalBatchSync ? 'Snapshot Upsert' : 'Draft'}</div>
         {plan.mode === 'incremental' && <p>Committed through: <code>{plan.appliedThrough ?? 'Not recorded'}</code>. This is the saved target checkpoint, not the latest source head.</p>}
@@ -471,7 +474,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
         {capability?.sourceIdentityRequired && proofCurrent && plansForProof === proofVersion && !plan.sourceIdentityReviewed && <p>Requires review. Review and save this sync again to bind it to the verified source identity.</p>}
         {!sameRevision(plan.sourceUpdatedAt, source.updatedAt) && <p>This source has changed. Review and save the mapping before running.</p>}
         <div className="ontology-source-sync__actions">
-          <Button size="small" disabled={Boolean(busy)} onClick={() => edit(plan)}>Edit sync</Button>
+          <Button size="small" disabled={Boolean(busy) || sourcePaused} onClick={() => edit(plan)}>Edit sync</Button>
           <Button size="small" aria-expanded={scheduleId === plan.id} onClick={() => setScheduleId(value => value === plan.id ? undefined : plan.id)}>Schedule</Button>
           <Button size="small" aria-expanded={historyId === plan.id} onClick={() => { setReceiptList(undefined); setAttemptList(undefined); setHistoryError(''); setHistoryView('receipts'); setHistoryId(value => value === plan.id ? '' : plan.id); }}>Sync history</Button>
           {capability?.enabled && (sameRevision(plan.sourceUpdatedAt, source.updatedAt) && !sourceReviewNeeded(plan) || storedRun(storageKey(plan.id))) &&
@@ -489,12 +492,13 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
               ? attemptList ? <AttemptList attempts={attemptList.filter(attempt => attempt.planId === plan.id)} canRetry={Boolean(capability?.enabled && !busy)} onRetry={attempt => askRun(plan, attempt)} /> : <p role="status">Loading attempts…</p>
               : receiptList ? <ReceiptList receipts={receiptList.filter(receipt => receipt.planId === plan.id)} incremental={plan.mode === 'incremental'} lineageAvailable={capability?.incrementalLineage === true} /> : <p role="status">Loading sync history…</p>}
         </section>}
-      </li>)}</ul> : <p>No saved batch syncs. Select a table in Explore source to set one up.</p>}
+      </li>)}</ul> : <p>{sourcePaused ? 'No saved batch syncs.' : 'No saved batch syncs. Select a table in Explore source to set one up.'}</p>}
     </div>
     <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" title={retry ? 'Retry previous sandbox sync?' : 'Run sandbox batch sync?'}
       onCancel={cancelRun} onOk={run} confirmLoading={busy === 'run'} okText={retry ? 'Retry same request' : 'Confirm sandbox sync'} okButtonProps={{ disabled: Boolean(confirm && !retry && sourceReviewNeeded(confirm)) }}>
       {confirm && (retry ? <>
         <p>This uses the original request ID and saved revision. A committed sync is not applied again.</p>
+        {sourcePaused && <p>While paused, this only recovers a previously recorded result. It will not contact the source or start a write.</p>}
         <p>Request ID: <code>{retry.requestId}</code></p>
         {retry.expectedUpdatedAt !== confirm.updatedAt && <p>The plan has changed. This request can recover an existing receipt, but cannot run a different revision.</p>}
       </> : <>

@@ -60,7 +60,7 @@ from app.web.api.models.etl import (
     PreviewRowsQuery,
     SqlQuery,
 )
-from app.web.api.models.data_connections import DataConnectionPayload, SourceCatalog, SourceColumns
+from app.web.api.models.data_connections import DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns
 from app.web.api.models.transfer_plans import (
     TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
     TransferRunRequest, WarehouseSchema,
@@ -727,6 +727,11 @@ async def review_batch_source_identity(
     connection_id: UUID, payload: BatchSourceIdentityReview, session: SessionDep,
 ) -> BatchSourceIdentityStatus:
     return await verify_source_identity(session, connection_id, payload.expectedSourceUpdatedAt)
+
+
+@write.put("/data-connections/{connection_id}/pause")
+async def change_data_connection_pause(connection_id: UUID, payload: DataConnectionPauseChange) -> dict[str, Any]:
+    return await get_data_connections().change_pause(str(connection_id), payload)
 
 
 @write.post("/data-connections/{connection_id}/test")

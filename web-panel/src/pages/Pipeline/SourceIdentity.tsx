@@ -9,6 +9,7 @@ export const sameSourceRevision = (a: string | null | undefined, b: string) =>
 const messages = {
   unverified: 'Not verified',
   blocked: 'Source identity policy is blocked',
+  paused: 'Connection paused',
   verified: 'Verified for this saved revision',
   stale: 'Requires review',
   unknown: 'Identity could not be confirmed',
@@ -44,7 +45,7 @@ export default function SourceIdentity({ source, identity, onIdentity, disabled 
   const status = identity?.state === 'stale' ? 'stale' : error ? 'unknown' : !identity ? 'loading' : identity.state === 'verified' && !sameSourceRevision(identity.sourceUpdatedAt, source.updatedAt) ? 'stale' : identity.state;
   const checked = status === 'verified' ? identity?.verifiedAt : null;
   const verify = () => {
-    if (disabled || busy || !identity || identity.state === 'blocked') return;
+    if (disabled || busy || !identity || identity.state === 'blocked' || identity.state === 'paused') return;
     const request = new AbortController();
     pending.current?.abort(); pending.current = request;
     setError(''); setBusy(true);
@@ -64,7 +65,7 @@ export default function SourceIdentity({ source, identity, onIdentity, disabled 
   };
   return <section className="ontology-source-catalog ontology-source-sync" aria-label="Source identity" aria-busy={busy}>
     <header><div><h3>Source identity</h3><p>A connectivity test proves access, not the identity of the reviewed source.</p></div>
-      <Button size="small" onClick={identity && status !== 'blocked' ? verify : load} disabled={disabled || busy}>{identity && status !== 'blocked' ? 'Verify source identity' : 'Refresh identity status'}</Button>
+      <Button size="small" onClick={identity && status !== 'blocked' && status !== 'paused' ? verify : load} disabled={disabled || busy}>{identity && status !== 'blocked' && status !== 'paused' ? 'Verify source identity' : 'Refresh identity status'}</Button>
     </header>
     <div className="ontology-source-sync__body">
       <p role="status"><strong>{busy ? 'Checking source identity…' : messages[status]}</strong>{checked && Number.isFinite(Date.parse(checked)) && <> · Checked {new Date(checked).toLocaleString()}</>}</p>

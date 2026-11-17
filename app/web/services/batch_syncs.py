@@ -24,7 +24,7 @@ from app.web.api.models.batch_sync_schedules import BatchSyncScheduleJobRow, Bat
 from app.web.api.models.user import User
 from app.web.api.utils.models import StatusTypes
 from app.web.core.config import settings
-from app.web.services.data_connections import get_data_connections
+from app.web.services.data_connections import SavedSourcePaused, get_data_connections, paused_at_sql
 from app.web.services.batch_sync_scope import local_batch_sync_scope
 from app.web.services.etl_layers import quote_identifier
 from app.web.services.batch_source_identity import (
@@ -235,13 +235,22 @@ async def _finish_after_rollback(
         logger.warning("Batch sync attempt outcome could not be recorded: %s", attempt_id)
 
 
-async def _verify_source_revision(session: AsyncSession, connection_id: UUID, expected: datetime, *, lock: bool) -> None:
+async def _saved_source_state(session: AsyncSession, connection_id: UUID, *, lock: bool):
     # This is the app's registry, not a query to the saved external source.
     lock_clause = " FOR SHARE" if lock else ""
-    row = (await session.execute(text("""
-        SELECT engine, config->>'host' AS host, updated_at
-        FROM public.ontology_data_connections WHERE id=:id
+    return (await session.execute(text(f"""
+        SELECT engine, config->>'host' AS host, updated_at, {paused_at_sql('registry')} AS paused_at
+        FROM public.ontology_data_connections registry WHERE id=:id
     """ + lock_clause), {"id": connection_id})).mappings().first()
+
+
+def _require_active_source(row) -> None:
+    if row is not None and row["paused_at"] is not None:
+        raise _RunFailure(409, "source_paused", "This saved PostgreSQL source is paused")
+
+
+def _validate_source_revision(row, expected: datetime) -> None:
+    _require_active_source(row)
     if row is None:
         raise HTTPException(404, "Saved PostgreSQL source does not exist")
     if row["updated_at"] != expected:
@@ -256,6 +265,10 @@ async def _verify_source_revision(session: AsyncSession, connection_id: UUID, ex
         local = False
     if not local:
         raise HTTPException(422, "This batch pilot requires a saved numeric loopback address")
+
+
+async def _verify_source_revision(session: AsyncSession, connection_id: UUID, expected: datetime, *, lock: bool) -> None:
+    _validate_source_revision(await _saved_source_state(session, connection_id, lock=lock), expected)
 
 
 async def _target_metadata(session: AsyncSession, table: str):
@@ -379,6 +392,8 @@ def _check_source_projection(plan: BatchSyncPlan, columns, source_metadata):
 
 
 def _source_failure(error: HTTPException) -> _RunFailure:
+    if isinstance(error, SavedSourcePaused):
+        return _RunFailure(409, "source_paused", "This saved PostgreSQL source is paused")
     if isinstance(error, SourceIdentityMismatch):
         return _RunFailure(409, "source_identity_mismatch", "The saved PostgreSQL source no longer matches its reviewed identity")
     if error.status_code == 504:
@@ -506,6 +521,10 @@ async def run_batch_sync(
             raise _RunFailure(409, "schedule_receipt_conflict", "The job has no matching committed batch receipt")
         if row.updated_at != req.expectedUpdatedAt:
             raise _RunFailure(409, "plan_changed", "Batch sync plan changed; review it before starting")
+        # Replay above is deliberately source-free. Hold the registry fence until
+        # this new attempt has settled, even if the remote source is slow.
+        saved_source = await _saved_source_state(session, row.connection_id, lock=True)
+        _require_active_source(saved_source)
         plan = _plan_response(row)
         incremental = row.mode == "incremental"
         if incremental:
@@ -531,7 +550,7 @@ async def run_batch_sync(
             binding = await watermark(session, lock=True)
             if not same_binding(binding, row):
                 raise _RunFailure(409, "incremental_binding_changed", "The fixed synthetic stream binding differs from its review")
-        await _verify_source_revision(session, plan.connectionId, plan.sourceUpdatedAt, lock=True)
+        _validate_source_revision(saved_source, plan.sourceUpdatedAt)
         if job is not None:
             _check_job_time(job, scheduled_now)
         try:

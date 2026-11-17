@@ -4,7 +4,7 @@
 
 | 核对项 | Palantir 官方行为 | Clawer 当前状态 | 下一步验收标准 |
 | --- | --- | --- | --- |
-| 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；本地 PostgreSQL 试点已将连通性与已保存源身份核验分开，手工和调度在源事务中重新验证。其他连接器能力和统一网络策略仍待覆盖。 | 在选择同步或导出前验证连接器能力和权限；不把连接测试通过当成可读取或可写入业务资产的证明。 |
+| 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；本地 PostgreSQL 试点已将连通性与已保存源身份核验分开，手工和调度在源事务中重新验证；保存连接可显式暂停/恢复且旧审核不自动复用。其他连接器能力和统一网络策略仍待覆盖。 | 在选择同步或导出前验证连接器能力和权限；不把连接测试通过当成可读取或可写入业务资产的证明。 |
 | 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度；固定合成源另支持按已提交批次增量 Upsert，源发布进度与目标已应用位置分开。 | 尚需将有明确提交语义的增量扩展到已授权源和数据集目标，覆盖其他连接器与数据变化模式。 |
 | 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断和固定消费路径；独立本地合成流可按已提交序号回放 after-image，分别记录源最高位点、目标检查点和提交回执。另有独立的本地合成推送收件箱，生产者验签后可持久接收并查看回执；另行授权的手工应用可向固定目标按接收顺序追加，应用位置和结果独立记录。尚无通用可配置入站流。 | 继续验收可配置的生产者身份、流定义和消费策略；不把接收回执或消费位点当作目标提交。 |
 | 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执；当前审核的正数回执已驱动沙箱外发 Lineage。可选第二个预置本地接收端，各自审核、授权和记录，不自动多发或回退。固定合成标记另有可撤销授权。Published API 仍只是被动读取。 | 验收通用标记策略、更多目标及导出模式，以及另行审核的写回或 Webhook。 |
@@ -260,3 +260,9 @@
 - 参考 [Foundry Table exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/#table-exports)。在现有 Data Connections 内只选择一个由部署端预置、独立核验的本地合成接收端。不提供任意地址、自动多发、故障回退或生产连接。原入口仍指向主接收端，旧回执归属不变。
 - 审核版本、授权与撤销代次、尝试和目标回执按选定接收端隔离。相同请求不能改接收端或换载荷。接收端响应丢失时，只在同一个已核验接收端找原回执；错连、撤权、凭证版本或身份变更不会转发到另一个端。
 - 用两个独立且结构相同的 PostgreSQL 夹具核验真正写入、错误地址、授权隔离、回放与失败路径。界面不显示主机、凭证或验证材料。仅独立隔离环境，不部署。
+
+### 已保存 PostgreSQL 连接的暂停与恢复
+
+- 连接暂停不删除凭据、配置或历史。用精确连接版本确认暂停；连接已经被使用时先等当前有界操作结束，忙时提示重试，不在尚有远程操作时宣称已暂停。暂停成功后，保存连接的测试、目录、身份复核、手工运行和定时运行不会再打开源。
+- 恢复会生成新的连接版本，旧连通性结果、身份审核、计划和调度不能自动重新生效。需重新验证、审核并启用定时任务；既有已提交原请求仍只读原回执。暂停策略不因关闭新状态操作开关而绕过。
+- 仅管理已保存的 PostgreSQL 连接，不改变其它引擎或独立传入凭据的连接操作。用隔离真实数据库验证双连接、在途操作、过期版本、定时路径以及凭据加密和回执完整性。

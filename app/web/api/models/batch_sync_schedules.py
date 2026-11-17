@@ -21,6 +21,7 @@ class BatchSyncSchedule(BaseModel):
     available: bool
     enabled: bool
     configuredEnabled: bool
+    sourcePaused: Literal[True] | None = ApiField(default=None, exclude_if=lambda value: value is None)
     generation: int | None = None
     plannedTimeUtc: str | None = None
     armedForUpdatedAt: datetime | None = None

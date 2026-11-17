@@ -6,7 +6,7 @@ import ipaddress
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 Engine = Literal["postgresql", "mysql", "oracle", "dameng", "elasticsearch", "milvus"]
@@ -76,6 +76,13 @@ class DataConnectionPayload(BaseModel):
             if value is not None and not 1 <= len(value.get_secret_value()) <= 8192:
                 raise ValueError("Credentials must contain between 1 and 8192 characters")
         return self
+
+
+class DataConnectionPauseChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    paused: bool = Field(strict=True)
+    expectedUpdatedAt: AwareDatetime
 
 
 class SourceRelation(BaseModel):

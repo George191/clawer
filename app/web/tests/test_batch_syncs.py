@@ -374,6 +374,75 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(paused.json()["configuredEnabled"])
                 self.assertEqual(reader.await_count, 1)
 
+    async def test_paused_source_reconciles_only_existing_receipt_and_does_not_dispatch_queued_work(self):
+        from app.web.services.data_connections import DataConnections
+
+        service = object.__new__(DataConnections)
+        service._pg = self.pg
+        await self.pg.execute("CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')")
+        await self.pg.execute('CREATE TABLE public."user" (id uuid primary key, status public.statustypes, is_superuser boolean)')
+        await self.pg.execute("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)""", {"id": ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+        slot = datetime(2026, 11, 17, 3, 0, tzinfo=timezone.utc)
+        connection_path = "/etl/data-connections/" + PAYLOAD["connectionId"]
+
+        async def jobs(now):
+            async with self.pg.session() as session:
+                return await collect_due_batch_sync_jobs(session, now=now)
+
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_SANDBOX_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_SANDBOX_SCHEDULER_ENABLED", True),
+            patch("app.web.api.routes.etl.get_data_connections", return_value=service),
+            patch("app.web.services.batch_sync_schedules._utc_now", return_value=slot - timedelta(minutes=1)),
+            patch("app.web.services.batch_sync_schedules.local_batch_sync_scope", return_value="test-namespace-a"),
+            patch("app.web.services.batch_syncs.local_batch_sync_scope", return_value="test-namespace-a"),
+            patch("app.web.services.batch_syncs.read_batch_sync_snapshot",
+                  return_value=([{"Source Identifier": 1, "Display Name": "reviewed once"}], PROJECTION)) as read,
+        ):
+            async with api(True, self.provider) as client:
+                plan = (await client.post(RUNS, json=PAYLOAD)).json()
+                route = f"{RUNS}/{plan['id']}"
+                request = {"requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"]}
+                receipt = await client.post(route + "/runs", json=request)
+                self.assertEqual(receipt.status_code, 200, receipt.text)
+                self.assertEqual(read.await_count, 1)
+                arm = {"plannedTimeUtc": "03:00", "expectedUpdatedAt": plan["updatedAt"],
+                       "enabled": True, "expectedGeneration": None}
+                self.assertTrue((await client.put(route + "/schedule", json=arm)).json()["enabled"])
+                queued, = await jobs(slot)
+
+                pause = await client.put(connection_path + "/pause", json={
+                    "paused": True, "expectedUpdatedAt": PAYLOAD["expectedSourceUpdatedAt"],
+                })
+                self.assertEqual(pause.status_code, 200, pause.text)
+                status = (await client.get(route + "/schedule")).json()
+                self.assertTrue(status["sourcePaused"] and status["configuredEnabled"])
+                self.assertFalse(status["enabled"])
+                self.assertEqual((await client.get(connection_path + "/batch-source-identity")).json()["state"], "paused")
+                self.assertEqual(await jobs(slot + timedelta(minutes=1)), [])
+                with patch.object(settings, "ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED", False):
+                    later = await client.post(route + "/runs", json={**request, "requestId": str(uuid4())})
+                    self.assertEqual(later.json()["detail"]["code"], "source_paused")
+                    self.assertEqual((await client.post(route + "/runs", json=request)).json(), receipt.json())
+                    rejected_arm = await client.put(route + "/schedule", json={**arm, "expectedGeneration": 1})
+                    self.assertEqual(rejected_arm.json()["detail"]["code"], "source_paused")
+                    async with self.pg.session() as session:
+                        self.assertEqual(await execute_batch_sync_schedule_job(session, queued, now=slot), "rejected")
+                self.assertEqual(read.await_count, 1)
+                resumed = await client.put(connection_path + "/pause", json={
+                    "paused": False, "expectedUpdatedAt": pause.json()["updatedAt"],
+                })
+                self.assertEqual(resumed.status_code, 200, resumed.text)
+                self.assertFalse((await client.get(route + "/schedule")).json()["enabled"])
+                stale = await client.post(route + "/runs", json={**request, "requestId": str(uuid4())})
+                self.assertEqual(stale.json()["detail"]["code"], "source_revision_changed")
+                self.assertEqual(await jobs(slot + timedelta(days=1)), [])
+                self.assertEqual(read.await_count, 1)
+
     @unittest.skipUnless(all(IDENTITY_ORIGINS), "requires isolated A/B PostgreSQL source fixtures")
     async def test_exact_source_identity_is_sticky_and_blocks_wrong_origin_before_select(self):
         import asyncpg

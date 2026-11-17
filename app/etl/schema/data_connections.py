@@ -10,6 +10,17 @@ CREATE TABLE public.ontology_data_connections (
     created_by TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    tested_at TIMESTAMPTZ NOT NULL
+    tested_at TIMESTAMPTZ,
+    paused_at TIMESTAMPTZ,
+    CONSTRAINT ck_ontology_pg_source_pause CHECK (paused_at IS NULL OR (engine = 'postgresql' AND tested_at IS NULL))
 )
+"""
+
+
+DATA_CONNECTIONS_PAUSE_DDL = """
+ALTER TABLE public.ontology_data_connections
+  ALTER COLUMN tested_at DROP NOT NULL,
+  ADD COLUMN paused_at TIMESTAMPTZ,
+  ADD CONSTRAINT ck_ontology_pg_source_pause
+    CHECK (paused_at IS NULL OR (engine = 'postgresql' AND tested_at IS NULL))
 """

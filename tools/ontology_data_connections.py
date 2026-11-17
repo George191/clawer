@@ -12,13 +12,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text
 
-from app.etl.schema.data_connections import DATA_CONNECTIONS_DDL
+from app.etl.schema.data_connections import DATA_CONNECTIONS_DDL, DATA_CONNECTIONS_PAUSE_DDL
 from app.storage.postgres_client import get_pg_client
 
 
 EXPECTED = {"id": "uuid", "name": "text", "engine": "text", "config": "jsonb",
             "credentials_ciphertext": "text", "created_by": "text", "created_at": "timestamp with time zone",
             "updated_at": "timestamp with time zone", "tested_at": "timestamp with time zone"}
+PAUSED_CONTRACT = {**EXPECTED, "paused_at": "timestamp with time zone"}
 
 
 async def definition(session):
@@ -28,7 +29,12 @@ async def definition(session):
         AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum"""))).mappings().all()
     if not rows:
         return False
-    if {row["name"]: row["type"] for row in rows} != EXPECTED or not all(row["not_null"] for row in rows):
+    actual = {row["name"]: row["type"] for row in rows}
+    legacy = actual == EXPECTED and all(row["not_null"] for row in rows)
+    upgraded = actual == PAUSED_CONTRACT and all(
+        row["not_null"] == (row["name"] not in ("tested_at", "paused_at")) for row in rows
+    )
+    if not (legacy or upgraded):
         raise RuntimeError("Existing external source registry differs from its expected column contract")
     primary = (await session.execute(text("""SELECT EXISTS (SELECT 1 FROM pg_constraint k
         JOIN pg_attribute a ON a.attrelid=k.conrelid AND a.attname='id'
@@ -36,22 +42,25 @@ async def definition(session):
         AND k.conkey=ARRAY[a.attnum]::smallint[])"""))).scalar_one()
     if not primary:
         raise RuntimeError("External source registry is missing its UUID primary key")
-    return True
+    return "legacy" if legacy else "current"
 
 
 async def migrate(pg, *, apply=False):
     async with pg.session() as session:
         if apply:
-            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_data_connections_migration'))"))
             await session.execute(text("SET LOCAL lock_timeout='5s'"))
             await session.execute(text("SET LOCAL statement_timeout='30s'"))
+            await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('public.ontology_data_connections_migration'))"))
         else:
             await session.execute(text("SET TRANSACTION READ ONLY"))
         before = await definition(session)
-        if not before and apply:
-            await session.execute(text(DATA_CONNECTIONS_DDL))
-        ready = await definition(session) if apply else before
-        return {"applied": apply, "ready": ready, "changes": [] if before else ["create_external_source_registry"],
+        changes = [] if before == "current" else [
+            "enable_postgresql_source_pause" if before == "legacy" else "create_external_source_registry",
+        ]
+        if changes and apply:
+            await session.execute(text(DATA_CONNECTIONS_PAUSE_DDL if before == "legacy" else DATA_CONNECTIONS_DDL))
+        ready = (await definition(session) if apply else before) == "current"
+        return {"applied": apply, "ready": ready, "changes": changes,
                 "business_rows_read": 0, "business_rows_written": 0}
 
 

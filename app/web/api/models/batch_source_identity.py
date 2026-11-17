@@ -15,7 +15,7 @@ class BatchSourceIdentityReview(BaseModel):
 
 
 class BatchSourceIdentityStatus(BaseModel):
-    state: Literal["disabled", "unverified", "verified", "stale", "blocked"]
+    state: Literal["disabled", "unverified", "verified", "stale", "blocked", "paused"]
     sourceUpdatedAt: datetime | None = None
     verifiedAt: datetime | None = None
 

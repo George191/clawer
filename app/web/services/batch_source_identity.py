@@ -14,7 +14,7 @@ from sqlmodel import select
 from app.web.api.models.batch_source_identity import BatchSourceIdentityRow, BatchSourceIdentityStatus
 from app.web.api.models.batch_syncs import BatchSyncPlanRow
 from app.web.core.config import settings
-from app.web.services.data_connections import get_data_connections
+from app.web.services.data_connections import SavedSourcePaused, get_data_connections, paused_at_sql
 from app.web.services.postgres_sync_source import SourceIdentityMismatch, review_batch_source
 
 
@@ -39,26 +39,30 @@ def _local_host(host: str | None) -> bool:
         return False
 
 
-async def _saved_revision(session: AsyncSession, identity: UUID, *, lock: bool = False) -> datetime | None:
-    """Read only exact registry metadata; never read credentials in the status route."""
-    row = (await session.execute(text("""
-        SELECT engine, config->>'host' AS host, updated_at
-        FROM public.ontology_data_connections WHERE id = :id
+async def _saved_source(session: AsyncSession, identity: UUID, *, lock: bool = False, optional: bool = False):
+    """Read only exact registry metadata; do not return credentials on identity routes."""
+    if optional and not await session.scalar(text("SELECT pg_catalog.to_regclass('public.ontology_data_connections')")):
+        return None
+    row = (await session.execute(text(f"""
+        SELECT engine, config->>'host' AS host, updated_at, {paused_at_sql('registry')} AS paused_at
+        FROM public.ontology_data_connections registry WHERE id = :id
     """ + (" FOR UPDATE" if lock else "")), {"id": identity})).mappings().first()
-    if row is None:
+    if row is None and not optional:
         raise HTTPException(404, "Saved PostgreSQL source does not exist")
-    return row["updated_at"] if row["engine"] == "postgresql" and _local_host(row["host"]) else None
+    return row
 
 
 async def read_source_identity(session: AsyncSession, identity: UUID) -> BatchSourceIdentityStatus:
-    if not identity_required():
-        # Without local execution no new work is offered. Under explicit local flag-off,
-        # expose only the blocked capability for an ever-verified saved connection.
+    required = identity_required()
+    row = await _saved_source(session, identity, optional=not required)
+    if row is not None and row["paused_at"] is not None:
+        return BatchSourceIdentityStatus(state="paused", sourceUpdatedAt=row["updated_at"])
+    if not required:
         protected = _explicit_local_batch() and await session.get(BatchSourceIdentityRow, identity) is not None
         return BatchSourceIdentityStatus(state="blocked" if protected else "disabled")
-    saved = await _saved_revision(session, identity)
-    if saved is None:
+    if row["engine"] != "postgresql" or not _local_host(row["host"]):
         return BatchSourceIdentityStatus(state="disabled")
+    saved = row["updated_at"]
     proof = await session.get(BatchSourceIdentityRow, identity)
     expected = expected_fingerprint()
     if proof is None:
@@ -73,14 +77,19 @@ async def verify_source_identity(
 ) -> BatchSourceIdentityStatus:
     marker, expected = settings.BATCH_SYNC_SOURCE_IDENTITY_MARKER, expected_fingerprint()
     if not marker or not expected:
+        row = await _saved_source(session, identity, optional=True)
+        if row is not None and row["paused_at"] is not None:
+            raise SavedSourcePaused()
         raise HTTPException(403, "Reviewed source identity requires explicit local provisioning")
     await session.execute(text("SET LOCAL lock_timeout = '2s'"))
     await session.execute(text("SET LOCAL statement_timeout = '8s'"))
     # Serialize verify/failure for the exact saved registry row; concurrent config edit cannot pair with this proof.
-    saved = await _saved_revision(session, identity, lock=True)
-    if saved is None:
+    row = await _saved_source(session, identity, lock=True)
+    if row["paused_at"] is not None:
+        raise SavedSourcePaused()
+    if row["engine"] != "postgresql" or not _local_host(row["host"]):
         raise HTTPException(422, "Use an eligible saved numeric-loopback PostgreSQL source")
-    if saved != revision:
+    if row["updated_at"] != revision:
         raise HTTPException(409, "Saved source settings changed; reload before verifying")
     try:
         await review_batch_source(get_data_connections(), str(identity), revision, marker)

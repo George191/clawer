@@ -692,7 +692,7 @@ export interface DataSourcePayload {
 }
 export interface DataSource extends Omit<DataSourcePayload, 'credentials'> {
   id: string; credentialsConfigured: boolean; catalogAvailable: boolean; createdBy: string;
-  createdAt: string; updatedAt: string; testedAt: string;
+  createdAt: string; updatedAt: string; testedAt: string | null; pausedAt?: string | null; pauseAvailable?: boolean;
 }
 export interface DataSourceTest { ok: boolean; message: string; latencyMs: number; testedAt?: string; }
 export type DataSourceRelation = { name: string; kind: 'table' | 'partitioned_table' | 'view' | 'materialized_view' | 'foreign_table' };
@@ -706,7 +706,7 @@ export const fetchDataSourceCatalog = (
 export const fetchDataSourceColumns = (id: string, schema: string, table: string, signal?: AbortSignal): Promise<DataSourceColumns> =>
   client.get(`${dataSourceCatalogPath(id)}/columns`, { params: { schema, table }, signal }).then((r) => unwrap<DataSourceColumns>(r.data));
 export type BatchSourceIdentity = {
-  state: 'disabled' | 'blocked' | 'unverified' | 'verified' | 'stale'; sourceUpdatedAt: string | null; verifiedAt: string | null;
+  state: 'disabled' | 'blocked' | 'paused' | 'unverified' | 'verified' | 'stale'; sourceUpdatedAt: string | null; verifiedAt: string | null;
 };
 const batchSourceIdentityPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/batch-source-identity`;
 export const fetchBatchSourceIdentity = (id: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
@@ -824,6 +824,8 @@ export const createDataSource = (payload: DataSourcePayload): Promise<DataSource
   client.post('/etl/data-connections', payload, { timeout: 45000 }).then((r) => unwrap<DataSource>(r.data));
 export const updateDataSource = (id: string, payload: DataSourcePayload): Promise<DataSource> =>
   client.put(`/etl/data-connections/${id}`, payload, { timeout: 45000 }).then((r) => unwrap<DataSource>(r.data));
+export const setDataSourcePaused = (id: string, request: { paused: boolean; expectedUpdatedAt: string }): Promise<DataSource> =>
+  client.put(`/etl/data-connections/${encodeURIComponent(id)}/pause`, request).then((r) => unwrap<DataSource>(r.data));
 export const deleteDataSource = (id: string): Promise<void> =>
   client.delete(`/etl/data-connections/${id}`).then(() => undefined);
 export interface EtlDataQuery {

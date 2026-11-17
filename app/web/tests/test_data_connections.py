@@ -1,6 +1,7 @@
 """Connector contracts and driver calls; no external database is accessed."""
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import ssl
 from types import SimpleNamespace
@@ -13,6 +14,11 @@ from pydantic import ValidationError
 
 from app.web.api.models.data_connections import DataConnectionPayload
 from app.web.services import data_connections as sources
+
+
+@asynccontextmanager
+async def stub_registry_session():
+    yield object()
 
 
 def payload(engine="postgresql", **changes):
@@ -161,7 +167,8 @@ class StoredConnectionCredentialsTests(unittest.IsolatedAsyncioTestCase):
             {"host": "other-db.example.test"}, {"port": 6543},
             {"database": "other"}, {"username": "other"}, {"tls": False},
         )
-        with patch.object(service, "_stored", return_value=stored), patch.object(service, "_probe_result") as probe:
+        with (patch.object(service, "_session", stub_registry_session),
+              patch.object(service, "_stored", return_value=stored), patch.object(service, "_probe_result") as probe):
             for change in changes:
                 candidate = payload(**change).model_copy(update={"credentials": type(original.credentials)()})
                 with self.subTest(change=change), self.assertRaises(HTTPException) as failure:
@@ -190,6 +197,7 @@ class SourceCatalogTests(unittest.IsolatedAsyncioTestCase):
         connection.fetchval = AsyncMock(return_value=True)
         driver = SimpleNamespace(connect=AsyncMock(return_value=connection))
         with (
+            patch.object(service, "_session", stub_registry_session),
             patch.object(service, "_stored", return_value=stored),
             patch.object(service, "_credentials", return_value={"password": "from-saved-record"}) as credentials,
             patch.object(sources, "_driver", return_value=driver),
@@ -211,6 +219,7 @@ class SourceCatalogTests(unittest.IsolatedAsyncioTestCase):
         service = object.__new__(sources.DataConnections)
         stored = {"name": "Saved demo", "engine": "postgresql", "config": payload().config.model_dump()}
         with (
+            patch.object(service, "_session", stub_registry_session),
             patch.object(service, "_stored", return_value={**stored, "engine": "mysql"}),
             patch.object(sources, "_driver") as driver,
             self.assertRaises(HTTPException) as failure,
@@ -222,6 +231,7 @@ class SourceCatalogTests(unittest.IsolatedAsyncioTestCase):
         for driver_error, code in ((TimeoutError("private connection string"), 504), (OSError("private connection string"), 502)):
             driver = SimpleNamespace(connect=AsyncMock(side_effect=driver_error))
             with (
+                patch.object(service, "_session", stub_registry_session),
                 patch.object(service, "_stored", return_value=stored),
                 patch.object(service, "_credentials", return_value={"password": "private connection string"}),
                 patch.object(sources, "_driver", return_value=driver),

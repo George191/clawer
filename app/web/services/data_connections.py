@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -14,7 +13,7 @@ from time import monotonic
 from typing import Any
 import uuid
 
-from anyio import fail_after
+from anyio import fail_after, to_thread
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
@@ -26,7 +25,9 @@ from sqlalchemy.exc import DBAPIError
 
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
-from app.web.api.models.data_connections import DataConnectionPayload, SourceCatalog, SourceColumn, SourceColumns, SourceRelation
+from app.web.api.models.data_connections import (
+    DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumn, SourceColumns, SourceRelation,
+)
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
 from app.web.core.config import settings
 
@@ -97,20 +98,44 @@ def _secrets(payload: DataConnectionPayload) -> dict[str, str]:
     return {key: value.get_secret_value() for key, value in payload.credentials if value is not None}
 
 
-def _public(row) -> dict[str, Any]:
+def paused_at_sql(alias: str) -> str:
+    """Read lifecycle state from either an upgraded or independently installed legacy registry."""
+    return f"(pg_catalog.to_jsonb({alias})->>'paused_at')::timestamptz"
+
+
+_PAUSE_INSTALLED = text("""SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute
+    WHERE attrelid = pg_catalog.to_regclass('public.ontology_data_connections')
+      AND attname = 'paused_at' AND attnum > 0 AND NOT attisdropped)""")
+
+
+def source_pause_enabled() -> bool:
+    return (getattr(settings, "ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED", False)
+            and settings.ENVIRONMENT == "local" and "ENVIRONMENT" in settings.model_fields_set)
+
+
+class SavedSourcePaused(HTTPException):
+    def __init__(self):
+        super().__init__(409, {"code": "source_paused", "message": "This saved PostgreSQL source is paused"})
+
+
+def _public(row, *, pause_available: bool = False) -> dict[str, Any]:
     data = dict(row)
     catalog_available = False
-    if data["engine"] == "postgresql":
+    paused = data.get("paused_at")
+    if data["engine"] == "postgresql" and paused is None:
         try:
             _driver("postgresql")
             catalog_available = True
         except HTTPException:
             pass  # Saved source remains visible when its optional driver is missing.
-    return {"id": str(data["id"]), "name": data["name"], "engine": data["engine"],
+    result = {"id": str(data["id"]), "name": data["name"], "engine": data["engine"],
             "config": json.loads(data["config"]) if isinstance(data["config"], str) else data["config"],
             "credentialsConfigured": True, "catalogAvailable": catalog_available, "createdBy": data["created_by"],
             "createdAt": data["created_at"].isoformat(), "updatedAt": data["updated_at"].isoformat(),
-            "testedAt": data["tested_at"].isoformat()}
+            "testedAt": data["tested_at"].isoformat() if data["tested_at"] is not None else None}
+    if paused is not None or pause_available and data["engine"] == "postgresql":
+        result.update(pausedAt=paused.isoformat() if paused is not None else None, pauseAvailable=pause_available)
+    return result
 
 
 async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) -> None:
@@ -124,7 +149,11 @@ async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) ->
         try:
             await connection.fetchval("SELECT 1")
         finally:
-            await connection.close(timeout=_TIMEOUT)
+            try:
+                await connection.close(timeout=_TIMEOUT)
+            except BaseException:
+                connection.terminate()
+                raise
     elif payload.engine == "elasticsearch":
         host = f"[{config.host}]" if ":" in config.host else config.host
         url = f"{'https' if config.tls else 'http'}://{host}:{config.port}/"
@@ -192,7 +221,7 @@ async def _probe(payload: DataConnectionPayload, credentials: dict[str, str]) ->
                     client.list_collections(timeout=_TIMEOUT)
                 finally:
                     client.close()
-        await asyncio.to_thread(synchronous_probe)
+        await to_thread.run_sync(synchronous_probe)
 
 
 def _failure_message(error: Exception) -> str:
@@ -215,15 +244,18 @@ class DataConnections:
     @asynccontextmanager
     async def _session(self):
         try:
-            with fail_after(12):
+            with fail_after(20):
                 await self._pg.connect(max_retries=1)
                 async with self._pg.session() as session:
                     await session.execute(text("SET LOCAL statement_timeout = '10s'"))
+                    await session.execute(text("SET LOCAL lock_timeout = '2s'"))
                     yield session
         except HTTPException:
             raise
         except DBAPIError as error:
             code = getattr(error.orig, "sqlstate", None) or getattr(error.orig, "pgcode", None)
+            if code == "55P03":
+                raise HTTPException(409, {"code": "source_busy", "message": "This saved source is busy; try again"}) from None
             if code == "42P01":
                 raise HTTPException(503, "External source registry is not initialized; run tools/ontology_data_connections.py --apply") from error
             raise HTTPException(503, "External source registry operation failed") from error
@@ -232,15 +264,57 @@ class DataConnections:
 
     async def list(self):
         async with self._session() as session:
-            rows = (await session.execute(text(f"SELECT {_PUBLIC_COLUMNS} FROM public.ontology_data_connections ORDER BY lower(name), id"))).mappings()
-            return [_public(row) for row in rows]
+            can_pause = source_pause_enabled() and await session.scalar(_PAUSE_INSTALLED)
+            rows = (await session.execute(text(f"""
+                SELECT {_PUBLIC_COLUMNS}, {paused_at_sql('registry')} AS paused_at
+                FROM public.ontology_data_connections registry ORDER BY lower(name), id
+            """))).mappings()
+            return [_public(row, pause_available=bool(can_pause)) for row in rows]
 
-    async def _stored(self, connection_id: str):
+    async def _stored(self, connection_id: str, *, session=None, lock: str = ""):
+        if session is None:
+            # Worker and identity verification already hold the registry row lock in their outer transaction.
+            async with self._session() as opened:
+                return await self._stored(connection_id, session=opened)
+        state = paused_at_sql("registry")
+        row = (await session.execute(text(f"""
+            SELECT {_PUBLIC_COLUMNS}, {state} AS paused_at,
+                CASE WHEN {state} IS NULL THEN credentials_ciphertext END AS credentials_ciphertext
+            FROM public.ontology_data_connections registry WHERE id=:id
+            """ + lock), {"id": uuid.UUID(connection_id)})).mappings().first()
+        if row is None:
+            raise HTTPException(404, "Data source not found")
+        if row["paused_at"] is not None:
+            raise SavedSourcePaused()
+        return dict(row)
+
+    async def change_pause(self, connection_id: str, change: DataConnectionPauseChange):
+        if not source_pause_enabled():
+            raise HTTPException(403, "Saved PostgreSQL source pause requires explicit local opt-in")
         async with self._session() as session:
-            row = (await session.execute(text(f"SELECT {_PUBLIC_COLUMNS}, credentials_ciphertext FROM public.ontology_data_connections WHERE id=:id"), {"id": uuid.UUID(connection_id)})).mappings().first()
+            if not await session.scalar(_PAUSE_INSTALLED):
+                raise HTTPException(503, "Install the external source registry lifecycle migration first")
+            params = {"id": uuid.UUID(connection_id)}
+            row = (await session.execute(text(f"""
+                SELECT {_PUBLIC_COLUMNS}, paused_at FROM public.ontology_data_connections
+                WHERE id=:id FOR UPDATE
+            """), params)).mappings().first()
             if row is None:
                 raise HTTPException(404, "Data source not found")
-            return dict(row)
+            if row["engine"] != "postgresql":
+                raise HTTPException(422, "Only saved PostgreSQL sources can be paused")
+            if row["updated_at"] != change.expectedUpdatedAt:
+                raise HTTPException(409, {"code": "source_revision_changed",
+                                          "message": "The saved source changed; reload it before changing its pause state"})
+            if (row["paused_at"] is not None) == change.paused:
+                return _public(row, pause_available=True)
+            updated = (await session.execute(text(f"""
+                UPDATE public.ontology_data_connections
+                SET paused_at=CASE WHEN :paused THEN clock_timestamp() ELSE NULL END, tested_at=NULL,
+                    updated_at=greatest(clock_timestamp(), updated_at + interval '1 microsecond')
+                WHERE id=:id AND updated_at=:revision RETURNING {_PUBLIC_COLUMNS}, paused_at
+            """), {**params, "revision": row["updated_at"], "paused": change.paused})).mappings().one()
+            return _public(updated, pause_available=True)
 
     async def _credentials(self, payload, stored=None):
         provided = _secrets(payload)
@@ -260,9 +334,11 @@ class DataConnections:
         raise HTTPException(422, "Enter credentials for the selected authentication method")
 
     async def test(self, payload: DataConnectionPayload, connection_id: str | None = None):
-        stored = await self._stored(connection_id) if connection_id else None
-        credentials = await self._credentials(payload, stored)
-        return await self._probe_result(payload, credentials)
+        if connection_id is None:
+            return await self._probe_result(payload, await self._credentials(payload))
+        async with self._session() as session:
+            stored = await self._stored(connection_id, session=session, lock=" FOR SHARE")
+            return await self._probe_result(payload, await self._credentials(payload, stored))
 
     async def _probe_result(self, payload, credentials):
         start = monotonic()
@@ -279,21 +355,25 @@ class DataConnections:
                 "latencyMs": round((monotonic() - start) * 1000), "testedAt": datetime.now(timezone.utc).isoformat()}
 
     async def test_saved(self, connection_id):
-        row = await self._stored(connection_id)
-        payload = DataConnectionPayload(name=row["name"], engine=row["engine"], config=row["config"])
-        credentials = await self._credentials(payload, row)
-        result = await self._probe_result(payload, credentials)
-        if result["ok"]:
-            async with self._session() as session:
-                updated = await session.execute(text("UPDATE public.ontology_data_connections SET tested_at=:tested WHERE id=:id AND updated_at=:version RETURNING id"),
-                                                {"id": uuid.UUID(connection_id), "version": row["updated_at"], "tested": datetime.fromisoformat(result["testedAt"])})
-                if updated.first() is None:
-                    raise HTTPException(409, "The data source changed during testing; reload its current settings")
-        return result
+        async with self._session() as session:
+            row = await self._stored(connection_id, session=session, lock=" FOR UPDATE")
+            payload = DataConnectionPayload(name=row["name"], engine=row["engine"], config=row["config"])
+            credentials = await self._credentials(payload, row)
+            result = await self._probe_result(payload, credentials)
+            if result["ok"]:
+                await session.execute(text("UPDATE public.ontology_data_connections SET tested_at=:tested WHERE id=:id"),
+                                      {"id": uuid.UUID(connection_id), "tested": datetime.fromisoformat(result["testedAt"])})
+            return result
 
     @asynccontextmanager
     async def _postgres_catalog(self, connection_id):
-        row = await self._stored(connection_id)
+        async with self._session() as session:
+            row = await self._stored(connection_id, session=session, lock=" FOR SHARE")
+            async with self._postgres_catalog_row(row) as connection:
+                yield connection
+
+    @asynccontextmanager
+    async def _postgres_catalog_row(self, row):
         if row["engine"] != "postgresql":
             raise HTTPException(422, "Catalog exploration is supported only for saved PostgreSQL sources")
         try:
@@ -388,13 +468,21 @@ class DataConnections:
                                       for row in columns[:_CATALOG_COLUMN_LIMIT]])
 
     async def save(self, payload, user_id, connection_id=None):
+        if connection_id is None:
+            params = await self._prepare_save(payload, user_id, uuid.uuid4(), None)
+            async with self._session() as session:
+                return await self._save_verified(session, params)
+        async with self._session() as session:
+            stored = await self._stored(connection_id, session=session, lock=" FOR UPDATE")
+            params = await self._prepare_save(payload, user_id, uuid.UUID(connection_id), stored)
+            return await self._save_verified(session, params)
+
+    async def _prepare_save(self, payload, user_id, identifier, stored):
         cipher = credential_cipher()
-        stored = await self._stored(connection_id) if connection_id else None
         credentials = await self._credentials(payload, stored)
         result = await self._probe_result(payload, credentials)
         if not result["ok"]:
             raise HTTPException(422, result["message"])
-        identifier = uuid.UUID(connection_id) if connection_id else uuid.uuid4()
         params = {"id": identifier, "name": payload.name, "engine": payload.engine,
                   "config": json.dumps(payload.config.model_dump()),
                   "credentials": (stored["credentials_ciphertext"] if stored and not _secrets(payload)
@@ -402,21 +490,24 @@ class DataConnections:
                   "user": str(user_id), "tested": datetime.fromisoformat(result["testedAt"])}
         if stored:
             params["version"] = stored["updated_at"]
-        async with self._session() as session:
-            if connection_id:
-                sql = f"""UPDATE public.ontology_data_connections SET name=:name, engine=:engine,
-                    config=CAST(:config AS jsonb), credentials_ciphertext=:credentials,
-                    updated_at=greatest(clock_timestamp(), updated_at + interval '1 microsecond'),
-                    tested_at=:tested WHERE id=:id AND updated_at=:version RETURNING {_PUBLIC_COLUMNS}"""
-            else:
-                sql = f"""INSERT INTO public.ontology_data_connections
-                    (id,name,engine,config,credentials_ciphertext,created_by,tested_at)
-                    VALUES (:id,:name,:engine,CAST(:config AS jsonb),:credentials,:user,:tested)
-                    RETURNING {_PUBLIC_COLUMNS}"""
-            row = (await session.execute(text(sql), params)).mappings().first()
-            if row is None:
-                raise HTTPException(409, "The data source changed during verification; reload before saving")
-            return _public(row)
+        return params
+
+    async def _save_verified(self, session, params):
+        if "version" in params:
+            sql = f"""UPDATE public.ontology_data_connections SET name=:name, engine=:engine,
+                config=CAST(:config AS jsonb), credentials_ciphertext=:credentials,
+                updated_at=greatest(clock_timestamp(), updated_at + interval '1 microsecond'),
+                tested_at=:tested WHERE id=:id AND updated_at=:version RETURNING {_PUBLIC_COLUMNS}"""
+        else:
+            sql = f"""INSERT INTO public.ontology_data_connections
+                (id,name,engine,config,credentials_ciphertext,created_by,tested_at)
+                VALUES (:id,:name,:engine,CAST(:config AS jsonb),:credentials,:user,:tested)
+                RETURNING {_PUBLIC_COLUMNS}"""
+        row = (await session.execute(text(sql), params)).mappings().first()
+        if row is None:
+            raise HTTPException(409, "The data source changed during verification; reload before saving")
+        can_pause = source_pause_enabled() and await session.scalar(_PAUSE_INSTALLED)
+        return _public(row, pause_available=bool(can_pause))
 
     async def delete(self, connection_id):
         async with self._session() as session:

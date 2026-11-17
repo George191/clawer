@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import HTTPException
-from sqlalchemy import DateTime, Uuid, case, column, exists, table, text, update
+from sqlalchemy import DateTime, Uuid, case, column, exists, literal_column, table, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from app.web.services.batch_source_identity import plan_source_ready_clause, req
 from app.web.services.batch_sync_incremental import incremental_ready_clause
 from app.web.services.batch_syncs import _HISTORY_LIMIT, _target_metadata, _verify_source_revision, run_batch_sync, scheduled_batch_sync_enabled
 from app.web.services.batch_sync_scope import local_batch_sync_scope
+from app.web.services.data_connections import paused_at_sql
 
 SLOT_WINDOW = timedelta(minutes=5)
 DISPATCH_LEASE = timedelta(seconds=45)
@@ -32,14 +33,25 @@ def _utc_now() -> datetime:
 
 
 _REGISTRY = table("ontology_data_connections", column("id", Uuid()), column("updated_at", DateTime(timezone=True)),
-                  schema="public")
+                  schema="public").alias("saved_batch_source")
+
+
+_SOURCE_PAUSED_AT = literal_column(paused_at_sql("saved_batch_source"), type_=DateTime(timezone=True))
+
+
+async def _source_state(session: AsyncSession, identity: UUID) -> tuple[datetime | None, bool]:
+    row = (await session.execute(select(_REGISTRY.c.updated_at, _SOURCE_PAUSED_AT)
+                                 .where(_REGISTRY.c.id == identity))).one_or_none()
+    return (row[0], row[1] is not None) if row is not None else (None, False)
 
 
 def _response(plan: BatchSyncPlanRow, binding: BatchSyncScheduleRow | None,
-              source_version: datetime | None, identity_ready: bool) -> BatchSyncSchedule:
-    available = scheduled_batch_sync_enabled() and source_version == plan.source_updated_at and identity_ready
+              source_version: datetime | None, identity_ready: bool, source_paused: bool) -> BatchSyncSchedule:
+    available = (scheduled_batch_sync_enabled() and not source_paused
+                 and source_version == plan.source_updated_at and identity_ready)
     return BatchSyncSchedule(
         available=available,
+        sourcePaused=True if source_paused else None,
         configuredEnabled=bool(binding and binding.enabled),
         enabled=bool(available and binding and binding.enabled and binding.armed_for_updated_at == plan.updated_at
                      and binding.source_updated_at == plan.source_updated_at
@@ -56,9 +68,9 @@ async def read_batch_sync_schedule(session: AsyncSession, plan_id: UUID) -> Batc
     plan = await session.get(BatchSyncPlanRow, plan_id)
     if plan is None:
         raise HTTPException(404, "Batch sync plan does not exist")
-    source_version = await session.scalar(select(_REGISTRY.c.updated_at).where(_REGISTRY.c.id == plan.connection_id))
+    source_version, source_paused = await _source_state(session, plan.connection_id)
     identity_ready = await _source_identity_ready(session, plan_id)
-    return _response(plan, await session.get(BatchSyncScheduleRow, plan_id), source_version, identity_ready)
+    return _response(plan, await session.get(BatchSyncScheduleRow, plan_id), source_version, identity_ready, source_paused)
 
 
 async def change_batch_sync_schedule(
@@ -117,8 +129,8 @@ async def change_batch_sync_schedule(
             binding.source_updated_at = plan.source_updated_at
             binding.planned_time_utc = change.plannedTimeUtc
         binding.updated_at = _utc_now()
-    source_version = await session.scalar(select(_REGISTRY.c.updated_at).where(_REGISTRY.c.id == plan.connection_id))
-    result = _response(plan, binding, source_version, await _source_identity_ready(session, plan.id))
+    source_version, source_paused = await _source_state(session, plan.connection_id)
+    result = _response(plan, binding, source_version, await _source_identity_ready(session, plan.id), source_paused)
     await session.commit()
     return result
 
@@ -130,14 +142,14 @@ async def _source_identity_ready(session: AsyncSession, plan_id: UUID) -> bool:
 
 
 async def list_batch_sync_schedules(session: AsyncSession) -> list[BatchSyncScheduleSummary]:
-    statement = (select(BatchSyncPlanRow, BatchSyncScheduleRow, _REGISTRY.c.updated_at,
+    statement = (select(BatchSyncPlanRow, BatchSyncScheduleRow, _REGISTRY.c.updated_at, _SOURCE_PAUSED_AT,
                       plan_source_ready_clause() & incremental_ready_clause())
                  .join(BatchSyncScheduleRow, BatchSyncScheduleRow.plan_id == BatchSyncPlanRow.id)
                  .outerjoin(_REGISTRY, _REGISTRY.c.id == BatchSyncPlanRow.connection_id)
                  .order_by(BatchSyncScheduleRow.updated_at.desc(), BatchSyncPlanRow.id).limit(TICK_LIMIT))
     return [BatchSyncScheduleSummary(planId=plan.id, connectionId=plan.connection_id, planName=plan.name, sourceTable=plan.source_table,
-                                    targetTable=plan.target_table, **_response(plan, binding, source_version, identity_ready).model_dump())
-            for plan, binding, source_version, identity_ready in (await session.execute(statement)).all()]
+                                    targetTable=plan.target_table, **_response(plan, binding, source_version, identity_ready, paused_at is not None).model_dump())
+            for plan, binding, source_version, paused_at, identity_ready in (await session.execute(statement)).all()]
 
 
 async def list_batch_sync_schedule_jobs(session: AsyncSession, plan_id: UUID) -> list[BatchSyncScheduleJob]:
@@ -173,7 +185,7 @@ async def collect_due_batch_sync_jobs(session: AsyncSession, *, now: datetime | 
             BatchSyncScheduleRow.enabled, BatchSyncScheduleRow.armed_for_updated_at == BatchSyncPlanRow.updated_at,
             BatchSyncScheduleRow.updated_at <= slot,
             BatchSyncScheduleRow.source_updated_at == BatchSyncPlanRow.source_updated_at,
-            _REGISTRY.c.updated_at == BatchSyncScheduleRow.source_updated_at,
+            _REGISTRY.c.updated_at == BatchSyncScheduleRow.source_updated_at, _SOURCE_PAUSED_AT.is_(None),
             plan_source_ready_clause(), incremental_ready_clause(),
             BatchSyncScheduleRow.planned_time_utc == slot.strftime("%H:%M"),
             ~exists().where(
@@ -194,11 +206,19 @@ async def collect_due_batch_sync_jobs(session: AsyncSession, *, now: datetime | 
                 for binding in bindings
             ]).on_conflict_do_nothing())
 
-    jobs = (await session.scalars(select(BatchSyncScheduleJobRow).where(
-        BatchSyncScheduleJobRow.state.in_(OPEN_JOB_STATES), BatchSyncScheduleJobRow.expires_at > now,
-        BatchSyncScheduleJobRow.dispatch_after <= now,
-    ).order_by(BatchSyncScheduleJobRow.dispatch_after, BatchSyncScheduleJobRow.id)
-        .limit(TICK_LIMIT).with_for_update(skip_locked=True))).all()
+    job, plan, schedule = BatchSyncScheduleJobRow, BatchSyncPlanRow, BatchSyncScheduleRow
+    jobs = (await session.scalars(select(job)
+        .join(plan, plan.id == job.plan_id)
+        .join(schedule, schedule.plan_id == plan.id)
+        .join(_REGISTRY, _REGISTRY.c.id == plan.connection_id)
+        .where(
+            job.state.in_(OPEN_JOB_STATES), job.expires_at > now, job.dispatch_after <= now,
+            schedule.enabled, schedule.generation == job.generation,
+            schedule.armed_for_updated_at == job.plan_updated_at, plan.updated_at == job.plan_updated_at,
+            schedule.source_updated_at == job.source_updated_at, plan.source_updated_at == job.source_updated_at,
+            _REGISTRY.c.updated_at == job.source_updated_at, _SOURCE_PAUSED_AT.is_(None),
+            plan_source_ready_clause(), incremental_ready_clause(),
+        ).order_by(job.dispatch_after, job.id).limit(TICK_LIMIT).with_for_update(of=job, skip_locked=True))).all()
     ids = []
     for job in jobs:
         job.dispatch_after = now + DISPATCH_LEASE
