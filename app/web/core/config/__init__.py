@@ -7,6 +7,7 @@ from pydantic import (
     AnyUrl,
     BeforeValidator,
     EmailStr,
+    Field,
     HttpUrl,
     PostgresDsn,
     SecretStr,
@@ -18,6 +19,7 @@ from sqlalchemy.engine import make_url
 from typing_extensions import Self
 
 from app.storage.postgres_client import _resolved_pg_url
+from app.web.core.config.indexed_sample import IndexedSampleScope
 
 def parse_cors(v: Any) -> list[str] | str:
     if isinstance(v, str) and not v.startswith("["):
@@ -58,6 +60,9 @@ class Settings(BaseSettings):
     ONTOLOGY_SANDBOX_PIPELINE_MATCH_ENABLED: bool = False
     ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED: bool = False
     ONTOLOGY_INDEX_PREVIEW_SANDBOX_ENABLED: bool = False
+    ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ENABLED: bool = False
+    ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER: UUID | None = None
+    ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ALLOWLIST: Annotated[list[IndexedSampleScope], Field(max_length=3)] = []
     PUSH_INBOX_SANDBOX_ENABLED: bool = False
     PUSH_INBOX_SANDBOX_APPLY_ENABLED: bool = False
     PUSH_INBOX_SANDBOX_PUBLIC_KEY: SecretStr | None = None

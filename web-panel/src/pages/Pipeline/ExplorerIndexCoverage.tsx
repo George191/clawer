@@ -4,6 +4,7 @@ import { checkPreviewIndexCoverage } from '../../services/api';
 import type { PreviewIndexCoverageOperator, PreviewIndexCoverageState } from '../../services/api';
 import type { ExplorerFilter } from './explorerFilters';
 import { useSandboxIdentity } from './SandboxMarkings';
+import ExplorerIndexedIdSample from './ExplorerIndexedIdSample';
 
 const operators: Partial<Record<string, PreviewIndexCoverageOperator>> = {
   '=': 'eq', '<': 'lt', '<=': 'lte', '>': 'gt', '>=': 'gte', '介于': 'between',
@@ -17,9 +18,9 @@ const labels: Record<PreviewIndexCoverageState, string> = {
 };
 
 type Props = {
-  schema: string; table: string; rules: ExplorerFilter[]; columnTypes?: Record<string, string>; conflictingOptions: boolean;
+  schema: string; table: string; rules: ExplorerFilter[]; columnTypes?: Record<string, string>; conflictingOptions: boolean; allowSample?: boolean;
 };
-export default function ExplorerIndexCoverage({ schema, table, rules, columnTypes, conflictingOptions }: Props) {
+export default function ExplorerIndexCoverage({ schema, table, rules, columnTypes, conflictingOptions, allowSample }: Props) {
   const identity = useSandboxIdentity();
   const term = rules.length === 1 ? rules[0] : undefined;
   const operator = term && Object.prototype.hasOwnProperty.call(operators, term.operator) ? operators[term.operator] : undefined;
@@ -30,8 +31,12 @@ export default function ExplorerIndexCoverage({ schema, table, rules, columnType
   if (!identity) return null;
   const input = supported && term && operator ? { field: term.field, operator } : undefined;
   // This key is only local UI state: changing a literal invalidates the prior check without sending the literal.
-  return <CoverageCheck key={JSON.stringify([identity, schema, table, rules, type, conflictingOptions])}
-    schema={schema} table={table} input={input} />;
+  return <>
+    <CoverageCheck key={JSON.stringify([identity, schema, table, rules, type, conflictingOptions])}
+      schema={schema} table={table} input={input} />
+    {allowSample && <ExplorerIndexedIdSample key={JSON.stringify([identity, schema, table])} schema={schema} table={table}
+      candidate={input && term ? { field: term.field, operator: term.operator, value: term.value } : undefined} />}
+  </>;
 }
 
 function CoverageCheck({ schema, table, input }: {

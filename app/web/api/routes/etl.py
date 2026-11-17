@@ -15,6 +15,7 @@ from app.web.api.dependencies.session import get_db
 from app.web.api.models.lineage_neighbors import (
     LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath, LineagePathTargets, ObservedLineage,
 )
+from app.web.api.models.indexed_id_sample import IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
 from app.web.api.models.asset_collected_stats import AssetCollectedStats
 from app.web.api.models.asset_freshness import (
@@ -80,7 +81,7 @@ from app.web.services.asset_freshness import (
     preview_schema_baseline, put_asset_freshness,
 )
 from app.web.services.index_preview_sandbox import (
-    index_range_pagination_available, index_sandbox_available, run_index_preview_until_disconnect,
+    index_range_pagination_available, index_sandbox_available, run_bounded_index_query, run_index_preview_until_disconnect,
 )
 from app.web.services.asset_field_freshness import (
     acknowledge_field_freshness, read_field_freshness, review_field_freshness,
@@ -121,6 +122,7 @@ from app.web.services import etl_runtime
 from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
+from app.web.services.indexed_id_sample import indexed_sample_capability, sample_indexed_ids
 from app.web.services.preview_index_coverage import preview_index_coverage
 from app.web.services.transfer_observed_lineage import observed_transfer_lineage
 from app.web.services.transfer_plans import list_transfer_plans, preflight_transfer_plan, save_transfer_plan
@@ -898,6 +900,37 @@ async def object_preview(layer: str, table: str, includeHidden: bool = False,
     if includeHidden:
         return await get_etl_layers().preview(layer, table, include_hidden=True)
     return await get_etl_layers().preview(layer, table)
+
+
+@write.get("/{schema}/{table}/indexed-id-sample")
+async def get_indexed_id_sample(
+    schema: WarehouseSchema, table: TableName, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexedSampleCapability:
+    if request.query_params:
+        raise HTTPException(422, "Indexed ID sample capability accepts no query parameters")
+    response.headers["Cache-Control"] = "no-store"
+    return await indexed_sample_capability(session, schema, table)
+
+
+@write.post("/{schema}/{table}/indexed-id-sample")
+async def post_indexed_id_sample(
+    schema: WarehouseSchema, table: TableName, payload: IndexedSampleRequest, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexedSampleResult:
+    if request.query_params:
+        raise HTTPException(422, "Indexed ID sample accepts only exact ID or range bounds in the body")
+    response.headers["Cache-Control"] = "no-store"
+
+    async def wait_for_disconnect() -> None:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    return await run_bounded_index_query(
+        sample_indexed_ids(session, schema, table, payload), wait_for_disconnect(),
+        IndexedSampleResult(state="blocked", reason="query_unavailable"),
+        cancelled_message="Indexed ID sample was cancelled",
+    )
 
 
 @read.post("/{schema}/{table}/preview-index-coverage")

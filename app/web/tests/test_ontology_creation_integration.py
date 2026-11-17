@@ -14,6 +14,10 @@ from app.etl.schema import ontology
 from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL_STATEMENTS
 from app.storage.postgres_client import PostgresClient
 from app.web.api.models.etl import PreviewIndexCoverageRequest
+from app.web.api.models.indexed_id_sample import IndexedSampleRequest
+from app.web.core.config import settings
+from app.web.core.config.indexed_sample import IndexedSampleScope
+from app.web.services import indexed_id_sample as indexed
 from app.web.services.etl_layers import EtlLayers
 from app.web.services.etl_workspace import EtlWorkspace
 from app.web.services.preview_index_coverage import preview_index_coverage
@@ -79,6 +83,74 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
         return {**deepcopy(PAYLOAD), "relations": [{"name": "firms_company", "targetSchema": TARGET_SCHEMA,
             "targetTable": "companies", "sourceFields": ["record_id"], "targetFields": ["record_id"],
             "cardinality": "many_to_one", "description": "Parent company"}]}
+
+    async def test_exact_authorized_index_sample_returns_only_canonical_ids_and_reproves_after_reindex(self):
+        marker = uuid4()
+        marker_table = "public.ontology_explorer_indexed_sample_identity"
+        async with self.pg.session() as session:
+            await session.execute(text(f"CREATE TABLE {marker_table} (marker uuid PRIMARY KEY)"))
+            await session.execute(text(f"INSERT INTO {marker_table} VALUES (:marker)"), {"marker": marker})
+            await session.execute(text(f"CREATE TABLE {SCHEMA}.narrow (record_id bigint PRIMARY KEY, secret text NOT NULL)"))
+            await session.execute(text(f"INSERT INTO {SCHEMA}.narrow SELECT key, 'never returned' FROM generate_series(1,10000) key"))
+            await session.execute(text(f"INSERT INTO {SCHEMA}.narrow VALUES (-9223372036854775808,'extra'), (9223372036854775807,'extra')"))
+            await session.execute(text(f"ANALYZE {SCHEMA}.narrow"))
+            scope = (await session.execute(text(f"""
+                SELECT current_database() AS database, '{SCHEMA}' AS schema, 'narrow' AS "table", 'record_id' AS "keyColumn",
+                    c.oid::bigint AS "heapOid", pg_relation_filenode(c.oid)::bigint AS "heapFilenode",
+                    i.indexrelid::bigint AS "indexOid", pg_relation_filenode(i.indexrelid)::bigint AS "indexFilenode"
+                FROM pg_class c JOIN pg_index i ON i.indrelid=c.oid AND i.indisprimary
+                WHERE c.oid='{SCHEMA}.narrow'::regclass
+            """))).mappings().one()
+        self.addAsyncCleanup(self.pg.execute, f"DROP TABLE {marker_table}")
+        approval = IndexedSampleScope.model_validate(scope)
+
+        async def capability():
+            async with self.pg.session() as session:
+                return await indexed.indexed_sample_capability(session, SCHEMA, "narrow")
+
+        async def sample(**bounds):
+            async with self.pg.session() as session:
+                return await indexed.sample_indexed_ids(session, SCHEMA, "narrow", IndexedSampleRequest(**bounds))
+
+        with (patch.object(settings, "ENVIRONMENT", "local"),
+              patch.object(settings, "ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ALLOWLIST", [approval]),
+              patch.object(settings, "ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER", marker)):
+            self.assertFalse((await capability()).available)
+            with patch.object(settings, "ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ENABLED", True):
+                with patch.object(settings, "ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER", uuid4()):
+                    self.assertFalse((await capability()).available)
+                    self.assertEqual((await sample(idEquals="1")).reason, "scope_unavailable")
+                self.assertEqual((await capability()).model_dump(), {
+                    "available": True, "keyColumn": "record_id", "limit": 20,
+                })
+                edge = await sample(idEquals="-9223372036854775808")
+                self.assertEqual(edge.model_dump(), {"state": "sampled", "reason": "index_path",
+                                                    "ids": ["-9223372036854775808"], "hasMore": False})
+                result = await sample(idFrom="1", idTo="50")
+                self.assertEqual(result.ids, [str(i) for i in range(1, 21)])
+                self.assertTrue(result.hasMore)
+                async with self.pg.session() as writer:
+                    await writer.execute(text(f"LOCK TABLE ONLY {SCHEMA}.narrow IN ROW EXCLUSIVE MODE"))
+                    with patch.object(indexed, "_approved_plan", side_effect=AssertionError("busy table reached EXPLAIN")):
+                        busy = await sample(idEquals="5")
+                    self.assertEqual((busy.reason, busy.ids), ("query_unavailable", []))
+                original_limits = indexed._limits
+
+                async def force_residual(session):
+                    await original_limits(session)
+                    for knob in ("enable_indexscan", "enable_indexonlyscan", "enable_bitmapscan"):
+                        await session.execute(text(f"SET LOCAL {knob}=off"))
+
+                with patch.object(indexed, "_limits", force_residual):
+                    blocked = await sample(idEquals="5")
+                    self.assertEqual((blocked.reason, blocked.ids), ("unsupported_plan", []))
+                await self.workspace.set_object_visibility(SCHEMA, "narrow", "hidden", "fixture")
+                self.assertFalse((await capability()).available)
+                self.assertEqual((await sample(idEquals="5")).reason, "scope_unavailable")
+                await self.workspace.set_object_visibility(SCHEMA, "narrow", "normal", "fixture")
+                await self.pg.execute(f"REINDEX INDEX {SCHEMA}.narrow_pkey")
+                self.assertFalse((await capability()).available)
+                self.assertEqual((await sample(idEquals="5")).reason, "scope_unavailable")
 
     async def test_index_coverage_uses_only_visible_native_leading_keys_and_column_privileges(self):
         role = "helio_coverage_" + uuid4().hex[:12]

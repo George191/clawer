@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Coroutine
-from typing import Any
+from typing import Any, TypeVar
 from uuid import UUID
 
 from anyio import CancelScope, move_on_after
@@ -79,7 +79,10 @@ def _query(request: IndexSandboxQuery, after: str | None = None) -> tuple[str, d
     )
 
 
-def _approved_plan(raw: Any, index: str) -> IndexSandboxPlan | None:
+def _approved_plan(
+    raw: Any, index: str, *, schema: str = INDEX_SANDBOX_SCHEMA, table: str = INDEX_SANDBOX_TABLE,
+    only_key: str | None = None,
+) -> IndexSandboxPlan | None:
     if not isinstance(raw, list) or len(raw) != 1 or not isinstance(raw[0], dict):
         return None
     root = raw[0].get("Plan")
@@ -93,13 +96,18 @@ def _approved_plan(raw: Any, index: str) -> IndexSandboxPlan | None:
     if scan not in ("Index Scan", "Index Only Scan"):
         return None
     if (leaf.get("Parent Relationship") != "Outer" or leaf.get("Parallel Aware") is not False
-            or leaf.get("Schema") != INDEX_SANDBOX_SCHEMA or leaf.get("Relation Name") != INDEX_SANDBOX_TABLE
+            or leaf.get("Schema") != schema or leaf.get("Relation Name") != table
             or leaf.get("Alias") != "r" or leaf.get("Index Name") != index or leaf.get("Scan Direction") != "Forward"
             or not leaf.get("Index Cond")
             or any(key in node for node in (root, leaf) for key in (
                 "Filter", "One-Time Filter", "Recheck Cond", "Subplan Name", "InitPlan",
             )) or "Plans" in leaf):
         return None
+    if only_key:
+        # PostgreSQL may omit the table alias for this single-relation output.
+        allowed = ([only_key], [f'"{only_key}"'], [f"r.{only_key}"], [f'r."{only_key}"'])
+        if root.get("Output") not in allowed or leaf.get("Output") not in allowed:
+            return None
     return IndexSandboxPlan(scan="index_only" if scan == "Index Only Scan" else "index")
 
 
@@ -199,8 +207,21 @@ async def run_index_preview_until_disconnect(
     session: AsyncSession, request: IndexSandboxQuery, actor: UUID,
     disconnect: Coroutine[Any, Any, None],
 ) -> IndexSandboxPreview:
+    return await run_bounded_index_query(
+        run_index_preview(session, request, actor), disconnect, _blocked(request, "query_unavailable"),
+        cancelled_message="Synthetic index preview was cancelled",
+    )
+
+
+_T = TypeVar("_T")
+
+
+async def run_bounded_index_query(
+    operation: Coroutine[Any, Any, _T], disconnect: Coroutine[Any, Any, None], unavailable: _T, *,
+    cancelled_message: str,
+) -> _T:
     """Watch this request only; issue one driver task cancellation, never repeated level cancellation."""
-    query = asyncio.create_task(run_index_preview(session, request, actor))
+    query = asyncio.create_task(operation)
     watcher = asyncio.create_task(disconnect)
     tasks = (query, watcher)
     try:
@@ -209,8 +230,8 @@ async def run_index_preview_until_disconnect(
             return query.result()
         if watcher in done:
             watcher.result()
-            raise HTTPException(499, "Synthetic index preview was cancelled")
-        return _blocked(request, "query_unavailable")
+            raise HTTPException(499, cancelled_message)
+        return unavailable
     finally:
         # asyncpg/SQLAlchemy must be allowed to finish cancellation and pool
         # recovery. An AnyIO level-cancelled query would interrupt that cleanup.

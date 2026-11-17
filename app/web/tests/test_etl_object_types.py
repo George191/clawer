@@ -496,6 +496,27 @@ class ObjectRouteTests(unittest.TestCase):
                                               json={"limit": 101, "offset": 2001}).status_code, 200)
             self.assertFalse(instance.data.await_args.kwargs)
 
+    def test_indexed_sample_is_admin_only_and_does_not_accept_generic_filters(self):
+        path = "/api/v1/etl/ts_ods/objects/indexed-id-sample"
+
+        def denied():
+            raise HTTPException(403, "Admin required")
+
+        self.app.dependency_overrides[etl.get_current_active_superuser] = denied
+        with patch.object(etl, "sample_indexed_ids", new=AsyncMock()) as sample:
+            self.assertEqual(self.client.post(path, json={"idEquals": "5"}).status_code, 403)
+            self.assertEqual(self.client.get(path).status_code, 403)
+            sample.assert_not_called()
+            self.app.dependency_overrides[etl.get_current_active_superuser] = lambda: None
+            for data in (
+                {"idEquals": 5}, {"idFrom": "10", "idTo": "2"}, {"idFrom": "1"},
+                {"idEquals": "-0"}, {"idEquals": "9223372036854775808"},
+                {"idEquals": "1", "limit": 50}, {"idEquals": "1", "column": "extra"},
+            ):
+                self.assertEqual(self.client.post(path, json=data).status_code, 422)
+            self.assertEqual(self.client.post(path + "?column=extra", json={"idEquals": "1"}).status_code, 422)
+            sample.assert_not_called()
+
     def test_filter_index_coverage_request_never_accepts_values_or_sql(self):
         url = "/api/v1/etl/ts_ods/objects/preview-index-coverage"
         with patch.object(etl, "preview_index_coverage", new=AsyncMock(return_value={"state": "candidate"})) as advisory:

@@ -1214,3 +1214,16 @@ export const checkPreviewIndexCoverage = (
 ): Promise<{ state: PreviewIndexCoverageState }> =>
   client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview-index-coverage`,
     { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
+
+export type IndexedIdSamplePredicate = { idEquals: string } | { idFrom: string; idTo: string };
+export type IndexedIdSampleCapability = { available: boolean; keyColumn?: string; limit: 20 };
+export type IndexedIdSampleResult = {
+  state: 'sampled' | 'blocked'; reason: 'index_path' | 'scope_unavailable' | 'unsupported_plan' | 'query_unavailable';
+  ids: string[]; hasMore: boolean;
+};
+const indexedIdSamplePath = (schema: string, table: string) =>
+  `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/indexed-id-sample`;
+export const fetchIndexedIdSample = (schema: string, table: string, signal?: AbortSignal): Promise<IndexedIdSampleCapability> =>
+  client.get(indexedIdSamplePath(schema, table), { signal }).then(r => unwrap<IndexedIdSampleCapability>(r.data));
+export const queryIndexedIdSample = (schema: string, table: string, predicate: IndexedIdSamplePredicate, signal?: AbortSignal): Promise<IndexedIdSampleResult> =>
+  client.post(indexedIdSamplePath(schema, table), predicate, { signal }).then(r => unwrap<IndexedIdSampleResult>(r.data));
