@@ -45,6 +45,7 @@ from .embedding import (
 from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
 from .asset_collected_stats import AssetCollectedStatRow as AssetCollectedStatRow
 from .asset_freshness import AssetFreshnessPolicyRow as AssetFreshnessPolicyRow
+from .push_inbox_apply import PushApplyBindingRow as PushApplyBindingRow, PushApplyResultRow as PushApplyResultRow
 from .push_inbox import PushInboxReceiptRow as PushInboxReceiptRow, PushInboxStateRow as PushInboxStateRow
 from .batch_source_identity import BatchSourceIdentityRow as BatchSourceIdentityRow
 from .batch_syncs import BatchSyncPlanRow as BatchSyncPlanRow, BatchSyncWatermarkRow as BatchSyncWatermarkRow

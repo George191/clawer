@@ -12,8 +12,11 @@ from anyio import fail_after
 from fastapi import HTTPException
 
 from app.web.api.models.data_connections import DataConnectionPayload
+from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
 from app.web.services.data_connections import DataConnections, _CATALOG_RELATION_SCOPE, _driver
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
+
+_RESERVED_SOURCE_SCHEMAS = (PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, "batch_sync_identity", "batch_sync_stream")
 
 _MAX_ROWS = 100
 _MAX_COLUMNS = 32
@@ -109,7 +112,7 @@ async def read_batch_sync_snapshot(
     identity_marker: UUID | None = None, relation_pin: tuple[int, int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Read all rows of a small approved source table or fail with no partial batch."""
-    if schema in (PROTECTED_SYNTHETIC_SCHEMA, "batch_sync_identity", "batch_sync_stream"):
+    if schema in _RESERVED_SOURCE_SCHEMAS:
         raise HTTPException(422, "The reserved synthetic schema is not a batch source")
     relation = f"{_identifier(schema)}.{_identifier(table)}"
     names = [_identifier(column) for column in columns]
@@ -256,12 +259,12 @@ async def review_batch_source(
     schema: str | None = None, table: str | None = None,
 ) -> tuple[int, int] | None:
     """Verify only the identity catalog and optional source relation metadata, not business rows."""
+    if schema in _RESERVED_SOURCE_SCHEMAS:
+        raise HTTPException(422, "The reserved synthetic schema is not a batch source")
     async with _saved_loopback_source(connections, connection_id, revision) as connection:
         await _require_identity_marker(connection, marker)
         if schema is None or table is None:
             return None
-        if schema in (PROTECTED_SYNTHETIC_SCHEMA, "batch_sync_identity", "batch_sync_stream"):
-            raise HTTPException(422, "The reserved synthetic schema is not a batch source")
         relation = f"{_identifier(schema)}.{_identifier(table)}"
         state = await connection.fetchrow("""
             SELECT c.oid, pg_catalog.pg_relation_filenode(c.oid) AS file_node

@@ -561,6 +561,24 @@ export type SyntheticPushInboxStatus = {
 };
 export const fetchSyntheticPushInbox = (signal?: AbortSignal): Promise<SyntheticPushInboxStatus> =>
   client.get('/etl/push-inbox-sandbox', { signal }).then(r => unwrap<SyntheticPushInboxStatus>(r.data));
+export type PushApplyResult = {
+  status: 'applied' | 'no_new_data'; id: string | null; fromExclusive: string; throughInclusive: string;
+  reviewedAcceptedThrough: string; eventsApplied: number; appliedAt: string | null; checkedAt: string | null; hasMoreReviewed: boolean;
+};
+export type PushApplyStatus = {
+  state: 'disabled' | 'unconfigured' | 'unreviewed' | 'ready' | 'blocked'; available: boolean; canReplay: boolean; generation: 1 | null;
+  acceptedThrough: string | null; appliedThrough: string | null; reviewedAt: string | null; maxEvents: number; recent: PushApplyResult[];
+};
+export type PushApplyRequest = {
+  requestId: string; expectedGeneration: 1; expectedAppliedThrough: string; expectedAcceptedThrough: string;
+};
+const pushApplyPath = '/etl/push-inbox-sandbox/apply';
+export const fetchPushApplyStatus = (signal?: AbortSignal): Promise<PushApplyStatus> =>
+  client.get(pushApplyPath, { signal }).then(r => unwrap<PushApplyStatus>(r.data));
+export const reviewPushApplyTarget = (): Promise<PushApplyStatus> =>
+  client.put(pushApplyPath, { expectedGeneration: null }).then(r => unwrap<PushApplyStatus>(r.data));
+export const runPushApply = (request: PushApplyRequest): Promise<PushApplyResult> =>
+  client.post(`${pushApplyPath}/runs`, request).then(r => unwrap<PushApplyResult>(r.data));
 export const fetchSandboxCdc = (signal?: AbortSignal): Promise<SandboxCdcStatus> =>
   client.get(sandboxCdcPath, { signal }).then((r) => unwrap<SandboxCdcStatus>(r.data));
 export const reviewSandboxCdc = (): Promise<SandboxCdcStatus> =>

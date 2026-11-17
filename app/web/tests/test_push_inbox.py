@@ -30,6 +30,7 @@ _DB = "ontology_push_inbox_regression"
 _URL = os.getenv("ONTOLOGY_PUSH_INBOX_TEST_URL")
 _BODY = b'{"schemaVersion":1,"entityId":"9223372036854775807","value":"fixture-a"}'
 _ADMIN = "/etl/push-inbox-sandbox"
+_APPLY = _ADMIN + "/apply"
 
 
 def headers(key, body, *, identity=None, stamp=None):
@@ -290,6 +291,150 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             self.assertEqual((await client.post(PATH, headers=headers(self.key, _BODY), content=_BODY)).status_code, 429)
             replay = await client.post(PATH, headers=headers(self.key, _BODY, identity=identity), content=_BODY)
             self.assertEqual(replay.json(), first.json())
+
+    async def _prepare_apply_fixture(self):
+        migration = importlib.import_module("app.web.alembic.versions.af02d96bc517_ontology_push_inbox_apply")
+
+        def provision(conn):
+            with Operations.context(MigrationContext.configure(conn)):
+                migration.upgrade()
+
+        async with self.engine.begin() as conn:
+            await conn.run_sync(provision)
+            await conn.execute(text("CREATE SCHEMA ts_push_inbox_sandbox"))
+            await conn.execute(text("""
+                CREATE TABLE ts_push_inbox_sandbox.applied_fixture(
+                    ordinal bigint PRIMARY KEY, acceptance_id uuid NOT NULL, entity_id bigint NOT NULL,
+                    fixture_value text NOT NULL
+                )
+            """))
+
+        async def cleanup():
+            async with self.engine.begin() as conn:
+                await conn.execute(text("DROP TABLE ontology_push_inbox_apply_receipts, ontology_push_inbox_apply_binding"))
+                await conn.execute(text("DROP SCHEMA ts_push_inbox_sandbox CASCADE"))
+
+        self.addAsyncCleanup(cleanup)
+
+    async def test_reviewed_apply_preserves_each_event_and_honest_empty_check_with_exact_replay(self):
+        await self._prepare_apply_fixture()
+
+        def request(start, end, identity=None):
+            return {"requestId": str(identity or uuid4()), "expectedGeneration": 1,
+                    "expectedAppliedThrough": str(start), "expectedAcceptedThrough": str(end)}
+
+        async def accept(producer, suffix):
+            body = _BODY.replace(b"fixture-a", ("fixture-" + suffix).encode())
+            response = await producer.post(PATH, headers=headers(self.key, body), content=body)
+            self.assertEqual(response.status_code, 201, response.text)
+            return response.json()
+
+        with patch.object(settings, "PUSH_INBOX_SANDBOX_APPLY_ENABLED", True):
+            async with self._producer() as producer, api(True, self._admin_session) as admin:
+                async with api(False, self._admin_session) as reader:
+                    self.assertEqual((await reader.get(_APPLY)).status_code, 403)
+                initial = (await admin.get(_APPLY)).json()
+                self.assertEqual(initial["state"], "unreviewed", initial)
+                self.assertEqual((await admin.post(_APPLY + "/runs", json=request(0, 0))).status_code, 409)
+                armed = await admin.put(_APPLY, json={"expectedGeneration": None})
+                self.assertEqual(armed.status_code, 200, armed.text)
+                self.assertEqual(armed.json()["state"], "ready")
+                self.assertEqual((await admin.put(_APPLY, json={"expectedGeneration": None})).status_code, 409)
+                check = request(0, 0)
+                empty = await admin.post(_APPLY + "/runs", json=check)
+                self.assertEqual(empty.status_code, 200, empty.text)
+                self.assertEqual(empty.json()["status"], "no_new_data")
+                self.assertIsNone(empty.json()["appliedAt"])
+                self.assertEqual(empty.json()["eventsApplied"], 0)
+
+                once, twice = await accept(producer, "first"), await accept(producer, "second")
+                self.assertEqual((await admin.get(_APPLY)).json()["acceptedThrough"], "2")
+                await accept(producer, "out-of-range")
+                self.assertEqual((await admin.post(_APPLY + "/runs", json=check)).json(), empty.json())
+                self.assertEqual((await admin.post(_APPLY + "/runs", json=request(0, 0))).status_code, 409)
+                self.assertEqual((await admin.post(_APPLY + "/runs", json={**check, "expectedAcceptedThrough": "2"})).status_code,
+                                 409)
+
+                async with self.engine.begin() as conn:
+                    # Only the apply result ledger is faulted, after actual target inserts.
+                    await conn.execute(text("""
+                        CREATE FUNCTION ts_push_inbox_sandbox.reject_apply_result() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN RAISE EXCEPTION 'test-only apply receipt fault'; END; $$
+                    """))
+                    await conn.execute(text("""
+                        CREATE TRIGGER reject_apply_result BEFORE INSERT ON ontology_push_inbox_apply_receipts
+                        FOR EACH ROW EXECUTE FUNCTION ts_push_inbox_sandbox.reject_apply_result()
+                    """))
+                original = request(0, 2)
+                failed = await admin.post(_APPLY + "/runs", json=original)
+                self.assertEqual(failed.status_code, 503, failed.text)
+                self.assertEqual((await admin.get(_APPLY)).json()["appliedThrough"], "0")
+                async with self.engine.begin() as conn:
+                    self.assertEqual(await conn.scalar(text("SELECT count(*) FROM ts_push_inbox_sandbox.applied_fixture")), 0)
+                    await conn.execute(text("DROP TRIGGER reject_apply_result ON ontology_push_inbox_apply_receipts"))
+                applied = await admin.post(_APPLY + "/runs", json=original)
+                self.assertEqual(applied.status_code, 200, applied.text)
+                self.assertEqual((applied.json()["status"], applied.json()["eventsApplied"]), ("applied", 2))
+                self.assertEqual(applied.json()["reviewedAcceptedThrough"], "2")
+                async with self.engine.begin() as conn:
+                    items = (await conn.execute(text("""
+                        SELECT ordinal, acceptance_id, entity_id, fixture_value
+                        FROM ts_push_inbox_sandbox.applied_fixture ORDER BY ordinal
+                    """))).all()
+                    self.assertEqual([(o, str(a), entity, v) for o, a, entity, v in items], [
+                        (1, once["id"], 2**63-1, "fixture-first"), (2, twice["id"], 2**63-1, "fixture-second"),
+                    ])
+                    await conn.execute(text("TRUNCATE ts_push_inbox_sandbox.applied_fixture"))
+                self.assertEqual((await admin.post(_APPLY + "/runs", json=original)).json(), applied.json())
+                self.assertEqual((await admin.post(_APPLY + "/runs", json=request(2, 3))).status_code, 409)
+                blocked = (await admin.get(_APPLY)).json()
+                self.assertEqual((blocked["state"], blocked["canReplay"]), ("blocked", True))
+                self.assertNotIn("fixture-first", str(blocked))
+
+    async def test_reviewed_apply_caps_exact_batch_detects_missing_ordinals_and_reconciles_without_target(self):
+        from app.web.services.push_inbox_apply import apply_push_range
+
+        await self._prepare_apply_fixture()
+        async with self.engine.begin() as conn:
+            await conn.execute(text("""
+                INSERT INTO ontology_push_inbox_receipts
+                    (id,request_id,ordinal,body_digest,schema_version,entity_id,fixture_value,accepted_at)
+                SELECT gen_random_uuid(),gen_random_uuid(),n,repeat('a',64),1,n,'fixture-reviewed',clock_timestamp()
+                FROM generate_series(1,53) AS n
+            """))
+            await conn.execute(text("UPDATE ontology_push_inbox_state SET accepted_count=53"))
+
+        async def lose_ack(session, request, actor):
+            await apply_push_range(session, request, actor)
+            raise OSError("fixture-only lost acknowledgement after the transaction committed")
+
+        with patch.object(settings, "PUSH_INBOX_SANDBOX_APPLY_ENABLED", True):
+            async with api(True, self._admin_session) as admin:
+                reviewed = await admin.put(_APPLY, json={"expectedGeneration": None})
+                self.assertEqual(reviewed.status_code, 200, reviewed.text)
+                body = {"requestId": str(uuid4()), "expectedGeneration": 1,
+                        "expectedAppliedThrough": "0", "expectedAcceptedThrough": "53"}
+                with patch("app.web.api.routes.etl.apply_push_range", side_effect=lose_ack):
+                    pending = await admin.post(_APPLY + "/runs", json=body)
+                self.assertEqual(pending.status_code, 503, pending.text)
+                preserved = (await admin.get(_APPLY)).json()
+                first, = preserved["recent"]
+                self.assertEqual((first["eventsApplied"], first["throughInclusive"], first["hasMoreReviewed"]),
+                                 (50, "50", True))
+                self.assertEqual((await admin.post(_APPLY + "/runs", json=body)).json(), first)
+                async with self.engine.begin() as conn:
+                    await conn.execute(text("DELETE FROM ontology_push_inbox_receipts WHERE ordinal=52"))
+                gap = await admin.post(_APPLY + "/runs", json={**body, "requestId": str(uuid4()),
+                                                               "expectedAppliedThrough": "50"})
+                self.assertEqual(gap.status_code, 409, gap.text)
+                self.assertEqual((await admin.get(_APPLY)).json()["appliedThrough"], "50")
+                async with self.engine.begin() as conn:
+                    self.assertEqual(await conn.scalar(text("SELECT count(*) FROM ts_push_inbox_sandbox.applied_fixture")), 50)
+                    await conn.execute(text("TRUNCATE ontology_push_inbox_receipts"))
+                archived = (await admin.get(_APPLY)).json()
+                self.assertEqual((archived["state"], archived["canReplay"]), ("blocked", True))
+                self.assertEqual((await admin.post(_APPLY + "/runs", json=body)).json(), first)
+                self.assertEqual((await admin.put(_APPLY, json={"expectedGeneration": None})).status_code, 409)
 
     async def _remove_fault_fn(self):
         async with self.engine.begin() as conn:

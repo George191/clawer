@@ -27,6 +27,7 @@ from sqlalchemy.exc import DBAPIError
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.data_connections import DataConnectionPayload, SourceCatalog, SourceColumn, SourceColumns, SourceRelation
+from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
 from app.web.core.config import settings
 
 
@@ -46,9 +47,9 @@ _CATALOG_COLUMN_LIMIT = 200
 _CATALOG_KINDS = {
     "r": "table", "p": "partitioned_table", "v": "view", "m": "materialized_view", "f": "foreign_table",
 }
-_CATALOG_SCHEMA_SCOPE = """
+_CATALOG_SCHEMA_SCOPE = f"""
     left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
-    AND n.nspname NOT IN ('batch_sync_identity', 'batch_sync_stream', 'ts_cdc_sandbox')
+    AND n.nspname NOT IN ('batch_sync_identity', 'batch_sync_stream', 'ts_cdc_sandbox', '{PUSH_APPLY_SCHEMA}')
     AND has_schema_privilege(n.oid, 'USAGE')
 """
 _CATALOG_RELATION_SCOPE = f"""

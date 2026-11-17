@@ -3,17 +3,18 @@ import { Button } from '@/components/ui';
 import { fetchSyntheticPushInbox } from '../../services/api';
 import type { SyntheticPushInboxStatus } from '../../services/api';
 import { useSandboxIdentity } from './SandboxMarkings';
+import SyntheticPushApply from './SyntheticPushApply';
 
 export default function SyntheticPushInbox() {
   const identity = useSandboxIdentity();
-  return identity ? <PushInboxStatus key={identity} /> : null;
+  return identity ? <PushInboxStatus key={identity} identity={identity} /> : null;
 }
 
 function AcceptedAt({ value }: { value?: string }) {
   return value && Number.isFinite(Date.parse(value)) ? <time dateTime={value}>{new Date(value).toLocaleString()}</time> : <>Not recorded</>;
 }
 
-function PushInboxStatus() {
+function PushInboxStatus({ identity }: { identity: string }) {
   const title = useId();
   const [snapshot, setSnapshot] = useState<SyntheticPushInboxStatus>();
   const [refreshing, setRefreshing] = useState(false);
@@ -52,7 +53,8 @@ function PushInboxStatus() {
           <span>Receipt <code>{receipt.id}</code></span><span>Accepted at <AcceptedAt value={receipt.acceptedAt} /></span>
         </li>)}</ol>
       </details>}
-      <p><strong>Not applied.</strong> Inbox acceptance does not show that any dataset was updated or data flowed downstream.</p>
+      <p><strong>Acceptance is not application.</strong> Inbox acceptance alone does not show that any target changed or data flowed downstream.</p>
+      <SyntheticPushApply identity={identity} version={revision} />
     </div>
   </section>;
 }

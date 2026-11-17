@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；本地 PostgreSQL 试点已将连通性与已保存源身份核验分开，手工和调度在源事务中重新验证。其他连接器能力和统一网络策略仍待覆盖。 | 在选择同步或导出前验证连接器能力和权限；不把连接测试通过当成可读取或可写入业务资产的证明。 |
 | 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度；固定合成源另支持按已提交批次增量 Upsert，源发布进度与目标已应用位置分开。 | 尚需将有明确提交语义的增量扩展到已授权源和数据集目标，覆盖其他连接器与数据变化模式。 |
-| 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断和固定消费路径；独立本地合成流可按已提交序号回放 after-image，分别记录源最高位点、目标检查点和提交回执。另有独立的本地合成推送收件箱，生产者验签后可持久接收并查看回执，但不应用到目标。尚无通用可配置入站流。 | 继续验收可配置的生产者身份、流定义和消费策略；不把接收回执或消费位点当作目标提交。 |
+| 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断和固定消费路径；独立本地合成流可按已提交序号回放 after-image，分别记录源最高位点、目标检查点和提交回执。另有独立的本地合成推送收件箱，生产者验签后可持久接收并查看回执；另行授权的手工应用可向固定目标按接收顺序追加，应用位置和结果独立记录。尚无通用可配置入站流。 | 继续验收可配置的生产者身份、流定义和消费策略；不把接收回执或消费位点当作目标提交。 |
 | 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执；当前审核的正数回执已驱动沙箱外发 Lineage。固定合成标记另有可撤销授权。Published API 仍只是被动读取。 | 验收通用标记策略、多目标/模式，以及另行审核的写回或 Webhook。 |
 | 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地 1–3 个上游的平面 AND/OR，以及三个上游的有限括号组合，都复用现有 Automation Center；实际使用的上游事件、当时审核的规则与子回执分开。 | 仍需验收时间与事件混合触发、更多层条件、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；本地受管增量资产可展开一个已审核上游，区分真实正数提交、未观察及目标身份更换后的历史。财报 Evidence 的声明路径不代表生产逐边验证。 | 先接表级运行证据。区分代码声明、配置草稿和已经观察到的执行，不能用草稿绘成已提交的血缘。 |
@@ -230,3 +230,9 @@
 - 参考 [Foundry 推送入站](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 的生产者身份与固定数据结构。此试点不模拟 Foundry OAuth/API 兼容性：入站只在另行启动的数值环回监听器（`python -m app.web.push_inbox_ingress`）注册，默认关闭，普通 Web 服务不注册生产者入口，不接 Kafka、CDC 或目标写入。
 - 生产者使用部署端预置公钥验证固定路径、请求标识、有限时间和正文；管理员浏览会话不等于生产者许可。对固定合成记录流式限制请求大小，拒绝非预期字段、无效签名、重放内容被替换、超速或容量已满。规范化记录、序号和接收回执原子保存；通过验签的同原请求重试只返回原回执。
 - Connections 只查看授权接收摘要，不展示正文、公钥材料、签名或数据库标记。接收回执不是消费位点、目标提交、数据流血缘或已应用记录。验收需涵盖正常 Web 服务隔离、错身份、并发重试、真实回滚、轮换和只读管理界面；仅合成隔离环境，无生产部署。
+
+### 已接收推送记录的专用目标手工应用
+
+- 入站许可不自动授予目标写入。另行启用默认关闭的本地试点，由管理员审核固定、已预置的合成目标，再明确确认要处理的已接收范围。目标按接收序号保留事件；同一实体的两次接收也不是一条事件。未获审核的新到记录不包含在当次应用。
+- 接收序号、应用位置和验收回执是独立事实；应用时校验连续记录与已审核物理身份，并在同一个数据库事务写目标、推进应用位置、保存独立回执。失败三者同退；原请求可取回原结果。无新数据不是成功写入，不能提高应用位置。任一物理表身份改变不得重绑并从零开始。
+- 不提供通用目标查询、公开链接、任意写入、自动调度或 CDC 消费。仅在隔离数据库用实际拒绝、并发、回滚及浏览器结果验收。

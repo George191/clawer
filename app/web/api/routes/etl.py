@@ -31,6 +31,7 @@ from app.web.api.models.cdc_sandbox_versions import (
     CdcSandboxComparison, CdcSandboxVersionDetail, CdcSandboxVersionsPage,
 )
 from app.web.api.models.push_inbox import PushInboxStatus
+from app.web.api.models.push_inbox_apply import PushApplyRequest, PushApplyResult, PushApplyReview, PushApplyStatus
 from app.web.api.models.pipeline_sandbox import (
     PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
 )
@@ -90,6 +91,7 @@ from app.web.services.pipeline_sandbox_outputs import (
     commit_pipeline_output, list_pipeline_outputs, read_pipeline_output,
 )
 from app.web.services.push_inbox import read_push_status
+from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
@@ -126,6 +128,39 @@ async def get_local_push_inbox(
         return await read_push_status(session)
     except DBAPIError:
         raise HTTPException(503, "Synthetic inbox status is unavailable") from None
+
+
+@write.get("/push-inbox-sandbox/apply")
+async def get_push_apply(
+    response: Response, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PushApplyStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await read_push_apply(session)
+    except DBAPIError:
+        raise HTTPException(503, "Synthetic apply status is unavailable") from None
+
+
+@write.put("/push-inbox-sandbox/apply")
+async def put_push_apply(
+    payload: PushApplyReview, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PushApplyStatus:
+    try:
+        return await review_push_apply(session, current_user.id)
+    except DBAPIError:
+        raise HTTPException(503, "The synthetic apply review could not be confirmed") from None
+
+
+@write.post("/push-inbox-sandbox/apply/runs")
+async def run_push_apply(
+    payload: PushApplyRequest, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PushApplyResult:
+    try:
+        return await apply_push_range(session, payload, current_user.id)
+    except (DBAPIError, OSError):
+        raise HTTPException(503, "The synthetic apply outcome could not be confirmed; retry the same request ID") from None
 
 
 @write.get("/index-preview-sandbox")
