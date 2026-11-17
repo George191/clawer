@@ -220,6 +220,16 @@ export interface SchedulerItem {
 }
 
 // ==================== Query ====================
+export interface EtlTableColumn {
+  name: string;
+  type: string;
+  primary: boolean;
+  primaryPosition: number | null;
+  nullable: boolean;
+  comment: string | null;
+  ordinalPosition: number;
+}
+
 export interface QueryResult {
   primaryKey?: string[];
   total?: number;

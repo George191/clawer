@@ -194,6 +194,11 @@ async def object_preview(layer: str, table: str, includeHidden: bool = False,
     return await get_etl_layers().preview(layer, table)
 
 
+@read.get("/{layer}/{table}/columns")
+async def table_columns(layer: str, table: str) -> list[dict[str, Any]]:
+    return await get_etl_layers().columns(layer, table)
+
+
 @write.put("/{layer}/{table}/visibility")
 async def set_object_visibility(layer: str, table: str, payload: ObjectVisibility,
                                 current_user: Any = Depends(get_current_user)) -> dict[str, Any]:

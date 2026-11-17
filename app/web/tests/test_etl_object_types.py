@@ -379,18 +379,45 @@ class ObjectRouteTests(unittest.TestCase):
                     self.assertIn("not initialized", response.json()["detail"])
         self.assertTrue(all(sql.lstrip().startswith("SELECT") for sql, _ in session.calls))
 
+    def test_columns_route_returns_physical_metadata_without_reading_rows(self):
+        fields = [
+            {**column("id", "bigint", True, 1, False, "Record identifier"), "ordinalPosition": 1},
+            {**column("title"), "ordinalPosition": 3},
+        ]
+        instance, session = service(Result(fields), ontology_installed=False)
+        with patch.object(etl, "get_etl_layers", return_value=instance):
+            response = self.client.get("/api/v1/etl/ts_ods/objects/columns")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), fields)
+        self.assertEqual(len(session.calls), 1)
+        sql, params = session.calls[0]
+        self.assertEqual(params, {"schema": "ts_ods", "table": "objects"})
+        self.assertIn('a.attnum AS "ordinalPosition"', sql)
+        self.assertIn("FROM pg_attribute", sql)
+        self.assertIn("ORDER BY a.attnum", sql)
+        self.assertNotIn("ontology_objects", sql)
+
+    def test_columns_route_rejects_invalid_identifier_and_reports_missing_table(self):
+        instance, session = service(Result([]))
+        with patch.object(etl, "get_etl_layers", return_value=instance):
+            self.assertEqual(self.client.get("/api/v1/etl/ods/bad%3Bquery/columns").status_code, 400)
+            self.assertFalse(session.calls)
+            self.assertEqual(self.client.get("/api/v1/etl/ods/missing/columns").status_code, 404)
+        self.assertEqual(len(session.calls), 1)
+
     def test_fastapi_bounds_validate_before_any_service_or_database_call(self):
         with patch.object(etl, "get_etl_layers") as factory:
             for query in ("limit=0", "limit=501", "offset=-1", "offset=1000001", "search=" + "x" * 1001):
                 self.assertEqual(self.client.get("/api/v1/etl/object-types?" + query).status_code, 422)
             factory.assert_not_called()
 
-    def test_rejected_authentication_prevents_both_metadata_routes(self):
+    def test_rejected_authentication_prevents_metadata_routes(self):
         def reject():
             raise HTTPException(401, "Authentication required")
         self.app.dependency_overrides[get_current_user] = reject
         with patch.object(etl, "get_etl_layers") as factory:
-            for path in ("/api/v1/etl/object-types", "/api/v1/etl/ts_ods/objects/preview"):
+            for path in ("/api/v1/etl/object-types", "/api/v1/etl/ts_ods/objects/preview",
+                         "/api/v1/etl/ts_ods/objects/columns"):
                 self.assertEqual(self.client.get(path).status_code, 401)
             factory.assert_not_called()
 

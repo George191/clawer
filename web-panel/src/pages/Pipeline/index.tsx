@@ -10,6 +10,8 @@ import OntologyLineage from './OntologyLineage';
 import PostgresIcon from './PostgresGlyph';
 import './ontology-frame.css';
 import './ontology-workspace.css';
+import ExplorerCatalog from './ExplorerCatalog';
+import ExplorerTableSchema from './ExplorerTableSchema';
 import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
@@ -154,8 +156,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const { search, pathname } = useLocation();
     const isSchemas = pathname === '/ontology/explorer';
     const workspacePath = pathname === '/ontology/transforms' ? '/ontology/transforms' : '/ontology/explorer';
-    const [resourceView, setResourceView] = useState<'preview' | 'details' | 'api'>('preview');
-    const [sidebarTableSearch, setSidebarTableSearch] = useState('');
+    const requestedView = new URLSearchParams(search).get('view');
+    const resourceView = isSchemas && (requestedView === 'schema' || requestedView === 'stream' || requestedView === 'api') ? requestedView : 'preview';
     const  navigate  =  useNavigate();
     const [canManage, setCanManage] = useState(false);
     const managePermission = useRef(false);
@@ -168,10 +170,12 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const [data, setData] = useState<QueryResult>();
     const [stream, setStream] = useState<EtlStreamState>();
     const [loading, setLoading] = useState(false);
+    const [previewError, setPreviewError] = useState('');
     const [tablesLoading, setTablesLoading] = useState(false);
     const [tablesLoadedSchema, setTablesLoadedSchema] = useState<string>();
     const [requestError, setRequestError] = useState('');
     const [streamError, setStreamError] = useState('');
+    const [streamLoading, setStreamLoading] = useState(false);
     const [scriptNote, setScriptNote] = useState('');
     const [mutationLoading, setMutationLoading] = useState(false);
     const [keywordsOpen, setKeywordsOpen] = useState(false);
@@ -356,7 +360,10 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const requestedSchema = new URLSearchParams(search).get('schema');
     const selectedSchemaAvailable = catalogLoaded && !!schemaNode && (!requestedSchema || requestedSchema === selectedSchema);
     const visibleSchemas = schemas.filter((item) => `${item.key} ${item.label} ${item.alias || ''} ${item.database || ''}`.toLowerCase().includes(schemaSearch.trim().toLowerCase()));
-    const selectedTableAvailable = selectedSchemaAvailable && tablesLoadedSchema === selectedSchema && !closedTables.has(table.name) && serverTables.some((item) => item.name === table.name);
+    const requestedTable = new URLSearchParams(search).get('table');
+    const selectedTableAvailable = selectedSchemaAvailable && tablesLoadedSchema === selectedSchema
+        && (!isSchemas || requestedTable === null || requestedTable === table.name)
+        && !closedTables.has(table.name) && serverTables.some((item) => item.name === table.name);
     useEffect(() => {
         setScriptOpen(pathname === '/ontology/transforms' && selectedTableAvailable);
     }, [pathname, selectedSchema, table.name, selectedTableAvailable]);
@@ -375,6 +382,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const filterCount = countFilterTerms(appliedTerms) + Number(Boolean(appliedQuery.search?.trim()));
     const sortCount = appliedQuery.sorts.length;
     const showPreview = !isSchemas || resourceView === 'preview';
+    const showStream = !isSchemas || resourceView === 'stream';
     const fieldCount = data?.columns.length ?? 0;
     const tableDescription = `${selectedSchema}.${table.name || 'No table selected'}`;
     const dataRows = data?.rows ?? [];
@@ -624,13 +632,23 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         setKeywordsOpen(false);
         setEditingRowKey(undefined); setEditingDraft(null); setPartition(undefined); setPageNumber(1); setData(undefined); setPartitions([]); setScript(''); setSavedScript(''); setScriptLoaded(false); setScriptNote('Loading script…'); setOpenApis([]); setInputTopics([]); setActiveTopicIndex(0); setStream(undefined); setOffsets([]); setStreamError(''); setOffsetPartition(undefined); setOffset(undefined); setOffsetOpen(false);
         setFilterText(''); setFilterRules([{ id: 'rule-1', field: '', operator: '=', value: '', active: true, join: 'and' }]); setSortField(''); setSortConditions([]); setAppliedQuery({ filters: [], sorts: [], search: '' });
-        if (!selectedTableAvailable) return;
+        setPreviewError('');
+    }, [selectedSchema, table.name, selectedTableAvailable]);
+    useEffect(() => {
+        if (!selectedTableAvailable || !showPreview) return;
+        let active = true;
+        fetchTablePartitions(selectedSchema, table.name)
+            .then((items) => { if (active) setPartitions(items); })
+            .catch((error) => { if (active) message.error(errorText(error)); });
+        return () => { active = false; };
+    }, [selectedSchema, table.name, selectedTableAvailable, showPreview]);
+    useEffect(() => {
+        if (!selectedTableAvailable || (isSchemas && !scriptOpen) || scriptLoaded || scriptDirty) return;
         const version = ++metadataRequest.current;
         const valid = () => version === metadataRequest.current;
-        fetchTablePartitions(selectedSchema, table.name).then((items) => { if (valid()) setPartitions(items); }).catch((error) => { if (valid()) message.error(errorText(error)); });
         Promise.all([fetchLayerScript(selectedSchema, table.name), fetchHandlerCode(selectedSchema, table.name)]).then(([result, draft]) => { if (valid()) { const code = draft.code || result.code || ''; setScript(code); setSavedScript(code); setScriptLoaded(true); setScriptNote(draft.code && draft.code !== result.code ? 'Saved draft' : result.available ? result.path || 'Deployed handler' : result.reason || 'No deployed handler'); } }).catch((error) => { if (valid()) setScriptNote(errorText(error)); });
         return () => { metadataRequest.current++; };
-    }, [selectedSchema, table.name, selectedTableAvailable]);
+    }, [selectedSchema, table.name, selectedTableAvailable, isSchemas, scriptOpen, scriptLoaded, scriptDirty]);
     useEffect(() => {
         if (!keywordsOpen) return;
         let active = true;
@@ -650,13 +668,15 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     }, [selectedSchema, table.name, canManage, selectedTableAvailable]);
     useEffect(() => {
         const version = ++dataRequest.current;
-        if (!selectedTableAvailable) { setLoading(false); return; }
-        setLoading(true); setRequestError('');
-        const timer = window.setTimeout(() => queryEtlTable(selectedSchema, table.name, { ...appliedQuery, limit: pageSize, offset: (pageNumber - 1) * pageSize, partition }).then((result) => { if (version === dataRequest.current) { if (!result.rows.length && pageNumber > 1) { setPageNumber(result.totalEstimated ? 1 : Math.max(1, Math.min(pageNumber - 1, Math.ceil((result.total ?? 0) / pageSize)))); } else setData(result); } }).catch((error) => { if (version === dataRequest.current) { setData(undefined); setRequestError(errorText(error)); } }).finally(() => { if (version === dataRequest.current) setLoading(false); }), 100);
-        return () => { window.clearTimeout(timer); dataRequest.current++; };
-    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion, selectedTableAvailable]);
+        if (!selectedTableAvailable || !showPreview) { setLoading(false); return; }
+        setLoading(true); setPreviewError('');
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => queryEtlTable(selectedSchema, table.name, { ...appliedQuery, limit: pageSize, offset: (pageNumber - 1) * pageSize, partition }, controller.signal).then((result) => { if (version === dataRequest.current) { if (!result.rows.length && pageNumber > 1) { setPageNumber(result.totalEstimated ? 1 : Math.max(1, Math.min(pageNumber - 1, Math.ceil((result.total ?? 0) / pageSize)))); } else setData(result); } }).catch((error) => { if (version === dataRequest.current && !controller.signal.aborted) { setData(undefined); setPreviewError(errorText(error)); } }).finally(() => { if (version === dataRequest.current) setLoading(false); }), 100);
+        return () => { window.clearTimeout(timer); controller.abort(); dataRequest.current++; };
+    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion, selectedTableAvailable, showPreview]);
     useEffect(() => {
-        if (!selectedTableAvailable) return;
+        if (!selectedTableAvailable || !showStream) { setStreamLoading(false); return; }
+        setStreamLoading(true);
         let active = true;
         let timer: number | undefined;
         const refresh = async () => {
@@ -668,20 +688,27 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 setOffsetPartition((current) => result.offsets?.some((item) => item.partition === current) ? current : result.offsets?.[0]?.partition);
                 if (result.topic) setInputTopics((current) => current.includes(result.topic!) ? current : [result.topic!]);
             } catch (error) { if (active && version === streamRequest.current) { setStream(undefined); setOffsets([]); setStreamError(errorText(error)); } }
-            finally { if (active) timer = window.setTimeout(refresh, 5000); }
+            finally { if (active) { setStreamLoading(false); timer = window.setTimeout(refresh, 5000); } }
         };
         void refresh();
         return () => { active = false; streamRequest.current++; window.clearTimeout(timer); };
-    }, [selectedSchema, table.name, inputTopics[activeTopicIndex], selectedTableAvailable]);
+    }, [selectedSchema, table.name, inputTopics[activeTopicIndex], selectedTableAvailable, showStream]);
     const selectResourceView = (view: typeof resourceView) => {
         if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; }
-        setResourceView(view);
+        if (view === resourceView) return;
+        const params = new URLSearchParams(search);
+        if (view === 'preview') params.delete('view');
+        else params.set('view', view);
+        navigate(`${workspacePath}?${params.toString()}`);
     };
     const selectSchema = (schema: string) => {
         if (isSchemas && (editingRowKey || scriptDirty || apisDirty || mutationPending.current)) {
             message.warning('Save or cancel current changes before switching schemas'); return;
         }
-        navigate(`${workspacePath}?schema=${encodeURIComponent(schema)}`);
+        const params = new URLSearchParams(search);
+        params.set('schema', schema);
+        params.delete('table');
+        navigate(`${workspacePath}?${params.toString()}`);
     };
     const selectTable = (selected: LayerTable) => {
         if (isSchemas && (scriptDirty || apisDirty || mutationPending.current)) {
@@ -747,11 +774,11 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         </section>
     );
 
-    useEffect(() => { setSidebarTableSearch(''); }, [selectedSchema]);
-    useEffect(() => { setResourceView('preview'); }, [pathname, selectedSchema, table.name]);
-
     return <div className={`flow-layers flow-layers--tagged${isSchemas ? ' flow-schema-workbench' : ''}`}>
         <div  className="flow-layer-layout">
+            {isSchemas ? <ExplorerCatalog schemas={schemas} tables={tablesLoadedSchema === selectedSchema ? serverTables : []}
+                selectedSchema={selectedSchema} selectedTable={table.name} catalogLoaded={catalogLoaded} tablesLoading={tablesLoading}
+                requestError={requestError} onRefresh={refreshWorkspace} onSchema={selectSchema} onTable={selectTable} /> :
             <aside className="flow-layer-tree flow-ontology-schema-sidebar">
                 <div className="flow-tree-label flow-tree-label--actions"><span>Schemas</span><button type="button" aria-label="Refresh schemas" title="Refresh schemas" onClick={refreshWorkspace}><ReloadOutlined /></button></div>
                 <Input className="flow-ontology-schema-search" aria-label="Search schemas" placeholder="Search schemas" prefix={<SearchOutlined />} value={schemaSearch} onChange={(event) => setSchemaSearch(event.target.value)} allowClear />
@@ -759,21 +786,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                     {visibleSchemas.map((item) => <button type="button" className={`flow-connector-tree-item flow-ontology-schema-item ${selectedSchema === item.key ? 'is-active' : ''}`} key={item.key} style={{ '--schema-color': schemaColor(item.key) } as React.CSSProperties} aria-current={selectedSchema === item.key ? 'page' : undefined} onClick={() => selectSchema(item.key)}><i className="flow-schema-color-dot" aria-hidden="true" /><span className="flow-connector-tree-name"><strong>{item.alias || item.label}</strong><small>{item.key}</small></span><em>{item.tables ?? 0}</em></button>)}
                     {!visibleSchemas.length && <p className="flow-schema-search-empty">{!catalogLoaded && !requestError ? 'Loading schemas…' : schemas.length ? 'No matching schemas' : 'No schemas available'}</p>}
                 </div>
-                {isSchemas ? <div className="flow-schema-table-nav">
-                    <div className="flow-tree-label"><span>Tables</span><strong>{tablesLoading ? '…' : serverTables.length}</strong></div>
-                    <Input className="flow-ontology-schema-search" aria-label="Search tables" placeholder="Search tables" prefix={<SearchOutlined />} value={sidebarTableSearch} onChange={(event) => setSidebarTableSearch(event.target.value)} allowClear />
-                    <div className="flow-schema-table-list" aria-label="Tables in selected schema">
-                        {serverTables.filter((item) => item.name.toLowerCase().includes(sidebarTableSearch.trim().toLowerCase())).map((item) => (
-                            <button type="button" key={item.name} title={item.name} aria-current={item.name === table.name ? 'true' : undefined} onClick={() => selectTable(item)}>
-                                <TemplateGlyph kind={inferSiteKind(item.dataType || '', item.name)} source={item.name} />
-                                <span>{item.name}</span>
-                            </button>
-                        ))}
-                        {tablesLoading ? <div className="flow-schema-search-empty">Loading tables…</div>
-                            : !serverTables.some((item) => item.name.toLowerCase().includes(sidebarTableSearch.trim().toLowerCase())) && <div className="flow-schema-search-empty">{serverTables.length ? 'No matching tables' : 'No tables available'}</div>}
-                    </div>
-                </div> : <div className="flow-schema-sidebar-summary">{schemas.length} schema resources</div>}
-            </aside>
+                <div className="flow-schema-sidebar-summary">{schemas.length} schema resources</div>
+            </aside>}
             <section  className="flow-layer-main">
                 {(loading || tablesLoading) && <Spin size="small" />}
                 {requestError && <div role="alert" style={{ padding: 12, color: '#ff7875' }}>{requestError} <Button size="small" onClick={() => { setRefreshVersion((value) => value + 1); refreshCatalog().catch((error) => setRequestError(errorText(error))); }}>Retry</Button></div>}
@@ -794,7 +808,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                         <i className={`flow-dot ${schemaNode?.status === 'running' ? 'flow-dot--green' : ''}`} /><span>{schemaNode?.status === 'running' ? 'Schema accessible' : schemaNode?.status || 'Unavailable'}</span>
                     </div>
                 </div>}
-                <div className="flow-table-switcher">
+                {!isSchemas && <div className="flow-table-switcher">
                 <Dropdown  overlayClassName="flow-menu-popup flow-table-tab-dropdown"  trigger={['click']}  dropdownRender={()  =>  (
                     <div  className="flow-tab-search-panel">
                         <div  className="flow-tab-search-input-wrap">
@@ -819,14 +833,14 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 <div  className="flow-table-tabs"  ref={tableTabsRef}  role="tablist"  aria-label={`${selectedSchema}  tables`}>
                     {tables.map((item)  =>  {  const  active  =  table.name  ===  item.name;  return  <button  type="button"  role="tab"  aria-selected={active}  className={active  ?  'is-active'  :  ''}  key={item.name}  title={item.name} onKeyDown={(event) => { if (event.key === 'Delete') { event.preventDefault(); closeTable(item.name); } }} onClick={() => selectTable(item)}><span  className="flow-tab-favicon"><TemplateGlyph  kind={inferSiteKind(item.dataType || '', item.name)}  source={item.name}  /></span><span  className="flow-tab-label">{item.name}</span><span  className="flow-tab-close"  title={`Close ${item.name} (Delete)`} onClick={(event) => { event.stopPropagation(); closeTable(item.name); }}>&times;</span></button>;  })}
                 </div>
-                </div>
-                {!table.name ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the asset navigator or use Browse tables.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
+                </div>}
+                {!selectedTableAvailable ? <div className="flow-workspace-empty" role="status"><DatabaseOutlined /><h3>{tablesLoading || !catalogLoaded && !requestError ? 'Loading schema resources…' : selectedSchema ? serverTables.length ? 'No table selected' : 'No tables in this schema' : 'No schema selected'}</h3><p>{schemaNode?.status === 'stopped' ? 'This schema is not available in the connected database.' : serverTables.length ? 'Select a table from the catalog.' : 'Select a schema to explore its tables and data.'}</p></div> : <div className="flow-inspector">
                     <div  className="flow-table-header">
                         <div className="flow-table-header-left">
                             {isSchemas && <div className="flow-schema-asset-icon"><TemplateGlyph kind={inferSiteKind(table.dataType || '', table.name)} source={table.name} /></div>}
                             <div><h2>{table.name}</h2>{isSchemas && <p className="flow-schema-asset-source">{schemaNode?.database ? <span>{schemaNode.database}</span> : null}<code>{tableDescription}</code></p>}</div>
                         </div>
-                        {(!isSchemas || resourceView === 'details') && <div className="flow-stream-pipeline">
+                        {!isSchemas && <div className="flow-stream-pipeline">
                             <div  className="flow-pipeline-node  flow-pipeline-node--input">
                                 <div  className="flow-pipeline-line-row">
                                     <DownloadOutlined  className="flow-pipeline-icon  flow-pipeline-icon--in"  />
@@ -844,15 +858,16 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             </div>
                         </div>}
                         <div className="flow-table-header-right">
-                            <div className="flow-health-badge" title={stream?.reason || streamError}><i className={`flow-dot ${stream?.available || schemaNode?.status === 'running' ? 'flow-dot--green' : ''}`} /><span>{stream?.available ? 'Stream available' : schemaNode?.status === 'running' ? 'Schema accessible' : 'Unavailable'}</span></div>
+                            <div className="flow-health-badge" title={isSchemas ? undefined : stream?.reason || streamError}><i className={`flow-dot ${(!isSchemas && stream?.available) || schemaNode?.status === 'running' ? 'flow-dot--green' : ''}`} /><span>{!isSchemas && stream?.available ? 'Stream available' : schemaNode?.status === 'running' ? 'Schema accessible' : 'Unavailable'}</span></div>
                             {selectedSchema === 'ts_task' && table.name === 'task_vulnerability' && <Button size="small" onClick={() => setKeywordsOpen(true)}>Satellite extraction</Button>}
-                            {canManage && (!isSchemas || resourceView === 'details') && <Button size="small" disabled={!stream?.available || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
+                            {canManage && !isSchemas && <Button size="small" disabled={!stream?.available || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
                         </div>
                     </div>
-                    {(!isSchemas || resourceView === 'details') && <p className="flow-table-desc">{tableDescription}{streamError ? ` · ${streamError}` : !stream?.available ? ` · ${stream?.reason || 'Stream unavailable'}` : ''}</p>}
+                    {!isSchemas && <p className="flow-table-desc">{tableDescription}{streamError ? ` · ${streamError}` : !stream?.available ? ` · ${stream?.reason || 'Stream unavailable'}` : ''}</p>}
                     {isSchemas && <nav className="flow-schema-view-tabs" aria-label="Table view">
                         <button type="button" aria-pressed={resourceView === 'preview'} onClick={() => selectResourceView('preview')}><DatabaseOutlined /> Data preview</button>
-                        <button type="button" aria-pressed={resourceView === 'details'} onClick={() => selectResourceView('details')}><SettingOutlined /> Schema & stream</button>
+                        <button type="button" aria-pressed={resourceView === 'schema'} onClick={() => selectResourceView('schema')}><SettingOutlined /> Schema</button>
+                        <button type="button" aria-pressed={resourceView === 'stream'} onClick={() => selectResourceView('stream')}><DownloadOutlined /> Stream</button>
                         {canManage && <button type="button" aria-pressed={resourceView === 'api'} onClick={() => selectResourceView('api')}><CodeOutlined /> Published APIs</button>}
                     </nav>}
                     <div className="flow-inspector-body">
@@ -881,10 +896,24 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                 if (requireAppliedSortDraft()) updateExplorerSorts(appliedQuery.sorts.filter((item) => item.field !== sort.field));
                             }))}
                         </div>}
-                        {isSchemas && resourceView === 'details' && <section className="flow-schema-details">
-                            <header><div><h3>Columns</h3><p>Database names, types and primary keys{table.size && table.size !== '—' ? ` · Storage: ${table.size}` : ''}.</p></div><Button size="small" icon={<CodeOutlined />} onClick={() => activateTool('script')}>Layer script</Button></header>
-                            {!data ? <p>{loading ? 'Loading column metadata…' : 'Column metadata unavailable'}</p> : <table><thead><tr><th scope="col">Name</th><th scope="col">Database type</th><th scope="col">Key</th></tr></thead><tbody>{data.columns.map((column) => <tr key={column}><td><code>{column}</code></td><td>{data.columnTypes?.[column] || '—'}</td><td>{data.primaryKey?.includes(column) ? <strong>Primary key</strong> : '—'}</td></tr>)}</tbody></table>}
+                        {isSchemas && resourceView === 'schema' && <ExplorerTableSchema key={`${selectedSchema}.${table.name}`} schema={selectedSchema} table={table.name} />}
+                        {isSchemas && resourceView === 'stream' && <section className="flow-schema-details flow-explorer-stream" aria-label="Stream status">
+                            <header>
+                                <div><h3>Stream</h3><p>Consumer status and partition offsets for this table.</p></div>
+                                <div className="flow-explorer-stream-actions">
+                                    <Button size="small" icon={<CodeOutlined />} onClick={() => activateTool('script')}>Layer script</Button>
+                                    {canManage && <Button size="small" disabled={!stream?.available || !offsets.length} onClick={() => { setOffsetPartition(offsets[0]?.partition); setOffset(offsets[0]?.offset); setTopicDraft(stream?.topic || ''); setOffsetOpen(true); }}>Adjust offset</Button>}
+                                </div>
+                            </header>
+                            {streamLoading && !stream && !streamError ? <div className="flow-schema-state" role="status">Checking stream status…</div>
+                                : streamError ? <div className="flow-schema-state" role="alert"><strong>Stream status unavailable</strong><p>{streamError}</p></div>
+                                : !stream?.available ? <div className="flow-schema-state" role="status"><strong>{stream?.topic ? 'Stream unavailable' : 'No active stream'}</strong><p>{stream?.reason || 'There is no stream information for this table.'}</p></div>
+                                : <>
+                                    <dl className="flow-explorer-stream-meta"><div><dt>Topic</dt><dd>{stream.topic || 'Not reported'}</dd></div><div><dt>Consumer group</dt><dd>{stream.consumerGroup || 'Not reported'}</dd></div><div><dt>Throughput</dt><dd title={stream.throughputReason}>{stream.throughput == null ? 'Unavailable' : `${stream.throughput.toLocaleString()} events/s`}</dd></div></dl>
+                                    {offsets.length ? <table><thead><tr><th scope="col">Partition</th><th scope="col">Offset</th></tr></thead><tbody>{offsets.map((item) => <tr key={item.partition}><td>{item.partition}</td><td>{item.offset.toLocaleString()}</td></tr>)}</tbody></table> : <div className="flow-schema-state">No consumer offsets reported.</div>}
+                                </>}
                         </section>}
+                        {showPreview && previewError && <div className="flow-schema-state flow-preview-error" role="alert"><strong>Data preview unavailable</strong><p>{previewError}</p><Button size="small" onClick={refreshWorkspace}>Retry preview</Button></div>}
                         {showPreview && filterOpen && <div className="flow-filter-card">
                                 <div className={isSchemas ? 'flow-schema-filter-search' : undefined}>
                                     {isSchemas && <span>Search across columns</span>}
@@ -896,9 +925,9 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                 <div  className="flow-filter-apply"><button type="button" className="flow-filter-apply-button" onClick={applyFilters}>Apply filters</button><span className="flow-filter-edited-hint">Apply to update filters and pending sorts</span>{!isSchemas && canManage && <span className="flow-api-count"><button type="button" className="flow-api-count-number" onClick={() => { setApiListOpen(true); setFilterOpen(true); }}>{apiCount}</button><span className="flow-api-count-label"> / APIs</span></span>}</div>
                                 {!isSchemas && canManage && apiListOpen && apiPanel}
                             </div>}
-                            {isSchemas && canManage && resourceView === 'api' && apiPanel}
+                            {isSchemas && resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
                             {showPreview && partitionOpen &&  <div  className="flow-partition-tags">{partitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={() => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPartition(partition === item.name ? undefined : item.name); setPageNumber(1); }}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
-                            {showPreview && <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => isSchemas ? `${range[0].toLocaleString('en-US')}–${range[1].toLocaleString('en-US')} of ${total.toLocaleString('en-US')}${data?.totalEstimated ? ' estimated' : ''} rows` : `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>}
+                            {showPreview && !previewError && <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => isSchemas ? `${range[0].toLocaleString('en-US')}–${range[1].toLocaleString('en-US')} of ${total.toLocaleString('en-US')}${data?.totalEstimated ? ' estimated' : ''} rows` : `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>}
                     </div>
                     <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
                         <div  className="flow-script-editor">

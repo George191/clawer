@@ -10,7 +10,7 @@ import type {
   EtlObjectFavorites,
   EtlObjectFavoriteMembership,
   EtlObjectPreview,
-  QueryResult,
+  EtlTableColumn, QueryResult,
   TaskInfo,
   TemplateInfo,
   HandlerCode,
@@ -270,6 +270,9 @@ export const fetchCdcStatus = (signal?: AbortSignal): Promise<CdcStatus> =>
 export const fetchLayerTables = (layer: string, tableRole = 'current'): Promise<LayerTable[]> =>
   client.get(`/etl/${layer}/tables`, { params: { tableRole } }).then((r) => unwrap<LayerTable[]>(r.data));
 
+export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal): Promise<EtlTableColumn[]> =>
+  client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal }).then((r) => unwrap<EtlTableColumn[]>(r.data));
+
 export const fetchTableData = (
   layer: string,
   table: string,
@@ -332,8 +335,8 @@ export interface EtlPublishedApi {
   id: string; token: string; validFrom: string; validUntil: string; filterType: string[]; filterSource: string[]; url: string;
   filters?: EtlDataQuery['filters']; sorts?: EtlDataQuery['sorts']; search?: string; partition?: string;
 }
-export const queryEtlTable = (layer: string, table: string, query: EtlDataQuery): Promise<QueryResult> =>
-  client.post(`/etl/${layer}/${table}/data`, query).then((r) => unwrap<QueryResult>(r.data));
+export const queryEtlTable = (layer: string, table: string, query: EtlDataQuery, signal?: AbortSignal): Promise<QueryResult> =>
+  client.post(`/etl/${layer}/${table}/data`, query, { signal }).then((r) => unwrap<QueryResult>(r.data));
 export const fetchEtlConnections = (): Promise<EtlConnection[]> =>
   client.get('/etl/connections').then((r) => unwrap<EtlConnection[]>(r.data));
 export const createEtlConnection = (payload: Omit<EtlConnection, 'id'>): Promise<EtlConnection> =>
