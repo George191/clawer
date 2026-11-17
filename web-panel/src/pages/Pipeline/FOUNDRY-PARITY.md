@@ -12,7 +12,7 @@
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；本地受管增量资产可展开一个已审核上游，区分真实正数提交、未观察及目标身份更换后的历史。财报 Evidence 的声明路径不代表生产逐边验证。 | 先接表级运行证据。区分代码声明、配置草稿和已经观察到的执行，不能用草稿绘成已提交的血缘。 |
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。受管增量资产可查独立回执、无新数据和可精确归因的手工/调度尝试；还未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；固定合成资产已验证有界主键索引预检和阻断后的零行查询，并能查沙箱运行历史。已审核的本地沙箱目标可查看后台存下的表级规划器行数估计。 | 通用大表仍需扩大可接受的索引路径、查询预算和列级已采集统计，不能在交互请求中隐式扫描业务表。 |
-| 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警。 | 验收通用 schema、逻辑数据规模、作业状态、数据字段新鲜度及更广的告警范围，不用财报日期冒充同步时间。 |
+| 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警；另可审核每日 UTC 同步结果，区分确认写入失败、正数提交和未知。 | 验收通用 schema、逻辑数据规模、其他作业/调度类型、数据字段新鲜度及更广的告警范围，不用财报日期冒充同步时间。 |
 | 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；合成 CDC 可查看、比较真实提交快照；沙箱 Builder 可对已存版本筛选、映射和保存不可变配置；另行启用后可明确提交到独立输出存储，获得可复查的结果和回执。 | 继续验收通用图编排、生产资产快照、历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
 | 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执；隔离 CDC 版本、Builder 配置和输出已验证标记继承、加严和拒绝。 | 继续验收通用资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
 
@@ -236,3 +236,9 @@
 - 入站许可不自动授予目标写入。另行启用默认关闭的本地试点，由管理员审核固定、已预置的合成目标，再明确确认要处理的已接收范围。目标按接收序号保留事件；同一实体的两次接收也不是一条事件。未获审核的新到记录不包含在当次应用。
 - 接收序号、应用位置和验收回执是独立事实；应用时校验连续记录与已审核物理身份，并在同一个数据库事务写目标、推进应用位置、保存独立回执。失败三者同退；原请求可取回原结果。无新数据不是成功写入，不能提高应用位置。任一物理表身份改变不得重绑并从零开始。
 - 不提供通用目标查询、公开链接、任意写入、自动调度或 CDC 消费。仅在隔离数据库用实际拒绝、并发、回滚及浏览器结果验收。
+
+### 每日 UTC 同步结果健康检查
+
+- 参考 [Foundry Sync status](https://www.palantir.com/docs/foundry/health-checks/checks-reference/#sync-status)。在现有资产 Evidence 的 Quality 中审核绑定已启用的每日 UTC 调度、相同计划版本与目标表，只检查审核之后该代次最近时段的持久作业结果。使用现有后台资产检查，不启动同步、不查询业务行、不发外部通知。
+- 真实正数提交必须有匹配目标和调度任务的回执。明确失败必须来自本次已归因的目标写入尝试与已确认回滚，不能从错误消息或旧拒绝推算。无任务、尚未完成、过期、提交结果未确认、无写入或身份变更分别保留为未知状态或说明，不误报成功或失败。
+- 明确失败才产生独立站内告警；确认已读不算恢复。只有同审核范围内后来可证实的正数提交能恢复；暂停、重新审核或目标替换不把历史告警标成恢复。试点默认关闭，仅验收隔离本地资产。

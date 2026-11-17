@@ -158,32 +158,47 @@ async def _pin_attempt_scope(
 
 
 async def _finish_attempt(session: AsyncSession, attempt_id: UUID, status: str, *,
-                          receipt_id: UUID | None = None, message: str | None = None) -> None:
-    await session.execute(update(TransferAttemptRow).where(
+                          receipt_id: UUID | None = None, message: str | None = None) -> int:
+    changed = await session.execute(update(TransferAttemptRow).where(
         TransferAttemptRow.id == attempt_id, TransferAttemptRow.status == "started",
     ).values(status=status, finished_at=datetime.now(timezone.utc), receipt_id=receipt_id, message=message))
+    return changed.rowcount
 
 
 async def _record_attempt_error(
     session: AsyncSession, attempt_id: UUID, failure: HTTPException, *,
     scheduled_job_id: UUID | None = None, upstream_job_id: UUID | None = None,
     retryable: bool = False, scheduled_now: datetime | None = None,
+    target_rejection: tuple[int, int] | None = None,
 ) -> None:
     # A failed receipt commit may instead be an acknowledged database write with
     # an interrupted connection. Never overwrite a committed attempt with failure.
     message = failure.detail if isinstance(failure.detail, str) else failure.detail.get("message", "Transfer rejected")
     status = "outcome_unknown" if failure.status_code >= 500 else "rejected"
     try:
-        await _finish_attempt(session, attempt_id, status, message=message[:240])
+        attempt_changed = await _finish_attempt(session, attempt_id, status, message=message[:240])
         job_id = upstream_job_id or scheduled_job_id
         model = UpstreamTriggerJobRow if upstream_job_id is not None else TransferScheduleJobRow
         if job_id is not None and not retryable:
             job_state = ("expired" if isinstance(failure.detail, dict) and failure.detail.get("code") == "schedule_expired"
                          else status)
             finished = scheduled_now or datetime.now(timezone.utc)
-            await session.execute(update(model).where(
+            job_changed = await session.execute(update(model).where(
                 model.id == job_id, model.state.in_(("pending", "dispatched")),
             ).values(state=job_state, finished_at=finished, message=message[:240]))
+            if (target_rejection is not None and scheduled_job_id == job_id and upstream_job_id is None
+                and job_state == "rejected" and attempt_changed == 1 and job_changed.rowcount == 1):
+                from app.web.api.models.asset_job_quality import TransferTargetRejectionRow
+
+                try:
+                    async with session.begin_nested():
+                        session.add(TransferTargetRejectionRow(
+                            job_id=job_id, attempt_id=attempt_id,
+                            target_oid=target_rejection[0], target_filenode=target_rejection[1],
+                        ))
+                        await session.flush()
+                except DBAPIError:
+                    logger.warning("Optional daily target proof could not be recorded")
         await session.commit()
     except Exception:
         await session.rollback()
@@ -382,6 +397,14 @@ async def _lock_upstream_job(
     return job, events, binding, parents
 
 
+def _verified_target_diagnostics(error: DBAPIError, name: str) -> bool:
+    """Only the exact relation's structural DML diagnostic is a target rejection."""
+    for details in (error.orig, getattr(error.orig, "__cause__", None)):
+        if (getattr(details, "schema_name", None), getattr(details, "table_name", None)) == (SANDBOX, name):
+            return True
+    return False
+
+
 async def run_sandbox_transfer(
     session: AsyncSession, plan_id: UUID, request: TransferRunRequest, actor_id: UUID, *,
     scheduled_job_id: UUID | None = None, scheduled_now: datetime | None = None,
@@ -403,6 +426,7 @@ async def run_sandbox_transfer(
     attempt_id = attempt.id
     session.add(attempt)
     await session.commit()
+    target_stage = None
     try:
         await session.execute(text("SET LOCAL search_path = pg_catalog, public, pg_temp"))
         await session.execute(text("SET LOCAL lock_timeout = '2s'"))
@@ -572,6 +596,9 @@ async def run_sandbox_transfer(
             )
         if job is not None and (scheduled_now or datetime.now(timezone.utc)) >= job.expires_at:
             raise HTTPException(409, {"code": "schedule_expired", "message": "UTC dispatch window closed before writing"})
+        if scheduled_job_id is not None and upstream_job_id is None and settings.TRANSFER_SANDBOX_JOB_QUALITY_ENABLED:
+            current_target = catalog[plan.target_table]
+            target_stage = plan.target_table, current_target["table_oid"], current_target["table_node"]
         written = 0 if keys == [] else (await session.execute(text(f"""
             WITH inserted AS (
                 INSERT INTO {target} ({column_list})
@@ -581,6 +608,7 @@ async def run_sandbox_transfer(
             )
             SELECT count(*) FROM inserted
         """), limit_params)).scalar_one()
+        target_stage = None  # Receipt/flush/COMMIT failures do not prove target-statement rejection.
         if keys:
             if written != len(keys):
                 raise HTTPException(409, "Incremental result did not match the selected key batch")
@@ -619,6 +647,10 @@ async def run_sandbox_transfer(
     except DBAPIError as exc:
         await session.rollback()
         state = getattr(exc.orig, "sqlstate", None)
+        target_rejection = None
+        if (target_stage is not None and state in {"23502", "23503", "23505", "23514"}
+            and _verified_target_diagnostics(exc, target_stage[0])):
+            target_rejection = target_stage[1:]
         if state == "21000":
             failure = HTTPException(422, "Transfer source contains duplicate projected primary keys; nothing was committed")
         elif state in {"23502", "23503", "23505", "23514"}:
@@ -630,7 +662,8 @@ async def run_sandbox_transfer(
         else:
             failure = HTTPException(503, "Transfer outcome not confirmed; retry with the same request ID")
         await _record_attempt_error(session, attempt_id, failure, scheduled_job_id=scheduled_job_id, upstream_job_id=upstream_job_id,
-                                    retryable=state in {"55P03", "57014", "40P01"}, scheduled_now=scheduled_now)
+                                    retryable=state in {"55P03", "57014", "40P01"}, scheduled_now=scheduled_now,
+                                    target_rejection=target_rejection)
         raise failure from exc
     except HTTPException as exc:
         await session.rollback()

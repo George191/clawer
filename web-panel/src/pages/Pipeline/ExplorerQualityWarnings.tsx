@@ -3,7 +3,7 @@ import { Button, Modal } from '@/components/ui';
 import type { AssetFreshness, AssetQualityIncident } from '../../services/api';
 
 const kindLabels: Record<AssetQualityIncident['kind'], string> = {
-  freshness: 'Transfer freshness', schema: 'Schema check', heap_size: 'Heap size check',
+  freshness: 'Transfer freshness', schema: 'Schema check', heap_size: 'Heap size check', daily_job: 'Scheduled transfer outcome',
 };
 const statusLabels: Record<AssetQualityIncident['status'], string> = {
   open: 'Open', acknowledged: 'Acknowledged · still open', recovered: 'Recovered', superseded: 'Superseded',
@@ -13,12 +13,14 @@ const reasonLabels: Record<AssetQualityIncident['reason'], string> = {
   schema_drift: 'The catalog schema differs from the reviewed baseline.',
   below_minimum: 'The heap is smaller than the configured minimum.',
   above_maximum: 'The heap exceeds the configured maximum.',
+  target_rejected: 'The reviewed scheduled job was definitively rejected by its target.',
 };
 const closeLabels: Record<NonNullable<AssetQualityIncident['closeReason']>, string> = {
   healthy: 'A later evaluation confirmed recovery.',
   policy_paused: 'Policy paused. This does not confirm recovery.',
   policy_reviewed: 'Policy changed. This does not confirm recovery.',
   schema_baseline_captured: 'A new schema baseline was captured. This does not confirm recovery.',
+  schedule_changed: 'The reviewed schedule changed. This does not confirm recovery.',
 };
 
 function Time({ value }: { value: string }) {

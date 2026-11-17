@@ -18,6 +18,7 @@ from app.web.api.models.asset_freshness import (
     AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse, AssetQualityIncident, AssetQualityIncidentAck,
     AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
+from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJobQualityStatus
 from app.web.api.models.batch_lineage import BatchLineageDetail, BatchLineageKind, BatchLineagePage
 from app.web.api.models.batch_source_identity import BatchSourceIdentityReview, BatchSourceIdentityStatus
 from app.web.api.models.batch_syncs import (
@@ -71,6 +72,7 @@ from app.web.services.asset_freshness import (
     preview_schema_baseline, put_asset_freshness,
 )
 from app.web.services.index_preview_sandbox import index_sandbox_available, run_index_preview
+from app.web.services.asset_job_quality import acknowledge_daily_job, read_job_quality, review_job_quality
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_lineage import list_batch_lineage, read_batch_lineage
 from app.web.services.batch_source_identity import read_source_identity, verify_source_identity
@@ -265,6 +267,38 @@ async def get_local_pipeline_output(
     output_id: UUID, session: SessionDep, current_user: CurrentActiveSuperuser,
 ) -> PipelineSandboxOutputDetail:
     return await read_pipeline_output(session, output_id, current_user.id)
+
+
+@write.get("/asset-freshness/{schema}/{table}/daily-job-quality")
+async def get_daily_job_quality(
+    schema: WarehouseSchema, table: TableName, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetJobQualityStatus:
+    try:
+        return await read_job_quality(session, schema, table)
+    except DBAPIError:
+        raise HTTPException(503, "Recorded Daily UTC status is temporarily unavailable") from None
+
+
+@write.put("/asset-freshness/{schema}/{table}/daily-job-quality")
+async def put_daily_job_quality(
+    schema: WarehouseSchema, table: TableName, payload: AssetJobQualityReview,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetJobQualityStatus:
+    try:
+        return await review_job_quality(session, schema, table, payload)
+    except DBAPIError:
+        raise HTTPException(503, "The Daily UTC review could not be confirmed") from None
+
+
+@write.post("/asset-freshness/{schema}/{table}/daily-job-quality/incidents/{incident_id}/acknowledge")
+async def acknowledge_daily_quality_incident(
+    schema: WarehouseSchema, table: TableName, incident_id: UUID, payload: AssetQualityIncidentAck,
+    current_user: CurrentActiveSuperuser, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetQualityIncident:
+    try:
+        return await acknowledge_daily_job(session, schema, table, incident_id, payload.expectedGeneration, current_user.id)
+    except DBAPIError:
+        raise HTTPException(503, "Daily UTC acknowledgement could not be confirmed") from None
 
 
 @write.get("/asset-freshness/{schema}/{table}/collected-stats")

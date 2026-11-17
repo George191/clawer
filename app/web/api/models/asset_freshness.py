@@ -127,9 +127,9 @@ class AssetFreshnessTransition(AssetFreshnessAssessment):
     generation: int
 
 
-AssetQualityIncidentKind = Literal["freshness", "schema", "heap_size"]
-AssetQualityIncidentReason = Literal["write_overdue", "schema_drift", "below_minimum", "above_maximum"]
-AssetQualityIncidentClose = Literal["healthy", "policy_paused", "policy_reviewed", "schema_baseline_captured"]
+AssetQualityIncidentKind = Literal["freshness", "schema", "heap_size", "daily_job"]
+AssetQualityIncidentReason = Literal["write_overdue", "schema_drift", "below_minimum", "above_maximum", "target_rejected"]
+AssetQualityIncidentClose = Literal["healthy", "policy_paused", "policy_reviewed", "schema_baseline_captured", "schedule_changed", "target_changed"]
 
 
 class AssetQualityIncident(BaseModel):
@@ -259,11 +259,12 @@ class AssetQualityIncidentRow(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("generation > 0 AND ((kind = 'freshness' AND reason = 'write_overdue') OR "
                         "(kind = 'schema' AND reason = 'schema_drift') OR "
-                        "(kind = 'heap_size' AND reason IN ('below_minimum','above_maximum')))",
+                        "(kind = 'heap_size' AND reason IN ('below_minimum','above_maximum')) OR "
+                        "(kind = 'daily_job' AND reason = 'target_rejected'))",
                         name="ck_ontology_asset_quality_incident_kind"),
         CheckConstraint("(closed_at IS NULL) = (close_reason IS NULL) AND "
                         "(close_reason IS NULL OR close_reason IN "
-                        "('healthy','policy_paused','policy_reviewed','schema_baseline_captured')) AND "
+                        "('healthy','policy_paused','policy_reviewed','schema_baseline_captured','schedule_changed','target_changed')) AND "
                         "(acknowledged_at IS NULL) = (acknowledged_by IS NULL)",
                         name="ck_ontology_asset_quality_incident_lifecycle"),
         Index("uq_ontology_asset_quality_incident_active", "target_table", "kind", unique=True,

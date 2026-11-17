@@ -1,6 +1,7 @@
 """Track last confirmed internal writes without reading warehouse business rows."""
 
 from datetime import datetime, timedelta, timezone
+import logging
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -29,6 +30,7 @@ _BATCH_LIMIT = 25
 _PERIOD = timedelta(minutes=1)
 _STALE_AFTER = timedelta(minutes=3)
 _HISTORY_LIMIT = 25
+_log = logging.getLogger(__name__)
 
 # Keep identity checks catalog-only. A relation rewrite changes its filenode
 # even when its logical name is reused.
@@ -277,7 +279,8 @@ async def acknowledge_quality_incident(
 
 async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now: datetime) -> str:
     plan = await session.get(TransferPlanRow, row.plan_id, populate_existing=True)
-    reason = _drift(row, plan, await _identity(session, row.target_table))
+    identity = await _identity(session, row.target_table)
+    reason = _drift(row, plan, identity)
     binding_current = reason is None
     await evaluate_asset_quality(session, row, reason, now)
     receipt = None
@@ -309,6 +312,17 @@ async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now
         from app.web.services.asset_collected_stats import collect_asset_stats
 
         await collect_asset_stats(session, row, now)
+    if settings.TRANSFER_SANDBOX_JOB_QUALITY_ENABLED:
+        from app.web.services.asset_job_quality import evaluate_daily_job_quality, job_quality_enabled
+
+        if job_quality_enabled():
+            try:
+                async with session.begin_nested():
+                    await session.execute(text("SET LOCAL statement_timeout='750ms'"))
+                    await evaluate_daily_job_quality(session, row, identity, now)
+                    await session.execute(text("SET LOCAL statement_timeout='3s'"))
+            except Exception:
+                _log.warning("Optional Daily UTC quality check did not settle")
     return state
 
 

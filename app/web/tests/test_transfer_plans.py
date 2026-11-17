@@ -134,6 +134,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.incident_migration = import_module(
             "app.web.alembic.versions.f32194ec7a60_ontology_asset_quality_incidents",
         )
+        self.job_quality_migration = import_module("app.web.alembic.versions.7ba3f09ec526_ontology_daily_job_quality")
         self.stats_migration = import_module("app.web.alembic.versions.ab4e962c7d10_ontology_asset_collected_stats")
         self.timeline_migration = import_module("app.web.alembic.versions.db42c1589a0e_ontology_transfer_timeline")
         async with self.pg.session() as session:
@@ -162,6 +163,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.incident_migration.upgrade)
             await self.migrate(session, self.timeline_migration.upgrade)
             await self.migrate(session, self.stats_migration.upgrade)
+            await self.migrate(session, self.job_quality_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -174,6 +176,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def drop_fixtures(self):
         async with self.pg.session() as session:
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_daily_job_quality, "
+                                       "public.ontology_transfer_schedule_target_rejections"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_collected_stats"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_incidents"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_transitions, "
@@ -576,6 +580,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.job_quality_migration.downgrade)
             await self.migrate(session, self.stats_migration.downgrade)
             await self.migrate(session, self.nested_migration.downgrade)
             await self.migrate(session, self.timeline_migration.downgrade)
@@ -1254,3 +1259,155 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 after_peer_reset = (await client.get(second_route)).json()
                 self.assertEqual(after_peer_reset["state"], "current", after_peer_reset)
                 self.assertEqual(after_peer_reset["current"]["lastAnalyzedAt"], before_peer_reset["lastAnalyzedAt"])
+
+    async def test_daily_job_quality_requires_real_target_proof_and_never_recovers_from_neutral_slots(self):
+        from app.web.services.transfer_schedules import collect_due_transfer_jobs, execute_transfer_schedule_job
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.job_src (id int PRIMARY KEY, value text NOT NULL)",
+                "CREATE TABLE ts_transfer_sandbox.job_dst (id int PRIMARY KEY, value text NOT NULL UNIQUE)",
+                "INSERT INTO ts_transfer_sandbox.job_src VALUES (1,'collision')",
+                "INSERT INTO ts_transfer_sandbox.job_dst VALUES (2,'collision')",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text('INSERT INTO public."user" VALUES (:id, \'ENABLE\', true)'), {"id": TEST_ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+        draft = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                 "sourceTable": "job_src", "targetTable": "job_dst", "trigger": "scheduled", "writeMode": "upsert",
+                 "scheduleTime": "04:00"}
+        slot = datetime(2031, 1, 7, 4, 0, tzinfo=timezone.utc)
+        base = "/etl/asset-freshness/ts_transfer_sandbox/job_dst"
+        path = base + "/daily-job-quality"
+        clock = slot - timedelta(minutes=1)
+
+        async def collect(at):
+            async with self.pg.session() as session:
+                return await collect_due_transfer_jobs(session, now=at)
+
+        async def worker(job, at):
+            async with self.pg.session() as session:
+                return await execute_transfer_schedule_job(session, job, now=at)
+
+        async def tick(at):
+            async with self.pg.session() as session:
+                return await evaluate_due_asset_freshness(session, now=at)
+
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_JOB_QUALITY_ENABLED", True),
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_schedules._utc_now", side_effect=lambda: clock),
+            patch("app.web.services.asset_job_quality._utc_now", side_effect=lambda: clock),
+            patch("app.web.services.asset_freshness._utc_now", side_effect=lambda: clock),
+        ):
+            async with api(True, self.session_provider) as client:
+                async with api(False, self.session_provider) as reader:
+                    self.assertEqual((await reader.get(path)).status_code, 403)
+                with patch.object(settings, "TRANSFER_SANDBOX_JOB_QUALITY_ENABLED", False):
+                    self.assertEqual((await client.get(path)).json()["state"], "disabled")
+                created = await client.post(RUNS, json=draft)
+                self.assertEqual(created.status_code, 201, created.text)
+                plan = created.json()
+                plan_path = f"{RUNS}/{plan['id']}/schedule"
+                schedule_body = {"enabled": True, "expectedUpdatedAt": plan["updatedAt"]}
+                scheduled = await client.put(plan_path, json=schedule_body)
+                self.assertEqual(scheduled.status_code, 200, scheduled.text)
+                policy = await client.put(base, json={
+                    "planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"], "expectedGeneration": None,
+                    "thresholdMinutes": 30, "enabled": True,
+                })
+                self.assertEqual(policy.status_code, 200, policy.text)
+                review_body = {"planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"], "expectedGeneration": None,
+                               "expectedFreshnessGeneration": 1, "expectedScheduleGeneration": 1}
+
+                # A real failed job before the explicit quality review is never observed later.
+                early, = await collect(slot)
+                self.assertEqual(await worker(early, slot), "rejected")
+                clock = slot + timedelta(hours=1)
+                reviewed = await client.put(path, json=review_body)
+                self.assertEqual(reviewed.status_code, 200, reviewed.text)
+                self.assertEqual(reviewed.json()["state"], "not_checked")
+                self.assertEqual((await tick(clock))["checked"], 1)
+                self.assertEqual((await client.get(path)).json()["reason"], "no_post_review_slot")
+
+                next_slot = slot + timedelta(days=1)
+                clock = next_slot + timedelta(seconds=30)
+                broken, = await collect(next_slot)
+                self.assertEqual(await worker(broken, next_slot), "rejected")
+                evidence = await self.pg.fetch_one("""
+                    SELECT code FROM ontology_transfer_schedule_target_rejections WHERE job_id=:id
+                """, {"id": broken})
+                self.assertEqual(evidence["code"], "target_constraint")
+                self.assertEqual((await tick(clock))["checked"], 1)
+                failed = (await client.get(path)).json()
+                self.assertEqual((failed["state"], failed["reason"]), ("unhealthy", "target_rejected"))
+                incident, = failed["incidents"]["active"]
+                self.assertEqual(incident["kind"], "daily_job")
+                self.assertEqual((await client.get(base)).json()["incidents"]["active"], [])
+                ack_path = f"/incidents/{incident['id']}/acknowledge"
+                self.assertEqual((await client.post(base + ack_path, json={"expectedGeneration": 1})).status_code, 404)
+                ack = await client.post(path + ack_path, json={"expectedGeneration": 1})
+                self.assertEqual(ack.status_code, 200, ack.text)
+                self.assertEqual(ack.json()["status"], "acknowledged")
+                same = await client.put(path, json={**review_body, "expectedGeneration": 1})
+                self.assertEqual(same.json()["binding"]["generation"], 1)
+                self.assertEqual(same.json()["incidents"]["active"][0]["status"], "acknowledged")
+
+                # A regressed clock cannot overwrite or revive an older supposed health proof.
+                from app.web.services.asset_freshness import _identity, _lock_policy
+                from app.web.services.asset_job_quality import evaluate_daily_job_quality
+
+                recorded = clock
+                clock = next_slot - timedelta(hours=1)
+                async with self.pg.session() as session:
+                    locked_policy = await _lock_policy(session, "job_dst")
+                    exact = await _identity(session, "job_dst")
+                    await evaluate_daily_job_quality(session, locked_policy, exact, clock)
+                regressed = (await client.get(path)).json()
+                self.assertEqual((regressed["state"], regressed["reason"]), ("unknown", "evaluation_stale"))
+                self.assertEqual(regressed["checkedAt"], failed["checkedAt"])
+                clock = recorded
+
+
+                # A newer pending, then genuine zero-row receipt, cannot resolve an ACKed incident.
+                zero_slot = next_slot + timedelta(days=1)
+                clock = zero_slot + timedelta(seconds=30)
+                zeros, = await collect(zero_slot)
+                await tick(clock)
+                self.assertEqual((await client.get(path)).json()["reason"], "nonterminal")
+                await self.pg.execute("DELETE FROM ts_transfer_sandbox.job_src")
+                self.assertEqual(await worker(zeros, zero_slot), "committed")
+                clock += timedelta(minutes=1)
+                await tick(clock)
+                neutral = (await client.get(path)).json()
+                self.assertEqual((neutral["state"], neutral["reason"], neutral["observation"]["rowsAffected"]),
+                                 ("unknown", "zero_rows", 0))
+                self.assertEqual(neutral["incidents"]["active"][0]["id"], incident["id"])
+
+                clock = zero_slot + timedelta(days=1, seconds=30)
+                await tick(clock)
+                self.assertEqual((await client.get(path)).json()["reason"], "missing_slot")
+                positive_slot = zero_slot + timedelta(days=2)
+                clock = positive_slot + timedelta(seconds=30)
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.job_src VALUES (1,'legitimate write')")
+                good, = await collect(positive_slot)
+                self.assertEqual(await worker(good, positive_slot), "committed")
+                await tick(clock)
+                health = (await client.get(path)).json()
+                self.assertEqual((health["state"], health["observation"]["rowsAffected"]), ("healthy", 1))
+                self.assertEqual(health["incidents"]["active"], [])
+                self.assertEqual(health["incidents"]["history"][0]["status"], "recovered")
+                clock += timedelta(minutes=4)
+                self.assertEqual((await client.get(path)).json()["reason"], "evaluation_stale")
+                self.assertEqual((await client.put(plan_path, json={**schedule_body, "enabled": False})).status_code, 200)
+                old = (await client.get(path)).json()
+                self.assertEqual((old["state"], old["reason"]), ("superseded", "schedule_changed"))
+                self.assertIsNone(old["observation"])

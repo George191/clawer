@@ -483,11 +483,11 @@ export type AssetQualityCheck = AssetQualityResult & {
   history: (Omit<AssetQualityResult, 'validUntil'> & { id: string; generation: number })[];
 };
 export type AssetQualityIncident = {
-  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size';
+  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job';
   status: 'open' | 'acknowledged' | 'recovered' | 'superseded';
-  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum';
+  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum' | 'target_rejected';
   openedAt: string; lastConfirmedAt: string; acknowledgedAt: string | null; closedAt: string | null;
-  closeReason: 'healthy' | 'policy_paused' | 'policy_reviewed' | 'schema_baseline_captured' | null;
+  closeReason: 'healthy' | 'policy_paused' | 'policy_reviewed' | 'schema_baseline_captured' | 'schedule_changed' | null;
 };
 export type AssetFreshness = {
   available: boolean;
@@ -520,6 +520,29 @@ export const captureAssetSchemaBaseline = (schema: string, table: string, expect
   client.post(`${assetFreshnessPath(schema, table)}/schema-baseline`, { expectedGeneration, expectedFingerprint }).then((r) => unwrap<AssetFreshness>(r.data));
 export const acknowledgeAssetQualityIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
   client.post(`${assetFreshnessPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then((r) => unwrap<AssetQualityIncident>(r.data));
+
+export type DailyJobQualityCandidate = {
+  planId: string; planUpdatedAt: string; freshnessGeneration: number; scheduleGeneration: number; plannedTimeUtc: string;
+};
+export type DailyJobQuality = {
+  available: boolean; state: 'disabled' | 'not_configured' | 'not_checked' | 'healthy' | 'unhealthy' | 'unknown' | 'superseded';
+  reason: string | null; checkedAt: string | null; validUntil: string | null;
+  candidate: DailyJobQualityCandidate | null;
+  binding: (DailyJobQualityCandidate & { generation: number; reviewedAt: string }) | null;
+  observation: { slot: string; state: TransferScheduleJob['state']; finishedAt: string | null; receiptId: string | null; rowsAffected: number | null } | null;
+  incidents: AssetFreshness['incidents'];
+};
+export type DailyJobQualityReview = {
+  expectedGeneration: number | null; planId: string; expectedPlanUpdatedAt: string;
+  expectedFreshnessGeneration: number; expectedScheduleGeneration: number;
+};
+const dailyJobQualityPath = (schema: string, table: string) => `${assetFreshnessPath(schema, table)}/daily-job-quality`;
+export const fetchDailyJobQuality = (schema: string, table: string, signal?: AbortSignal): Promise<DailyJobQuality> =>
+  client.get(dailyJobQualityPath(schema, table), { signal }).then(r => unwrap<DailyJobQuality>(r.data));
+export const reviewDailyJobQuality = (schema: string, table: string, request: DailyJobQualityReview): Promise<DailyJobQuality> =>
+  client.put(dailyJobQualityPath(schema, table), request).then(r => unwrap<DailyJobQuality>(r.data));
+export const acknowledgeDailyJobQualityIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${dailyJobQualityPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
 
 export const fetchTableData = (
   layer: string,

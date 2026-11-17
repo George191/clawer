@@ -5,6 +5,7 @@ import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchExplorerTableEvidence, type ExplorerTableEvidenceSnapshot, type TransferRunReceipt } from '../../services/api';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import ExplorerAssetFreshness from './ExplorerAssetFreshness';
+import ExplorerDailyJobQuality from './ExplorerDailyJobQuality';
 import ExplorerAssetStatistics from './ExplorerAssetStatistics';
 import ExplorerTransferTimeline from './ExplorerTransferTimeline';
 import './table-evidence.css';
@@ -64,6 +65,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                             <dl><div><dt>Checked at</dt><dd><time dateTime={snapshot.observedAt}>{new Date(snapshot.observedAt).toLocaleString()}</time></dd></div></dl>
                             {showReceipts && <ExplorerAssetStatistics schema={schema} table={table} version={version} />}
                         </section>
+                        {showReceipts && <ExplorerDailyJobQuality schema={schema} table={table} version={version} />}
                         {showReceipts && <ExplorerAssetFreshness key={`${schema}.${table}`} schema={schema} table={table} version={version} />}
                         {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>
                         {showReceipts ? <ExplorerTransferTimeline key={`${schema}.${table}:${version}`} schema={schema} table={table} onLatestCurrentReceipt={setLatestCurrentReceipt} />
