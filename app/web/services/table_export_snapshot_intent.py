@@ -27,6 +27,7 @@ _SOURCE = "ts_table_export_sandbox"
 _MAX_INTENTS = 16
 _SOURCE_RELATIONS = ("identity", "records")
 _PRIVATE_RELATIONS = ("identity", "intents", "records")
+_DELIVERY_RELATIONS = ("deliveries",)
 
 
 class SnapshotPublicationIntentUnavailable(Exception):
@@ -48,7 +49,7 @@ def _unavailable():
 
 async def _lock_scope(session: AsyncSession, schema: str, names: tuple[str, ...]) -> None:
     # These are two fixed callers with compile-time schema/relation sets; no request identifiers reach DDL.
-    if (schema, names) not in {(_SOURCE, _SOURCE_RELATIONS), (_PRIVATE, _PRIVATE_RELATIONS)}:
+    if (schema, names) not in {(_SOURCE, _SOURCE_RELATIONS), (_PRIVATE, _PRIVATE_RELATIONS), (_PRIVATE, _DELIVERY_RELATIONS)}:
         raise _unavailable()
     qualifier = ", ".join(f'ONLY "{schema}"."{table}"' for table in names)
     mode = "SHARE ROW EXCLUSIVE" if schema == _PRIVATE else "SHARE UPDATE EXCLUSIVE"
@@ -138,7 +139,7 @@ async def _check_sender(session: AsyncSession, sender) -> None:
         raise _unavailable()
 
 
-async def _verify_frozen(session: AsyncSession, intent) -> None:
+async def _verify_frozen(session: AsyncSession, intent) -> list[tuple[int, str | None]]:
     count = intent["row_count"]
     records = (await session.execute(text(f"""
         WITH selected AS MATERIALIZED (
@@ -158,6 +159,7 @@ async def _verify_frozen(session: AsyncSession, intent) -> None:
     canonical = _normalize(SnapshotPublicationRow(id=str(key), caption=caption) for key, caption in rows)
     if canonical != rows or not hmac.compare_digest(_seal(rows), intent["payload_hash"]):
         raise _unavailable()
+    return canonical
 
 
 def _result(intent) -> SnapshotPublicationIntent:

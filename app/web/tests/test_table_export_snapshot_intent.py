@@ -1,6 +1,7 @@
 """Disposable sender PG tests: real frozen rows, replay, and atomic rollback."""
 
 from contextlib import ExitStack
+from datetime import datetime, timezone
 import importlib
 import os
 import unittest
@@ -15,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.web.core.config import snapshot_intent
 from app.web.services import table_export_snapshot_intent as intent
-from app.web.services.table_export_snapshot_publication import SnapshotPublicationHead
+from app.web.services import table_export_snapshot_delivery as delivery
+from app.web.services.table_export_snapshot_publication import SnapshotPublicationHead, SnapshotPublicationResult
 from app.web.services.table_export_snapshot_publication_receiver import SnapshotPublicationProfile
 
 _URL = os.getenv("ONTOLOGY_TABLE_EXPORT_TEST_URL")
@@ -34,9 +36,14 @@ class SnapshotIntentPGTests(unittest.IsolatedAsyncioTestCase):
         source_marker, private_marker, actor = uuid4(), uuid4(), uuid4()
         migration = importlib.import_module("app.web.alembic.versions.fb804e491f6d_ontology_private_snapshot_intent")
 
+        delivery_migration = importlib.import_module(
+            "app.web.alembic.versions.e57b4216c9a8_ontology_snapshot_intent_delivery_ledger"
+        )
+
         def provision(connection):
             with Operations.context(MigrationContext.configure(connection)):
                 migration.upgrade()
+                delivery_migration.upgrade()
 
         async with engine.begin() as db:
             await db.run_sync(provision)
@@ -63,6 +70,7 @@ class SnapshotIntentPGTests(unittest.IsolatedAsyncioTestCase):
             await db.execute(text("SET LOCAL search_path=pg_catalog,pg_temp"))
             source_proof = await intent.compute_snapshot_intent_source_proof(db)
             private_proof = await intent.compute_snapshot_intent_private_proof(db)
+            delivery_proof = await delivery.compute_snapshot_intent_delivery_proof(db)
         profile = SnapshotPublicationProfile(
             uuid4(), "127.0.0.1", (url.port or 5432) + 1,
             "sender_intent_provider_fixture", "receiver_writer", "dummy-test-only", uuid4(), "a"*64,
@@ -130,6 +138,65 @@ class SnapshotIntentPGTests(unittest.IsolatedAsyncioTestCase):
 
             completed = await freeze(request_id)
             self.assertEqual(completed.row_count, 1)
+            async with engine.connect() as db:
+                frozen_scope = await db.scalar(text(f"SELECT scope_digest FROM {_SCOPE}.intents"))
+                frozen_digest = await db.scalar(text(f"SELECT payload_hash FROM {_SCOPE}.intents"))
+            execute_grant = snapshot_intent.SnapshotDeliveryGrant(
+                intentId=completed.id, requestId=request_id, expectedPreviousGeneration=0, sourceMarker=source_marker,
+                privateMarker=private_marker, privateProofSha256=private_proof, scopeDigest=frozen_scope,
+                deliveryProofSha256=delivery_proof, configRevision=profile.config_revision,
+            )
+            receipt = SnapshotPublicationResult(
+                request_id=request_id, generation=1, previous_generation=0, row_count=1,
+                recorded_at=datetime.now(timezone.utc),
+            )
+
+            async def send(original, previous, payload, **params):
+                rows = list(payload)
+                self.assertEqual((original, previous, rows[0].caption), (request_id, 0, "fixture-original"))
+                async with engine.connect() as db:
+                    claim = (await db.execute(text(f"""
+                        SELECT request_id,payload_hash,receiver_generation FROM {_SCOPE}.deliveries
+                    """))).one()
+                self.assertEqual(tuple(claim), (request_id, frozen_digest, None))
+                raise OSError("receiver publication not confirmed")
+
+            async def confirm(original, previous, digest, **params):
+                self.assertEqual((original, previous, digest), (request_id, 0, frozen_digest))
+                return receipt
+
+            publish_once = AsyncMock(side_effect=send)
+            reconcile = AsyncMock(side_effect=OSError("no verified receipt"))
+            patches.enter_context(patch.object(delivery, "configured_snapshot_publication_profile", return_value=profile))
+            patches.enter_context(patch.object(delivery, "publish_snapshot", new=publish_once))
+            patches.enter_context(patch.object(delivery, "reconcile_snapshot", new=reconcile))
+
+            async def deliver():
+                async with AsyncSession(engine) as db:
+                    return await delivery.deliver_snapshot_publication_intent(
+                        db, actor_id=actor, intent_id=completed.id, request_id=request_id,
+                        expected_config_revision=profile.config_revision, expected_previous_generation=0,
+                    )
+
+            with self.assertRaises(delivery.SnapshotDeliveryUnavailable):
+                await deliver()
+            publish_once.assert_not_awaited()
+            patches.enter_context(patch.object(intent.settings, "TABLE_EXPORT_SNAPSHOT_DELIVERY_ENABLED", True))
+            patches.enter_context(patch.object(intent.settings, "TABLE_EXPORT_SNAPSHOT_DELIVERY_GRANTS", {actor: execute_grant}))
+            for _ in range(2):
+                with self.assertRaises(delivery.SnapshotDeliveryUnavailable):
+                    await deliver()
+            publish_once.assert_awaited_once()
+            reconcile.assert_awaited_once()
+            reconcile.side_effect = confirm
+            self.assertEqual(await deliver(), receipt)
+            self.assertEqual(await deliver(), receipt)
+            publish_once.assert_awaited_once()
+            self.assertEqual(reconcile.await_count, 3)
+            async with engine.connect() as db:
+                self.assertEqual((await db.execute(text(f"""
+                    SELECT receiver_generation,receiver_recorded_at,receiver_row_count FROM {_SCOPE}.deliveries
+                """))).one(), (1, receipt.recorded_at, 1))
             self.assertEqual(set(completed.model_dump()),
                              {"id", "created_at", "row_count", "config_revision", "expected_previous_generation"})
             async with engine.begin() as db:

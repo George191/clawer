@@ -22,7 +22,10 @@ from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TA
 from app.web.core.config import settings
 from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
 from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA, HANDOFF_PROTECTED_REGCLASSES
-from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PROTECTED_REGCLASSES
+from app.web.services.snapshot_intent_scope import (
+    SNAPSHOT_INTENT_DELIVERY_REGCLASS, SNAPSHOT_INTENT_FROZEN_REGCLASSES,
+    SNAPSHOT_INTENT_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PROTECTED_REGCLASSES,
+)
 from app.web.services.postgres_sync_source import read_batch_sync_snapshot, review_batch_source
 from app.web.services.data_connections import DataConnections
 from app.web.services.etl_layers import EtlLayers, _PUSH_APPLY_BINDING, _PUSH_APPLY_RECEIPTS
@@ -378,7 +381,7 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
 
         await migrate(migration.upgrade)
         self.addAsyncCleanup(self._write, f"DROP SCHEMA IF EXISTS {private} CASCADE")
-        for name in SNAPSHOT_INTENT_PROTECTED_REGCLASSES:
+        for name in SNAPSHOT_INTENT_FROZEN_REGCLASSES:
             self.assertEqual(await self.conn.fetchval(f"SELECT count(*) FROM {name}"), 0)
         await migrate(migration.downgrade)
         self.assertIsNone(await self.conn.fetchval("SELECT to_regnamespace($1)::text", private))
@@ -397,6 +400,58 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "Refusing"):
             await migrate(migration.downgrade)
         self.assertEqual(await self.conn.fetchval(f"SELECT count(*) FROM {private}.records"), 1)
+
+    async def test_delivery_admission_or_mirrored_receipt_blocks_downgrade(self):
+        ledger = import_module("app.web.alembic.versions.e57b4216c9a8_ontology_snapshot_intent_delivery_ledger")
+        private = SNAPSHOT_INTENT_PRIVATE_SCHEMA
+        qualified = SNAPSHOT_INTENT_DELIVERY_REGCLASS
+        await self._write(f"CREATE SCHEMA {private}")
+        self.addAsyncCleanup(self._write, f"DROP SCHEMA {private} CASCADE")
+
+        async def migrate(direction):
+            async with self.engine.begin() as connection:
+                def perform(sync):
+                    with Operations.context(MigrationContext.configure(sync)):
+                        direction()
+                await connection.run_sync(perform)
+
+        await migrate(ledger.upgrade)
+        await migrate(ledger.downgrade)
+        self.assertIsNone(await self.conn.fetchval("SELECT to_regclass($1)::text", qualified))
+        await migrate(ledger.upgrade)
+        await self._write(f"DROP TABLE {_QUALIFIED}")
+        self.assertEqual((await self.layers.query("SELECT 1 AS result"))["rows"], [{"result": 1}])
+        await self._write(f"""
+            INSERT INTO {qualified} (
+              intent_id,request_id,scope_digest,payload_hash,expected_previous_generation,
+              delivery_config_revision,execution_digest,row_count,admitted_at
+            ) VALUES (
+              gen_random_uuid(),gen_random_uuid(),repeat('a',64),repeat('b',64),3,
+              gen_random_uuid(),repeat('c',64),2,clock_timestamp()
+            )
+        """)
+        with self.assertRaisesRegex(RuntimeError, "Refusing"):
+            await migrate(ledger.downgrade)
+        with self.assertRaises(HTTPException) as raw:
+            await self.layers.query("SELECT 1")
+        self.assertEqual(raw.exception.status_code, 403)
+        for invalid in (
+            "receiver_generation=4",
+            "receiver_recorded_at=clock_timestamp()",
+            "receiver_row_count=2",
+            "receiver_generation=5, receiver_recorded_at=clock_timestamp(), receiver_row_count=2",
+            "receiver_generation=4, receiver_recorded_at='infinity', receiver_row_count=2",
+            "receiver_generation=4, receiver_recorded_at=clock_timestamp(), receiver_row_count=1",
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(asyncpg.CheckViolationError):
+                await self.conn.execute(f"UPDATE {qualified} SET {invalid}")
+        await self.conn.execute(f"""
+            UPDATE {qualified}
+            SET receiver_generation=4, receiver_recorded_at=clock_timestamp(), receiver_row_count=2
+        """)
+        with self.assertRaisesRegex(RuntimeError, "Refusing"):
+            await migrate(ledger.downgrade)
+        self.assertEqual(await self.conn.fetchval(f"SELECT receiver_generation FROM {qualified}"), 4)
 
     async def test_fixed_target_blocks_raw_even_without_acceptance_tables(self):
         with patch.object(settings, "PUSH_INBOX_SANDBOX_ENABLED", False):
