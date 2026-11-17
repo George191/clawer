@@ -229,6 +229,22 @@ async def compute_snapshot_publication_proof(connection: asyncpg.Connection) -> 
 
 async def verify_snapshot_publication_receiver(connection: asyncpg.Connection, profile: SnapshotPublicationProfile) -> None:
     await lock_snapshot_publication_relations(connection)
+    await recheck_snapshot_publication_receiver(connection, profile)
+
+
+async def lock_snapshot_publication_reconciliation(connection: asyncpg.Connection) -> None:
+    if (not connection.is_in_transaction()
+        or await connection.fetchval("SHOW transaction_read_only") != "on"
+        or await connection.fetchval("SHOW transaction_isolation") != "repeatable read"):
+        raise SnapshotPublicationReceiverUnavailable()
+    await connection.execute(
+        f"LOCK TABLE ONLY {_SCHEMA}.state, ONLY {_SCHEMA}.generations, ONLY {_SCHEMA}.records"
+        " IN ACCESS SHARE MODE NOWAIT"
+    )
+
+
+async def recheck_snapshot_publication_receiver(connection: asyncpg.Connection, profile: SnapshotPublicationProfile) -> None:
+    """Exact enrollment check under the caller's publication/reconciliation relation locks."""
     approved = await connection.fetchval("""
         SELECT current_database() = $1 AND current_user = $2 AND session_user = $2
           AND inet_server_addr() = $3::inet AND inet_server_port() = $4

@@ -17,6 +17,8 @@ from pydantic import BaseModel, ConfigDict
 from app.web.services.table_export_snapshot_publication_receiver import (
     SNAPSHOT_PUBLICATION_SCHEMA,
     configured_snapshot_publication_profile,
+    lock_snapshot_publication_reconciliation,
+    recheck_snapshot_publication_receiver,
     snapshot_publication_connection,
     verify_snapshot_publication_receiver,
 )
@@ -188,4 +190,53 @@ async def publish_snapshot(
         raise
     except Exception:
         # A timeout or transport failure across COMMIT may have left a durable result.
+        raise _unavailable() from None
+
+
+
+async def reconcile_snapshot(
+    request_id: UUID, expected_previous_generation: int, expected_payload_digest: str, *,
+    expected_config_revision: UUID, sender_port: int, sender_database: str, sender_username: str, sender_marker: UUID,
+) -> SnapshotPublicationResult:
+    """Confirm exact original durable publication without supplying values or granting resend.
+
+    Unknown/absent and denied outcomes intentionally have the same meaning: unconfirmed.
+    """
+    if (not isinstance(request_id, UUID) or request_id.version != 4
+        or type(expected_previous_generation) is not int or not 0 <= expected_previous_generation < _MAX_GENERATION
+        or not isinstance(expected_payload_digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_payload_digest, re.ASCII)):
+        raise _unavailable()
+    profile = configured_snapshot_publication_profile()
+    if profile is None or not isinstance(expected_config_revision, UUID) or profile.config_revision != expected_config_revision:
+        raise _unavailable()
+    try:
+        async with asyncio.timeout(5):
+            async with snapshot_publication_connection(
+                profile, sender_port=sender_port, sender_database=sender_database,
+                sender_username=sender_username, sender_marker=sender_marker,
+            ) as connection:
+                async with connection.transaction(isolation="repeatable_read", readonly=True):
+                    await connection.execute("SET LOCAL lock_timeout = '400ms'")
+                    await connection.execute("SET LOCAL statement_timeout = '750ms'")
+                    await lock_snapshot_publication_reconciliation(connection)
+                    await recheck_snapshot_publication_receiver(connection, profile)
+                    head = await connection.fetchval(f"""
+                        SELECT current_generation FROM ONLY {_SCOPE}.state WHERE singleton IS TRUE
+                    """)
+                    prior = await connection.fetchrow(f"""
+                        SELECT generation,previous_generation,payload_hash,row_count,recorded_at
+                        FROM ONLY {_SCOPE}.generations WHERE request_id=$1
+                    """, request_id)
+                    if (head is None or not 1 <= head <= _MAX_GENERATION or prior is None
+                        or not 1 <= prior["generation"] <= head):
+                        raise _unavailable()
+                    result = await _replay(connection, prior, request_id=request_id,
+                                           previous=expected_previous_generation, digest=expected_payload_digest)
+                    await recheck_snapshot_publication_receiver(connection, profile)
+                    if configured_snapshot_publication_profile() != profile:
+                        raise _unavailable()
+                return result
+    except Exception:
+        # No pointer, row, source, or reservation write, including on miss or uncertainty.
         raise _unavailable() from None

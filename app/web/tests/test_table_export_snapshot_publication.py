@@ -99,6 +99,19 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
                         ):
                             return await run_publish(request, previous, payload, deployed, revision)
 
+                    async def reconcile(request, previous, payload=rows, *, deployed=profile,
+                                        revision=None, digest=None):
+                        with (
+                            patch.object(service, "configured_snapshot_publication_profile", return_value=deployed),
+                            patch.object(provider, "configured_snapshot_publication_profile", return_value=deployed),
+                        ):
+                            return await service.reconcile_snapshot(
+                                request, previous, service._seal(service._normalize(payload)) if digest is None else digest,
+                                expected_config_revision=revision or deployed.config_revision, sender_port=port+1,
+                                sender_database="test_other_sender", sender_username="test_other_sender",
+                                sender_marker=uuid4(),
+                            )
+
                     with self.assertRaises(service.SnapshotPublicationUnavailable):
                         await publish(uuid4(), 0, revision=uuid4())
                     with self.assertRaises(service.SnapshotPublicationUnavailable):
@@ -158,17 +171,59 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
 
                     original = service.snapshot_publication_connection
 
-                    @asynccontextmanager
-                    async def lost_ack(*args, **kwargs):
-                        async with original(*args, **kwargs) as conn:
-                            yield conn
-                            raise OSError("fixture after actual COMMIT")
-
                     second_id = uuid4()
-                    with patch.object(service, "snapshot_publication_connection", new=lost_ack):
+                    uncommitted, release = asyncio.Event(), asyncio.Event()
+
+                    class HoldBeforeCommit:
+                        def __init__(self, connection):
+                            self.connection = connection
+
+                        def __getattr__(self, key):
+                            return getattr(self.connection, key)
+
+                        async def execute(self, sql, *args):
+                            result = await self.connection.execute(sql, *args)
+                            if sql.lstrip().startswith(f"UPDATE ONLY {_SCHEMA}.state"):
+                                uncommitted.set()
+                                await release.wait()
+                            return result
+
+                    @asynccontextmanager
+                    async def hold_then_lose_writer_ack(*args, **kwargs):
+                        async with original(*args, **kwargs) as conn:
+                            yield HoldBeforeCommit(conn)
+                            if asyncio.current_task() is writer:
+                                raise OSError("fixture after actual COMMIT")
+
+                    with patch.object(service, "snapshot_publication_connection", new=hold_then_lose_writer_ack):
+                        with (
+                            patch.object(service, "configured_snapshot_publication_profile", return_value=profile),
+                            patch.object(provider, "configured_snapshot_publication_profile", return_value=profile),
+                        ):
+                            writer = asyncio.create_task(run_publish(second_id, 1, rows[:1], profile))
+                            try:
+                                await asyncio.wait_for(uncommitted.wait(), 2)
+                                with self.assertRaises(service.SnapshotPublicationUnavailable):
+                                    await reconcile(second_id, 1, rows[:1])
+                                self.assertEqual(await reconcile(request, 0), first)
+                            finally:
+                                release.set()
+                                with self.assertRaises(service.SnapshotPublicationUnavailable):
+                                    await writer
+                    second = await reconcile(second_id, 1, rows[:1])
+                    self.assertEqual(await publish(second_id, 1, rows[:1]), second)
+                    for request_to_verify in (
+                        reconcile(uuid4(), 1), reconcile(second_id, 0, rows[:1]), reconcile(second_id, 1),
+                        reconcile(second_id, 1, rows[:1], digest="A"*64),
+                        reconcile(second_id, 1, rows[:1], revision=uuid4()),
+                        reconcile(second_id, 1, rows[:1], deployed=replace(profile, marker=uuid4())),
+                    ):
+                        with self.assertRaisesRegex(service.SnapshotPublicationUnavailable, "unconfirmed"):
+                            await request_to_verify
+                    async with data.transaction():
+                        await data.execute(f"LOCK TABLE {_SCHEMA}.records IN ACCESS EXCLUSIVE MODE")
                         with self.assertRaises(service.SnapshotPublicationUnavailable):
-                            await publish(second_id, 1, rows[:1])
-                    second = await publish(second_id, 1, rows[:1])
+                            await reconcile(second_id, 1, rows[:1])
                     self.assertEqual(second.generation, 2)
                     self.assertEqual(await publish(request, 0, list(reversed(rows))), first)
                     self.assertEqual(await data.fetchval(f"SELECT current_generation FROM {_SCHEMA}.state"), 2)
@@ -178,9 +233,15 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
                         await publish(uuid4(), 16)
                     self.assertEqual(await publish(request, 0), first)
                     self.assertEqual(await data.fetchval(f"SELECT count(*) FROM {_SCHEMA}.generations"), 16)
+                    self.assertEqual(await reconcile(request, 0), first)
                     await data.execute(f"UPDATE {_SCHEMA}.records SET caption='tampered' WHERE generation=1")
                     with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await reconcile(request, 0)
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
                         await publish(request, 0)
+                    await data.execute(f"REINDEX INDEX {_SCHEMA}.records_pkey")
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await reconcile(second_id, 1, rows[:1])
                     self.assertEqual(await data.fetchval(f"SELECT current_generation FROM {_SCHEMA}.state"), 16)
             finally:
                 await admin.execute(f"DROP DATABASE IF EXISTS {database} WITH (FORCE)")
