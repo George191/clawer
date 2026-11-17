@@ -221,6 +221,7 @@ class HttpClient:
                     task_id, adapter_name, exclude_proxy_url=exclude_proxy_url,
                 )
                 if not proxy_url:
+                    await asyncio.sleep(0)
                     raise ProxyError("The template requires an available exit proxy")
                 self._leased_proxies[task_id] = proxy_url
                 self._last_proxy_urls[task_id] = proxy_url
