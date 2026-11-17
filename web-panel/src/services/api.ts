@@ -1228,11 +1228,14 @@ export const fetchObservedTableLineage = (source: TableLineageIdentity, directio
 
 export type PreviewIndexCoverageOperator = 'eq' | 'lt' | 'lte' | 'gt' | 'gte' | 'between';
 export type PreviewIndexCoverageState = 'candidate' | 'no_candidate' | 'unsupported' | 'unavailable';
+export type PreviewIndexCoverageTerm = { field: string; operator: PreviewIndexCoverageOperator };
+export type PreviewIndexCoverageInput = PreviewIndexCoverageTerm | { terms: PreviewIndexCoverageTerm[] };
 export const checkPreviewIndexCoverage = (
-  schema: string, table: string, request: { field: string; operator: PreviewIndexCoverageOperator }, signal?: AbortSignal,
+  schema: string, table: string, request: PreviewIndexCoverageInput, signal?: AbortSignal,
 ): Promise<{ state: PreviewIndexCoverageState }> =>
   client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview-index-coverage`,
-    { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
+    'terms' in request ? { terms: request.terms.map(({ field, operator }) => ({ field, operator })) } :
+      { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
 
 export type IndexedIdSamplePredicate = { idEquals: string } | { idFrom: string; idTo: string };
 export type IndexedIdSampleCapability = { available: boolean; keyColumn?: string; limit: 20 };

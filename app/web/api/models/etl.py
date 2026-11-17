@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 PREVIEW_ROWS_MAX_LIMIT = 100
@@ -67,6 +67,25 @@ class PreviewIndexCoverageRequest(BaseModel):
 
     field: str = Field(strict=True, pattern=r"^[a-z_][a-z0-9_]{0,62}$")
     operator: Literal["eq", "lt", "lte", "gt", "gte", "between"]
+
+
+class PreviewCompositeIndexCoverageRequest(BaseModel):
+    """Two or three equality terms, with at most one term using a range."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    terms: list[PreviewIndexCoverageRequest] = Field(strict=True, min_length=2, max_length=3)
+
+    @model_validator(mode="after")
+    def distinct_filter_columns(self):
+        if len({term.field for term in self.terms}) != len(self.terms):
+            raise ValueError("Use distinct filter fields")
+        if sum(term.operator != "eq" for term in self.terms) > 1:
+            raise ValueError("Use at most one range filter")
+        return self
+
+
+PreviewIndexCoverageInput = PreviewIndexCoverageRequest | PreviewCompositeIndexCoverageRequest
 
 
 class PreviewIndexCoverage(BaseModel):

@@ -13,7 +13,7 @@ from sqlalchemy.engine import make_url
 from app.etl.schema import ontology
 from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL_STATEMENTS
 from app.storage.postgres_client import PostgresClient
-from app.web.api.models.etl import PreviewIndexCoverageRequest
+from app.web.api.models.etl import PreviewCompositeIndexCoverageRequest, PreviewIndexCoverageRequest
 from app.web.api.models.indexed_id_sample import IndexedSampleRequest
 from app.web.core.config import settings
 from app.web.core.config.indexed_sample import IndexedSampleScope
@@ -205,6 +205,62 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 await probe("id", table=name)
             self.assertEqual((error.exception.status_code, error.exception.detail),
                              (404, "Table does not exist in this schema"))
+
+    async def test_composite_index_coverage_requires_one_native_ordered_prefix_after_acl(self):
+        role = "helio_compound_coverage_" + uuid4().hex[:12]
+        async with self.pg.session() as session:
+            for sql in (
+                f"""CREATE TABLE {SCHEMA}.shapes (
+                    a bigint, b date, c timestamptz, payload int, separate int,
+                    partial_one int, partial_two int, expr_one int, expr_two int, invalid_order int,
+                    kind text
+                )""",
+                f"CREATE INDEX ON {SCHEMA}.shapes (a, b DESC, c, invalid_order) INCLUDE (payload)",
+                f"CREATE INDEX ON {SCHEMA}.shapes (separate)",
+                f"CREATE INDEX ON {SCHEMA}.shapes (partial_one, partial_two) WHERE partial_one > 0",
+                f"CREATE INDEX ON {SCHEMA}.shapes (expr_one, (expr_two + 1))",
+                f"CREATE INDEX ON {SCHEMA}.shapes USING hash (expr_two)",
+                f"CREATE INDEX ON {SCHEMA}.shapes (expr_one, expr_two, (separate + 1))",
+                f"CREATE ROLE {role} NOLOGIN",
+                f"GRANT SELECT ON public.ontology_objects TO {role}",
+                f"GRANT USAGE ON SCHEMA {SCHEMA} TO {role}",
+                f"GRANT SELECT (a, b, kind) ON {SCHEMA}.shapes TO {role}",
+            ):
+                await session.execute(text(sql))
+
+        async def cleanup():
+            await self.pg.execute(f"DROP OWNED BY {role}")
+            await self.pg.execute(f"DROP ROLE {role}")
+
+        self.addAsyncCleanup(cleanup)
+
+        async def probe(*terms, reader=False):
+            payload = PreviewCompositeIndexCoverageRequest(terms=[
+                PreviewIndexCoverageRequest(field=field, operator=operator) for field, operator in terms
+            ])
+            async with self.pg.session() as session:
+                if reader:
+                    await session.execute(text(f"SET LOCAL ROLE {role}"))
+                return (await preview_index_coverage(session, SCHEMA, "shapes", payload)).state
+
+        self.assertEqual(await probe(("b", "between"), ("a", "eq"), reader=True), "candidate")
+        self.assertEqual(await probe(("c", "lt"), ("a", "eq"), ("b", "eq")), "candidate")
+        self.assertEqual(await probe(("c", "eq"), ("b", "eq"), ("a", "eq")), "candidate")
+        for comparison in (
+            (("a", "gte"), ("b", "eq")), (("a", "eq"), ("c", "eq")),
+            (("a", "eq"), ("b", "eq"), ("payload", "eq")),
+            (("a", "eq"), ("b", "eq"), ("invalid_order", "eq")),
+            (("a", "eq"), ("separate", "eq")), (("partial_one", "eq"), ("partial_two", "eq")),
+            (("expr_one", "eq"), ("expr_two", "eq")),
+        ):
+            self.assertEqual(await probe(*comparison), "no_candidate", comparison)
+        self.assertEqual(await probe(("a", "eq"), ("kind", "eq"), reader=True), "unsupported")
+        self.assertEqual(await probe(("c", "eq"), ("kind", "eq"), reader=True), "unavailable")
+        self.assertEqual(await probe(("a", "eq"), ("does_not_exist", "eq"), reader=True), "unavailable")
+        await self.pg.execute(f"REVOKE USAGE ON SCHEMA {SCHEMA} FROM {role}")
+        with self.assertRaises(HTTPException) as error:
+            await probe(("a", "eq"), ("b", "eq"), reader=True)
+        self.assertEqual(error.exception.status_code, 404)
 
     async def test_lineage_neighbors_are_direct_typed_visible_and_bounded(self):
         await self.workspace.create_table(SCHEMA, await self.relation_payload())

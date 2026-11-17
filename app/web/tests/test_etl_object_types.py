@@ -525,6 +525,14 @@ class ObjectRouteTests(unittest.TestCase):
                 {"field": "id", "operator": "in"},
                 {"field": "id OR TRUE", "operator": "eq"},
                 {"field": "id", "operator": "eq", "sort": "ASC"},
+                {"terms": [{"field": "id", "operator": "eq"}]},
+                {"terms": [{"field": field, "operator": "eq"} for field in ("a", "b", "c", "d")]},
+                {"terms": [{"field": "id", "operator": "eq"}, {"field": "id", "operator": "lt"}]},
+                {"terms": [{"field": "id", "operator": "lt"}, {"field": "day", "operator": "between"}]},
+                {"terms": [{"field": "id", "operator": "eq"}, {"field": "day", "operator": "eq", "value": "x"}]},
+                {"terms": [{"field": "id", "operator": "eq"}, {"terms": [{"field": "day", "operator": "eq"}]}]},
+                {"field": "id", "operator": "eq",
+                 "terms": [{"field": "id", "operator": "eq"}, {"field": "day", "operator": "eq"}]},
             ):
                 self.assertEqual(self.client.post(url, json=data).status_code, 422)
             self.assertEqual(self.client.post(url + "?value=3", json={"field": "id", "operator": "eq"}).status_code, 422)
@@ -533,6 +541,10 @@ class ObjectRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json(), {"state": "candidate"})
             self.assertEqual(response.headers["cache-control"], "no-store")
+            composite = self.client.post(url, json={
+                "terms": [{"field": "day", "operator": "between"}, {"field": "id", "operator": "eq"}],
+            })
+            self.assertEqual((composite.status_code, composite.json()), (200, {"state": "candidate"}))
 
     def test_column_lineage_query_requires_one_canonical_field_and_direction(self):
         url = "/api/v1/etl/ts_ods/objects/lineage-column-references"

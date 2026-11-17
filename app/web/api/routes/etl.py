@@ -70,7 +70,7 @@ from app.web.api.models.etl import (
     OffsetUpdate,
     ObjectVisibility,
     PreviewIndexCoverage,
-    PreviewIndexCoverageRequest,
+    PreviewIndexCoverageInput,
     PreviewRowsQuery,
     SqlQuery,
 )
@@ -1080,11 +1080,11 @@ async def post_indexed_id_sample(
 
 @read.post("/{schema}/{table}/preview-index-coverage")
 async def get_preview_index_coverage(
-    schema: WarehouseSchema, table: TableName, payload: PreviewIndexCoverageRequest, request: Request, response: Response,
+    schema: WarehouseSchema, table: TableName, payload: PreviewIndexCoverageInput, request: Request, response: Response,
     session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
 ) -> PreviewIndexCoverage:
     if request.query_params:
-        raise HTTPException(422, "Index coverage accepts only the field and operator body")
+        raise HTTPException(422, "Index coverage accepts only a filter shape in the body")
     response.headers["Cache-Control"] = "no-store"
     return await preview_index_coverage(session, schema, table, payload)
 
