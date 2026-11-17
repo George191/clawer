@@ -118,6 +118,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.upstream_migration = import_module("app.web.alembic.versions.5bef50bc72c9_ontology_transfer_upstream")
         self.compound_migration = import_module("app.web.alembic.versions.b6c45a7e9130_ontology_compound_upstream")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
+        self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
         async with self.pg.session() as session:
             for sql in (
                 "CREATE SCHEMA ts_rds", "CREATE SCHEMA ts_ods", "CREATE SCHEMA ts_meta",
@@ -139,6 +140,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.upstream_migration.upgrade)
             await self.migrate(session, self.compound_migration.upgrade)
             await self.migrate(session, self.freshness_migration.upgrade)
+            await self.migrate(session, self.quality_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -151,6 +153,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def drop_fixtures(self):
         async with self.pg.session() as session:
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_transitions, "
+                                       "public.ontology_asset_quality_observations"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_freshness_transitions, "
                                        "public.ontology_asset_freshness_policies"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedule_jobs"))
@@ -269,6 +273,90 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(paused.status_code, 200, paused.text)
                         assert_state(paused.json(), "paused")
 
+    async def test_quality_checks_capture_reviewed_schema_and_measure_only_main_heap(self):
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.quality_source (id int PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.quality_target (id int, tag varchar(10), "
+                "description text DEFAULT 'test_default_never_exposed', PRIMARY KEY (tag, id))",
+            ):
+                await session.execute(text(sql))
+        config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                  "sourceTable": "quality_source", "targetTable": "quality_target", "writeMode": "upsert"}
+        route = "/etl/asset-freshness/ts_transfer_sandbox/quality_target"
+
+        async def check(now):
+            async with self.pg.session() as session:
+                return await evaluate_due_asset_freshness(session, now=now)
+
+        with (patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+              patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+              patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+              patch.object(settings, "ENVIRONMENT", "local")):
+            async with api(True, self.session_provider) as client:
+                plan = (await client.post(RUNS, json=config)).json()
+                binding = {"planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"],
+                           "expectedGeneration": None, "thresholdMinutes": 5, "enabled": True,
+                           "schemaCheckEnabled": True, "heapSize": {"maxBytes": "0"}}
+                for bounds in ({"minBytes": "2", "maxBytes": "1"},
+                               {"maxBytes": "9223372036854775808"}, {"maxBytes": 0}):
+                    self.assertEqual((await client.put(route, json={**binding, "heapSize": bounds})).status_code, 422)
+                saved = await client.put(route, json=binding)
+                self.assertEqual(saved.status_code, 200, saved.text)
+                self.assertIsNone(saved.json()["policy"]["schemaBaseline"])
+                self.assertEqual(saved.json()["policy"]["heapSize"]["maxBytes"], "0")
+                preview_route = route + "/schema-baseline/preview"
+                baseline_route = route + "/schema-baseline"
+                response = await client.post(preview_route, json={"expectedGeneration": 1})
+                self.assertEqual(response.status_code, 200, response.text)
+                preview = response.json()
+                self.assertEqual([column["name"] for column in preview["columns"]], ["id", "tag", "description"])
+                self.assertEqual([column["primaryKeyPosition"] for column in preview["columns"]], [2, 1, None])
+                self.assertEqual(preview["columns"][1]["type"], "character varying(10)")
+                self.assertNotIn("test_default_never_exposed", response.text)
+                await self.pg.execute("ALTER TABLE ts_transfer_sandbox.quality_target ADD COLUMN extra int")
+                rejected = await client.post(baseline_route, json={
+                    "expectedGeneration": 1, "expectedFingerprint": preview["fingerprint"],
+                })
+                self.assertEqual(rejected.status_code, 409, rejected.text)
+                self.assertIsNone((await client.get(route)).json()["policy"]["schemaBaseline"])
+                preview = (await client.post(preview_route, json={"expectedGeneration": 1})).json()
+                captured = await client.post(baseline_route, json={
+                    "expectedGeneration": 1, "expectedFingerprint": preview["fingerprint"],
+                })
+                self.assertEqual(captured.status_code, 200, captured.text)
+                self.assertEqual(captured.json()["policy"]["generation"], 2)
+                self.assertEqual(captured.json()["policy"]["schemaBaseline"]["fingerprint"], preview["fingerprint"])
+                tick = datetime.now(timezone.utc)
+                self.assertEqual((await check(tick))["checked"], 1)
+                with patch("app.web.services.asset_freshness._utc_now", return_value=tick):
+                    states = (await client.get(route)).json()["checks"]
+                    self.assertEqual((states["schema"]["state"], states["heapSize"]["heapBytes"]), ("healthy", "0"))
+                await self.pg.execute("ALTER TABLE ts_transfer_sandbox.quality_target ALTER COLUMN extra SET NOT NULL")
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.quality_target(id, tag, extra) VALUES (1, 'x', 1)")
+                late = tick + timedelta(minutes=1)
+                self.assertEqual((await check(late))["checked"], 1)
+                size = await self.pg.fetch_one(
+                    "SELECT pg_relation_size('ts_transfer_sandbox.quality_target', 'main') AS bytes",
+                )
+                with patch("app.web.services.asset_freshness._utc_now", return_value=late):
+                    states = (await client.get(route)).json()["checks"]
+                    self.assertEqual(states["schema"]["reason"], "schema_drift")
+                    self.assertEqual(states["heapSize"]["reason"], "above_maximum")
+                    self.assertEqual(states["heapSize"]["heapBytes"], str(size["bytes"]))
+                    self.assertEqual(len(states["schema"]["history"]), 2)
+                with patch("app.web.services.asset_freshness._utc_now", return_value=late + timedelta(minutes=4)):
+                    states = (await client.get(route)).json()["checks"]
+                    self.assertEqual(states["schema"]["reason"], "evaluation_stale")
+                    self.assertIsNone(states["heapSize"]["heapBytes"])
+                ordinary = {k: v for k, v in binding.items() if k not in ("schemaCheckEnabled", "heapSize")}
+                saved = await client.put(route, json={**ordinary, "expectedGeneration": 2, "thresholdMinutes": 6})
+                self.assertEqual(saved.status_code, 200, saved.text)
+                self.assertEqual(saved.json()["policy"]["schemaBaseline"]["fingerprint"], preview["fingerprint"])
+                self.assertEqual(saved.json()["policy"]["heapSize"]["maxBytes"], "0")
+                self.assertEqual(saved.json()["checks"]["schema"]["state"], "not_checked")
+
     async def test_sandbox_data_and_receipt_commit_together_without_duplicate_replay(self):
         async with self.pg.session() as session:
             for sql in (
@@ -376,6 +464,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.quality_migration.downgrade)
             await self.migrate(session, self.freshness_migration.downgrade)
             await self.migrate(session, self.compound_migration.downgrade)
             await self.migrate(session, self.upstream_migration.downgrade)

@@ -10,6 +10,7 @@ from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.models.asset_freshness import (
     AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse,
+    AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
 from app.web.api.models.batch_syncs import (
     BatchSyncAttempt, BatchSyncCapabilities, BatchSyncPayload, BatchSyncPlan, BatchSyncReceipt, BatchSyncRunRequest,
@@ -43,7 +44,10 @@ from app.web.api.models.transfer_plans import (
 from app.web.api.models.transfer_schedules import (
     TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleSummary,
 )
-from app.web.services.asset_freshness import get_asset_freshness, get_asset_freshness_candidates, put_asset_freshness
+from app.web.services.asset_freshness import (
+    capture_schema_baseline, get_asset_freshness, get_asset_freshness_candidates,
+    preview_schema_baseline, put_asset_freshness,
+)
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_syncs import (
     batch_sync_capabilities, list_batch_sync_attempts, list_batch_sync_runs, list_batch_syncs, run_batch_sync, save_batch_sync,
@@ -94,6 +98,22 @@ async def write_freshness(
 ) -> AssetFreshnessResponse:
     """Version or pause the one exact-target check."""
     return await put_asset_freshness(session, schema, table, payload)
+
+
+@write.post("/asset-freshness/{schema}/{table}/schema-baseline/preview")
+async def preview_freshness_schema_baseline(
+    schema: WarehouseSchema, table: TableName, payload: AssetSchemaPreviewRequest, session: SessionDep,
+) -> AssetSchemaPreview:
+    """Preview bounded eligible table metadata without changing the baseline."""
+    return await preview_schema_baseline(session, schema, table, payload)
+
+
+@write.post("/asset-freshness/{schema}/{table}/schema-baseline")
+async def capture_freshness_schema_baseline(
+    schema: WarehouseSchema, table: TableName, payload: AssetSchemaCaptureRequest, session: SessionDep,
+) -> AssetFreshnessResponse:
+    """Capture a metadata snapshot explicitly reviewed by an administrator."""
+    return await capture_schema_baseline(session, schema, table, payload)
 
 
 @router.get("/published/{token}")

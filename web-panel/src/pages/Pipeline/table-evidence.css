@@ -53,3 +53,14 @@
 }
 .flow-evidence-freshness-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .flow-evidence-freshness summary { cursor: pointer; color: var(--ontology-text); font-size: 12px; }
+.flow-evidence-quality-checks { display: grid; gap: 10px; min-width: 0; }
+.flow-evidence-quality-checks > section { display: grid; gap: 7px; min-width: 0; border-top: 1px solid var(--ontology-border); padding-top: 8px; }
+.flow-evidence-quality-checks h5 { margin: 0; font-size: 12px; }
+.flow-evidence-quality-result { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.flow-evidence-quality-result span { color: var(--ontology-muted); font-size: 11px; }
+.flow-evidence-freshness-form label.flow-evidence-quality-toggle { display: flex; align-items: center; gap: 6px; }
+.flow-evidence-quality-bounds { display: grid; gap: 6px; }
+.flow-evidence-quality-columns { overflow: auto; }
+.flow-evidence-quality-columns table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.flow-evidence-quality-columns caption { text-align: left; }
+.flow-evidence-quality-columns :is(td, th) { text-align: left; vertical-align: top; padding: 5px; overflow-wrap: anywhere; border-bottom: 1px solid var(--ontology-border); }

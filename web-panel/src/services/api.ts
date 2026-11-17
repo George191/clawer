@@ -430,15 +430,36 @@ type AssetFreshnessAssessment = {
   receiptRecordedAt: string | null;
   receiptId: string | null;
 };
+export type AssetHeapBounds = { minBytes: string | null; maxBytes: string | null };
+export type AssetSchemaColumn = {
+  name: string; type: string; typmod: number; nullable: boolean; primaryKeyPosition: number | null;
+};
+export type AssetSchemaPreview = { fingerprint: string; columns: AssetSchemaColumn[] };
+export type AssetQualityResult = {
+  state: 'not_configured' | 'not_checked' | 'healthy' | 'unhealthy' | 'unknown' | 'paused';
+  reason: string | null;
+  checkedAt: string | null;
+  validUntil: string | null;
+  heapBytes: string | null;
+};
+export type AssetQualityCheck = AssetQualityResult & {
+  history: (Omit<AssetQualityResult, 'validUntil'> & { id: string; generation: number })[];
+};
 export type AssetFreshness = {
   available: boolean;
-  policy: { planId: string; planUpdatedAt: string; thresholdMinutes: number; enabled: boolean; generation: number; updatedAt: string } | null;
+  policy: {
+    planId: string; planUpdatedAt: string; thresholdMinutes: number; enabled: boolean; generation: number; updatedAt: string;
+    schemaCheckEnabled: boolean; heapSize: AssetHeapBounds | null;
+    schemaBaseline: (AssetSchemaPreview & { capturedAt: string }) | null;
+  } | null;
   assessment: AssetFreshnessAssessment;
   history: (AssetFreshnessAssessment & { id: string; generation: number })[];
+  checks: { schema: AssetQualityCheck; heapSize: AssetQualityCheck };
 };
 export type AssetFreshnessCandidate = { id: string; name: string; updatedAt: string };
 export type AssetFreshnessChange = {
   planId: string; expectedPlanUpdatedAt: string; expectedGeneration: number | null; thresholdMinutes: number; enabled: boolean;
+  schemaCheckEnabled?: boolean; heapSize?: AssetHeapBounds | null;
 };
 const assetFreshnessPath = (schema: string, table: string) =>
   `/etl/asset-freshness/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`;
@@ -448,6 +469,10 @@ export const fetchAssetFreshnessCandidates = (schema: string, table: string, sig
   client.get(`${assetFreshnessPath(schema, table)}/candidates`, { signal }).then((r) => unwrap<AssetFreshnessCandidate[]>(r.data));
 export const updateAssetFreshness = (schema: string, table: string, request: AssetFreshnessChange): Promise<AssetFreshness> =>
   client.put(assetFreshnessPath(schema, table), request).then((r) => unwrap<AssetFreshness>(r.data));
+export const previewAssetSchemaBaseline = (schema: string, table: string, expectedGeneration: number, signal?: AbortSignal): Promise<AssetSchemaPreview> =>
+  client.post(`${assetFreshnessPath(schema, table)}/schema-baseline/preview`, { expectedGeneration }, { signal }).then((r) => unwrap<AssetSchemaPreview>(r.data));
+export const captureAssetSchemaBaseline = (schema: string, table: string, expectedGeneration: number, expectedFingerprint: string): Promise<AssetFreshness> =>
+  client.post(`${assetFreshnessPath(schema, table)}/schema-baseline`, { expectedGeneration, expectedFingerprint }).then((r) => unwrap<AssetFreshness>(r.data));
 
 export const fetchTableData = (
   layer: string,

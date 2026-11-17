@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Input, Modal } from '@/components/ui';
-import { fetchAssetFreshness, fetchAssetFreshnessCandidates, updateAssetFreshness } from '../../services/api';
-import type { AssetFreshness, AssetFreshnessCandidate, AssetFreshnessChange } from '../../services/api';
+import { captureAssetSchemaBaseline, fetchAssetFreshness, fetchAssetFreshnessCandidates, previewAssetSchemaBaseline, updateAssetFreshness } from '../../services/api';
+import type { AssetFreshness, AssetFreshnessCandidate, AssetFreshnessChange, AssetSchemaPreview } from '../../services/api';
+import ExplorerAssetQualityChecks, { AssetSchemaColumns, qualityBounds, readQualityDraft } from './ExplorerAssetQualityChecks';
 
 const stateLabels: Record<AssetFreshness['assessment']['state'], string> = {
   not_configured: 'Not configured',
@@ -30,11 +31,13 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
   const [candidates, setCandidates] = useState<AssetFreshnessCandidate[]>();
   const [planId, setPlanId] = useState('');
   const [minutes, setMinutes] = useState('60');
+  const [quality, setQuality] = useState(() => readQualityDraft(null));
   const [failed, setFailed] = useState(false);
   const [candidateFailed, setCandidateFailed] = useState(false);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const [request, setRequest] = useState<AssetFreshnessChange>();
+  const [baselineReview, setBaselineReview] = useState<{ generation: number; preview: AssetSchemaPreview }>();
   const [busy, setBusy] = useState(false);
   const [expiredAssessment, setExpiredAssessment] = useState<AssetFreshness['assessment']>();
   const mounted = useRef(false);
@@ -49,6 +52,7 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
       setSnapshot(value);
       setPlanId(value.policy?.planId ?? '');
       setMinutes(String(value.policy?.thresholdMinutes ?? 60));
+      setQuality(readQualityDraft(value.policy));
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     void fetchAssetFreshnessCandidates(schema, table, controller.signal)
       .then(value => { if (!controller.signal.aborted) setCandidates(value); })
@@ -77,12 +81,15 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
   const selected = candidates?.find(item => item.id === planId);
   const threshold = Number(minutes);
   const validThreshold = /^\d+$/.test(minutes) && threshold >= minMinutes && threshold <= maxMinutes;
+  const heap = qualityBounds(quality);
+  const canReview = Boolean(snapshot?.available && policy?.enabled && policy.schemaCheckEnabled && quality.schema && planId === policy.planId);
   const choose = (enabled: boolean) => {
     if (!snapshot || pending.current) return;
     if (enabled) {
-      if (!snapshot.available || !selected || !validThreshold) return;
+      if (!snapshot.available || !selected || !validThreshold || !heap.valid) return;
       setRequest({ planId: selected.id, expectedPlanUpdatedAt: selected.updatedAt,
-        expectedGeneration: policy?.generation ?? null, thresholdMinutes: threshold, enabled });
+        expectedGeneration: policy?.generation ?? null, thresholdMinutes: threshold, enabled,
+        schemaCheckEnabled: quality.schema, heapSize: heap.value });
     } else if (policy?.enabled) {
       setRequest({ planId: policy.planId, expectedPlanUpdatedAt: policy.planUpdatedAt,
         expectedGeneration: policy.generation, thresholdMinutes: policy.thresholdMinutes, enabled });
@@ -98,6 +105,7 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
         setSnapshot(result);
         setPlanId(result.policy?.planId ?? '');
         setMinutes(String(result.policy?.thresholdMinutes ?? 60));
+        setQuality(readQualityDraft(result.policy));
       }
     } catch (failure) {
       if (mounted.current) {
@@ -109,6 +117,38 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
     } finally {
       pending.current = false;
       if (mounted.current) { setBusy(false); setRequest(undefined); }
+    }
+  };
+  const reviewSchema = async () => {
+    if (!canReview || !policy || pending.current) return;
+    pending.current = true; setBusy(true); setError('');
+    try {
+      const preview = await previewAssetSchemaBaseline(schema, table, policy.generation);
+      if (mounted.current) setBaselineReview({ generation: policy.generation, preview });
+    } catch {
+      if (mounted.current) {
+        setError('The current schema could not be verified. Review the refreshed policy before retrying.');
+        setRevision(value => value + 1);
+      }
+    } finally {
+      pending.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
+  const captureSchema = async () => {
+    if (!baselineReview || pending.current) return;
+    pending.current = true; setBusy(true); setError('');
+    try {
+      const result = await captureAssetSchemaBaseline(schema, table, baselineReview.generation, baselineReview.preview.fingerprint);
+      if (mounted.current) setSnapshot(result);
+    } catch {
+      if (mounted.current) {
+        setError('The schema baseline was not changed. Review the refreshed policy and schema before retrying.');
+        setRevision(value => value + 1);
+      }
+    } finally {
+      pending.current = false;
+      if (mounted.current) { setBusy(false); setBaselineReview(undefined); }
     }
   };
 
@@ -140,8 +180,9 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
             <Input aria-label="Threshold in minutes" type="number" min={minMinutes} max={maxMinutes} step={1}
               value={minutes} onChange={event => setMinutes(event.target.value)} disabled={busy || !snapshot.available} />
           </label>
+          <ExplorerAssetQualityChecks snapshot={snapshot} draft={quality} onDraft={setQuality} onReview={reviewSchema} busy={busy} canReview={canReview} />
           <div className="flow-evidence-freshness-actions">
-            <Button size="small" disabled={busy || !snapshot.available || !validThreshold || !selected}
+            <Button size="small" disabled={busy || !snapshot.available || !validThreshold || !selected || !heap.valid}
               onClick={() => choose(true)}>{policy && !policy.enabled ? 'Resume freshness check' : 'Save freshness check'}</Button>
             {policy?.enabled && <Button size="small" disabled={busy} onClick={() => choose(false)}>Pause freshness check</Button>}
           </div>
@@ -165,10 +206,19 @@ export default function ExplorerAssetFreshness({ schema, table, version }: { sch
       title={request?.enabled ? 'Save transfer freshness check?' : 'Pause transfer freshness check?'}
       onCancel={() => { if (!busy) setRequest(undefined); }} onOk={submit} confirmLoading={busy}
       okText={request?.enabled ? 'Confirm save check' : 'Confirm pause check'}>
-      {request?.enabled ? <p>Evaluate confirmed writes from <strong>{selected?.name}</strong> for
+      {request?.enabled ? <><p>Evaluate confirmed writes from <strong>{selected?.name}</strong> for
         <code> {schema}.{table}</code> with a threshold of <strong>{request.thresholdMinutes} minutes</strong>.
-        Saving a check does not start a transfer or write to this table.</p> : <p>Pause future freshness evaluations.
+        Saving a check does not start a transfer or write to this table.</p><p>Schema check {request.schemaCheckEnabled ? 'enabled' : 'disabled'}; heap size check {request.heapSize ? 'enabled' : 'disabled'}.
+        Saving the policy does not capture or replace a reviewed schema baseline.</p></> : <p>Pause future evaluations for this policy.
         This preserves the check history and does not change transfers or data.</p>}
+    </Modal>
+    <Modal open={Boolean(baselineReview)} destroyOnHidden className="flow-surface-modal"
+      title="Capture reviewed schema baseline?" onCancel={() => { if (!busy) setBaselineReview(undefined); }}
+      onOk={captureSchema} confirmLoading={busy} okText="Confirm capture baseline">
+      {baselineReview && <>
+        <p>Review the exact catalog metadata for <code>{schema}.{table}</code>. Confirming saves this as the expected schema and replaces the previous baseline, if any.</p>
+        <AssetSchemaColumns columns={baselineReview.preview.columns} />
+      </>}
     </Modal>
   </section>;
 }

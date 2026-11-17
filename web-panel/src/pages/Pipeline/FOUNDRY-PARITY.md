@@ -12,7 +12,7 @@
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；财报 Evidence 的声明路径不代表生产逐边验证。 | 先接表级运行证据。区分代码声明、配置草稿和已经观察到的执行，不能用草稿绘成已提交的血缘。 |
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有表级回执、通道历史、批量执行尝试和调度派发记录；未形成覆盖所有资产的 Build Timeline。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；未实现事务级历史与列分布统计等。 | 先接运行记录；大表筛选保留查询预算，统计不随页面请求扫描业务表。 |
-| 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度检查、阈值、未知/超期/恢复状态和历史。 | 验收通用 schema、规模、作业状态、数据字段新鲜度和可确认的告警，不用财报日期冒充同步时间。 |
+| 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值和独立结果历史。 | 验收通用 schema、逻辑数据规模、作业状态、数据字段新鲜度和可确认的告警，不用财报日期冒充同步时间。 |
 | 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分 / 缺失**。有 Handler 编辑和 dry-run，不是可视化数据转换；没有通用事务快照、历史对比或二分查找。 | 先把运行结果、配置版本和事务标识绑定；之后再评估可视化转换与历史快照，不从当前 PostgreSQL 表伪造旧版本。 |
 | 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执。 | 继续验收可配置资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
 
@@ -137,3 +137,9 @@
 - 对照 [Foundry Checks reference](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 的更新时间类检查。本轮配置的是「距上次已确认写入」，不是业务字段、源端或生产数据的通用新鲜度。仅在精确内部沙箱目标及绑定计划的审核版本下，由管理员保存阈值和启停。
 - 仅以当前物理目标的正数、已提交回执作为有效观测。没有可信回执、旧版本、表被重建或评估已滞后时显示未知，不能将旧回执补认成新物理表的更新。零行、派发、拒绝和结果未知不会刷新时间。界面区分回执记录时间、检查时间和阈值。
 - 复用现有 Automation 分钟任务在后台读取有界目录与索引内的回执，不扫描源或目标业务数据，不联系外部系统。验证进入超期、恢复、暂停、并发去重和最近状态变更；本轮不发送外部告警。
+
+### 结构基线与物理大小的验收口径
+
+- 参考 [Foundry Schema checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/#schema-checks) 的有序精确结构比较。在同一沙箱检查中独立配置结构规则：管理员明确确认当前版本后才保存基线，比较有序列名、PostgreSQL 类型与修饰符、可空性和主键顺序。调整其他阈值不得顺手接纳结构漂移；重新采集必须再次显示并校验被确认的目录版本。
+- 大小规则针对 PostgreSQL 主表数据文件字节数（不含索引及 TOAST），可设置区间。它不代表逻辑行数，也不和 Foundry 的通用数据集规模规则视为等价。后台只读取有界目录与存储元数据，不扫描业务行，不向外部发送告警。
+- 新鲜度、结构、大小分别展示正常、失败或未知及各自评估时间。停用、失去可信物理绑定、评估过期和目录不可核对，不得显示正常。验证精确结构漂移、显式重设、实际堆文件大小越界、并发记录去重，并保持原有写入新鲜度。

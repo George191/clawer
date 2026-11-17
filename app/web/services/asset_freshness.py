@@ -12,9 +12,13 @@ from app.storage.postgres_client import get_pg_client
 from app.web.api.models.asset_freshness import (
     AssetFreshnessAssessment, AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessPolicy,
     AssetFreshnessPolicyRow, AssetFreshnessResponse, AssetFreshnessTransition, AssetFreshnessTransitionRow,
+    AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
 from app.web.api.models.transfer_plans import TransferPlanRow, TransferRunRow
 from app.web.core.config import settings
+from app.web.services.asset_quality import (
+    captured_schema, enabled_heap, evaluate_asset_quality, read_quality_checks, read_schema_preview,
+)
 from app.web.services.transfer_runs import SANDBOX
 
 _BATCH_LIMIT = 25
@@ -85,15 +89,18 @@ async def get_asset_freshness(session: AsyncSession, schema: str, table: str) ->
     if row is None:
         return AssetFreshnessResponse(available=available,
                                       assessment=AssetFreshnessAssessment(state="not_configured"))
+    plan = await session.get(TransferPlanRow, row.plan_id, populate_existing=True)
+    context_reason = _drift(row, plan, identity) if flags else "checking_disabled"
+    now = _utc_now()
     policy = AssetFreshnessPolicy(planId=row.plan_id, planUpdatedAt=row.plan_updated_at,
                                   thresholdMinutes=row.threshold_minutes, enabled=row.enabled,
-                                  generation=row.generation, updatedAt=row.updated_at)
+                                  generation=row.generation, updatedAt=row.updated_at,
+                                  schemaCheckEnabled=row.schema_check_enabled,
+                                  schemaBaseline=captured_schema(row, context_reason), heapSize=enabled_heap(row))
     if not row.enabled:
         assessment = AssetFreshnessAssessment(state="paused")
     else:
-        plan = await session.get(TransferPlanRow, row.plan_id, populate_existing=True)
-        reason = _drift(row, plan, identity) if flags else "checking_disabled"
-        now = _utc_now()
+        reason = context_reason
         valid_until = row.checked_at + _STALE_AFTER if row.checked_at else None
         if row.state == "healthy" and row.receipt_recorded_at and valid_until:
             valid_until = min(valid_until, row.receipt_recorded_at + timedelta(minutes=row.threshold_minutes))
@@ -109,7 +116,9 @@ async def get_asset_freshness(session: AsyncSession, schema: str, table: str) ->
         .limit(_HISTORY_LIMIT))).all()
     history = [AssetFreshnessTransition(id=entry.id, generation=entry.generation, **_evidence(entry))
                for entry in history_rows]
-    return AssetFreshnessResponse(available=available, policy=policy, assessment=assessment, history=history)
+    checks = await read_quality_checks(session, row, context_reason, now)
+    return AssetFreshnessResponse(available=available, policy=policy, assessment=assessment,
+                                  history=history, checks=checks)
 
 
 async def get_asset_freshness_candidates(session: AsyncSession, schema: str, table: str) -> list[AssetFreshnessCandidate]:
@@ -129,9 +138,7 @@ async def put_asset_freshness(
 ) -> AssetFreshnessResponse:
     """Optimistically configure, resume or pause a fixed target's checker."""
     _check_schema(schema)
-    row = (await session.scalars(select(AssetFreshnessPolicyRow).where(
-        AssetFreshnessPolicyRow.target_table == table,
-    ).with_for_update().execution_options(populate_existing=True))).one_or_none()
+    row = await _lock_policy(session, table)
     if change.expectedGeneration != (row.generation if row else None):
         raise HTTPException(409, "The freshness policy changed; reload before updating it")
     now = _utc_now()
@@ -167,6 +174,12 @@ async def put_asset_freshness(
                       generation=row.generation + 1 if row else 1, threshold_minutes=change.thresholdMinutes,
                       updated_at=now, next_check_at=now, state="not_checked", reason=None,
                       checked_at=None, receipt_id=None, receipt_recorded_at=None)
+        if change.schemaCheckEnabled is not None:
+            values["schema_check_enabled"] = change.schemaCheckEnabled
+        if "heapSize" in change.model_fields_set:
+            bounds = change.heapSize
+            values["heap_min_bytes"] = int(bounds.minBytes) if bounds and bounds.minBytes is not None else None
+            values["heap_max_bytes"] = int(bounds.maxBytes) if bounds and bounds.maxBytes is not None else None
         if row is None:
             inserted = (await session.execute(insert(AssetFreshnessPolicyRow).values(
                 target_table=table, **values,
@@ -180,9 +193,67 @@ async def put_asset_freshness(
     return await get_asset_freshness(session, schema, table)
 
 
+async def _lock_policy(session: AsyncSession, table: str) -> AssetFreshnessPolicyRow | None:
+    return (await session.scalars(select(AssetFreshnessPolicyRow).where(
+        AssetFreshnessPolicyRow.target_table == table,
+    ).with_for_update().execution_options(populate_existing=True))).one_or_none()
+
+
+async def _review_schema(
+    session: AsyncSession, schema: str, table: str, generation: int, *, recording: bool,
+) -> tuple[AssetFreshnessPolicyRow, AssetSchemaPreview]:
+    _check_schema(schema)
+    if not asset_freshness_enabled():
+        raise HTTPException(403, "Sandbox asset quality checks are disabled")
+    row = (await _lock_policy(session, table) if recording else
+           await session.get(AssetFreshnessPolicyRow, table, populate_existing=True))
+    if row is None:
+        raise HTTPException(404, "Asset freshness policy does not exist")
+    if row.generation != generation:
+        raise HTTPException(409, "The quality policy changed; reload and review the columns again")
+    if not row.enabled or not row.schema_check_enabled:
+        raise HTTPException(409, "Enable the schema check before reviewing a baseline")
+    statement = select(TransferPlanRow).where(TransferPlanRow.id == row.plan_id)
+    if recording:
+        statement = statement.with_for_update(read=True)
+    plan = (await session.scalars(statement.execution_options(populate_existing=True))).one_or_none()
+    if _drift(row, plan, await _identity(session, table)):
+        raise HTTPException(409, "The approved plan or physical target changed; review its current binding")
+    preview = await read_schema_preview(session, row)
+    if preview is None:
+        raise HTTPException(422, "Schema review requires 1–128 columns with supported built-in types")
+    return row, preview
+
+
+async def preview_schema_baseline(
+    session: AsyncSession, schema: str, table: str, request: AssetSchemaPreviewRequest,
+) -> AssetSchemaPreview:
+    """Preview metadata without saving or recapturing the approved baseline."""
+    _, preview = await _review_schema(session, schema, table, request.expectedGeneration, recording=False)
+    return preview
+
+
+async def capture_schema_baseline(
+    session: AsyncSession, schema: str, table: str, request: AssetSchemaCaptureRequest,
+) -> AssetFreshnessResponse:
+    """Capture exactly the earlier preview, rejecting drift after operator review."""
+    row, preview = await _review_schema(session, schema, table, request.expectedGeneration, recording=True)
+    if preview.fingerprint != request.expectedFingerprint:
+        raise HTTPException(409, "The table columns changed after review; preview its metadata again")
+    now = _utc_now()
+    row.schema_baseline = {"target": [row.target_oid, row.target_filenode],
+                           "preview": {**preview.model_dump(mode="json"), "capturedAt": now.isoformat()}}
+    row.generation += 1
+    row.updated_at = now
+    row.next_check_at = now
+    await session.commit()
+    return await get_asset_freshness(session, schema, table)
+
+
 async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now: datetime) -> str:
     plan = await session.get(TransferPlanRow, row.plan_id, populate_existing=True)
     reason = _drift(row, plan, await _identity(session, row.target_table))
+    await evaluate_asset_quality(session, row, reason, now)
     receipt = None
     if reason is None:
         receipt = (await session.execute(select(TransferRunRow.id, TransferRunRow.recorded_at).where(
