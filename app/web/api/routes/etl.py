@@ -58,6 +58,7 @@ from app.web.api.models.table_exports import (
     ExportDestination,
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
     TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
+    TableExportSnapshotPreview, TableExportSnapshotPreviewCapability, TableExportSnapshotPreviewRequest,
 )
 from app.web.api.models.transfer_timeline import TimelineKind, TimelineView, TransferTimelineDetail, TransferTimelinePage
 from app.web.api.models.transfer_upstream import (
@@ -127,6 +128,7 @@ from app.web.services.pipeline_sandbox_outputs import (
 )
 from app.web.services.push_inbox import change_push_intake, read_push_status
 from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
+from app.web.services.table_export_snapshot import compare_table_export_snapshots, read_snapshot_preview_capability
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
@@ -888,6 +890,40 @@ def export_destination(request: Request, destination: ExportDestination = "prima
 
 
 ExportDestinationDep = Annotated[ExportDestination, Depends(export_destination)]
+
+
+@write.get("/table-export-sandbox/snapshot-preview")
+async def get_table_export_snapshot_preview(
+    request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> TableExportSnapshotPreviewCapability:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        raise HTTPException(422, "This comparison uses one fixed snapshot profile", headers=headers)
+    try:
+        with fail_after(3):
+            return await read_snapshot_preview_capability(session)
+    except (DBAPIError, TimeoutError, OSError):
+        return TableExportSnapshotPreviewCapability(available=False)
+
+
+@write.post("/table-export-sandbox/snapshot-preview")
+async def post_table_export_snapshot_preview(
+    payload: TableExportSnapshotPreviewRequest, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> TableExportSnapshotPreview:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        raise HTTPException(422, "This comparison uses one fixed snapshot profile", headers=headers)
+    try:
+        with fail_after(7):
+            return await compare_table_export_snapshots(session, payload)
+    except HTTPException as exc:
+        raise HTTPException(exc.status_code, exc.detail, headers=headers) from None
+    except (DBAPIError, TimeoutError, OSError):
+        raise HTTPException(503, "Synthetic snapshot comparison is temporarily unavailable", headers=headers) from None
 
 
 @write.get("/table-export/capabilities")

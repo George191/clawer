@@ -836,6 +836,15 @@ export const fetchBatchSyncScheduleJobs = (id: string, signal?: AbortSignal): Pr
   client.get(`${batchSyncSchedulePath(id)}/jobs`, { signal }).then((r) => unwrap<BatchSyncScheduleJob[]>(r.data));
 
 const tableExportPath = '/etl/table-export';
+const tableExportSnapshotPreviewPath = '/etl/table-export-sandbox/snapshot-preview';
+export type TableExportSnapshotCapability = { available: boolean; configRevision?: string };
+export type TableExportSnapshotResult = {
+  configRevision: string; sourceRows: number; targetRows: number; added: number; changed: number; unchanged: number; wouldRemove: number;
+};
+export const fetchTableExportSnapshotCapability = (signal?: AbortSignal): Promise<TableExportSnapshotCapability> =>
+  client.get(tableExportSnapshotPreviewPath, { signal }).then(r => unwrap<TableExportSnapshotCapability>(r.data));
+export const previewTableExportSnapshot = (expectedConfigRevision: string, signal?: AbortSignal): Promise<TableExportSnapshotResult> =>
+  client.post(tableExportSnapshotPreviewPath, { expectedConfigRevision }, { signal }).then(r => unwrap<TableExportSnapshotResult>(r.data));
 export type TableExportDestination = 'primary' | 'secondary';
 export type TableExportDestinationOption = { id: TableExportDestination; label: string };
 export type TableExportWriteMode = 'upsert' | 'append';

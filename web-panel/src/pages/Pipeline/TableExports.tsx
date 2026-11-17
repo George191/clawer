@@ -14,6 +14,8 @@ import TableExportAuthorization from './TableExportAuthorization';
 import { useSandboxIdentity } from './SandboxMarkings';
 import { exportMode, exportModeDescription, exportModeLabel } from './tableExportWriteModes';
 
+import TableExportSnapshotComparison from './TableExportSnapshotComparison';
+
 type RunRequest = { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number; writeMode?: TableExportWriteMode };
 type DraftReview = { name: string; expectedUpdatedAt: string | null; writeMode: TableExportWriteMode };
 const dateText = (timestamp: string) => new Date(timestamp).toLocaleString();
@@ -67,7 +69,10 @@ export default function TableExports({ openFromLink, onLinkClose }: { openFromLi
         setOpen(!open);
       }}>{open ? 'Close table exports' : 'Open table exports'}</Button>
     </header>
-    {open && identity && <ReceiverSelection key={identity} working={working} onWorkingChange={setWorking} />}
+    {open && identity && <>
+      <ReceiverSelection key={identity} working={working} onWorkingChange={setWorking} />
+      <TableExportSnapshotComparison key={`snapshot:${identity}`} identity={identity} />
+    </>}
   </section>;
 }
 

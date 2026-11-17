@@ -1,12 +1,13 @@
 """Outbound sender contracts; two-database receipt integration is tested separately."""
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 from importlib import import_module
 import os
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from alembic.migration import MigrationContext
@@ -16,6 +17,7 @@ import httpx
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import DBAPIError
 
 from app.storage.postgres_client import PostgresClient
@@ -24,7 +26,8 @@ from app.web.api.dependencies.session import get_db
 from app.web.api.models.table_exports import TableExportGrantChange, TableExportReview
 from app.web.api.routes.etl import router
 from app.web.core.config import settings
-from app.web.services import table_exports
+from app.web.services import table_export_snapshot, table_exports
+from app.web.services.table_export_snapshot_receiver import SnapshotReceiverRow
 from app.web.services.table_export_receiver import ReceiverFailure, ReceiverReceipt
 
 URL = os.environ.get("ONTOLOGY_TABLE_EXPORT_TEST_URL")
@@ -122,6 +125,98 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
     async def provider(self):
         async with self.pg.session() as session:
             yield session
+
+    async def test_snapshot_preview_proves_local_source_then_returns_counts_only(self):
+        endpoint = "/etl/table-export-sandbox/snapshot-preview"
+        revision, target_marker = uuid4(), uuid4()
+        sender_port = make_url(URL).port or 5432
+        receiver_port = next(port for port in (16532, 16533, 16534)
+                             if port not in {sender_port, settings.TABLE_EXPORT_RECEIVER_PORT,
+                                             settings.TABLE_EXPORT_SECONDARY_RECEIVER_PORT})
+        await self.pg.execute("""
+            INSERT INTO ts_table_export_sandbox.records VALUES(2,'synthetic change'), (-9223372036854775808,'source only')
+        """)
+        with patch.multiple(
+            settings, TABLE_EXPORT_SNAPSHOT_PREVIEW_ENABLED=True, TABLE_EXPORT_SNAPSHOT_PREVIEW_CONFIG_REVISION=revision,
+            TABLE_EXPORT_SNAPSHOT_PREVIEW_HOST="127.0.0.1", TABLE_EXPORT_SNAPSHOT_PREVIEW_PORT=receiver_port,
+            TABLE_EXPORT_SNAPSHOT_PREVIEW_DATABASE="isolated_snapshot", TABLE_EXPORT_SNAPSHOT_PREVIEW_USERNAME="snapshot_ro",
+            TABLE_EXPORT_SNAPSHOT_PREVIEW_PASSWORD=SecretStr("never-return-the-password"),
+            TABLE_EXPORT_SNAPSHOT_PREVIEW_MARKER=target_marker, TABLE_EXPORT_SNAPSHOT_PREVIEW_PROOF_SHA256="1" * 64,
+        ), patch.object(table_export_snapshot, "read_snapshot_preview", new_callable=AsyncMock) as receiver:
+            receiver.return_value = (SnapshotReceiverRow(1, "synthetic source"), SnapshotReceiverRow(2, None),
+                                     SnapshotReceiverRow(2**63 - 1, "target only"))
+            async with api(True, self.provider) as client:
+                caps = await client.get(endpoint)
+                self.assertEqual(caps.status_code, 200, caps.text)
+                self.assertEqual(caps.headers["cache-control"], "private, no-store")
+                self.assertEqual(set(caps.json()), {"available", "configRevision"})
+                self.assertTrue(caps.json()["available"])
+                self.assertNotEqual(caps.json()["configRevision"], str(revision))
+                receiver.assert_not_awaited()
+                request = {"expectedConfigRevision": caps.json()["configRevision"]}
+                for malformed in ({**request, "destination": "primary"}, {}, {"expectedConfigRevision": "bad"}):
+                    self.assertEqual((await client.post(endpoint, json=malformed)).status_code, 422)
+                self.assertEqual((await client.post(endpoint + "?mode=upsert", json=request)).status_code, 422)
+                async with api(False, self.provider) as reader:
+                    self.assertEqual((await reader.get(endpoint)).status_code, 403)
+                    self.assertEqual((await reader.post(endpoint, json=request)).status_code, 403)
+                async with self.pg.session() as session:
+                    sender = table_export_snapshot._sender_scope(session)
+                with patch.object(table_export_snapshot, "_read_source", side_effect=AssertionError("read sender rows")):
+                    relocated = replace(sender, database="other_sender")
+                    with patch.object(table_export_snapshot, "_sender_scope", return_value=relocated):
+                        self.assertEqual((await client.post(endpoint, json=request)).status_code, 409)
+                        false_token = table_export_snapshot._snapshot_revision(
+                            table_export_snapshot.configured_snapshot_profile(), relocated, SOURCE_MARKER,
+                        )
+                        self.assertFalse((await client.get(endpoint)).json()["available"])
+                        self.assertEqual((await client.post(endpoint, json={"expectedConfigRevision": str(false_token)})).status_code,
+                                         403)
+                    with patch.object(settings, "TABLE_EXPORT_SNAPSHOT_PREVIEW_PROOF_SHA256", "2" * 64):
+                        self.assertEqual((await client.post(endpoint, json=request)).status_code, 409)
+                    with patch.object(settings, "TABLE_EXPORT_SOURCE_MARKER", uuid4()):
+                        wrong = table_export_snapshot._snapshot_revision(
+                            table_export_snapshot.configured_snapshot_profile(), sender, settings.TABLE_EXPORT_SOURCE_MARKER,
+                        )
+                        self.assertFalse((await client.get(endpoint)).json()["available"])
+                        self.assertEqual((await client.post(endpoint, json={"expectedConfigRevision": str(wrong)})).status_code, 403)
+                    with patch.object(settings, "TABLE_EXPORT_SNAPSHOT_PREVIEW_PORT", sender_port):
+                        alias = table_export_snapshot._snapshot_revision(
+                            table_export_snapshot.configured_snapshot_profile(), sender, SOURCE_MARKER,
+                        )
+                        self.assertFalse((await client.get(endpoint)).json()["available"])
+                        self.assertEqual((await client.post(endpoint, json={"expectedConfigRevision": str(alias)})).status_code, 403)
+                receiver.assert_not_awaited()
+
+                compared = await client.post(endpoint, json=request)
+                self.assertEqual(compared.status_code, 200, compared.text)
+                self.assertEqual(compared.json(), dict(configRevision=request["expectedConfigRevision"],
+                                                      sourceRows=3, targetRows=3, added=1, changed=1,
+                                                      unchanged=1, wouldRemove=1))
+                receiver.assert_awaited_once_with(table_export_snapshot.configured_snapshot_profile(),
+                                                  sender_port=sender_port, sender_marker=SOURCE_MARKER,
+                                                  sender_database=sender.database, sender_username=sender.username)
+                for secret in ("127.0.0.1", "snapshot_ro", str(target_marker), "source only", "target only",
+                               "never-return-the-password"):
+                    self.assertNotIn(secret, compared.text)
+                receiver.reset_mock()
+                await self.pg.execute("TRUNCATE ts_table_export_sandbox.records")
+                self.assertEqual((await client.post(endpoint, json=request)).status_code, 422)
+                await self.pg.execute("INSERT INTO ts_table_export_sandbox.records SELECT n, repeat('x',8192) FROM generate_series(1,8) n")
+                original_execute = AsyncSession.execute
+
+                async def deny_payload(session, statement, *args, **kwargs):
+                    sql = str(statement)
+                    if sql.lstrip().startswith("SELECT id, CASE") and "ts_table_export_sandbox.records" in sql:
+                        raise AssertionError("Source captions were materialized beyond 64 KiB")
+                    return await original_execute(session, statement, *args, **kwargs)
+
+                with patch.object(AsyncSession, "execute", deny_payload):
+                    sized = await client.post(endpoint, json=request)
+                    self.assertEqual(sized.status_code, 422, sized.text)
+                receiver.assert_not_awaited()
+                for table in ("plan", "grants", "requests", "attempts", "receipts"):
+                    self.assertEqual(await self.pg.fetch_all(f"SELECT 1 FROM ontology_table_export_{table}"), [])
 
     @unittest.skipUnless(SECONDARY_URL, "Requires a separate disposable loopback receiver")
     async def test_secondary_real_commit_and_lost_ack_never_use_primary(self):
