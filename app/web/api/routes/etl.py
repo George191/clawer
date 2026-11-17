@@ -39,7 +39,7 @@ from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReceipt, C
 from app.web.api.models.cdc_sandbox_versions import (
     CdcSandboxComparison, CdcSandboxVersionDetail, CdcSandboxVersionsPage,
 )
-from app.web.api.models.push_inbox import PushInboxStatus
+from app.web.api.models.push_inbox import PushInboxIntakeChange, PushInboxStatus
 from app.web.api.models.push_inbox_apply import PushApplyRequest, PushApplyResult, PushApplyReview, PushApplyStatus
 from app.web.api.models.pipeline_handoff import (
     PipelineHandoffCapability, PipelineHandoffCopyReceipt, PipelineHandoffCopyRequest, PipelineHandoffEligibility,
@@ -118,7 +118,7 @@ from app.web.services.pipeline_sandbox import (
 from app.web.services.pipeline_sandbox_outputs import (
     commit_pipeline_output, compare_pipeline_outputs, list_pipeline_outputs, read_pipeline_output,
 )
-from app.web.services.push_inbox import read_push_status
+from app.web.services.push_inbox import change_push_intake, read_push_status
 from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
@@ -151,7 +151,7 @@ read = APIRouter(dependencies=[Depends(get_current_user)])
 write = APIRouter(dependencies=[Depends(get_current_active_superuser)])
 
 
-@write.get("/push-inbox-sandbox")
+@write.get("/push-inbox-sandbox", response_model_exclude_none=True)
 async def get_local_push_inbox(
     response: Response, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
 ) -> PushInboxStatus:
@@ -160,6 +160,18 @@ async def get_local_push_inbox(
         return await read_push_status(session)
     except DBAPIError:
         raise HTTPException(503, "Synthetic inbox status is unavailable") from None
+
+
+@write.put("/push-inbox-sandbox/intake", response_model_exclude_none=True)
+async def put_push_inbox_intake(
+    payload: PushInboxIntakeChange, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PushInboxStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await change_push_intake(session, payload)
+    except DBAPIError:
+        raise HTTPException(503, "Synthetic inbox intake change could not be confirmed; reload current state") from None
 
 
 @write.get("/push-inbox-sandbox/apply")

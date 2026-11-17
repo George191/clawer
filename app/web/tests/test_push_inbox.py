@@ -19,6 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.web.core.config import settings
@@ -31,6 +32,7 @@ _URL = os.getenv("ONTOLOGY_PUSH_INBOX_TEST_URL")
 _BODY = b'{"schemaVersion":1,"entityId":"9223372036854775807","value":"fixture-a"}'
 _ADMIN = "/etl/push-inbox-sandbox"
 _APPLY = _ADMIN + "/apply"
+_INTAKE = _ADMIN + "/intake"
 
 
 def headers(key, body, *, identity=None, stamp=None):
@@ -291,6 +293,112 @@ class PushInboxPostgres(IsolatedAsyncioTestCase):
             self.assertEqual((await client.post(PATH, headers=headers(self.key, _BODY), content=_BODY)).status_code, 429)
             replay = await client.post(PATH, headers=headers(self.key, _BODY, identity=identity), content=_BODY)
             self.assertEqual(replay.json(), first.json())
+
+    async def test_reviewed_intake_pause_is_sticky_keeps_replay_and_fences_legacy_writers(self):
+        await self._prepare_apply_fixture()
+        migration = importlib.import_module("app.web.alembic.versions.a9fcc74e95b1_ontology_push_intake_control")
+
+        def ddl(conn, action):
+            with Operations.context(MigrationContext.configure(conn)):
+                action()
+
+        async with self.engine.begin() as conn:
+            await conn.run_sync(ddl, migration.upgrade)
+            # Empty/unreviewed state can safely round-trip for a rolling deployment.
+            await conn.run_sync(ddl, migration.downgrade)
+        async with self.engine.begin() as conn:
+            await conn.run_sync(ddl, migration.upgrade)
+
+        async def drop_guard_function():
+            async with self.engine.begin() as conn:
+                await conn.execute(text("DROP FUNCTION public.push_inbox_intake_fence() CASCADE"))
+
+        self.addAsyncCleanup(drop_guard_function)
+        async with self._producer() as producer, api(True, self._admin_session) as admin, api(False) as reader:
+            self.assertNotIn("intakeGeneration", (await admin.get(_ADMIN)).json())
+            desired = {"expectedGeneration": 0, "paused": True}
+            self.assertEqual((await reader.put(_INTAKE, json=desired)).status_code, 403)
+            self.assertEqual((await admin.put(_INTAKE, json=desired)).status_code, 403)
+            request_id = uuid4()
+            accepted = await producer.post(PATH, headers=headers(self.key, _BODY, identity=request_id), content=_BODY)
+            self.assertEqual(accepted.status_code, 201)
+            with (
+                patch.object(settings, "PUSH_INBOX_SANDBOX_INTAKE_CONTROL_ENABLED", True),
+                patch.object(settings, "PUSH_INBOX_SANDBOX_APPLY_ENABLED", True),
+            ):
+                initial = (await admin.get(_ADMIN)).json()
+                self.assertEqual((initial["intakeControlAvailable"], initial["intakeGeneration"]), (True, 0))
+                for invalid in ({**desired, "expectedGeneration": True}, {**desired, "paused": 1}, {**desired, "extra": 0}):
+                    self.assertEqual((await admin.put(_INTAKE, json=invalid)).status_code, 422)
+                with patch.object(settings, "PUSH_INBOX_SANDBOX_DATABASE_MARKER", uuid4()):
+                    self.assertEqual((await admin.put(_INTAKE, json=desired)).status_code, 503)
+                self.assertEqual((await admin.put(_APPLY, json={"expectedGeneration": None})).status_code, 200)
+
+                # Hold the same durable singleton lock as acceptance. A control change
+                # cannot report success until an in-flight lock holder has settled.
+                async with self.engine.begin() as owner:
+                    await owner.execute(text("SELECT singleton FROM ontology_push_inbox_state FOR UPDATE"))
+                    self.assertEqual((await admin.put(_INTAKE, json=desired)).status_code, 503)
+                    self.assertEqual((await admin.get(_ADMIN)).json()["intakeGeneration"], 0)
+
+                paused = await admin.put(_INTAKE, json=desired)
+                self.assertEqual(paused.status_code, 200, paused.text)
+                paused = paused.json()
+                self.assertEqual((paused["state"], paused["intakeGeneration"], paused["recent"]),
+                                 ("paused", 1, [accepted.json()]))
+                self.assertIn("pausedAt", paused)
+                self.assertEqual((await admin.put(_INTAKE, json=desired)).json()["detail"]["code"],
+                                 "intake_generation_changed")
+                self.assertEqual((await admin.put(_INTAKE, json={**desired, "expectedGeneration": 1})).json(), paused)
+
+                async with self.engine.connect() as conn:
+                    clock = (await conn.execute(text(
+                        "SELECT accepted_count, window_epoch, window_accepted FROM ontology_push_inbox_state"))).one()
+                with patch.object(settings, "PUSH_INBOX_SANDBOX_INTAKE_CONTROL_ENABLED", False):
+                    status = (await admin.get(_ADMIN)).json()
+                    self.assertEqual(status["state"], "paused")
+                    self.assertNotIn("intakeControlAvailable", status)
+                    self.assertEqual((await producer.post(PATH, headers=headers(self.key, _BODY), content=_BODY)).status_code, 503)
+                    stale = headers(self.key, _BODY, identity=request_id, stamp=int(time.time())-301)
+                    self.assertEqual((await producer.post(PATH, headers=stale, content=_BODY)).status_code, 401)
+                    replay = await producer.post(PATH, headers=headers(self.key, _BODY, identity=request_id), content=_BODY)
+                    self.assertEqual(replay.json(), accepted.json())
+                    changed = _BODY.replace(b"fixture-a", b"fixture-b")
+                    self.assertEqual((await producer.post(PATH, headers=headers(self.key, changed, identity=request_id),
+                                                          content=changed)).status_code, 409)
+                # The older protocol writes receipt + counters together. Ignoring the
+                # new fields still rolls that whole transaction back while paused.
+                with self.assertRaises(DBAPIError):
+                    async with self.engine.begin() as conn:
+                        await conn.execute(text("SELECT singleton FROM ontology_push_inbox_state FOR UPDATE"))
+                        await conn.execute(text("""
+                            INSERT INTO ontology_push_inbox_receipts
+                            (id,request_id,ordinal,body_digest,schema_version,entity_id,fixture_value,accepted_at)
+                            VALUES (gen_random_uuid(),gen_random_uuid(),2,repeat('a',64),1,1,'fixture-legacy',clock_timestamp())
+                        """))
+                        await conn.execute(text("UPDATE ontology_push_inbox_state SET accepted_count=2"))
+                async with self.engine.connect() as conn:
+                    self.assertEqual(await conn.scalar(text("SELECT count(*) FROM ontology_push_inbox_receipts")), 1)
+                    self.assertEqual((await conn.execute(text(
+                        "SELECT accepted_count, window_epoch, window_accepted FROM ontology_push_inbox_state"))).one(), clock)
+
+                applied = await admin.post(_APPLY + "/runs", json={
+                    "requestId": str(uuid4()), "expectedGeneration": 1,
+                    "expectedAppliedThrough": "0", "expectedAcceptedThrough": "1",
+                })
+                self.assertEqual(applied.json()["eventsApplied"], 1)
+                self.assertEqual((await admin.get(_ADMIN)).json()["state"], "paused")
+                resumed = await admin.put(_INTAKE, json={"expectedGeneration": 1, "paused": False})
+                self.assertEqual((resumed.json()["state"], resumed.json()["intakeGeneration"]), ("ready", 2))
+                self.assertNotIn("pausedAt", resumed.json())
+                next_receipt = await producer.post(PATH, headers=headers(self.key, _BODY), content=_BODY)
+                self.assertEqual(next_receipt.json()["ordinal"], "2")
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot remove a reviewed"):
+            async with self.engine.begin() as conn:
+                await conn.run_sync(ddl, migration.downgrade)
+        async with self.engine.connect() as conn:
+            self.assertEqual(await conn.scalar(text("SELECT intake_generation FROM ontology_push_inbox_state")), 2)
 
     async def _prepare_apply_fixture(self):
         migration = importlib.import_module("app.web.alembic.versions.af02d96bc517_ontology_push_inbox_apply")
