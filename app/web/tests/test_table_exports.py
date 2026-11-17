@@ -24,10 +24,13 @@ from app.web.api.dependencies.session import get_db
 from app.web.api.models.table_exports import TableExportGrantChange, TableExportReview
 from app.web.api.routes.etl import router
 from app.web.core.config import settings
+from app.web.services import table_exports
 from app.web.services.table_export_receiver import ReceiverFailure, ReceiverReceipt
 
 URL = os.environ.get("ONTOLOGY_TABLE_EXPORT_TEST_URL")
 DATABASE = "ontology_table_export_regression"
+SECONDARY_URL = os.environ.get("ONTOLOGY_TABLE_EXPORT_SECONDARY_TEST_URL")
+SECONDARY_DATABASE = "ontology_table_export_secondary_regression"
 ENDPOINT = "/etl/table-export"
 ACTOR = uuid4()
 SOURCE_MARKER = uuid4()
@@ -59,6 +62,9 @@ class TableExportContracts(unittest.IsolatedAsyncioTestCase):
         with patch.object(settings, "TABLE_EXPORT_SANDBOX_ENABLED", False):
             async with api(True) as client:
                 self.assertFalse((await client.get(ENDPOINT + "/capabilities")).json()["enabled"])
+                self.assertFalse((await client.get(ENDPOINT + "/capabilities?destination=secondary")).json()["enabled"])
+                for invalid in ("arbitrary", "PRIMARY", "primary&destination=secondary"):
+                    self.assertEqual((await client.get(ENDPOINT + "/capabilities?destination=" + invalid)).status_code, 422)
                 self.assertEqual((await client.post(ENDPOINT + "/runs", json={
                     "requestId": str(uuid4()), "expectedUpdatedAt": datetime.now(timezone.utc).isoformat(),
                     "expectedGrantGeneration": 1,
@@ -81,6 +87,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
         migrations = (
             import_module("app.web.alembic.versions.b31c72f6a9de_ontology_table_exports"),
             import_module("app.web.alembic.versions.aa4c7d2e1f90_ontology_table_export_grants"),
+            import_module("app.web.alembic.versions.ad6207fa991b_ontology_table_export_destinations"),
         )
         async with self.pg.session() as session:
             def upgrade(sync_session):
@@ -113,6 +120,143 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
     async def provider(self):
         async with self.pg.session() as session:
             yield session
+
+    @unittest.skipUnless(SECONDARY_URL, "Requires a separate disposable loopback receiver")
+    async def test_secondary_real_commit_and_lost_ack_never_use_primary(self):
+        url = make_url(SECONDARY_URL)
+        if (url.database != SECONDARY_DATABASE or url.host != "127.0.0.1" or not url.port
+                or url.port == make_url(URL).port):
+            raise RuntimeError("Receiver fixture refuses any endpoint except its separate named loopback database")
+        target = PostgresClient(SECONDARY_URL)
+        await target.connect(max_retries=1)
+        self.addAsyncCleanup(target.close)
+        self.assertEqual((await target.fetch_one("SELECT current_database() AS name"))["name"], SECONDARY_DATABASE)
+        marker = uuid4()
+        async with target.session() as session:
+            await session.execute(text("CREATE SCHEMA ts_table_export_receiver"))
+            await session.execute(text("CREATE TABLE ts_table_export_receiver.export_receiver_identity (marker uuid PRIMARY KEY)"))
+            await session.execute(text("CREATE TABLE ts_table_export_receiver.records (id bigint PRIMARY KEY, caption text NOT NULL)"))
+            await session.execute(text("""
+                CREATE TABLE ts_table_export_receiver.receipts (request_id uuid PRIMARY KEY,
+                    plan_updated_at timestamptz NOT NULL, payload_digest text NOT NULL,
+                    rows_affected int NOT NULL, committed_at timestamptz NOT NULL)
+            """))
+            await session.execute(text("INSERT INTO ts_table_export_receiver.export_receiver_identity VALUES (:marker)"),
+                                  {"marker": marker})
+        self.addAsyncCleanup(target.execute, "DROP SCHEMA ts_table_export_receiver CASCADE")
+        revision = uuid4()
+        with patch.multiple(
+            settings, TABLE_EXPORT_SECONDARY_ENABLED=True, TABLE_EXPORT_SECONDARY_CONFIG_REVISION=revision,
+            TABLE_EXPORT_SECONDARY_RECEIVER_HOST=url.host, TABLE_EXPORT_SECONDARY_RECEIVER_PORT=url.port,
+            TABLE_EXPORT_SECONDARY_RECEIVER_DATABASE=url.database, TABLE_EXPORT_SECONDARY_RECEIVER_USERNAME=url.username,
+            TABLE_EXPORT_SECONDARY_RECEIVER_PASSWORD=SecretStr(url.password or "local-test-only"),
+            TABLE_EXPORT_SECONDARY_RECEIVER_MARKER=marker,
+        ):
+            primary_binding = table_exports._provisioned()[2]
+            secondary_binding = table_exports._provisioned("secondary")[2]
+            with patch.object(settings, "TABLE_EXPORT_SECONDARY_RECEIVER_PASSWORD", SecretStr("test-rotated")):
+                self.assertEqual(secondary_binding, table_exports._provisioned("secondary")[2])
+            async with api(True, self.provider) as client:
+                secondary = {"destination": "secondary"}
+                caps = (await client.get(ENDPOINT + "/capabilities")).json()
+                self.assertEqual([option["id"] for option in caps["approvedDestinations"]], ["primary", "secondary"])
+                self.assertNotIn("destinationLabel", caps)
+                primary = (await client.put(ENDPOINT, json={"name": "Primary", "expectedUpdatedAt": None})).json()
+                first = await self.decision(client, primary["updatedAt"])
+                self.assertEqual(first.json()["generation"], 1)
+                migration = import_module("app.web.alembic.versions.ad6207fa991b_ontology_table_export_destinations")
+
+                def migrated(session, action):
+                    with Operations.context(MigrationContext.configure(session.connection())):
+                        action()
+
+                # Existing primary review and grant are attributed without rebuilding either.
+                async with self.pg.session() as session:
+                    await session.run_sync(migrated, migration.downgrade)
+                    await session.run_sync(migrated, migration.upgrade)
+                self.assertEqual((await client.get(ENDPOINT)).json(), primary)
+                self.assertEqual((await client.get(ENDPOINT + "/grant")).json(), first.json())
+                with patch.object(settings, "TABLE_EXPORT_SECONDARY_RECEIVER_MARKER", uuid4()):
+                    bad = await client.put(ENDPOINT, params=secondary, json={"name": "Wrong", "expectedUpdatedAt": None})
+                    self.assertEqual(bad.status_code, 422, bad.text)
+                    self.assertIsNone((await client.get(ENDPOINT, params=secondary)).json())
+                plan = await client.put(ENDPOINT, params=secondary, json={"name": "Secondary", "expectedUpdatedAt": None})
+                self.assertEqual(plan.status_code, 200, plan.text)
+                version = plan.json()["updatedAt"]
+                with self.assertRaisesRegex(RuntimeError, "secondary export evidence"):
+                    async with self.pg.session() as session:
+                        await session.run_sync(migrated, migration.downgrade)
+
+
+                async def secondary_grant(approved, expected):
+                    return await client.put(ENDPOINT + "/grant", params=secondary, json={
+                        "approved": approved, "expectedPlanUpdatedAt": version, "expectedGeneration": expected,
+                        "marking": "sandbox-synthetic", "reason": "Verified isolated fixture",
+                    })
+
+                grant = await secondary_grant(True, None)
+                self.assertEqual(grant.status_code, 200, grant.text)
+                self.assertEqual(grant.json()["generation"], 1)
+                request = {"requestId": str(uuid4()), "expectedUpdatedAt": version, "expectedGrantGeneration": 1}
+
+                with patch.object(table_exports, "find_export_receipt",
+                                  side_effect=AssertionError("unexpected receiver lookup")) as lookup:
+                    await self.pg.execute('UPDATE ts_table_export_sandbox."identity" SET marker=:marker', {"marker": uuid4()})
+                    try:
+                        bad = await client.post(ENDPOINT + "/runs", params=secondary, json=request)
+                        self.assertEqual(bad.status_code, 409, bad.text)
+                        self.assertIsNone(await self.pg.fetch_one(
+                            "SELECT request_id FROM ontology_table_export_requests WHERE request_id=CAST(:id AS uuid)",
+                            {"id": request["requestId"]},
+                        ))
+                        self.assertEqual((await secondary_grant(False, 1)).status_code, 409)
+                        lookup.assert_not_called()
+                    finally:
+                        await self.pg.execute('UPDATE ts_table_export_sandbox."identity" SET marker=:marker',
+                                              {"marker": SOURCE_MARKER})
+
+                original_apply = table_exports.apply_export_rows
+
+                async def lose_ack(config, *args):
+                    self.assertEqual(config.marker, marker)
+                    await original_apply(config, *args)
+                    raise ReceiverFailure(503, "receiver_commit_unknown", "no acknowledgment", "outcome_unknown")
+
+                with patch.object(table_exports, "apply_export_rows", side_effect=lose_ack):
+                    unknown = await client.post(ENDPOINT + "/runs", params=secondary, json=request)
+                    self.assertEqual(unknown.status_code, 503, unknown.text)
+                with patch.object(table_exports, "_source_rows", side_effect=AssertionError("unexpected source read")) as read:
+                    denied = await client.post(ENDPOINT + "/runs", json={**request, "expectedUpdatedAt": primary["updatedAt"]})
+                    self.assertEqual(denied.status_code, 409, denied.text)
+                    recovered = await client.post(ENDPOINT + "/runs", params=secondary, json=request)
+                    self.assertEqual(recovered.status_code, 200, recovered.text)
+                    read.assert_not_called()
+                self.assertEqual(recovered.json()["rowsAffected"], 1)
+                self.assertEqual((await client.get(ENDPOINT + "/runs")).json(), [])
+                self.assertEqual((await client.get(ENDPOINT + "/attempts")).json(), [])
+                self.assertFalse((await client.get(ENDPOINT + "/lineage")).json()["observed"])
+                self.assertTrue((await client.get(ENDPOINT + "/lineage", params=secondary)).json()["observed"])
+                self.assertEqual((await target.fetch_one("SELECT caption FROM ts_table_export_receiver.records WHERE id=1"))
+                                 ["caption"], "synthetic source")
+                self.assertEqual((await target.fetch_one("SELECT count(*) AS n FROM ts_table_export_receiver.receipts"))
+                                 ["n"], 1)
+
+                with patch.object(settings, "TABLE_EXPORT_SECONDARY_CONFIG_REVISION", uuid4()):
+                    self.assertNotEqual(secondary_binding, table_exports._provisioned("secondary")[2])
+                    self.assertEqual(primary_binding, table_exports._provisioned()[2])
+                    self.assertFalse((await client.get(ENDPOINT + "/grant", params=secondary)).json()["effective"])
+                    self.assertTrue((await client.get(ENDPOINT + "/grant")).json()["effective"])
+
+                # Same-name, same-OID TRUNCATE rewrites the reviewed physical table.
+                await target.execute("TRUNCATE ts_table_export_receiver.records")
+                with patch.object(table_exports, "_source_rows", side_effect=AssertionError("unexpected source read")) as read:
+                    rejected = await client.post(ENDPOINT + "/runs", params=secondary,
+                                                 json={**request, "requestId": str(uuid4())})
+                    self.assertEqual(rejected.status_code, 422, rejected.text)
+                    read.assert_not_called()
+                self.assertEqual((await secondary_grant(False, 1)).json()["generation"], 2)
+                self.assertEqual((await client.get(ENDPOINT + "/runs", params=secondary)).json(), [])
+                self.assertTrue((await client.get(ENDPOINT + "/grant")).json()["effective"])
 
     async def decision(self, client, version, *, approved=True, generation=None):
         return await client.put(ENDPOINT + "/grant", json={

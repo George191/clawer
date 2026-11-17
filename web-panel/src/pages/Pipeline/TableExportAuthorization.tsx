@@ -8,8 +8,9 @@ const statusLabel: Record<TableExportGrant['status'], string> = {
   not_granted: 'Not approved', active: 'Approved', stale: 'Approval is stale', revoked: 'Approval revoked',
 };
 
-export default function TableExportAuthorization({ grant, plan, scope, busy, saving, dirty, onChange }: {
+export default function TableExportAuthorization({ grant, plan, scope, receiverLabel, busy, saving, dirty, onChange }: {
   grant: TableExportGrant; plan: TableExportPlan | null; scope: TableExportCapabilities;
+  receiverLabel?: string;
   busy: boolean; saving: boolean; dirty: boolean;
   onChange: (request: TableExportGrantChange) => Promise<void>;
 }) {
@@ -48,6 +49,7 @@ export default function TableExportAuthorization({ grant, plan, scope, busy, sav
       confirmLoading={saving}
       okButtonProps={{ disabled: !decision?.reason.trim() }}
       okText={decision?.approved ? 'Confirm approval' : 'Confirm revocation'}>
+      {receiverLabel && <p>Selected receiver: <strong>{receiverLabel}</strong>. This decision applies only to this receiver.</p>}
       {decision?.approved ? <>
         <p>Authorize only data marked <code>{grant.marking}</code> from the reviewed sandbox table
           <code> {scope.sourceSchema}.{scope.sourceTable}</code> to the fixed receiver

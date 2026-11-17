@@ -73,6 +73,34 @@ def _invalid_source() -> HTTPException:
     return HTTPException(409, "The approved synthetic export source does not match its provisioned identity or schema")
 
 
+async def require_export_sender_marker(session: AsyncSession, marker: UUID | None) -> None:
+    """Fence sender ledger changes with the provisioned source marker, without reading export rows."""
+    if marker is None:
+        raise _invalid_source()
+    try:
+        relations = (await session.execute(_RELATION_SQL, {"schema": _SOURCE_SCHEMA})).mappings().all()
+        oid = next((row["oid"] for row in relations if row["name"] == "identity"), None)
+        if oid is None:
+            raise _invalid_source()
+        await session.execute(text('LOCK TABLE ONLY ts_table_export_sandbox."identity" IN ACCESS SHARE MODE NOWAIT'))
+        held = await session.scalar(text("""
+            SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE pid = pg_catalog.pg_backend_pid()
+              AND locktype = 'relation' AND mode = 'AccessShareLock' AND granted AND relation = CAST(:oid AS oid))
+        """), {"oid": oid})
+        columns = (await session.execute(_COLUMNS_SQL, {"oid": oid})).mappings().all()
+        if not held or {row["name"]: row["type_oid"] for row in columns} != {"singleton": 16, "marker": 2950}:
+            raise _invalid_source()
+        identities = (await session.execute(text(
+            'SELECT singleton, marker FROM ONLY ts_table_export_sandbox."identity" LIMIT 2',
+        ))).all()
+        if identities != [(True, marker)]:
+            raise _invalid_source()
+    except DBAPIError as failure:
+        if getattr(failure.orig, "sqlstate", None) in ("55P03", "57014", "40001"):
+            raise HTTPException(503, "The approved synthetic export source is temporarily busy") from None
+        raise _invalid_source() from None
+
+
 async def _read_source(session: AsyncSession, marker: UUID) -> list[tuple[int, str]]:
     # Only these fixed SQL statements can touch source tables. Verify both
     # relations before using them and verify the same OIDs after taking locks.

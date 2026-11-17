@@ -38,6 +38,8 @@ class ReceiverConfig:
     password: str = field(repr=False)
     marker: UUID
     tls: bool = False
+    exact_physical: bool = False
+    physical_proof: str | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -96,10 +98,12 @@ async def _connect(config: ReceiverConfig):
 
 # Validate fixed relation names and shapes, and reject receiver-side features
 # that could redirect the write, run code, or mutate rows outside this contract.
-async def _verify_tables(connection: asyncpg.Connection, *, writing: bool) -> None:
-    names = ["export_receiver_identity", "receipts", "records"] if writing else ["export_receiver_identity", "receipts"]
+async def _verify_tables(connection: asyncpg.Connection, *, full: bool) -> str | None:
+    names = ["export_receiver_identity", "receipts", "records"] if full else ["export_receiver_identity", "receipts"]
     actual = await connection.fetch("""
         SELECT c.relname::text AS name,
+               c.oid::bigint AS relation_oid, pg_catalog.pg_relation_filenode(c.oid)::bigint AS filenode,
+               (c.relpersistence = 'p') AS permanent,
                ARRAY(SELECT a.attname::text || ':' || a.atttypid::text || ':' || a.attnotnull::text
                      FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
                      ORDER BY a.attnum) AS columns,
@@ -133,19 +137,50 @@ async def _verify_tables(connection: asyncpg.Connection, *, writing: bool) -> No
     if {r["name"]: (r["columns"], r["key_column"]) for r in actual} != {name: expected[name] for name in names}:
         raise ReceiverFailure(422, "receiver_contract", "The approved receiver does not match the provisioned table contract")
 
+    if not full or any(not row["permanent"] or not row["filenode"] for row in actual):
+        return None
+    return sha256(json.dumps(sorted((row["name"], row["relation_oid"], row["filenode"]) for row in actual),
+                             separators=(",", ":")).encode()).hexdigest()
 
-async def _verify_receiver(connection: asyncpg.Connection, config: ReceiverConfig, *, writing: bool) -> None:
+
+async def _verify_receiver(connection: asyncpg.Connection, config: ReceiverConfig, *, writing: bool) -> str | None:
     # Hold relation locks across validation and use, preventing a DDL swap.
     # The receiver service role must be read-only on the marker table.
     await connection.execute(f"LOCK TABLE ONLY {_IDENTITY} IN ACCESS SHARE MODE")
     if writing:
         await connection.execute(f"LOCK TABLE ONLY {_RECEIPTS}, ONLY {_RECORDS} IN ROW EXCLUSIVE MODE")
+    elif config.exact_physical:
+        await connection.execute(f"LOCK TABLE ONLY {_RECEIPTS}, ONLY {_RECORDS} IN ACCESS SHARE MODE")
     else:
         await connection.execute(f"LOCK TABLE ONLY {_RECEIPTS} IN ACCESS SHARE MODE")
-    await _verify_tables(connection, writing=writing)
+    proof = await _verify_tables(connection, full=writing or config.exact_physical)
+    if config.exact_physical:
+        local = await connection.fetchval("""
+            SELECT (pg_catalog.inet_server_addr() << inet '127.0.0.0/8'
+                OR pg_catalog.inet_server_addr() = inet '::1') AND pg_catalog.inet_server_port() = $1
+        """, config.port)
+        if not local or proof is None or (config.physical_proof is not None and proof != config.physical_proof):
+            raise ReceiverFailure(422, "receiver_identity_mismatch", "The approved receiver identity did not match")
     markers = await connection.fetch(f"SELECT marker FROM ONLY {_IDENTITY} LIMIT 2")
     if len(markers) != 1 or markers[0]["marker"] != config.marker:
         raise ReceiverFailure(422, "receiver_identity_mismatch", "The approved receiver identity did not match")
+    return proof
+
+
+async def preflight_export_receiver(config: ReceiverConfig) -> str:
+    """Read only the selected secondary's fixed catalog and marker; no receipt or data reads."""
+    try:
+        async with _connect(config) as connection:
+            async with connection.transaction(isolation="read_committed", readonly=True):
+                await _fence_receiver(connection)
+                proof = await _verify_receiver(connection, config, writing=False)
+                if proof is None or not config.exact_physical:
+                    raise ReceiverFailure(422, "receiver_identity_mismatch", "The approved receiver identity did not match")
+                return proof
+    except ReceiverFailure:
+        raise
+    except Exception as error:
+        raise _receiver_error(error, committing=False) from None
 
 
 async def _fence_receiver(connection: asyncpg.Connection) -> None:

@@ -235,3 +235,5 @@
   .ontology-connectors__grid { grid-template-columns: 1fr; }
   .ontology-connectors__card { min-height: 80px; }
 }
+.ontology-receiver-selection { display: grid; gap: 5px; max-width: 360px; }
+.ontology-receiver-selection select { min-height: 32px; width: 100%; padding: 4px 6px; border: 1px solid var(--ontology-border); border-radius: 3px; background: var(--ontology-bg); color: var(--ontology-text); font: inherit; }

@@ -6,11 +6,12 @@ import {
   fetchTableExportPlan, fetchTableExportReceipts, runTableExport, saveTableExportPlan, updateTableExportGrant,
 } from '../../services/api';
 import type {
-  TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
+  TableExportAttempt, TableExportCapabilities, TableExportDestination, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
   TableExportPlan, TableExportReceipt,
 } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import TableExportAuthorization from './TableExportAuthorization';
+import { useSandboxIdentity } from './SandboxMarkings';
 
 type RunRequest = { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number };
 const dateText = (timestamp: string) => new Date(timestamp).toLocaleString();
@@ -20,16 +21,18 @@ const attemptLabel: Record<TableExportAttempt['status'], string> = {
   rejected: 'Rejected', committed: 'Receiver confirmed', replayed: 'Existing receipt returned',
 };
 
-function readPending(key: string): RunRequest | undefined {
+function readPending(key: string, destination: TableExportDestination): RunRequest | undefined {
   try {
-    const value = JSON.parse(sessionStorage.getItem(key) ?? 'null') as RunRequest | null;
-    if (value && typeof value.requestId === 'string' && typeof value.expectedUpdatedAt === 'string' &&
-      Number.isSafeInteger(value.expectedGrantGeneration)) return value;
+    const value = JSON.parse(sessionStorage.getItem(key) ?? 'null') as (RunRequest & { destination?: TableExportDestination }) | null;
+    if (value && (value.destination === destination || (destination === 'primary' && value.destination === undefined)) &&
+      typeof value.requestId === 'string' && typeof value.expectedUpdatedAt === 'string' && Number.isSafeInteger(value.expectedGrantGeneration)) {
+      return { requestId: value.requestId, expectedUpdatedAt: value.expectedUpdatedAt, expectedGrantGeneration: value.expectedGrantGeneration };
+    }
   } catch { /* A new run requires usable client storage before it sends. */ }
 }
 
-function rememberPending(key: string, request: RunRequest) {
-  sessionStorage.setItem(key, JSON.stringify(request));
+function rememberPending(key: string, request: RunRequest, destination: TableExportDestination) {
+  sessionStorage.setItem(key, JSON.stringify({ ...request, destination }));
 }
 
 function forgetPending(key: string) {
@@ -44,8 +47,11 @@ function exportFailure(failure: unknown) {
 }
 
 export default function TableExports({ openFromLink, onLinkClose }: { openFromLink: boolean; onLinkClose: () => void }) {
+  const identity = useSandboxIdentity();
   const [open, setOpen] = useState(openFromLink);
+  const [working, setWorking] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { setWorking(false); }, [identity]);
   useEffect(() => {
     setOpen(openFromLink);
     if (openFromLink) heading.current?.focus();
@@ -53,16 +59,52 @@ export default function TableExports({ openFromLink, onLinkClose }: { openFromLi
   return <section className="ontology-source-catalog ontology-source-sync" aria-label="Table exports">
     <header>
       <div><h3 ref={heading} tabIndex={-1}>Table exports</h3><p>Bounded outbound pilot from a dedicated table to a fixed approved receiver.</p></div>
-      <Button size="small" aria-expanded={open} onClick={() => {
+      <Button size="small" aria-expanded={open} disabled={working} onClick={() => {
         if (open && openFromLink) onLinkClose();
         setOpen(!open);
       }}>{open ? 'Close table exports' : 'Open table exports'}</Button>
     </header>
-    {open && <TableExportWorkspace />}
+    {open && identity && <ReceiverSelection key={identity} working={working} onWorkingChange={setWorking} />}
   </section>;
 }
 
-function TableExportWorkspace() {
+function ReceiverSelection({ working, onWorkingChange }: { working: boolean; onWorkingChange: (working: boolean) => void }) {
+  const [catalog, setCatalog] = useState<TableExportCapabilities>();
+  const [failed, setFailed] = useState(false);
+  const [version, setVersion] = useState(0);
+  const [selected, setSelected] = useState<TableExportDestination>();
+  useEffect(() => {
+    const read = new AbortController();
+    setFailed(false);
+    void fetchTableExportCapabilities(read.signal).then(value => { if (!read.signal.aborted) setCatalog(value); })
+      .catch(() => { if (!read.signal.aborted) { setCatalog(undefined); setFailed(true); } });
+    return () => read.abort();
+  }, [version]);
+  if (failed) return <div className="ontology-source-sync__body"><p role="alert">Could not load the approved export receivers.
+    {' '}<Button size="small" onClick={() => setVersion(value => value + 1)}>Refresh export</Button></p></div>;
+  if (!catalog) return <div className="ontology-source-sync__body"><p role="status">Loading export configuration…</p></div>;
+  const choices = catalog.approvedDestinations;
+  if (!choices?.some(option => option.id === 'secondary')) return <TableExportWorkspace initialCapabilities={catalog} onWorkingChange={onWorkingChange} />;
+  const receiver = choices.find(option => option.id === selected);
+  return <>
+    <div className="ontology-source-sync__body">
+      <label className="ontology-receiver-selection">Approved receiver
+        <select aria-label="Approved receiver" value={receiver?.id ?? ''} disabled={working}
+          onChange={event => { if (!working) setSelected(choices.find(option => option.id === event.target.value)?.id); }}>
+          <option value="">Select one approved receiver</option>
+          {choices.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+        </select>
+      </label>
+      {!receiver && <p>Choose one receiver before inspecting its export draft, approval, or history.</p>}
+    </div>
+    {receiver && <TableExportWorkspace key={receiver.id} destination={receiver.id} label={receiver.label} onWorkingChange={onWorkingChange} />}
+  </>;
+}
+
+function TableExportWorkspace({ destination, label, initialCapabilities, onWorkingChange }: {
+  destination?: TableExportDestination; label?: string; initialCapabilities?: TableExportCapabilities;
+  onWorkingChange: (working: boolean) => void;
+}) {
   const [capabilities, setCapabilities] = useState<TableExportCapabilities>();
   const [plan, setPlan] = useState<TableExportPlan | null>();
   const [grant, setGrant] = useState<TableExportGrant>();
@@ -83,7 +125,9 @@ function TableExportWorkspace() {
   const identity = useRef(getSessionState().identity).current;
   const activeGeneration = grant?.effective && plan && grant.planUpdatedAt === plan.updatedAt ? grant.generation : null;
   const available = Boolean(capabilities?.enabled && capabilities.provisioned && activeGeneration != null);
-  const storageKey = `ontology-table-export:${identity}:${activeGeneration ?? 'inactive'}`;
+  const receiverScope = destination ?? 'primary';
+  // Primary retains the existing storage namespace; an untagged legacy request could only have been primary.
+  const storageKey = `ontology-table-export:${identity}:${receiverScope === 'secondary' ? 'secondary:' : ''}${activeGeneration ?? 'inactive'}`;
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -94,31 +138,32 @@ function TableExportWorkspace() {
     const read = new AbortController();
     setLoadingError(false);
     void Promise.all([
-      fetchTableExportCapabilities(read.signal), fetchTableExportPlan(read.signal), fetchTableExportGrant(read.signal),
+      revision === 0 && initialCapabilities ? Promise.resolve(initialCapabilities) : fetchTableExportCapabilities(read.signal, destination),
+      fetchTableExportPlan(read.signal, destination), fetchTableExportGrant(read.signal, destination),
     ]).then(([flags, saved, authorization]) => {
       if (live(read.signal)) {
         setCapabilities(flags); setPlan(saved); setName(saved?.name ?? ''); setGrant(authorization);
       }
     }).catch(() => { if (live(read.signal)) setLoadingError(true); });
     return () => read.abort();
-  }, [revision, identity]);
+  }, [revision, identity, destination, initialCapabilities]);
   useEffect(() => {
     if (!view) return;
     const read = new AbortController();
     setHistoryError(false);
     const fail = () => { if (live(read.signal)) setHistoryError(true); };
     if (view === 'authorization') {
-      void fetchTableExportGrantHistory(read.signal)
+      void fetchTableExportGrantHistory(read.signal, destination)
         .then(value => { if (live(read.signal)) setGrantHistory(value); }).catch(fail);
     } else if (activeGeneration == null) {
       setReceipts(undefined); setAttempts(undefined);
     } else if (view === 'receipts') {
-      void fetchTableExportReceipts(read.signal).then(value => { if (live(read.signal)) setReceipts(value); }).catch(fail);
+      void fetchTableExportReceipts(read.signal, destination).then(value => { if (live(read.signal)) setReceipts(value); }).catch(fail);
     } else {
-      void fetchTableExportAttempts(read.signal).then(value => { if (live(read.signal)) setAttempts(value); }).catch(fail);
+      void fetchTableExportAttempts(read.signal, destination).then(value => { if (live(read.signal)) setAttempts(value); }).catch(fail);
     }
     return () => read.abort();
-  }, [view, historyRevision, identity, activeGeneration]);
+  }, [view, historyRevision, identity, activeGeneration, destination]);
 
   const changeView = (next: 'receipts' | 'attempts' | 'authorization') => {
     if (next !== view) { setHistoryError(false); setView(next); }
@@ -129,9 +174,9 @@ function TableExportWorkspace() {
   };
   const save = async () => {
     if (!capabilities?.provisioned || plan === undefined || !name.trim() || pending.current || !live()) return;
-    pending.current = true; setOperation('save'); setNotice(undefined);
+    pending.current = true; onWorkingChange(true); setOperation('save'); setNotice(undefined);
     try {
-      const saved = await saveTableExportPlan({ name: name.trim(), expectedUpdatedAt: plan?.updatedAt ?? null });
+      const saved = await saveTableExportPlan({ name: name.trim(), expectedUpdatedAt: plan?.updatedAt ?? null }, destination);
       if (live()) {
         setPlan(saved); setName(saved.name); setGrant(undefined); setReceipts(undefined); setAttempts(undefined);
         setRevision(value => value + 1);
@@ -142,14 +187,14 @@ function TableExportWorkspace() {
         const { status } = exportFailure(failure);
         setNotice({ kind: 'alert', message: status === 409 ? 'The export draft has changed. Refresh and review it again.' : 'Could not save the export draft.' });
       }
-    } finally { pending.current = false; if (live()) setOperation(undefined); }
+    } finally { pending.current = false; if (live()) { setOperation(undefined); onWorkingChange(false); } }
   };
 
   const changeGrant = async (request: TableExportGrantChange) => {
     if (pending.current || !live()) return;
-    pending.current = true; setOperation('grant'); setNotice(undefined);
+    pending.current = true; onWorkingChange(true); setOperation('grant'); setNotice(undefined);
     try {
-      const authorization = await updateTableExportGrant(request);
+      const authorization = await updateTableExportGrant(request, destination);
       if (live()) {
         setGrant(authorization); setReceipts(undefined); setAttempts(undefined); setConfirm(undefined);
         setHistoryRevision(value => value + 1);
@@ -168,14 +213,14 @@ function TableExportWorkspace() {
       }
     } finally {
       pending.current = false;
-      if (live()) setOperation(undefined);
+      if (live()) { setOperation(undefined); onWorkingChange(false); }
     }
   };
 
   const askRun = (previous?: RunRequest) => {
     if (!plan || !available || activeGeneration == null || pending.current || !live()) return;
     if (previous && previous.expectedGrantGeneration !== activeGeneration) return;
-    const localRequest = readPending(storageKey);
+    const localRequest = readPending(storageKey, receiverScope);
     if (previous && localRequest && previous.requestId !== localRequest.requestId) {
       setNotice({ kind: 'alert', message: 'Resolve your pending export request before retrying a different request.' });
       return;
@@ -191,14 +236,14 @@ function TableExportWorkspace() {
     try {
       request = confirm.previous ?? { requestId: crypto.randomUUID(), expectedUpdatedAt: confirm.expectedUpdatedAt,
         expectedGrantGeneration: confirm.expectedGrantGeneration };
-      rememberPending(storageKey, request);
+      rememberPending(storageKey, request, receiverScope);
     } catch {
       setConfirm(undefined); setNotice({ kind: 'alert', message: 'Could not save a retry ID in this tab. No export request was sent.' });
       return;
     }
-    pending.current = true; setOperation('run'); setNotice(undefined);
+    pending.current = true; onWorkingChange(true); setOperation('run'); setNotice(undefined);
     try {
-      const receipt = await runTableExport(request);
+      const receipt = await runTableExport(request, destination);
       forgetPending(storageKey);
       if (live()) {
         setReceipts(items => [receipt, ...(items?.filter(item => item.id !== receipt.id) ?? [])]);
@@ -222,11 +267,12 @@ function TableExportWorkspace() {
       }
     } finally {
       pending.current = false;
-      if (live()) { setOperation(undefined); setConfirm(undefined); setHistoryRevision(value => value + 1); }
+      if (live()) { setOperation(undefined); onWorkingChange(false); setConfirm(undefined); setHistoryRevision(value => value + 1); }
     }
   };
 
-  const localRequest = readPending(storageKey);
+  const localRequest = readPending(storageKey, receiverScope);
+  const receiverLabel = capabilities?.destinationLabel ?? label;
   const route = capabilities && <div className="ontology-source-sync__route">
     <code>{capabilities.sourceSchema}.{capabilities.sourceTable}</code><ArrowRightOutlined /><code>{capabilities.targetSchema}.{capabilities.targetTable}</code>
   </div>;
@@ -241,6 +287,7 @@ function TableExportWorkspace() {
         {!capabilities.provisioned && <p role="status">The approved pilot receiver is not provisioned. A draft cannot be saved yet.</p>}
         <div className="ontology-table-export__mapping">
           <h4>Fixed source and approved destination</h4>
+          {receiverLabel && <p>Receiver: <strong>{receiverLabel}</strong></p>}
           {route}
           <p>Use only synthetic pilot records. The destination and columns are fixed; no custom endpoint, schedule, or target deletion.</p>
           <div className="ontology-source-catalog__columns"><table aria-label="Export column mapping">
@@ -259,11 +306,12 @@ function TableExportWorkspace() {
             </Button>}
           </div>
         </form>
-        <TableExportAuthorization grant={grant} plan={plan} scope={capabilities} busy={Boolean(operation)}
+        <TableExportAuthorization grant={grant} plan={plan} scope={capabilities} receiverLabel={receiverLabel} busy={Boolean(operation)}
           saving={operation === 'grant'} dirty={name.trim() !== (plan?.name ?? '')} onChange={changeGrant} />
       </>}
     {notice && <p role={notice.kind} className={notice.kind === 'alert' ? 'is-error' : undefined}>{notice.message}</p>}
     {capabilities && plan !== undefined && <section aria-label="Table export history">
+      {receiverLabel && <p>History for <strong>{receiverLabel}</strong> only.</p>}
       <div className="ontology-source-sync__actions" role="group" aria-label="Export history view">
         <Button size="small" aria-pressed={view === 'receipts'} onClick={() => changeView('receipts')}>Receiver receipts</Button>
         <Button size="small" aria-pressed={view === 'attempts'} onClick={() => changeView('attempts')}>Attempts</Button>
@@ -313,9 +361,11 @@ function TableExportWorkspace() {
       onCancel={() => setConfirm(undefined)} onOk={run} confirmLoading={operation === 'run'} okText={confirm?.previous ? 'Retry same request' : 'Confirm sandbox export'}>
       {confirm?.previous ? <>
         <p>Reuse the original request ID and saved export revision. If the receiver already committed it, the same request cannot apply it twice.</p>
+        {receiverLabel && <p>Original receiver: <strong>{receiverLabel}</strong>.</p>}
         <p>Request ID: <code>{confirm.previous.requestId}</code></p>
       </> : <>
         <p>Send up to {capabilities?.maxRows} synthetic records from this saved revision to the fixed approved receiver. Only the listed columns are sent. No target rows are deleted.</p>
+        {receiverLabel && <p>Destination: <strong>{receiverLabel}</strong>. No other receiver will be contacted.</p>}
         {route}
         {capabilities && <p>Mapped columns: {capabilities.mapping.map(field => `${field.sourceColumn} → ${field.targetColumn}`).join(', ')}.</p>}
       </>}

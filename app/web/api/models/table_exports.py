@@ -5,11 +5,12 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
-from sqlalchemy import CheckConstraint, Column, DateTime, Index
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index
 from sqlmodel import Field as DbField, SQLModel
 
 SYNTHETIC_EXPORT_MARKING = "sandbox-synthetic"
 ExportMarking = Literal["sandbox-synthetic"]
+ExportDestination = Literal["primary", "secondary"]
 
 ExportOutcome = Literal["started", "committed", "replayed", "rejected", "retryable", "outcome_unknown"]
 
@@ -69,6 +70,11 @@ class TableExportMapping(BaseModel):
     type: str
 
 
+class TableExportDestinationOption(BaseModel):
+    id: ExportDestination
+    label: str
+
+
 class TableExportCapabilities(BaseModel):
     enabled: bool
     provisioned: bool
@@ -79,6 +85,10 @@ class TableExportCapabilities(BaseModel):
     maxRows: int
     maxCaptionBytes: int
     mapping: list[TableExportMapping]
+    approvedDestinations: list[TableExportDestinationOption] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
+    destinationLabel: str | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportReceipt(BaseModel):
@@ -139,9 +149,16 @@ class TableExportLineage(BaseModel):
 
 class TableExportPlanRow(SQLModel, table=True):
     __tablename__ = "ontology_table_export_plan"
-    __table_args__ = (CheckConstraint("singleton = true", name="ck_ontology_table_export_singleton"),)
+    __table_args__ = (
+        CheckConstraint("singleton = true", name="ck_ontology_table_export_singleton"),
+        CheckConstraint("(destination = 'primary' AND receiver_proof IS NULL) OR "
+                        "(destination = 'secondary' AND (receiver_proof ~ '^[0-9a-f]{64}$') IS TRUE)",
+                        name="ck_ontology_table_export_plan_destination"),
+    )
 
-    singleton: bool = DbField(default=True, primary_key=True)
+    singleton: bool = DbField(default=True)
+    destination: str = DbField(default="primary", max_length=9, primary_key=True)
+    receiver_proof: str | None = DbField(default=None, max_length=64)
     id: UUID = DbField(default_factory=uuid4)
     name: str = DbField(max_length=120)
     reviewed_by: UUID
@@ -154,11 +171,13 @@ class TableExportGrantRow(SQLModel, table=True):
 
     __tablename__ = "ontology_table_export_grants"
     __table_args__ = (
+        CheckConstraint("destination IN ('primary', 'secondary')", name="ck_ontology_table_export_grants_destination"),
         CheckConstraint("generation > 0", name="ck_ontology_table_export_grant_generation"),
         CheckConstraint("marking = 'sandbox-synthetic'", name="ck_ontology_table_export_grant_marking"),
         CheckConstraint("action IN ('approved', 'revoked')", name="ck_ontology_table_export_grant_action"),
     )
 
+    destination: str = DbField(default="primary", max_length=9, primary_key=True)
     generation: int = DbField(primary_key=True)
     id: UUID = DbField(default_factory=uuid4, unique=True)
     action: str = DbField(max_length=8)
@@ -172,12 +191,20 @@ class TableExportGrantRow(SQLModel, table=True):
 
 class TableExportRequestRow(SQLModel, table=True):
     __tablename__ = "ontology_table_export_requests"
+    __table_args__ = (
+        CheckConstraint("destination IN ('primary', 'secondary')", name="ck_ontology_table_export_requests_destination"),
+        ForeignKeyConstraint(["destination", "grant_generation"],
+                             ["ontology_table_export_grants.destination", "ontology_table_export_grants.generation"],
+                             name="fk_table_export_request_grant"),
+        Index("ix_ontology_table_export_requests_grant_generation", "destination", "grant_generation"),
+    )
 
+    destination: str = DbField(default="primary", max_length=9)
     request_id: UUID = DbField(primary_key=True)
     plan_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     binding_digest: str = DbField(max_length=64)
     payload_digest: str | None = DbField(default=None, max_length=64)
-    grant_generation: int | None = DbField(default=None, foreign_key="ontology_table_export_grants.generation", index=True)
+    grant_generation: int | None = DbField(default=None)
 
 
 class TableExportReceiptRow(SQLModel, table=True):

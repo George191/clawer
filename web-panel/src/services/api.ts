@@ -758,9 +758,12 @@ export const fetchBatchSyncScheduleJobs = (id: string, signal?: AbortSignal): Pr
   client.get(`${batchSyncSchedulePath(id)}/jobs`, { signal }).then((r) => unwrap<BatchSyncScheduleJob[]>(r.data));
 
 const tableExportPath = '/etl/table-export';
+export type TableExportDestination = 'primary' | 'secondary';
+export type TableExportDestinationOption = { id: TableExportDestination; label: string };
 export type TableExportCapabilities = {
   enabled: boolean; provisioned: boolean; sourceSchema: string; sourceTable: string; targetSchema: string; targetTable: string;
   maxRows: number; maxCaptionBytes: number; mapping: { sourceColumn: string; targetColumn: string; type: string }[];
+  approvedDestinations?: TableExportDestinationOption[]; destinationLabel?: string;
 };
 export type TableExportPlan = { id: string; name: string; updatedAt: string };
 export type TableExportGrant = {
@@ -792,24 +795,25 @@ export type TableExportLineage = {
 };
 export const fetchTableExportLineage = (signal?: AbortSignal): Promise<TableExportLineage> =>
   client.get(`${tableExportPath}/lineage`, { signal }).then((r) => unwrap<TableExportLineage>(r.data));
-export const fetchTableExportCapabilities = (signal?: AbortSignal): Promise<TableExportCapabilities> =>
-  client.get(`${tableExportPath}/capabilities`, { signal }).then((r) => unwrap<TableExportCapabilities>(r.data));
-export const fetchTableExportPlan = (signal?: AbortSignal): Promise<TableExportPlan | null> =>
-  client.get(tableExportPath, { signal }).then((r) => unwrap<TableExportPlan | null>(r.data));
-export const saveTableExportPlan = (request: { name: string; expectedUpdatedAt: string | null }): Promise<TableExportPlan> =>
-  client.put(tableExportPath, request).then((r) => unwrap<TableExportPlan>(r.data));
-export const fetchTableExportGrant = (signal?: AbortSignal): Promise<TableExportGrant> =>
-  client.get(`${tableExportPath}/grant`, { signal }).then((r) => unwrap<TableExportGrant>(r.data));
-export const updateTableExportGrant = (request: TableExportGrantChange): Promise<TableExportGrant> =>
-  client.put(`${tableExportPath}/grant`, request).then((r) => unwrap<TableExportGrant>(r.data));
-export const fetchTableExportGrantHistory = (signal?: AbortSignal): Promise<TableExportGrantEvent[]> =>
-  client.get(`${tableExportPath}/grant/history`, { signal }).then((r) => unwrap<TableExportGrantEvent[]>(r.data));
-export const fetchTableExportReceipts = (signal?: AbortSignal): Promise<TableExportReceipt[]> =>
-  client.get(`${tableExportPath}/runs`, { signal }).then((r) => unwrap<TableExportReceipt[]>(r.data));
-export const fetchTableExportAttempts = (signal?: AbortSignal): Promise<TableExportAttempt[]> =>
-  client.get(`${tableExportPath}/attempts`, { signal }).then((r) => unwrap<TableExportAttempt[]>(r.data));
-export const runTableExport = (request: { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number }): Promise<TableExportReceipt> =>
-  client.post(`${tableExportPath}/runs`, request).then((r) => unwrap<TableExportReceipt>(r.data));
+const exportDestinationParams = (destination?: TableExportDestination) => destination ? { destination } : undefined;
+export const fetchTableExportCapabilities = (signal?: AbortSignal, destination?: TableExportDestination): Promise<TableExportCapabilities> =>
+  client.get(`${tableExportPath}/capabilities`, { signal, params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportCapabilities>(r.data));
+export const fetchTableExportPlan = (signal?: AbortSignal, destination?: TableExportDestination): Promise<TableExportPlan | null> =>
+  client.get(tableExportPath, { signal, params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportPlan | null>(r.data));
+export const saveTableExportPlan = (request: { name: string; expectedUpdatedAt: string | null }, destination?: TableExportDestination): Promise<TableExportPlan> =>
+  client.put(tableExportPath, request, { params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportPlan>(r.data));
+export const fetchTableExportGrant = (signal?: AbortSignal, destination?: TableExportDestination): Promise<TableExportGrant> =>
+  client.get(`${tableExportPath}/grant`, { signal, params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportGrant>(r.data));
+export const updateTableExportGrant = (request: TableExportGrantChange, destination?: TableExportDestination): Promise<TableExportGrant> =>
+  client.put(`${tableExportPath}/grant`, request, { params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportGrant>(r.data));
+export const fetchTableExportGrantHistory = (signal?: AbortSignal, destination?: TableExportDestination): Promise<TableExportGrantEvent[]> =>
+  client.get(`${tableExportPath}/grant/history`, { signal, params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportGrantEvent[]>(r.data));
+export const fetchTableExportReceipts = (signal?: AbortSignal, destination?: TableExportDestination): Promise<TableExportReceipt[]> =>
+  client.get(`${tableExportPath}/runs`, { signal, params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportReceipt[]>(r.data));
+export const fetchTableExportAttempts = (signal?: AbortSignal, destination?: TableExportDestination): Promise<TableExportAttempt[]> =>
+  client.get(`${tableExportPath}/attempts`, { signal, params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportAttempt[]>(r.data));
+export const runTableExport = (request: { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number }, destination?: TableExportDestination): Promise<TableExportReceipt> =>
+  client.post(`${tableExportPath}/runs`, request, { params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportReceipt>(r.data));
 export const fetchDataConnectorTypes = (): Promise<DataConnectorType[]> =>
   client.get('/etl/connector-types').then((r) => unwrap<DataConnectorType[]>(r.data));
 export const fetchDataSources = (): Promise<DataSource[]> =>

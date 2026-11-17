@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import AwareDatetime
 from sqlalchemy.exc import DBAPIError
@@ -41,6 +41,7 @@ from app.web.api.models.pipeline_sandbox_outputs import (
     PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputDetail, PipelineSandboxOutputsPage,
 )
 from app.web.api.models.table_exports import (
+    ExportDestination,
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
     TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
 )
@@ -581,60 +582,69 @@ async def get_batch_sync_capabilities() -> BatchSyncCapabilities:
     return batch_sync_capabilities()
 
 
+def export_destination(request: Request, destination: ExportDestination = "primary") -> ExportDestination:
+    if len(request.query_params.getlist("destination")) > 1:
+        raise HTTPException(422, "Specify exactly one approved Table Export destination")
+    return destination
+
+
+ExportDestinationDep = Annotated[ExportDestination, Depends(export_destination)]
+
+
 @write.get("/table-export/capabilities")
-async def get_table_export_capabilities() -> TableExportCapabilities:
-    return table_export_capabilities()
+async def get_table_export_capabilities(destination: ExportDestinationDep) -> TableExportCapabilities:
+    return table_export_capabilities(destination)
 
 
 @write.get("/table-export")
-async def get_table_export_review(session: SessionDep) -> TableExportPlan | None:
-    return await get_table_export(session)
+async def get_table_export_review(session: SessionDep, destination: ExportDestinationDep) -> TableExportPlan | None:
+    return await get_table_export(session, destination)
 
 
 @write.put("/table-export")
 async def put_table_export_review(
-    payload: TableExportReview, session: SessionDep, current_user: CurrentActiveSuperuser,
+    payload: TableExportReview, session: SessionDep, current_user: CurrentActiveSuperuser, destination: ExportDestinationDep,
 ) -> TableExportPlan:
-    return await review_table_export(session, payload, current_user.id)
+    return await review_table_export(session, payload, current_user.id, destination)
 
 
 @write.get("/table-export/grant")
-async def get_export_grant(session: SessionDep) -> TableExportGrant:
-    return await get_table_export_grant(session)
+async def get_export_grant(session: SessionDep, destination: ExportDestinationDep) -> TableExportGrant:
+    return await get_table_export_grant(session, destination)
 
 
 @write.put("/table-export/grant")
 async def put_export_grant(
-    payload: TableExportGrantChange, session: SessionDep, current_user: CurrentActiveSuperuser,
+    payload: TableExportGrantChange, session: SessionDep, current_user: CurrentActiveSuperuser, destination: ExportDestinationDep,
 ) -> TableExportGrant:
-    return await change_table_export_grant(session, payload, current_user.id)
+    return await change_table_export_grant(session, payload, current_user.id, destination)
 
 
 @write.get("/table-export/grant/history")
-async def get_export_grant_history(session: SessionDep) -> list[TableExportGrantEvent]:
-    return await list_table_export_grant_history(session)
+async def get_export_grant_history(session: SessionDep, destination: ExportDestinationDep) -> list[TableExportGrantEvent]:
+    return await list_table_export_grant_history(session, destination)
 
 
 @write.get("/table-export/runs")
-async def get_table_export_runs(session: SessionDep) -> list[TableExportReceipt]:
-    return await list_table_export_receipts(session)
+async def get_table_export_runs(session: SessionDep, destination: ExportDestinationDep) -> list[TableExportReceipt]:
+    return await list_table_export_receipts(session, destination)
 
 
 @write.post("/table-export/runs")
 async def post_table_export_run(
-    payload: TableExportRunRequest, session: SessionDep, current_user: CurrentActiveSuperuser,
+    payload: TableExportRunRequest, session: SessionDep, current_user: CurrentActiveSuperuser, destination: ExportDestinationDep,
 ) -> TableExportReceipt:
-    return await run_table_export(session, payload, current_user.id)
+    return await run_table_export(session, payload, current_user.id, destination)
 
 
 @write.get("/table-export/attempts")
-async def get_table_export_attempts(session: SessionDep) -> list[TableExportAttempt]:
-    return await list_table_export_attempts(session)
+async def get_table_export_attempts(session: SessionDep, destination: ExportDestinationDep) -> list[TableExportAttempt]:
+    return await list_table_export_attempts(session, destination)
 
 
 @write.get("/table-export/lineage")
-async def get_table_export_lineage_evidence(session: SessionDep) -> TableExportLineage:
-    return await get_table_export_lineage(session)
+async def get_table_export_lineage_evidence(session: SessionDep, destination: ExportDestinationDep) -> TableExportLineage:
+    return await get_table_export_lineage(session, destination)
 
 
 @write.get("/batch-syncs")
