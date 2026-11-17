@@ -1,5 +1,8 @@
 """App-side bindings for the exact local committed batch stream and isolated sink."""
 
+from hashlib import sha256
+import json
+
 from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +15,11 @@ from app.web.services.batch_source_identity import expected_fingerprint, identit
 
 def incremental_batch_enabled() -> bool:
     return settings.BATCH_SYNC_INCREMENTAL_ENABLED and identity_required() and expected_fingerprint() is not None
+
+
+def batch_lineage_enabled() -> bool:
+    return (settings.BATCH_SYNC_INCREMENTAL_ENABLED and settings.ENVIRONMENT == "local"
+            and "ENVIRONMENT" in settings.model_fields_set)
 
 
 def require_target_shape(target: dict, columns: dict) -> None:
@@ -71,3 +79,12 @@ def incremental_ready_clause():
         stream.source_stream_digest == plan.source_stream_digest,
         stream.target_oid == plan.target_oid, stream.target_file_node == plan.target_file_node,
     ).correlate(plan).exists())
+
+
+def watermark_scope(binding: BatchSyncWatermarkRow) -> str:
+    """Internal audit identity; never base an asset attempt on mutable plan joins."""
+    parts = [
+        str(binding.connection_id), binding.source_identity_fingerprint, binding.source_stream_digest,
+        binding.target_oid, binding.target_file_node,
+    ]
+    return sha256(json.dumps(parts, separators=(",", ":")).encode("ascii")).hexdigest()

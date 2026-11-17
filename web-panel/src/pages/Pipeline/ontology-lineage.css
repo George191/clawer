@@ -60,3 +60,31 @@
 .flow-transfer-route{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
 .flow-transfer-meta small{color:var(--ui-muted)}
 @media(max-width:760px){.flow-lineage-inspector--transfers{width:360px}.flow-transfer .flow-lineage-action{min-height:34px}}
+
+/* The managed asset is separate from the predefined processor-contract preview. */
+.flow-lineage-managed{display:flex;min-height:0;flex:none;align-items:flex-start;gap:16px;padding:9px 12px;border-bottom:1px solid var(--ui-border);background:var(--ui-panel)}
+.flow-lineage-managed.is-selected{max-height:min(53vh,470px);padding-block:0}
+.flow-lineage-managed__graph{display:grid;gap:7px;min-width:0;flex:1}
+.flow-lineage-managed.is-selected .flow-lineage-managed__graph{padding:9px 0}
+.flow-lineage-managed__eyebrow{color:var(--ui-muted);font-size:10px;letter-spacing:.035em}
+.flow-lineage-managed__nodes,.flow-lineage-managed__controls{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+.flow-lineage-managed__nodes .flow-lineage-action[aria-pressed=true]{color:var(--ui-text);border-color:var(--ui-primary)}
+.flow-lineage-managed__source{display:inline-flex;gap:6px;align-items:center;color:var(--ui-muted);min-height:28px;padding:3px 8px;border:1px solid var(--ui-border);border-radius:2px;overflow-wrap:anywhere}
+.flow-lineage-managed__edge{display:inline-flex;align-items:center;width:35px;color:var(--ui-muted)}
+.flow-lineage-managed__edge::before{content:"";flex:1;border-top:2px solid currentColor}
+.flow-lineage-managed__edge.is-reviewed::before{border-top-style:dashed}
+.flow-lineage-managed__edge.is-observed{color:var(--ui-primary)}
+.flow-lineage-managed__edge-label,.flow-lineage-managed-unavailable{color:var(--ui-muted)}
+.flow-lineage-managed-unavailable{padding:8px 12px}
+.flow-lineage-managed .flow-lineage-managed__inspector{position:static;align-self:stretch;flex:0 1 370px;width:auto;min-width:0;max-height:min(53vh,470px)}
+.flow-lineage-managed__timeline{margin-top:14px;border-top:1px solid var(--ui-border);padding-top:9px}
+.flow-lineage-managed__timeline h3,.flow-lineage-managed__timeline h4{font-size:12px;margin:0 0 7px}
+.flow-lineage-managed__timeline form{display:grid;gap:7px}
+.flow-lineage-managed__timeline label{display:grid;gap:3px;color:var(--ui-muted)}
+.flow-lineage-managed__timeline input{width:100%;min-width:0;padding:4px 6px;border:1px solid var(--ui-border);border-radius:2px;background:var(--ui-panel);color:var(--ui-text);font:inherit}
+.flow-lineage-managed__timeline ol{display:grid;gap:7px;list-style:none;padding:0;margin:8px 0}
+.flow-lineage-managed__timeline li,.flow-lineage-managed__entry{display:grid;gap:5px;padding:8px;border:1px solid var(--ui-border);border-radius:2px;min-width:0;overflow-wrap:anywhere}
+.flow-lineage-managed__timeline li button{justify-self:start}
+.flow-lineage-managed__entry{margin-top:8px}
+.flow-lineage-managed__entry dl{margin:4px 0}
+@media(max-width:700px){.flow-lineage-managed.is-selected{display:grid;gap:0;max-height:min(63vh,490px);overflow:auto;align-content:start}.flow-lineage-managed.is-selected .flow-lineage-managed__graph{padding:7px 0}.flow-lineage-managed .flow-lineage-managed__inspector{width:100%;max-width:none;max-height:none;overflow:visible;border:1px solid var(--ui-border);box-shadow:none}}

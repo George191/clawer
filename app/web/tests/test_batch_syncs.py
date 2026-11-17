@@ -102,6 +102,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
         self.schedules_migration = import_module("app.web.alembic.versions.a83a40b7dc19_ontology_batch_sync_schedules")
         identity_migration = import_module("app.web.alembic.versions.0e653c2f6a91_ontology_batch_source_identity")
         incremental_migration = import_module("app.web.alembic.versions.b8e42d47136f_ontology_batch_sync_incremental")
+        lineage_migration = import_module("app.web.alembic.versions.d2fb47b91a6e_ontology_committed_batch_timeline")
         await migrate(self.pg, apply=True)
         async with self.pg.session() as session:
             def upgrade(sync_session):
@@ -111,6 +112,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                     self.schedules_migration.upgrade()
                     identity_migration.upgrade()
                     incremental_migration.upgrade()
+                    lineage_migration.upgrade()
 
             await session.run_sync(upgrade)
             await session.execute(text("CREATE SCHEMA ts_batch_sync_sandbox"))
@@ -551,6 +553,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                        "sourceKeyColumn": "id", "targetTable": "committed_batch_fixture",
                        "mapping": [{"sourceColumn": name, "targetColumn": name} for name in ("id", "value")]}
         review_url = f"/etl/data-connections/{PAYLOAD['connectionId']}/batch-source-identity"
+        timeline = "/etl/ts_batch_sync_sandbox/committed_batch_fixture/batch-lineage-timeline"
         cursor_sql = "SELECT applied_through AS through FROM ontology_batch_sync_incremental_watermark"
         slot = datetime(2026, 11, 17, 4, 0, tzinfo=timezone.utc)
 
@@ -575,6 +578,11 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
             patch("app.web.services.batch_syncs.get_data_connections", return_value=connections),
         ):
             async with api(True, self.provider) as client:
+                self.assertEqual((await client.get(timeline)).json()["lineage"]["state"], "unreviewed")
+                async with api(False, self.provider) as reader:
+                    self.assertEqual((await reader.get(timeline)).status_code, 403)
+                with patch.object(settings, "BATCH_SYNC_INCREMENTAL_ENABLED", False):
+                    self.assertEqual((await client.get(timeline)).status_code, 404)
                 verify = await client.post(review_url, json={"expectedSourceUpdatedAt": PAYLOAD["expectedSourceUpdatedAt"]})
                 self.assertEqual(verify.status_code, 200, verify.text)
                 self.assertEqual((await client.post(RUNS, json={**incremental, "mode": "snapshot"})).status_code, 422)
@@ -585,6 +593,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(two.status_code, 201, two.text)
                 second = two.json()
                 self.assertEqual(first["appliedThrough"], "0")
+                self.assertEqual((await client.get(timeline)).json()["lineage"]["state"], "reviewed")
                 empty_id = uuid4()
                 empty = await request(client, first, empty_id)
                 self.assertEqual(empty.status_code, 200, empty.text)
@@ -641,3 +650,98 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 attempts = (await client.get(firstpath + "/attempts")).json()
                 self.assertIn(("no_new_data", info["receiptId"]), {(row["status"], row["receiptId"]) for row in attempts})
                 self.assertEqual({item["appliedThrough"] for item in (await client.get(RUNS)).json()}, {"2"})
+
+                observed = await client.get(timeline)
+                self.assertEqual(observed.status_code, 200, observed.text)
+                edge = observed.json()["lineage"]
+                self.assertEqual((edge["state"], edge["appliedThrough"], edge["latestPositiveReceiptId"]),
+                                 ("observed", "2", applied.json()["id"]))
+                self.assertEqual((await client.get(timeline, params={"from": "2026-01-01T00:00:00Z"})).status_code, 422)
+                self.assertEqual((await client.get(timeline, params={
+                    "from": "2026-01-01T00:00:00Z", "to": "2026-02-05T00:00:00Z",
+                })).status_code, 422)
+
+                scheduled_detail = await client.get(timeline + "/receipt/" + info["receiptId"])
+                self.assertEqual(scheduled_detail.status_code, 200, scheduled_detail.text)
+                scheduled = scheduled_detail.json()
+                self.assertEqual((scheduled["trigger"], scheduled["status"], scheduled["job"]["state"]),
+                                 ("daily_utc", "no_new_data", "no_new_data"))
+                self.assertEqual(scheduled["rowsAffected"], 0)
+                for forbidden in ("planId", "requestId", "connectionId", "manifestHash", "sourceIdentityVerified"):
+                    self.assertNotIn(forbidden, scheduled)
+
+                # Simulate legacy successful attempt and force a cross-table timestamp/UUID tie.
+                tie = UUID(applied.json()["id"])
+                await self.pg.execute("""
+                    UPDATE ontology_batch_sync_attempts SET id=:id, incremental_scope=NULL, started_at=(
+                        SELECT recorded_at FROM ontology_batch_sync_receipts WHERE id=:id
+                    ) WHERE receipt_id=:id AND status='committed'
+                """, {"id": tie})
+                cursor = None
+                seen = []
+                for page_number in range(20):
+                    params = {"limit": 1}
+                    if cursor:
+                        params["cursor"] = cursor
+                    page = await client.get(timeline, params=params)
+                    self.assertEqual(page.status_code, 200, page.text)
+                    entry, = page.json()["entries"]
+                    seen.append((entry["kind"], entry["id"]))
+                    cursor = page.json()["nextCursor"]
+                    if cursor is None:
+                        break
+                else:
+                    self.fail("Timeline did not terminate under bounded keyset paging")
+                paired = [kind for kind, identity in seen if identity == str(tie)]
+                self.assertEqual(paired, ["receipt", "attempt"])
+                self.assertEqual(len(seen), len(set(seen)))
+
+                # Commit a real later batch after timeline watermark read; one response must not mix generations.
+                from app.web.services import batch_lineage
+
+                captured, release = asyncio.Event(), asyncio.Event()
+                original_watermark = batch_lineage.watermark
+
+                async def hold_watermark(session):
+                    result = await original_watermark(session)
+                    captured.set()
+                    await release.wait()
+                    return result
+
+                with patch.object(batch_lineage, "watermark", hold_watermark):
+                    pending = asyncio.create_task(client.get(timeline))
+                    try:
+                        await asyncio.wait_for(captured.wait(), 5)
+                        self.assertEqual(await publish('[{"id":1,"value":"concurrent publication"}]'), 3)
+                        third = await request(client, first)
+                        self.assertEqual(third.status_code, 200, third.text)
+                    finally:
+                        release.set()
+                    concurrent_page = await asyncio.wait_for(pending, 5)
+                self.assertEqual(concurrent_page.status_code, 200, concurrent_page.text)
+                self.assertEqual(concurrent_page.json()["lineage"]["appliedThrough"], "2")
+                self.assertNotIn(third.json()["id"], {item["id"] for item in concurrent_page.json()["entries"]})
+                self.assertEqual((await client.get(timeline)).json()["lineage"]["appliedThrough"], "3")
+
+                # Local archive is independent of the mutable saved connection and of the source being healthy.
+                with patch.object(settings, "BATCH_SYNC_SOURCE_IDENTITY_MARKER", uuid4()):
+                    self.assertEqual((await client.get(timeline)).json()["lineage"]["state"], "observed")
+                await self.pg.execute("TRUNCATE ts_batch_sync_sandbox.committed_batch_fixture")
+                failed_after_rewrite = await request(client, first)
+                self.assertEqual(failed_after_rewrite.status_code, 409, failed_after_rewrite.text)
+                archived = await client.get(timeline)
+                self.assertEqual(archived.status_code, 200, archived.text)
+                self.assertEqual(archived.json()["lineage"]["state"], "archived")
+                for field in ("appliedThrough", "latestPositiveReceiptId", "latestPositiveRecordedAt"):
+                    self.assertIsNone(archived.json()["lineage"][field])
+                self.assertTrue(all(item["physicalScope"] == "archived" for item in archived.json()["entries"]))
+                failure, = [item for item in archived.json()["entries"] if item["code"] == "target_rewritten"]
+                self.assertIsNone(failure["receiptId"])
+                self.assertIsNone(failure["rowsAffected"])
+                history = await client.get(timeline + "/attempt/" + str(tie))
+                self.assertEqual(history.status_code, 200, history.text)
+                self.assertEqual(history.json()["receiptId"], str(tie))
+                await self.pg.execute("DROP TABLE ts_batch_sync_sandbox.committed_batch_fixture")
+                absent = await client.get(timeline)
+                self.assertEqual(absent.status_code, 200, absent.text)
+                self.assertEqual(absent.json()["lineage"]["state"], "archived")

@@ -125,6 +125,7 @@ class BatchSyncCapabilities(BaseModel):
     maxRows: int = BATCH_ROWS
     maxBytes: int = BATCH_BYTES
     scheduledBatchSync: bool = False
+    incrementalLineage: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalBatchSync: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalMaxRows: int | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalMaxBytes: int | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -186,6 +187,15 @@ class BatchSyncReceiptRow(SQLModel, table=True):
             name="ck_ontology_batch_sync_receipt_window",
         ),
         Index("ix_ontology_batch_sync_receipts_plan", "plan_id", "recorded_at"),
+        Index("ix_batch_receipt_incremental_timeline", "connection_id", "recorded_at", "id",
+              postgresql_where=text("from_exclusive IS NOT NULL AND source_identity_verified IS TRUE "
+                                    "AND source_schema = 'batch_sync_stream' AND source_table = 'batches' "
+                                    "AND target_table = 'committed_batch_fixture'")),
+        Index("ix_batch_receipt_incremental_positive", "connection_id", "recorded_at", "id",
+              postgresql_where=text("from_exclusive IS NOT NULL AND source_identity_verified IS TRUE "
+                                    "AND source_schema = 'batch_sync_stream' AND source_table = 'batches' "
+                                    "AND target_table = 'committed_batch_fixture' "
+                                    "AND outcome = 'committed' AND rows_affected > 0")),
         Index("uq_ontology_batch_sync_incremental_ordinal", "through_inclusive", unique=True,
               postgresql_where=text("outcome = 'committed' AND through_inclusive IS NOT NULL")),
     )
@@ -252,6 +262,11 @@ class BatchSyncAttemptRow(SQLModel, table=True):
             " AND receipt_id IS NULL AND code IS NOT NULL AND message IS NOT NULL)",
             name="ck_ontology_batch_sync_attempt_status",
         ),
+        CheckConstraint("incremental_scope ~ '^[0-9a-f]{64}$'", name="ck_batch_attempt_incremental_scope"),
+        Index("ix_batch_attempt_incremental_timeline", "incremental_scope", "started_at", "id",
+              postgresql_where=text("incremental_scope IS NOT NULL")),
+        Index("ix_batch_attempt_legacy_timeline", "started_at", "id",
+              postgresql_where=text("incremental_scope IS NULL AND receipt_id IS NOT NULL")),
         Index("ix_ontology_batch_sync_attempts_plan", "plan_id", "started_at"),
     )
 
@@ -260,6 +275,7 @@ class BatchSyncAttemptRow(SQLModel, table=True):
     request_id: UUID
     initiated_by: UUID
     status: str = DbField(default="started", max_length=16)
+    incremental_scope: str | None = DbField(default=None, max_length=64)
     started_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     finished_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
     receipt_id: UUID | None = DbField(default=None, foreign_key="ontology_batch_sync_receipts.id")

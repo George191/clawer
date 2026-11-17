@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { Button, Input, Modal } from '@/components/ui';
 import { ArrowRightOutlined } from '@/components/ui/icons';
 import {
@@ -10,6 +11,7 @@ import type { BatchSourceIdentity, BatchSyncAttempt, BatchSyncCapabilities, Batc
 import type { EtlTableColumn } from '../../services/types';
 import { getSessionState } from '../../services/session';
 import { sameSourceRevision } from './SourceIdentity';
+import { MANAGED_BATCH_ASSET } from './ManagedBatchLineage';
 import { nextLocalTimeForUtcClock } from '../../services/scheduleTime';
 
 export type BatchSyncSource = { schema: string; table: string };
@@ -59,7 +61,7 @@ function forgetRun(key: string) {
   try { sessionStorage.removeItem(key); } catch { /* Retained ID is safe to replay. */ }
 }
 
-function ReceiptList({ receipts, incremental }: { receipts: BatchSyncReceipt[]; incremental: boolean }) {
+function ReceiptList({ receipts, incremental, lineageAvailable }: { receipts: BatchSyncReceipt[]; incremental: boolean; lineageAvailable: boolean }) {
   return receipts.length ? <ul className="ontology-source-sync__items">{receipts.map(receipt => <li key={receipt.id}>
     <strong>{receipt.status === 'no_new_data' ? 'No new data' : 'Committed'}</strong>{receipt.sourceIdentityVerified && <span>Source identity verified for this run</span>}<span>Rows affected: {receipt.rowsAffected}</span>
     {receipt.status === 'no_new_data' && <span>No data moved; checkpoint unchanged.</span>}
@@ -70,6 +72,7 @@ function ReceiptList({ receipts, incremental }: { receipts: BatchSyncReceipt[]; 
     {receipt.manifestHash && <span>Batch manifest: <code>{receipt.manifestHash}</code></span>}
     <span>Destination: <code>{receipt.targetTable}</code></span>
     <span>Recorded at: <time dateTime={receipt.recordedAt}>{dateText(receipt.recordedAt)}</time></span><span>{receipt.status === 'no_new_data' ? 'Check record' : 'Receipt'}: <code>{receipt.id}</code></span>
+    {incremental && lineageAvailable && <div><Link to={`/ontology/lineage?${new URLSearchParams({ managedAsset: MANAGED_BATCH_ASSET, batchReceipt: receipt.id })}`}>Open committed batch lineage</Link></div>}
   </li>)}</ul> : <p>{incremental ? 'No committed batches or empty checks recorded.' : 'No committed sync receipts.'}</p>;
 }
 
@@ -484,7 +487,7 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
           {historyError ? <p role="alert" className="is-error">{historyError} <Button size="small" onClick={() => setRevision(value => value + 1)}>Retry history</Button></p>
             : historyView === 'attempts'
               ? attemptList ? <AttemptList attempts={attemptList.filter(attempt => attempt.planId === plan.id)} canRetry={Boolean(capability?.enabled && !busy)} onRetry={attempt => askRun(plan, attempt)} /> : <p role="status">Loading attempts…</p>
-              : receiptList ? <ReceiptList receipts={receiptList.filter(receipt => receipt.planId === plan.id)} incremental={plan.mode === 'incremental'} /> : <p role="status">Loading sync history…</p>}
+              : receiptList ? <ReceiptList receipts={receiptList.filter(receipt => receipt.planId === plan.id)} incremental={plan.mode === 'incremental'} lineageAvailable={capability?.incrementalLineage === true} /> : <p role="status">Loading sync history…</p>}
         </section>}
       </li>)}</ul> : <p>No saved batch syncs. Select a table in Explore source to set one up.</p>}
     </div>

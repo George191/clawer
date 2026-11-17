@@ -663,7 +663,7 @@ export const fetchBatchSourceIdentity = (id: string, signal?: AbortSignal): Prom
   client.get(batchSourceIdentityPath(id), { signal }).then(r => unwrap<BatchSourceIdentity>(r.data));
 export const verifyBatchSourceIdentity = (id: string, expectedSourceUpdatedAt: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
   client.post(batchSourceIdentityPath(id), { expectedSourceUpdatedAt }, { signal, timeout: 45000 }).then(r => unwrap<BatchSourceIdentity>(r.data));
-export type BatchSyncCapabilities = { incrementalBatchSync?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
+export type BatchSyncCapabilities = { incrementalLineage?: true; incrementalBatchSync?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
 export type BatchSyncMapping = { sourceColumn: string; targetColumn: string };
 export type BatchSyncInput = {
   name: string; connectionId: string; sourceSchema: string; sourceTable: string; sourceKeyColumn: string; targetTable: string;
@@ -1028,3 +1028,27 @@ export const fetchAccessTeams = (tenantId: string, query: AccessQuery) => client
 export const createAccessTeam = (tenantId: string, body: AccessTeamInput) => client.post('/team/', body, { params: { tenant_id: tenantId } }).then(r => unwrap<AccessTeam>(r.data));
 export const updateAccessTeam = (id: string, tenantId: string, body: AccessTeamInput) => client.put(`/team/${encodeURIComponent(id)}`, body, { params: { tenant_id: tenantId } }).then(r => unwrap<AccessTeam>(r.data));
 export const deleteAccessTeam = (id: string, tenantId: string) => client.delete(`/team/${encodeURIComponent(id)}`, { params: { tenant_id: tenantId } });
+
+export type CommittedBatchLineageSummary = {
+  state: 'unreviewed' | 'reviewed' | 'observed' | 'archived'; sourceSchema: string; sourceTable: string;
+  targetSchema: string; targetTable: string; appliedThrough: string | null;
+  latestPositiveReceiptId: string | null; latestPositiveRecordedAt: string | null;
+};
+export type CommittedBatchLineageEntry = {
+  id: string; kind: 'receipt' | 'attempt'; occurredAt: string; planUpdatedAt: string;
+  status: 'started' | 'committed' | 'no_new_data' | 'replayed' | 'rejected' | 'retryable' | 'outcome_unknown';
+  physicalScope: 'current' | 'archived'; finishedAt: string | null; receiptId: string | null; trigger: 'manual' | 'daily_utc' | null;
+  rowsAffected: number | null; fromExclusive: string | null; throughInclusive: string | null; sourceHighWater: string | null;
+  eventsRead: number | null; code: string | null;
+};
+export type CommittedBatchLineageDetail = CommittedBatchLineageEntry & {
+  job: { slot: string; state: BatchSyncScheduleJob['state']; dispatchedAt: string | null; finishedAt: string | null } | null;
+};
+export type CommittedBatchLineagePage = {
+  lineage: CommittedBatchLineageSummary; entries: CommittedBatchLineageEntry[]; nextCursor: string | null; from: string; to: string;
+};
+const committedBatchLineagePath = '/etl/ts_batch_sync_sandbox/committed_batch_fixture/batch-lineage-timeline';
+export const fetchCommittedBatchLineage = (params: { from?: string; to?: string; limit?: number; cursor?: string } = {}, signal?: AbortSignal): Promise<CommittedBatchLineagePage> =>
+  client.get(committedBatchLineagePath, { params, signal }).then(r => unwrap<CommittedBatchLineagePage>(r.data));
+export const fetchCommittedBatchLineageEntry = (kind: CommittedBatchLineageEntry['kind'], id: string, signal?: AbortSignal): Promise<CommittedBatchLineageDetail> =>
+  client.get(`${committedBatchLineagePath}/${kind}/${encodeURIComponent(id)}`, { signal }).then(r => unwrap<CommittedBatchLineageDetail>(r.data));

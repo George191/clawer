@@ -5,6 +5,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, UploadFile
 from fastapi.responses import Response
+from pydantic import AwareDatetime
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
@@ -15,6 +17,7 @@ from app.web.api.models.asset_freshness import (
     AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse, AssetQualityIncident, AssetQualityIncidentAck,
     AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
+from app.web.api.models.batch_lineage import BatchLineageDetail, BatchLineageKind, BatchLineagePage
 from app.web.api.models.batch_source_identity import BatchSourceIdentityReview, BatchSourceIdentityStatus
 from app.web.api.models.batch_syncs import (
     BatchSyncAttempt, BatchSyncCapabilities, BatchSyncPayload, BatchSyncPlan, BatchSyncReceipt, BatchSyncRunRequest,
@@ -65,6 +68,7 @@ from app.web.services.asset_freshness import (
 )
 from app.web.services.index_preview_sandbox import index_sandbox_available, run_index_preview
 from app.web.services.data_connections import connector_types, get_data_connections
+from app.web.services.batch_lineage import list_batch_lineage, read_batch_lineage
 from app.web.services.batch_source_identity import read_source_identity, verify_source_identity
 from app.web.services.batch_syncs import (
     batch_sync_capabilities, list_batch_sync_attempts, list_batch_sync_runs, list_batch_syncs, run_batch_sync, save_batch_sync,
@@ -451,6 +455,30 @@ async def update_transfer_plan(plan_id: UUID, payload: TransferPlanPayload, sess
 @write.get("/connector-types")
 async def available_connector_types() -> list[dict[str, Any]]:
     return connector_types()
+
+
+@write.get("/{layer}/{table}/batch-lineage-timeline")
+async def batch_lineage_timeline(
+    layer: str, table: str, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    from_at: AwareDatetime | None = Query(default=None, alias="from"),
+    to: AwareDatetime | None = None, limit: int = Query(default=25, ge=1, le=50),
+    cursor: str | None = Query(default=None, min_length=1, max_length=512),
+) -> BatchLineagePage:
+    try:
+        return await list_batch_lineage(session, layer, table, from_at, to, limit, cursor)
+    except DBAPIError:
+        raise HTTPException(503, "Managed incremental timeline is temporarily unavailable") from None
+
+
+@write.get("/{layer}/{table}/batch-lineage-timeline/{kind}/{entry_id}")
+async def batch_lineage_entry(
+    layer: str, table: str, kind: BatchLineageKind, entry_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> BatchLineageDetail:
+    try:
+        return await read_batch_lineage(session, layer, table, kind, entry_id)
+    except DBAPIError:
+        raise HTTPException(503, "Managed incremental timeline is temporarily unavailable") from None
 
 
 @write.get("/batch-syncs/capabilities")

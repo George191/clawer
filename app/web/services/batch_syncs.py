@@ -31,8 +31,8 @@ from app.web.services.batch_source_identity import (
     expected_fingerprint, identity_required, require_legacy_source_scope, require_plan_source_identity, require_source_proof,
 )
 from app.web.services.batch_sync_incremental import (
-    bind_incremental_target, incremental_batch_enabled, lock_incremental_target, require_target_shape,
-    same_binding, watermark,
+    batch_lineage_enabled, bind_incremental_target, incremental_batch_enabled, lock_incremental_target, require_target_shape,
+    same_binding, watermark, watermark_scope,
 )
 from app.web.services.postgres_committed_batch_source import (
     MAX_BATCH_BYTES, MAX_BATCH_ROWS, read_committed_batch, review_committed_batch_source,
@@ -69,6 +69,7 @@ def scheduled_batch_sync_enabled() -> bool:
 def batch_sync_capabilities() -> BatchSyncCapabilities:
     return BatchSyncCapabilities(enabled=_batch_sync_enabled(), scheduledBatchSync=scheduled_batch_sync_enabled(),
                                  sourceIdentityRequired=True if identity_required() else None,
+                                 incrementalLineage=True if batch_lineage_enabled() else None,
                                  incrementalBatchSync=True if incremental_batch_enabled() else None,
                                  incrementalMaxRows=MAX_BATCH_ROWS if incremental_batch_enabled() else None,
                                  incrementalMaxBytes=MAX_BATCH_BYTES if incremental_batch_enabled() else None)
@@ -169,8 +170,14 @@ async def _record_start(
     session: AsyncSession, plan_id: UUID, req: BatchSyncRunRequest, actor_id: UUID, scheduled_job_id: UUID | None,
 ) -> UUID:
     await _set_run_limits(session)
-    if await session.scalar(select(BatchSyncPlanRow.id).where(BatchSyncPlanRow.id == plan_id)) is None:
+    plan = await session.get(BatchSyncPlanRow, plan_id, populate_existing=True)
+    if plan is None:
         raise HTTPException(404, "Batch sync plan does not exist")
+    scope = None
+    if plan.mode == "incremental" and plan.updated_at == req.expectedUpdatedAt:
+        binding = await watermark(session)
+        if same_binding(binding, plan):
+            scope = watermark_scope(binding)
     # Existing receipts predate attempts. Prefer their exact version even if a
     # receipt was inserted by a previous application process during upgrade.
     legacy = await session.scalar(select(BatchSyncReceiptRow.plan_updated_at).where(
@@ -182,7 +189,7 @@ async def _record_start(
     bound = await session.get(BatchSyncRequestRow, (plan_id, req.requestId))
     if bound is None or bound.plan_updated_at != req.expectedUpdatedAt:
         raise _RunFailure(409, "request_revision_conflict", "This request ID belongs to a different plan version")
-    attempt = BatchSyncAttemptRow(plan_id=plan_id, request_id=req.requestId, initiated_by=actor_id,
+    attempt = BatchSyncAttemptRow(plan_id=plan_id, request_id=req.requestId, initiated_by=actor_id, incremental_scope=scope,
                                   started_at=datetime.now(timezone.utc), scheduled_job_id=scheduled_job_id)
     session.add(attempt)
     attempt_id = attempt.id

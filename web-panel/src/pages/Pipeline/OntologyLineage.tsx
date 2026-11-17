@@ -7,6 +7,7 @@ import { getSessionState } from '../../services/session';
 import type { LayerNode } from '../../services/types';
 import { schemaColor } from './OntologyExplorer';
 import LineageTransferPlans from './LineageTransferPlans';
+import ManagedBatchLineage, { MANAGED_BATCH_ASSET } from './ManagedBatchLineage';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import './ontology-lineage.css';
 
@@ -26,7 +27,9 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const search = params.get('q') || '';
-  const selected = params.get('schema') || '';
+  const managedSelected = params.get('managedAsset') === MANAGED_BATCH_ASSET;
+  const managedReceipt = params.get('batchReceipt');
+  const selected = managedSelected ? '' : params.get('schema') || '';
   const selectedTable = params.get('table') || '';
   const selectedSchedule = params.get('transferPlan') || undefined;
   const selectedUpstream = params.get('scheduleKind') === 'upstream';
@@ -155,7 +158,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   useEffect(() => setCopyStatus(''), [params]);
   const selectNode = (key: string) => {
     setInspectorOpen(true);
-    updateQuery({ schema: key, ...(selected === key ? {} : { transferPlan: null, scheduleKind: null, table: null }), ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
+    updateQuery({ schema: key, managedAsset: null, batchReceipt: null, ...(selected === key ? {} : { transferPlan: null, scheduleKind: null, table: null }), ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
   };
   const closeInspector = () => {
     setInspectorOpen(false);
@@ -240,6 +243,9 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
       <label className="flow-lineage-search"><SearchOutlined /><input ref={searchRef} aria-label="Search lineage nodes" placeholder="Find schemas" value={search} onChange={event => updateQuery({ q: event.target.value || null }, true)} />{search && <button type="button" aria-label="Clear lineage search" onClick={() => { updateQuery({ q: null }, true); searchRef.current?.focus(); }}><CloseOutlined /></button>}</label>
       <span className="flow-lineage-notice" title="Relationships are predefined ETL processor contracts, not discovered data lineage.">Relationships predefined</span>
     </div>
+    {canPlanTransfers && <ManagedBatchLineage selected={managedSelected} exactReceipt={managedReceipt} version={version + refreshToken}
+      onSelect={() => { if (!managedSelected) updateQuery({ managedAsset: MANAGED_BATCH_ASSET, batchReceipt: null, schema: null, table: null, transferPlan: null, scheduleKind: null }); }}
+      onClose={() => updateQuery({ managedAsset: null, batchReceipt: null }, true)} />}
     {error ? <div className="flow-lineage-state" role="alert">Unable to load lineage assets.<button type="button" className="flow-lineage-action" onClick={() => setVersion(value => value + 1)}>Retry</button></div>
       : loading ? <div className="flow-lineage-state"><Spin /></div>
         : !nodes.length ? <div className="flow-lineage-state">{search ? 'No matching assets' : 'No schemas to display'}</div>
