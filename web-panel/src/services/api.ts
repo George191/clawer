@@ -739,16 +739,16 @@ export const fetchBatchSourceIdentity = (id: string, signal?: AbortSignal): Prom
   client.get(batchSourceIdentityPath(id), { signal }).then(r => unwrap<BatchSourceIdentity>(r.data));
 export const verifyBatchSourceIdentity = (id: string, expectedSourceUpdatedAt: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
   client.post(batchSourceIdentityPath(id), { expectedSourceUpdatedAt }, { signal, timeout: 45000 }).then(r => unwrap<BatchSourceIdentity>(r.data));
-export type BatchSyncCapabilities = { incrementalLineage?: true; incrementalBatchSync?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
+export type BatchSyncCapabilities = { rangeSnapshot?: true; incrementalLineage?: true; incrementalBatchSync?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
 export type BatchSyncMapping = { sourceColumn: string; targetColumn: string };
 export type BatchSyncInput = {
   name: string; connectionId: string; sourceSchema: string; sourceTable: string; sourceKeyColumn: string; targetTable: string;
-  mode?: 'incremental'; mapping: BatchSyncMapping[]; expectedSourceUpdatedAt: string;
+  mode?: 'incremental'; keyRange?: { min: string; max: string }; mapping: BatchSyncMapping[]; expectedSourceUpdatedAt: string;
 };
 export type BatchSyncPlan = Omit<BatchSyncInput, 'expectedSourceUpdatedAt'> & { id: string; updatedAt: string; sourceUpdatedAt: string; sourceIdentityReviewed?: true; appliedThrough?: string };
 export type BatchSyncReceipt = {
   id: string; planId: string; status: 'committed' | 'no_new_data'; rowsAffected: number; recordedAt: string; sourceUpdatedAt: string; targetTable: string;
-  sourceIdentityVerified?: true; fromExclusive?: string; throughInclusive?: string; sourceHighWater?: string; eventsRead?: number; manifestHash?: string | null;
+  sourceIdentityVerified?: true; keyRange?: { min: string; max: string }; fromExclusive?: string; throughInclusive?: string; sourceHighWater?: string; eventsRead?: number; manifestHash?: string | null;
 };
 export type BatchSyncAttempt = {
   id: string; planId: string; requestId: string; planUpdatedAt: string;

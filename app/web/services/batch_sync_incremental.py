@@ -17,6 +17,10 @@ def incremental_batch_enabled() -> bool:
     return settings.BATCH_SYNC_INCREMENTAL_ENABLED and identity_required() and expected_fingerprint() is not None
 
 
+def range_snapshot_enabled() -> bool:
+    return settings.BATCH_SYNC_RANGE_SNAPSHOT_ENABLED and identity_required() and expected_fingerprint() is not None
+
+
 def batch_lineage_enabled() -> bool:
     return (settings.BATCH_SYNC_INCREMENTAL_ENABLED and settings.ENVIRONMENT == "local"
             and "ENVIRONMENT" in settings.model_fields_set)
@@ -71,6 +75,8 @@ def incremental_ready_clause():
     """Local admission only; actual worker rechecks physical target and source publisher."""
     plan, stream = BatchSyncPlanRow, BatchSyncWatermarkRow
     snapshot = plan.mode == "snapshot"
+    if not range_snapshot_enabled():
+        snapshot = snapshot & plan.range_min.is_(None)
     if not incremental_batch_enabled():
         return snapshot
     return snapshot | ((plan.mode == "incremental") & select(stream.singleton).where(

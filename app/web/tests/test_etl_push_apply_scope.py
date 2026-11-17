@@ -14,8 +14,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from app.web.api.models.batch_syncs import TARGET_SCHEMA as BATCH_RANGE_TARGET_SCHEMA
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TARGET
 from app.web.core.config import settings
+from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
 from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA, HANDOFF_PROTECTED_REGCLASSES
 from app.web.services.postgres_sync_source import read_batch_sync_snapshot, review_batch_source
 from app.web.services.data_connections import DataConnections
@@ -90,6 +92,39 @@ class TestImmediatePushScope(IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as error:
                 await review_batch_source(None, "test", datetime.now(timezone.utc), uuid4(),
                                           schema=private, table="copy_rows")
+            self.assertEqual(error.exception.status_code, 422)
+
+    async def test_range_snapshot_is_not_a_generic_snapshot_or_workspace_table(self):
+        workspace = EtlWorkspace()
+        layers = EtlLayers()
+        revision = datetime.now(timezone.utc)
+
+        @asynccontextmanager
+        async def unexpected(*, repeatable_read=False):
+            raise AssertionError("A prohibited generic action opened a database session")
+            yield
+
+        layers.session = workspace._session = unexpected
+        for method, args in (
+            (layers.data, (BATCH_RANGE_TARGET_SCHEMA, BATCH_RANGE_TARGET)),
+            (layers.preview, (BATCH_RANGE_TARGET_SCHEMA, BATCH_RANGE_TARGET)),
+            (workspace.create_table, (BATCH_RANGE_TARGET_SCHEMA, {"name": BATCH_RANGE_TARGET})),
+            (workspace.patch_row, (BATCH_RANGE_TARGET_SCHEMA, BATCH_RANGE_TARGET, {})),
+            (workspace.publications, (BATCH_RANGE_TARGET_SCHEMA, BATCH_RANGE_TARGET)),
+            (workspace.rename_schema, (_OTHER, {"name": BATCH_RANGE_SOURCE_SCHEMA})),
+        ):
+            with self.subTest(method=method.__name__), self.assertRaises(HTTPException) as error:
+                await method(*args)
+            self.assertEqual(error.exception.status_code, 404)
+        with patch("app.web.services.postgres_sync_source._saved_loopback_source", side_effect=AssertionError):
+            with self.assertRaises(HTTPException) as error:
+                await review_batch_source(None, "test", revision, uuid4(), schema=BATCH_RANGE_SOURCE_SCHEMA, table="items")
+            self.assertEqual(error.exception.status_code, 422)
+            with self.assertRaises(HTTPException) as error:
+                await read_batch_sync_snapshot(
+                    None, "test", expected_updated_at=revision, schema=BATCH_RANGE_SOURCE_SCHEMA, table="items",
+                    columns=["id"], key_column="id",
+                )
             self.assertEqual(error.exception.status_code, 422)
 
     async def test_batch_source_review_and_runtime_deny_before_connecting(self):
@@ -195,6 +230,44 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as token:
                 await self.workspace.published_data("legacy-link", {"limit": 1})
             self.assertEqual(token.exception.status_code, 404)
+
+    async def test_range_catalog_and_sticky_raw_gate_are_exact(self):
+        target = f"{BATCH_RANGE_TARGET_SCHEMA}.{BATCH_RANGE_TARGET}"
+        await self._write(
+            f"DROP TABLE {_QUALIFIED}", f"CREATE SCHEMA {BATCH_RANGE_TARGET_SCHEMA}",
+            f"CREATE SCHEMA {BATCH_RANGE_SOURCE_SCHEMA}",
+            f"CREATE TABLE {target} (id bigint PRIMARY KEY)",
+            f"CREATE TABLE {BATCH_RANGE_TARGET_SCHEMA}.unrelated (id bigint PRIMARY KEY)",
+            f"CREATE TABLE {_OTHER}.{BATCH_RANGE_TARGET} (id bigint PRIMARY KEY)",
+            "CREATE TABLE public.ontology_batch_sync_receipts(target_table text NOT NULL, range_min bigint)",
+            f"""INSERT INTO public.flow_publications VALUES ('range-old', '{BATCH_RANGE_TARGET_SCHEMA}',
+                '{BATCH_RANGE_TARGET}', '{{}}', now()-interval '1 hour', now()+interval '1 hour')""",
+        )
+        self.addAsyncCleanup(
+            self._write, "DROP TABLE public.ontology_batch_sync_receipts",
+            f"DROP SCHEMA {BATCH_RANGE_TARGET_SCHEMA} CASCADE", f"DROP SCHEMA IF EXISTS {BATCH_RANGE_SOURCE_SCHEMA} CASCADE",
+        )
+        self.assertEqual([item["name"] for item in await self.layers.tables(BATCH_RANGE_TARGET_SCHEMA)], ["unrelated"])
+        sources = await self.connections.catalog("fixture", schema=BATCH_RANGE_TARGET_SCHEMA, search="", limit=5, offset=0)
+        self.assertNotIn(BATCH_RANGE_SOURCE_SCHEMA, sources.schemas)
+        self.assertEqual([relation.name for relation in sources.relations], ["unrelated"])
+        same_name = await self.connections.catalog_columns("fixture", schema=_OTHER, table=BATCH_RANGE_TARGET)
+        self.assertEqual([column.name for column in same_name.columns], ["id"])
+        with self.assertRaises(HTTPException) as token:
+            await self.workspace.published_data("range-old", {})
+        self.assertEqual(token.exception.status_code, 404)
+        for statements in (
+            (),
+            (f"DROP SCHEMA {BATCH_RANGE_SOURCE_SCHEMA}",),
+            (f"DROP TABLE {target}", f"INSERT INTO public.ontology_batch_sync_receipts VALUES ('{BATCH_RANGE_TARGET}', 0)"),
+        ):
+            if statements:
+                await self._write(*statements)
+            with self.assertRaises(HTTPException) as raw:
+                await self.layers.query("SELECT 1")
+            self.assertEqual(raw.exception.status_code, 403)
+        await self._write("UPDATE public.ontology_batch_sync_receipts SET range_min = NULL")
+        self.assertEqual((await self.layers.query("SELECT 1 AS result"))["rows"], [{"result": 1}])
 
     async def test_handoff_never_catalogued_or_public_and_raw_depends_on_durable_evidence(self):
         private = HANDOFF_PRIVATE_SCHEMA

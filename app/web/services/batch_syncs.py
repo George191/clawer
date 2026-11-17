@@ -10,15 +10,15 @@ from fastapi import HTTPException
 from sqlalchemy import and_, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlmodel import select
 
 from app.web.api.models.batch_source_identity import BatchSourceIdentityRow
 from app.web.api.models.batch_syncs import (
     BATCH_ROWS, INCREMENTAL_SOURCE_SCHEMA, INCREMENTAL_TARGET, MAX_MAPPINGS, TARGET_SCHEMA,
     BatchSyncAttempt, BatchSyncAttemptRow, BatchSyncCapabilities,
-    BatchSyncPayload, BatchSyncPlan, BatchSyncPlanRow, BatchSyncReceipt, BatchSyncReceiptRow,
-    BatchSyncRequestRow, BatchSyncRunRequest, managed_batch_scope,
+    BatchSyncKeyRange, BatchSyncPayload, BatchSyncPlan, BatchSyncPlanRow, BatchSyncReceipt, BatchSyncReceiptRow,
+    BatchSyncRequestRow, BatchSyncRunRequest, managed_batch_scope, range_snapshot_scope,
 )
 from app.web.api.models.batch_sync_schedules import BatchSyncScheduleJobRow, BatchSyncScheduleRow
 from app.web.api.models.user import User
@@ -32,11 +32,13 @@ from app.web.services.batch_source_identity import (
 )
 from app.web.services.batch_sync_incremental import (
     batch_lineage_enabled, bind_incremental_target, incremental_batch_enabled, lock_incremental_target, require_target_shape,
-    same_binding, watermark, watermark_scope,
+    range_snapshot_enabled, same_binding, watermark, watermark_scope,
 )
 from app.web.services.postgres_committed_batch_source import (
     MAX_BATCH_BYTES, MAX_BATCH_ROWS, read_committed_batch, review_committed_batch_source,
 )
+from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
+from app.web.services.postgres_range_snapshot_source import read_range_snapshot, review_range_snapshot_source
 from app.web.services.postgres_sync_source import SourceIdentityMismatch, read_batch_sync_snapshot, review_batch_source
 from app.web.services.transfer_runs import _sandbox_tables
 
@@ -69,6 +71,7 @@ def scheduled_batch_sync_enabled() -> bool:
 def batch_sync_capabilities() -> BatchSyncCapabilities:
     return BatchSyncCapabilities(enabled=_batch_sync_enabled(), scheduledBatchSync=scheduled_batch_sync_enabled(),
                                  sourceIdentityRequired=True if identity_required() else None,
+                                 rangeSnapshot=True if range_snapshot_enabled() else None,
                                  incrementalLineage=True if batch_lineage_enabled() else None,
                                  incrementalBatchSync=True if incremental_batch_enabled() else None,
                                  incrementalMaxRows=MAX_BATCH_ROWS if incremental_batch_enabled() else None,
@@ -78,6 +81,7 @@ def batch_sync_capabilities() -> BatchSyncCapabilities:
 def _plan_response(row: BatchSyncPlanRow, reviewed: bool = False, applied_through: int | None = None) -> BatchSyncPlan:
     return BatchSyncPlan(
         id=row.id, name=row.name, connectionId=row.connection_id, sourceSchema=row.source_schema, mode=row.mode,
+        keyRange=_range_response(row),
         appliedThrough=str(applied_through) if applied_through is not None else None,
         sourceTable=row.source_table, sourceKeyColumn=row.source_key_column, targetTable=row.target_table,
         mapping=row.mapping, sourceUpdatedAt=row.source_updated_at, updatedAt=row.updated_at,
@@ -85,10 +89,14 @@ def _plan_response(row: BatchSyncPlanRow, reviewed: bool = False, applied_throug
     )
 
 
+def _range_response(row) -> BatchSyncKeyRange | None:
+    return BatchSyncKeyRange(min=str(row.range_min), max=str(row.range_max)) if row.range_min is not None else None
+
+
 def _receipt_response(row: BatchSyncReceiptRow) -> BatchSyncReceipt:
     interval = row.from_exclusive is not None
     return BatchSyncReceipt(
-        mode="incremental" if interval else None, status=row.outcome,
+        mode="incremental" if interval else None, status=row.outcome, keyRange=_range_response(row),
         fromExclusive=str(row.from_exclusive) if interval else None,
         throughInclusive=str(row.through_inclusive) if interval else None,
         sourceHighWater=str(row.source_high_water) if interval else None,
@@ -302,6 +310,19 @@ def _check_target_mapping(mapping, source_key: str, target, columns):
         raise HTTPException(422, "Map the source primary key to the target primary key")
 
 
+async def _require_range_target_local(session: AsyncSession) -> None:
+    engine = session.bind
+    try:
+        host = ip_address(engine.url.host or "") if isinstance(engine, AsyncEngine) and not engine.url.query else None
+    except ValueError:
+        host = None
+    if host is None or not host.is_loopback or "%" in str(host) or not await session.scalar(text("""
+        SELECT pg_catalog.inet_server_addr() = CAST(:address AS inet)
+            AND pg_catalog.inet_server_port() = :port
+    """), {"address": str(host), "port": engine.url.port or 5432}):
+        raise HTTPException(409, "The exact range snapshot target must use the isolated numeric-loopback database")
+
+
 async def save_batch_sync(
     session: AsyncSession, payload: BatchSyncPayload, plan_id: UUID | None = None,
 ) -> BatchSyncPlan:
@@ -315,6 +336,13 @@ async def save_batch_sync(
     else:
         row = None
     incremental = payload.mode == "incremental"
+    ranged = payload.keyRange is not None
+    if row is not None and (row.range_min is not None) != ranged:
+        raise HTTPException(409, "A reviewed bounded snapshot cannot be converted into a whole snapshot")
+    if ranged:
+        if not range_snapshot_enabled():
+            raise HTTPException(403, "Managed range snapshots are disabled")
+        await _require_range_target_local(session)
     if row is not None and row.mode != payload.mode:
         raise HTTPException(409, "The batch plan mode cannot be changed")
     if incremental and not incremental_batch_enabled():
@@ -330,6 +358,10 @@ async def save_batch_sync(
             raise HTTPException(409, "The expected local PostgreSQL source identity is not provisioned")
         if incremental:
             stream_digest = await review_committed_batch_source(
+                get_data_connections(), str(payload.connectionId), payload.expectedSourceUpdatedAt, marker,
+            )
+        elif ranged:
+            pin = await review_range_snapshot_source(
                 get_data_connections(), str(payload.connectionId), payload.expectedSourceUpdatedAt, marker,
             )
         else:
@@ -350,11 +382,13 @@ async def save_batch_sync(
                 raise HTTPException(409, "The fixed incremental target is missing or busy") from None
             raise
     target, columns = await _target_metadata(session, payload.targetTable)
-    if incremental:
+    if incremental or ranged:
         require_target_shape(target, columns)
     _check_target_mapping(payload.mapping, payload.sourceKeyColumn, target, columns)
     attrs = dict(
         name=payload.name.strip(), mode=payload.mode, source_stream_digest=stream_digest,
+        range_min=int(payload.keyRange.min) if ranged else None, range_max=int(payload.keyRange.max) if ranged else None,
+        range_index_oid=pin[2] if ranged else None, range_index_node=pin[3] if ranged else None,
         connection_id=payload.connectionId, source_schema=payload.sourceSchema,
         source_table=payload.sourceTable, source_key_column=payload.sourceKeyColumn, target_table=payload.targetTable,
         mapping=[item.model_dump() for item in payload.mapping], source_updated_at=payload.expectedSourceUpdatedAt,
@@ -527,6 +561,15 @@ async def run_batch_sync(
         _require_active_source(saved_source)
         plan = _plan_response(row)
         incremental = row.mode == "incremental"
+        ranged = row.range_min is not None
+        if ranged:
+            if not range_snapshot_enabled():
+                raise _RunFailure(403, "range_snapshot_disabled", "Managed range snapshots are disabled")
+            if not range_snapshot_scope(plan):
+                raise _RunFailure(409, "range_scope_changed", "The bounded snapshot no longer matches the fixed fixture")
+            await _require_range_target_local(session)
+        elif plan.targetTable == BATCH_RANGE_TARGET or plan.sourceSchema == BATCH_RANGE_SOURCE_SCHEMA:
+            raise _RunFailure(409, "range_scope_changed", "The reserved snapshot fixture requires reviewed exact bounds")
         if incremental:
             if not incremental_batch_enabled():
                 raise _RunFailure(403, "incremental_disabled", "Managed incremental batch sync is disabled")
@@ -545,6 +588,8 @@ async def run_batch_sync(
                               "The reviewed batch target was replaced or rewritten; review and save the plan again")
         _check_target_mapping(plan.mapping, plan.sourceKeyColumn, target, columns)
         binding = None
+        if ranged:
+            require_target_shape(target, columns)
         if incremental:
             require_target_shape(target, columns)
             binding = await watermark(session, lock=True)
@@ -581,6 +626,17 @@ async def run_batch_sync(
                         raise SourceIdentityMismatch()
                 interval = dict(from_exclusive=start, through_inclusive=end, source_high_water=batch.published_through,
                                 events_read=len(source_rows), manifest_hash=batch.digest)
+            elif ranged:
+                if marker is None:
+                    raise SourceIdentityMismatch()
+                source_rows = await read_range_snapshot(
+                    get_data_connections(), str(plan.connectionId), expected_updated_at=plan.sourceUpdatedAt, marker=marker,
+                    pin=(row.source_oid, row.source_file_node, row.range_index_oid, row.range_index_node),
+                    lower=row.range_min, upper=row.range_max,
+                )
+                interval = dict(range_min=row.range_min, range_max=row.range_max)
+                if not source_rows:
+                    outcome = "no_new_data"
             else:
                 proof_args = {"identity_marker": marker, "relation_pin": (row.source_oid, row.source_file_node)} if marker else {}
                 source_rows, source_meta = await read_batch_sync_snapshot(
@@ -590,7 +646,7 @@ async def run_batch_sync(
                 )
         except HTTPException as error:
             raise _source_failure(error) from None
-        if binding is None:
+        if binding is None and not ranged:
             _check_source_projection(plan, columns, source_meta)
         if len(source_rows) > BATCH_ROWS:
             raise _RunFailure(422, "source_limit", "The source exceeds the 100-row batch limit; no batch was written")

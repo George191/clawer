@@ -5,7 +5,7 @@
 | 核对项 | Palantir 官方行为 | Clawer 当前状态 | 下一步验收标准 |
 | --- | --- | --- | --- |
 | 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；本地 PostgreSQL 试点已将连通性与已保存源身份核验分开，手工和调度在源事务中重新验证；保存连接可显式暂停/恢复且旧审核不自动复用。其他连接器能力和统一网络策略仍待覆盖。 | 在选择同步或导出前验证连接器能力和权限；不把连接测试通过当成可读取或可写入业务资产的证明。 |
-| 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度；固定合成源另支持按已提交批次增量 Upsert，源发布进度与目标已应用位置分开。 | 尚需将有明确提交语义的增量扩展到已授权源和数据集目标，覆盖其他连接器与数据变化模式。 |
+| 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度；固定合成源另支持审核明确主键区间后的快照 Upsert，或按已提交批次增量 Upsert；源发布进度与目标已应用位置分开。 | 尚需将有明确提交语义的增量扩展到已授权源和数据集目标，覆盖其他连接器与数据变化模式。 |
 | 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断和固定消费路径；独立本地合成流可按已提交序号回放 after-image，分别记录源最高位点、目标检查点和提交回执。另有独立的本地合成推送收件箱，生产者验签后可持久接收并查看回执；另行授权的手工应用可向固定目标按接收顺序追加，应用位置和结果独立记录。尚无通用可配置入站流。 | 继续验收可配置的生产者身份、流定义和消费策略；不把接收回执或消费位点当作目标提交。 |
 | 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执；当前审核的正数回执已驱动沙箱外发 Lineage。可选第二个预置本地接收端，各自审核、授权和记录，不自动多发或回退。原 Upsert 之外可单独审核只追加模式，遇主键冲突整批拒绝。固定合成标记另有可撤销授权。Published API 仍只是被动读取。 | 验收通用标记策略、更多目标及导出模式，以及另行审核的写回或 Webhook。 |
 | 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地 1–3 个上游的平面 AND/OR，以及三个上游的有限括号组合，都复用现有 Automation Center；实际使用的上游事件、当时审核的规则与子回执分开。另支持单个每日 UTC 时点与此前已观察到的上游条件组合。 | 仍需验收更通用的时间与事件组合、更多层条件、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
@@ -374,3 +374,9 @@
 - 资格预检不授权写入。另行启用执行许可、确认精确封存结果和指定私有接收方之后，才在同一个隔离数据库提交一份副本。复制之前复核所有来源和实际标记以及独立接收方权限；标记原样继承，不可降低，不连接外部接收方。启用前须在隔离库预置独立数据库标记、物理接收端指纹和执行授权；迁移本身不授权写入。
 - 已封存的精确有界结果、其原始保护以及独立回执同事务保存。发生故障一起回滚；原请求按授权只找原回执，不重复写入。零行不代表数据流；通用查询和发布不能访问私有副本。
 - 验收失去确认、并发、身份和授权撤销、损坏或改写的物理目标、无副作用拒绝和真实浏览器。只用隔离合成数据，默认关闭，不部署或发送生产数据。
+
+### 已审核的主键区间快照同步
+
+- 在固定合成 PostgreSQL 源和目标上，可在快照计划审核中录入 bigint 主键起止值，含起止两端。手工和现有定时任务都只能用当时的审核版本，运行时不临时覆写区间；这不是增量游标。其它行不改、不删，旧快照和已提交批次模式保持独立。
+- 在源事务核对身份、源表和主键索引，检查同一有界范围 SQL 的实际选用计划，再最多试取 101 行。隔离 PostgreSQL 17 的测试角色只在固定源表另获 MAINTAIN 来取得 SHARE 锁，没有业务行写权限；仅有 SELECT 会拒绝，不应给通用或生产连接扩大权限。超过 100 行整批拒绝；索引不符不回退；空范围结果不当成数据移动。
+- 回执保留原区间和版本；恢复原请求不重读源。验收有符号边界、区间外行、过限、空结果、重建索引、停用和手工/定时，限隔离环境，默认关闭，未部署。
