@@ -55,6 +55,7 @@ class BatchSyncPayload(BatchSyncDefinition):
 
 class BatchSyncPlan(BatchSyncDefinition):
     id: UUID
+    sourceIdentityReviewed: Literal[True] | None = Field(default=None, exclude_if=lambda v: v is None)
     sourceUpdatedAt: datetime
     updatedAt: datetime
 
@@ -67,6 +68,7 @@ class BatchSyncRunRequest(BaseModel):
 
 class BatchSyncReceipt(BaseModel):
     id: UUID
+    sourceIdentityVerified: Literal[True] | None = Field(default=None, exclude_if=lambda v: v is None)
     planId: UUID
     status: Literal["committed"] = "committed"
     rowsAffected: int
@@ -95,6 +97,7 @@ class BatchSyncCapabilities(BaseModel):
     maxRows: int = BATCH_ROWS
     maxBytes: int = BATCH_BYTES
     scheduledBatchSync: bool = False
+    sourceIdentityRequired: Literal[True] | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class BatchSyncPlanRow(SQLModel, table=True):
@@ -102,6 +105,9 @@ class BatchSyncPlanRow(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("jsonb_typeof(mapping) = 'array' AND jsonb_array_length(mapping) BETWEEN 1 AND 32",
                         name="ck_ontology_batch_sync_mapping"),
+        CheckConstraint("(source_identity_fingerprint IS NULL AND source_oid IS NULL AND source_file_node IS NULL) "
+                        "OR (source_identity_fingerprint ~ '^[0-9a-f]{64}$' AND source_oid > 0 AND source_file_node > 0) IS TRUE",
+                        name="ck_batch_sync_source_identity_pin"),
         Index("ix_ontology_batch_sync_plans_connection", "connection_id", "updated_at"),
     )
 
@@ -112,6 +118,9 @@ class BatchSyncPlanRow(SQLModel, table=True):
     source_table: str = DbField(max_length=128)
     source_key_column: str = DbField(max_length=128)
     target_table: str = DbField(max_length=63)
+    source_identity_fingerprint: str | None = DbField(default=None, max_length=64)
+    source_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    source_file_node: int | None = DbField(default=None, sa_column=Column(BigInteger))
     target_oid: int = DbField(sa_column=Column(BigInteger, nullable=False))
     target_file_node: int = DbField(sa_column=Column(BigInteger, nullable=False))
     mapping: list[dict[str, str]] = DbField(sa_column=Column(JSONB, nullable=False))
@@ -138,6 +147,7 @@ class BatchSyncReceiptRow(SQLModel, table=True):
     plan_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     source_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
     rows_affected: int
+    source_identity_verified: bool | None = None
     recorded_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
 
 

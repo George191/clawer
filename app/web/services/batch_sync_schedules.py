@@ -16,6 +16,7 @@ from app.web.api.models.batch_sync_schedules import (
     BatchSyncSchedule, BatchSyncScheduleChange, BatchSyncScheduleJob, BatchSyncScheduleJobRow,
     BatchSyncScheduleRow, BatchSyncScheduleSummary,
 )
+from app.web.services.batch_source_identity import plan_source_ready_clause, require_plan_source_identity
 from app.web.services.batch_syncs import _HISTORY_LIMIT, _target_metadata, _verify_source_revision, run_batch_sync, scheduled_batch_sync_enabled
 from app.web.services.batch_sync_scope import local_batch_sync_scope
 
@@ -34,8 +35,8 @@ _REGISTRY = table("ontology_data_connections", column("id", Uuid()), column("upd
 
 
 def _response(plan: BatchSyncPlanRow, binding: BatchSyncScheduleRow | None,
-              source_version: datetime | None) -> BatchSyncSchedule:
-    available = scheduled_batch_sync_enabled() and source_version == plan.source_updated_at
+              source_version: datetime | None, identity_ready: bool) -> BatchSyncSchedule:
+    available = scheduled_batch_sync_enabled() and source_version == plan.source_updated_at and identity_ready
     return BatchSyncSchedule(
         available=available,
         configuredEnabled=bool(binding and binding.enabled),
@@ -55,7 +56,8 @@ async def read_batch_sync_schedule(session: AsyncSession, plan_id: UUID) -> Batc
     if plan is None:
         raise HTTPException(404, "Batch sync plan does not exist")
     source_version = await session.scalar(select(_REGISTRY.c.updated_at).where(_REGISTRY.c.id == plan.connection_id))
-    return _response(plan, await session.get(BatchSyncScheduleRow, plan_id), source_version)
+    identity_ready = await _source_identity_ready(session, plan_id)
+    return _response(plan, await session.get(BatchSyncScheduleRow, plan_id), source_version, identity_ready)
 
 
 async def change_batch_sync_schedule(
@@ -81,6 +83,7 @@ async def change_batch_sync_schedule(
         raise HTTPException(403, "Automatic sandbox batch execution is disabled")
     if change.enabled:
         await _verify_source_revision(session, plan.connection_id, plan.source_updated_at, lock=True)
+        await require_plan_source_identity(session, plan)
         target, _ = await _target_metadata(session, plan.target_table)
         if target["table_oid"] != plan.target_oid or target["table_node"] != plan.target_file_node:
             raise HTTPException(409, "The batch target was replaced or rewritten; review and save the plan again")
@@ -112,19 +115,25 @@ async def change_batch_sync_schedule(
             binding.planned_time_utc = change.plannedTimeUtc
         binding.updated_at = _utc_now()
     source_version = await session.scalar(select(_REGISTRY.c.updated_at).where(_REGISTRY.c.id == plan.connection_id))
-    result = _response(plan, binding, source_version)
+    result = _response(plan, binding, source_version, await _source_identity_ready(session, plan.id))
     await session.commit()
     return result
 
 
+async def _source_identity_ready(session: AsyncSession, plan_id: UUID) -> bool:
+    return bool(await session.scalar(select(BatchSyncPlanRow.id).where(
+        BatchSyncPlanRow.id == plan_id, plan_source_ready_clause(),
+    )))
+
+
 async def list_batch_sync_schedules(session: AsyncSession) -> list[BatchSyncScheduleSummary]:
-    statement = (select(BatchSyncPlanRow, BatchSyncScheduleRow, _REGISTRY.c.updated_at)
+    statement = (select(BatchSyncPlanRow, BatchSyncScheduleRow, _REGISTRY.c.updated_at, plan_source_ready_clause())
                  .join(BatchSyncScheduleRow, BatchSyncScheduleRow.plan_id == BatchSyncPlanRow.id)
                  .outerjoin(_REGISTRY, _REGISTRY.c.id == BatchSyncPlanRow.connection_id)
                  .order_by(BatchSyncScheduleRow.updated_at.desc(), BatchSyncPlanRow.id).limit(TICK_LIMIT))
     return [BatchSyncScheduleSummary(planId=plan.id, connectionId=plan.connection_id, planName=plan.name, sourceTable=plan.source_table,
-                                    targetTable=plan.target_table, **_response(plan, binding, source_version).model_dump())
-            for plan, binding, source_version in (await session.execute(statement)).all()]
+                                    targetTable=plan.target_table, **_response(plan, binding, source_version, identity_ready).model_dump())
+            for plan, binding, source_version, identity_ready in (await session.execute(statement)).all()]
 
 
 async def list_batch_sync_schedule_jobs(session: AsyncSession, plan_id: UUID) -> list[BatchSyncScheduleJob]:
@@ -161,6 +170,7 @@ async def collect_due_batch_sync_jobs(session: AsyncSession, *, now: datetime | 
             BatchSyncScheduleRow.updated_at <= slot,
             BatchSyncScheduleRow.source_updated_at == BatchSyncPlanRow.source_updated_at,
             _REGISTRY.c.updated_at == BatchSyncScheduleRow.source_updated_at,
+            plan_source_ready_clause(),
             BatchSyncScheduleRow.planned_time_utc == slot.strftime("%H:%M"),
             ~exists().where(
                 BatchSyncScheduleJobRow.plan_id == BatchSyncScheduleRow.plan_id,

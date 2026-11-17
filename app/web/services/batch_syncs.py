@@ -12,6 +12,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.web.api.models.batch_source_identity import BatchSourceIdentityRow
 from app.web.api.models.batch_syncs import (
     BATCH_ROWS, MAX_MAPPINGS, TARGET_SCHEMA, BatchSyncAttempt, BatchSyncAttemptRow, BatchSyncCapabilities,
     BatchSyncPayload, BatchSyncPlan, BatchSyncPlanRow, BatchSyncReceipt, BatchSyncReceiptRow,
@@ -24,7 +25,10 @@ from app.web.core.config import settings
 from app.web.services.data_connections import get_data_connections
 from app.web.services.batch_sync_scope import local_batch_sync_scope
 from app.web.services.etl_layers import quote_identifier
-from app.web.services.postgres_sync_source import read_batch_sync_snapshot
+from app.web.services.batch_source_identity import (
+    expected_fingerprint, identity_required, require_legacy_source_scope, require_plan_source_identity, require_source_proof,
+)
+from app.web.services.postgres_sync_source import SourceIdentityMismatch, read_batch_sync_snapshot, review_batch_source
 from app.web.services.transfer_runs import _sandbox_tables
 
 _KEY_TYPES = {20, 21, 23, 2950}  # bigint, smallint, integer, UUID
@@ -54,14 +58,16 @@ def scheduled_batch_sync_enabled() -> bool:
 
 
 def batch_sync_capabilities() -> BatchSyncCapabilities:
-    return BatchSyncCapabilities(enabled=_batch_sync_enabled(), scheduledBatchSync=scheduled_batch_sync_enabled())
+    return BatchSyncCapabilities(enabled=_batch_sync_enabled(), scheduledBatchSync=scheduled_batch_sync_enabled(),
+                                 sourceIdentityRequired=True if identity_required() else None)
 
 
-def _plan_response(row: BatchSyncPlanRow) -> BatchSyncPlan:
+def _plan_response(row: BatchSyncPlanRow, reviewed: bool = False) -> BatchSyncPlan:
     return BatchSyncPlan(
         id=row.id, name=row.name, connectionId=row.connection_id, sourceSchema=row.source_schema,
         sourceTable=row.source_table, sourceKeyColumn=row.source_key_column, targetTable=row.target_table,
         mapping=row.mapping, sourceUpdatedAt=row.source_updated_at, updatedAt=row.updated_at,
+        sourceIdentityReviewed=True if reviewed else None,
     )
 
 
@@ -69,6 +75,7 @@ def _receipt_response(row: BatchSyncReceiptRow) -> BatchSyncReceipt:
     return BatchSyncReceipt(
         id=row.id, planId=row.plan_id, rowsAffected=row.rows_affected, recordedAt=row.recorded_at,
         sourceUpdatedAt=row.source_updated_at, targetTable=row.target_table,
+        sourceIdentityVerified=True if row.source_identity_verified else None,
     )
 
 
@@ -80,8 +87,23 @@ async def list_batch_syncs(
         statement = statement.where(BatchSyncPlanRow.connection_id == connection_id)
     if plan_id is not None:
         statement = statement.where(BatchSyncPlanRow.id == plan_id)
-    rows = await session.scalars(statement.order_by(BatchSyncPlanRow.updated_at.desc(), BatchSyncPlanRow.id).limit(_PLAN_LIMIT))
-    return [_plan_response(row) for row in rows]
+    rows = (await session.scalars(
+        statement.order_by(BatchSyncPlanRow.updated_at.desc(), BatchSyncPlanRow.id).limit(_PLAN_LIMIT),
+    )).all()
+    expected = expected_fingerprint()
+    if expected is None:
+        return [_plan_response(row) for row in rows]
+    candidates = {row.connection_id for row in rows if row.source_identity_fingerprint == expected}
+    current = (await session.execute(text("""
+        SELECT proof.connection_id, proof.source_updated_at
+        FROM public.ontology_batch_source_identities proof
+        JOIN public.ontology_data_connections conn
+          ON conn.id=proof.connection_id AND conn.updated_at=proof.source_updated_at
+        WHERE proof.connection_id=ANY(CAST(:ids AS uuid[])) AND proof.fingerprint=:fingerprint AND proof.is_current
+    """), {"ids": list(candidates), "fingerprint": expected})).all() if candidates else []
+    verified = {tuple(item) for item in current}
+    return [_plan_response(row, row.source_identity_fingerprint == expected
+                           and (row.connection_id, row.source_updated_at) in verified) for row in rows]
 
 
 async def list_batch_sync_runs(session: AsyncSession, plan_id: UUID) -> list[BatchSyncReceipt]:
@@ -248,6 +270,21 @@ async def save_batch_sync(
     else:
         row = None
     await _verify_source_revision(session, payload.connectionId, payload.expectedSourceUpdatedAt, lock=True)
+    fingerprint = None
+    pin = None
+    if identity_required():
+        fingerprint = await require_source_proof(session, payload.connectionId, payload.expectedSourceUpdatedAt)
+        marker = settings.BATCH_SYNC_SOURCE_IDENTITY_MARKER
+        if marker is None:
+            raise HTTPException(409, "The expected local PostgreSQL source identity is not provisioned")
+        pin = await review_batch_source(
+            get_data_connections(), str(payload.connectionId), payload.expectedSourceUpdatedAt, marker,
+            schema=payload.sourceSchema, table=payload.sourceTable,
+        )
+    else:
+        if row is not None and row.source_identity_fingerprint is not None:
+            raise HTTPException(409, "Reenable the reviewed local PostgreSQL source identity policy")
+        await require_legacy_source_scope(session, payload.connectionId)
     target, columns = await _target_metadata(session, payload.targetTable)
     _check_target_mapping(payload.mapping, payload.sourceKeyColumn, target, columns)
     attrs = dict(
@@ -255,6 +292,8 @@ async def save_batch_sync(
         source_table=payload.sourceTable, source_key_column=payload.sourceKeyColumn, target_table=payload.targetTable,
         mapping=[item.model_dump() for item in payload.mapping], source_updated_at=payload.expectedSourceUpdatedAt,
         target_oid=target["table_oid"], target_file_node=target["table_node"],
+        source_identity_fingerprint=fingerprint, source_oid=pin[0] if pin else None,
+        source_file_node=pin[1] if pin else None,
     )
     now = datetime.now(timezone.utc)
     if row is None:
@@ -264,7 +303,7 @@ async def save_batch_sync(
         for key, value in attrs.items():
             setattr(row, key, value)
         row.updated_at = max(now, row.updated_at + timedelta(microseconds=1))
-    result = _plan_response(row)
+    result = _plan_response(row, fingerprint is not None)
     await session.commit()
     return result
 
@@ -285,6 +324,8 @@ def _check_source_projection(plan: BatchSyncPlan, columns, source_metadata):
 
 
 def _source_failure(error: HTTPException) -> _RunFailure:
+    if isinstance(error, SourceIdentityMismatch):
+        return _RunFailure(409, "source_identity_mismatch", "The saved PostgreSQL source no longer matches its reviewed identity")
     if error.status_code == 504:
         return _RunFailure(504, "source_timeout", "The PostgreSQL source timed out; retry with the same request ID", "retryable")
     if error.status_code >= 500:
@@ -424,11 +465,18 @@ async def run_batch_sync(
         await _verify_source_revision(session, plan.connectionId, plan.sourceUpdatedAt, lock=True)
         if job is not None:
             _check_job_time(job, scheduled_now)
+        try:
+            marker = await require_plan_source_identity(session, row)
+        except HTTPException:
+            raise _RunFailure(409, "source_identity_review_required",
+                              "Verify the saved PostgreSQL source and review the batch plan again") from None
         source_columns = [item.sourceColumn for item in plan.mapping]
+        proof_args = {"identity_marker": marker, "relation_pin": (row.source_oid, row.source_file_node)} if marker else {}
         try:
             source_rows, source_meta = await read_batch_sync_snapshot(
                 get_data_connections(), str(plan.connectionId), expected_updated_at=plan.sourceUpdatedAt,
                 schema=plan.sourceSchema, table=plan.sourceTable, columns=source_columns, key_column=plan.sourceKeyColumn,
+                **proof_args,
             )
         except HTTPException as error:
             raise _source_failure(error) from None
@@ -470,6 +518,7 @@ async def run_batch_sync(
             source_schema=plan.sourceSchema, source_table=plan.sourceTable, target_table=plan.targetTable,
             plan_updated_at=plan.updatedAt, source_updated_at=plan.sourceUpdatedAt,
             rows_affected=affected, recorded_at=datetime.now(timezone.utc),
+            source_identity_verified=True if marker is not None else None,
         )
         session.add(saved)
         result = _receipt_response(saved)

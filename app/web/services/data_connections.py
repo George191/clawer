@@ -47,6 +47,7 @@ _CATALOG_KINDS = {
 }
 _CATALOG_SCHEMA_SCOPE = """
     left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
+    AND n.nspname NOT IN ('batch_sync_identity', 'ts_cdc_sandbox')
     AND has_schema_privilege(n.oid, 'USAGE')
 """
 _CATALOG_RELATION_SCOPE = f"""

@@ -655,14 +655,22 @@ export const fetchDataSourceCatalog = (
   client.get(dataSourceCatalogPath(id), { params, signal }).then((r) => unwrap<DataSourceCatalog>(r.data));
 export const fetchDataSourceColumns = (id: string, schema: string, table: string, signal?: AbortSignal): Promise<DataSourceColumns> =>
   client.get(`${dataSourceCatalogPath(id)}/columns`, { params: { schema, table }, signal }).then((r) => unwrap<DataSourceColumns>(r.data));
-export type BatchSyncCapabilities = { enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
+export type BatchSourceIdentity = {
+  state: 'disabled' | 'blocked' | 'unverified' | 'verified' | 'stale'; sourceUpdatedAt: string | null; verifiedAt: string | null;
+};
+const batchSourceIdentityPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/batch-source-identity`;
+export const fetchBatchSourceIdentity = (id: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
+  client.get(batchSourceIdentityPath(id), { signal }).then(r => unwrap<BatchSourceIdentity>(r.data));
+export const verifyBatchSourceIdentity = (id: string, expectedSourceUpdatedAt: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
+  client.post(batchSourceIdentityPath(id), { expectedSourceUpdatedAt }, { signal, timeout: 45000 }).then(r => unwrap<BatchSourceIdentity>(r.data));
+export type BatchSyncCapabilities = { sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
 export type BatchSyncMapping = { sourceColumn: string; targetColumn: string };
 export type BatchSyncInput = {
   name: string; connectionId: string; sourceSchema: string; sourceTable: string; sourceKeyColumn: string; targetTable: string;
   mapping: BatchSyncMapping[]; expectedSourceUpdatedAt: string;
 };
-export type BatchSyncPlan = Omit<BatchSyncInput, 'expectedSourceUpdatedAt'> & { id: string; updatedAt: string; sourceUpdatedAt: string };
-export type BatchSyncReceipt = { id: string; planId: string; status: 'committed'; rowsAffected: number; recordedAt: string; sourceUpdatedAt: string; targetTable: string };
+export type BatchSyncPlan = Omit<BatchSyncInput, 'expectedSourceUpdatedAt'> & { id: string; updatedAt: string; sourceUpdatedAt: string; sourceIdentityReviewed?: true };
+export type BatchSyncReceipt = { id: string; planId: string; status: 'committed'; rowsAffected: number; recordedAt: string; sourceUpdatedAt: string; targetTable: string; sourceIdentityVerified?: true };
 export type BatchSyncAttempt = {
   id: string; planId: string; requestId: string; planUpdatedAt: string;
   status: 'started' | 'committed' | 'replayed' | 'rejected' | 'retryable' | 'outcome_unknown';

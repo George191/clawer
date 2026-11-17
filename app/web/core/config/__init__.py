@@ -55,6 +55,8 @@ class Settings(BaseSettings):
     ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS: dict[UUID, list[Literal["sandbox-synthetic", "sandbox-restricted"]]] = {}
     CDC_SANDBOX_STREAM_MARKER: UUID | None = None
     BATCH_SYNC_SANDBOX_ENABLED: bool = False
+    BATCH_SYNC_SOURCE_IDENTITY_ENABLED: bool = False
+    BATCH_SYNC_SOURCE_IDENTITY_MARKER: UUID | None = None
     BATCH_SYNC_SANDBOX_SCHEDULER_ENABLED: bool = False
     TABLE_EXPORT_SANDBOX_ENABLED: bool = False
     TABLE_EXPORT_SOURCE_MARKER: UUID | None = None

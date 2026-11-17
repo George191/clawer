@@ -3,10 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { Button, Checkbox, Input, Modal, Select } from '@/components/ui';
 import { ArrowLeftOutlined, CheckCircleOutlined, DatabaseOutlined, DeleteOutlined, EyeOutlined, FolderOutlined, PlusOutlined, ReloadOutlined, SearchOutlined, TableOutlined } from '@/components/ui/icons';
 import apiClient, { createDataSource, deleteDataSource, fetchCurrentUserContext, fetchDataConnectorTypes, fetchDataSourceCatalog, fetchDataSourceColumns, fetchDataSources, testDataSource, updateDataSource } from '../../services/api';
-import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceRelation, DataSourceTest } from '../../services/api';
+import type { DataConnectorEngine, DataConnectorType, DataSource, DataSourceCatalog, DataSourceColumns, DataSourceConfig, DataSourcePayload, DataSourceRelation, DataSourceTest, BatchSourceIdentity } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import PostgresGlyph from './PostgresGlyph';
 import SourceBatchSyncs from './SourceBatchSyncs';
+import SourceIdentity from './SourceIdentity';
 import type { BatchSyncSource } from './SourceBatchSyncs';
 import TableExports from './TableExports';
 import SandboxCdcReplay from './SandboxCdcReplay';
@@ -180,6 +181,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const exploring = !!sourceId && exploringSource === sourceId;
   const [wizard, setWizard] = useState<'choose' | 'configure' | null>(null);
   const [chosenEngine, setChosenEngine] = useState<DataConnectorEngine>();
+  const [sourceProof, setSourceProof] = useState<{key: string; value: BatchSourceIdentity | undefined}>();
   const [savedTest, setSavedTest] = useState<DataSourceTest | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [editingId, setEditingId] = useState('');
@@ -200,6 +202,8 @@ export default function DataConnections({ onChanged }: Props = {}) {
   const selected = sources.find((item) => item.id === editingId);
   const viewedSource = sources.find((item) => item.id === sourceId);
   const chosen = connectors.find((item) => item.engine === chosenEngine);
+  const proofKey = viewedSource ? `${sessionIdentity}:${viewedSource.id}:${viewedSource.updatedAt}` : '';
+  const activeProof = sourceProof?.key === proofKey ? sourceProof.value : undefined;
   const viewedType = connectors.find((item) => item.engine === viewedSource?.engine);
   const sameDestination = !!draft && !!selected && Object.entries(draft.config).every(([key, value]) => {
     const saved = selected.config[key as keyof DataSourceConfig];
@@ -210,7 +214,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
-    setExploringSource(''); setSyncSelection(undefined); setSavedTest(null);
+    setExploringSource(''); setSyncSelection(undefined); setSavedTest(null); setSourceProof(undefined);
   }, [sourceId]);
   useEffect(() => {
     if (!dirty && !pending) return;
@@ -308,7 +312,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
       setSources((items) => [...items.filter((item) => item.id !== source.id), source].sort((a, b) => a.name.localeCompare(b.name)));
       closeWizard();
       selectSource(source.id); setExploringSource(''); setSyncSelection(undefined); setSavedTest(null);
-      setNotice('Source saved. Its connection was verified with a read-only request.'); onChanged?.();
+      setNotice('Source saved. Its connectivity was tested with a read-only request.'); onChanged?.();
     });
   };
   const testSaved = async () => {
@@ -380,12 +384,14 @@ export default function DataConnections({ onChanged }: Props = {}) {
           <div><dt>Authentication</dt><dd>{authName(viewedSource.config.auth)}</dd></div>
           <div><dt>Transport</dt><dd>{viewedSource.engine === 'dameng' ? 'Vendor client default' : viewedSource.config.tls ? 'TLS verification enabled' : 'TLS disabled'}</dd></div>
           <div><dt>Credentials</dt><dd>{viewedSource.credentialsConfigured ? 'Configured' : 'Not configured'}</dd></div>
-          <div><dt>Last verified</dt><dd>{formatDate(viewedSource.testedAt)}</dd></div>
+          <div><dt>Last connectivity test</dt><dd>{formatDate(viewedSource.testedAt)}</dd></div>
         </dl>
         {viewedType && !viewedType.driverAvailable && <p className="ontology-connectors__prerequisite" role="status">{viewedType.prerequisite}</p>}
         <p className="ontology-connectors__scope"><DatabaseOutlined /> These settings do not import or synchronize tables.</p>
+        {viewedSource.engine === 'postgresql' && <SourceIdentity key={`identity:${proofKey}`} source={viewedSource} identity={activeProof}
+          onIdentity={value => { if (current()) setSourceProof({ key: proofKey, value }); }} disabled={blocked} />}
         {exploring && viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceCatalog key={viewedSource.id} sourceId={viewedSource.id} onSetUpSync={selection => setSyncSelection({ sourceId: viewedSource.id, selection })} />}
-        {viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceBatchSyncs key={viewedSource.id} source={viewedSource} selection={syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
+        {viewedSource.catalogAvailable && viewedType?.catalogAvailable && <SourceBatchSyncs key={`sync:${proofKey}`} source={viewedSource} sourceProof={activeProof} selection={syncSelection?.sourceId === viewedSource.id ? syncSelection.selection : undefined} selectedSchedule={selectedSchedule} onComposerClosed={() => setSyncSelection(undefined)} />}
         <div className="ontology-connections-detail__destructive"><Button size="small" danger icon={<DeleteOutlined />} disabled={blocked} onClick={remove}>Delete source</Button></div>
       </section> : <section className="ontology-connections-inventory" aria-label="Sources">
         <header><div><h2>Sources <span>{sources.length}</span></h2><p>Open a source to review its settings or run a read-only check.</p></div><Button size="small" icon={<ReloadOutlined />} disabled={blocked} onClick={() => setReload((value) => value + 1)}>Refresh sources</Button></header>
@@ -396,7 +402,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
           </select></label>
         </div>
         {filteredSources.length ? <div className="ontology-connections-inventory__table"><table>
-          <thead><tr><th scope="col">Source</th><th scope="col">Connector</th><th scope="col">Endpoint</th><th scope="col">Last verified</th></tr></thead>
+          <thead><tr><th scope="col">Source</th><th scope="col">Connector</th><th scope="col">Endpoint</th><th scope="col">Last connectivity test</th></tr></thead>
           <tbody>{filteredSources.map((source) => <tr key={source.id}>
             <td><button type="button" className="ontology-connections-source-link" title={source.name} onClick={() => showSource(source)}><ConnectorMark engine={source.engine} /><span>{source.name}</span></button></td>
             <td>{labelFor(source.engine)}</td><td><code>{endpoint(source.config)}</code></td><td>{formatDate(source.testedAt)}</td>

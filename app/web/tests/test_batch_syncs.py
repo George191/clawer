@@ -6,7 +6,7 @@ from importlib import import_module
 import os
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 from alembic.migration import MigrationContext
@@ -29,6 +29,7 @@ from tools.ontology_data_connections import migrate
 
 
 URL = os.environ.get("ONTOLOGY_BATCH_SYNC_TEST_URL")
+IDENTITY_ORIGINS = [os.environ.get("ONTOLOGY_BATCH_SOURCE_TEST_ORIGIN_" + suffix) for suffix in ("A", "B")]
 DATABASE = "ontology_batch_sync_regression"
 ACTOR = uuid4()
 RUNS = "/etl/batch-syncs"
@@ -98,6 +99,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
         self.migration = import_module("app.web.alembic.versions.3c0db1c2a19e_ontology_batch_syncs")
         self.attempts_migration = import_module("app.web.alembic.versions.70ac419e8121_ontology_batch_sync_attempts")
         self.schedules_migration = import_module("app.web.alembic.versions.a83a40b7dc19_ontology_batch_sync_schedules")
+        identity_migration = import_module("app.web.alembic.versions.0e653c2f6a91_ontology_batch_source_identity")
         await migrate(self.pg, apply=True)
         async with self.pg.session() as session:
             def upgrade(sync_session):
@@ -105,6 +107,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                     self.migration.upgrade()
                     self.attempts_migration.upgrade()
                     self.schedules_migration.upgrade()
+                    identity_migration.upgrade()
 
             await session.run_sync(upgrade)
             await session.execute(text("CREATE SCHEMA ts_batch_sync_sandbox"))
@@ -123,7 +126,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 "DROP TABLE public.ontology_batch_sync_attempts, public.ontology_batch_sync_requests, "
                 "public.ontology_batch_sync_schedule_jobs, public.ontology_batch_sync_schedules",
                 "DROP TABLE public.ontology_batch_sync_receipts, public.ontology_batch_sync_plans",
-                "DROP TABLE public.ontology_data_connections",
+                "DROP TABLE public.ontology_data_connections, public.ontology_batch_source_identities",
                 "DROP SCHEMA ts_batch_sync_sandbox CASCADE",
             ):
                 await session.execute(text(command))
@@ -364,3 +367,136 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(paused.status_code, 200, paused.text)
                 self.assertFalse(paused.json()["configuredEnabled"])
                 self.assertEqual(reader.await_count, 1)
+
+    @unittest.skipUnless(all(IDENTITY_ORIGINS), "requires isolated A/B PostgreSQL source fixtures")
+    async def test_exact_source_identity_is_sticky_and_blocks_wrong_origin_before_select(self):
+        import asyncpg
+
+        markers = [uuid4(), uuid4()]
+        origins = [make_url(url) for url in IDENTITY_ORIGINS]
+        role = "batch_identity_fixture_reader"
+        for index, origin in enumerate(origins):
+            if (origin.host not in {"127.0.0.1", "::1"}
+                or origin.database != ("ontology_batch_origin_a" if index == 0 else "ontology_batch_origin_b")
+                or origin.query):
+                self.fail("Refusing any non-fixture source database")
+        opened = []
+        for origin, marker in zip(origins, markers, strict=True):
+            admin = await asyncpg.connect(host=origin.host, port=origin.port, user=origin.username,
+                                          password=origin.password, database=origin.database)
+            self.addAsyncCleanup(admin.close)
+            opened.append(admin)
+            await admin.execute("""
+                DO $$BEGIN
+                    CREATE ROLE batch_identity_fixture_reader LOGIN;
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END$$;
+                CREATE SCHEMA batch_sync_identity;
+                CREATE TABLE batch_sync_identity.source_identity(marker uuid PRIMARY KEY);
+                GRANT USAGE ON SCHEMA batch_sync_identity TO batch_identity_fixture_reader;
+                GRANT SELECT ON batch_sync_identity.source_identity TO batch_identity_fixture_reader;
+                CREATE SCHEMA "Source Catalog";
+                CREATE TABLE "Source Catalog"."Account Data"("Source Identifier" integer PRIMARY KEY,"Display Name" text NOT NULL);
+                GRANT USAGE ON SCHEMA "Source Catalog" TO batch_identity_fixture_reader;
+                GRANT SELECT ON "Source Catalog"."Account Data" TO batch_identity_fixture_reader;
+            """)
+            self.addAsyncCleanup(admin.execute, 'DROP SCHEMA batch_sync_identity, "Source Catalog" CASCADE')
+            await admin.execute("INSERT INTO batch_sync_identity.source_identity VALUES($1)", marker)
+            await admin.execute('INSERT INTO "Source Catalog"."Account Data" VALUES(1,$1)', f"origin {len(opened)}")
+
+        current = 0
+        observed_sql = []
+
+        class Capture:
+            def __init__(self, original):
+                self.original = original
+
+            def __getattr__(self, attr):
+                fn = getattr(self.original, attr)
+                if attr not in ("fetch", "fetchval", "fetchrow", "execute"):
+                    return fn
+
+                async def record(sql, *params, **kwargs):
+                    observed_sql.append((sql, params, current))
+                    return await fn(sql, *params, **kwargs)
+                return record
+
+        async def connect(**kwargs):
+            # Simulate a wrong same-shape service at the exact saved settings without changing a revision.
+            origin = origins[current]
+            kwargs.update(host=origin.host, port=origin.port, database=origin.database)
+            return Capture(await asyncpg.connect(**kwargs))
+
+        revision = datetime.fromisoformat(PAYLOAD["expectedSourceUpdatedAt"])
+        stored = {
+            "name": "Isolated Source", "engine": "postgresql", "updated_at": revision,
+            "config": {"host": origins[0].host, "port": origins[0].port, "database": origins[0].database,
+                       "username": role, "auth": "password", "tls": False},
+        }
+        connections = SimpleNamespace(_stored=AsyncMock(return_value=stored),
+                                      _credentials=AsyncMock(return_value={"password": "isolated-test-value"}))
+        review_url = f"/etl/data-connections/{PAYLOAD['connectionId']}/batch-source-identity"
+        verify = {"expectedSourceUpdatedAt": PAYLOAD["expectedSourceUpdatedAt"]}
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "BATCH_SYNC_SANDBOX_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_SOURCE_IDENTITY_MARKER", markers[0]),
+            patch("app.web.services.batch_source_identity.get_data_connections", return_value=connections),
+            patch("app.web.services.batch_syncs.get_data_connections", return_value=connections),
+            patch("app.web.services.postgres_sync_source._driver", return_value=SimpleNamespace(connect=connect)),
+        ):
+            async with api(True, self.provider) as client:
+                legacy = (await client.post(RUNS, json=PAYLOAD)).json()
+                with patch.object(settings, "BATCH_SYNC_SOURCE_IDENTITY_ENABLED", True):
+                    self.assertEqual((await client.get(review_url)).json()["state"], "unverified")
+                    self.assertEqual((await client.post(RUNS, json=PAYLOAD)).status_code, 409)
+                    checked = await client.post(review_url, json=verify)
+                    self.assertEqual(checked.status_code, 200, checked.text)
+                    self.assertEqual(checked.json()["state"], "verified")
+                    self.assertNotIn(str(markers[0]), checked.text)
+                    self.assertFalse(any('"Account Data"' in sql for sql, _, _ in observed_sql))
+                    self.assertFalse(any(markers[0] in params for _, params, _ in observed_sql))
+                    plan_resp = await client.post(RUNS, json=PAYLOAD)
+                    self.assertEqual(plan_resp.status_code, 201, plan_resp.text)
+                    plan = plan_resp.json()
+                    self.assertTrue(plan["sourceIdentityReviewed"])
+                    self.assertFalse(any("WITH s AS MATERIALIZED" in sql for sql, _, _ in observed_sql))
+                    body = {"requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"]}
+                    path = f"{RUNS}/{plan['id']}/runs"
+
+                    current = 1
+                    observed_sql.clear()
+                    rejected = await client.post(path, json=body)
+                    self.assertEqual(rejected.status_code, 409, rejected.text)
+                    self.assertEqual(rejected.json()["detail"]["code"], "source_identity_mismatch")
+                    self.assertFalse(any('"Account Data"' in sql for sql, _, _ in observed_sql))
+                    self.assertEqual((await client.get(path)).json(), [])
+                    self.assertEqual((await self.pg.fetch_one(
+                        "SELECT caption FROM ts_batch_sync_sandbox.accounts WHERE id=1",
+                    ))["caption"], "old")
+
+                    current = 0
+                    applied = await client.post(path, json=body)
+                    self.assertEqual(applied.status_code, 200, applied.text)
+                    self.assertTrue(applied.json()["sourceIdentityVerified"])
+                    await opened[0].execute('TRUNCATE TABLE "Source Catalog"."Account Data"')
+                    observed_sql.clear()
+                    changed = await client.post(path, json={**body, "requestId": str(uuid4())})
+                    self.assertEqual(changed.status_code, 409, changed.text)
+                    self.assertEqual(changed.json()["detail"]["code"], "source_identity_mismatch")
+                    self.assertFalse(any("WITH s AS MATERIALIZED" in sql for sql, _, _ in observed_sql))
+                    observed_sql.clear()
+
+                    current = 1
+                    self.assertEqual((await client.post(review_url, json=verify)).status_code, 409)
+                    self.assertEqual((await client.get(review_url)).json()["state"], "stale")
+                self.assertEqual((await client.get(review_url)).json()["state"], "blocked")
+                self.assertEqual((await client.post(RUNS, json=PAYLOAD)).status_code, 409)
+                rejected = await client.post(f"{RUNS}/{legacy['id']}/runs", json={
+                    "requestId": str(uuid4()), "expectedUpdatedAt": legacy["updatedAt"],
+                })
+                self.assertEqual(rejected.status_code, 409, rejected.text)
+                self.assertEqual((await client.post(path, json=body)).json(), applied.json())
+                self.assertEqual((await self.pg.fetch_one(
+                    "SELECT caption FROM ts_batch_sync_sandbox.accounts WHERE id=1",
+                ))["caption"], "origin 1")

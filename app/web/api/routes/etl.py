@@ -15,6 +15,7 @@ from app.web.api.models.asset_freshness import (
     AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse, AssetQualityIncident, AssetQualityIncidentAck,
     AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
+from app.web.api.models.batch_source_identity import BatchSourceIdentityReview, BatchSourceIdentityStatus
 from app.web.api.models.batch_syncs import (
     BatchSyncAttempt, BatchSyncCapabilities, BatchSyncPayload, BatchSyncPlan, BatchSyncReceipt, BatchSyncRunRequest,
 )
@@ -64,6 +65,7 @@ from app.web.services.asset_freshness import (
 )
 from app.web.services.index_preview_sandbox import index_sandbox_available, run_index_preview
 from app.web.services.data_connections import connector_types, get_data_connections
+from app.web.services.batch_source_identity import read_source_identity, verify_source_identity
 from app.web.services.batch_syncs import (
     batch_sync_capabilities, list_batch_sync_attempts, list_batch_sync_runs, list_batch_syncs, run_batch_sync, save_batch_sync,
 )
@@ -580,6 +582,18 @@ async def test_data_connection(payload: DataConnectionPayload, connectionId: UUI
 async def create_data_connection(payload: DataConnectionPayload,
                                  current_user: Any = Depends(get_current_active_superuser)) -> dict[str, Any]:
     return await get_data_connections().save(payload, str(current_user.id))
+
+
+@write.get("/data-connections/{connection_id}/batch-source-identity")
+async def batch_source_identity(connection_id: UUID, session: SessionDep) -> BatchSourceIdentityStatus:
+    return await read_source_identity(session, connection_id)
+
+
+@write.post("/data-connections/{connection_id}/batch-source-identity")
+async def review_batch_source_identity(
+    connection_id: UUID, payload: BatchSourceIdentityReview, session: SessionDep,
+) -> BatchSourceIdentityStatus:
+    return await verify_source_identity(session, connection_id, payload.expectedSourceUpdatedAt)
 
 
 @write.post("/data-connections/{connection_id}/test")
