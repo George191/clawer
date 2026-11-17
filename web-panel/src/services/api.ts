@@ -10,7 +10,7 @@ import type {
   EtlObjectFavorites,
   EtlObjectFavoriteMembership,
   EtlObjectPreview,
-  EtlTableColumn, QueryResult,
+  EtlTableColumn, ExplorerPreviewResult, QueryResult,
   TaskInfo,
   TemplateInfo,
   HandlerCode,
@@ -337,6 +337,9 @@ export interface EtlPublishedApi {
 }
 export const queryEtlTable = (layer: string, table: string, query: EtlDataQuery, signal?: AbortSignal): Promise<QueryResult> =>
   client.post(`/etl/${layer}/${table}/data`, query, { signal }).then((r) => unwrap<QueryResult>(r.data));
+export const queryExplorerPreview = (layer: string, table: string, query: EtlDataQuery, signal?: AbortSignal): Promise<ExplorerPreviewResult> =>
+  client.post(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/preview-rows`, query, { signal }).then((r) => unwrap<ExplorerPreviewResult>(r.data));
+
 export const fetchEtlConnections = (): Promise<EtlConnection[]> =>
   client.get('/etl/connections').then((r) => unwrap<EtlConnection[]>(r.data));
 export const createEtlConnection = (payload: Omit<EtlConnection, 'id'>): Promise<EtlConnection> =>

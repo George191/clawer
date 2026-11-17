@@ -496,3 +496,31 @@
   .flow-console--ontology .flow-schema-workbench .flow-schema-view-tabs { gap: 12px; }
   .flow-explorer-column-sheet .flow-schema-scroll-hint { display: block; margin-bottom: 6px; font-size: 11px; }
 }
+
+/* Preview pages are a bounded window, not a count of the underlying table. */
+.flow-preview-pager {
+  flex: none; margin-top: 8px; border: 1px solid var(--ontology-border); border-radius: 5px;
+  color: var(--ontology-muted); background: var(--ontology-bg); font-size: 12px;
+}
+.flow-preview-pager > nav, .flow-preview-page-controls, .flow-preview-page-controls > label {
+  display: flex; align-items: center; gap: 7px;
+}
+.flow-preview-pager > nav {
+  justify-content: space-between; flex-wrap: wrap; gap: 5px 10px; min-height: 38px; padding: 4px 7px 4px 10px;
+}
+.flow-preview-range { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flow-preview-page-controls { flex-wrap: wrap; }
+.flow-preview-page-controls > label { white-space: nowrap; }
+.flow-preview-page-controls select {
+  min-height: 28px; padding: 0 4px; border: 1px solid var(--ontology-control-border); border-radius: 3px;
+  background: var(--ontology-panel); color: var(--ontology-text); font: inherit;
+}
+.flow-preview-page-controls select:focus-visible { outline: 2px solid var(--ontology-primary); outline-offset: 1px; }
+.flow-preview-pager-notices {
+  display: grid; gap: 3px; padding: 6px 10px; border-bottom: 1px solid var(--ontology-border);
+}
+@media (max-width: 740px), (pointer: coarse) {
+  .flow-console--ontology .flow-schema-workbench .flow-preview-page-controls :is(.ui-btn, select) { min-height: 38px; }
+}
+
+.flow-console--ontology .flow-explorer-catalog .flow-catalog-create-table { margin: 0 12px 10px; width: calc(100% - 24px); }

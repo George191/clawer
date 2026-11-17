@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
-import { Input } from '@/components/ui';
+import { Button, Input } from '@/components/ui';
 import { DatabaseOutlined, DownOutlined, ReloadOutlined, RightOutlined, SearchOutlined } from '@/components/ui/icons';
 import type { LayerNode, LayerTable } from '../../services/types';
 import { TemplateGlyph, inferSiteKind } from '../AICollect/WorkspaceDock';
@@ -14,12 +14,13 @@ type Props = {
     catalogLoaded: boolean;
     tablesLoading: boolean;
     requestError: string;
+    onCreateTable?: () => void;
     onRefresh: () => void;
     onSchema: (schema: string) => void;
     onTable: (table: LayerTable) => void;
 };
 
-export default function ExplorerCatalog({ schemas, tables, selectedSchema, selectedTable, catalogLoaded, tablesLoading, requestError, onRefresh, onSchema, onTable }: Props) {
+export default function ExplorerCatalog({ schemas, tables, selectedSchema, selectedTable, catalogLoaded, tablesLoading, requestError, onCreateTable, onRefresh, onSchema, onTable }: Props) {
     const [search, setSearch] = useState('');
     const [collapsedSchema, setCollapsedSchema] = useState('');
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -39,6 +40,7 @@ export default function ExplorerCatalog({ schemas, tables, selectedSchema, selec
                 <button type="button" className="flow-catalog-refresh" aria-label="Refresh catalog" title="Refresh catalog" onClick={onRefresh}><ReloadOutlined /></button>
             </header>
             <div className="flow-catalog-content" id="flow-catalog-content">
+                {onCreateTable && <Button className="flow-catalog-create-table" size="small" title={`Create a storage table in ${selectedSchema}`} onClick={onCreateTable}>New storage table</Button>}
                 <Input className="flow-ontology-schema-search" aria-label="Search catalog" placeholder="Search catalog" prefix={<SearchOutlined />} value={search} onChange={(event) => setSearch(event.target.value)} allowClear />
                 {!!keyword && <p className="flow-catalog-scope">Searches schema names and tables in {selectedSchema || 'the open schema'}.</p>}
                 <ul className="flow-catalog-list" aria-label="Schemas">

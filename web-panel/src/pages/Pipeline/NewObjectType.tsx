@@ -10,7 +10,7 @@ type Index = { id: number; name: string; type: string; unique: boolean; fields: 
 type Relation = { id: number; name: string; targetId: string; sourceFields: string[]; targetFields: string[]; cardinality: string; description: string };
 type Check = { id: number; name: string; expression: string; comment: string };
 type Draft = { schema: string; name: string; dataType: string; description: string; fields: Property[]; indexes: Index[]; relations: Relation[]; checks: Check[] };
-type Props = { schemas: LayerNode[]; initialSchema?: string; onCancel: () => void; onOpenExisting: (object: EtlObjectPreview) => void; onCreated: (schema: string, table: LayerTable) => void };
+type Props = { variant?: 'object' | 'storage'; schemas: LayerNode[]; initialSchema?: string; onCancel: () => void; onOpenExisting: (object: EtlObjectPreview) => void; onCreated: (schema: string, table: LayerTable) => void };
 const steps = ['Datasource', 'Metadata', 'Properties', 'Actions', 'Save location', 'Security'] as const;
 const identifier = /^[a-z_][a-z0-9_]{0,62}$/;
 const fieldTypes = ['TEXT', 'VARCHAR', 'CHAR', 'BIGINT', 'INTEGER', 'SMALLINT', 'BOOLEAN', 'TIMESTAMPTZ', 'TIMESTAMP', 'DATE', 'TIME', 'JSONB', 'JSON', 'UUID', 'NUMERIC', 'DECIMAL', 'REAL', 'DOUBLE PRECISION', 'BYTEA', 'SERIAL', 'BIGSERIAL'];
@@ -24,7 +24,7 @@ function errorMessage(error: unknown) {
   return typeof detail === 'string' ? detail : 'Unable to create the object type. Your changes are retained. Try again.';
 }
 
-export default function NewObjectType({ schemas, initialSchema, onCancel, onOpenExisting, onCreated }: Props) {
+export default function NewObjectType({ variant = 'object', schemas, initialSchema, onCancel, onOpenExisting, onCreated }: Props) {
   const schemaNames = schemas.map((schema) => schema.schemaName || schema.key);
   const [draft, setDraft] = useState<Draft>(() => ({ schema: initialSchema && schemaNames.includes(initialSchema) ? initialSchema : '', name: '', dataType: '', description: '', fields: [{ id: 0, name: 'record_id', type: 'TEXT', length: '', nullable: false, primary: true, comment: 'Business record identifier' }], indexes: [], relations: [], checks: [] }));
   const original = useRef(JSON.stringify(draft));
@@ -192,12 +192,12 @@ export default function NewObjectType({ schemas, initialSchema, onCancel, onOpen
   const existing = sourceMode === 'existing';
   const qualifiedName = `${draft.schema}.${draft.name}`;
   const sourcePending = !!activeSchema && (tableState.loading || tableState.schema !== activeSchema);
-  return <Modal open centered className="flow-surface-modal flow-create-modal flow-create-object" title="Create a new object type" width={1160} onCancel={close} maskClosable={!pending} closable={!pending} keyboard={!pending} footer={<>
+  return <Modal open centered className="flow-surface-modal flow-create-modal flow-create-object" title={variant === 'storage' ? 'Create a storage table' : 'Create a new object type'} width={1160} onCancel={close} maskClosable={!pending} closable={!pending} keyboard={!pending} footer={<>
     <Button disabled={pending} onClick={close}>Cancel</Button>
     {step > 0 && <Button disabled={pending} onClick={() => { setStep((value) => value - 1); setError(''); }}>Back</Button>}
-    {existing ? <Button type="primary" disabled={!preview} onClick={openExisting}>Open existing object type</Button> : step < steps.length - 1
+    {existing ? <Button type="primary" disabled={!preview} onClick={openExisting}>{variant === 'storage' ? 'Open existing table' : 'Open existing object type'}</Button> : step < steps.length - 1
       ? <Button type="primary" onClick={next} disabled={!draft.schema || !tablesReady}>Next</Button>
-      : <Button type="primary" loading={pending} onClick={() => void submit()}>Create object type</Button>}
+      : <Button type="primary" loading={pending} onClick={() => void submit()}>{variant === 'storage' ? 'Create storage table' : 'Create object type'}</Button>}
   </>}>
     <div className="flow-create-layout">
       <ol className="flow-create-steps" aria-label="Create object type steps">{(existing ? steps.slice(0, 1) : steps).map((label, index) => (

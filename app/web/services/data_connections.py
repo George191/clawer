@@ -221,11 +221,14 @@ class DataConnections:
         if stored:
             row = stored
             old_config = json.loads(row["config"]) if isinstance(row["config"], str) else row["config"]
-            if row["engine"] == payload.engine and old_config["auth"] == payload.config.auth:
-                try:
-                    return json.loads(credential_cipher().decrypt(row["credentials_ciphertext"].encode("ascii")))
-                except (InvalidToken, ValueError, UnicodeError) as error:
-                    raise HTTPException(503, "Stored credentials cannot be decrypted; restore the configured SECRET_KEY or replace these credentials") from error
+            # A saved secret belongs to exactly this connection configuration.
+            # A rename or an explicit test of the saved source may reuse it.
+            if row["engine"] != payload.engine or old_config != payload.config.model_dump():
+                raise HTTPException(422, "Enter new credentials when changing the connection settings")
+            try:
+                return json.loads(credential_cipher().decrypt(row["credentials_ciphertext"].encode("ascii")))
+            except (InvalidToken, ValueError, UnicodeError) as error:
+                raise HTTPException(503, "Stored credentials cannot be decrypted; restore the configured SECRET_KEY or replace these credentials") from error
         raise HTTPException(422, "Enter credentials for the selected authentication method")
 
     async def test(self, payload: DataConnectionPayload, connection_id: str | None = None):
