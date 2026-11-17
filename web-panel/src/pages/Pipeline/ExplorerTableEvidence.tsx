@@ -5,6 +5,7 @@ import { ReloadOutlined } from '@/components/ui/icons';
 import { fetchExplorerTableEvidence, type ExplorerTableEvidenceSnapshot, type TransferRunReceipt } from '../../services/api';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import ExplorerAssetFreshness from './ExplorerAssetFreshness';
+import ExplorerAssetStatistics from './ExplorerAssetStatistics';
 import ExplorerTransferTimeline from './ExplorerTransferTimeline';
 import './table-evidence.css';
 
@@ -61,6 +62,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                                 <p>The filing date is when the source filing was submitted, not the reporting period or when the row was imported or updated.</p>
                             </>}
                             <dl><div><dt>Checked at</dt><dd><time dateTime={snapshot.observedAt}>{new Date(snapshot.observedAt).toLocaleString()}</time></dd></div></dl>
+                            {showReceipts && <ExplorerAssetStatistics schema={schema} table={table} version={version} />}
                         </section>
                         {showReceipts && <ExplorerAssetFreshness key={`${schema}.${table}`} schema={schema} table={table} version={version} />}
                         {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>

@@ -1053,3 +1053,16 @@ export const fetchCommittedBatchLineage = (params: { from?: string; to?: string;
   client.get(committedBatchLineagePath, { params, signal }).then(r => unwrap<CommittedBatchLineagePage>(r.data));
 export const fetchCommittedBatchLineageEntry = (kind: CommittedBatchLineageEntry['kind'], id: string, signal?: AbortSignal): Promise<CommittedBatchLineageDetail> =>
   client.get(`${committedBatchLineagePath}/${kind}/${encodeURIComponent(id)}`, { signal }).then(r => unwrap<CommittedBatchLineageDetail>(r.data));
+
+export type CollectedStatisticsSample = {
+  capturedAt: string; policyGeneration: number; planUpdatedAt: string; estimatedRows: string | null; lastAnalyzedAt: string | null;
+};
+export type CollectedAssetStatistics = {
+  available: boolean; state: 'unavailable' | 'not_configured' | 'not_collected' | 'no_stats' | 'current' | 'unknown';
+  reason: 'checking_disabled' | 'target_unavailable' | 'target_changed' | 'policy_changed' | 'policy_paused'
+    | 'stats_reset' | 'observation_stale' | 'probe_failed' | null;
+  current: CollectedStatisticsSample | null; historical: CollectedStatisticsSample | null; validUntil: string | null;
+};
+export const fetchCollectedAssetStatistics = (schema: string, table: string, signal?: AbortSignal): Promise<CollectedAssetStatistics> =>
+  client.get(`/etl/asset-freshness/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/collected-stats`, { signal })
+    .then(r => unwrap<CollectedAssetStatistics>(r.data));

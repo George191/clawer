@@ -43,6 +43,7 @@ from .embedding import (
 )
 
 from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
+from .asset_collected_stats import AssetCollectedStatRow as AssetCollectedStatRow
 from .asset_freshness import AssetFreshnessPolicyRow as AssetFreshnessPolicyRow
 from .batch_source_identity import BatchSourceIdentityRow as BatchSourceIdentityRow
 from .batch_syncs import BatchSyncPlanRow as BatchSyncPlanRow, BatchSyncWatermarkRow as BatchSyncWatermarkRow

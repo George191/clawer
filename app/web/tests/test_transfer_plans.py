@@ -53,6 +53,16 @@ def api(is_admin, session_provider=lambda: None):
 
 
 class TransferPlanTests(unittest.IsolatedAsyncioTestCase):
+    def test_collected_estimate_rejects_unknown_and_avoids_floating_json(self):
+        from app.web.services.asset_collected_stats import _estimate
+
+        self.assertEqual(_estimate("1.23e+12"), "1230000000000")
+        self.assertEqual(_estimate("0.0000"), "0")
+        self.assertEqual(_estimate("8.50"), "8.5")
+        for raw in ("-1", "NaN", "Infinity", "1e10000", "not a number", None):
+            with self.subTest(raw=raw):
+                self.assertIsNone(_estimate(raw))
+
     def test_payload_rules(self):
         self.assertIsNone(TransferPlanPayload.model_validate(PAYLOAD).scheduleTime)
         self.assertEqual(TransferPlanPayload.model_validate(
@@ -124,6 +134,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.incident_migration = import_module(
             "app.web.alembic.versions.f32194ec7a60_ontology_asset_quality_incidents",
         )
+        self.stats_migration = import_module("app.web.alembic.versions.ab4e962c7d10_ontology_asset_collected_stats")
         self.timeline_migration = import_module("app.web.alembic.versions.db42c1589a0e_ontology_transfer_timeline")
         async with self.pg.session() as session:
             for sql in (
@@ -150,6 +161,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.quality_migration.upgrade)
             await self.migrate(session, self.incident_migration.upgrade)
             await self.migrate(session, self.timeline_migration.upgrade)
+            await self.migrate(session, self.stats_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -162,6 +174,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def drop_fixtures(self):
         async with self.pg.session() as session:
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_collected_stats"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_incidents"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_transitions, "
                                        "public.ontology_asset_quality_observations"))
@@ -563,6 +576,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.stats_migration.downgrade)
+            await self.migrate(session, self.nested_migration.downgrade)
             await self.migrate(session, self.timeline_migration.downgrade)
             await self.migrate(session, self.incident_migration.downgrade)
             await self.migrate(session, self.quality_migration.downgrade)
@@ -1099,3 +1114,143 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     """), {"job": adversarial, "replacement": UUID(replacement)})
                 self.assertEqual(await execute(adversarial), "rejected")
                 self.assertNotIn(str(adversarial), {row["id"] for row in (await client.get(path + "/jobs")).json()})
+
+    async def test_collected_stats_observations_reset_failure_hidden_and_rewrite(self):
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.stats_source (id int PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.stats_target (id int PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.unconfigured (id int PRIMARY KEY)",
+                "INSERT INTO ts_transfer_sandbox.stats_target VALUES (1),(2),(3)",
+            ):
+                await session.execute(text(sql))
+        root = "/etl/asset-freshness/ts_transfer_sandbox/"
+        policy = root + "stats_target"
+        route = policy + "/collected-stats"
+        now = datetime.now(timezone.utc)
+
+        async def tick(minutes):
+            async with self.pg.session() as session:
+                return await evaluate_due_asset_freshness(session, now=now + timedelta(minutes=minutes))
+
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_COLLECTED_STATS_ENABLED", True),
+        ):
+            async with api(True, self.session_provider) as client:
+                async with api(False, self.session_provider) as reader:
+                    self.assertEqual((await reader.get(route)).status_code, 403)
+                with patch.object(settings, "TRANSFER_SANDBOX_COLLECTED_STATS_ENABLED", False):
+                    self.assertEqual((await client.get(route)).json()["reason"], "checking_disabled")
+                self.assertEqual((await client.get(root + "unconfigured/collected-stats")).json()["state"], "not_configured")
+                self.assertEqual((await client.get("/etl/asset-freshness/ts_ods/hidden/collected-stats")).status_code, 404)
+                draft = await client.post(RUNS, json={
+                    **PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                    "sourceTable": "stats_source", "targetTable": "stats_target", "writeMode": "upsert",
+                })
+                self.assertEqual(draft.status_code, 201, draft.text)
+                draft = draft.json()
+                config = {"planId": draft["id"], "expectedPlanUpdatedAt": draft["updatedAt"], "expectedGeneration": None,
+                          "thresholdMinutes": 20, "enabled": True}
+                reviewed = await client.put(policy, json=config)
+                self.assertEqual(reviewed.status_code, 200, reviewed.text)
+                self.assertEqual((await client.get(route)).json()["state"], "not_collected")
+                self.assertEqual((await tick(1))["checked"], 1)
+                initial = (await client.get(route)).json()
+                self.assertEqual(initial["state"], "no_stats", initial)
+
+                await self.pg.execute("ANALYZE ts_transfer_sandbox.stats_target")
+                self.assertEqual((await tick(2))["checked"], 1)
+                observed = (await client.get(route)).json()
+                self.assertEqual(observed["state"], "current", observed)
+                self.assertEqual(observed["current"]["estimatedRows"], "3")
+                self.assertIsNotNone(observed["current"]["lastAnalyzedAt"])
+                self.assertEqual((await client.get(route)).json(), observed)
+
+                async def database_fault(session, reviewed_policy):
+                    return await session.execute(text("SELECT pg_catalog.no_synthetic_probe_function()"))
+
+                with patch("app.web.services.asset_collected_stats._probe_catalog", side_effect=database_fault):
+                    self.assertEqual((await tick(3))["checked"], 1)
+                suppressed = (await client.get(route)).json()
+                self.assertEqual(suppressed["reason"], "probe_failed")
+                self.assertIsNone(suppressed["current"])
+                self.assertEqual(suppressed["historical"], observed["current"])
+
+                await self.pg.execute("""
+                    SELECT pg_stat_reset_single_table_counters('ts_transfer_sandbox.stats_target'::regclass)
+                """)
+                self.assertEqual((await tick(4))["checked"], 1)
+                reset = (await client.get(route)).json()
+                self.assertEqual(reset["reason"], "stats_reset", reset)
+                self.assertEqual(reset["historical"], observed["current"])
+                self.assertEqual((await tick(5))["checked"], 1)
+                self.assertEqual((await client.get(route)).json()["reason"], "stats_reset")
+
+                await self.pg.execute("ANALYZE ts_transfer_sandbox.stats_target")
+                self.assertEqual((await tick(6))["checked"], 1)
+                fresh = (await client.get(route)).json()
+                self.assertEqual(fresh["state"], "current", fresh)
+                self.assertEqual(fresh["current"]["estimatedRows"], "3")
+                await self.pg.execute(
+                    "INSERT INTO public.ontology_objects VALUES ('ts_transfer_sandbox','stats_target',true,'hidden')",
+                )
+                self.assertEqual((await tick(7))["checked"], 1)
+                hidden = (await client.get(route)).json()
+                self.assertFalse(hidden["available"])
+                self.assertIsNone(hidden["current"])
+                self.assertIsNone(hidden["historical"])
+                await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='stats_target'")
+
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.stats_target")
+                rewritten = (await client.get(route)).json()
+                self.assertEqual(rewritten["reason"], "target_changed", rewritten)
+                self.assertIsNone(rewritten["current"])
+                self.assertEqual(rewritten["historical"], fresh["current"])
+                resp = await client.put(policy, json={**config, "expectedGeneration": 1})
+                self.assertEqual(resp.status_code, 200, resp.text)
+                self.assertEqual((await tick(8))["checked"], 1)
+                rereviewed = (await client.get(route)).json()
+                self.assertIsNone(rereviewed["current"], rereviewed)
+                self.assertEqual(rereviewed["historical"], fresh["current"])
+                await self.pg.execute("ANALYZE ts_transfer_sandbox.stats_target")
+                self.assertEqual((await tick(9))["checked"], 1)
+                zero = (await client.get(route)).json()
+                self.assertEqual(zero["current"]["estimatedRows"], "0", zero)
+                self.assertEqual(zero["current"]["policyGeneration"], 2)
+
+                # Global reset is permitted only inside this explicitly isolated fixture database.
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.unconfigured VALUES (1),(2)")
+                await self.pg.execute("CREATE INDEX unconfigured_extra_idx ON ts_transfer_sandbox.unconfigured(id)")
+                await self.pg.execute("SELECT pg_stat_reset()")
+                second = await client.post(RUNS, json={
+                    **PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                    "sourceTable": "stats_source", "targetTable": "unconfigured", "writeMode": "upsert",
+                })
+                self.assertEqual(second.status_code, 201, second.text)
+                second_plan = second.json()
+                second_policy = root + "unconfigured"
+                second_route = second_policy + "/collected-stats"
+                self.assertEqual((await client.put(second_policy, json={
+                    **config, "planId": second_plan["id"], "expectedPlanUpdatedAt": second_plan["updatedAt"],
+                })).status_code, 200)
+                self.assertEqual((await tick(10))["checked"], 2)
+                first_after_reset = (await client.get(second_route)).json()
+                self.assertEqual(first_after_reset["reason"], "stats_reset", first_after_reset)
+                self.assertIsNone(first_after_reset["current"])
+                await self.pg.execute("ANALYZE ts_transfer_sandbox.unconfigured")
+                self.assertEqual((await tick(11))["checked"], 2)
+                self.assertEqual((await client.get(second_route)).json()["current"]["estimatedRows"], "2")
+
+                before_peer_reset = (await client.get(second_route)).json()["current"]
+                await self.pg.execute("""
+                    SELECT pg_stat_reset_single_table_counters('ts_transfer_sandbox.stats_target'::regclass)
+                """)
+                self.assertEqual((await tick(12))["checked"], 2)
+                after_peer_reset = (await client.get(second_route)).json()
+                self.assertEqual(after_peer_reset["state"], "current", after_peer_reset)
+                self.assertEqual(after_peer_reset["current"]["lastAnalyzedAt"], before_peer_reset["lastAnalyzedAt"])

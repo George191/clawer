@@ -13,6 +13,7 @@ from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
+from app.web.api.models.asset_collected_stats import AssetCollectedStats
 from app.web.api.models.asset_freshness import (
     AssetFreshnessCandidate, AssetFreshnessChange, AssetFreshnessResponse, AssetQualityIncident, AssetQualityIncidentAck,
     AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
@@ -62,6 +63,7 @@ from app.web.api.models.transfer_plans import (
 from app.web.api.models.transfer_schedules import (
     TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleSummary,
 )
+from app.web.services.asset_collected_stats import read_asset_collected_stats
 from app.web.services.asset_freshness import (
     acknowledge_quality_incident, capture_schema_baseline, get_asset_freshness, get_asset_freshness_candidates,
     preview_schema_baseline, put_asset_freshness,
@@ -215,6 +217,16 @@ async def get_local_pipeline_output(
     output_id: UUID, session: SessionDep, current_user: CurrentActiveSuperuser,
 ) -> PipelineSandboxOutputDetail:
     return await read_pipeline_output(session, output_id, current_user.id)
+
+
+@write.get("/asset-freshness/{schema}/{table}/collected-stats")
+async def get_collected_stats(
+    schema: WarehouseSchema, table: TableName, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetCollectedStats:
+    try:
+        return await read_asset_collected_stats(session, schema, table)
+    except DBAPIError:
+        raise HTTPException(503, "Recorded catalog statistics are temporarily unavailable") from None
 
 
 @write.get("/asset-freshness/{schema}/{table}/candidates")

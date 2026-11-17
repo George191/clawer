@@ -278,6 +278,7 @@ async def acknowledge_quality_incident(
 async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now: datetime) -> str:
     plan = await session.get(TransferPlanRow, row.plan_id, populate_existing=True)
     reason = _drift(row, plan, await _identity(session, row.target_table))
+    binding_current = reason is None
     await evaluate_asset_quality(session, row, reason, now)
     receipt = None
     if reason is None:
@@ -304,6 +305,10 @@ async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now
     row.state, row.reason, row.checked_at, row.next_check_at = state, reason, now, now + _PERIOD
     row.receipt_id = receipt.id if receipt else None
     row.receipt_recorded_at = receipt.recorded_at if receipt else None
+    if binding_current and settings.TRANSFER_SANDBOX_COLLECTED_STATS_ENABLED:
+        from app.web.services.asset_collected_stats import collect_asset_stats
+
+        await collect_asset_stats(session, row, now)
     return state
 
 
