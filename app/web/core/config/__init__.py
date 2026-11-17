@@ -20,7 +20,7 @@ from typing_extensions import Self
 
 from app.storage.postgres_client import _resolved_pg_url
 from app.web.core.config.indexed_sample import IndexedSampleScope
-from app.web.core.config.sandbox_handoff import HandoffClearance, HandoffSinkGrant
+from app.web.core.config.sandbox_handoff import HandoffClearance, HandoffCopyGrant, HandoffSinkGrant
 
 def parse_cors(v: Any) -> list[str] | str:
     if isinstance(v, str) and not v.startswith("["):
@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     ONTOLOGY_SANDBOX_HANDOFF_SINK_GENERATION: UUID | None = None
     ONTOLOGY_SANDBOX_HANDOFF_SINK_CLEARANCE: HandoffClearance | None = None
     ONTOLOGY_SANDBOX_HANDOFF_SINK_GRANTS: dict[UUID, HandoffSinkGrant] = {}
+    ONTOLOGY_SANDBOX_HANDOFF_COPY_ENABLED: bool = False
+    ONTOLOGY_SANDBOX_HANDOFF_COPY_DATABASE_MARKER: UUID | None = None
+    ONTOLOGY_SANDBOX_HANDOFF_COPY_PHYSICAL_DIGEST: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
+    ONTOLOGY_SANDBOX_HANDOFF_COPY_GRANTS: dict[UUID, HandoffCopyGrant] = {}
     ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS: dict[UUID, list[Literal["sandbox-synthetic", "sandbox-restricted"]]] = {}
     CDC_SANDBOX_STREAM_MARKER: UUID | None = None
     BATCH_SYNC_SANDBOX_ENABLED: bool = False

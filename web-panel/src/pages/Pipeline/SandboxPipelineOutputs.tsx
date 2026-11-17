@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
 import { fetchSandboxHandoffCapability, commitSandboxPipelineOutput, fetchSandboxPipelineOutput, fetchSandboxPipelineOutputs } from '../../services/api';
 import type {
-  SandboxHandoffSink, SandboxPipelineOutput, SandboxPipelineOutputDetail, SandboxPipelineOutputList, SandboxPipelineOutputRequest, SandboxPipelineRevision,
+  SandboxHandoffCapability, SandboxPipelineOutput, SandboxPipelineOutputDetail, SandboxPipelineOutputList, SandboxPipelineOutputRequest, SandboxPipelineRevision,
 } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import { SandboxMarkings, sandboxScopeDenied } from './SandboxMarkings';
@@ -53,7 +53,8 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const [detail, setDetail] = useState<SandboxPipelineOutputDetail>();
   const [detailFailed, setDetailFailed] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
-  const [handoffSink, setHandoffSink] = useState<SandboxHandoffSink>();
+  const [handoff, setHandoff] = useState<SandboxHandoffCapability>();
+  const handoffSink = handoff?.sink;
   const [handoffOutput, setHandoffOutput] = useState<SandboxPipelineOutput>();
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
@@ -62,7 +63,7 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const invalidate = () => {
     setList(undefined); setLoadFailed(true); setInspecting(undefined); setDetail(undefined);
     setConfirm(undefined); setPendingRequest(undefined); setNotice(undefined);
-    setComparisonOpen(false); setHandoffOutput(undefined); setHandoffSink(undefined);
+    setComparisonOpen(false); setHandoffOutput(undefined); setHandoff(undefined);
     onScopeDenied?.();
   };
 
@@ -86,11 +87,11 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
 
   useEffect(() => {
     const read = new AbortController();
-    setHandoffOutput(undefined); setHandoffSink(undefined);
+    setHandoffOutput(undefined); setHandoff(undefined);
     if (scopeKey && list?.available && list.outputs.length) {
       void fetchSandboxHandoffCapability(read.signal).then(value => {
-        if (live(read.signal) && value.available && value.sink?.id === 'synthetic-review-sink') setHandoffSink(value.sink);
-      }).catch(() => { if (live(read.signal)) setHandoffSink(undefined); });
+        if (live(read.signal) && value.available && value.sink?.id === 'synthetic-review-sink') setHandoff(value);
+      }).catch(() => { if (live(read.signal)) setHandoff(undefined); });
     }
     return () => read.abort();
   }, [scopeKey, list]);
@@ -180,7 +181,7 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
             </ol> : <p>No committed sandbox output receipts.</p>}
           </>}
     {handoffOutput && handoffSink && list?.available && <SandboxPipelineHandoff key={`${handoffOutput.id}:${handoffSink.generation}`}
-      output={handoffOutput} sink={handoffSink} onClose={() => setHandoffOutput(undefined)} onScopeDenied={invalidate} />}
+      output={handoffOutput} sink={handoffSink} copyAvailable={handoff?.copyAvailable === true} scopeKey={scopeKey} onClose={() => setHandoffOutput(undefined)} onScopeDenied={invalidate} />}
     {comparisonOpen && list?.available && <SandboxPipelineOutputComparison outputs={list.outputs}
       onClose={() => setComparisonOpen(false)} onScopeDenied={invalidate} />}
     <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" confirmLoading={busy}

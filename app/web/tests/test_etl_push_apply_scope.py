@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TARGET
 from app.web.core.config import settings
+from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA, HANDOFF_PROTECTED_REGCLASSES
 from app.web.services.postgres_sync_source import read_batch_sync_snapshot, review_batch_source
 from app.web.services.data_connections import DataConnections
 from app.web.services.etl_layers import EtlLayers, _PUSH_APPLY_BINDING, _PUSH_APPLY_RECEIPTS
@@ -61,6 +62,35 @@ class TestImmediatePushScope(IsolatedAsyncioTestCase):
             with self.subTest(method=method.__name__, args=args), self.assertRaises(HTTPException) as error:
                 await method(*args)
             self.assertEqual(error.exception.status_code, 404)
+
+    async def test_handoff_schema_rejects_generic_operations_before_io(self):
+        layers, workspace = EtlLayers(), EtlWorkspace()
+        private = HANDOFF_PRIVATE_SCHEMA
+
+        @asynccontextmanager
+        async def unexpected(*, repeatable_read=False):
+            raise AssertionError("A prohibited generic action opened a database session")
+            yield
+
+        layers.session = workspace._session = unexpected
+        for method, args in (
+            (layers.tables, (private,)), (layers.columns, (private, "copy_rows")),
+            (layers.data, (private, "copy_rows")), (layers.object_types, (private,)),
+            (workspace.create_table, (private, {"name": "copy_rows"})),
+            (workspace.patch_row, (private, "copy_rows", {})),
+            (workspace.publications, (private, "copy_rows")),
+            (workspace.rename_schema, (_OTHER, {"name": private})),
+            (workspace.rename_schema, (private, {"name": _OTHER})),
+            (workspace.delete_schema, (private,)),
+        ):
+            with self.subTest(method=method.__name__, args=args), self.assertRaises(HTTPException) as error:
+                await method(*args)
+            self.assertEqual(error.exception.status_code, 404)
+        with patch("app.web.services.postgres_sync_source._saved_loopback_source", side_effect=AssertionError):
+            with self.assertRaises(HTTPException) as error:
+                await review_batch_source(None, "test", datetime.now(timezone.utc), uuid4(),
+                                          schema=private, table="copy_rows")
+            self.assertEqual(error.exception.status_code, 422)
 
     async def test_batch_source_review_and_runtime_deny_before_connecting(self):
         revision = datetime.now(timezone.utc)
@@ -165,6 +195,33 @@ class TestStoredPushedTargetScope(IsolatedAsyncioTestCase):
             with self.assertRaises(HTTPException) as token:
                 await self.workspace.published_data("legacy-link", {"limit": 1})
             self.assertEqual(token.exception.status_code, 404)
+
+    async def test_handoff_never_catalogued_or_public_and_raw_depends_on_durable_evidence(self):
+        private = HANDOFF_PRIVATE_SCHEMA
+        await self._write(
+            f"DROP TABLE {_QUALIFIED}", f"CREATE SCHEMA {private}",
+            *(f"CREATE TABLE {relation} (id int PRIMARY KEY)" for relation in HANDOFF_PROTECTED_REGCLASSES),
+            f"""INSERT INTO public.flow_publications VALUES ('handoff-old', '{private}',
+                'copy_rows', '{{}}', now()-interval '1 hour', now()+interval '1 hour')""",
+        )
+        self.addAsyncCleanup(self._write, f"DROP SCHEMA {private} CASCADE")
+        self.assertNotIn(private, (await self.connections.catalog("fixture", schema=None, search="", limit=5, offset=0)).schemas)
+        with self.assertRaises(HTTPException) as denied:
+            await self.connections.catalog_columns("fixture", schema=private, table="copy_rows")
+        self.assertEqual(denied.exception.status_code, 404)
+        with self.assertRaises(HTTPException) as token:
+            await self.workspace.published_data("handoff-old", {"limit": 1})
+        self.assertEqual(token.exception.status_code, 404)
+        self.assertEqual((await self.layers.query("SELECT 1 AS result"))["rows"], [{"result": 1}])
+        # Isolate each gate. Surviving evidence blocks raw SQL without the
+        # provision marker or siblings, and irrespective of feature settings.
+        for relation in HANDOFF_PROTECTED_REGCLASSES:
+            await self._write(f"INSERT INTO {relation} VALUES (1)")
+            with self.subTest(relation=relation), self.assertRaises(HTTPException) as raw:
+                await self.layers.query("SELECT 1")
+            self.assertEqual(raw.exception.status_code, 403)
+            await self._write(f"DROP TABLE {relation}")
+        self.assertEqual((await self.layers.query("SELECT 1 AS result"))["rows"], [{"result": 1}])
 
     async def test_fixed_target_blocks_raw_even_without_acceptance_tables(self):
         with patch.object(settings, "PUSH_INBOX_SANDBOX_ENABLED", False):

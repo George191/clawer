@@ -29,6 +29,7 @@ from app.web.api.models.data_connections import (
     DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumn, SourceColumns, SourceRelation,
 )
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
+from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA
 from app.web.core.config import settings
 
 
@@ -50,7 +51,7 @@ _CATALOG_KINDS = {
 }
 _CATALOG_SCHEMA_SCOPE = f"""
     left(n.nspname::text, 3) <> 'pg_' AND n.nspname <> 'information_schema'
-    AND n.nspname NOT IN ('batch_sync_identity', 'batch_sync_stream', 'ts_cdc_sandbox', '{PUSH_APPLY_SCHEMA}')
+    AND n.nspname NOT IN ('batch_sync_identity', 'batch_sync_stream', 'ts_cdc_sandbox', '{PUSH_APPLY_SCHEMA}', '{HANDOFF_PRIVATE_SCHEMA}')
     AND has_schema_privilege(n.oid, 'USAGE')
 """
 _CATALOG_RELATION_SCOPE = f"""

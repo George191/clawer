@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.web.api.models.pipeline_handoff import (
@@ -50,7 +51,17 @@ async def handoff_capability(session: AsyncSession, actor_id: UUID) -> PipelineH
     if scope is None:
         return PipelineHandoffCapability(available=False)
     grant, _, _ = scope
-    return PipelineHandoffCapability(available=True, sink=PipelineHandoffSink(generation=grant.generation))
+    from app.web.services.pipeline_handoff_copy import copy_available
+
+    available = False
+    if settings.ONTOLOGY_SANDBOX_HANDOFF_COPY_ENABLED:
+        try:
+            async with session.begin_nested():
+                available = await copy_available(session, actor_id, grant)
+        except DBAPIError:
+            pass
+    return PipelineHandoffCapability(available=True, sink=PipelineHandoffSink(generation=grant.generation),
+                                    copyAvailable=True if available else None)
 
 
 async def handoff_eligibility(

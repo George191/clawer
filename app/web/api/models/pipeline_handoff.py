@@ -1,9 +1,10 @@
 """Read-only handoff eligibility for one fixed synthetic profile."""
 
+from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, UUID4
 
 from app.web.api.models.synthetic_governance import SandboxMarking
 
@@ -16,6 +17,7 @@ class PipelineHandoffSink(BaseModel):
 
 class PipelineHandoffCapability(BaseModel):
     available: bool
+    copyAvailable: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     sink: PipelineHandoffSink | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
@@ -33,3 +35,17 @@ class PipelineHandoffEligibility(BaseModel):
     eligible: bool
     reason: Literal["eligible_for_review", "clearance_mismatch"]
     markings: list[SandboxMarking]
+
+
+class PipelineHandoffCopyRequest(PipelineHandoffRequest):
+    requestId: UUID4
+
+
+class PipelineHandoffCopyReceipt(BaseModel):
+    id: UUID
+    requestId: UUID
+    outputId: UUID
+    sink: PipelineHandoffSink
+    markings: list[SandboxMarking]
+    rowsCopied: int
+    recordedAt: datetime

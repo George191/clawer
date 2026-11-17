@@ -23,6 +23,7 @@ from app.etl.schema.object_relations import relation_mapping, validate_definitio
 from app.etl.schema.ontology import resource_group, sync_object_metadata
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
+from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA
 from app.web.core.config import settings as web_settings
 from app.web.services.etl_layers import (
     EtlLayers,
@@ -321,7 +322,7 @@ class EtlWorkspace:
                 result = await session.execute(text('SELECT id, name, database_name AS database, schemas FROM public.flow_connections ORDER BY name'))
                 rows = [dict(row) for row in result.mappings()]
                 for row in rows:
-                    row["schemas"] = [schema for schema in row["schemas"] if schema != PUSH_APPLY_SCHEMA]
+                    row["schemas"] = [schema for schema in row["schemas"] if schema not in (PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA)]
                 return rows
             result = await session.execute(text("SELECT current_database()"))
             database = result.scalar_one()
@@ -559,11 +560,11 @@ class EtlWorkspace:
     async def _favorite_ids(session, user_id: str) -> list[str]:
         rows = await session.execute(text("""SELECT o.schema_name || '.' || o.table_name AS id
             FROM public.ontology_object_favorites f JOIN public.ontology_objects o ON o.id = f.object_id
-            WHERE f.user_id = CAST(:user_id AS uuid) AND o.schema_name <> :push_schema
+            WHERE f.user_id = CAST(:user_id AS uuid) AND o.schema_name NOT IN (:push_schema, :handoff_schema)
               AND NOT (o.schema_name = :batch_schema AND o.table_name = :batch_target)
             ORDER BY o.schema_name, o.table_name"""),
             {"user_id": user_id, "batch_schema": RESERVED_BATCH_TARGET[0], "batch_target": RESERVED_BATCH_TARGET[1],
-             "push_schema": PUSH_APPLY_SCHEMA})
+             "push_schema": PUSH_APPLY_SCHEMA, "handoff_schema": HANDOFF_PRIVATE_SCHEMA})
         return [row["id"] for row in rows.mappings()]
 
     async def object_favorites(self, user_id: str) -> dict[str, Any]:

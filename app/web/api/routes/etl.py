@@ -42,7 +42,8 @@ from app.web.api.models.cdc_sandbox_versions import (
 from app.web.api.models.push_inbox import PushInboxStatus
 from app.web.api.models.push_inbox_apply import PushApplyRequest, PushApplyResult, PushApplyReview, PushApplyStatus
 from app.web.api.models.pipeline_handoff import (
-    PipelineHandoffCapability, PipelineHandoffEligibility, PipelineHandoffRequest,
+    PipelineHandoffCapability, PipelineHandoffCopyReceipt, PipelineHandoffCopyRequest, PipelineHandoffEligibility,
+    PipelineHandoffRequest,
 )
 from app.web.api.models.pipeline_sandbox import (
     PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
@@ -107,6 +108,7 @@ from app.web.services.cdc_sandbox import (
     apply_cdc_sandbox, list_cdc_sandbox_receipts, read_cdc_sandbox, review_cdc_sandbox,
 )
 from app.web.services.cdc_sandbox_versions import compare_cdc_versions, list_cdc_versions, read_cdc_version
+from app.web.services.pipeline_handoff_copy import copy_handoff
 from app.web.services.pipeline_handoff import handoff_capability, handoff_eligibility
 from app.web.services.pipeline_sandbox import (
     list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
@@ -313,6 +315,21 @@ async def post_pipeline_handoff_eligibility(
             return await handoff_eligibility(session, current_user.id, payload)
     except (DBAPIError, TimeoutError):
         raise HTTPException(503, "Synthetic handoff eligibility is temporarily unavailable") from None
+
+
+@write.post("/pipeline-sandbox/handoff/copies", status_code=201)
+async def post_pipeline_handoff_copy(
+    payload: PipelineHandoffCopyRequest, request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffCopyReceipt:
+    if request.query_params:
+        raise HTTPException(422, "This handoff uses one fixed private synthetic sink")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with fail_after(4):
+            return await copy_handoff(session, current_user.id, payload)
+    except (DBAPIError, TimeoutError):
+        raise HTTPException(503, "Synthetic handoff could not settle; retry the same request ID") from None
 
 
 @write.get("/pipeline-sandbox/outputs")

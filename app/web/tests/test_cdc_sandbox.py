@@ -19,7 +19,7 @@ from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReview
 from app.web.api.models.pipeline_sandbox import PipelineSandboxConfig, PipelineSandboxSave
 from app.web.api.models.pipeline_sandbox_outputs import PipelineSandboxCommit
 from app.web.core.config import settings
-from app.web.core.config.sandbox_handoff import HandoffSinkGrant
+from app.web.core.config.sandbox_handoff import HandoffCopyGrant, HandoffSinkGrant
 from app.web.services.etl_layers import EtlLayers
 from app.web.tests.test_transfer_plans import TEST_ACTOR, api
 
@@ -637,8 +637,101 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                             self.assertEqual((await qualify()).json(), gap.json())
                     for reader in (output_read, cdc_read, id_read):
                         reader.assert_not_called()
+                await self.assert_private_handoff_copy(client, grant, review(base_output), review(restricted_output), route)
+
         async with api(False, self.sessions) as reader:
             self.assertEqual((await reader.get(route)).status_code, 403)
+
+    async def assert_private_handoff_copy(self, client, grant, payload, empty_payload, route):
+        from app.web.services.pipeline_handoff_copy import _physical
+
+        marker = uuid4()
+        migration = import_module("app.web.alembic.versions.6094e3ea0b7d_ontology_private_handoff_copy")
+
+        def migrate(sync, operation):
+            with Operations.context(MigrationContext.configure(sync.connection())):
+                operation()
+
+        self.addAsyncCleanup(self.pg.execute, "DROP SCHEMA IF EXISTS ontology_handoff_private CASCADE")
+        async with self.pg.session() as session:
+            for operation in (migration.upgrade, migration.downgrade, migration.upgrade):
+                await session.run_sync(migrate, operation)
+            await session.execute(text("SET LOCAL search_path=pg_catalog,public,pg_temp"))
+            await session.execute(text("INSERT INTO ontology_handoff_private.sink_state VALUES(true,:marker)"), {"marker": marker})
+            physical = await _physical(session)
+            self.assertIsNotNone(physical)
+        approval = HandoffCopyGrant(**grant.model_dump(), databaseMarker=marker, physicalDigest=physical)
+        body = {**payload, "requestId": str(uuid4())}
+        with patch.multiple(settings, ONTOLOGY_SANDBOX_HANDOFF_SINK_GRANTS={TEST_ACTOR: grant},
+                            ONTOLOGY_SANDBOX_HANDOFF_COPY_ENABLED=True,
+                            ONTOLOGY_SANDBOX_HANDOFF_COPY_DATABASE_MARKER=marker,
+                            ONTOLOGY_SANDBOX_HANDOFF_COPY_PHYSICAL_DIGEST=physical):
+            self.assertEqual((await client.post(route + "/copies", json=body)).status_code, 404)
+            with patch.object(settings, "ONTOLOGY_SANDBOX_HANDOFF_COPY_GRANTS", {TEST_ACTOR: approval}):
+                cap = await client.get(route)
+                self.assertTrue(cap.json().get("copyAvailable"), cap.text)
+                execute = AsyncSession.execute
+
+                async def fail_rows(session, query, params=None, **kwargs):
+                    if "INSERT INTO ontology_handoff_private.copy_rows" in str(query):
+                        params = [{**row, "position": 101} for row in params]
+                    return await execute(session, query, params, **kwargs)
+
+                with patch.object(AsyncSession, "execute", fail_rows):
+                    result = await client.post(route + "/copies", json=body)
+                    self.assertEqual(result.status_code, 503, result.text)
+                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS n FROM ontology_handoff_private.copies"))["n"], 0)
+                original = await client.post(route + "/copies", json=body)
+                self.assertEqual(original.status_code, 201, original.text)
+                receipt = original.json()
+                self.assertEqual((receipt["rowsCopied"], receipt["markings"]), (1, ["sandbox-synthetic"]))
+                self.assertNotIn("rows", receipt)
+                with patch("app.web.services.pipeline_handoff_copy._stored_rows", side_effect=AssertionError(
+                    "reconciliation touched source output rows",
+                )) as source:
+                    replay = await client.post(route + "/copies", json=body)
+                    self.assertEqual(replay.json(), receipt)
+                    duplicate = await client.post(route + "/copies", json={**body, "requestId": str(uuid4())})
+                    self.assertEqual(duplicate.status_code, 409, duplicate.text)
+                    await self.pg.execute("UPDATE ontology_handoff_private.copy_rows SET row_values=ARRAY['2']")
+                    tampered = await client.post(route + "/copies", json=body)
+                    self.assertEqual(tampered.status_code, 409, tampered.text)
+                    await self.pg.execute("DELETE FROM ontology_handoff_private.copy_rows")
+                    self.assertEqual((await client.post(route + "/copies", json=body)).status_code, 409)
+                    source.assert_not_called()
+
+                restarted = grant.model_copy(update={"generation": uuid4(), "clearance": "sandbox-restricted"})
+                approved = HandoffCopyGrant(**restarted.model_dump(), databaseMarker=marker, physicalDigest=physical)
+                zero = {**empty_payload, "requestId": str(uuid4()), "expectedSinkGeneration": str(restarted.generation)}
+                original_commit = AsyncSession.commit
+                lost = False
+
+                async def lose_ack(session):
+                    nonlocal lost
+                    await original_commit(session)
+                    if not lost:
+                        lost = True
+                        raise TimeoutError("simulated post-commit loss")
+
+                with patch.multiple(settings, ONTOLOGY_SANDBOX_HANDOFF_SINK_GRANTS={TEST_ACTOR: restarted},
+                                    ONTOLOGY_SANDBOX_HANDOFF_SINK_CLEARANCE=restarted.clearance,
+                                    ONTOLOGY_SANDBOX_HANDOFF_SINK_GENERATION=restarted.generation,
+                                    ONTOLOGY_SANDBOX_HANDOFF_COPY_GRANTS={TEST_ACTOR: approved}):
+                    self.assertEqual((await client.post(route + "/copies", json=body)).status_code, 404)
+                    with patch.object(AsyncSession, "commit", lose_ack):
+                        uncertain = await client.post(route + "/copies", json=zero)
+                        self.assertEqual(uncertain.status_code, 503, uncertain.text)
+                    with patch("app.web.services.pipeline_handoff_copy._stored_rows", side_effect=AssertionError(
+                        "lost-ack recovery reread sealed source",
+                    )) as source:
+                        settled = await client.post(route + "/copies", json=zero)
+                        self.assertEqual(settled.status_code, 201, settled.text)
+                        self.assertEqual((settled.json()["rowsCopied"], settled.json()["markings"]),
+                                         (0, ["sandbox-synthetic", "sandbox-restricted"]))
+                        source.assert_not_called()
+        with self.assertRaisesRegex(RuntimeError, "Cannot remove provisioned synthetic handoff"):
+            async with self.pg.session() as session:
+                await session.run_sync(migrate, migration.downgrade)
 
     async def test_compare_sealed_outputs_checks_ancestry_before_rows_and_counts_bounded_changes(self):
         base, restricted = "sandbox-synthetic", "sandbox-restricted"
