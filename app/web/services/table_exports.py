@@ -96,6 +96,19 @@ def _enabled() -> bool:
     return _local() and settings.TABLE_EXPORT_SANDBOX_ENABLED
 
 
+def _append_enabled() -> bool:
+    return _enabled() and settings.TABLE_EXPORT_APPEND_ENABLED
+
+
+def _wire_mode(mode: str):
+    return "append" if mode == "append" else None
+
+
+def _check_mode(mode: str | None, current: str) -> None:
+    if (mode or "upsert") != current:
+        raise _RunFailure(409, "write_mode_changed", "The request must match the explicitly reviewed receiver write mode")
+
+
 def table_export_capabilities(destination: ExportDestination = "primary") -> TableExportCapabilities:
     provisioned = _local() and _provisioned(destination) is not None
     options = None
@@ -104,6 +117,7 @@ def table_export_capabilities(destination: ExportDestination = "primary") -> Tab
     source_schema, source_table = SOURCE_LABEL.split(".")
     return TableExportCapabilities(
         enabled=_enabled() and provisioned, provisioned=provisioned,
+        appendAvailable=True if provisioned and _append_enabled() else None,
         sourceSchema=source_schema, sourceTable=source_table, targetSchema=_TARGET_SCHEMA, targetTable=_TARGET_TABLE,
         maxRows=MAX_EXPORT_ROWS, maxCaptionBytes=MAX_CAPTION_BYTES,
         approvedDestinations=options, destinationLabel=_DESTINATION_LABELS[destination] if destination == "secondary" else None,
@@ -113,13 +127,13 @@ def table_export_capabilities(destination: ExportDestination = "primary") -> Tab
 
 
 def _plan(row: TableExportPlanRow) -> TableExportPlan:
-    return TableExportPlan(id=row.id, name=row.name, updatedAt=row.updated_at)
+    return TableExportPlan(id=row.id, name=row.name, updatedAt=row.updated_at, writeMode=_wire_mode(row.write_mode))
 
 
-def _receipt(row: TableExportReceiptRow, generation: int) -> TableExportReceipt:
+def _receipt(row: TableExportReceiptRow, generation: int, mode: str = "upsert") -> TableExportReceipt:
     return TableExportReceipt(
         id=row.id, requestId=row.request_id, rowsAffected=row.rows_affected, recordedAt=row.recorded_at,
-        grantGeneration=generation,
+        grantGeneration=generation, writeMode=_wire_mode(mode),
     )
 
 
@@ -142,10 +156,12 @@ async def _last_grant(session: AsyncSession, destination: ExportDestination) -> 
                                  .limit(1).execution_options(populate_existing=True))).one_or_none()
 
 
-def _scope_digest(binding: str, receiver_proof: str | None = None) -> str:
+def _scope_digest(binding: str, receiver_proof: str | None = None, mode: str = "upsert") -> str:
     scope = ["export-grant-v1", SYNTHETIC_EXPORT_MARKING, binding, _PROJECTION, MAX_EXPORT_ROWS, MAX_CAPTION_BYTES]
     if receiver_proof is not None:
         scope.append(receiver_proof)
+    if mode == "append":
+        scope.extend(("write-mode", "append"))
     return sha256(json.dumps(scope, separators=(",", ":")).encode()).hexdigest()
 
 
@@ -155,7 +171,8 @@ def _grant_view(
     available = bool(plan and live_binding and plan.binding_digest == live_binding)
     effective = bool(available and grant and grant.action == "approved"
                      and grant.marking == SYNTHETIC_EXPORT_MARKING and grant.plan_updated_at == plan.updated_at
-                     and grant.scope_digest == _scope_digest(live_binding, plan.receiver_proof))
+                     and grant.write_mode == plan.write_mode
+                     and grant.scope_digest == _scope_digest(live_binding, plan.receiver_proof, plan.write_mode))
     status = ("not_granted" if grant is None else "revoked" if grant.action == "revoked"
               else "active" if effective else "stale")
     return TableExportGrant(
@@ -163,6 +180,7 @@ def _grant_view(
         planUpdatedAt=grant.plan_updated_at if grant else None,
         approvedAt=grant.recorded_at if grant and grant.action == "approved" else None,
         revokedAt=grant.recorded_at if grant and grant.action == "revoked" else None,
+        writeMode=_wire_mode(grant.write_mode if grant else plan.write_mode if plan else "upsert"),
     )
 
 
@@ -198,6 +216,9 @@ async def change_table_export_grant(
     current = _grant_view(plan, previous, live_binding)
     if plan is None or plan.updated_at != payload.expectedPlanUpdatedAt:
         raise _RunFailure(409, "plan_changed", "The Table Export review changed; reload it before changing the grant")
+    _check_mode(payload.writeMode, plan.write_mode)
+    if payload.approved and plan.write_mode == "append" and not _append_enabled():
+        raise _RunFailure(403, "append_disabled", "Append is not enabled for new receiver grants")
     if current.generation != payload.expectedGeneration:
         raise _RunFailure(409, "grant_changed", "The Table Export grant changed; reload it")
     if payload.approved and not current.available:
@@ -206,13 +227,16 @@ async def change_table_export_grant(
         previous is None or previous.action != "approved"
     )):
         raise _RunFailure(409, "grant_unchanged", "The requested Table Export grant state is already recorded")
-    if destination == "secondary":
-        await _require_local_secondary_sender(session, settings.TABLE_EXPORT_SECONDARY_RECEIVER_PORT,
-                                              settings.TABLE_EXPORT_SOURCE_MARKER)
+    if destination == "secondary" or plan.write_mode == "append":
+        port = (settings.TABLE_EXPORT_SECONDARY_RECEIVER_PORT if destination == "secondary"
+                else settings.TABLE_EXPORT_RECEIVER_PORT)
+        await _require_local_secondary_sender(session, port, settings.TABLE_EXPORT_SOURCE_MARKER)
     row = TableExportGrantRow(
         destination=destination, generation=(current.generation or 0) + 1, action="approved" if payload.approved else "revoked",
         marking=payload.marking, reason=payload.reason, actor_id=actor_id,
-        scope_digest=_scope_digest(live_binding, plan.receiver_proof) if payload.approved else previous.scope_digest,
+        scope_digest=(_scope_digest(live_binding, plan.receiver_proof, plan.write_mode)
+                      if payload.approved else previous.scope_digest),
+        write_mode=plan.write_mode if payload.approved else previous.write_mode,
         plan_updated_at=plan.updated_at if payload.approved else previous.plan_updated_at,
         recorded_at=datetime.now(timezone.utc),
     )
@@ -229,7 +253,7 @@ async def list_table_export_grant_history(session: AsyncSession, destination: Ex
                                 .limit(_HISTORY_LIMIT))
     return [TableExportGrantEvent(
         id=row.id, action=row.action, generation=row.generation, marking=row.marking,
-        recordedAt=row.recorded_at, planUpdatedAt=row.plan_updated_at, reason=row.reason,
+        recordedAt=row.recorded_at, planUpdatedAt=row.plan_updated_at, reason=row.reason, writeMode=_wire_mode(row.write_mode),
     ) for row in rows]
 
 
@@ -241,6 +265,7 @@ def _require_grant(
         raise _RunFailure(403, "grant_required", "An effective synthetic Table Export grant is required")
     if grant.generation != req.expectedGrantGeneration:
         raise _RunFailure(409, "grant_changed", "The Table Export grant changed; review a new request")
+    _check_mode(req.writeMode, plan.write_mode)
     if plan.updated_at != req.expectedUpdatedAt:
         raise _RunFailure(409, "plan_changed", "The Table Export review changed; review a new request")
     return req.expectedGrantGeneration
@@ -280,18 +305,24 @@ async def review_table_export(
     if payload.expectedUpdatedAt != (row.updated_at if row else None):
         raise _RunFailure(409, "plan_changed", "The Table Export review changed; reload it before saving")
 
+    if row is not None and row.write_mode == "append" and payload.writeMode is None:
+        _check_mode(payload.writeMode, row.write_mode)
+    mode = payload.writeMode or "upsert"
+    if mode == "append" and not _append_enabled():
+        raise _RunFailure(403, "append_disabled", "Append is not enabled for new receiver reviews")
+
     receiver_proof = None
-    if destination == "secondary":
+    if destination == "secondary" or mode == "append":
         await _require_local_secondary_sender(session, provision[1].port, provision[0])
         try:
-            receiver_proof = await preflight_export_receiver(provision[1])
+            receiver_proof = await preflight_export_receiver(replace(provision[1], exact_physical=True))
         except ReceiverFailure as error:
             raise _failure(error, receiver_may_have_committed=False) from None
 
     now = datetime.now(timezone.utc)
     if row is None:
         row = TableExportPlanRow(destination=destination, name=payload.name, reviewed_by=actor_id,
-                                 binding_digest=provision[2], receiver_proof=receiver_proof, updated_at=now)
+                                 binding_digest=provision[2], receiver_proof=receiver_proof, write_mode=mode, updated_at=now)
         created = (await session.execute(insert(TableExportPlanRow).values(row.model_dump()).on_conflict_do_nothing()
                                          .returning(TableExportPlanRow.destination))).scalar_one_or_none()
         if created is None:
@@ -301,6 +332,7 @@ async def review_table_export(
         row.reviewed_by = actor_id
         row.binding_digest = provision[2]
         row.receiver_proof = receiver_proof
+        row.write_mode = mode
         row.updated_at = max(now, row.updated_at + timedelta(microseconds=1))
     result = _plan(row)
     await session.commit()
@@ -311,41 +343,41 @@ async def list_table_export_receipts(session: AsyncSession, destination: ExportD
     _, grant = await _read_grant(session, destination)
     if not grant.effective:
         return []
-    rows = await session.scalars(select(TableExportReceiptRow)
+    rows = await session.execute(select(TableExportReceiptRow, TableExportRequestRow.write_mode)
                                 .join(TableExportRequestRow, TableExportRequestRow.request_id == TableExportReceiptRow.request_id)
                                 .where(TableExportRequestRow.destination == destination,
                                        TableExportRequestRow.grant_generation == grant.generation)
                                 .order_by(TableExportReceiptRow.recorded_at.desc(), TableExportReceiptRow.id.desc())
                                 .limit(_HISTORY_LIMIT))
-    return [_receipt(row, grant.generation) for row in rows]
+    return [_receipt(row, grant.generation, mode) for row, mode in rows]
 
 
 async def list_table_export_attempts(session: AsyncSession, destination: ExportDestination = "primary") -> list[TableExportAttempt]:
     _, grant = await _read_grant(session, destination)
     if not grant.effective:
         return []
-    statement = (select(TableExportAttemptRow, TableExportRequestRow.plan_updated_at)
+    statement = (select(TableExportAttemptRow, TableExportRequestRow.plan_updated_at, TableExportRequestRow.write_mode)
                  .join(TableExportRequestRow, TableExportRequestRow.request_id == TableExportAttemptRow.request_id)
                  .where(TableExportRequestRow.destination == destination,
                                        TableExportRequestRow.grant_generation == grant.generation)
                  .order_by(TableExportAttemptRow.started_at.desc(), TableExportAttemptRow.id.desc()).limit(_HISTORY_LIMIT))
     return [TableExportAttempt(id=row.id, requestId=row.request_id, planUpdatedAt=version, grantGeneration=grant.generation, status=row.status,
                                startedAt=row.started_at, finishedAt=row.finished_at, receiptId=row.receipt_id,
-                               code=row.code, message=row.message)
-            for row, version in (await session.execute(statement)).all()]
+                               code=row.code, message=row.message, writeMode=_wire_mode(mode))
+            for row, version, mode in (await session.execute(statement)).all()]
 
 
 def _lineage_receipt(
-    receipt: TableExportReceiptRow, reviewed_at: datetime, binding: str, plan: TableExportPlanRow | None,
+    receipt: TableExportReceiptRow, reviewed_at: datetime, binding: str, mode: str, plan: TableExportPlanRow | None,
 ) -> TableExportLineageReceipt:
     # Never look up the latest plan name for old evidence. The immutable
     # request's saved revision and binding are its only attribution.
     relation = "different_binding"
     if plan is not None and plan.binding_digest == binding:
-        relation = "current_review" if plan.updated_at == reviewed_at else "earlier_review"
+        relation = "current_review" if plan.updated_at == reviewed_at and plan.write_mode == mode else "earlier_review"
     return TableExportLineageReceipt(
         id=receipt.id, recordedAt=receipt.recorded_at, rowsAffected=receipt.rows_affected,
-        reviewedAt=reviewed_at, reviewRelation=relation, observed=receipt.rows_affected > 0,
+        reviewedAt=reviewed_at, reviewRelation=relation, observed=receipt.rows_affected > 0, writeMode=_wire_mode(mode),
     )
 
 
@@ -354,20 +386,21 @@ async def get_table_export_lineage(session: AsyncSession, destination: ExportDes
     plan, grant = await _read_grant(session, destination)
     binding_matches = grant.available
     declaration = None if plan is None else TableExportLineageDeclaration(
-        id=plan.id, name=plan.name, reviewedAt=plan.updated_at,
+        id=plan.id, name=plan.name, reviewedAt=plan.updated_at, writeMode=_wire_mode(plan.write_mode),
         state=("stale" if not binding_matches else "blocked" if not grant.effective
-               else "enabled" if _enabled() else "inactive"),
+               else "enabled" if (_append_enabled() if plan.write_mode == "append" else _enabled()) else "inactive"),
     )
     statement = (
-        select(TableExportReceiptRow, TableExportRequestRow.plan_updated_at, TableExportRequestRow.binding_digest)
+        select(TableExportReceiptRow, TableExportRequestRow.plan_updated_at, TableExportRequestRow.binding_digest,
+               TableExportRequestRow.write_mode)
         .join(TableExportRequestRow, TableExportRequestRow.request_id == TableExportReceiptRow.request_id)
         .where(TableExportRequestRow.destination == destination,
                TableExportRequestRow.payload_digest.op("~")("^[0-9a-f]{64}$"),
                TableExportRequestRow.grant_generation == grant.generation)
         .order_by(TableExportReceiptRow.recorded_at.desc(), TableExportReceiptRow.id.desc())
     )
-    receipts = [_lineage_receipt(receipt, reviewed_at, binding, plan)
-                for receipt, reviewed_at, binding in (await session.execute(statement.limit(_HISTORY_LIMIT))).all()
+    receipts = [_lineage_receipt(receipt, reviewed_at, binding, mode, plan)
+                for receipt, reviewed_at, binding, mode in (await session.execute(statement.limit(_HISTORY_LIMIT))).all()
                 ] if grant.effective else []
     observation = None
     if grant.effective:
@@ -376,6 +409,7 @@ async def get_table_export_lineage(session: AsyncSession, destination: ExportDes
         latest = (await session.execute(statement.where(
             TableExportRequestRow.plan_updated_at == plan.updated_at,
             TableExportRequestRow.binding_digest == plan.binding_digest,
+            TableExportRequestRow.write_mode == plan.write_mode,
             TableExportReceiptRow.rows_affected > 0,
         ).limit(1))).one_or_none()
         if latest is not None:
@@ -389,6 +423,18 @@ async def get_table_export_lineage(session: AsyncSession, destination: ExportDes
     )
 
 
+async def _append_conflicted(session: AsyncSession, request_id: UUID) -> bool:
+    prior = await session.scalar(select(TableExportAttemptRow.id).where(
+        TableExportAttemptRow.request_id == request_id, TableExportAttemptRow.status == "rejected",
+        TableExportAttemptRow.code == "append_duplicate",
+    ).limit(1))
+    return prior is not None
+
+
+def _append_duplicate() -> _RunFailure:
+    return _RunFailure(409, "append_duplicate", "An existing receiver key rejected the complete Append batch")
+
+
 async def _start(
     session: AsyncSession, req: TableExportRunRequest, actor_id: UUID, binding: str, destination: ExportDestination,
     config: ReceiverConfig, source_marker: UUID,
@@ -396,19 +442,26 @@ async def _start(
     await _limits(session)
     plan = await _lock_plan(session, destination)
     generation = _require_grant(plan, await _last_grant(session, destination), req, binding)
-    if destination == "secondary":
+    mode = plan.write_mode
+    if destination == "secondary" or mode == "append":
         await _require_local_secondary_sender(session, config.port, source_marker)
-    await session.execute(insert(TableExportRequestRow).values(
-        destination=destination, request_id=req.requestId, plan_updated_at=req.expectedUpdatedAt, binding_digest=binding,
-        grant_generation=generation,
-    ).on_conflict_do_nothing())
+    if mode != "append" or _append_enabled():
+        await session.execute(insert(TableExportRequestRow).values(
+            destination=destination, request_id=req.requestId, plan_updated_at=req.expectedUpdatedAt, binding_digest=binding,
+            grant_generation=generation, write_mode=mode,
+        ).on_conflict_do_nothing())
     request = await session.get(TableExportRequestRow, req.requestId)
+    if request is None and mode == "append" and not _append_enabled():
+        raise _RunFailure(403, "append_disabled", "Append is disabled for new exports")
     if request is not None and request.destination != destination:
         raise _RunFailure(409, "request_destination_conflict", "This request ID belongs to a different approved receiver")
     if request is None or request.plan_updated_at != req.expectedUpdatedAt or request.binding_digest != binding:
         raise _RunFailure(409, "request_revision_conflict", "This request ID is bound to a different Table Export review")
+    _check_mode(req.writeMode, request.write_mode)
     if request.grant_generation != generation:
         raise _RunFailure(409, "request_grant_changed", "The request belongs to a different grant and cannot be replayed")
+    if mode == "append" and await _append_conflicted(session, req.requestId):
+        raise _append_duplicate()
     attempt = TableExportAttemptRow(request_id=req.requestId, initiated_by=actor_id, started_at=datetime.now(timezone.utc))
     attempt_id = attempt.id
     session.add(attempt)
@@ -456,12 +509,12 @@ def _verify_receipt(receipt: ReceiverReceipt, req: TableExportRunRequest, digest
 
 
 async def _mirror(
-    session: AsyncSession, attempt: UUID, proof: ReceiverReceipt, generation: int, *, replayed: bool,
+    session: AsyncSession, attempt: UUID, proof: ReceiverReceipt, generation: int, *, replayed: bool, mode: str = "upsert",
 ) -> TableExportReceipt:
     row = TableExportReceiptRow(request_id=proof.request_id, rows_affected=proof.rows_affected, recorded_at=proof.committed_at)
     session.add(row)
     await session.flush()
-    result = _receipt(row, generation)
+    result = _receipt(row, generation, mode)
     await _finish(session, attempt, "replayed" if replayed else "committed", receipt_id=result.id)
     await session.commit()
     return result
@@ -507,41 +560,62 @@ async def run_table_export(
         raise _RunFailure(503, "execution_unavailable", "Sender could not start; retry the same request ID", "retryable") from None
 
     receiver_may_have_committed = False
+    terminal_settled = False
     try:
         await _limits(session)
         plan = await _lock_plan(session, destination)
         generation = _require_grant(plan, await _last_grant(session, destination), req, binding)
         request = await session.get(TableExportRequestRow, req.requestId, populate_existing=True)
         if (request is None or request.destination != destination or request.grant_generation != generation
-            or request.binding_digest != binding):
+            or request.binding_digest != binding or request.plan_updated_at != req.expectedUpdatedAt
+            or request.write_mode != plan.write_mode):
             raise _RunFailure(409, "request_grant_changed", "The request belongs to a different grant and cannot be replayed")
-        if destination == "secondary":
+        mode = request.write_mode
+        if destination == "secondary" or mode == "append":
             await _require_local_secondary_sender(session, config.port, source_marker)
             if not plan.receiver_proof:
                 raise _RunFailure(403, "export_unprovisioned", "Review the selected receiver before running an export")
-            config = replace(config, physical_proof=plan.receiver_proof)
+            config = replace(config, exact_physical=True, physical_proof=plan.receiver_proof)
         prior = (await session.scalars(select(TableExportReceiptRow).where(
             TableExportReceiptRow.request_id == req.requestId,
         ))).one_or_none()
         if prior is not None:
-            result = _receipt(prior, generation)
+            result = _receipt(prior, generation, mode)
             receiver_may_have_committed = True  # Sender already observed authoritative evidence.
             await _finish(session, attempt, "replayed", receipt_id=result.id)
             await session.commit()
             return result
+        if mode == "append" and await _append_conflicted(session, req.requestId):
+            raise _append_duplicate()
         proof = await find_export_receipt(config, req.requestId)
         if proof is not None:
             _verify_receipt(proof, req, request.payload_digest)
             receiver_may_have_committed = True
-            return await _mirror(session, attempt, proof, generation, replayed=True)
+            return await _mirror(session, attempt, proof, generation, replayed=True, mode=mode)
+        if mode == "append" and not _append_enabled():
+            raise _RunFailure(403, "append_disabled", "Append is disabled and the receiver had no receipt for this request")
         rows = await _source_rows(session, source_marker)
-        digest = export_payload_digest(rows)
+        digest = export_payload_digest(rows, append=True) if mode == "append" else export_payload_digest(rows)
         if request.payload_digest is None:
             await _pin(session, req.requestId, digest)
         elif request.payload_digest != digest:
             raise _RunFailure(409, "payload_changed_no_receipt", "The receiver had no receipt and the source payload changed; review a new request")
         receiver_may_have_committed = True
-        proof = await apply_export_rows(config, req.requestId, req.expectedUpdatedAt, digest, rows)
+        try:
+            if mode == "append":
+                proof = await apply_export_rows(config, req.requestId, req.expectedUpdatedAt, digest, rows, append=True)
+            else:
+                proof = await apply_export_rows(config, req.requestId, req.expectedUpdatedAt, digest, rows)
+        except ReceiverFailure as error:
+            if mode != "append" or error.code != "append_duplicate" or error.outcome != "rejected":
+                raise
+            # This outcome is terminal only after it is recorded under the same
+            # plan lock that serialized transport, not after releasing the fence.
+            failure = _append_duplicate()
+            await _finish(session, attempt, failure.outcome, code=failure.code, message=failure.message)
+            await session.commit()
+            terminal_settled = True
+            raise failure from None
         try:
             _verify_receipt(proof, req, digest)
             if proof.rows_affected != len(rows):
@@ -549,8 +623,10 @@ async def run_table_export(
         except (_RunFailure, ValueError):
             raise _RunFailure(503, "outcome_unknown", "The sender could not verify the receiver response; retry the same request ID",
                               "outcome_unknown") from None
-        return await _mirror(session, attempt, proof, generation, replayed=False)
+        return await _mirror(session, attempt, proof, generation, replayed=False, mode=mode)
     except Exception as error:
+        if terminal_settled:
+            raise
         failure = _failure(error, receiver_may_have_committed=receiver_may_have_committed)
         if await _rollback(session):
             try:

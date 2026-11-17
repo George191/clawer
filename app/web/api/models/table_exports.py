@@ -11,6 +11,7 @@ from sqlmodel import Field as DbField, SQLModel
 SYNTHETIC_EXPORT_MARKING = "sandbox-synthetic"
 ExportMarking = Literal["sandbox-synthetic"]
 ExportDestination = Literal["primary", "secondary"]
+ExportWriteMode = Literal["upsert", "append"]
 
 ExportOutcome = Literal["started", "committed", "replayed", "rejected", "retryable", "outcome_unknown"]
 
@@ -19,12 +20,14 @@ class TableExportReview(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: str = Field(min_length=1, max_length=120, pattern=r"^[^\x00-\x1f\x7f]+$")
     expectedUpdatedAt: AwareDatetime | None
+    writeMode: ExportWriteMode | None = None
 
 
 class TableExportPlan(BaseModel):
     id: UUID
     name: str
     updatedAt: datetime
+    writeMode: Literal["append"] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportRunRequest(BaseModel):
@@ -32,6 +35,7 @@ class TableExportRunRequest(BaseModel):
     requestId: UUID
     expectedUpdatedAt: AwareDatetime
     expectedGrantGeneration: int = Field(ge=1)
+    writeMode: ExportWriteMode | None = None
 
 
 class TableExportGrantChange(BaseModel):
@@ -41,6 +45,7 @@ class TableExportGrantChange(BaseModel):
     expectedGeneration: int | None = Field(ge=1)
     marking: ExportMarking
     reason: str = Field(min_length=1, max_length=240, pattern=r"^[^\x00-\x1f\x7f]+$")
+    writeMode: ExportWriteMode | None = None
 
 
 class TableExportGrant(BaseModel):
@@ -52,6 +57,7 @@ class TableExportGrant(BaseModel):
     planUpdatedAt: datetime | None = None
     approvedAt: datetime | None = None
     revokedAt: datetime | None = None
+    writeMode: Literal["append"] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportGrantEvent(BaseModel):
@@ -62,6 +68,7 @@ class TableExportGrantEvent(BaseModel):
     recordedAt: datetime
     planUpdatedAt: datetime
     reason: str
+    writeMode: Literal["append"] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportMapping(BaseModel):
@@ -89,6 +96,7 @@ class TableExportCapabilities(BaseModel):
         default=None, exclude_if=lambda value: value is None,
     )
     destinationLabel: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    appendAvailable: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportReceipt(BaseModel):
@@ -98,6 +106,7 @@ class TableExportReceipt(BaseModel):
     rowsAffected: int
     recordedAt: datetime
     grantGeneration: int
+    writeMode: Literal["append"] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportAttempt(BaseModel):
@@ -111,6 +120,7 @@ class TableExportAttempt(BaseModel):
     receiptId: UUID | None = None
     code: str | None = None
     message: str | None = None
+    writeMode: Literal["append"] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportLineageEndpoint(BaseModel):
@@ -127,6 +137,7 @@ class TableExportLineageDeclaration(BaseModel):
     name: str
     reviewedAt: datetime
     state: Literal["enabled", "inactive", "stale", "blocked"]
+    writeMode: Literal["append"] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportLineageReceipt(BaseModel):
@@ -136,6 +147,7 @@ class TableExportLineageReceipt(BaseModel):
     reviewedAt: datetime
     reviewRelation: Literal["current_review", "earlier_review", "different_binding"]
     observed: bool
+    writeMode: Literal["append"] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TableExportLineage(BaseModel):
@@ -150,13 +162,16 @@ class TableExportLineage(BaseModel):
 class TableExportPlanRow(SQLModel, table=True):
     __tablename__ = "ontology_table_export_plan"
     __table_args__ = (
+        CheckConstraint("write_mode IN ('upsert', 'append')", name="ck_table_export_plan_write_mode"),
         CheckConstraint("singleton = true", name="ck_ontology_table_export_singleton"),
-        CheckConstraint("(destination = 'primary' AND receiver_proof IS NULL) OR "
-                        "(destination = 'secondary' AND (receiver_proof ~ '^[0-9a-f]{64}$') IS TRUE)",
+        CheckConstraint("(destination = 'primary' AND write_mode = 'upsert' AND receiver_proof IS NULL) OR "
+                        "((destination = 'secondary' OR (destination = 'primary' AND write_mode = 'append')) "
+                        "AND (receiver_proof ~ '^[0-9a-f]{64}$') IS TRUE)",
                         name="ck_ontology_table_export_plan_destination"),
     )
 
     singleton: bool = DbField(default=True)
+    write_mode: str = DbField(default="upsert", max_length=6)
     destination: str = DbField(default="primary", max_length=9, primary_key=True)
     receiver_proof: str | None = DbField(default=None, max_length=64)
     id: UUID = DbField(default_factory=uuid4)
@@ -171,12 +186,14 @@ class TableExportGrantRow(SQLModel, table=True):
 
     __tablename__ = "ontology_table_export_grants"
     __table_args__ = (
+        CheckConstraint("write_mode IN ('upsert', 'append')", name="ck_table_export_grants_write_mode"),
         CheckConstraint("destination IN ('primary', 'secondary')", name="ck_ontology_table_export_grants_destination"),
         CheckConstraint("generation > 0", name="ck_ontology_table_export_grant_generation"),
         CheckConstraint("marking = 'sandbox-synthetic'", name="ck_ontology_table_export_grant_marking"),
         CheckConstraint("action IN ('approved', 'revoked')", name="ck_ontology_table_export_grant_action"),
     )
 
+    write_mode: str = DbField(default="upsert", max_length=6)
     destination: str = DbField(default="primary", max_length=9, primary_key=True)
     generation: int = DbField(primary_key=True)
     id: UUID = DbField(default_factory=uuid4, unique=True)
@@ -192,6 +209,7 @@ class TableExportGrantRow(SQLModel, table=True):
 class TableExportRequestRow(SQLModel, table=True):
     __tablename__ = "ontology_table_export_requests"
     __table_args__ = (
+        CheckConstraint("write_mode IN ('upsert', 'append')", name="ck_table_export_requests_write_mode"),
         CheckConstraint("destination IN ('primary', 'secondary')", name="ck_ontology_table_export_requests_destination"),
         ForeignKeyConstraint(["destination", "grant_generation"],
                              ["ontology_table_export_grants.destination", "ontology_table_export_grants.generation"],
@@ -199,6 +217,7 @@ class TableExportRequestRow(SQLModel, table=True):
         Index("ix_ontology_table_export_requests_grant_generation", "destination", "grant_generation"),
     )
 
+    write_mode: str = DbField(default="upsert", max_length=6)
     destination: str = DbField(default="primary", max_length=9)
     request_id: UUID = DbField(primary_key=True)
     plan_updated_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))

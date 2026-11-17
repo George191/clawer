@@ -7,13 +7,15 @@ import {
 } from '../../services/api';
 import type {
   TableExportAttempt, TableExportCapabilities, TableExportDestination, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
-  TableExportPlan, TableExportReceipt,
+  TableExportPlan, TableExportReceipt, TableExportWriteMode,
 } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import TableExportAuthorization from './TableExportAuthorization';
 import { useSandboxIdentity } from './SandboxMarkings';
+import { exportMode, exportModeDescription, exportModeLabel } from './tableExportWriteModes';
 
-type RunRequest = { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number };
+type RunRequest = { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number; writeMode?: TableExportWriteMode };
+type DraftReview = { name: string; expectedUpdatedAt: string | null; writeMode: TableExportWriteMode };
 const dateText = (timestamp: string) => new Date(timestamp).toLocaleString();
 const recoverable = new Set(['started', 'retryable', 'outcome_unknown']);
 const attemptLabel: Record<TableExportAttempt['status'], string> = {
@@ -21,18 +23,19 @@ const attemptLabel: Record<TableExportAttempt['status'], string> = {
   rejected: 'Rejected', committed: 'Receiver confirmed', replayed: 'Existing receipt returned',
 };
 
-function readPending(key: string, destination: TableExportDestination): RunRequest | undefined {
+function readPending(key: string, destination: TableExportDestination, writeMode: TableExportWriteMode): RunRequest | undefined {
   try {
     const value = JSON.parse(sessionStorage.getItem(key) ?? 'null') as (RunRequest & { destination?: TableExportDestination }) | null;
     if (value && (value.destination === destination || (destination === 'primary' && value.destination === undefined)) &&
-      typeof value.requestId === 'string' && typeof value.expectedUpdatedAt === 'string' && Number.isSafeInteger(value.expectedGrantGeneration)) {
-      return { requestId: value.requestId, expectedUpdatedAt: value.expectedUpdatedAt, expectedGrantGeneration: value.expectedGrantGeneration };
+      exportMode(value) === writeMode && typeof value.requestId === 'string' && typeof value.expectedUpdatedAt === 'string' && Number.isSafeInteger(value.expectedGrantGeneration)) {
+      return { requestId: value.requestId, expectedUpdatedAt: value.expectedUpdatedAt, expectedGrantGeneration: value.expectedGrantGeneration,
+        ...(writeMode === 'append' ? { writeMode } : {}) };
     }
   } catch { /* A new run requires usable client storage before it sends. */ }
 }
 
 function rememberPending(key: string, request: RunRequest, destination: TableExportDestination) {
-  sessionStorage.setItem(key, JSON.stringify({ ...request, destination }));
+  sessionStorage.setItem(key, JSON.stringify({ ...request, destination, writeMode: exportMode(request) }));
 }
 
 function forgetPending(key: string) {
@@ -109,6 +112,7 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
   const [plan, setPlan] = useState<TableExportPlan | null>();
   const [grant, setGrant] = useState<TableExportGrant>();
   const [name, setName] = useState('');
+  const [writeMode, setWriteMode] = useState<TableExportWriteMode>('upsert');
   const [loadingError, setLoadingError] = useState(false);
   const [historyError, setHistoryError] = useState(false);
   const [notice, setNotice] = useState<{ message: string; kind: 'status' | 'alert' }>();
@@ -119,15 +123,20 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
   const [attempts, setAttempts] = useState<TableExportAttempt[]>();
   const [grantHistory, setGrantHistory] = useState<TableExportGrantEvent[]>();
   const [confirm, setConfirm] = useState<Omit<RunRequest, 'requestId'> & { previous?: RunRequest }>();
+  const [draftReview, setDraftReview] = useState<DraftReview>();
   const [operation, setOperation] = useState<'save' | 'run' | 'grant'>();
   const active = useRef(false);
   const pending = useRef(false);
   const identity = useRef(getSessionState().identity).current;
-  const activeGeneration = grant?.effective && plan && grant.planUpdatedAt === plan.updatedAt ? grant.generation : null;
+  const savedMode = exportMode(plan);
+  const activeGeneration = grant?.effective && plan && grant.planUpdatedAt === plan.updatedAt && exportMode(grant) === savedMode ? grant.generation : null;
   const available = Boolean(capabilities?.enabled && capabilities.provisioned && activeGeneration != null);
+  const modeAvailable = savedMode === 'upsert' || capabilities?.appendAvailable === true;
   const receiverScope = destination ?? 'primary';
   // Primary retains the existing storage namespace; an untagged legacy request could only have been primary.
   const storageKey = `ontology-table-export:${identity}:${receiverScope === 'secondary' ? 'secondary:' : ''}${activeGeneration ?? 'inactive'}`;
+  const localRequest = readPending(storageKey, receiverScope, savedMode);
+  const dirty = name.trim() !== (plan?.name ?? '') || writeMode !== savedMode;
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -142,7 +151,7 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
       fetchTableExportPlan(read.signal, destination), fetchTableExportGrant(read.signal, destination),
     ]).then(([flags, saved, authorization]) => {
       if (live(read.signal)) {
-        setCapabilities(flags); setPlan(saved); setName(saved?.name ?? ''); setGrant(authorization);
+        setCapabilities(flags); setPlan(saved); setName(saved?.name ?? ''); setWriteMode(exportMode(saved)); setGrant(authorization);
       }
     }).catch(() => { if (live(read.signal)) setLoadingError(true); });
     return () => read.abort();
@@ -169,25 +178,39 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
     if (next !== view) { setHistoryError(false); setView(next); }
   };
   const refreshPlan = () => {
-    setPlan(undefined); setGrant(undefined); setConfirm(undefined); setReceipts(undefined); setAttempts(undefined);
+    setPlan(undefined); setGrant(undefined); setConfirm(undefined); setDraftReview(undefined); setReceipts(undefined); setAttempts(undefined);
     setRevision(value => value + 1);
   };
-  const save = async () => {
-    if (!capabilities?.provisioned || plan === undefined || !name.trim() || pending.current || !live()) return;
+  const save = async (reviewed: DraftReview) => {
+    if (!capabilities?.provisioned || plan === undefined || !reviewed.name || pending.current || !live() ||
+      reviewed.expectedUpdatedAt !== (plan?.updatedAt ?? null) || (reviewed.writeMode === 'append' || reviewed.writeMode !== savedMode) && !capabilities.appendAvailable ||
+      Boolean(localRequest && reviewed.writeMode !== savedMode)) return;
     pending.current = true; onWorkingChange(true); setOperation('save'); setNotice(undefined);
     try {
-      const saved = await saveTableExportPlan({ name: name.trim(), expectedUpdatedAt: plan?.updatedAt ?? null }, destination);
+      const saved = await saveTableExportPlan({ name: reviewed.name, expectedUpdatedAt: reviewed.expectedUpdatedAt,
+        ...(reviewed.writeMode === 'append' || reviewed.writeMode !== savedMode ? { writeMode: reviewed.writeMode } : {}) }, destination);
+      if (exportMode(saved) !== reviewed.writeMode) throw new Error('Unverified export mode');
       if (live()) {
-        setPlan(saved); setName(saved.name); setGrant(undefined); setReceipts(undefined); setAttempts(undefined);
+        setPlan(saved); setName(saved.name); setWriteMode(exportMode(saved)); setGrant(undefined); setReceipts(undefined); setAttempts(undefined);
         setRevision(value => value + 1);
-        setNotice({ kind: 'status', message: 'Export draft saved. No approval was granted and no data was sent.' });
+        setNotice({ kind: 'status', message: reviewed.writeMode !== savedMode
+          ? 'Export mode saved. Prior approval does not apply to this revision. No data was sent.'
+          : 'Export draft saved. No approval was granted and no data was sent.' });
       }
     } catch (failure) {
       if (live()) {
         const { status } = exportFailure(failure);
         setNotice({ kind: 'alert', message: status === 409 ? 'The export draft has changed. Refresh and review it again.' : 'Could not save the export draft.' });
       }
-    } finally { pending.current = false; if (live()) { setOperation(undefined); onWorkingChange(false); } }
+    } finally { pending.current = false; if (live()) { setOperation(undefined); setDraftReview(undefined); onWorkingChange(false); } }
+  };
+  const requestSave = () => {
+    if (!capabilities?.provisioned || plan === undefined || !name.trim() || pending.current || !live() ||
+      (writeMode === 'append' || writeMode !== savedMode) && !capabilities.appendAvailable ||
+      Boolean(localRequest && writeMode !== savedMode)) return;
+    const reviewed = { name: name.trim(), expectedUpdatedAt: plan?.updatedAt ?? null, writeMode };
+    if (writeMode === 'append' || writeMode !== savedMode) setDraftReview(reviewed);
+    else void save(reviewed);
   };
 
   const changeGrant = async (request: TableExportGrantChange) => {
@@ -219,23 +242,24 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
 
   const askRun = (previous?: RunRequest) => {
     if (!plan || !available || activeGeneration == null || pending.current || !live()) return;
-    if (previous && previous.expectedGrantGeneration !== activeGeneration) return;
-    const localRequest = readPending(storageKey, receiverScope);
+    if (previous && (previous.expectedGrantGeneration !== activeGeneration || exportMode(previous) !== savedMode)) return;
     if (previous && localRequest && previous.requestId !== localRequest.requestId) {
       setNotice({ kind: 'alert', message: 'Resolve your pending export request before retrying a different request.' });
       return;
     }
     const request = previous ?? localRequest;
+    if (!request && (!modeAvailable || dirty)) return;
     setConfirm({ expectedUpdatedAt: request?.expectedUpdatedAt ?? plan.updatedAt,
-      expectedGrantGeneration: activeGeneration, previous: request });
+      expectedGrantGeneration: activeGeneration, previous: request, ...(savedMode === 'append' ? { writeMode: savedMode } : {}) });
   };
   const run = async () => {
-    if (!confirm || !available || confirm.expectedGrantGeneration !== activeGeneration || pending.current || !live()) return;
+    if (!confirm || !available || confirm.expectedGrantGeneration !== activeGeneration || exportMode(confirm) !== savedMode ||
+      (!confirm.previous && (!modeAvailable || dirty)) || pending.current || !live()) return;
     let request: RunRequest;
     const retrying = Boolean(confirm.previous);
     try {
       request = confirm.previous ?? { requestId: crypto.randomUUID(), expectedUpdatedAt: confirm.expectedUpdatedAt,
-        expectedGrantGeneration: confirm.expectedGrantGeneration };
+        expectedGrantGeneration: confirm.expectedGrantGeneration, ...(confirm.writeMode ? { writeMode: confirm.writeMode } : {}) };
       rememberPending(storageKey, request, receiverScope);
     } catch {
       setConfirm(undefined); setNotice({ kind: 'alert', message: 'Could not save a retry ID in this tab. No export request was sent.' });
@@ -244,6 +268,8 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
     pending.current = true; onWorkingChange(true); setOperation('run'); setNotice(undefined);
     try {
       const receipt = await runTableExport(request, destination);
+      if (receipt.requestId !== request.requestId || receipt.grantGeneration !== request.expectedGrantGeneration ||
+        exportMode(receipt) !== exportMode(request)) throw new Error('Unverified export receipt');
       forgetPending(storageKey);
       if (live()) {
         setReceipts(items => [receipt, ...(items?.filter(item => item.id !== receipt.id) ?? [])]);
@@ -255,11 +281,14 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
       const retryable = ['target_busy', 'receiver_unavailable', 'receiver_timeout', 'execution_unavailable'].includes(code);
       const uncertain = code === 'outcome_unknown' || !status || status === 408 || status >= 500 && !retryable;
       const noReceiptConfirmed = status === 409 && code === 'payload_changed_no_receipt';
-      if (noReceiptConfirmed || !retryable && !uncertain && !retrying) forgetPending(storageKey);
+      const duplicate = status === 409 && code === 'append_duplicate' && exportMode(request) === 'append';
+      if (duplicate || noReceiptConfirmed || !retryable && !uncertain && !retrying) forgetPending(storageKey);
       if (live()) {
         if (status === 403 || code.startsWith('grant_')) refreshPlan();
         setView('attempts');
-        setNotice({ kind: 'alert', message: noReceiptConfirmed
+        setNotice({ kind: 'alert', message: duplicate
+          ? 'An existing key rejected the entire append batch. No existing rows were changed and no receipt was created.'
+          : noReceiptConfirmed
           ? 'The source changed and the receiver confirmed there is no receipt for this request. Review the export before starting a new request.'
           : retryable || uncertain || retrying
             ? 'The receiver outcome is not confirmed. Review attempts or retry the same request.'
@@ -271,7 +300,6 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
     }
   };
 
-  const localRequest = readPending(storageKey, receiverScope);
   const receiverLabel = capabilities?.destinationLabel ?? label;
   const route = capabilities && <div className="ontology-source-sync__route">
     <code>{capabilities.sourceSchema}.{capabilities.sourceTable}</code><ArrowRightOutlined /><code>{capabilities.targetSchema}.{capabilities.targetTable}</code>
@@ -290,24 +318,33 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
           {receiverLabel && <p>Receiver: <strong>{receiverLabel}</strong></p>}
           {route}
           <p>Use only synthetic pilot records. The destination and columns are fixed; no custom endpoint, schedule, or target deletion.</p>
+          {plan && (capabilities.appendAvailable || plan.writeMode) && <p>Saved write mode: <strong>{exportModeLabel(savedMode)}</strong>.</p>}
+          {!modeAvailable && <p>Append only is unavailable for new exports. An exact retained request may still recover its recorded result.</p>}
           <div className="ontology-source-catalog__columns"><table aria-label="Export column mapping">
             <thead><tr><th scope="col">Source column</th><th scope="col">Receiver column</th><th scope="col">Type</th></tr></thead>
             <tbody>{capabilities.mapping.map(field => <tr key={field.targetColumn}><th scope="row"><code>{field.sourceColumn}</code></th><td><code>{field.targetColumn}</code></td><td><code>{field.type}</code></td></tr>)}</tbody>
           </table></div>
           <p>Transfer limit: {capabilities.maxRows} rows and {capabilities.maxCaptionBytes.toLocaleString()} bytes per caption.</p>
         </div>
-        <form className="ontology-source-sync__form" aria-label="Export draft" onSubmit={event => { event.preventDefault(); void save(); }}>
+        <form className="ontology-source-sync__form" aria-label="Export draft" onSubmit={event => { event.preventDefault(); requestSave(); }}>
           <label>Export name<Input aria-label="Export name" required maxLength={120} value={name} disabled={Boolean(operation) || !capabilities.provisioned} onChange={event => setName(event.target.value)} /></label>
+          {capabilities.appendAvailable && <><label>Export write mode
+            <select aria-label="Export write mode" value={writeMode} disabled={Boolean(operation) || !capabilities.provisioned || Boolean(localRequest)}
+              onChange={event => setWriteMode(event.target.value === 'append' ? 'append' : 'upsert')}>
+              <option value="upsert">Upsert</option><option value="append">Append only</option>
+            </select>
+          </label><p>{exportModeDescription(writeMode)}</p></>}
           <div className="ontology-source-sync__actions">
-            <Button htmlType="submit" size="small" loading={operation === 'save'} disabled={!capabilities.provisioned || Boolean(operation) || !name.trim()}>Save export draft</Button>
+            <Button htmlType="submit" size="small" loading={operation === 'save'} disabled={!capabilities.provisioned || Boolean(operation) || !name.trim() ||
+              (writeMode === 'append' && !capabilities.appendAvailable) || Boolean(localRequest && writeMode !== savedMode)}>Save export draft</Button>
             <Button size="small" onClick={refreshPlan} disabled={Boolean(operation)}>Refresh export</Button>
-            {plan && available && <Button size="small" type="primary" loading={operation === 'run'} disabled={Boolean(operation) || (!localRequest && name.trim() !== plan.name)} onClick={() => askRun()}>
+            {plan && available && (modeAvailable || localRequest) && <Button size="small" type="primary" loading={operation === 'run'} disabled={Boolean(operation) || (!localRequest && dirty)} onClick={() => askRun()}>
               {localRequest ? 'Retry same export request' : 'Run sandbox export'}
             </Button>}
           </div>
         </form>
         <TableExportAuthorization grant={grant} plan={plan} scope={capabilities} receiverLabel={receiverLabel} busy={Boolean(operation)}
-          saving={operation === 'grant'} dirty={name.trim() !== (plan?.name ?? '')} onChange={changeGrant} />
+          saving={operation === 'grant'} dirty={dirty} onChange={changeGrant} />
       </>}
     {notice && <p role={notice.kind} className={notice.kind === 'alert' ? 'is-error' : undefined}>{notice.message}</p>}
     {capabilities && plan !== undefined && <section aria-label="Table export history">
@@ -325,6 +362,7 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
               <strong>{event.action === 'approved' ? 'Approved' : 'Revoked'} · Generation {event.generation}</strong>
               <span>{event.marking} · <time dateTime={event.recordedAt}>{dateText(event.recordedAt)}</time></span>
               <span>Reviewed revision: <time dateTime={event.planUpdatedAt}>{dateText(event.planUpdatedAt)}</time></span>
+              {(capabilities.appendAvailable || event.writeMode) && <span>Recorded write mode: {exportModeLabel(exportMode(event))}</span>}
               <span>Reason: {event.reason}</span>
             </li>)}
           </ul> : <p>No export authorization decisions recorded.</p>
@@ -332,6 +370,7 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
         : view === 'receipts' ? !currentReceipts ? <p role="status">Loading receiver receipts…</p> : currentReceipts.length ? <ul className="ontology-source-sync__items">
           {currentReceipts.map(receipt => <li key={receipt.id}>
             <strong>Receiver confirmed</strong>
+            {(capabilities.appendAvailable || receipt.writeMode) && <span>Recorded write mode: {exportModeLabel(exportMode(receipt))}</span>}
             <span>Rows affected: {receipt.rowsAffected}</span>
             <span>Receiver recorded at: <time dateTime={receipt.recordedAt}>{dateText(receipt.recordedAt)}</time></span>
             <span>Request ID: <code>{receipt.requestId}</code></span>
@@ -342,16 +381,19 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
             <p>A request was not necessarily accepted or committed by the receiver. Verify the receipt before treating an export as complete.</p>
             {!currentAttempts ? <p role="status">Loading export attempts…</p> : currentAttempts.length ? <ul className="ontology-source-sync__items">
               {currentAttempts.map(attempt => {
-                const canRetry = !seenRequests.has(attempt.requestId) && recoverable.has(attempt.status);
+                const canRetry = !seenRequests.has(attempt.requestId) && recoverable.has(attempt.status) && exportMode(attempt) === savedMode;
                 seenRequests.add(attempt.requestId);
                 return <li key={attempt.id}>
                   <strong>{attemptLabel[attempt.status]}</strong>
+                  {(capabilities.appendAvailable || attempt.writeMode) && <span>Recorded write mode: {exportModeLabel(exportMode(attempt))}</span>}
                   <span>Request ID: <code>{attempt.requestId}</code></span>
                   <span>Requested at: <time dateTime={attempt.startedAt}>{dateText(attempt.startedAt)}</time></span>
                   {attempt.finishedAt && <span>Finished at: <time dateTime={attempt.finishedAt}>{dateText(attempt.finishedAt)}</time></span>}
                   {attempt.receiptId && <span>Receipt: <code>{attempt.receiptId}</code></span>}
                   {attempt.message && <p>{attempt.message}</p>}
-                  {plan && available && canRetry && <div><Button size="small" disabled={Boolean(operation)} onClick={() => askRun({ requestId: attempt.requestId, expectedUpdatedAt: attempt.planUpdatedAt, expectedGrantGeneration: attempt.grantGeneration })}>Retry attempt</Button></div>}
+                  {plan && available && canRetry && <div><Button size="small" disabled={Boolean(operation)} onClick={() => askRun({
+                    requestId: attempt.requestId, expectedUpdatedAt: attempt.planUpdatedAt, expectedGrantGeneration: attempt.grantGeneration, writeMode: attempt.writeMode,
+                  })}>Retry attempt</Button></div>}
                 </li>;
               })}
             </ul> : <p>No export attempts recorded.</p>}
@@ -362,12 +404,24 @@ function TableExportWorkspace({ destination, label, initialCapabilities, onWorki
       {confirm?.previous ? <>
         <p>Reuse the original request ID and saved export revision. If the receiver already committed it, the same request cannot apply it twice.</p>
         {receiverLabel && <p>Original receiver: <strong>{receiverLabel}</strong>.</p>}
+        {(capabilities?.appendAvailable || confirm.writeMode) && <p>Original write mode: <strong>{exportModeLabel(exportMode(confirm))}</strong>. This will not change the mode.</p>}
         <p>Request ID: <code>{confirm.previous.requestId}</code></p>
       </> : <>
         <p>Send up to {capabilities?.maxRows} synthetic records from this saved revision to the fixed approved receiver. Only the listed columns are sent. No target rows are deleted.</p>
         {receiverLabel && <p>Destination: <strong>{receiverLabel}</strong>. No other receiver will be contacted.</p>}
+        {confirm && (capabilities?.appendAvailable || confirm.writeMode) && <p>Write mode: <strong>{exportModeLabel(exportMode(confirm))}</strong>. {exportModeDescription(exportMode(confirm))}</p>}
         {route}
         {capabilities && <p>Mapped columns: {capabilities.mapping.map(field => `${field.sourceColumn} → ${field.targetColumn}`).join(', ')}.</p>}
+      </>}
+    </Modal>
+    <Modal open={Boolean(draftReview)} destroyOnHidden className="flow-surface-modal" title="Review export write mode?"
+      onCancel={() => { if (operation !== 'save') setDraftReview(undefined); }} onOk={() => draftReview ? save(draftReview) : undefined}
+      confirmLoading={operation === 'save'} okText="Confirm export draft">
+      {draftReview && <>
+        <p>Draft: <strong>{draftReview.name}</strong>. {receiverLabel && <>Receiver: <strong>{receiverLabel}</strong>. </>}
+          Write mode: <strong>{exportModeLabel(draftReview.writeMode)}</strong>.</p>
+        <p>{exportModeDescription(draftReview.writeMode)}</p>
+        <p>Saving this revision does not send data or carry forward a previous approval.</p>
       </>}
     </Modal>
   </div>;

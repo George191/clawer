@@ -3,6 +3,7 @@ import { Button, Input, Modal } from '@/components/ui';
 import type {
   TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportPlan,
 } from '../../services/api';
+import { exportMode, exportModeDescription, exportModeLabel } from './tableExportWriteModes';
 
 const statusLabel: Record<TableExportGrant['status'], string> = {
   not_granted: 'Not approved', active: 'Approved', stale: 'Approval is stale', revoked: 'Approval revoked',
@@ -15,13 +16,17 @@ export default function TableExportAuthorization({ grant, plan, scope, receiverL
   onChange: (request: TableExportGrantChange) => Promise<void>;
 }) {
   const [decision, setDecision] = useState<TableExportGrantChange>();
-  const canApprove = Boolean(grant.available && plan && !dirty && grant.status !== 'active');
+  const reviewedMode = exportMode(plan);
+  const showMode = scope.appendAvailable || plan?.writeMode || grant.writeMode;
+  const canApprove = Boolean(grant.available && plan && !dirty && grant.status !== 'active' &&
+    (reviewedMode !== 'append' || scope.appendAvailable));
   const canRevoke = Boolean(plan && (grant.status === 'active' || grant.status === 'stale'));
   const choose = (approved: boolean) => {
     if (!plan || busy || (approved ? !canApprove : !canRevoke)) return;
     setDecision({
       approved, expectedPlanUpdatedAt: plan.updatedAt, expectedGeneration: grant.generation,
       marking: grant.marking, reason: '',
+      ...(reviewedMode === 'append' ? { writeMode: reviewedMode } : {}),
     });
   };
   return <section className="ontology-table-export__authorization" aria-label="Export authorization">
@@ -32,6 +37,7 @@ export default function TableExportAuthorization({ grant, plan, scope, receiverL
       the listed columns, and the fixed receiver. Data marking: <code>{grant.marking}</code>.</p>
     {grant.approvedAt && <p>Approved at: <time dateTime={grant.approvedAt}>
       {new Date(grant.approvedAt).toLocaleString()}</time></p>}
+    {grant.approvedAt && showMode && <p>Recorded approval mode: <strong>{exportModeLabel(exportMode(grant))}</strong>.</p>}
     {grant.revokedAt && <p>Revoked at: <time dateTime={grant.revokedAt}>
       {new Date(grant.revokedAt).toLocaleString()}</time></p>}
     <div className="ontology-source-sync__actions">
@@ -50,6 +56,8 @@ export default function TableExportAuthorization({ grant, plan, scope, receiverL
       okButtonProps={{ disabled: !decision?.reason.trim() }}
       okText={decision?.approved ? 'Confirm approval' : 'Confirm revocation'}>
       {receiverLabel && <p>Selected receiver: <strong>{receiverLabel}</strong>. This decision applies only to this receiver.</p>}
+      {showMode && <p>{decision?.approved ? 'Reviewed write mode' : 'Recorded approval mode'}: <strong>{exportModeLabel(decision?.approved ? reviewedMode : exportMode(grant))}</strong>.
+        {decision?.approved && <> {exportModeDescription(reviewedMode)}</>}</p>}
       {decision?.approved ? <>
         <p>Authorize only data marked <code>{grant.marking}</code> from the reviewed sandbox table
           <code> {scope.sourceSchema}.{scope.sourceTable}</code> to the fixed receiver

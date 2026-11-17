@@ -88,6 +88,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
             import_module("app.web.alembic.versions.b31c72f6a9de_ontology_table_exports"),
             import_module("app.web.alembic.versions.aa4c7d2e1f90_ontology_table_export_grants"),
             import_module("app.web.alembic.versions.ad6207fa991b_ontology_table_export_destinations"),
+            import_module("app.web.alembic.versions.849ba892a412_ontology_table_export_append"),
         )
         async with self.pg.session() as session:
             def upgrade(sync_session):
@@ -115,6 +116,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
         async with self.pg.session() as session:
             await session.execute(text("DROP TABLE ontology_table_export_attempts, ontology_table_export_receipts, ontology_table_export_requests, ontology_table_export_plan"))
             await session.execute(text("DROP TABLE ontology_table_export_grants"))
+            await session.execute(text("DROP FUNCTION IF EXISTS public.guard_table_export_write_mode()"))
             await session.execute(text("DROP SCHEMA ts_table_export_sandbox CASCADE"))
 
     async def provider(self):
@@ -166,14 +168,18 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(first.json()["generation"], 1)
                 migration = import_module("app.web.alembic.versions.ad6207fa991b_ontology_table_export_destinations")
 
+                append_migration = import_module("app.web.alembic.versions.849ba892a412_ontology_table_export_append")
+
                 def migrated(session, action):
                     with Operations.context(MigrationContext.configure(session.connection())):
                         action()
 
                 # Existing primary review and grant are attributed without rebuilding either.
                 async with self.pg.session() as session:
+                    await session.run_sync(migrated, append_migration.downgrade)
                     await session.run_sync(migrated, migration.downgrade)
                     await session.run_sync(migrated, migration.upgrade)
+                    await session.run_sync(migrated, append_migration.upgrade)
                 self.assertEqual((await client.get(ENDPOINT)).json(), primary)
                 self.assertEqual((await client.get(ENDPOINT + "/grant")).json(), first.json())
                 with patch.object(settings, "TABLE_EXPORT_SECONDARY_RECEIVER_MARKER", uuid4()):
@@ -185,6 +191,7 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                 version = plan.json()["updatedAt"]
                 with self.assertRaisesRegex(RuntimeError, "secondary export evidence"):
                     async with self.pg.session() as session:
+                        await session.run_sync(migrated, append_migration.downgrade)
                         await session.run_sync(migrated, migration.downgrade)
 
 
@@ -257,6 +264,131 @@ class TableExportSenderIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await secondary_grant(False, 1)).json()["generation"], 2)
                 self.assertEqual((await client.get(ENDPOINT + "/runs", params=secondary)).json(), [])
                 self.assertTrue((await client.get(ENDPOINT + "/grant")).json()["effective"])
+
+    @unittest.skipUnless(SECONDARY_URL, "Requires a separate disposable loopback receiver")
+    async def test_explicit_primary_append_atomically_rejects_duplicate_and_recovers_exact_prior_off(self):
+        url = make_url(SECONDARY_URL)
+        if (url.database != SECONDARY_DATABASE or url.host != "127.0.0.1" or not url.port
+            or url.port == make_url(URL).port):
+            raise RuntimeError("Use a distinct disposable PostgreSQL receiver")
+        target = PostgresClient(SECONDARY_URL)
+        await target.connect(max_retries=1)
+        self.addAsyncCleanup(target.close)
+        self.assertEqual((await target.fetch_one("SELECT current_database() AS name"))["name"], SECONDARY_DATABASE)
+        marker = uuid4()
+        async with target.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_table_export_receiver",
+                "CREATE TABLE ts_table_export_receiver.export_receiver_identity (marker uuid PRIMARY KEY)",
+                "CREATE TABLE ts_table_export_receiver.records (id bigint PRIMARY KEY, caption text NOT NULL)",
+                """CREATE TABLE ts_table_export_receiver.receipts (request_id uuid PRIMARY KEY,
+                    plan_updated_at timestamptz NOT NULL, payload_digest text NOT NULL,
+                    rows_affected int NOT NULL, committed_at timestamptz NOT NULL)""",
+                "INSERT INTO ts_table_export_receiver.records VALUES (2, 'must stay unchanged')",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("INSERT INTO ts_table_export_receiver.export_receiver_identity VALUES (:marker)"),
+                                  {"marker": marker})
+        self.addAsyncCleanup(target.execute, "DROP SCHEMA ts_table_export_receiver CASCADE")
+        await self.pg.execute("INSERT INTO ts_table_export_sandbox.records VALUES (2, 'new source caption')")
+        with patch.multiple(
+            settings, TABLE_EXPORT_APPEND_ENABLED=True,
+            TABLE_EXPORT_RECEIVER_HOST=url.host, TABLE_EXPORT_RECEIVER_PORT=url.port,
+            TABLE_EXPORT_RECEIVER_DATABASE=url.database, TABLE_EXPORT_RECEIVER_USERNAME=url.username,
+            TABLE_EXPORT_RECEIVER_PASSWORD=SecretStr(url.password or "local-test-only"), TABLE_EXPORT_RECEIVER_MARKER=marker,
+        ):
+            async with api(True, self.provider) as client:
+                self.assertTrue((await client.get(ENDPOINT + "/capabilities")).json()["appendAvailable"])
+                plan = await client.put(ENDPOINT, json={"name": "Exact append", "expectedUpdatedAt": None, "writeMode": "append"})
+                self.assertEqual(plan.status_code, 200, plan.text)
+                version = plan.json()["updatedAt"]
+                self.assertEqual(plan.json()["writeMode"], "append")
+                self.assertEqual((await client.put(ENDPOINT, json={"name": "Old caller", "expectedUpdatedAt": version}))
+                                 .status_code, 409)
+                grant = {"approved": True, "expectedPlanUpdatedAt": version, "expectedGeneration": None,
+                         "marking": "sandbox-synthetic", "reason": "Review exact Append mode"}
+                self.assertEqual((await client.put(ENDPOINT + "/grant", json=grant)).status_code, 409)
+                old_shaped = (
+                    """INSERT INTO ontology_table_export_grants
+                         (destination,generation,id,action,marking,reason,actor_id,scope_digest,plan_updated_at,recorded_at)
+                       SELECT destination,1,:id,'approved','sandbox-synthetic','old binary',reviewed_by,
+                              binding_digest,updated_at,clock_timestamp() FROM ontology_table_export_plan""",
+                    """INSERT INTO ontology_table_export_requests
+                         (destination,request_id,plan_updated_at,binding_digest)
+                       SELECT destination,:id,updated_at,binding_digest FROM ontology_table_export_plan""",
+                )
+                for sql in old_shaped:
+                    with self.assertRaisesRegex(DBAPIError, "Export admission mode or revision"):
+                        await self.pg.execute(sql, {"id": uuid4()})
+                approved = await client.put(ENDPOINT + "/grant", json={**grant, "writeMode": "append"})
+                self.assertEqual(approved.status_code, 200, approved.text)
+                self.assertEqual(approved.json()["writeMode"], "append")
+                request = {"requestId": str(uuid4()), "expectedUpdatedAt": version,
+                           "expectedGrantGeneration": 1, "writeMode": "append"}
+                self.assertEqual((await client.post(ENDPOINT + "/runs", json={**request, "writeMode": "upsert"})).status_code, 409)
+                duplicate = await client.post(ENDPOINT + "/runs", json=request)
+                self.assertEqual(duplicate.status_code, 409, duplicate.text)
+                self.assertEqual(duplicate.json()["detail"]["code"], "append_duplicate")
+                self.assertEqual([tuple(row.values()) for row in await target.fetch_all(
+                    "SELECT id,caption FROM ts_table_export_receiver.records ORDER BY id")], [(2, "must stay unchanged")])
+                self.assertEqual((await target.fetch_one("SELECT count(*) AS n FROM ts_table_export_receiver.receipts"))["n"], 0)
+                attempts = (await client.get(ENDPOINT + "/attempts")).json()
+                self.assertEqual((attempts[0]["status"], attempts[0]["writeMode"], attempts[0]["code"]),
+                                 ("rejected", "append", "append_duplicate"))
+
+                # A concurrent/later identical request cannot become admitted after the key disappears.
+                await target.execute("DELETE FROM ts_table_export_receiver.records WHERE id=2")
+                with patch.object(table_exports, "find_export_receipt", side_effect=AssertionError("terminal request probed receiver")):
+                    self.assertEqual((await client.post(ENDPOINT + "/runs", json=request)).json(), duplicate.json())
+
+                new = {**request, "requestId": str(uuid4())}
+                original = table_exports.apply_export_rows
+
+                async def lose_ack(*args, **kwargs):
+                    self.assertEqual(kwargs, {"append": True})
+                    await original(*args, **kwargs)
+                    raise ReceiverFailure(503, "receiver_commit_unknown", "isolated fixture", "outcome_unknown")
+
+                with patch.object(table_exports, "apply_export_rows", side_effect=lose_ack):
+                    self.assertEqual((await client.post(ENDPOINT + "/runs", json=new)).status_code, 503)
+                with patch.object(settings, "TABLE_EXPORT_APPEND_ENABLED", False), patch.object(
+                    table_exports, "_source_rows", side_effect=AssertionError("unexpected source read while disabled"),
+                ):
+                    self.assertNotIn("appendAvailable", (await client.get(ENDPOINT + "/capabilities")).json())
+                    recovered = await client.post(ENDPOINT + "/runs", json=new)
+                    self.assertEqual(recovered.status_code, 200, recovered.text)
+                    self.assertEqual((recovered.json()["rowsAffected"], recovered.json()["writeMode"]), (2, "append"))
+                    self.assertEqual((await client.post(ENDPOINT + "/runs", json={**new, "requestId": str(uuid4())}))
+                                     .status_code, 403)
+                self.assertEqual((await target.fetch_one("SELECT count(*) AS n FROM ts_table_export_receiver.receipts"))["n"], 1)
+                self.assertEqual((await client.get(ENDPOINT + "/runs")).json(), [recovered.json()])
+                self.assertEqual((await client.get(ENDPOINT + "/lineage")).json()["latestObservation"]["writeMode"], "append")
+                for relation in ("ontology_table_export_requests", "ontology_table_export_grants"):
+                    with self.assertRaisesRegex(DBAPIError, "Export admission scope is immutable"):
+                        await self.pg.execute(f"UPDATE {relation} SET write_mode='upsert'")
+                switch = await client.put(ENDPOINT, json={
+                    "name": "Explicit Upsert", "expectedUpdatedAt": version, "writeMode": "upsert",
+                })
+                self.assertEqual(switch.status_code, 200, switch.text)
+                self.assertNotIn("writeMode", switch.json())
+                self.assertEqual((await client.get(ENDPOINT + "/grant")).json()["status"], "stale")
+                revoke = await client.put(ENDPOINT + "/grant", json={
+                    **grant, "approved": False, "expectedGeneration": 1, "writeMode": "upsert",
+                    "expectedPlanUpdatedAt": switch.json()["updatedAt"],
+                })
+                self.assertEqual(revoke.status_code, 200, revoke.text)
+                history = (await client.get(ENDPOINT + "/grant/history")).json()
+                self.assertEqual([(row["action"], row["writeMode"]) for row in history],
+                                 [("revoked", "append"), ("approved", "append")])
+
+        migration = import_module("app.web.alembic.versions.849ba892a412_ontology_table_export_append")
+        def reject_downgrade(sync_session):
+            with Operations.context(MigrationContext.configure(sync_session.connection())):
+                migration.downgrade()
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot remove reviewed Append"):
+            async with self.pg.session() as session:
+                await session.run_sync(reject_downgrade)
 
     async def decision(self, client, version, *, approved=True, generation=None):
         return await client.put(ENDPOINT + "/grant", json={

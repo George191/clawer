@@ -216,7 +216,7 @@ async def find_export_receipt(config: ReceiverConfig, request_id: UUID) -> Recei
         raise _receiver_error(error, committing=False) from None
 
 
-def export_payload_digest(rows: list[dict]) -> str:
+def export_payload_digest(rows: list[dict], *, append: bool = False) -> str:
     """Validate the exact wire projection and pin a stable, key-ordered digest."""
     if type(rows) is not list or len(rows) > _MAX_ROWS:
         raise ReceiverFailure(422, "receiver_limit", "The export exceeds the receiver row limit")
@@ -235,14 +235,46 @@ def export_payload_digest(rows: list[dict]) -> str:
             raise ReceiverFailure(422, "receiver_projection", "The export does not match the approved projection") from None
         keys.add(key)
         payload.append((key, caption))
-    return sha256(json.dumps([(str(key), caption) for key, caption in sorted(payload)], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    prepared = json.dumps([(str(key), caption) for key, caption in sorted(payload)],
+                          ensure_ascii=False, separators=(",", ":")).encode()
+    return sha256((b"table-export-append-v1\x00" if append else b"") + prepared).hexdigest()
+
+
+async def _append_rows(connection: asyncpg.Connection, transaction, rows: list[dict]) -> int:
+    key = await connection.fetchval(f"""
+        SELECT conname::text FROM pg_catalog.pg_constraint
+        WHERE conrelid = '{_RECORDS}'::pg_catalog.regclass AND contype = 'p'
+    """)
+    if not key:
+        raise ReceiverFailure(422, "receiver_contract", "The approved receiver does not match the provisioned table contract")
+    try:
+        return await connection.fetchval(f"""
+            WITH written AS (
+                INSERT INTO {_RECORDS} (id, caption)
+                SELECT id, caption FROM unnest($1::bigint[], $2::text[]) AS payload(id, caption)
+                ORDER BY id RETURNING 1
+            )
+            SELECT count(*) FROM written
+        """, [row["id"] for row in rows], [row["caption"] for row in rows])
+    except asyncpg.UniqueViolationError as error:
+        if (error.schema_name, error.table_name, error.constraint_name) != (_SCHEMA, "records", key):
+            raise
+        try:
+            await transaction.rollback()
+        except Exception:
+            raise ReceiverFailure(503, "receiver_rollback_unknown",
+                                  "Receiver rollback could not be confirmed; reconcile the same request",
+                                  "outcome_unknown") from None
+        raise ReceiverFailure(409, "append_duplicate", "An existing receiver key rejected the complete Append batch") from None
 
 
 async def apply_export_rows(
-    config: ReceiverConfig, request_id: UUID, plan_updated_at: datetime, sent_digest: str, rows: list[dict],
+    config: ReceiverConfig, request_id: UUID, plan_updated_at: datetime, sent_digest: str, rows: list[dict], *, append: bool = False,
 ) -> ReceiverReceipt:
-    """Upsert typed rows and write their receipt in the same receiver transaction."""
-    if export_payload_digest(rows) != sent_digest:
+    """Write the exact authorized mode and its receipt in the same receiver transaction."""
+    if append and (not config.exact_physical or not config.physical_proof):
+        raise ReceiverFailure(422, "receiver_identity_mismatch", "Append requires the exact reviewed receiver identity")
+    if export_payload_digest(rows, append=append) != sent_digest:
         raise ReceiverFailure(409, "receiver_digest_mismatch", "The export does not match the pinned payload digest")
     committing = False
     try:
@@ -257,14 +289,14 @@ async def apply_export_rows(
                     raise ReceiverFailure(409, "receiver_request_conflict", "This request already has a different receiver receipt")
                 return prior
             if rows:
-                affected = await connection.fetchval(f"""
+                affected = (await _append_rows(connection, transaction, rows) if append else await connection.fetchval(f"""
                     WITH merged AS (
                         INSERT INTO {_RECORDS} (id, caption)
                         SELECT id, caption FROM unnest($1::bigint[], $2::text[]) AS payload(id, caption) ORDER BY id
                         ON CONFLICT (id) DO UPDATE SET caption = EXCLUDED.caption RETURNING 1
                     )
                     SELECT count(*) FROM merged
-                """, [row["id"] for row in rows], [row["caption"] for row in rows])
+                """, [row["id"] for row in rows], [row["caption"] for row in rows]))
                 if affected != len(rows):
                     raise ReceiverFailure(422, "receiver_row_mismatch", "Receiver did not acknowledge the complete batch")
             row = await connection.fetchrow(f"""
