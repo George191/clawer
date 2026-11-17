@@ -165,7 +165,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     return () => document.removeEventListener('keydown', close);
   }, [selected, params]);
   const openPanel = (next: typeof panel) => { setPanel(next); setInspectorOpen(true); };
-  const openWorkspace = () => asset && navigate(`/ontology/layers?schema=${encodeURIComponent(asset.key)}`);
+  const openWorkspace = () => asset && navigate(`/ontology/explorer?schema=${encodeURIComponent(asset.key)}`);
   const copyLink = async () => {
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(window.location.href);

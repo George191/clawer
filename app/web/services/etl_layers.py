@@ -383,6 +383,7 @@ class EtlLayers:
             result = await session.execute(text("""
                 SELECT a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type,
                        col_description(c.oid, a.attnum) AS comment,
+                       a.attnum AS "ordinalPosition",
                        NOT a.attnotnull AS nullable,
                        COALESCE(array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts, false) AS primary,
                        CASE WHEN array_position(i.indkey::smallint[], a.attnum) < i.indnkeyatts

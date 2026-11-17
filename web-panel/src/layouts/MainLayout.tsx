@@ -176,8 +176,8 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
   },
   'etl-pipeline': {
     key: 'etl-pipeline',
-    label: 'Ontology',
-    shortLabel: 'Ontology',
+    label: 'Ontology Foundry',
+    shortLabel: 'Ontology Foundry',
     enabled: true,
     icon: <ApartmentOutlined />,
     defaultPath: '/ontology',
@@ -188,7 +188,7 @@ const projectConfigs: Record<ProjectKey, ProjectConfig> = {
         label: 'Workspace',
         children: [
           { key: '/ontology', icon: <SearchOutlined />, label: 'Discover' },
-          { key: '/ontology/layers', icon: <DatabaseOutlined />, label: 'Schemas' },
+          { key: '/ontology/explorer', icon: <DatabaseOutlined />, label: 'Explorer' },
           { key: '/ontology/transforms', icon: <CodeOutlined />, label: 'Transforms' },
           { key: '/ontology/runtime', icon: <ExperimentOutlined />, label: 'Runtime' },
           { key: '/ontology/lineage', icon: <BranchesOutlined />, label: 'Lineage & Impact' },
