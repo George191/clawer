@@ -1,9 +1,10 @@
 """Receipt-backed immutable synthetic Builder output versions."""
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field as ApiField, UUID4
+from pydantic import BaseModel, ConfigDict, Field as ApiField, UUID4, model_validator
 from sqlalchemy import ARRAY, CheckConstraint, Column, DateTime, Index, SmallInteger, Text
 from sqlmodel import Field, SQLModel
 
@@ -40,6 +41,38 @@ class PipelineSandboxOutputDetail(PipelineSandboxOutput):
 class PipelineSandboxOutputsPage(BaseModel):
     available: bool
     outputs: list[PipelineSandboxOutput]
+
+
+class PipelineSandboxOutputCompareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fromOutputId: UUID
+    toOutputId: UUID
+
+    @model_validator(mode="after")
+    def distinct_outputs(self):
+        if self.fromOutputId == self.toOutputId:
+            raise ValueError("Choose two distinct sealed Builder outputs")
+        return self
+
+
+class PipelineSandboxOutputChange(BaseModel):
+    id: str
+    kind: Literal["added", "removed", "updated"]
+    before: list[str] | None
+    after: list[str] | None
+
+
+class PipelineSandboxOutputComparison(SyntheticMarked):
+    fromOutputId: UUID
+    toOutputId: UUID
+    projection: list[BuilderColumn]
+    added: int
+    removed: int
+    updated: int
+    unchanged: int
+    changes: list[PipelineSandboxOutputChange]
+    truncated: bool
 
 
 class PipelineSandboxOutputRow(SQLModel, table=True):

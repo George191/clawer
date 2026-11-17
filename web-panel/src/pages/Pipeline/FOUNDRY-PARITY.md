@@ -13,7 +13,7 @@
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。受管增量资产可查独立回执、无新数据和可精确归因的手工/调度尝试。现有 Automation 可取消尚无执行尝试的一条每日 UTC 作业并保留终态，不伪造资产归属；还未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；固定合成资产已验证有界主键索引预检、阻断后的零行查询、游标翻页和断连取消，并能查沙箱运行历史。已审核的本地沙箱目标可查看后台存下的表级规划器行数估计。 | 通用大表仍需扩大可接受的索引路径、查询预算和列级已采集统计，不能在交互请求中隐式扫描业务表。 |
 | 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警；另可审核每日 UTC 同步结果，区分确认写入失败、正数提交和未知。固定合成表可区分最新索引字段时间与已核实的同步提交。 | 验收通用 schema、逻辑数据规模、其他作业/调度类型、更广的字段新鲜度及告警范围，不用财报日期冒充同步时间。 |
-| 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；合成 CDC 可查看、比较真实提交快照；沙箱 Builder 可对已存版本筛选、映射和保存不可变配置，也可用同一合成流的另一封存版本按 ID 匹配并保留双输入标记；另行启用后可明确提交到独立输出存储，获得可复查的结果和回执。 | 继续验收通用图编排、生产资产快照、历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
+| 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；合成 CDC 可查看、比较真实提交快照；沙箱 Builder 可对已存版本筛选、映射和保存不可变配置，也可用同一合成流的另一封存版本按 ID 匹配并保留双输入标记；另行启用后可明确提交到独立输出存储，获得可复查的结果和回执；可按同一保留主键和投影比较两份封存输出，无需重跑。 | 继续验收通用图编排、生产资产快照、历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
 | 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执；隔离 CDC 版本、Builder 配置和输出已验证标记继承、加严和拒绝。 | 继续验收通用资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
 
 ## 实现顺序
@@ -302,3 +302,9 @@
 - 参考 [Foundry Data freshness](https://www.palantir.com/docs/foundry/health-checks/checks-reference/#data-freshness)。现有 Quality 在专用合成表上单独审核时间字段、索引和允许时差。分别显示读到的数据时间、已核验写入提交的参考时间和本次检查时间；不把新的提交或页面刷新当作数据更新。测量也不证明字段值来自这一笔同步。
 - 仅在有更新且已核验的真实提交时，由现有后台任务核对时间戳索引及查询计划，再最多取一个时间值，不全表扫描或读取其它列。日期无效、无结果、晚于参考提交、索引重建或查询受阻时保守显示未知。旧回执不续延新鲜度；明确的延迟告警只由更新的健康结果恢复。
 - 该行为默认关闭，仅在固定合成目标验收；浏览器只读后台已保存结果，不收集业务值，不改变财报或其它资产。
+
+### 比较两次已提交的 Builder 输出
+
+- 参考 [Foundry Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/) 的真实版本事实。Builder 历史可选两个已封存结果，先验两份输出、各自已审核配置、来源绑定和当前权限，再读双方存储结果。此操作不会重跑转换、查询活动数据或创建输出。
+- 有相同列和顺序、且实际保留有效主键的输出按精确 bigint 主键比较。返回新增、移除、变更和未变更计数，差异内容另有小上限；投影缺少主键或排序不一致时明确不兼容，不能以行号填补。比较结果继续继承双方适用的最严格标记。
+- 验收真实已提交版本、空结果、列不兼容、大整数行键、权限拒绝先于读取、封存数据不一致、浏览器切换。仅隔离环境，不部署。

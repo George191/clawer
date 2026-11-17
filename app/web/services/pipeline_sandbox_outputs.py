@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import re
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -13,17 +14,18 @@ from sqlmodel import select
 from app.web.api.models.cdc_sandbox import CdcSandboxBindingRow
 from app.web.api.models.pipeline_sandbox import PipelineSandboxRevisionRow
 from app.web.api.models.pipeline_sandbox_outputs import (
-    PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputDetail, PipelineSandboxOutputRecordRow,
+    PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputChange, PipelineSandboxOutputCompareRequest,
+    PipelineSandboxOutputComparison, PipelineSandboxOutputDetail, PipelineSandboxOutputRecordRow,
     PipelineSandboxOutputRow, PipelineSandboxOutputsPage,
 )
 from app.web.core.config import settings
 from app.web.services.cdc_sandbox_versions import _read_records
 from app.web.services.pipeline_sandbox import (
-    _builder_scope, _raw_revisions, _revision, _revisions, lock_builder_writes, project_pipeline_records,
+    _builder_scope, _match_version_query, _raw_revisions, _revision, _revisions, lock_builder_writes, project_pipeline_records,
     read_match_ids, resolve_pipeline_inputs,
 )
 from app.web.services.synthetic_governance import (
-    BASE, allowed_level, marking_limit, markings, require_marking_access,
+    BASE, RESTRICTED, allowed_level, marking_limit, markings, require_marking_access,
 )
 
 MAX_OUTPUT_ROWS = 100
@@ -136,6 +138,106 @@ async def read_pipeline_output(session: AsyncSession, identity: UUID, actor_id: 
     if row is None:
         raise HTTPException(404, "No committed Builder output exists for this scope")
     return PipelineSandboxOutputDetail(**_receipt(row).model_dump(), rows=await _stored_rows(session, row))
+
+
+def _compare_missing() -> HTTPException:
+    return HTTPException(404, "Two authorized sealed Builder outputs are required for comparison")
+
+
+async def _authorize_comparison_operands(
+    session: AsyncSession, request: PipelineSandboxOutputCompareRequest, actor_id: UUID,
+) -> tuple[PipelineSandboxOutputRow, PipelineSandboxOutputRow]:
+    limit = marking_limit(actor_id)
+    if limit == 0:
+        raise _compare_missing()
+    binding = await _require_output_scope(session, limit)
+    if binding is None:
+        raise _compare_missing()
+    operands = (await session.scalars(_outputs(binding, limit).where(
+        PipelineSandboxOutputRow.id.in_((request.fromOutputId, request.toOutputId)),
+    ))).all()
+    if len(operands) != 2:
+        raise _compare_missing()
+    saved = {row.generation: row for row in (await session.scalars(_revisions(binding, limit).where(
+        PipelineSandboxRevisionRow.generation.in_({row.reviewed_generation for row in operands}),
+    ))).all()}
+    for output in operands:
+        revision = saved.get(output.reviewed_generation)
+        if revision is None:
+            raise _compare_missing()
+        try:
+            config = _revision(revision).config
+        except HTTPException:
+            raise _compare_missing() from None
+        # The current-match flag controls new execution, not this historical read.
+        levels = []
+        for identity in (config.versionId, config.matchVersionId):
+            if identity is None:
+                continue
+            header = await session.scalar(_match_version_query(binding, identity, limit))
+            if header is None:
+                raise _compare_missing()
+            levels.append(header.marking_level)
+        if (config.projection != output.columns
+            or (config.matchVersionId is not None and any(level not in (BASE, RESTRICTED) for level in levels))
+            or (max([level or 0 for level in levels] + [RESTRICTED if config.additionalMarking else 0]) or None)
+                != output.marking_level):
+            raise _compare_missing()
+    keyed = {item.id: item for item in operands}
+    return keyed[request.fromOutputId], keyed[request.toOutputId]
+
+
+def _keyed_output_rows(rows: list[list[str]], id_position: int) -> dict[int, list[str]]:
+    result: dict[int, list[str]] = {}
+    for row in rows:
+        value = row[id_position]
+        if not isinstance(value, str) or not re.fullmatch(r"(?:0|-?[1-9][0-9]{0,18})", value):
+            raise HTTPException(409, "Stored Builder output has an invalid canonical bigint ID")
+        key = int(value)
+        if not -(2**63) <= key < 2**63 or key in result:
+            raise HTTPException(409, "Stored Builder output has an invalid or duplicate bigint ID")
+        result[key] = row
+    return result
+
+
+async def compare_pipeline_outputs(
+    session: AsyncSession, request: PipelineSandboxOutputCompareRequest, actor_id: UUID,
+) -> PipelineSandboxOutputComparison:
+    """Read two already sealed outputs under one snapshot; never run the Builder or load CDC rows."""
+    await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+    await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
+    before, after = await _authorize_comparison_operands(session, request, actor_id)
+    if before.columns != after.columns or "id" not in before.columns:
+        raise HTTPException(409, "Choose outputs with the same ordered projection including ID")
+    before_rows = await _stored_rows(session, before)
+    after_rows = await _stored_rows(session, after)
+    if (len(before_rows) + len(after_rows) > 2 * MAX_OUTPUT_ROWS
+        or _byte_size(before_rows) + _byte_size(after_rows) > 2 * MAX_OUTPUT_BYTES):
+        raise HTTPException(409, "The sealed outputs exceed the comparison budget")
+    position = before.columns.index("id")
+    left, right = _keyed_output_rows(before_rows, position), _keyed_output_rows(after_rows, position)
+    counts = dict(added=0, removed=0, updated=0, unchanged=0)
+    details = []
+    bytes_left = 2 * MAX_OUTPUT_BYTES
+    truncated = False
+    for key in sorted(left.keys() | right.keys()):
+        a, b = left.get(key), right.get(key)
+        kind = "added" if a is None else "removed" if b is None else "updated" if a != b else "unchanged"
+        counts[kind] += 1
+        if kind == "unchanged":
+            continue
+        if not truncated and len(details) < 25:
+            change = PipelineSandboxOutputChange(id=str(key), kind=kind, before=a, after=b)
+            bytes_left -= len(change.model_dump_json().encode("utf-8")) + 1
+            if bytes_left >= 0:
+                details.append(change)
+                continue
+        truncated = True
+    return PipelineSandboxOutputComparison(
+        fromOutputId=before.id, toOutputId=after.id, projection=before.columns,
+        markings=markings(max(before.marking_level or 0, after.marking_level or 0) or None),
+        changes=details, truncated=truncated, **counts,
+    )
 
 
 async def commit_pipeline_output(

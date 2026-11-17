@@ -5,7 +5,7 @@ from importlib import import_module
 import os
 import unittest
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -540,6 +540,97 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 with patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", uuid4()):
                     self.assertFalse((await client.get(_OUTPUTS)).json()["available"])
                     self.assertEqual((await client.get(f"{_OUTPUTS}/{receipt['id']}")).status_code, 403)
+
+    async def test_compare_sealed_outputs_checks_ancestry_before_rows_and_counts_bounded_changes(self):
+        base, restricted = "sandbox-synthetic", "sandbox-restricted"
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base, restricted]}),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    for key in (-9223372036854775808, -2, 0, *range(1, 28)):
+                        await self.produce(session, key, "before")
+
+                async def capture(previous):
+                    result = await client.post(_ROUTE + "/runs", json=payload(previous))
+                    self.assertEqual(result.status_code, 200, result.text)
+                    return result.json()["id"]
+
+                async def output(version, generation, *, projection, filters=(), marking=None):
+                    config = dict(versionId=version, projection=projection, filters=list(filters))
+                    if marking:
+                        config["additionalMarking"] = marking
+                    saved = await client.post(_BUILDER + "/revisions", json={
+                        "expectedGeneration": generation, "config": config,
+                    })
+                    self.assertEqual(saved.status_code, 201, saved.text)
+                    result = await client.post(_OUTPUTS, json={
+                        "requestId": str(uuid4()), "expectedGeneration": saved.json()["generation"],
+                        "expectedConfigHash": saved.json()["configHash"],
+                    })
+                    self.assertEqual(result.status_code, 201, result.text)
+                    return result.json()["id"]
+
+                first = await capture(0)
+                left = await output(first, None, projection=["value", "id"])
+                async with self.pg.session() as session:
+                    for key in (*range(1, 28), 9223372036854775807):
+                        await self.produce(session, key, "after")
+                second = await capture(30)
+                right = await output(second, 1, projection=["value", "id"],
+                                     filters=[{"field": "id", "operator": "gte", "value": "0"}], marking=restricted)
+                value_only = await output(second, 2, projection=["value"])
+                path = _OUTPUTS + "/compare"
+                args = {"fromOutputId": left, "toOutputId": right}
+
+                with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base]}), patch(
+                    "app.web.services.pipeline_sandbox_outputs._stored_rows",
+                    side_effect=AssertionError("read rows before both operands were authorized"),
+                ) as read:
+                    denied = await client.post(path, json=args)
+                    absent = await client.post(path, json={**args, "toOutputId": str(uuid4())})
+                    self.assertEqual((denied.status_code, denied.json()), (404, absent.json()))
+                    read.assert_not_called()
+
+                self.assertEqual((await client.post(path, json={**args, "toOutputId": left})).status_code, 422)
+                self.assertEqual((await client.post(path, json={**args, "ignoreOrder": True})).status_code, 422)
+                with patch("app.web.services.pipeline_sandbox_outputs._stored_rows", side_effect=AssertionError(
+                    "incompatible output shouldn't load rows",
+                )) as read:
+                    rejected = await client.post(path, json={**args, "toOutputId": value_only})
+                    self.assertEqual(rejected.status_code, 409, rejected.text)
+                    read.assert_not_called()
+
+                await self.pg.execute("TRUNCATE ts_cdc_sandbox.target_rows")
+                # The exact old physical capture remains historical, never reevaluated on the replacement.
+                with patch("app.web.services.pipeline_sandbox_outputs._read_records",
+                           side_effect=AssertionError("compared live or captured CDC rows")) as read:
+                    comparison = await client.post(path, json=args)
+                    self.assertEqual(comparison.status_code, 200, comparison.text)
+                    self.assertEqual(comparison.headers["Cache-Control"], "no-store")
+                    read.assert_not_called()
+                result = comparison.json()
+                self.assertEqual([result[key] for key in ("added", "removed", "updated", "unchanged")], [1, 2, 27, 1])
+                self.assertEqual(result["markings"], [base, restricted])
+                self.assertTrue(result["truncated"])
+                self.assertEqual(len(result["changes"]), 25)
+                self.assertEqual(result["changes"][0], {"id": "-9223372036854775808", "kind": "removed",
+                                                       "before": ["before", "-9223372036854775808"], "after": None})
+                self.assertEqual(result["changes"][2], {"id": "1", "kind": "updated",
+                                                       "before": ["before", "1"], "after": ["after", "1"]})
+                await self.pg.execute("""
+                    UPDATE ontology_pipeline_sandbox_output_rows SET row_values=ARRAY['tampered',row_values[2]]
+                    WHERE output_id=:id AND position=1
+                """, {"id": UUID(left)})
+                self.assertEqual((await client.post(path, json=args)).status_code, 409)
 
     async def test_builder_output_row_failure_rolls_back_receipt_and_real_lost_ack_replays_once(self):
         with (

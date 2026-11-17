@@ -41,7 +41,8 @@ from app.web.api.models.pipeline_sandbox import (
     PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
 )
 from app.web.api.models.pipeline_sandbox_outputs import (
-    PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputDetail, PipelineSandboxOutputsPage,
+    PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputCompareRequest, PipelineSandboxOutputComparison,
+    PipelineSandboxOutputDetail, PipelineSandboxOutputsPage,
 )
 from app.web.api.models.table_exports import (
     ExportDestination,
@@ -100,7 +101,7 @@ from app.web.services.pipeline_sandbox import (
     list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
 )
 from app.web.services.pipeline_sandbox_outputs import (
-    commit_pipeline_output, list_pipeline_outputs, read_pipeline_output,
+    commit_pipeline_output, compare_pipeline_outputs, list_pipeline_outputs, read_pipeline_output,
 )
 from app.web.services.push_inbox import read_push_status
 from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
@@ -279,6 +280,18 @@ async def post_local_pipeline_output(
     payload: PipelineSandboxCommit, session: SessionDep, current_user: CurrentActiveSuperuser,
 ) -> PipelineSandboxOutput:
     return await commit_pipeline_output(session, payload, current_user.id)
+
+
+@write.post("/pipeline-sandbox/outputs/compare")
+async def compare_local_pipeline_outputs(
+    payload: PipelineSandboxOutputCompareRequest, current_user: CurrentActiveSuperuser, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineSandboxOutputComparison:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await compare_pipeline_outputs(session, payload, current_user.id)
+    except DBAPIError:
+        raise HTTPException(503, "Sealed Builder output comparison is temporarily unavailable") from None
 
 
 @write.get("/pipeline-sandbox/outputs/{output_id}")

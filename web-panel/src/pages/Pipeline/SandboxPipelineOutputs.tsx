@@ -6,6 +6,7 @@ import type {
 } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import { SandboxMarkings, sandboxScopeDenied } from './SandboxMarkings';
+import SandboxPipelineOutputComparison from './SandboxPipelineOutputComparison';
 
 type Confirmation = { revision: SandboxPipelineRevision } | { previous: SandboxPipelineOutputRequest };
 const timeText = (value: string) => new Date(value).toLocaleString();
@@ -50,6 +51,7 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const [inspecting, setInspecting] = useState<SandboxPipelineOutput>();
   const [detail, setDetail] = useState<SandboxPipelineOutputDetail>();
   const [detailFailed, setDetailFailed] = useState(false);
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -57,13 +59,14 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const invalidate = () => {
     setList(undefined); setLoadFailed(true); setInspecting(undefined); setDetail(undefined);
     setConfirm(undefined); setPendingRequest(undefined); setNotice(undefined);
+    setComparisonOpen(false);
     onScopeDenied?.();
   };
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController();
-    setList(undefined); setLoadFailed(false);
+    setList(undefined); setLoadFailed(false); setComparisonOpen(false);
     void fetchSandboxPipelineOutputs(controller.signal).then(value => {
       if (!live(controller.signal)) return;
       setList(value);
@@ -140,7 +143,9 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   return <section className="flow-sandbox-builder__history" aria-label="Committed sandbox outputs">
     <h2>Committed sandbox outputs</h2>
     <p>Only an explicit commit writes immutable sandbox output rows and a receipt. Previewing or saving a configuration does not write output data.</p>
-    <div className="flow-sandbox-builder__actions"><Button size="small" disabled={busy} onClick={() => setRefresh(value => value + 1)}>Refresh output history</Button></div>
+    <div className="flow-sandbox-builder__actions"><Button size="small" disabled={busy} onClick={() => { setComparisonOpen(false); setRefresh(value => value + 1); }}>Refresh output history</Button>
+      {list?.available && list.outputs.length >= 2 && <Button size="small" disabled={busy} onClick={() => setComparisonOpen(true)}>Compare committed outputs</Button>}
+    </div>
     {notice && <p role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
     {loadFailed ? <p role="alert">Sandbox output status could not be loaded.</p>
       : !list ? <p role="status">Loading sandbox outputs…</p>
@@ -159,6 +164,8 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
               </li>)}
             </ol> : <p>No committed sandbox output receipts.</p>}
           </>}
+    {comparisonOpen && list?.available && <SandboxPipelineOutputComparison outputs={list.outputs}
+      onClose={() => setComparisonOpen(false)} onScopeDenied={invalidate} />}
     <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" confirmLoading={busy}
       title={confirm && 'previous' in confirm ? 'Retry original output request?' : 'Commit reviewed sandbox output?'}
       okText={confirm && 'previous' in confirm ? 'Confirm original retry' : 'Confirm output commit'}

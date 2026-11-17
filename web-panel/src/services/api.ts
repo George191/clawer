@@ -677,12 +677,20 @@ export type SandboxPipelineOutput = {
 };
 export type SandboxPipelineOutputList = { available: boolean; outputs: SandboxPipelineOutput[] };
 export type SandboxPipelineOutputDetail = SandboxPipelineOutput & { rows: string[][] };
+export type SandboxPipelineOutputComparison = {
+  fromOutputId: string; toOutputId: string; projection: SandboxPipelineColumn[]; markings: string[] | null;
+  added: number; removed: number; updated: number; unchanged: number;
+  changes: { id: string; kind: 'added' | 'removed' | 'updated'; before: string[] | null; after: string[] | null }[];
+  truncated: boolean;
+};
 export type SandboxPipelineOutputRequest = { requestId: string; expectedGeneration: number; expectedConfigHash: string };
 const sandboxPipelineOutputPath = `${sandboxPipelinePath}/outputs`;
 export const fetchSandboxPipelineOutputs = (signal?: AbortSignal): Promise<SandboxPipelineOutputList> =>
   client.get(sandboxPipelineOutputPath, { signal }).then((r) => unwrap<SandboxPipelineOutputList>(r.data));
 export const fetchSandboxPipelineOutput = (id: string, signal?: AbortSignal): Promise<SandboxPipelineOutputDetail> =>
   client.get(`${sandboxPipelineOutputPath}/${encodeURIComponent(id)}`, { signal }).then((r) => unwrap<SandboxPipelineOutputDetail>(r.data));
+export const compareSandboxPipelineOutputs = (request: { fromOutputId: string; toOutputId: string }, signal?: AbortSignal): Promise<SandboxPipelineOutputComparison> =>
+  client.post(`${sandboxPipelineOutputPath}/compare`, request, { signal }).then(r => unwrap<SandboxPipelineOutputComparison>(r.data));
 export const commitSandboxPipelineOutput = (request: SandboxPipelineOutputRequest): Promise<SandboxPipelineOutput> =>
   client.post(sandboxPipelineOutputPath, request).then((r) => unwrap<SandboxPipelineOutput>(r.data));
 

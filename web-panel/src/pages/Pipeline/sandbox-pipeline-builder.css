@@ -40,3 +40,7 @@
   .flow-sandbox-builder__graph, .flow-sandbox-builder__graph.is-matched { grid-template-columns: minmax(0, 1fr); }
   .flow-sandbox-builder__arrow { justify-self: center; margin: 0; transform: rotate(90deg); }
 }
+.flow-sandbox-builder__compare{padding:0;overflow:visible}
+.flow-sandbox-builder__compare-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px}
+.flow-sandbox-builder__compare-result,.flow-sandbox-builder__compare-values{display:grid;gap:5px;min-width:0;overflow-wrap:anywhere}
+.flow-sandbox-builder__compare .flow-sandbox-builder__counts{grid-template-columns:repeat(auto-fit,minmax(103px,1fr))}
