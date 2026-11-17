@@ -240,7 +240,8 @@ async def _decision(
                 and attempt.status == "rejected" and attempt.finished_at is not None and attempt.receipt_id is None):
                 return "unhealthy", "target_rejected", None, None
     reason = {"pending": "nonterminal", "dispatched": "nonterminal", "expired": "expired",
-              "outcome_unknown": "outcome_unknown", "rejected": "unproven_rejection"}.get(job.state, "unverified_receipt")
+              "canceled": "canceled", "outcome_unknown": "outcome_unknown",
+              "rejected": "unproven_rejection"}.get(job.state, "unverified_receipt")
     return "unknown", reason, None, None
 
 

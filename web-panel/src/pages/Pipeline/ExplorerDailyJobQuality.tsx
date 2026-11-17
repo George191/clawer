@@ -27,6 +27,7 @@ const reasons: Partial<Record<string, string>> = {
   missing_slot: 'The latest reviewed UTC slot has no recorded job. This does not confirm a failure.',
   nonterminal: 'The recorded slot has not reached a terminal outcome.',
   expired: 'The slot expired. This is not a confirmed failure or success.',
+  canceled: 'This waiting slot was canceled. It does not prove either a failed or successful write.',
   outcome_unknown: 'The outcome of this slot could not be verified.',
   zero_rows: 'A zero-row receipt does not verify a successful write.',
   unverified_receipt: 'No verified positive target receipt is linked to this slot.',
@@ -40,6 +41,7 @@ const slotStates: Record<NonNullable<DailyJobQuality['observation']>['state'], s
   rejected: 'Rejection recorded',
   outcome_unknown: 'Outcome unknown',
   expired: 'Expired',
+  canceled: 'Canceled',
 };
 
 function Time({ value, empty }: { value?: string | null; empty: string }) {

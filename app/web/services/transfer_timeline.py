@@ -102,6 +102,12 @@ async def _linked_jobs(session: AsyncSession, rows: list[Record]) -> dict[tuple[
         revision = job.plan_updated_at if isinstance(job, TransferScheduleJobRow) else job.child_updated_at
         if revision != row.plan_updated_at:
             continue
+        if isinstance(job, TransferScheduleJobRow) and job.state == "canceled" and (
+            not isinstance(row, TransferAttemptRow) or row.target_oid is None or row.target_filenode is None
+            or row.status != "rejected" or row.receipt_id is not None or row.finished_at is None or job.canceled_at is None
+            or not row.started_at <= row.finished_at <= job.canceled_at
+        ):
+            continue
         if isinstance(job, UpstreamTriggerJobRow) and job.group_operator is not None:
             if job.id not in checked_nested:
                 checked_nested[job.id] = await _job_detail(session, job) is not None
@@ -217,7 +223,8 @@ async def list_transfer_timeline(
 
 async def _job_detail(session: AsyncSession, job: Job) -> TransferTimelineJob | None:
     if isinstance(job, TransferScheduleJobRow):
-        return TransferTimelineJob(id=job.id, kind="daily_utc", dueAt=job.slot, state=job.state, parentEvents=[])
+        return TransferTimelineJob(id=job.id, kind="daily_utc", dueAt=job.slot, state=job.state,
+                                   canceledAt=job.canceled_at, parentEvents=[])
     events = (await session.scalars(select(TransferCommitEventRow).join(
         UpstreamTriggerJobEventRow, UpstreamTriggerJobEventRow.event_id == TransferCommitEventRow.id,
     ).where(UpstreamTriggerJobEventRow.job_id == job.id, UpstreamTriggerJobEventRow.plan_id == job.plan_id,

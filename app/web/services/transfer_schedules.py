@@ -11,13 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.storage.postgres_client import get_pg_client
-from app.web.api.models.transfer_plans import TransferPlanRow, TransferRunRequest
+from app.web.api.models.transfer_plans import TransferAttemptRow, TransferPlanRow, TransferRunRequest, TransferRunRow
 from app.web.api.models.transfer_schedules import (
-    TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleJobRow, TransferScheduleRow,
+    TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleJobCancel,
+    TransferScheduleJobRow, TransferScheduleRow,
     TransferScheduleSummary,
 )
 from app.web.core.config import settings
 from app.web.api.models.transfer_upstream import UpstreamTriggerRow
+from app.web.api.models.user import User
+from app.web.api.utils.models import StatusTypes
 from app.web.services.transfer_runs import (
     HISTORY_LIMIT, SANDBOX, run_sandbox_transfer, scheduled_transfer_enabled,
 )
@@ -26,6 +29,7 @@ SLOT_WINDOW = timedelta(minutes=5)
 DISPATCH_LEASE = timedelta(seconds=45)
 TICK_LIMIT = 100
 OPEN_JOB_STATES = ("pending", "dispatched")
+_CANCELED_MESSAGE = "Canceled. This UTC slot will not run again."
 
 
 def _utc_now() -> datetime:
@@ -37,10 +41,64 @@ def _eligible(plan: TransferPlanRow) -> bool:
             and plan.source_schema == SANDBOX and plan.target_schema == SANDBOX and plan.incremental_cursor is None)
 
 
+def transfer_job_cancel_enabled() -> bool:
+    return settings.TRANSFER_SANDBOX_JOB_CANCEL_ENABLED and scheduled_transfer_enabled()
+
+
+def _job_identity(plan_id: UUID, generation: int, slot: datetime) -> UUID:
+    return uuid5(NAMESPACE_URL, f"asiral:transfer:{plan_id}:{generation}:{slot.astimezone(timezone.utc).isoformat()}")
+
+
+async def _cancel_now(session: AsyncSession) -> datetime:
+    return (await session.scalar(text("SELECT pg_catalog.clock_timestamp()"))).astimezone(timezone.utc)
+
+
+def _cancel_error(code: str, message: str) -> HTTPException:
+    return HTTPException(409, {"code": code, "message": message})
+
+
+def _current_job(plan, schedule, job, conflict: bool) -> bool:
+    return bool(schedule is not None and schedule.enabled and not conflict and _eligible(plan)
+                and schedule.generation == job.generation and schedule.armed_by == job.armed_by
+                and schedule.armed_for_updated_at == plan.updated_at == job.plan_updated_at
+                and schedule.updated_at <= job.slot and job.expires_at == job.slot + SLOT_WINDOW
+                and job.slot.second == job.slot.microsecond == 0
+                and plan.schedule_time == job.slot.astimezone(timezone.utc).strftime("%H:%M")
+                and job.id == _job_identity(plan.id, job.generation, job.slot))
+
+
+async def _mixed_conflict(session: AsyncSession, plan_id: UUID) -> bool:
+    upstream = await session.get(UpstreamTriggerRow, plan_id, populate_existing=True)
+    return bool(upstream is not None and upstream.enabled and upstream.mixed_time_utc is not None)
+
+
+async def _eligible_schedule_actor(session: AsyncSession, schedule: TransferScheduleRow | None) -> bool:
+    return bool(schedule and await session.scalar(select(User.id).where(
+        User.id == schedule.armed_by, User.status == StatusTypes.ENABLE, User.is_superuser.is_(True),
+    )))
+
+
+def _prior_attempts(plan_id: UUID, job_ids: list[UUID]):
+    attempt = TransferAttemptRow
+    return select(attempt.request_id, attempt.status).where(
+        attempt.plan_id == plan_id, attempt.request_id.in_(job_ids),
+    )
+
+
+def _job_response(job: TransferScheduleJobRow, *, include_generation: bool = False, cancelable: bool = False) -> TransferScheduleJob:
+    return TransferScheduleJob(
+        id=job.id, slot=job.slot, state=job.state, dispatchedAt=job.dispatched_at,
+        finishedAt=job.finished_at, receiptId=job.receipt_id, message=job.message,
+        generation=job.generation if include_generation or job.state == "canceled" else None,
+        canceledAt=job.canceled_at, cancelable=True if cancelable else None,
+    )
+
+
 def _response(plan: TransferPlanRow, binding: TransferScheduleRow | None) -> TransferSchedule:
     available = scheduled_transfer_enabled() and _eligible(plan)
     return TransferSchedule(
         available=available,
+        jobCancelAvailable=True if available and transfer_job_cancel_enabled() else None,
         enabled=bool(available and binding and binding.enabled and binding.armed_for_updated_at == plan.updated_at),
         generation=binding.generation if binding else None,
         plannedTimeUtc=plan.schedule_time,
@@ -114,14 +172,95 @@ async def list_transfer_schedules(session: AsyncSession) -> list[TransferSchedul
 
 
 async def list_transfer_schedule_jobs(session: AsyncSession, plan_id: UUID) -> list[TransferScheduleJob]:
-    if await session.get(TransferPlanRow, plan_id) is None:
+    plan = await session.get(TransferPlanRow, plan_id)
+    if plan is None:
         raise HTTPException(404, "Transfer draft does not exist")
     statement = select(TransferScheduleJobRow).where(TransferScheduleJobRow.plan_id == plan_id).order_by(
         TransferScheduleJobRow.slot.desc(), TransferScheduleJobRow.generation.desc(),
     ).limit(HISTORY_LIMIT)
-    return [TransferScheduleJob(id=row.id, slot=row.slot, state=row.state, dispatchedAt=row.dispatched_at,
-                                finishedAt=row.finished_at, receiptId=row.receipt_id, message=row.message)
-            for row in (await session.scalars(statement)).all()]
+    jobs = (await session.scalars(statement)).all()
+    enabled = transfer_job_cancel_enabled()
+    possible = set()
+    if enabled and jobs and _eligible(plan):
+        now = await _cancel_now(session)
+        binding = await session.get(TransferScheduleRow, plan_id)
+        conflict = await _mixed_conflict(session, plan_id)
+        if await _eligible_schedule_actor(session, binding):
+            possible = {job.id for job in jobs if job.state in OPEN_JOB_STATES and job.receipt_id is None
+                        and job.finished_at is None and job.slot <= now < job.expires_at
+                        and _current_job(plan, binding, job, conflict)}
+        if possible:
+            attempts = _prior_attempts(plan_id, sorted(possible)).with_only_columns(TransferAttemptRow.request_id).distinct()
+            possible -= set((await session.scalars(attempts)).all())
+        if possible:
+            possible -= set((await session.scalars(select(TransferRunRow.request_id).where(
+                TransferRunRow.plan_id == plan_id, TransferRunRow.request_id.in_(possible),
+            ))).all())
+    return [_job_response(job, include_generation=enabled, cancelable=job.id in possible) for job in jobs]
+
+
+async def cancel_transfer_schedule_job(
+    session: AsyncSession, plan_id: UUID, job_id: UUID, change: TransferScheduleJobCancel, actor_id: UUID,
+) -> TransferScheduleJob:
+    if not transfer_job_cancel_enabled():
+        raise HTTPException(403, "Canceling a Daily UTC job requires explicit local opt-in")
+    committing = False
+    try:
+        await session.execute(text("SET LOCAL lock_timeout = '100ms'"))
+        await session.execute(text("SET LOCAL statement_timeout = '2s'"))
+        # Same order as both scheduled worker admission and actual execution.
+        plan = await session.scalar(select(TransferPlanRow).where(TransferPlanRow.id == plan_id)
+                                    .with_for_update(nowait=True).execution_options(populate_existing=True))
+        if plan is None:
+            raise HTTPException(404, "The exact Daily UTC job does not exist")
+        job = await session.scalar(select(TransferScheduleJobRow).where(
+            TransferScheduleJobRow.id == job_id, TransferScheduleJobRow.plan_id == plan_id,
+        ).with_for_update(nowait=True).execution_options(populate_existing=True))
+        if job is None:
+            raise HTTPException(404, "The exact Daily UTC job does not exist")
+        if job.generation != change.expectedGeneration or job.slot != change.expectedSlot:
+            raise _cancel_error("job_scope_changed", "The exact reviewed generation or UTC slot does not match")
+        if job.state == "canceled":
+            result = _job_response(job, include_generation=True)
+            await session.rollback()
+            return result
+        if job.state not in OPEN_JOB_STATES or job.receipt_id is not None or job.finished_at is not None:
+            raise _cancel_error("job_terminal", "This Daily UTC job already has an outcome and cannot be canceled")
+        binding = await session.get(TransferScheduleRow, plan_id, populate_existing=True)
+        if (not _current_job(plan, binding, job, await _mixed_conflict(session, plan_id))
+            or not await _eligible_schedule_actor(session, binding)):
+            raise _cancel_error("job_stale", "The reviewed Daily UTC job is no longer current")
+        if await session.scalar(select(TransferRunRow.id).where(
+            TransferRunRow.plan_id == plan_id, TransferRunRow.request_id == job_id,
+        ).limit(1)):
+            raise _cancel_error("job_terminal", "A transfer receipt already exists for this job")
+        attempt = TransferAttemptRow
+        if await session.scalar(_prior_attempts(plan_id, [job_id]).where(attempt.status != "started").limit(1)):
+            raise _cancel_error("job_terminal", "This job already has a previous execution attempt")
+        if await session.scalar(_prior_attempts(plan_id, [job_id]).where(attempt.status == "started").limit(1)):
+            raise _cancel_error("job_busy", "This job is already settling and was not canceled")
+        now = await _cancel_now(session)
+        if not job.slot <= now < job.expires_at:
+            raise _cancel_error("job_stale", "The UTC dispatch window is not open for this job")
+        job.state = "canceled"
+        job.canceled_by = actor_id
+        job.canceled_at = job.finished_at = now
+        job.message = _CANCELED_MESSAGE
+        result = _job_response(job, include_generation=True)
+        committing = True
+        await session.commit()
+        return result
+    except (DBAPIError, OSError, TimeoutError) as failure:
+        await session.rollback()
+        if committing:
+            raise HTTPException(503, {"code": "cancel_outcome_unknown",
+                                      "message": "Cancellation was not confirmed; check or retry this exact job"}) from None
+        if getattr(getattr(failure, "orig", None), "sqlstate", None) in {"55P03", "40P01", "57014"}:
+            raise _cancel_error("job_busy", "This job or its plan is settling and was not canceled") from None
+        raise
+    except HTTPException:
+        await session.rollback()
+        raise
 
 
 async def collect_due_transfer_jobs(session: AsyncSession, *, now: datetime | None = None) -> list[UUID]:
@@ -157,7 +296,7 @@ async def collect_due_transfer_jobs(session: AsyncSession, *, now: datetime | No
         if bindings:
             await session.execute(insert(TransferScheduleJobRow).values([
                 {
-                    "id": uuid5(NAMESPACE_URL, f"asiral:transfer:{binding.plan_id}:{binding.generation}:{slot.isoformat()}"),
+                    "id": _job_identity(binding.plan_id, binding.generation, slot),
                     "plan_id": binding.plan_id, "generation": binding.generation, "slot": slot,
                     "expires_at": slot + SLOT_WINDOW, "dispatch_after": now,
                     "plan_updated_at": binding.armed_for_updated_at, "armed_by": binding.armed_by, "state": "pending",
@@ -205,7 +344,7 @@ async def execute_scheduled_transfer_job(job_id: UUID, *, now: datetime | None =
 async def execute_transfer_schedule_job(session: AsyncSession, job_id: UUID, *, now: datetime | None = None) -> str:
     if not scheduled_transfer_enabled():
         return "disabled"
-    job = await session.get(TransferScheduleJobRow, job_id)
+    job = await session.get(TransferScheduleJobRow, job_id, populate_existing=True)
     if job is None:
         return "missing"
     if job.state not in OPEN_JOB_STATES:

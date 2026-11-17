@@ -13,10 +13,10 @@ from app.web.api.models.asset_freshness import AssetQualityIncidentLists
 JobQualityState = Literal["disabled", "not_configured", "not_checked", "healthy", "unhealthy", "unknown", "superseded"]
 JobQualityReason = Literal[
     "checking_disabled", "target_unavailable", "no_eligible_schedule", "policy_changed", "schedule_changed",
-    "target_changed", "evaluation_stale", "no_post_review_slot", "missing_slot", "nonterminal", "expired", "outcome_unknown",
+    "target_changed", "evaluation_stale", "no_post_review_slot", "missing_slot", "nonterminal", "expired", "canceled", "outcome_unknown",
     "zero_rows", "unverified_receipt", "unproven_rejection", "target_rejected",
 ]
-JobState = Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired"]
+JobState = Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired", "canceled"]
 Version = Annotated[int, ApiField(strict=True, ge=1)]
 
 

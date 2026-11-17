@@ -90,6 +90,7 @@ const scheduleJobLabels: Record<TransferScheduleJob['state'], string> = {
   rejected: 'Rejected',
   outcome_unknown: 'Outcome unknown',
   expired: 'Expired',
+  canceled: 'Canceled',
 };
 
 function UtcTime({ value }: { value: string }) {
@@ -179,7 +180,8 @@ function TransferSchedulePanel({ plan, maxRows }: { plan: TransferPlan; maxRows:
           <strong>{scheduleJobLabels[job.state]}</strong>
           <div>Scheduled slot: <UtcTime value={job.slot} /></div>
           {job.dispatchedAt && <div>Dispatched at: <UtcTime value={job.dispatchedAt} /></div>}
-          {job.finishedAt && <div>Finished at: <UtcTime value={job.finishedAt} /></div>}
+          {job.state === 'canceled' ? job.canceledAt && <div>Canceled at: <UtcTime value={job.canceledAt} /></div>
+            : job.finishedAt && <div>Finished at: <UtcTime value={job.finishedAt} /></div>}
           {job.receiptId && <div>Receipt: <code>{job.receiptId}</code></div>}
           {job.message && <div>{job.message}</div>}
         </li>)}

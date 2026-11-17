@@ -321,16 +321,20 @@ export type TransferSchedule = {
   plannedTimeUtc: string | null;
   armedForUpdatedAt: string | null;
   updatedAt: string | null;
+  jobCancelAvailable?: true;
 };
 
 export type TransferScheduleJob = {
   id: string;
   slot: string;
-  state: 'pending' | 'dispatched' | 'committed' | 'rejected' | 'outcome_unknown' | 'expired';
+  state: 'pending' | 'dispatched' | 'committed' | 'rejected' | 'outcome_unknown' | 'expired' | 'canceled';
   dispatchedAt: string | null;
   finishedAt: string | null;
   receiptId: string | null;
   message: string | null;
+  generation?: number;
+  cancelable?: true;
+  canceledAt?: string | null;
 };
 
 export type TransferScheduleSummary = TransferSchedule & { planId: string; planName: string; sourceTable: string; targetTable: string };
@@ -348,6 +352,8 @@ export const updateTransferSchedule = (planId: string, request: { enabled: boole
 
 export const fetchTransferScheduleJobs = (planId: string, signal?: AbortSignal): Promise<TransferScheduleJob[]> =>
   client.get(`${transferSchedulePath(planId)}/jobs`, { signal }).then((r) => unwrap<TransferScheduleJob[]>(r.data));
+export const cancelTransferScheduleJob = (planId: string, jobId: string, request: { expectedGeneration: number; expectedSlot: string }): Promise<TransferScheduleJob> =>
+  client.put(`${transferSchedulePath(planId)}/jobs/${encodeURIComponent(jobId)}/cancel`, request).then((r) => unwrap<TransferScheduleJob>(r.data));
 
 export type TransferUpstreamOperator = 'AND' | 'OR';
 export type TransferUpstreamGroup = { operator: TransferUpstreamOperator; parentPlanIds: [string, string] };
@@ -360,7 +366,8 @@ export type TransferUpstreamTrigger = {
   armedForUpdatedAt: string | null; updatedAt: string | null;
 };
 export type TransferUpstreamCandidate = { id: string; name: string; updatedAt: string; sourceTable: string; targetTable: string };
-export type TransferUpstreamJob = Omit<TransferScheduleJob, 'slot'> & TransferUpstreamRecordedRule & {
+export type TransferUpstreamJob = Omit<TransferScheduleJob, 'slot' | 'state' | 'generation' | 'cancelable' | 'canceledAt'> & TransferUpstreamRecordedRule & {
+  state: Exclude<TransferScheduleJob['state'], 'canceled'>;
   mixedSlot?: string | null; witnessObservedAt?: string | null;
   events: { eventRecordedAt: string; eventId: string; parentPlanId: string; parentReceiptId: string }[];
 };
@@ -762,7 +769,9 @@ export const fetchBatchSyncSchedule = (id: string, signal?: AbortSignal): Promis
   client.get(batchSyncSchedulePath(id), { signal }).then((r) => unwrap<BatchSyncSchedule>(r.data));
 export const updateBatchSyncSchedule = (id: string, request: { enabled: boolean; plannedTimeUtc: string; expectedUpdatedAt: string; expectedGeneration: number | null }): Promise<BatchSyncSchedule> =>
   client.put(batchSyncSchedulePath(id), request).then((r) => unwrap<BatchSyncSchedule>(r.data));
-export type BatchSyncScheduleJob = Omit<TransferScheduleJob, 'state'> & { state: TransferScheduleJob['state'] | 'no_new_data' };
+export type BatchSyncScheduleJob = Omit<TransferScheduleJob, 'state' | 'generation' | 'cancelable' | 'canceledAt'> & {
+  state: Exclude<TransferScheduleJob['state'], 'canceled'> | 'no_new_data';
+};
 export const fetchBatchSyncScheduleJobs = (id: string, signal?: AbortSignal): Promise<BatchSyncScheduleJob[]> =>
   client.get(`${batchSyncSchedulePath(id)}/jobs`, { signal }).then((r) => unwrap<BatchSyncScheduleJob[]>(r.data));
 

@@ -426,6 +426,34 @@ def _verified_target_diagnostics(error: DBAPIError, name: str) -> bool:
     return False
 
 
+async def _lock_daily_admission(
+    session: AsyncSession, plan_id: UUID, request: TransferRunRequest, job_id: UUID, actor_id: UUID,
+) -> TransferPlanRow:
+    """Fence even the initial scoped audit against cancel's plan-then-job lock order."""
+    try:
+        await session.execute(text("SET LOCAL lock_timeout = '2s'"))
+        await session.execute(text("SET LOCAL statement_timeout = '5s'"))
+        plan = (await lock_transfer_plans(session, plan_id)).get(plan_id)
+        if plan is None:
+            raise HTTPException(404, "Transfer draft does not exist")
+        job = await session.scalar(select(TransferScheduleJobRow).where(TransferScheduleJobRow.id == job_id)
+                                   .with_for_update().execution_options(populate_existing=True))
+        if (job is None or job.id != request.requestId or job.plan_id != plan_id
+            or job.plan_updated_at != request.expectedUpdatedAt or job.armed_by != actor_id):
+            raise HTTPException(409, "The scheduled dispatch does not match this transfer request")
+        if job.state == "canceled":
+            raise HTTPException(409, {"code": "job_canceled", "message": "The Daily UTC job was canceled"})
+        return plan
+    except DBAPIError as failure:
+        await session.rollback()
+        if getattr(failure.orig, "sqlstate", None) in {"55P03", "57014", "40P01"}:
+            raise HTTPException(409, {"code": "job_busy", "message": "The scheduled job is already settling"}) from None
+        raise
+    except HTTPException:
+        await session.rollback()
+        raise
+
+
 async def run_sandbox_transfer(
     session: AsyncSession, plan_id: UUID, request: TransferRunRequest, actor_id: UUID, *,
     scheduled_job_id: UUID | None = None, scheduled_now: datetime | None = None,
@@ -437,7 +465,8 @@ async def run_sandbox_transfer(
         raise HTTPException(403, "Upstream sandbox transfer execution is disabled")
     if upstream_job_id is None and scheduled_job_id is None and request.requestId.version != 4:
         raise HTTPException(422, "Manual sandbox runs require a UUIDv4 request ID")
-    draft = await session.get(TransferPlanRow, plan_id, populate_existing=True)
+    draft = (await _lock_daily_admission(session, plan_id, request, scheduled_job_id, actor_id)
+             if scheduled_job_id is not None else await session.get(TransferPlanRow, plan_id, populate_existing=True))
     if draft is None:
         raise HTTPException(404, "Transfer draft does not exist")
     scope = await _pin_attempt_scope(session, draft, request, scheduled_job_id=scheduled_job_id,

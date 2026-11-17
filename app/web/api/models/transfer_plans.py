@@ -211,6 +211,7 @@ class TransferAttemptRow(SQLModel, table=True):
                         "AND (scope_trigger IS DISTINCT FROM 'daily_utc' OR schedule_job_id IS NOT NULL)",
                         name="ck_ontology_transfer_attempt_timeline_scope"),
         Index("ix_ontology_transfer_attempts_plan", "plan_id", "started_at"),
+        Index("ix_ontology_transfer_attempts_request", "plan_id", "request_id"),
         Index("ix_ontology_transfer_attempt_timeline", "target_table", "started_at", "id",
               postgresql_where=text("target_table IS NOT NULL")),
         Index("ix_ontology_transfer_attempt_manual_receipt", "receipt_id",

@@ -66,7 +66,7 @@ from app.web.api.models.transfer_plans import (
     TransferRunRequest, WarehouseSchema,
 )
 from app.web.api.models.transfer_schedules import (
-    TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleSummary,
+    TransferSchedule, TransferScheduleChange, TransferScheduleJob, TransferScheduleJobCancel, TransferScheduleSummary,
 )
 from app.web.services.asset_collected_stats import read_asset_collected_stats
 from app.web.services.asset_freshness import (
@@ -117,7 +117,7 @@ from app.web.services.transfer_runs import (
     SANDBOX, list_transfer_attempts, list_transfer_runs, run_sandbox_transfer, transfer_run_capabilities,
 )
 from app.web.services.transfer_schedules import (
-    change_transfer_schedule, list_transfer_schedule_jobs, list_transfer_schedules, read_transfer_schedule,
+    cancel_transfer_schedule_job, change_transfer_schedule, list_transfer_schedule_jobs, list_transfer_schedules, read_transfer_schedule,
 )
 
 router = APIRouter(prefix="/etl", tags=["etl"])
@@ -526,6 +526,14 @@ async def put_transfer_schedule(
 @write.get("/transfer-plans/{plan_id}/schedule/jobs")
 async def get_transfer_schedule_jobs(plan_id: UUID, session: SessionDep) -> list[TransferScheduleJob]:
     return await list_transfer_schedule_jobs(session, plan_id)
+
+
+@write.put("/transfer-plans/{plan_id}/schedule/jobs/{job_id}/cancel")
+async def put_transfer_schedule_job_cancel(
+    plan_id: UUID, job_id: UUID, payload: TransferScheduleJobCancel, session: SessionDep,
+    current_user: CurrentActiveSuperuser,
+) -> TransferScheduleJob:
+    return await cancel_transfer_schedule_job(session, plan_id, job_id, payload, current_user.id)
 
 
 @write.post("/transfer-plans/{plan_id}/runs")

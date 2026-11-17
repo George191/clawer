@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import httpx
 from pydantic import ValidationError
 from sqlalchemy import text
@@ -130,6 +130,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.compound_migration = import_module("app.web.alembic.versions.b6c45a7e9130_ontology_compound_upstream")
         self.nested_migration = import_module("app.web.alembic.versions.0f8b2e641a5d_ontology_nested_upstream")
         self.mixed_migration = import_module("app.web.alembic.versions.67bd926fa4d1_ontology_mixed_upstream")
+        self.cancel_migration = import_module("app.web.alembic.versions.21fe23589f8d_ontology_daily_job_cancel")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
         self.incident_migration = import_module(
@@ -166,6 +167,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.stats_migration.upgrade)
             await self.migrate(session, self.job_quality_migration.upgrade)
             await self.migrate(session, self.mixed_migration.upgrade)
+            await self.migrate(session, self.cancel_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -583,6 +585,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.cancel_migration.downgrade)
             await self.migrate(session, self.mixed_migration.downgrade)
             await self.migrate(session, self.job_quality_migration.downgrade)
             await self.migrate(session, self.stats_migration.downgrade)
@@ -996,6 +999,142 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(item["physicalScope"] == "historical" for item in historical["entries"]))
         async with api(False, self.session_provider) as reader:
             self.assertEqual((await reader.get(route)).status_code, 403)
+
+    async def test_cancel_exact_waiting_daily_job_preserves_next_schedule_and_never_starts_worker(self):
+        from app.web.api.models.transfer_plans import TransferRunRequest
+        from app.web.services.transfer_runs import run_sandbox_transfer
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.source (id integer PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.destination (id integer PRIMARY KEY)",
+                "INSERT INTO ts_transfer_sandbox.source VALUES (1)",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+        slot = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+
+        async def collect(now):
+            async with self.pg.session() as session:
+                return await collect_due_transfer_jobs(session, now=now)
+
+        async def execute(identity, now):
+            async with self.pg.session() as session:
+                return await execute_transfer_schedule_job(session, identity, now=now)
+
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_schedules._utc_now", return_value=slot - timedelta(minutes=1)),
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_JOB_CANCEL_ENABLED", True),
+        ):
+            async with api(True, self.session_provider) as client:
+                plan = await client.post(RUNS, json={
+                    **PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                    "sourceTable": "source", "targetTable": "destination", "writeMode": "upsert",
+                    "trigger": "scheduled", "scheduleTime": slot.strftime("%H:%M"),
+                })
+                self.assertEqual(plan.status_code, 201, plan.text)
+                plan = plan.json()
+                plan_id = UUID(plan["id"])
+                root = f"{RUNS}/{plan_id}"
+                schedule = root + "/schedule"
+                audit = schedule + "/jobs"
+                reviewed = {"expectedUpdatedAt": plan["updatedAt"], "enabled": True}
+                armed = await client.put(schedule, json=reviewed)
+                self.assertTrue(armed.json()["jobCancelAvailable"])
+                identity, = await collect(slot)
+                request = {"expectedGeneration": 1, "expectedSlot": slot.isoformat()}
+                action = audit + f"/{identity}/cancel"
+                with patch.object(settings, "TRANSFER_SANDBOX_JOB_CANCEL_ENABLED", False):
+                    self.assertEqual((await client.put(action, json=request)).status_code, 403)
+                async with api(False, self.session_provider) as reader:
+                    self.assertEqual((await reader.put(action, json=request)).status_code, 403)
+                self.assertEqual((await client.put(action, json={**request, "expectedGeneration": 2})).json()
+                                 ["detail"]["code"], "job_scope_changed")
+                self.assertEqual((await client.put(action, json={**request,
+                    "expectedSlot": (slot + timedelta(minutes=1)).isoformat()})).json()["detail"]["code"], "job_scope_changed")
+                self.assertEqual((await client.put(audit + f"/{uuid4()}/cancel", json=request)).status_code, 404)
+                self.assertTrue((await client.get(audit)).json()[0]["cancelable"])
+                await self.pg.execute("""
+                    UPDATE ontology_transfer_schedule_jobs SET state='dispatched', dispatched_at=:slot WHERE id=:id
+                """, {"slot": slot, "id": identity})
+                self.assertTrue((await client.get(audit)).json()[0]["cancelable"])
+
+                for table, locked_id in (("ontology_transfer_plans", plan_id), ("ontology_transfer_schedule_jobs", identity)):
+                    async with self.pg.session() as competing:
+                        await competing.execute(text(f"SELECT id FROM {table} WHERE id=:id FOR UPDATE"), {"id": locked_id})
+                        busy = await asyncio.wait_for(client.put(action, json=request), timeout=1.2)
+                        self.assertEqual(busy.status_code, 409, busy.text)
+                        self.assertEqual(busy.json()["detail"]["code"], "job_busy")
+
+                settled = await client.put(action, json=request)
+                self.assertEqual(settled.status_code, 200, settled.text)
+                canceled = settled.json()
+                self.assertEqual(canceled["state"], "canceled")
+                self.assertEqual(canceled["canceledAt"], canceled["finishedAt"])
+                self.assertIsNone(canceled["receiptId"])
+                evidence = await self.pg.fetch_one("SELECT canceled_by, canceled_at FROM ontology_transfer_schedule_jobs "
+                                                   "WHERE id=:id", {"id": identity})
+                self.assertEqual(evidence["canceled_by"], TEST_ACTOR)
+                self.assertEqual(evidence["canceled_at"], datetime.fromisoformat(canceled["canceledAt"]))
+                self.assertEqual(await collect(slot + timedelta(minutes=1)), [])
+                with (
+                    patch.object(settings, "TRANSFER_SANDBOX_JOB_CANCEL_ENABLED", False),
+                    patch("app.web.services.transfer_runs._pin_attempt_scope",
+                          side_effect=AssertionError("canceled worker reached target catalog")) as pin,
+                ):
+                    self.assertEqual(await execute(identity, slot), "canceled")
+                    with self.assertRaises(HTTPException) as rejected:
+                        async with self.pg.session() as session:
+                            await run_sandbox_transfer(session, plan_id, TransferRunRequest(
+                                requestId=identity, expectedUpdatedAt=plan["updatedAt"],
+                            ), TEST_ACTOR, scheduled_job_id=identity, scheduled_now=slot)
+                    self.assertEqual(rejected.exception.detail["code"], "job_canceled")
+                    pin.assert_not_called()
+                    self.assertEqual((await client.get(audit)).json(), [canceled])
+                self.assertEqual((await client.get(root + "/attempts")).json(), [])
+                self.assertEqual((await client.get(root + "/runs")).json(), [])
+                timeline = await client.get("/etl/ts_transfer_sandbox/destination/transfer-timeline")
+                self.assertEqual(timeline.status_code, 200, timeline.text)
+                self.assertEqual(timeline.json()["entries"], [])
+                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS n FROM ts_transfer_sandbox.destination"))["n"], 0)
+
+                # Explicit re-arm invalidates new actions from old generation, not this immutable audit retry.
+                self.assertEqual((await client.put(schedule, json={**reviewed, "enabled": False})).status_code, 200)
+                rearmed = (await client.put(schedule, json=reviewed)).json()
+                self.assertEqual((rearmed["generation"], rearmed["enabled"]), (3, True))
+                self.assertEqual((await client.put(action, json=request)).json(), canceled)
+                with self.assertRaisesRegex(RuntimeError, "terminal Daily UTC cancellation evidence"):
+                    async with self.pg.session() as session:
+                        await self.migrate(session, self.cancel_migration.downgrade)
+
+                tomorrow = slot + timedelta(days=1)
+                next_id, = await collect(tomorrow)
+                self.assertNotEqual(next_id, identity)
+                next_action = audit + f"/{next_id}/cancel"
+                next_request = {"expectedGeneration": 3, "expectedSlot": tomorrow.isoformat()}
+                self.assertEqual(await execute(next_id, tomorrow - timedelta(seconds=1)), "pending")
+                previously_attempted = await client.put(next_action, json=next_request)
+                self.assertEqual(previously_attempted.json()["detail"]["code"], "job_terminal")
+                self.assertEqual(await execute(next_id, tomorrow), "committed")
+                self.assertEqual(len((await client.get(root + "/runs")).json()), 1)
+
+                # Even a malformed old job mirror cannot hide a genuine exact receipt from the guard.
+                await self.pg.execute("""
+                    UPDATE ontology_transfer_schedule_jobs SET state='pending',receipt_id=NULL,finished_at=NULL WHERE id=:id
+                """, {"id": next_id})
+                inconsistent = await client.put(next_action, json=next_request)
+                self.assertEqual(inconsistent.json()["detail"]["code"], "job_terminal")
+                self.assertIn("receipt", inconsistent.json()["detail"]["message"])
 
     async def test_mixed_utc_requires_visible_pre_slot_witness_and_checks_db_expiry_before_write(self):
         async with self.pg.session() as session:
@@ -1565,10 +1704,28 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                                  ("unknown", "zero_rows", 0))
                 self.assertEqual(neutral["incidents"]["active"][0]["id"], incident["id"])
 
-                clock = zero_slot + timedelta(days=1, seconds=30)
+                canceled_slot = zero_slot + timedelta(days=1)
+                clock = canceled_slot + timedelta(seconds=30)
+                canceled, = await collect(canceled_slot)
+                with (
+                    patch.object(settings, "TRANSFER_SANDBOX_JOB_CANCEL_ENABLED", True),
+                    patch("app.web.services.transfer_schedules._cancel_now", return_value=clock),
+                ):
+                    response = await client.put(plan_path + f"/jobs/{canceled}/cancel", json={
+                        "expectedGeneration": 1, "expectedSlot": canceled_slot.isoformat(),
+                    })
+                self.assertEqual(response.status_code, 200, response.text)
+                await tick(clock)
+                neutral = (await client.get(path)).json()
+                self.assertEqual((neutral["state"], neutral["reason"], neutral["observation"]["state"]),
+                                 ("unknown", "canceled", "canceled"))
+                self.assertIsNone(neutral["observation"]["receiptId"])
+                self.assertEqual(neutral["incidents"]["active"][0]["id"], incident["id"])
+
+                clock = zero_slot + timedelta(days=2, seconds=30)
                 await tick(clock)
                 self.assertEqual((await client.get(path)).json()["reason"], "missing_slot")
-                positive_slot = zero_slot + timedelta(days=2)
+                positive_slot = zero_slot + timedelta(days=3)
                 clock = positive_slot + timedelta(seconds=30)
                 await self.pg.execute("INSERT INTO ts_transfer_sandbox.job_src VALUES (1,'legitimate write')")
                 good, = await collect(positive_slot)

@@ -35,7 +35,8 @@ class TransferTimelineJob(BaseModel):
     kind: Literal["daily_utc", "upstream"]
     dueAt: datetime
     witnessObservedAt: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
-    state: Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired"]
+    state: Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired", "canceled"]
+    canceledAt: datetime | None = Field(default=None, exclude_if=lambda value: value is None)
     parentEvents: list[UpstreamTriggerEvent]
     operator: Operator | None = Field(default=None, exclude_if=lambda value: value is None)
     group: UpstreamGroup | None = Field(default=None, exclude_if=lambda value: value is None)
