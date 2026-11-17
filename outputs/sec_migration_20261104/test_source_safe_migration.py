@@ -601,6 +601,90 @@ class WorkerControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(checkpoint["processed"], 0)
         self.assertIsNone(checkpoint["cursor"])
 
+    async def test_failed_connection_is_terminated_before_recovering_committed_pending(self):
+        self.documents = self.documents[:2]
+        rows = [(layer, SafeMigrationTests.row(self, number, "google_patent", layer))
+                for layer in ("rds", "ods") for number in range(2)]
+        failed, healthy = Connection(rows), Connection()
+        for connection in (failed, healthy):
+            connection.is_closed = MagicMock(return_value=False)
+            connection.close = AsyncMock()
+            connection.terminate = MagicMock()
+        failed.lose_commit = True
+        failed.close.side_effect = TimeoutError("graceful close stalled")
+        failed.terminate.side_effect = lambda: setattr(failed.is_closed, "return_value", True)
+        pending_path = None
+
+        async def connect(_root, _worker):
+            nonlocal pending_path
+            if not failed.is_closed():
+                return failed
+            checkpoint = migration.pg.read(self.root / "worker-0.json")
+            self.assertEqual(checkpoint["processed"], 0)
+            self.assertIsNone(checkpoint["cursor"])
+            pending_path = self.root / checkpoint["pending"]
+            self.assertTrue(pending_path.is_file())
+            self.assertFalse(list((self.root / "transactions").glob("*.committed.json")))
+            healthy.rows, healthy.outcomes, healthy.txid = failed.rows, failed.outcomes, failed.txid
+            return healthy
+
+        with patch.object(migration.facts, "mongo_client", return_value=MagicMock()), \
+             patch.object(migration, "validate_namespace", return_value=MagicMock()), \
+             patch.object(migration.pg, "owned_connection", AsyncMock(side_effect=connect)) as owned, \
+             patch.object(migration.patent, "read_batch", side_effect=self.read), \
+             patch.object(migration, "apply_chunk", AsyncMock(wraps=migration.apply_chunk)) as apply, \
+             patch.object(migration.asyncio, "sleep", AsyncMock()), patch("builtins.print") as log:
+            await migration.worker_run(self.root, 0)
+        failed.close.assert_not_awaited()
+        failed.terminate.assert_called_once_with()
+        healthy.close.assert_awaited_once()
+        self.assertEqual(owned.await_count, 2)
+        self.assertEqual(apply.await_count, 1)
+        checkpoint = migration.pg.read(self.root / "worker-0.json")
+        self.assertEqual(checkpoint["processed"], 2)
+        self.assertEqual(checkpoint["cursor"], str(self.documents[-1]["_id"]))
+        self.assertIsNone(checkpoint["pending"])
+        self.assertTrue(checkpoint["done"])
+        self.assertTrue(pending_path.is_file())
+        self.assertEqual(len(list((self.root / "transactions").glob("*.prepared.json"))), 1)
+        self.assertEqual(len(list((self.root / "transactions").glob("*.committed.json"))), 1)
+        self.assertEqual(set(healthy.rows), {(layer, str(number), "patent_google")
+                                           for layer in ("rds", "ods") for number in range(2)})
+        event = json.loads(log.call_args.args[0])
+        self.assertEqual((event["worker"], event["error"], event["attempt"], event["max_attempts"]),
+                         (0, "OSError", 1, 5))
+
+    async def test_five_sql_failures_preserve_cursor_and_raise_original_error(self):
+        connections = [MagicMock() for _ in range(5)]
+        for connection in connections:
+            connection.is_closed.return_value = False
+            connection.close = AsyncMock(side_effect=TimeoutError("graceful close stalled"))
+        before = {"plan_sha256": self.plan["plan_sha256"], "worker": 0, "processed": 300,
+                  "cursor": str(self.documents[299]["_id"]), "pending": None, "done": False, "last_error": None}
+        migration.pg.atomic(self.root / "worker-0.json", before)
+        original = migration.asyncpg.QueryCanceledError("statement timed out")
+        with patch.object(migration.facts, "mongo_client", return_value=MagicMock()), \
+             patch.object(migration, "validate_namespace", return_value=MagicMock()), \
+             patch.object(migration.pg, "owned_connection", AsyncMock(side_effect=connections)) as owned, \
+             patch.object(migration.patent, "read_batch", side_effect=self.read), \
+             patch.object(migration, "apply_chunk", AsyncMock(side_effect=original)) as apply, \
+             patch.object(migration.asyncio, "sleep", AsyncMock()) as sleep, patch("builtins.print") as log:
+            with self.assertRaises(migration.asyncpg.QueryCanceledError) as raised:
+                await migration.worker_run(self.root, 0)
+        self.assertIs(raised.exception, original)
+        self.assertEqual((owned.await_count, apply.await_count, sleep.await_count), (5, 5, 4))
+        for connection in connections:
+            connection.terminate.assert_called_once_with()
+            connection.close.assert_not_awaited()
+        for call in apply.await_args_list:
+            self.assertEqual(call.args[4]["processed"], 300)
+            self.assertEqual(call.args[5][0]["_id"], self.documents[300]["_id"])
+        checkpoint = migration.pg.read(self.root / "worker-0.json")
+        self.assertEqual(checkpoint, {**before, "canary_complete": False, "last_error": "QueryCanceledError"})
+        events = [json.loads(call.args[0]) for call in log.call_args_list]
+        self.assertEqual([event["attempt"] for event in events], [1, 2, 3, 4, 5])
+        self.assertTrue(all(event["error"] == "QueryCanceledError" for event in events))
+
     async def test_full_facts_uses_generic_safe_writer_and_resumes_the_canary_cursor(self):
         self.plan.update(kind="facts_full", collection="financial_fact_sec_edgar", data_type="financial_fact",
                          aliases=migration.SCOPES["facts_full"][1])
