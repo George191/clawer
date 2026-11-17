@@ -11,6 +11,7 @@ import SourceIdentity from './SourceIdentity';
 import type { BatchSyncSource } from './SourceBatchSyncs';
 import TableExports from './TableExports';
 import SandboxCdcReplay from './SandboxCdcReplay';
+import SyntheticPushInbox from './SyntheticPushInbox';
 import './data-connections.css';
 
 type Props = { onCancel?: () => void; onChanged?: () => void };
@@ -418,6 +419,7 @@ export default function DataConnections({ onChanged }: Props = {}) {
           return next;
         }, { replace: true })} />
         <SandboxCdcReplay />
+        <SyntheticPushInbox />
       </section>)}
     </div>
 

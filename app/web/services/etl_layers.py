@@ -27,6 +27,8 @@ from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
 
 RESERVED_BATCH_TARGET = (BATCH_TARGET_SCHEMA, INCREMENTAL_TARGET)
 _RESERVED_BATCH_REGCLASS = ".".join(RESERVED_BATCH_TARGET)
+_PUSH_INBOX_RECEIPTS = "public.ontology_push_inbox_receipts"
+_PUSH_INBOX_MARKER = "public.ontology_push_inbox_state"
 
 
 def require_ordinary_table(schema: str, table: str) -> None:
@@ -149,12 +151,13 @@ class EtlLayers:
         self._pg = get_pg_client()
 
     @asynccontextmanager
-    async def session(self):
+    async def session(self, *, repeatable_read: bool = False):
         try:
             with fail_after(12):
                 await self._pg.connect(max_retries=1)
                 async with self._pg.session() as session:
-                    await session.execute(text("SET TRANSACTION READ ONLY"))
+                    mode = "ISOLATION LEVEL REPEATABLE READ READ ONLY" if repeatable_read else "READ ONLY"
+                    await session.execute(text(f"SET TRANSACTION {mode}"))
                     await session.execute(text("SET LOCAL statement_timeout = '10s'"))
                     yield session
         except HTTPException:
@@ -726,19 +729,29 @@ class EtlLayers:
         if not re.match(r"^(SELECT|WITH)\b", sql, re.IGNORECASE) or ";" in sql:
             raise HTTPException(400, "Only a single read-only SELECT query is supported")
         started = perf_counter()
-        async with self.session() as session:
+        # Observe the protection gate and execute the caller's SELECT in the same snapshot.
+        async with self.session(repeatable_read=True) as session:
             # Raw SQL is not a relation sandbox: views and database functions can hide references.
-            # Leave the ordinary environment unchanged unless this isolated fixture exists or history is protected.
-            fixture, marked_history_column = (await session.execute(text("""
+            # Migration-only empty metadata must not disable the ordinary workspace.
+            fixture, marked_history_column, push_marker, push_receipts = (await session.execute(text("""
                 SELECT (pg_catalog.to_regnamespace(:fixture) IS NOT NULL
                         OR pg_catalog.to_regclass(:batch_target) IS NOT NULL),
                        EXISTS (
                            SELECT 1 FROM pg_catalog.pg_attribute
                            WHERE attrelid = pg_catalog.to_regclass('public.ontology_cdc_sandbox_versions')
                              AND attname = 'marking_level' AND attnum > 0 AND NOT attisdropped
-                       )
-            """), {"fixture": PROTECTED_SYNTHETIC_SCHEMA, "batch_target": _RESERVED_BATCH_REGCLASS})).one()
-            if fixture or (marked_history_column and await session.scalar(text("""
+                       ),
+                       pg_catalog.to_regclass(:push_marker) IS NOT NULL,
+                       pg_catalog.to_regclass(:push_receipts) IS NOT NULL
+            """), {"fixture": PROTECTED_SYNTHETIC_SCHEMA, "batch_target": _RESERVED_BATCH_REGCLASS,
+                    "push_marker": _PUSH_INBOX_MARKER, "push_receipts": _PUSH_INBOX_RECEIPTS})).one()
+            protected_push = (
+                push_marker and await session.scalar(text(
+                    f"SELECT EXISTS (SELECT 1 FROM {_PUSH_INBOX_MARKER} WHERE singleton IS TRUE AND database_marker IS NOT NULL)"
+                ))
+                or push_receipts and await session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_INBOX_RECEIPTS})"))
+            )
+            if fixture or protected_push or (marked_history_column and await session.scalar(text("""
                 SELECT EXISTS (SELECT 1 FROM public.ontology_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
             """))):
                 raise HTTPException(403, "Free-form SQL is unavailable in the protected synthetic workspace")

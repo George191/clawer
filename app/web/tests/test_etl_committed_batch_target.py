@@ -79,7 +79,7 @@ class TestCommittedTargetCatalog(IsolatedAsyncioTestCase):
                         await db.execute(text(sql))
 
                     @asynccontextmanager
-                    async def configured():
+                    async def configured(*, repeatable_read=False):
                         yield db
 
                     layers, workspace = EtlLayers(), EtlWorkspace()

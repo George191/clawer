@@ -30,6 +30,7 @@ from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReceipt, C
 from app.web.api.models.cdc_sandbox_versions import (
     CdcSandboxComparison, CdcSandboxVersionDetail, CdcSandboxVersionsPage,
 )
+from app.web.api.models.push_inbox import PushInboxStatus
 from app.web.api.models.pipeline_sandbox import (
     PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
 )
@@ -88,6 +89,7 @@ from app.web.services.pipeline_sandbox import (
 from app.web.services.pipeline_sandbox_outputs import (
     commit_pipeline_output, list_pipeline_outputs, read_pipeline_output,
 )
+from app.web.services.push_inbox import read_push_status
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
@@ -113,6 +115,17 @@ from app.web.services.transfer_schedules import (
 router = APIRouter(prefix="/etl", tags=["etl"])
 read = APIRouter(dependencies=[Depends(get_current_user)])
 write = APIRouter(dependencies=[Depends(get_current_active_superuser)])
+
+
+@write.get("/push-inbox-sandbox")
+async def get_local_push_inbox(
+    response: Response, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PushInboxStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await read_push_status(session)
+    except DBAPIError:
+        raise HTTPException(503, "Synthetic inbox status is unavailable") from None
 
 
 @write.get("/index-preview-sandbox")

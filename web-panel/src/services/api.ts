@@ -554,6 +554,13 @@ export type SandboxCdcReceipt = {
   rowsAffected: number; recordedAt: string; markings?: string[];
 };
 const sandboxCdcPath = '/etl/cdc-sandbox';
+export type SyntheticPushInboxStatus = {
+  available: boolean; state: 'disabled' | 'unconfigured' | 'ready' | 'full';
+  acceptedCount: number; totalLimit: number; windowSeconds: number; windowLimit: number;
+  recent: { id: string; ordinal: string; acceptedAt: string }[];
+};
+export const fetchSyntheticPushInbox = (signal?: AbortSignal): Promise<SyntheticPushInboxStatus> =>
+  client.get('/etl/push-inbox-sandbox', { signal }).then(r => unwrap<SyntheticPushInboxStatus>(r.data));
 export const fetchSandboxCdc = (signal?: AbortSignal): Promise<SandboxCdcStatus> =>
   client.get(sandboxCdcPath, { signal }).then((r) => unwrap<SandboxCdcStatus>(r.data));
 export const reviewSandboxCdc = (): Promise<SandboxCdcStatus> =>
