@@ -8,7 +8,7 @@
 | 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度；固定合成源另支持审核明确主键区间后的快照 Upsert，或按已提交批次增量 Upsert；源发布进度与目标已应用位置分开。 | 尚需将有明确提交语义的增量扩展到已授权源和数据集目标，覆盖其他连接器与数据变化模式。 |
 | 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断和固定消费路径；独立本地合成流可按已提交序号回放 after-image，分别记录源最高位点、目标检查点和提交回执。独立本地合成推送收件箱可验签、原子接收、恢复原回执，并可单独暂停或恢复新的接收。另行授权的手工应用可向固定目标按接收顺序追加，应用位置和结果独立记录。尚无通用可配置入站流。 | 继续验收可配置的生产者身份、流定义和消费策略；不把接收回执或消费位点当作目标提交。 |
 | 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执；当前审核的正数回执已驱动沙箱外发 Lineage。可选第二个预置本地接收端，各自审核、授权和记录，不自动多发或回退。原 Upsert 之外可单独审核只追加模式，遇主键冲突整批拒绝。固定合成标记另有可撤销授权。Published API 仍只是被动读取。 | 验收通用标记策略、更多目标及导出模式，以及另行审核的写回或 Webhook。 |
-| 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地 1–3 个上游的平面 AND/OR，以及三个上游的有限括号组合，都复用现有 Automation Center；实际使用的上游事件、当时审核的规则与子回执分开。另支持单个每日 UTC 时点与此前已观察到的上游条件组合。 | 仍需验收更通用的时间与事件组合、更多层条件、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
+| 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC，普通沙箱内部 Upsert 另可单独配置每周一个 UTC 时段。本地 1–3 个上游的平面 AND/OR，以及三个上游的有限括号组合，都复用现有 Automation Center；实际使用的上游事件、当时审核的规则与子回执分开。另支持单个每日 UTC 时点与此前已观察到的上游条件组合。 | 仍需验收更通用的时间与事件组合、更多层条件、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；本地受管增量资产可展开一个已审核上游，区分真实正数提交、未观察及目标身份更换后的历史。财报 Evidence 的声明路径不代表生产逐边验证。普通可见表可从 Explorer 定位并展开有限两跳，或选择另一张可见表查找最多四跳的有向引用路径及共同上游、共同下游；分别显示声明关系和物理外键；独立本地视图能基于两端物理身份核验已有手工提交证据，可按真实列映射和复合外键查看字段引用。 | 继续验收跨转换字段级影响及更广的资源路径，并把可验证运行证据与声明分开，不能用草稿绘成已提交的血缘。 |
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。受管增量资产可查独立回执、无新数据和可精确归因的手工/调度尝试。现有 Automation 可取消尚无执行尝试的一条每日 UTC 作业并保留终态，不伪造资产归属。运行时间线可在分页前按日期和真实结果筛选，已观察手工传输能直达经过两端复核的原回执。仍未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；固定合成资产已验证有界主键索引预检、阻断后的零行查询、游标翻页和断连取消，并能查沙箱运行历史。已审核的本地沙箱目标可查看后台存下的表级规划器行数估计。普通筛选可显式检查单条件或 2–3 个 AND 条件能否匹配一个 B-tree 的连续查找键前缀，不自动执行；已分别审核的普通表可另行运行单条件、仅返回 ID 的索引验证抽样。 | 通用大表仍需扩大可接受的索引路径、可验证的执行预算和列级已采集统计，不能在交互请求中隐式扫描业务表。 |
@@ -53,6 +53,13 @@
 - 首期仅允许本地专用沙箱中的每日 Upsert，必须明确绑定并默认关闭；内部日程按 UTC，Automation 同时显示浏览器本地时钟。暂停、重新开启、草稿版本变化和超出五分钟窗口不得补跑旧任务。
 - 同一计划代次与 UTC 时间槽只允许一个持久作业。应验证重复派发、消息未确认和工作进程故障，按同一记录恢复，不把消息派发当作写入成功。实际提交必须有数据库回执，重试不能重复写入。
 - 仍未覆盖跨库、生产、批量入站、上游事件触发和任何对外发布。
+
+### 单个每周 UTC 时点
+
+- 参考 [Foundry 时间触发配置](https://www.palantir.com/docs/foundry/building-pipelines/triggers-reference/#time-trigger) 可指定星期的行为。本试点仅在既有 Lineage 和 Automation Center 的内部沙箱 Upsert 新增一个「每周 UTC」固定时段，明确指定星期一至星期日及 UTC 时分；不新增调度器，也不覆盖通用 cron、时区或夏令时规则。
+- 新建和保存是草稿，另行确认当前版本才可启用。候选的 UTC 时段必须同时匹配已审核的星期和时分；只在现有五分钟窗口内派发，不补跑错过的周次、不在旧窗口用新授权补跑、不把每日计划转换或猜测为每周计划。
+- 每周计划和作业记录与每日明确区分。版本、授权、功能开关或有效窗口在写入前仍须满足；历史以持久作业记录为准，不用当前草稿重新标记。受控批量同步、混合上游触发、每日质量检查及生产部署不在本轮范围。
+- 迁移 `deb2f8719046` 后，`TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED` 仍默认关闭。仅在完整的新 API、采集器和执行器均就绪的隔离环境启用；旧执行器不会把每周计划当作每日写入，但混合版本不保证每周作业可用。支持暂停每周计划，不复用仅针对每日 UTC 的单条作业取消接口。
 
 ### 数据源发现的验收口径
 

@@ -16,7 +16,8 @@ from sqlmodel import select
 from app.web.api.models.transfer_plans import TransferAttemptRow, TransferRunRow
 from app.web.api.models.transfer_schedules import TransferScheduleJobRow
 from app.web.api.models.transfer_timeline import (
-    TimelineKind, TimelineView, TransferTimelineDetail, TransferTimelineEntry, TransferTimelineJob, TransferTimelinePage,
+    TimelineKind, TimelineScheduledTrigger, TimelineView, TransferTimelineDetail, TransferTimelineEntry,
+    TransferTimelineJob, TransferTimelinePage,
 )
 from app.web.api.models.transfer_upstream import (
     TransferCommitEventRow, UpstreamTriggerEvent, UpstreamTriggerJobEventRow, UpstreamTriggerJobRow,
@@ -36,6 +37,7 @@ _FILTER_TIMESTAMP = re.compile(
     r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])"
 )
 _SCOPE_FIELDS = ("plan_id", "request_id", "plan_updated_at", "target_table", "source_table")
+_SCHEDULE_SCOPES: dict[str, TimelineScheduledTrigger] = {"daily_utc": "daily_utc", "week_utc": "weekly_utc"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,32 +127,43 @@ def _matching_receipt(record: TransferRunRow, job: Job) -> bool:
     return job.state == "committed" and job.receipt_id == record.id
 
 
+def _scheduled_kind(job: TransferScheduleJobRow) -> TimelineScheduledTrigger | None:
+    """Read cadence from immutable job metadata, not the mutable draft or a feature flag."""
+    weekday = job.schedule_weekday_utc
+    if weekday is None:
+        return "daily_utc"
+    if (1 <= weekday <= 7 and job.slot.utcoffset() is not None
+        and job.slot.astimezone(timezone.utc).isoweekday() == weekday):
+        return "weekly_utc"
+    return None
+
+
 async def _linked_jobs(session: AsyncSession, rows: list[Record]) -> dict[tuple[TimelineKind, UUID], Job]:
-    daily_ids = set()
+    scheduled_ids = set()
     upstream_ids = set()
     for row in rows:
         if isinstance(row, TransferAttemptRow):
-            if row.scope_trigger == "daily_utc" and row.schedule_job_id == row.request_id:
-                daily_ids.add(row.schedule_job_id)
+            if row.scope_trigger in _SCHEDULE_SCOPES and row.schedule_job_id == row.request_id:
+                scheduled_ids.add(row.schedule_job_id)
             if row.scope_trigger == "upstream" and row.upstream_job_id == row.request_id:
                 upstream_ids.add(row.upstream_job_id)
         elif row.initiated_by == SCHEDULED_SYSTEM_ACTOR:
-            daily_ids.add(row.request_id)
+            scheduled_ids.add(row.request_id)
         elif row.initiated_by == UPSTREAM_SYSTEM_ACTOR:
             upstream_ids.add(row.request_id)
-    daily = {job.id: job for job in (await session.scalars(select(TransferScheduleJobRow).where(
-        TransferScheduleJobRow.id.in_(daily_ids),
-    ))).all()} if daily_ids else {}
+    scheduled = {job.id: job for job in (await session.scalars(select(TransferScheduleJobRow).where(
+        TransferScheduleJobRow.id.in_(scheduled_ids),
+    ))).all()} if scheduled_ids else {}
     upstream = {job.id: job for job in (await session.scalars(select(UpstreamTriggerJobRow).where(
         UpstreamTriggerJobRow.id.in_(upstream_ids),
     ))).all()} if upstream_ids else {}
     linked, checked_nested = {}, {}
     for row in rows:
         if isinstance(row, TransferAttemptRow):
-            job = (daily.get(row.schedule_job_id) if row.scope_trigger == "daily_utc" else
+            job = (scheduled.get(row.schedule_job_id) if row.scope_trigger in _SCHEDULE_SCOPES else
                    upstream.get(row.upstream_job_id) if row.scope_trigger == "upstream" else None)
         else:
-            job = (daily.get(row.request_id) if row.initiated_by == SCHEDULED_SYSTEM_ACTOR else
+            job = (scheduled.get(row.request_id) if row.initiated_by == SCHEDULED_SYSTEM_ACTOR else
                    upstream.get(row.request_id) if row.initiated_by == UPSTREAM_SYSTEM_ACTOR else None)
             if job is not None and not _matching_receipt(row, job):
                 continue
@@ -159,6 +172,12 @@ async def _linked_jobs(session: AsyncSession, rows: list[Record]) -> dict[tuple[
         revision = job.plan_updated_at if isinstance(job, TransferScheduleJobRow) else job.child_updated_at
         if revision != row.plan_updated_at:
             continue
+        if isinstance(job, TransferScheduleJobRow):
+            cadence = _scheduled_kind(job)
+            if cadence is None or (
+                isinstance(row, TransferAttemptRow) and _SCHEDULE_SCOPES.get(row.scope_trigger) != cadence
+            ):
+                continue
         if isinstance(job, TransferScheduleJobRow) and job.state == "canceled" and (
             not isinstance(row, TransferAttemptRow) or row.target_oid is None or row.target_filenode is None
             or row.status != "rejected" or row.receipt_id is not None or row.finished_at is None or job.canceled_at is None
@@ -175,7 +194,8 @@ async def _linked_jobs(session: AsyncSession, rows: list[Record]) -> dict[tuple[
 
 
 async def _manual_receipts(session: AsyncSession, rows: list[Record]) -> set[UUID]:
-    receipts = {row.id: row for row in rows if isinstance(row, TransferRunRow)}
+    receipts = {row.id: row for row in rows if isinstance(row, TransferRunRow)
+                and row.initiated_by not in (SCHEDULED_SYSTEM_ACTOR, UPSTREAM_SYSTEM_ACTOR)}
     if not receipts:
         return set()
     attempts = (await session.scalars(select(TransferAttemptRow).where(
@@ -214,7 +234,7 @@ def _entry(
     scope = ("unknown" if row.target_oid is None or row.target_filenode is None else
              "current" if (row.target_oid, row.target_filenode) == physical else "historical")
     manual = row.scope_trigger == "manual" if attempt else row.id in manual_receipts
-    trigger = ("daily_utc" if isinstance(job, TransferScheduleJobRow) else "upstream" if job is not None
+    trigger = (_scheduled_kind(job) if isinstance(job, TransferScheduleJobRow) else "upstream" if job is not None
                else "manual" if manual else None)
     receipt_id = attempt_receipts.get(row.id) if attempt else row.id
     status = row.status if attempt else "committed"
@@ -304,8 +324,10 @@ async def list_transfer_timeline(
 
 async def _job_detail(session: AsyncSession, job: Job) -> TransferTimelineJob | None:
     if isinstance(job, TransferScheduleJobRow):
-        return TransferTimelineJob(id=job.id, kind="daily_utc", dueAt=job.slot, state=job.state,
-                                   canceledAt=job.canceled_at, parentEvents=[])
+        cadence = _scheduled_kind(job)
+        return (TransferTimelineJob(id=job.id, kind=cadence, dueAt=job.slot, state=job.state,
+                                    scheduleWeekdayUtc=job.schedule_weekday_utc, canceledAt=job.canceled_at,
+                                    parentEvents=[]) if cadence is not None else None)
     events = (await session.scalars(select(TransferCommitEventRow).join(
         UpstreamTriggerJobEventRow, UpstreamTriggerJobEventRow.event_id == TransferCommitEventRow.id,
     ).where(UpstreamTriggerJobEventRow.job_id == job.id, UpstreamTriggerJobEventRow.plan_id == job.plan_id,

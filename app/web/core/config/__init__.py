@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
     TRANSFER_SANDBOX_ENABLED: bool = False
     TRANSFER_SANDBOX_SCHEDULER_ENABLED: bool = False
+    TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED: bool = False
     TRANSFER_SANDBOX_UPSTREAM_ENABLED: bool = False
     TRANSFER_SANDBOX_FRESHNESS_ENABLED: bool = False
     TRANSFER_SANDBOX_COLLECTED_STATS_ENABLED: bool = False

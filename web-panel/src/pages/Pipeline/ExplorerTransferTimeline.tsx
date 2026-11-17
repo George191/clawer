@@ -4,6 +4,7 @@ import { exactTransferReceiptFocus } from './transferReceiptFocus';
 import { Button, Modal } from '@/components/ui';
 import { fetchTransferTimeline, fetchTransferTimelineDetail } from '../../services/api';
 import type { TransferRunReceipt, TransferTimelineDetail, TransferTimelineEntry, TransferTimelineFilters } from '../../services/api';
+import { isoWeekdayName } from '../../services/scheduleTime';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 import { recordedUpstreamRule } from './upstreamRules';
 
@@ -13,7 +14,7 @@ const physicalLabels: Record<TransferTimelineEntry['physicalScope'], string> = {
   unknown: 'Physical identity unverified',
 };
 const triggerLabels: Record<NonNullable<TransferTimelineEntry['trigger']>, string> = {
-  manual: 'Manual', daily_utc: 'Daily UTC', upstream: 'Upstream commit',
+  manual: 'Manual', daily_utc: 'Daily UTC', weekly_utc: 'Weekly UTC', upstream: 'Upstream commit',
 };
 const statusLabels: Record<string, string> = {
   started: 'Request recorded', rejected: 'Rejected', outcome_unknown: 'Outcome unknown',
@@ -238,11 +239,13 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
           {shownDetail.job ? <section aria-label="Dispatch provenance">
             <h5>Dispatch provenance</h5>
             <p>{triggerLabels[shownDetail.job.kind]} · {labelStatus(shownDetail.job.state)}</p>
+            {shownDetail.job.kind === 'weekly_utc' && isoWeekdayName(shownDetail.job.scheduleWeekdayUtc) &&
+              <p>Recorded weekday (UTC): {isoWeekdayName(shownDetail.job.scheduleWeekdayUtc)}</p>}
             {shownDetail.job.group && shownDetail.job.operator && <p>Recorded condition: <strong>{recordedUpstreamRule({
               operator: shownDetail.job.operator, group: shownDetail.job.group, ruleParentPlanIds: shownDetail.job.ruleParentPlanIds,
             }).expression}</strong></p>}
             <p>Job ID: <code>{shownDetail.job.id}</code></p>
-            {shownDetail.job.dueAt && <p>{shownDetail.job.kind === 'daily_utc' ? 'Scheduled for' : 'Event set ready at'}: <TimelineTime value={shownDetail.job.dueAt} /></p>}
+            {shownDetail.job.dueAt && <p>{shownDetail.job.kind !== 'upstream' ? 'Scheduled for' : 'Event set ready at'}: <TimelineTime value={shownDetail.job.dueAt} /></p>}
             {shownDetail.job.parentEvents.length > 0 && <ul className="flow-evidence-receipts" aria-label="Parent events">
               {shownDetail.job.parentEvents.map(event => <li key={event.eventId}>
                 <div><span>Parent receipt ID</span><code>{event.parentReceiptId}</code></div>

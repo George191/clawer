@@ -282,13 +282,14 @@ export type TransferPlanInput = {
   targetTable: string;
   writeMode: 'append' | 'upsert';
   incrementalCursor?: string | null;
-  trigger: 'manual' | 'scheduled' | 'upstream';
+  trigger: 'manual' | 'scheduled' | 'upstream' | 'weekly';
   scheduleTime: string | null;
+  scheduleWeekdayUtc?: number | null;
 };
 
 export type TransferPlan = TransferPlanInput & { id: string; status: 'draft'; updatedAt: string };
 
-export type TransferRunCapabilities = { enabled: boolean; sourceSchema: string; targetSchema: string; maxRows: number; incrementalAppend: boolean; scheduledUpsert: boolean; upstreamUpsert: boolean };
+export type TransferRunCapabilities = { enabled: boolean; sourceSchema: string; targetSchema: string; maxRows: number; incrementalAppend: boolean; scheduledUpsert: boolean; upstreamUpsert: boolean; weeklyUpsert?: true };
 export type TransferRunReceipt = {
   id: string;
   planId: string;
@@ -319,6 +320,7 @@ export type TransferSchedule = {
   enabled: boolean;
   generation: number | null;
   plannedTimeUtc: string | null;
+  plannedWeekdayUtc?: number | null;
   armedForUpdatedAt: string | null;
   updatedAt: string | null;
   jobCancelAvailable?: true;
@@ -335,6 +337,7 @@ export type TransferScheduleJob = {
   generation?: number;
   cancelable?: true;
   canceledAt?: string | null;
+  scheduleWeekdayUtc?: number | null;
 };
 
 export type TransferScheduleSummary = TransferSchedule & { planId: string; planName: string; sourceTable: string; targetTable: string };
@@ -406,11 +409,11 @@ export const fetchTransferRunAttempts = (planId: string, signal?: AbortSignal): 
 export type TransferTimelineEntry = {
   id: string; kind: 'attempt' | 'receipt'; occurredAt: string; planId: string; planUpdatedAt: string | null;
   status: string; receiptId: string | null; rowsAffected: number | null;
-  physicalScope: 'current' | 'historical' | 'unknown'; trigger: 'manual' | 'daily_utc' | 'upstream' | null;
+  physicalScope: 'current' | 'historical' | 'unknown'; trigger: 'manual' | 'daily_utc' | 'weekly_utc' | 'upstream' | null;
   sourceSchema: string | null; sourceTable: string | null; finishedAt: string | null; message: string | null;
 };
 export type TransferTimelineDetail = TransferTimelineEntry & {
-  job: Partial<TransferUpstreamRecordedRule> & { id: string; kind: 'daily_utc' | 'upstream'; dueAt: string | null; state: string;
+  job: Partial<TransferUpstreamRecordedRule> & { id: string; kind: 'daily_utc' | 'weekly_utc' | 'upstream'; dueAt: string | null; state: string; scheduleWeekdayUtc?: number | null;
     parentEvents: { eventId: string; parentPlanId: string; parentReceiptId: string; eventRecordedAt: string }[];
   } | null;
 };

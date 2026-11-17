@@ -48,7 +48,7 @@ async def _context(session: AsyncSession, policy: AssetFreshnessPolicyRow, ident
     if (plan is None or plan.updated_at != policy.plan_updated_at or plan.source_schema != SANDBOX
         or plan.target_schema != SANDBOX or plan.target_table != policy.target_table
         or plan.trigger != "scheduled" or plan.write_mode != "upsert" or plan.incremental_cursor is not None
-        or plan.schedule_time is None):
+        or plan.schedule_time is None or plan.schedule_weekday_utc is not None):
         return None, None
     statement = select(TransferScheduleRow).where(TransferScheduleRow.plan_id == plan.id)
     schedule = await session.scalar(statement.with_for_update(read=True, nowait=True) if lock else statement)
@@ -216,6 +216,8 @@ async def acknowledge_daily_job(
 async def _decision(
     session: AsyncSession, row: AssetJobQualityRow, job: TransferScheduleJobRow, plan: TransferPlanRow, now: datetime,
 ):
+    if job.schedule_weekday_utc is not None:
+        return "unknown", "unverified_receipt", None, None
     if job.finished_at is not None and not job.slot <= job.finished_at <= now:
         return "unknown", "outcome_unknown", None, None
     if job.state == "committed" and job.finished_at and job.receipt_id:
@@ -273,6 +275,7 @@ async def evaluate_daily_job_quality(
         return
     job = await session.scalar(select(TransferScheduleJobRow).where(
         TransferScheduleJobRow.plan_id == row.plan_id, TransferScheduleJobRow.generation == row.schedule_generation,
+        TransferScheduleJobRow.schedule_weekday_utc.is_(None),
         TransferScheduleJobRow.slot > row.reviewed_at, TransferScheduleJobRow.slot <= expected,
     ).order_by(TransferScheduleJobRow.slot.desc()).limit(1))
     if job is None or job.slot != expected:
