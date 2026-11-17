@@ -4,6 +4,7 @@ import { checkPreviewIndexCoverage } from '../../services/api';
 import type { PreviewIndexCoverageInput, PreviewIndexCoverageOperator, PreviewIndexCoverageState, PreviewIndexCoverageTerm } from '../../services/api';
 import type { ExplorerFilter } from './explorerFilters';
 import { useSandboxIdentity } from './SandboxMarkings';
+import ExplorerIndexedCompoundSample, { compoundSamplePredicate } from './ExplorerIndexedCompoundSample';
 import ExplorerIndexedIdSample from './ExplorerIndexedIdSample';
 
 const operators: Partial<Record<string, PreviewIndexCoverageOperator>> = {
@@ -79,12 +80,15 @@ export default function ExplorerIndexCoverage({ schema, table, rules, columnType
     input = { terms };
   }
   const sampleTerm = input && !('terms' in input) ? rules[0] : undefined;
+  const compound = allowSample && input && 'terms' in input ? compoundSamplePredicate(rules, types) : undefined;
   // This key is only local UI state: changing a literal invalidates the prior check without sending the literal.
   return <>
     <CoverageCheck key={JSON.stringify([identity, schema, table, rules, types, conflictingOptions])}
       schema={schema} table={table} input={input} />
     {allowSample && <ExplorerIndexedIdSample key={JSON.stringify([identity, schema, table])} schema={schema} table={table}
       candidate={sampleTerm ? { field: sampleTerm.field, operator: sampleTerm.operator, value: sampleTerm.value } : undefined} />}
+    {compound && <ExplorerIndexedCompoundSample key={JSON.stringify(['compound', identity, schema, table])}
+      identity={identity} schema={schema} table={table} predicate={compound} reviewKey={JSON.stringify([rules, types])} />}
   </>;
 }
 

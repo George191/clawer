@@ -1292,6 +1292,15 @@ export const fetchIndexedIdSample = (schema: string, table: string, signal?: Abo
 export const queryIndexedIdSample = (schema: string, table: string, predicate: IndexedIdSamplePredicate, signal?: AbortSignal): Promise<IndexedIdSampleResult> =>
   client.post(indexedIdSamplePath(schema, table), predicate, { signal }).then(r => unwrap<IndexedIdSampleResult>(r.data));
 
+export type IndexedCompoundSamplePredicate = { tenantId: string; groupId: string; idFrom: string; idTo: string };
+const indexedCompoundSamplePath = (schema: string, table: string) =>
+  `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/indexed-compound-id-sample`;
+export const fetchIndexedCompoundSample = (schema: string, table: string, signal?: AbortSignal): Promise<IndexedIdSampleCapability> =>
+  client.get(indexedCompoundSamplePath(schema, table), { signal }).then(r => unwrap<IndexedIdSampleCapability>(r.data));
+export const queryIndexedCompoundSample = (schema: string, table: string, predicate: IndexedCompoundSamplePredicate, signal?: AbortSignal): Promise<IndexedIdSampleResult> =>
+  client.post(indexedCompoundSamplePath(schema, table), predicate, { signal }).then(r => unwrap<IndexedIdSampleResult>(r.data));
+
+
 export type TableLineageCommonDownstream = Omit<TableLineageCommonUpstream, 'ancestor'> & { descendant: TableLineageIdentity | null };
 export const fetchTableLineageCommonDownstream = (source: TableLineageIdentity, target: TableLineageIdentity, signal?: AbortSignal): Promise<TableLineageCommonDownstream> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-common-downstream`, {

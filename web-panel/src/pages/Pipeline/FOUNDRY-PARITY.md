@@ -11,7 +11,7 @@
 | 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC，普通沙箱内部 Upsert 另可单独配置每周一个 UTC 时段。本地 1–3 个上游的平面 AND/OR，以及三个上游的有限括号组合，都复用现有 Automation Center；实际使用的上游事件、当时审核的规则与子回执分开。另支持单个每日 UTC 时点与此前已观察到的上游条件组合。 | 仍需验收更通用的时间与事件组合、更多层条件、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自有影响行的提交回执，独立本地视图核验手工及新捕获的 Daily/Weekly UTC 两端物理证据；受管增量资产可展开一个已审核上游，区分真实正数提交、未观察及目标身份更换后的历史。财报 Evidence 的声明路径不代表生产逐边验证。普通可见表可从 Explorer 定位并展开有限两跳，或选择另一张可见表查找最多四跳的有向引用路径及共同上游、共同下游；分别显示声明关系和物理外键，并可按真实列映射和复合外键查看字段引用。 | 继续验收跨转换字段级影响及更广的资源路径，并把可验证运行证据与声明分开，不能用草稿绘成已提交的血缘。 |
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。受管增量资产可查独立回执、无新数据和可精确归因的手工/调度尝试。现有 Automation 可取消尚无执行尝试的一条每日 UTC 作业并保留终态，不伪造资产归属。运行时间线可在分页前按日期和真实结果筛选，已有两端证据的手工及普通定时传输能直达重新核对权限后的原回执。仍未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
-| 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；固定合成资产已验证有界主键索引预检、阻断后的零行查询、游标翻页和断连取消，并能查沙箱运行历史。已审核的本地沙箱目标可查看后台存下的表级规划器行数估计。普通筛选可显式检查单条件或 2–3 个 AND 条件能否匹配一个 B-tree 的连续查找键前缀，不自动执行；已分别审核的普通表可另行运行单条件、仅返回 ID 的索引验证抽样。 | 通用大表仍需扩大可接受的索引路径、可验证的执行预算和列级已采集统计，不能在交互请求中隐式扫描业务表。 |
+| 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；固定合成资产已验证有界主键索引预检、阻断后的零行查询、游标翻页和断连取消，并能查沙箱运行历史。已审核的本地沙箱目标可查看后台存下的表级规划器行数估计。普通筛选可显式检查单条件或 2–3 个 AND 条件能否匹配一个 B-tree 的连续查找键前缀，不自动执行；审核过的本地表可另行执行单条件或固定复合条件的仅 ID 索引抽样。 | 通用大表仍需扩大可接受的索引路径、可验证的执行预算和列级已采集统计，不能在交互请求中隐式扫描业务表。 |
 | 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警；可分别审核 Daily 和 Weekly UTC 结果，区分确认目标拒绝、正数提交和未知。固定合成表可区分最新索引字段时间与已核实的同步提交，并可有界核验「至少 N 行」，不宣称精确总数。 | 验收通用 schema、更广的逻辑数据规模、其他作业/调度类型、更广的字段新鲜度及告警范围，不用财报日期冒充同步时间。 |
 | 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；合成 CDC 可查看、比较真实提交快照；沙箱 Builder 可对已存版本筛选、映射和保存不可变配置，也可用同一合成流的另一封存版本按 ID 匹配并保留双输入标记；可另行确认提交受保护输出，再比较两份封存版本或跨明确选择的 2–5 份兼容版本追查一条记录，无需重跑。 | 继续验收通用图编排、生产资产快照、全量历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
 | 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执；隔离 CDC 版本、Builder 配置和输出已验证标记继承、加严和拒绝。封存输出可单独预检授权范围，另行确认后在同一隔离库提交保留标记的私有交接。独立获授权的接收方可按 ID 核实已记录回执，不获得正文或发送权限。 | 继续验收通用资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
@@ -371,6 +371,12 @@
 
 - 在原筛选之外提供独立的显式抽样，只给部署方审核、栏位权限和物理身份均匹配的当前普通表。部署端需在环回数据库单独预置 `public.ontology_explorer_indexed_sample_identity(marker uuid PRIMARY KEY)` 的一条记录，以及最多三个表与索引的精确物理绑定。首版仅支持单列 bigint 主键等值或范围，最多显示 20 个 ID（额外一个探知是否还有更多），不读其它列或自动应用普通筛选。
 - 用预计执行的同一参数化语句验证 PostgreSQL 计划。表或索引身份变化、锁忙、计划包含全表扫描或不支持的节点时明确拒绝，不回退普通查询。精确保留大整数；数据行数量有界，不承诺固定次数的物理 I/O。
+
+### 复合索引保护的 ID 抽样
+
+- 独立开关只允许一个审核过的本地普通表及其精确物理主键索引 `(tenant_id, group_id, id)`。前两列须为等值，`id` 须有含两端的有界 bigint 区间；所有整数按字符串传递，不做 JavaScript 数字转换。当前角色必须有 schema 及参与列的读取权限。
+- 实际读取前，使用同一 SQL 和绑定值验证 PostgreSQL 选中了已审核的原生复合索引，并以该索引执行全部四个条件。其他索引、顺序扫描、额外过滤或排序、身份变化及锁超时都拒绝，不回退；通过时只返回最多 20 个 ID，不返回业务列。现有 Apply、单条件抽样和目录建议不变。默认关闭，仅隔离验证，未部署。
+- 执行前需取得固定表的立即共享锁。PostgreSQL 17 的低权限验收仅在该固定表另获 MAINTAIN，其余不扩张；只有 SELECT 无法取得该锁时安全拒绝。
 - 验收真实大普通表、精确审批列表与权限、索引重建、实际无读行拒绝、取消和现有 Apply 兼容性；默认关闭，只用隔离数据，不部署。
 
 ### 两张可见表的共同下游引用

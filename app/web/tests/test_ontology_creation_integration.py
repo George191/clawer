@@ -14,10 +14,10 @@ from app.etl.schema import ontology
 from app.etl.schema.object_relations import OBJECT_RELATIONS_DDL_STATEMENTS
 from app.storage.postgres_client import PostgresClient
 from app.web.api.models.etl import PreviewCompositeIndexCoverageRequest, PreviewIndexCoverageRequest
-from app.web.api.models.indexed_id_sample import IndexedSampleRequest
+from app.web.api.models.indexed_id_sample import IndexedCompoundSampleRequest, IndexedSampleRequest
 from app.web.core.config import settings
-from app.web.core.config.indexed_sample import IndexedSampleScope
-from app.web.services import indexed_id_sample as indexed
+from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope
+from app.web.services import indexed_compound_id_sample as compound, indexed_id_sample as indexed
 from app.web.services.etl_layers import EtlLayers
 from app.web.services.etl_workspace import EtlWorkspace
 from app.web.services.preview_index_coverage import preview_index_coverage
@@ -152,6 +152,73 @@ class OntologyCreationIntegration(unittest.IsolatedAsyncioTestCase):
                 await self.pg.execute(f"REINDEX INDEX {SCHEMA}.narrow_pkey")
                 self.assertFalse((await capability()).available)
                 self.assertEqual((await sample(idEquals="5")).reason, "scope_unavailable")
+
+    async def test_verified_compound_id_sample_requires_exact_native_prefix_and_both_bounds(self):
+        marker = uuid4()
+        marker_table = "public.ontology_explorer_indexed_sample_identity"
+        table = f"{SCHEMA}.compound_ids"
+        async with self.pg.session() as session:
+            for sql in (
+                f"CREATE TABLE {marker_table} (marker uuid PRIMARY KEY)",
+                f"CREATE TABLE {table} (tenant_id bigint, group_id bigint, id bigint, secret text, "
+                "PRIMARY KEY (tenant_id,group_id,id))",
+                f"INSERT INTO {table} SELECT tenant, grp, id, 'never returned' "
+                "FROM generate_series(1,100) tenant, generate_series(1,20) grp, generate_series(1,80) id",
+                f"INSERT INTO {table} VALUES(-9223372036854775808,9223372036854775807,-9223372036854775808,'secret')",
+                f"ANALYZE {table}",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text(f"INSERT INTO {marker_table} VALUES (:marker)"), {"marker": marker})
+            profile = (await session.execute(text(f"""
+                SELECT current_database() AS database, '{SCHEMA}' AS schema, 'compound_ids' AS "table",
+                    c.oid::bigint AS "heapOid", pg_relation_filenode(c.oid)::bigint AS "heapFilenode",
+                    i.indexrelid::bigint AS "indexOid", pg_relation_filenode(i.indexrelid)::bigint AS "indexFilenode"
+                FROM pg_class c JOIN pg_index i ON i.indrelid=c.oid AND i.indisprimary
+                WHERE c.oid='{table}'::regclass
+            """))).mappings().one()
+        self.addAsyncCleanup(self.pg.execute, f"DROP TABLE {marker_table}")
+        profile = IndexedCompoundSampleScope.model_validate(profile)
+        request = IndexedCompoundSampleRequest(tenantId="2", groupId="5", idFrom="4", idTo="41")
+
+        async def cap():
+            async with self.pg.session() as session:
+                return await compound.indexed_compound_sample_capability(session, SCHEMA, "compound_ids")
+
+        async def sample(payload=request):
+            async with self.pg.session() as session:
+                return await compound.sample_indexed_compound_ids(session, SCHEMA, "compound_ids", payload)
+
+        with (patch.object(settings, "ENVIRONMENT", "local"),
+              patch.object(settings, "ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_PROFILE", profile),
+              patch.object(settings, "ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER", marker)):
+            self.assertFalse((await cap()).available)
+            with patch.object(settings, "ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_ENABLED", True):
+                self.assertEqual((await cap()).model_dump(), {"available": True, "limit": 20})
+                positive = await sample()
+                self.assertEqual(positive.ids, [str(n) for n in range(4, 24)], positive.model_dump())
+                self.assertTrue(positive.hasMore)
+                exact = await sample(IndexedCompoundSampleRequest(
+                    tenantId="-9223372036854775808", groupId="9223372036854775807",
+                    idFrom="-9223372036854775808", idTo="9223372036854775807",
+                ))
+                self.assertEqual(exact.ids, ["-9223372036854775808"], exact.model_dump())
+                self.assertFalse(exact.hasMore)
+                async with self.pg.session() as writer:
+                    await writer.execute(text(f"LOCK TABLE ONLY {table} IN ROW EXCLUSIVE MODE"))
+                    with patch.object(compound, "_approved_plan", side_effect=AssertionError("busy table reached EXPLAIN")):
+                        self.assertEqual((await sample()).reason, "query_unavailable")
+                original_limits = compound._limits
+
+                async def without_index(session):
+                    await original_limits(session)
+                    for knob in ("enable_indexscan", "enable_indexonlyscan", "enable_bitmapscan"):
+                        await session.execute(text(f"SET LOCAL {knob}=off"))
+
+                with patch.object(compound, "_limits", without_index):
+                    self.assertEqual((await sample()).reason, "unsupported_plan")
+                await self.pg.execute(f"REINDEX INDEX {SCHEMA}.compound_ids_pkey")
+                self.assertFalse((await cap()).available)
+                self.assertEqual((await sample()).reason, "scope_unavailable")
 
     async def test_index_coverage_uses_only_visible_native_leading_keys_and_column_privileges(self):
         role = "helio_coverage_" + uuid4().hex[:12]

@@ -19,7 +19,7 @@ from sqlalchemy.engine import make_url
 from typing_extensions import Self
 
 from app.storage.postgres_client import _resolved_pg_url
-from app.web.core.config.indexed_sample import IndexedSampleScope
+from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope
 from app.web.core.config.sandbox_handoff import HandoffClearance, HandoffCopyGrant, HandoffSinkGrant
 
 def parse_cors(v: Any) -> list[str] | str:
@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     ONTOLOGY_SANDBOX_PIPELINE_MATCH_ENABLED: bool = False
     ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED: bool = False
     ONTOLOGY_INDEX_PREVIEW_SANDBOX_ENABLED: bool = False
+    ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_ENABLED: bool = False
+    ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_PROFILE: IndexedCompoundSampleScope | None = None
     ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ENABLED: bool = False
     ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER: UUID | None = None
     ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ALLOWLIST: Annotated[list[IndexedSampleScope], Field(max_length=3)] = []

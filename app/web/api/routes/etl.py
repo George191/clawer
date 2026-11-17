@@ -18,7 +18,7 @@ from app.web.api.models.lineage_neighbors import (
     LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
     LineagePathTargets, ObservedLineage,
 )
-from app.web.api.models.indexed_id_sample import IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult
+from app.web.api.models.indexed_id_sample import IndexedCompoundSampleRequest, IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
 from app.web.api.models.asset_collected_stats import AssetCollectedStats
 from app.web.api.models.asset_freshness import (
@@ -147,6 +147,7 @@ from app.web.services import etl_runtime
 from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
+from app.web.services.indexed_compound_id_sample import indexed_compound_sample_capability, sample_indexed_compound_ids
 from app.web.services.indexed_id_sample import indexed_sample_capability, sample_indexed_ids
 from app.web.services.lineage_column_references import read_lineage_column_references
 from app.web.services.preview_index_coverage import preview_index_coverage
@@ -1203,6 +1204,37 @@ async def object_preview(layer: str, table: str, includeHidden: bool = False,
     if includeHidden:
         return await get_etl_layers().preview(layer, table, include_hidden=True)
     return await get_etl_layers().preview(layer, table)
+
+
+@write.get("/{schema}/{table}/indexed-compound-id-sample")
+async def get_indexed_compound_id_sample(
+    schema: WarehouseSchema, table: TableName, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexedSampleCapability:
+    if request.query_params:
+        raise HTTPException(422, "Indexed compound ID sample capability accepts no query parameters")
+    response.headers["Cache-Control"] = "private, no-store"
+    return await indexed_compound_sample_capability(session, schema, table)
+
+
+@write.post("/{schema}/{table}/indexed-compound-id-sample")
+async def post_indexed_compound_id_sample(
+    schema: WarehouseSchema, table: TableName, payload: IndexedCompoundSampleRequest, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexedSampleResult:
+    if request.query_params:
+        raise HTTPException(422, "Indexed compound ID sample accepts only its fixed predicate body")
+    response.headers["Cache-Control"] = "private, no-store"
+
+    async def wait_for_disconnect() -> None:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    return await run_bounded_index_query(
+        sample_indexed_compound_ids(session, schema, table, payload), wait_for_disconnect(),
+        IndexedSampleResult(state="blocked", reason="query_unavailable"),
+        cancelled_message="Indexed compound ID sample was cancelled",
+    )
 
 
 @write.get("/{schema}/{table}/indexed-id-sample")
