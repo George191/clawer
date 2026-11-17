@@ -26,21 +26,23 @@ def _incident(row: AssetQualityIncidentRow) -> AssetQualityIncident:
                                 acknowledgedAt=row.acknowledged_at, closedAt=row.closed_at, closeReason=row.close_reason)
 
 
-def _kind_filter(daily_only: bool, field_only: bool):
+def _kind_filter(daily_only: bool, field_only: bool, min_rows_only: bool):
     if daily_only:
         return AssetQualityIncidentRow.kind == "daily_job"
     if field_only:
         return AssetQualityIncidentRow.kind == "field_time"
-    return AssetQualityIncidentRow.kind.notin_(("daily_job", "field_time"))
+    if min_rows_only:
+        return AssetQualityIncidentRow.kind == "minimum_rows"
+    return AssetQualityIncidentRow.kind.notin_(("daily_job", "field_time", "minimum_rows"))
 
 
 async def list_quality_incidents(
-    session: AsyncSession, policy: AssetFreshnessPolicyRow, *, daily_only: bool = False, field_only: bool = False,
+    session: AsyncSession, policy: AssetFreshnessPolicyRow, *, daily_only: bool = False, field_only: bool = False, min_rows_only: bool = False,
 ) -> AssetQualityIncidentLists:
     """Return at most three active check incidents and bounded terminal history."""
     query = select(AssetQualityIncidentRow).where(
         AssetQualityIncidentRow.target_table == policy.target_table,
-        _kind_filter(daily_only, field_only),
+        _kind_filter(daily_only, field_only, min_rows_only),
     )
     active = (await session.scalars(query.where(
         AssetQualityIncidentRow.closed_at.is_(None), AssetQualityIncidentRow.generation == policy.generation,
@@ -88,12 +90,12 @@ async def supersede_quality_incidents(
 
 async def acknowledge_quality_incident_locked(
     session: AsyncSession, policy: AssetFreshnessPolicyRow, incident_id: UUID,
-    expected_generation: int, actor_id: UUID, now: datetime, *, daily_only: bool = False, field_only: bool = False,
+    expected_generation: int, actor_id: UUID, now: datetime, *, daily_only: bool = False, field_only: bool = False, min_rows_only: bool = False,
 ) -> AssetQualityIncident:
     """Acknowledge once while keeping the condition active until evaluation recovers."""
     row = (await session.scalars(select(AssetQualityIncidentRow).where(
         AssetQualityIncidentRow.id == incident_id, AssetQualityIncidentRow.target_table == policy.target_table,
-        _kind_filter(daily_only, field_only),
+        _kind_filter(daily_only, field_only, min_rows_only),
     ))).one_or_none()
     if row is None:
         raise HTTPException(404, "Asset quality incident not found")

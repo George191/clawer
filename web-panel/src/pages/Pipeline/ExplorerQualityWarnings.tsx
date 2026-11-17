@@ -5,6 +5,7 @@ import type { AssetFreshness, AssetQualityIncident } from '../../services/api';
 const kindLabels: Record<AssetQualityIncident['kind'], string> = {
   freshness: 'Transfer freshness', schema: 'Schema check', heap_size: 'Heap size check', daily_job: 'Scheduled transfer outcome',
   field_time: 'Field data freshness',
+  minimum_rows: 'Minimum row health',
 };
 const statusLabels: Record<AssetQualityIncident['status'], string> = {
   open: 'Open', acknowledged: 'Acknowledged · still open', recovered: 'Recovered', superseded: 'Superseded',
@@ -16,6 +17,7 @@ const reasonLabels: Record<AssetQualityIncident['reason'], string> = {
   above_maximum: 'The heap exceeds the configured maximum.',
   target_rejected: 'The reviewed scheduled job was definitively rejected by its target.',
   field_lag: 'The confirmed sync and field timestamp were farther apart than the reviewed lag threshold.',
+  row_threshold: 'The bounded observation verified fewer rows than the reviewed minimum.',
 };
 const closeLabels: Record<NonNullable<AssetQualityIncident['closeReason']>, string> = {
   healthy: 'A later evaluation confirmed recovery.',

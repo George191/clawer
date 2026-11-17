@@ -135,6 +135,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.mixed_migration = import_module("app.web.alembic.versions.67bd926fa4d1_ontology_mixed_upstream")
         self.cancel_migration = import_module("app.web.alembic.versions.21fe23589f8d_ontology_daily_job_cancel")
         self.field_freshness_migration = import_module("app.web.alembic.versions.68ff119daf40_ontology_field_freshness")
+        self.min_rows_migration = import_module("app.web.alembic.versions.b0be6e75c221_ontology_asset_min_rows")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
         self.incident_migration = import_module(
@@ -173,6 +174,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.mixed_migration.upgrade)
             await self.migrate(session, self.cancel_migration.upgrade)
             await self.migrate(session, self.field_freshness_migration.upgrade)
+            await self.migrate(session, self.min_rows_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -187,6 +189,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         async with self.pg.session() as session:
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_daily_job_quality, "
                                        "public.ontology_transfer_schedule_target_rejections"))
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_min_rows"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_field_freshness"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_collected_stats"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_incidents"))
@@ -210,6 +213,101 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 await session.execute(text(f"DROP SCHEMA {schema} CASCADE"))
             await session.execute(text("DROP SCHEMA IF EXISTS ts_transfer_sandbox CASCADE"))
 
+    async def test_min_rows_uses_only_exact_prefix_and_opens_then_recovers_on_new_receipt(self):
+        from app.web.services.asset_min_rows import _verified_plan as verify_prefix
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.minimum_source (id bigint PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.field_freshness_fixture (id bigint PRIMARY KEY)",
+                "INSERT INTO ts_transfer_sandbox.minimum_source VALUES (1)",
+            ):
+                await session.execute(text(sql))
+            await self.migrate(session, self.min_rows_migration.downgrade)
+            await self.migrate(session, self.min_rows_migration.upgrade)
+        route = "/etl/asset-freshness/ts_transfer_sandbox/field_freshness_fixture"
+        path = route + "/min-rows"
+        config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                  "sourceTable": "minimum_source", "targetTable": "field_freshness_fixture", "writeMode": "upsert"}
+        tick = datetime.now(timezone.utc) + timedelta(minutes=1)
+
+        async def check():
+            nonlocal tick
+            async with self.pg.session() as session:
+                await evaluate_due_asset_freshness(session, now=tick)
+            tick += timedelta(minutes=1)
+
+        with (patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+              patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+              patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+              patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+              patch.object(settings, "TRANSFER_SANDBOX_MIN_ROWS_ENABLED", True),
+              patch.object(settings, "ENVIRONMENT", "local")):
+            async with api(True, self.session_provider) as client:
+                created = await client.post(RUNS, json=config)
+                self.assertEqual(created.status_code, 201, created.text)
+                plan = created.json()
+                payload = {"planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"],
+                           "expectedGeneration": None, "thresholdMinutes": 5, "enabled": True}
+                self.assertEqual((await client.put(route, json=payload)).status_code, 200)
+
+                async def transfer():
+                    response = await client.post(f"{RUNS}/{plan['id']}/runs", json={
+                        "requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"],
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+                    return response.json()
+
+                first = await transfer()
+                self.assertEqual(first["rowsAffected"], 1)
+                review = {"expectedGeneration": 0, "policyGeneration": 1, "minimumRows": 3}
+                for bad in (0, 101, True, "3"):
+                    self.assertEqual((await client.put(path, json={**review, "minimumRows": bad})).status_code, 422)
+                status = await client.put(path, json=review)
+                self.assertEqual(status.status_code, 200, status.text)
+                self.assertEqual(status.json()["reason"], "no_verified_receipt")
+                with patch("app.web.services.asset_min_rows._verified_plan", side_effect=AssertionError("old receipt qualified")) as proof:
+                    await check()
+                    proof.assert_not_called()
+
+                await transfer()
+                with patch("app.web.services.asset_min_rows._verified_plan", wraps=verify_prefix) as proof:
+                    await check()
+                    self.assertTrue(proof.called)
+                low = (await client.get(path)).json()
+                self.assertEqual((low["state"], low["minimumRows"], low["incident"]["status"]),
+                                 ("below_minimum", 3, "open"), low)
+                self.assertEqual((low["incident"]["kind"], low["incident"]["reason"]), ("minimum_rows", "row_threshold"))
+                self.assertFalse({"rowCount", "rows", "ids", "rowsAffected"} & set(low))
+                with patch("app.web.services.asset_min_rows._verified_plan", side_effect=AssertionError("duplicate measurement")) as proof:
+                    await check()
+                    proof.assert_not_called()
+                self.assertEqual((await client.get(path)).json()["checkedAt"], low["checkedAt"])
+                ack = await client.post(path + f"/incidents/{low['incident']['id']}/acknowledge", json={"expectedGeneration": 1})
+                self.assertEqual(ack.status_code, 200, ack.text)
+                self.assertEqual(ack.json()["status"], "acknowledged")
+
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.minimum_source VALUES (2),(3)")
+                await transfer()
+                async with self.pg.session() as writer:
+                    await writer.execute(text("LOCK TABLE ONLY ts_transfer_sandbox.field_freshness_fixture IN ROW EXCLUSIVE MODE"))
+                    with patch("app.web.services.asset_min_rows._verified_plan", side_effect=AssertionError("busy plan")) as proof:
+                        await check()
+                        proof.assert_not_called()
+                unknown = (await client.get(path)).json()
+                self.assertEqual((unknown["state"], unknown["incident"]["status"]), ("unknown", "acknowledged"))
+                await check()
+                recovered = (await client.get(path)).json()
+                self.assertEqual((recovered["state"], recovered["incident"]["status"]), ("healthy", "recovered"), recovered)
+                self.assertEqual(recovered["incident"]["id"], low["incident"]["id"])
+                await self.pg.execute("REINDEX INDEX ts_transfer_sandbox.field_freshness_fixture_pkey")
+                self.assertEqual((await client.get(path)).json()["state"], "superseded")
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot remove reviewed minimum-row"):
+            async with self.pg.session() as session:
+                await self.migrate(session, self.min_rows_migration.downgrade)
+
     async def test_indexed_field_time_uses_new_exact_receipts_and_tied_times_are_neutral(self):
         async with self.pg.session() as session:
             for sql in (
@@ -220,8 +318,10 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 await session.execute(text(sql))
             # Empty post-migrate downgrade is reversible; a real review below must block it.
+            await self.migrate(session, self.min_rows_migration.downgrade)
             await self.migrate(session, self.field_freshness_migration.downgrade)
             await self.migrate(session, self.field_freshness_migration.upgrade)
+            await self.migrate(session, self.min_rows_migration.upgrade)
         route = "/etl/asset-freshness/ts_transfer_sandbox/field_freshness_fixture"
         field = route + "/field-freshness"
         config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
@@ -295,6 +395,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Cannot remove reviewed field freshness"):
             async with self.pg.session() as session:
+                await self.migrate(session, self.min_rows_migration.downgrade)
                 await self.migrate(session, self.field_freshness_migration.downgrade)
 
     async def test_freshness_confirms_exact_physical_receipts_and_handles_stale_checks(self):
@@ -678,6 +779,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.min_rows_migration.downgrade)
             await self.migrate(session, self.field_freshness_migration.downgrade)
             await self.migrate(session, self.cancel_migration.downgrade)
             await self.migrate(session, self.mixed_migration.downgrade)

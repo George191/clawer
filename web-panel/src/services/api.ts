@@ -500,9 +500,9 @@ export type AssetQualityCheck = AssetQualityResult & {
   history: (Omit<AssetQualityResult, 'validUntil'> & { id: string; generation: number })[];
 };
 export type AssetQualityIncident = {
-  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job' | 'field_time';
+  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job' | 'field_time' | 'minimum_rows';
   status: 'open' | 'acknowledged' | 'recovered' | 'superseded';
-  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum' | 'target_rejected' | 'field_lag';
+  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum' | 'target_rejected' | 'field_lag' | 'row_threshold';
   openedAt: string; lastConfirmedAt: string; acknowledgedAt: string | null; closedAt: string | null;
   closeReason: 'healthy' | 'policy_paused' | 'policy_reviewed' | 'schema_baseline_captured' | 'schedule_changed' | 'target_changed' | null;
 };
@@ -1242,3 +1242,17 @@ export type ColumnLineageReferences = {
 export const fetchColumnLineageReferences = (source: TableLineageIdentity, column: string, direction: TableLineageDirection, signal?: AbortSignal): Promise<ColumnLineageReferences> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-column-references`,
     { params: { column, direction }, signal }).then(r => unwrap<ColumnLineageReferences>(r.data));
+
+export type MinimumRowHealth = {
+  enabled: boolean; generation: number; policyGeneration: number | null; minimumRows: number | null;
+  state: 'unconfigured' | 'unknown' | 'healthy' | 'below_minimum' | 'superseded'; reason: string | null;
+  receiptRecordedAt: string | null; checkedAt: string | null; validUntil: string | null; incident: AssetQualityIncident | null;
+};
+export type MinimumRowHealthReview = { expectedGeneration: number; policyGeneration: number; minimumRows: number };
+const minimumRowHealthPath = `${assetFreshnessPath('ts_transfer_sandbox', 'field_freshness_fixture')}/min-rows`;
+export const fetchMinimumRowHealth = (signal?: AbortSignal): Promise<MinimumRowHealth> =>
+  client.get(minimumRowHealthPath, { signal }).then(r => unwrap<MinimumRowHealth>(r.data));
+export const reviewMinimumRowHealth = (request: MinimumRowHealthReview): Promise<MinimumRowHealth> =>
+  client.put(minimumRowHealthPath, request).then(r => unwrap<MinimumRowHealth>(r.data));
+export const acknowledgeMinimumRowHealthIncident = (id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${minimumRowHealthPath}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
