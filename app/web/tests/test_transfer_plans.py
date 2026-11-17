@@ -2368,6 +2368,142 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(after_peer_reset["state"], "current", after_peer_reset)
                 self.assertEqual(after_peer_reset["current"]["lastAnalyzedAt"], before_peer_reset["lastAnalyzedAt"])
 
+    async def test_weekly_quality_evidence_reproves_the_exact_latest_scoped_outcome(self):
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+        migration = import_module("app.web.alembic.versions.af834982b6d1_ontology_weekly_job_quality")
+
+        async with self.pg.session() as session:
+            await self.migrate(session, migration.upgrade)
+            for sql in (
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.evid_source (id int PRIMARY KEY, value text NOT NULL)",
+                "INSERT INTO ts_transfer_sandbox.evid_source VALUES (1,'collision')",
+                "CREATE TABLE ts_transfer_sandbox.evid_good (id int PRIMARY KEY, value text NOT NULL UNIQUE)",
+                "CREATE TABLE ts_transfer_sandbox.evid_bad (id int PRIMARY KEY, value text NOT NULL UNIQUE)",
+                "CREATE TABLE ts_transfer_sandbox.evid_legacy (id int PRIMARY KEY, value text NOT NULL UNIQUE)",
+                "INSERT INTO ts_transfer_sandbox.evid_bad VALUES (2,'collision')",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TABLE public.ontology_asset_weekly_job_quality")
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+        slot = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+        review_at = slot - timedelta(hours=1)
+        now = review_at
+
+        class DraftClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return review_at.astimezone(tz) if tz is not None else review_at.replace(tzinfo=None)
+
+        root = "/etl/asset-freshness/ts_transfer_sandbox"
+        query = {"expectedGeneration": "1", "expectedSlot": slot.isoformat()}
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", True),
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_schedules._utc_now", return_value=review_at),
+            patch("app.web.services.asset_freshness._utc_now", side_effect=lambda: now),
+            patch("app.web.services.asset_weekly_job_quality._utc_now", side_effect=lambda: now),
+        ):
+            async with api(True, self.session_provider) as client:
+                plans = {}
+                for table in ("evid_good", "evid_bad", "evid_legacy"):
+                    with patch("app.web.services.transfer_plans.datetime", DraftClock):
+                        created = await client.post(RUNS, json={
+                            **PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                            "sourceTable": "evid_source", "targetTable": table, "writeMode": "upsert", "trigger": "weekly",
+                            "scheduleTime": slot.strftime("%H:%M"), "scheduleWeekdayUtc": slot.isoweekday(),
+                        })
+                    self.assertEqual(created.status_code, 201, created.text)
+                    plan = created.json()
+                    plans[table] = plan
+                    armed = await client.put(f"{RUNS}/{plan['id']}/schedule", json={
+                        "enabled": True, "expectedUpdatedAt": plan["updatedAt"],
+                    })
+                    self.assertEqual(armed.status_code, 200, armed.text)
+                    policy = await client.put(f"{root}/{table}", json={
+                        "planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"], "expectedGeneration": None,
+                        "thresholdMinutes": 30, "enabled": True,
+                    })
+                    self.assertEqual(policy.status_code, 200, policy.text)
+                    reviewed = await client.put(f"{root}/{table}/weekly-job-quality", json={
+                        "planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"], "expectedGeneration": None,
+                        "expectedFreshnessGeneration": 1, "expectedScheduleGeneration": 1,
+                    })
+                    self.assertEqual(reviewed.status_code, 200, reviewed.text)
+
+                async def evidence(table, params=query):
+                    return await client.get(f"{root}/{table}/weekly-job-quality/evidence", params=params)
+
+                missing = await evidence("evid_good")
+                self.assertEqual(missing.status_code, 404)
+                now = datetime.now(timezone.utc)
+                async with self.pg.session() as session:
+                    self.assertEqual(len(await collect_due_transfer_jobs(session, now=now)), 3)
+                jobs = {str(row["plan_id"]): row["id"] for row in await self.pg.fetch_all(
+                    "SELECT plan_id,id FROM ontology_transfer_schedule_jobs",
+                )}
+                for table, plan in plans.items():
+                    with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", table != "evid_legacy"):
+                        async with self.pg.session() as session:
+                            state = await execute_transfer_schedule_job(session, jobs[plan["id"]])
+                            self.assertEqual(state, "rejected" if table == "evid_bad" else "committed")
+                now = datetime.now(timezone.utc)
+                async with self.pg.session() as session:
+                    self.assertEqual((await evaluate_due_asset_freshness(session, now=now))["checked"], 3)
+
+                good = await evidence("evid_good")
+                self.assertEqual(good.status_code, 200, good.text)
+                self.assertEqual(good.headers["cache-control"], "private, no-store")
+                self.assertEqual(set(good.json()), {"kind", "jobId", "slot", "finishedAt", "receiptId", "recordedAt", "rowsAffected"})
+                self.assertEqual((good.json()["kind"], good.json()["rowsAffected"]), ("receipt", 1))
+                self.assertEqual(good.json()["jobId"], str(jobs[plans["evid_good"]["id"]]))
+                bad = await evidence("evid_bad")
+                self.assertEqual(bad.status_code, 200, bad.text)
+                self.assertEqual(set(bad.json()), {"kind", "jobId", "slot", "finishedAt", "attemptId", "startedAt", "attemptFinishedAt"})
+                self.assertEqual(bad.json()["kind"], "target_constraint")
+                self.assertEqual((await evidence("evid_legacy")).json(), missing.json())
+                self.assertEqual((await evidence("evid_good", {**query, "expectedGeneration": "2"})).json(), missing.json())
+                self.assertEqual((await evidence("evid_good", {**query, "expectedSlot": (slot - timedelta(days=7)).isoformat()})).json(),
+                                 missing.json())
+                self.assertEqual((await evidence("evid_good", {**query, "runId": good.json()["receiptId"]})).status_code, 422)
+                self.assertEqual((await evidence("evid_good", {**query, "expectedSlot": "1234"})).status_code, 422)
+                self.assertEqual((await evidence("evid_good", [*query.items(), ("expectedGeneration", "1")])).status_code, 422)
+                offset_slot = slot.astimezone(timezone(timedelta(hours=8))).isoformat()
+                self.assertEqual((await evidence("evid_good", {**query, "expectedSlot": offset_slot})).json(), good.json())
+                async with api(False, self.session_provider) as reader:
+                    self.assertEqual((await reader.get(f"{root}/evid_good/weekly-job-quality/evidence",
+                                                       params=query)).status_code, 403)
+                with patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED", False):
+                    self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
+                    self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                    self.assertEqual((await evidence("evid_bad")).json(), bad.json())
+                snapshot = now
+                now += timedelta(minutes=3)
+                self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                now = snapshot
+                await self.pg.execute("INSERT INTO public.ontology_objects VALUES "
+                                      "('ts_transfer_sandbox','evid_source',true,'hidden')")
+                self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                self.assertEqual((await evidence("evid_bad")).json(), missing.json())
+                await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='evid_source'")
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.evid_good")
+                self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.evid_bad")
+                self.assertEqual((await evidence("evid_bad")).json(), missing.json())
+
     async def test_weekly_target_constraint_proof_is_genuine_atomic_and_separately_gated(self):
         from app.web.services.transfer_schedules import execute_transfer_schedule_job
 

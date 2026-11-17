@@ -578,6 +578,16 @@ export const reviewWeeklyJobQuality = (schema: string, table: string, request: D
 export const acknowledgeWeeklyJobQualityIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
   client.post(`${weeklyJobQualityPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
 
+export type WeeklyJobEvidence = { jobId: string; slot: string; finishedAt: string } & (
+  { kind: 'receipt'; receiptId: string; recordedAt: string; rowsAffected: number } |
+  { kind: 'target_constraint'; attemptId: string; startedAt: string; attemptFinishedAt: string }
+);
+export const fetchWeeklyJobEvidence = (
+  schema: string, table: string, expectedGeneration: number, expectedSlot: string, signal?: AbortSignal,
+): Promise<WeeklyJobEvidence> =>
+  client.get(`${weeklyJobQualityPath(schema, table)}/evidence`, { params: { expectedGeneration, expectedSlot }, signal })
+    .then(r => unwrap<WeeklyJobEvidence>(r.data));
+
 export const fetchTableData = (
   layer: string,
   table: string,

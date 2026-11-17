@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -26,7 +27,7 @@ from app.web.api.models.asset_freshness import (
 )
 from app.web.api.models.asset_field_freshness import AssetFieldFreshnessReview, AssetFieldFreshnessStatus
 from app.web.api.models.asset_min_rows import AssetMinRowsReview, AssetMinRowsStatus
-from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJobQualityStatus, WeeklyJobQualityStatus
+from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJobQualityStatus, WeeklyJobEvidence, WeeklyJobQualityStatus
 from app.web.api.models.batch_lineage import BatchLineageDetail, BatchLineageKind, BatchLineagePage
 from app.web.api.models.batch_source_identity import BatchSourceIdentityReview, BatchSourceIdentityStatus
 from app.web.api.models.batch_syncs import (
@@ -98,7 +99,8 @@ from app.web.services.asset_field_freshness import (
 from app.web.services.asset_min_rows import acknowledge_min_rows, read_min_rows, review_min_rows
 from app.web.services.asset_job_quality import acknowledge_daily_job, read_job_quality, review_job_quality
 from app.web.services.asset_weekly_job_quality import (
-    acknowledge_weekly_job, read_weekly_job_quality, review_weekly_job_quality,
+    acknowledge_weekly_job, read_weekly_job_evidence, read_weekly_job_quality, review_weekly_job_quality,
+    weekly_evidence_unavailable,
 )
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_lineage import list_batch_lineage, read_batch_lineage
@@ -422,6 +424,30 @@ async def get_weekly_job_quality(
         return await read_weekly_job_quality(session, schema, table)
     except DBAPIError:
         raise HTTPException(503, "Recorded Weekly UTC status is temporarily unavailable") from None
+
+
+@write.get("/asset-freshness/{schema}/{table}/weekly-job-quality/evidence")
+async def get_weekly_job_evidence(
+    schema: WarehouseSchema, table: TableName, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    expectedGeneration: str = Query(..., pattern=r"^[1-9][0-9]{0,9}$"),
+    expectedSlot: str = Query(..., max_length=35, pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"),
+) -> WeeklyJobEvidence:
+    response.headers["Cache-Control"] = "private, no-store"
+    if set(request.query_params) != {"expectedGeneration", "expectedSlot"} or len(request.query_params.multi_items()) != 2:
+        raise HTTPException(422, "Use one exact review generation and UTC slot")
+    generation = int(expectedGeneration)
+    try:
+        slot = datetime.fromisoformat(expectedSlot)
+        if generation > 2_147_483_647:
+            raise ValueError("generation outside the supported range")
+    except ValueError:
+        raise HTTPException(422, "Invalid review generation or UTC slot") from None
+    try:
+        with fail_after(3):
+            return await read_weekly_job_evidence(session, schema, table, generation, slot)
+    except (DBAPIError, TimeoutError):
+        raise weekly_evidence_unavailable() from None
 
 
 @write.put("/asset-freshness/{schema}/{table}/weekly-job-quality")

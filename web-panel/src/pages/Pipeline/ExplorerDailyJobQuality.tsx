@@ -4,6 +4,7 @@ import { acknowledgeDailyJobQualityIncident, fetchDailyJobQuality, reviewDailyJo
 import type { AssetQualityIncident, DailyJobQuality, DailyJobQualityCandidate, DailyJobQualityReview, WeeklyJobQuality } from '../../services/api';
 import { isoWeekdayName } from '../../services/scheduleTime';
 import { getSessionState } from '../../services/session';
+import ExplorerWeeklyRunEvidence from './ExplorerWeeklyRunEvidence';
 import ExplorerQualityWarnings from './ExplorerQualityWarnings';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 
@@ -185,6 +186,9 @@ function DailyJobQualityCard({ schema, table, identity, cadence = 'daily' }: Pro
         {observation.receiptId && <div><dt>Receipt ID</dt><dd><code>{observation.receiptId}</code></dd></div>}
       </>}
     </dl>
+    {weekly && (state === 'healthy' || state === 'unhealthy') && !busy && binding && snapshot.validUntil && observation?.finishedAt &&
+      <ExplorerWeeklyRunEvidence schema={schema} table={table} identity={identity} generation={binding.generation}
+        validUntil={snapshot.validUntil} outcome={state} observation={observation} />}
     {candidate && !alreadyReviewed && (!weekly || state !== 'disabled' && !loading) && <p>Eligible schedule: {clock(candidate)}.</p>}
     {canReview && <div className="flow-evidence-freshness-actions"><Button size="small" onClick={offerReview}>{reviewLabel}</Button></div>}
     <ExplorerQualityWarnings incidents={snapshot.incidents} generation={weekly && (snapshot.state === 'disabled' || snapshot.state === 'superseded') ? undefined : binding?.freshnessGeneration} busy={busy || loading} onAcknowledge={acknowledge} />

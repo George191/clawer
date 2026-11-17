@@ -107,6 +107,29 @@ class WeeklyJobQualityStatus(AssetJobQualityStatus):
     binding: WeeklyJobQualityBinding | None = None
 
 
+class _WeeklyEvidence(BaseModel):
+    jobId: UUID
+    slot: datetime
+    finishedAt: datetime
+
+
+class WeeklyReceiptEvidence(_WeeklyEvidence):
+    kind: Literal["receipt"] = "receipt"
+    receiptId: UUID
+    recordedAt: datetime
+    rowsAffected: int = ApiField(ge=1, le=100)
+
+
+class WeeklyTargetConstraintEvidence(_WeeklyEvidence):
+    kind: Literal["target_constraint"] = "target_constraint"
+    attemptId: UUID
+    startedAt: datetime
+    attemptFinishedAt: datetime
+
+
+WeeklyJobEvidence = Annotated[WeeklyReceiptEvidence | WeeklyTargetConstraintEvidence, ApiField(discriminator="kind")]
+
+
 class WeeklyJobQualityRow(SQLModel, table=True):
     __tablename__ = "ontology_asset_weekly_job_quality"
     __table_args__ = (CheckConstraint(

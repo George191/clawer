@@ -11,7 +11,8 @@ from sqlmodel import select
 from app.web.api.models.asset_freshness import AssetFreshnessPolicyRow, AssetQualityIncident, AssetQualityIncidentRow
 from app.web.api.models.asset_job_quality import (
     AssetJobObservation, AssetJobQualityReview, TransferTargetRejectionRow, WeeklyJobQualityBinding,
-    WeeklyJobQualityCandidate, WeeklyJobQualityRow, WeeklyJobQualityStatus,
+    WeeklyJobEvidence, WeeklyJobQualityCandidate, WeeklyJobQualityRow, WeeklyJobQualityStatus,
+    WeeklyReceiptEvidence, WeeklyTargetConstraintEvidence,
 )
 from app.web.api.models.transfer_plans import TransferAttemptRow, TransferPlanRow, TransferRunRow
 from app.web.api.models.transfer_schedules import TransferScheduleJobRow, TransferScheduleRow
@@ -294,6 +295,77 @@ async def _decision(
               "canceled": "canceled", "outcome_unknown": "outcome_unknown",
               "rejected": "unproven_rejection"}.get(job.state, "unverified_receipt")
     return "unknown", reason, None, None
+
+
+def weekly_evidence_unavailable() -> HTTPException:
+    return HTTPException(404, "Verified Weekly UTC evidence is unavailable",
+                         headers={"Cache-Control": "private, no-store"})
+
+
+async def read_weekly_job_evidence(
+    session: AsyncSession, schema: str, table: str, expected_generation: int, expected_slot: datetime,
+) -> WeeklyJobEvidence:
+    """Reprove one current persisted outcome; never look up arbitrary IDs or read business rows."""
+    from app.web.services.transfer_observed_lineage import observed_receipt_physical_proof, visible_observed_table_identity
+    from app.web.services.transfer_runs import observed_lineage_enabled
+
+    unavailable = weekly_evidence_unavailable()
+    if schema != SANDBOX or not weekly_job_quality_enabled():
+        raise unavailable
+    await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+    await session.execute(text("SET LOCAL statement_timeout='750ms'"))
+    await session.execute(text("SET LOCAL lock_timeout='100ms'"))
+    identity = await visible_observed_table_identity(session, schema, table)
+    if identity is None:
+        raise unavailable
+    policy = await session.get(AssetFreshnessPolicyRow, table)
+    row = await session.get(WeeklyJobQualityRow, table)
+    if (policy is None or row is None or row.generation != expected_generation
+        or row.checked_at is None or row.state not in ("healthy", "unhealthy")):
+        raise unavailable
+    plan, schedule = await _context(session, policy, identity)
+    if _drift(row, policy, identity, plan, schedule):
+        raise unavailable
+    now = _utc_now()
+    slot = _expected_slot(now, row.planned_time_utc, row.planned_weekday_utc)
+    if (slot != expected_slot or slot != row.observed_slot or slot != row.confirmed_slot
+        or not row.reviewed_at < slot <= row.checked_at <= now < row.checked_at + _TTL
+        or _expected_slot(row.checked_at, row.planned_time_utc, row.planned_weekday_utc) != slot):
+        raise unavailable
+
+    job = await session.get(TransferScheduleJobRow, clock_slot_job_id(row.plan_id, row.schedule_generation, slot))
+    if (job is None or job.plan_id != row.plan_id or job.generation != row.schedule_generation
+        or job.schedule_weekday_utc != row.planned_weekday_utc or job.slot != slot
+        or job.plan_updated_at != row.plan_updated_at or job.armed_by != row.armed_by
+        or job.expires_at != slot + timedelta(minutes=5) or schedule.updated_at > slot
+        or job.state != row.job_state or job.finished_at != row.finished_at or job.finished_at is None
+        or job.canceled_at is not None or job.canceled_by is not None):
+        raise unavailable
+    state, reason, receipt_id, affected = await _decision(session, row, job, plan, row.checked_at)
+    if (state, reason, receipt_id, affected) != (row.state, row.reason, row.receipt_id, row.rows_affected):
+        raise unavailable
+    source = await visible_observed_table_identity(session, plan.source_schema, plan.source_table)
+    if source is None:
+        raise unavailable
+    fields = dict(jobId=job.id, slot=slot, finishedAt=job.finished_at)
+    if state == "healthy" and receipt_id is not None and affected is not None and observed_lineage_enabled():
+        receipt = await session.get(TransferRunRow, receipt_id)
+        physical = await observed_receipt_physical_proof(session, table, receipt_id)
+        if (receipt is None or physical is None or physical.trigger != "weekly_utc" or physical.job_id != job.id
+            or source != (physical.source_oid, physical.source_node)
+            or identity != (physical.target_oid, physical.target_node)):
+            raise unavailable
+        return WeeklyReceiptEvidence(**fields, receiptId=receipt.id, recordedAt=receipt.recorded_at, rowsAffected=affected)
+    if state == "unhealthy" and reason == "target_rejected":
+        proof = await session.get(TransferTargetRejectionRow, job.id)
+        attempt = await session.get(TransferAttemptRow, proof.attempt_id) if proof is not None else None
+        if attempt is None or attempt.finished_at is None:
+            raise unavailable
+        # There is deliberately no claim of a physically attested source or a transferred row.
+        return WeeklyTargetConstraintEvidence(
+            **fields, attemptId=attempt.id, startedAt=attempt.started_at, attemptFinishedAt=attempt.finished_at,
+        )
+    raise unavailable
 
 
 async def evaluate_weekly_job_quality(
