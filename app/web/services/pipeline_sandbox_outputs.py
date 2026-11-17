@@ -13,11 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.web.api.models.cdc_sandbox import CdcSandboxBindingRow
-from app.web.api.models.pipeline_sandbox import PipelineSandboxRevisionRow
+from app.web.api.models.pipeline_sandbox import PipelineSandboxConfig, PipelineSandboxRevisionRow
 from app.web.api.models.pipeline_sandbox_outputs import (
     PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputChange, PipelineSandboxOutputCompareRequest,
     PipelineSandboxOutputComparison, PipelineSandboxOutputDetail, PipelineSandboxOutputRecordRow,
-    PipelineSandboxOutputRow, PipelineSandboxOutputsPage,
+    PipelineSandboxOutputRow, PipelineSandboxOutputsPage, PipelineSandboxRecordHistory,
+    PipelineSandboxRecordHistoryRequest, PipelineSandboxRecordHistoryStep,
 )
 from app.web.core.config import settings
 from app.web.services.cdc_sandbox_versions import _read_records
@@ -32,6 +33,9 @@ from app.web.services.synthetic_governance import (
 MAX_OUTPUT_ROWS = 100
 MAX_OUTPUT_BYTES = 65536
 _HISTORY_LIMIT = 25
+_RECORD_HISTORY_MAX_ROWS = 500
+_RECORD_HISTORY_MAX_BYTES = 320 * 1024
+_RECORD_HISTORY_RESPONSE_BYTES = 128 * 1024
 
 
 async def _output_scope(session: AsyncSession, limit: int | None) -> tuple[bool, CdcSandboxBindingRow | None]:
@@ -165,22 +169,23 @@ async def _authorize_comparison_operands(
     return keyed[request.fromOutputId], keyed[request.toOutputId]
 
 
-async def verify_output_ancestry(
+async def _verified_output_configs(
     session: AsyncSession, binding: CdcSandboxBindingRow, limit: int | None,
     operands: Sequence[PipelineSandboxOutputRow],
-) -> bool:
+) -> dict[UUID, PipelineSandboxConfig] | None:
     """Verify exact immutable review and approved input headers, without any row reads."""
     saved = {row.generation: row for row in (await session.scalars(_revisions(binding, limit).where(
         PipelineSandboxRevisionRow.generation.in_({row.reviewed_generation for row in operands}),
     ))).all()}
+    accepted = {}
     for output in operands:
         revision = saved.get(output.reviewed_generation)
         if revision is None:
-            return False
+            return None
         try:
             config = _revision(revision).config
         except HTTPException:
-            return False
+            return None
         # The current-match flag controls new execution, not this historical read.
         levels = []
         for identity in (config.versionId, config.matchVersionId):
@@ -188,14 +193,22 @@ async def verify_output_ancestry(
                 continue
             header = await session.scalar(_match_version_query(binding, identity, limit))
             if header is None:
-                return False
+                return None
             levels.append(header.marking_level)
         if (config.projection != output.columns
             or (config.matchVersionId is not None and any(level not in (BASE, RESTRICTED) for level in levels))
             or (max([level or 0 for level in levels] + [RESTRICTED if config.additionalMarking else 0]) or None)
                 != output.marking_level):
-            return False
-    return True
+            return None
+        accepted[output.id] = config
+    return accepted
+
+
+async def verify_output_ancestry(
+    session: AsyncSession, binding: CdcSandboxBindingRow, limit: int | None,
+    operands: Sequence[PipelineSandboxOutputRow],
+) -> bool:
+    return await _verified_output_configs(session, binding, limit, operands) is not None
 
 
 def _keyed_output_rows(rows: list[list[str]], id_position: int) -> dict[int, list[str]]:
@@ -249,6 +262,85 @@ async def compare_pipeline_outputs(
         markings=markings(max(before.marking_level or 0, after.marking_level or 0) or None),
         changes=details, truncated=truncated, **counts,
     )
+
+
+def _history_missing() -> HTTPException:
+    return HTTPException(404, "Authorized sealed Builder outputs are required for record history",
+                         headers={"Cache-Control": "private, no-store"})
+
+
+def _recipe(config: PipelineSandboxConfig) -> tuple:
+    # Config has already been parsed, normalized and checked against its own
+    # exact hash and marking; only compatibility ignores version IDs and mark override.
+    return (config.matchVersionId is not None, tuple(config.projection),
+            tuple((item.field, item.operator, item.value) for item in config.filters))
+
+
+async def trace_pipeline_output_record(
+    session: AsyncSession, request: PipelineSandboxRecordHistoryRequest, actor_id: UUID,
+) -> PipelineSandboxRecordHistory:
+    """Read selected sealed outputs only, with no partial result or Builder evaluation."""
+    await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
+    await session.execute(text("SET LOCAL statement_timeout='1000ms'"))
+    await session.execute(text("SET LOCAL lock_timeout='100ms'"))
+    limit = marking_limit(actor_id)
+    if limit == 0:
+        raise _history_missing()
+    available, binding = await _output_scope(session, limit)
+    if not available or binding is None:
+        raise _history_missing()
+    operands = (await session.scalars(_outputs(binding, limit).where(
+        PipelineSandboxOutputRow.id.in_(request.outputIds),
+    ))).all()
+    if len(operands) != len(request.outputIds):
+        raise _history_missing()
+    configs = await _verified_output_configs(session, binding, limit, operands)
+    if configs is None:
+        raise _history_missing()
+
+    outputs = sorted(operands, key=lambda output: output.recorded_at)
+    if len({output.recorded_at for output in outputs}) != len(outputs):
+        raise HTTPException(409, "The selected outputs share a recorded time; record order is ambiguous")
+    projection = outputs[0].columns
+    recipe = _recipe(configs[outputs[0].id])
+    if "id" not in projection or any(_recipe(configs[output.id]) != recipe for output in outputs[1:]):
+        raise HTTPException(409, "Choose outputs from the same Builder recipe and ordered projection including ID")
+    if (sum(output.output_rows for output in outputs) > _RECORD_HISTORY_MAX_ROWS
+        or sum(output.output_bytes for output in outputs) > _RECORD_HISTORY_MAX_BYTES):
+        raise HTTPException(409, "The selected outputs exceed the record history budget")
+
+    key = int(request.recordId)
+    position = projection.index("id")
+    steps = []
+    previous = None
+    for output in outputs:
+        # Persisted position constraint and primary key bound each proved seal to
+        # 100 records; oversized or missing archived rows cannot produce a step.
+        rows = await _stored_rows(session, output)
+        current = _keyed_output_rows(rows, position).get(key)
+        if not steps:
+            label = "absent" if current is None else "baseline"
+        elif current is None:
+            label = "absent" if previous is None else "removed"
+        elif previous is None:
+            label = "added"
+        else:
+            label = "unchanged" if current == previous else "changed"
+        steps.append(PipelineSandboxRecordHistoryStep(
+            outputId=output.id, recordedAt=output.recorded_at, kind=label, row=current,
+        ))
+        previous = current
+    return PipelineSandboxRecordHistory(
+        recordId=request.recordId, projection=projection,
+        markings=markings(max(output.marking_level or 0 for output in outputs) or None), steps=steps,
+    )
+
+
+def encode_record_history(history: PipelineSandboxRecordHistory) -> bytes:
+    payload = history.model_dump_json().encode("utf-8")
+    if len(payload) > _RECORD_HISTORY_RESPONSE_BYTES:
+        raise HTTPException(409, "The selected record history exceeds the response budget")
+    return payload
 
 
 async def commit_pipeline_output(

@@ -7,6 +7,7 @@ import type {
 import { getSessionState } from '../../services/session';
 import { SandboxMarkings, sandboxScopeDenied } from './SandboxMarkings';
 import SandboxPipelineOutputComparison from './SandboxPipelineOutputComparison';
+import SandboxPipelineRecordHistory from './SandboxPipelineRecordHistory';
 import SandboxPipelineHandoff from './SandboxPipelineHandoff';
 
 type Confirmation = { revision: SandboxPipelineRevision } | { previous: SandboxPipelineOutputRequest };
@@ -53,6 +54,7 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const [detail, setDetail] = useState<SandboxPipelineOutputDetail>();
   const [detailFailed, setDetailFailed] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [recordHistoryOpen, setRecordHistoryOpen] = useState(false);
   const [handoff, setHandoff] = useState<SandboxHandoffCapability>();
   const handoffSink = handoff?.sink;
   const [handoffOutput, setHandoffOutput] = useState<SandboxPipelineOutput>();
@@ -63,14 +65,14 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const invalidate = () => {
     setList(undefined); setLoadFailed(true); setInspecting(undefined); setDetail(undefined);
     setConfirm(undefined); setPendingRequest(undefined); setNotice(undefined);
-    setComparisonOpen(false); setHandoffOutput(undefined); setHandoff(undefined);
+    setComparisonOpen(false); setRecordHistoryOpen(false); setHandoffOutput(undefined); setHandoff(undefined);
     onScopeDenied?.();
   };
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController();
-    setList(undefined); setLoadFailed(false); setComparisonOpen(false);
+    setList(undefined); setLoadFailed(false); setComparisonOpen(false); setRecordHistoryOpen(false);
     void fetchSandboxPipelineOutputs(controller.signal).then(value => {
       if (!live(controller.signal)) return;
       setList(value);
@@ -158,8 +160,9 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   return <section className="flow-sandbox-builder__history" aria-label="Committed sandbox outputs">
     <h2>Committed sandbox outputs</h2>
     <p>Only an explicit commit writes immutable sandbox output rows and a receipt. Previewing or saving a configuration does not write output data.</p>
-    <div className="flow-sandbox-builder__actions"><Button size="small" disabled={busy} onClick={() => { setComparisonOpen(false); setRefresh(value => value + 1); }}>Refresh output history</Button>
+    <div className="flow-sandbox-builder__actions"><Button size="small" disabled={busy} onClick={() => { setComparisonOpen(false); setRecordHistoryOpen(false); setRefresh(value => value + 1); }}>Refresh output history</Button>
       {list?.available && list.outputs.length >= 2 && <Button size="small" disabled={busy} onClick={() => setComparisonOpen(true)}>Compare committed outputs</Button>}
+      {list?.available && list.outputs.length >= 2 && <Button size="small" disabled={busy} onClick={() => setRecordHistoryOpen(true)}>Record history</Button>}
     </div>
     {notice && <p role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
     {loadFailed ? <p role="alert">Sandbox output status could not be loaded.</p>
@@ -184,6 +187,8 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
       output={handoffOutput} sink={handoffSink} copyAvailable={handoff?.copyAvailable === true} scopeKey={scopeKey} onClose={() => setHandoffOutput(undefined)} onScopeDenied={invalidate} />}
     {comparisonOpen && list?.available && <SandboxPipelineOutputComparison outputs={list.outputs}
       onClose={() => setComparisonOpen(false)} onScopeDenied={invalidate} />}
+    {recordHistoryOpen && list?.available && <SandboxPipelineRecordHistory key={JSON.stringify([identity, scopeKey, refresh])} outputs={list.outputs}
+      onClose={() => setRecordHistoryOpen(false)} onScopeDenied={invalidate} />}
     <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" confirmLoading={busy}
       title={confirm && 'previous' in confirm ? 'Retry original output request?' : 'Commit reviewed sandbox output?'}
       okText={confirm && 'previous' in confirm ? 'Confirm original retry' : 'Confirm output commit'}

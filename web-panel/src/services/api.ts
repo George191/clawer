@@ -725,6 +725,13 @@ export const fetchSandboxPipelineOutput = (id: string, signal?: AbortSignal): Pr
   client.get(`${sandboxPipelineOutputPath}/${encodeURIComponent(id)}`, { signal }).then((r) => unwrap<SandboxPipelineOutputDetail>(r.data));
 export const compareSandboxPipelineOutputs = (request: { fromOutputId: string; toOutputId: string }, signal?: AbortSignal): Promise<SandboxPipelineOutputComparison> =>
   client.post(`${sandboxPipelineOutputPath}/compare`, request, { signal }).then(r => unwrap<SandboxPipelineOutputComparison>(r.data));
+export type SandboxPipelineRecordHistory = {
+  recordId: string; projection: SandboxPipelineColumn[]; markings?: string[] | null;
+  steps: { outputId: string; recordedAt: string; kind: 'baseline' | 'added' | 'changed' | 'removed' | 'unchanged' | 'absent'; row: string[] | null }[];
+};
+export const readSandboxPipelineRecordHistory = (request: { outputIds: string[]; recordId: string }, signal?: AbortSignal): Promise<SandboxPipelineRecordHistory> =>
+  client.post(`${sandboxPipelineOutputPath}/record-history`, request, { signal })
+    .then(r => unwrap<SandboxPipelineRecordHistory>(r.data));
 export const commitSandboxPipelineOutput = (request: SandboxPipelineOutputRequest): Promise<SandboxPipelineOutput> =>
   client.post(sandboxPipelineOutputPath, request).then((r) => unwrap<SandboxPipelineOutput>(r.data));
 

@@ -52,6 +52,7 @@ from app.web.api.models.pipeline_sandbox import (
 from app.web.api.models.pipeline_sandbox_outputs import (
     PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputCompareRequest, PipelineSandboxOutputComparison,
     PipelineSandboxOutputDetail, PipelineSandboxOutputsPage,
+    PipelineSandboxRecordHistory, PipelineSandboxRecordHistoryRequest,
 )
 from app.web.api.models.table_exports import (
     ExportDestination,
@@ -121,7 +122,8 @@ from app.web.services.pipeline_sandbox import (
     list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
 )
 from app.web.services.pipeline_sandbox_outputs import (
-    commit_pipeline_output, compare_pipeline_outputs, list_pipeline_outputs, read_pipeline_output,
+    commit_pipeline_output, compare_pipeline_outputs, encode_record_history, list_pipeline_outputs,
+    read_pipeline_output, trace_pipeline_output_record,
 )
 from app.web.services.push_inbox import change_push_intake, read_push_status
 from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
@@ -373,6 +375,24 @@ async def compare_local_pipeline_outputs(
         return await compare_pipeline_outputs(session, payload, current_user.id)
     except DBAPIError:
         raise HTTPException(503, "Sealed Builder output comparison is temporarily unavailable") from None
+
+
+@write.post("/pipeline-sandbox/outputs/record-history", response_model=PipelineSandboxRecordHistory)
+async def trace_local_pipeline_output_record(
+    payload: PipelineSandboxRecordHistoryRequest, current_user: CurrentActiveSuperuser, request: Request,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> Response:
+    headers = {"Cache-Control": "private, no-store"}
+    if request.query_params:
+        raise HTTPException(422, "Record history accepts only the selected outputs and ID in the body", headers=headers)
+    try:
+        with fail_after(5):
+            history = await trace_pipeline_output_record(session, payload, current_user.id)
+            return Response(encode_record_history(history), media_type="application/json", headers=headers)
+    except HTTPException as exc:
+        raise HTTPException(exc.status_code, exc.detail, headers=headers) from None
+    except (DBAPIError, TimeoutError):
+        raise HTTPException(503, "Sealed Builder record history is temporarily unavailable", headers=headers) from None
 
 
 @write.get("/pipeline-sandbox/outputs/{output_id}")

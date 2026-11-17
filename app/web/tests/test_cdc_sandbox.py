@@ -824,6 +824,116 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 """, {"id": UUID(left)})
                 self.assertEqual((await client.post(path, json=args)).status_code, 409)
 
+    async def test_record_history_reproves_all_selected_outputs_before_loading_sealed_rows(self):
+        base, restricted = "sandbox-synthetic", "sandbox-restricted"
+        record = "-9223372036854775808"
+        path = _OUTPUTS + "/record-history"
+        config_shape = {"projection": ["value", "id"],
+                        "filters": [{"field": "value", "operator": "prefix", "value": "keep"}]}
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base, restricted]}),
+        ):
+            async with api(True, self.sessions) as client:
+                response = await client.put(_ROUTE, json=_REVIEW)
+                self.assertEqual(response.status_code, 200, response.text)
+                version = None
+                generation = None
+
+                async def seal(shape, *, additional=None):
+                    nonlocal generation
+                    config = {**shape, "versionId": version, **({"additionalMarking": additional} if additional else {})}
+                    saved = await client.post(_BUILDER + "/revisions", json={"expectedGeneration": generation, "config": config})
+                    self.assertEqual(saved.status_code, 201, saved.text)
+                    generation = saved.json()["generation"]
+                    committed = await client.post(_OUTPUTS, json={
+                        "requestId": str(uuid4()), "expectedGeneration": generation,
+                        "expectedConfigHash": saved.json()["configHash"],
+                    })
+                    self.assertEqual(committed.status_code, 201, committed.text)
+                    return committed.json()
+
+                saved = []
+                for index, (identity, value) in enumerate((
+                    (int(record), "discard initially"), (int(record), "keep first"),
+                    (10, "keep unrelated"), (int(record), "keep updated"), (int(record), "discard now"),
+                )):
+                    async with self.pg.session() as session:
+                        await self.produce(session, identity, value)
+                    response = await client.post(_ROUTE + "/runs", json=payload(index))
+                    self.assertEqual(response.status_code, 200, response.text)
+                    version = response.json()["id"]
+                    saved.append(await seal(config_shape, additional=restricted if index == 2 else None))
+                different = await seal({**config_shape, "filters": []})
+                reversed_ids = [item["id"] for item in reversed(saved)]
+                request = {"outputIds": reversed_ids, "recordId": record}
+
+                with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base]}), patch(
+                    "app.web.services.pipeline_sandbox_outputs._stored_rows",
+                    side_effect=AssertionError("read storage before every selected operand was authorized"),
+                ) as read:
+                    denied = await client.post(path, json=request)
+                    absent = await client.post(path, json={**request, "outputIds": [saved[0]["id"], str(uuid4())]})
+                    self.assertEqual((denied.status_code, denied.json()), (404, absent.json()))
+                    read.assert_not_called()
+                for invalid in (
+                    {**request, "recordId": int(record)}, {**request, "recordId": "-0"},
+                    {**request, "recordId": "9223372036854775808"}, {**request, "outputIds": [saved[0]["id"]] * 2},
+                    {**request, "outputIds": [*reversed_ids, different["id"]]}, {**request, "includeLatest": True},
+                ):
+                    self.assertEqual((await client.post(path, json=invalid)).status_code, 422)
+                self.assertEqual((await client.post(path + "?latest=true", json=request)).status_code, 422)
+                async with api(False, self.sessions) as reader:
+                    self.assertEqual((await reader.post(path, json=request)).status_code, 403)
+                with patch("app.web.services.pipeline_sandbox_outputs._stored_rows",
+                           side_effect=AssertionError("recipe validation should precede row reads")) as read:
+                    rejected = await client.post(path, json={**request, "outputIds": [saved[0]["id"], different["id"]]})
+                    self.assertEqual(rejected.status_code, 409)
+                    read.assert_not_called()
+
+                with patch("app.web.services.pipeline_sandbox_outputs._read_records",
+                           side_effect=AssertionError("history touched stored CDC rows")) as read:
+                    response = await client.post(path, json=request)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.headers["cache-control"], "private, no-store")
+                    read.assert_not_called()
+                    result = response.json()
+                self.assertEqual((result["recordId"], result["projection"], result["markings"]),
+                                 (record, ["value", "id"], [base, restricted]))
+                self.assertEqual([item["outputId"] for item in result["steps"]], [item["id"] for item in saved])
+                self.assertEqual([item["kind"] for item in result["steps"]], ["absent", "added", "unchanged", "changed", "removed"])
+                self.assertEqual([item["row"] for item in result["steps"]], [
+                    None, ["keep first", record], ["keep first", record], ["keep updated", record], None,
+                ])
+                baseline = await client.post(path, json={**request, "outputIds": reversed_ids[2:]})
+                self.assertEqual([item["kind"] for item in baseline.json()["steps"]], ["absent", "added", "unchanged"])
+                baseline = await client.post(path, json={**request, "outputIds": reversed_ids[:3]})
+                self.assertEqual([item["kind"] for item in baseline.json()["steps"]], ["baseline", "changed", "removed"])
+                with patch("app.web.services.pipeline_sandbox_outputs._RECORD_HISTORY_RESPONSE_BYTES", 100):
+                    self.assertEqual((await client.post(path, json=request)).status_code, 409)
+
+                await self.pg.execute("""
+                    UPDATE ontology_pipeline_sandbox_outputs SET recorded_at=(
+                        SELECT recorded_at FROM ontology_pipeline_sandbox_outputs WHERE id=:first
+                    ) WHERE id=:second
+                """, {"first": UUID(saved[0]["id"]), "second": UUID(saved[1]["id"])})
+                tied = await client.post(path, json=request)
+                self.assertEqual(tied.status_code, 409, tied.text)
+                self.assertIn("ambiguous", tied.json()["detail"])
+                await self.pg.execute("""
+                    UPDATE ontology_pipeline_sandbox_output_rows SET row_values=ARRAY['tampered',row_values[2]]
+                    WHERE output_id=:id AND position=1
+                """, {"id": UUID(saved[3]["id"])})
+                bad_seal = await client.post(path, json={**request, "outputIds": reversed_ids[:2]})
+                self.assertEqual(bad_seal.status_code, 409, bad_seal.text)
+                self.assertNotIn("steps", bad_seal.json())
+
     async def test_builder_output_row_failure_rolls_back_receipt_and_real_lost_ack_replays_once(self):
         with (
             patch.object(settings, "ENVIRONMENT", "local"),
