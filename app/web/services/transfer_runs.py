@@ -78,6 +78,11 @@ def observed_lineage_enabled() -> bool:
             and settings.TRANSFER_SANDBOX_ENABLED and settings.TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED)
 
 
+def scheduled_observed_lineage_enabled() -> bool:
+    """Require explicit local observed-lineage scope and opt-in for clock receipts."""
+    return observed_lineage_enabled() and settings.TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED
+
+
 def is_sandbox_upsert(plan: TransferPlanRow, trigger: str) -> bool:
     return (plan.trigger == trigger and plan.write_mode == "upsert" and plan.incremental_cursor is None
             and plan.source_schema == plan.target_schema == SANDBOX)
@@ -723,6 +728,15 @@ async def run_sandbox_transfer(
             if written != len(keys):
                 raise HTTPException(409, "Incremental result did not match the selected key batch")
             checkpoint.cursor_through = keys[-1]
+        scheduled_source = None
+        if (written > 0 and isinstance(job, TransferScheduleJobRow) and scheduled_observed_lineage_enabled()
+            and is_sandbox_upsert(plan, "weekly" if job.schedule_weekday_utc is not None else "scheduled")
+            and job.id == clock_slot_job_id(job.plan_id, job.generation, job.slot)
+            and scope.get("schedule_job_id") == job.id
+            and scope.get("scope_trigger") == ("week_utc" if job.schedule_weekday_utc is not None else "daily_utc")):
+            # The source is the actual heap already catalog-checked and locked
+            # for this bounded write. Never capture on the replay path.
+            scheduled_source = catalog[plan.source_table]
         receipt = TransferRunRow(
             plan_id=plan_id, request_id=request.requestId, plan_updated_at=plan.updated_at,
             initiated_by=(UPSTREAM_SYSTEM_ACTOR if upstream_job_id is not None else
@@ -731,13 +745,17 @@ async def run_sandbox_transfer(
             target_schema=SANDBOX, target_table=plan.target_table,
             target_oid=catalog[plan.target_table]["table_oid"],
             target_filenode=catalog[plan.target_table]["table_node"],
+            scheduled_source_oid=scheduled_source["table_oid"] if scheduled_source else None,
+            scheduled_source_filenode=scheduled_source["table_node"] if scheduled_source else None,
             write_mode=plan.write_mode, rows_affected=written, recorded_at=datetime.now(timezone.utc),
             cursor_through=checkpoint.cursor_through if incremental else None, has_more=has_more,
         )
         session.add(receipt)
         result = _run_response(receipt)
         await session.flush()
-        await _finish_attempt(session, attempt_id, "committed", receipt_id=receipt.id)
+        settled = await _finish_attempt(session, attempt_id, "committed", receipt_id=receipt.id)
+        if scheduled_source is not None and settled != 1:
+            raise HTTPException(409, "The exact scheduled transfer attempt did not settle")
         if job is None and written > 0 and upstream_transfer_enabled() and is_sandbox_upsert(plan, "manual"):
             # The same parent plan row stays locked across this event and
             # receipt's atomic commit, and across the arming cutoff query.

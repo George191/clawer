@@ -1223,7 +1223,7 @@ export const acknowledgeFieldFreshnessIncident = (id: string, expectedGeneration
 
 export type ObservedTableLineage = {
   available: boolean; direction: TableLineageDirection; truncated: boolean;
-  neighbors: (TableLineageIdentity & { receiptId: string; receiptRecordedAt: string; rowsAffected: number })[];
+  neighbors: (TableLineageIdentity & { receiptId: string; receiptRecordedAt: string; rowsAffected: number; trigger?: 'daily_utc' | 'weekly_utc' })[];
 };
 export const fetchObservedTableLineage = (source: TableLineageIdentity, direction: TableLineageDirection, signal?: AbortSignal): Promise<ObservedTableLineage> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-observed`, { params: { direction }, signal })

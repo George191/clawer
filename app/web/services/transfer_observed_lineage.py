@@ -1,4 +1,4 @@
-"""Current physical evidence of completed manual sandbox transfers, not declared edges."""
+"""Exact physical evidence of completed sandbox transfers, not declared edges."""
 
 from uuid import UUID
 
@@ -26,6 +26,8 @@ _PHYSICAL = f"""
     WHERE n.nspname = 'ts_transfer_sandbox' AND {_LINEAGE_VISIBLE_SQL}
       AND c.relkind = 'r' AND c.relpersistence = 'p' AND am.amname = 'heap'
       AND NOT c.relrowsecurity AND NOT c.relhasrules
+      AND pg_catalog.has_schema_privilege(n.oid, 'USAGE')
+      AND pg_catalog.has_table_privilege(c.oid, 'SELECT')
       AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits h WHERE c.oid IN (h.inhrelid, h.inhparent))
 """
 _ROOT = text(_PHYSICAL + " AND c.relname = :table")
@@ -74,42 +76,110 @@ _POSITIVE_MANUAL_PROOF = """
           AND a.started_at <= r.recorded_at AND a.finished_at >= r.recorded_at
     )
 """
+_POSITIVE_SCHEDULED_PROOF = """
+    r.source_schema = 'ts_transfer_sandbox' AND r.target_schema = 'ts_transfer_sandbox'
+    AND r.source_table <> r.target_table
+    AND r.rows_affected BETWEEN 1 AND 100 AND r.write_mode = 'upsert'
+    AND r.cursor_through IS NULL AND r.has_more IS NULL
+    AND r.initiated_by = :daily_actor
+    AND r.scheduled_source_oid IS NOT NULL AND r.scheduled_source_oid > 0 AND r.scheduled_source_filenode > 0
+    AND r.target_oid > 0 AND r.target_filenode > 0
+    AND r.plan_updated_at <= j.slot
+    AND j.state = 'committed' AND j.canceled_at IS NULL AND j.canceled_by IS NULL
+    AND j.slot = pg_catalog.date_trunc('minute', j.slot)
+    AND j.expires_at = j.slot + interval '5 minutes'
+    AND j.finished_at >= j.slot AND j.finished_at < j.expires_at
+    AND (j.dispatched_at IS NULL OR (j.dispatched_at >= j.slot AND j.dispatched_at <= r.recorded_at))
+    AND j.finished_at <= pg_catalog.statement_timestamp()
+    AND r.recorded_at >= j.slot AND r.recorded_at <= j.finished_at
+    AND r.recorded_at <= pg_catalog.statement_timestamp()
+    AND (j.schedule_weekday_utc IS NULL OR (j.schedule_weekday_utc BETWEEN 1 AND 7
+        AND j.schedule_weekday_utc = EXTRACT(ISODOW FROM j.slot AT TIME ZONE 'UTC')))
+    AND NOT EXISTS (
+        SELECT 1 FROM public.ontology_transfer_upstream_jobs u WHERE u.id=r.request_id AND u.plan_id=r.plan_id
+    )
+    AND EXISTS (
+        SELECT 1 FROM public.ontology_transfer_attempts a
+        WHERE a.receipt_id = r.id AND a.receipt_id IS NOT NULL AND a.status = 'committed'
+          AND a.scope_trigger IN ('daily_utc', 'week_utc')
+          AND a.scope_trigger = CASE WHEN j.schedule_weekday_utc IS NULL THEN 'daily_utc' ELSE 'week_utc' END
+          AND a.schedule_job_id = j.id AND a.upstream_job_id IS NULL
+          AND a.plan_id = r.plan_id AND a.request_id = r.request_id AND a.plan_updated_at = r.plan_updated_at
+          AND a.source_table = r.source_table AND a.target_table = r.target_table
+          AND a.target_oid = r.target_oid AND a.target_filenode = r.target_filenode
+          AND a.started_at >= j.slot AND a.started_at <= r.recorded_at
+          AND a.finished_at >= r.recorded_at AND a.finished_at <= j.finished_at
+          AND a.finished_at <= pg_catalog.statement_timestamp()
+    )
+"""
 _PROOF_ACTORS = {"daily_actor": SCHEDULED_SYSTEM_ACTOR, "upstream_actor": UPSTREAM_SYSTEM_ACTOR}
-_LINK_PROOF = text(f"""
-    SELECT e.source_oid, e.source_node, e.target_oid, e.target_node
-    FROM public.ontology_transfer_runs r
-    JOIN public.ontology_transfer_commit_events e ON e.parent_receipt_id=r.id
-    WHERE r.id=:receipt_id AND r.target_table=:table AND {_POSITIVE_MANUAL_PROOF}
-""")
+_SCHEDULED_JOIN = """
+    JOIN public.ontology_transfer_schedule_jobs j ON j.id=r.request_id AND j.receipt_id=r.id
+        AND j.plan_id=r.plan_id AND j.plan_updated_at=r.plan_updated_at
+"""
+_SCHEDULED_TRIGGER = "CASE WHEN j.schedule_weekday_utc IS NULL THEN 'daily_utc' ELSE 'weekly_utc' END"
+_CURRENT_PLAN = """
+    AND p.updated_at = r.plan_updated_at
+    AND p.source_schema = r.source_schema AND p.source_table = r.source_table
+    AND p.target_schema = r.target_schema AND p.target_table = r.target_table
+    AND p.write_mode = 'upsert' AND p.incremental_cursor IS NULL
+"""
+_SCHEDULE_RULE = """
+    AND p.trigger = CASE WHEN j.schedule_weekday_utc IS NULL THEN 'scheduled' ELSE 'weekly' END
+    AND p.schedule_weekday_utc IS NOT DISTINCT FROM j.schedule_weekday_utc
+    AND p.schedule_time = pg_catalog.to_char(j.slot AT TIME ZONE 'UTC', 'HH24:MI')
+"""
+
+
+def _capture_branches(where: str, *, current: bool) -> str:
+    """Apply the exact same persisted proof to the current graph and protected historical links."""
+    plan = "JOIN public.ontology_transfer_plans p ON p.id = r.plan_id" if current else ""
+    manual_only = f"{_CURRENT_PLAN} AND p.trigger = 'manual'" if current else ""
+    scheduled_only = f"{_CURRENT_PLAN} {_SCHEDULE_RULE}" if current else ""
+    return f"""
+        SELECT r.id, r.recorded_at, r.rows_affected, r.source_table, r.target_table,
+            e.source_oid, e.source_node, e.target_oid, e.target_node, NULL::text AS trigger, NULL::uuid AS job_id
+        FROM public.ontology_transfer_runs r
+        JOIN public.ontology_transfer_commit_events e ON e.parent_receipt_id=r.id
+        {plan}
+        WHERE {where} AND {_POSITIVE_MANUAL_PROOF} {manual_only}
+        UNION ALL
+        SELECT r.id, r.recorded_at, r.rows_affected, r.source_table, r.target_table,
+            r.scheduled_source_oid AS source_oid, r.scheduled_source_filenode AS source_node,
+            r.target_oid, r.target_filenode AS target_node, {_SCHEDULED_TRIGGER} AS trigger, j.id AS job_id
+        FROM public.ontology_transfer_runs r
+        {_SCHEDULED_JOIN}
+        {plan}
+        WHERE {where} AND {_POSITIVE_SCHEDULED_PROOF} {scheduled_only}
+    """
 
 
 async def observed_receipt_physical_proof(session: AsyncSession, table: str, receipt_id: UUID):
     """An existing capture remains historical proof independent of current plan/date window."""
-    return (await session.execute(_LINK_PROOF, {**_PROOF_ACTORS, "receipt_id": receipt_id, "table": table})).one_or_none()
+    query = _capture_branches(
+        "r.id=:receipt_id AND r.target_table=:table", current=False,
+    )
+    return (await session.execute(text(query), {**_PROOF_ACTORS, "receipt_id": receipt_id, "table": table})).one_or_none()
 
 
 def _receipt_query(direction: LineageDirection):
     current, remote = ("source", "target") if direction == "outgoing" else ("target", "source")
+    captures = _capture_branches(
+        f"r.{current}_schema = 'ts_transfer_sandbox' AND r.{current}_table = :table "
+        "AND r.recorded_at > pg_catalog.statement_timestamp() - interval '7 days'",
+        current=True,
+    )
     return text(f"""
         WITH physical AS MATERIALIZED ({_PHYSICAL}), by_peer AS (
             SELECT DISTINCT ON (peer.name COLLATE "C")
-                peer.name, peer.oid, peer.node, r.id, r.recorded_at, r.rows_affected
-            FROM public.ontology_transfer_runs r
-            JOIN public.ontology_transfer_commit_events e ON e.parent_receipt_id = r.id
-            JOIN public.ontology_transfer_plans p ON p.id = r.plan_id
-            JOIN physical src ON src.name = r.source_table AND src.oid = e.source_oid AND src.node = e.source_node
-            JOIN physical dst ON dst.name = r.target_table AND dst.oid = e.target_oid AND dst.node = e.target_node
+                peer.name, peer.oid, peer.node, r.id, r.recorded_at, r.rows_affected, r.trigger
+            FROM ({captures}) r
+            JOIN physical src ON src.name = r.source_table AND src.oid = r.source_oid AND src.node = r.source_node
+            JOIN physical dst ON dst.name = r.target_table AND dst.oid = r.target_oid AND dst.node = r.target_node
             JOIN physical peer ON peer.name = r.{remote}_table
-            WHERE r.{current}_schema = 'ts_transfer_sandbox' AND r.{current}_table = :table
-              AND r.recorded_at > pg_catalog.statement_timestamp() - interval '7 days'
-              AND {_POSITIVE_MANUAL_PROOF}
-              AND p.updated_at = r.plan_updated_at
-              AND p.source_schema = r.source_schema AND p.source_table = r.source_table
-              AND p.target_schema = r.target_schema AND p.target_table = r.target_table
-              AND p.trigger = 'manual' AND p.write_mode = 'upsert' AND p.incremental_cursor IS NULL
             ORDER BY peer.name COLLATE "C", r.recorded_at DESC, r.id DESC
         )
-        SELECT name, oid, node, id, recorded_at, rows_affected FROM by_peer
+        SELECT name, oid, node, id, recorded_at, rows_affected, trigger FROM by_peer
         ORDER BY recorded_at DESC, name COLLATE "C", id DESC
         LIMIT :limit
     """)
@@ -147,6 +217,7 @@ async def observed_transfer_lineage(
     return ObservedLineage(
         available=True, direction=direction, truncated=len(rows) > _LIMIT,
         neighbors=[ObservedLineageNeighbor(schema=SANDBOX, table=row.name, receiptId=row.id,
-                                           receiptRecordedAt=row.recorded_at, rowsAffected=row.rows_affected)
+                                           receiptRecordedAt=row.recorded_at, rowsAffected=row.rows_affected,
+                                           trigger=row.trigger)
                    for row in rows[:_LIMIT]],
     )

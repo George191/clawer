@@ -18,8 +18,8 @@ function Workspace({ table }: { table: string }) {
   const [open, setOpen] = useState(false);
   const [direction, setDirection] = useState<TableLineageDirection>('incoming');
   return <section className="flow-lineage-reference-path" aria-labelledby={title}>
-    <h3 id={title}>Observed manual transfers</h3>
-    <p>Recent, verified local sandbox receipts only. This is separate from declared and foreign-key references and is not a live or production map.</p>
+    <h3 id={title}>Observed transfers</h3>
+    <p>Verified local sandbox evidence of past transfers. Declared relationships and foreign-key references do not prove that data moved. This is not a live or production map.</p>
     <button type="button" className="flow-lineage-action" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       {open ? 'Hide observed transfers' : 'Show observed transfers'}
     </button>
@@ -63,18 +63,19 @@ function ObservedDirection({ table, direction }: { table: string; direction: Tab
   const rows = snapshot.neighbors.filter(item => item.schema === source.schema && Number.isSafeInteger(item.rowsAffected) && item.rowsAffected > 0 &&
     Number.isFinite(Date.parse(item.receiptRecordedAt)) && Date.parse(item.receiptRecordedAt) <= now && Date.parse(item.receiptRecordedAt) + horizonMs > now);
   return <>
-    <p>Committed manual transfers affecting rows within the last seven days, for the verified physical tables.</p>
+    <p>Only committed receipts that affected rows in the last seven days and can be verified for these physical tables are shown. Older or unverified evidence is not shown.</p>
     {rows.length ? <ol className="flow-lineage-table-references__list">{rows.map(item => <li key={JSON.stringify([item.schema, item.table, item.receiptId])}>
       <strong>Verified positive receipt</strong>
       <span className="flow-lineage-table-references__route"><code>{name(direction === 'incoming' ? item : source)}</code>
         <span aria-label="transferred to"> → </span><code>{name(direction === 'incoming' ? source : item)}</code></span>
+      <span>Trigger: {item.trigger === 'daily_utc' ? 'Daily UTC' : item.trigger === 'weekly_utc' ? 'Weekly UTC' : item.trigger == null ? 'Manual' : 'Not verified'}</span>
       <span>Rows affected: {item.rowsAffected.toLocaleString()}</span>
       <span>Receipt: <code>{item.receiptId}</code></span>
       {canonicalTransferReceipt(item.receiptId) && <Link className="flow-evidence-lineage-link" to={`/ontology/explorer?${new URLSearchParams({
         schema: source.schema, table: direction === 'incoming' ? table : item.table, view: 'evidence', transferReceipt: item.receiptId,
       })}`}>Open receipt in Explorer</Link>}
       <span>Receipt recorded at: <time dateTime={item.receiptRecordedAt}>{new Date(item.receiptRecordedAt).toLocaleString(undefined, { timeZone: 'UTC', timeZoneName: 'short' })}</time></span>
-    </li>)}</ol> : <p role="status">No current observed manual transfers in this direction.</p>}
+    </li>)}</ol> : <p role="status">No current observed transfers in this direction.</p>}
     {snapshot.truncated && rows.length > 0 && <p>Only the first bounded set of observed neighbors is shown.</p>}
   </>;
 }

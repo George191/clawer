@@ -170,6 +170,15 @@ class TransferRunRow(SQLModel, table=True):
         Index("ix_ontology_transfer_runs_freshness", "plan_id", "plan_updated_at", "target_oid",
               "target_filenode", "recorded_at", "id", postgresql_where=text(
                   "rows_affected > 0 AND target_oid IS NOT NULL AND target_filenode IS NOT NULL")),
+        CheckConstraint("""((scheduled_source_oid IS NULL AND scheduled_source_filenode IS NULL) OR
+                        (scheduled_source_oid BETWEEN 1 AND 4294967295
+                        AND scheduled_source_filenode BETWEEN 1 AND 4294967295
+                        AND target_oid > 0 AND target_filenode > 0 AND rows_affected > 0
+                        AND write_mode = 'upsert' AND cursor_through IS NULL AND has_more IS NULL
+                        AND initiated_by = '827a40a4-ea50-5e8f-a4f8-191ebfadd1a6'::uuid)) IS TRUE""",
+                        name="ck_ontology_transfer_run_scheduled_source"),
+        Index("ix_ontology_transfer_run_scheduled_source", "source_schema", "source_table", "recorded_at", "id",
+              postgresql_where=text("scheduled_source_oid IS NOT NULL")),
         Index("ix_ontology_transfer_runs_plan", "plan_id", "recorded_at"),
         Index("ix_ontology_transfer_runs_source", "source_schema", "source_table", "recorded_at"),
         Index("ix_ontology_transfer_runs_target", "target_schema", "target_table", "recorded_at"),
@@ -191,6 +200,8 @@ class TransferRunRow(SQLModel, table=True):
     target_table: str = DbField(max_length=63)
     target_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
     target_filenode: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    scheduled_source_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    scheduled_source_filenode: int | None = DbField(default=None, sa_column=Column(BigInteger))
     write_mode: str = DbField(max_length=6)
     rows_affected: int
     recorded_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
@@ -232,6 +243,9 @@ class TransferAttemptRow(SQLModel, table=True):
         Index("ix_ontology_transfer_attempts_request", "plan_id", "request_id"),
         Index("ix_ontology_transfer_attempt_timeline", "target_table", "started_at", "id",
               postgresql_where=text("target_table IS NOT NULL")),
+        Index("ix_ontology_transfer_attempt_clock_receipt", "receipt_id",
+              postgresql_where=text("scope_trigger IN ('daily_utc','week_utc') AND status = 'committed' "
+                                    "AND receipt_id IS NOT NULL")),
         Index("ix_ontology_transfer_attempt_manual_receipt", "receipt_id",
               postgresql_where=text("scope_trigger = 'manual' AND status = 'committed' AND receipt_id IS NOT NULL")),
     )

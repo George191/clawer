@@ -75,6 +75,7 @@ class ObservedLineageNeighbor(LineageEndpoint):
     receiptId: UUID
     receiptRecordedAt: datetime
     rowsAffected: int
+    trigger: Literal["daily_utc", "weekly_utc"] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ObservedLineage(BaseModel):

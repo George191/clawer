@@ -383,10 +383,14 @@ async def read_transfer_timeline_entry(
         source = await visible_observed_table_identity(session, row.source_schema, row.source_table)
         if source is None:
             raise unavailable
-        entry = _entry(row, physical, None, {row.id}, {})
+        job = await session.get(TransferScheduleJobRow, proof.job_id) if proof.job_id is not None else None
+        report = await _job_detail(session, job) if job is not None else None
+        if proof.trigger is not None and (report is None or report.kind != proof.trigger):
+            raise unavailable
+        entry = _entry(row, physical, job, {row.id} if proof.trigger is None else set(), {})
         if source != (proof.source_oid, proof.source_node) or physical != (proof.target_oid, proof.target_node):
             entry.physicalScope = "historical"
-        return TransferTimelineDetail(**entry.model_dump())
+        return TransferTimelineDetail(**entry.model_dump(), job=report)
 
     link = (await _linked_jobs(session, [row])).get((kind, row.id))
     report = await _job_detail(session, link) if link is not None else None
