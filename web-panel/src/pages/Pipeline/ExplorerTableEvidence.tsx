@@ -2,24 +2,23 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui';
 import { ReloadOutlined } from '@/components/ui/icons';
-import { fetchExplorerTableEvidence, fetchExplorerTransferRuns, type ExplorerTableEvidenceSnapshot, type TransferRunReceipt } from '../../services/api';
+import { fetchExplorerTableEvidence, type ExplorerTableEvidenceSnapshot, type TransferRunReceipt } from '../../services/api';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
 import ExplorerAssetFreshness from './ExplorerAssetFreshness';
+import ExplorerTransferTimeline from './ExplorerTransferTimeline';
 import './table-evidence.css';
 
 export default function ExplorerTableEvidence({ schema, table, canManage }: { schema: string; table: string; canManage: boolean }) {
     const [version, setVersion] = useState(0);
     const [snapshot, setSnapshot] = useState<ExplorerTableEvidenceSnapshot>();
     const [failed, setFailed] = useState(false);
-    const [receipts, setReceipts] = useState<TransferRunReceipt[]>();
-    const [receiptsFailed, setReceiptsFailed] = useState(false);
+    const [latestCurrentReceipt, setLatestCurrentReceipt] = useState<TransferRunReceipt | null>(null);
     const showReceipts = canManage && schema === 'ts_transfer_sandbox';
     const showExport = canManage && schema === TABLE_EXPORT_SOURCE.schema && table === TABLE_EXPORT_SOURCE.table;
     const refresh = () => {
         setSnapshot(undefined);
         setFailed(false);
-        setReceipts(undefined);
-        setReceiptsFailed(false);
+        setLatestCurrentReceipt(null);
         setVersion((value) => value + 1);
     };
 
@@ -31,16 +30,8 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
         return () => request.abort();
     }, [schema, table, version]);
 
-    useEffect(() => {
-        if (!showReceipts) return;
-        const request = new AbortController();
-        fetchExplorerTransferRuns(schema, table, request.signal)
-            .then(value => { if (!request.signal.aborted) setReceipts(value); })
-            .catch(() => { if (!request.signal.aborted) setReceiptsFailed(true); });
-        return () => request.abort();
-    }, [schema, table, version, showReceipts]);
-
-    const observed = showReceipts && receipts?.find(run => run.rowsAffected > 0);
+    const observed = showReceipts && latestCurrentReceipt && latestCurrentReceipt.rowsAffected > 0 &&
+        latestCurrentReceipt.targetSchema === schema && latestCurrentReceipt.targetTable === table && latestCurrentReceipt;
 
     return (
         <section className="flow-schema-details flow-table-evidence" aria-label="Table evidence">
@@ -73,22 +64,14 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                         </section>
                         {showReceipts && <ExplorerAssetFreshness key={`${schema}.${table}`} schema={schema} table={table} version={version} />}
                         {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>
-                        <section className="flow-evidence-card" aria-labelledby="table-evidence-history">
-                            <header><h4 id="table-evidence-history">History</h4><span>{showReceipts ? 'Sandbox transfers' : 'Run receipt unavailable'}</span></header>
-                            {showReceipts ? (
-                                receiptsFailed ? <p role="alert">Transfer receipts could not be loaded. Refresh evidence to retry.</p>
-                                    : !receipts ? <p role="status">Loading committed receipts…</p>
-                                        : receipts.length ? <ul className="flow-evidence-receipts">{receipts.map(run => <li key={run.id}>
-                                            <div><strong>{run.rowsAffected.toLocaleString()} rows affected</strong><span>Committed · {run.writeMode}</span></div>
-                                            <code>{run.sourceSchema}.{run.sourceTable} → {run.targetSchema}.{run.targetTable}</code>
-                                            <div><span>Receipt recorded</span><time dateTime={run.recordedAt}>{new Date(run.recordedAt).toLocaleString()}</time></div>
-                                            <code title="Receipt ID">{run.id}</code>
-                                        </li>)}</ul> : <p>No committed sandbox transfers for this table.</p>
-                            ) : <><strong>{snapshot.lineage.status === 'declared' ? 'No verified migration receipt' : 'No verified run history'}</strong>
+                        {showReceipts ? <ExplorerTransferTimeline key={`${schema}.${table}:${version}`} schema={schema} table={table} onLatestCurrentReceipt={setLatestCurrentReceipt} />
+                        : <section className="flow-evidence-card" aria-labelledby="table-evidence-history">
+                            <header><h4 id="table-evidence-history">History</h4><span>Run receipt unavailable</span></header>
+                            <strong>{snapshot.lineage.status === 'declared' ? 'No verified migration receipt' : 'No verified run history'}</strong>
                             <p>{snapshot.lineage.status === 'declared'
                                 ? 'This view cannot confirm when the migration ran, which batches completed, or how many rows were written.'
-                                : 'No verified ingestion or transformation runs are available for this table.'}</p></>}
-                        </section>
+                                : 'No verified ingestion or transformation runs are available for this table.'}</p>
+                        </section>}
                         <section className="flow-evidence-card flow-evidence-lineage" aria-labelledby="table-evidence-lineage">
                             <header><h4 id="table-evidence-lineage">Lineage</h4><span>{observed ? 'Observed in sandbox' : snapshot.lineage.status === 'declared' ? 'Declared in code' : 'Evidence unavailable'}</span></header>
                             {observed ? <>
@@ -97,7 +80,7 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                                     <span className="flow-evidence-arrow" aria-hidden="true">→</span>
                                     <div className="flow-evidence-node"><span>Destination table</span><code>{observed.targetSchema}.{observed.targetTable}</code></div>
                                 </div>
-                                <p>Latest committed sandbox transfer affecting rows. This is not evidence of production data movement.</p>
+                                <p>Latest committed sandbox transfer affecting rows on this physical destination. This is not evidence of production data movement.</p>
                             </> : snapshot.lineage.status === 'declared' ? <>
                                 <div className="flow-evidence-path">
                                     <div className="flow-evidence-node"><span>MongoDB collection</span><code>{snapshot.lineage.mongoCollection}</code></div>

@@ -7,10 +7,10 @@
 | 数据源与连接器 | [配置 Source](https://www.palantir.com/docs/foundry/data-connection/set-up-source/)；连接、凭证、网络和支持的能力先于任务配置。 | **部分**。Ontology 内已有连接器清单、新建/编辑/测试、加密凭证，以及有界只读的 PostgreSQL 源目录浏览；其他连接器能力和统一网络策略仍待覆盖。 | 在选择同步或导出前验证连接器能力和权限；不把连接测试通过当成可读取或可写入业务资产的证明。 |
 | 批量同步（拉入） | [配置 Sync](https://www.palantir.com/docs/foundry/data-connection/set-up-sync/)；选数据源、数据集输出，配置后手动或按调度运行。 | **部分**。本地试点支持已保存 PostgreSQL 源表、显式列/主键映射、限量快照 Upsert、执行尝试、同请求恢复和每日 UTC 调度。 | 受控试点不能代替完整的增量检查点、通用数据集目标或其他连接器。 |
 | 推送入站与 CDC | [Push data into a stream](https://www.palantir.com/docs/foundry/data-connection/push-based-ingestion/) 与 [CDC](https://www.palantir.com/docs/foundry/data-integration/change-data-capture/) 是不同输入。前者由外部调用写入 API，后者消费源变更。 | **部分**。已有 Debezium/Kafka/WAL 诊断及代码中固定的消费路径；没有 Foundry 式可配置入站流和逐通道管理。 | 如需入站，隔离接口认证、schema/速率验证、幂等、失败处理；不把消费位点当作下游已经提交的证明。 |
-| 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执。Published API 仍只是被动读取。 | 继续接入回执驱动的 Lineage 证据、按标记校验的外发策略、多目标/模式，以及另行审核的写回或 Webhook。 |
+| 对外推送与写回 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 分批量文件、表、连续流。表导出支持事务增量/全量等策略；[Webhooks](https://www.palantir.com/docs/foundry/data-connection/webhooks-overview/) 单列为外部调用能力。 | **部分**。已有默认关闭的 PostgreSQL 表导出沙箱：固定批准目的端、显式列映射、手动确认、执行尝试及接收端原子回执；当前审核的正数回执已驱动沙箱外发 Lineage。固定合成标记另有可撤销授权。Published API 仍只是被动读取。 | 验收通用标记策略、多目标/模式，以及另行审核的写回或 Webhook。 |
 | 通道配置与图上调度 | [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/) 在连接中配置导出；Add schedule 进入 [Data Lineage 的 Manage schedules](https://www.palantir.com/docs/foundry/data-lineage/manage-schedules/)。[建立调度](https://www.palantir.com/docs/foundry/building-pipelines/create-schedule/)定义触发、目标与运行范围。 | **部分**。Lineage 管理独立的表间通道；内部 Upsert 与受控批量同步可绑定每日 UTC。本地 1–3 个上游的平面 AND/OR 提交触发也复用现有 Automation Center，完整上游事件集与子回执分开。 | 验收嵌套或混合触发、通用运行范围和跨通道路由，不从未启用草稿启动作业。 |
 | 血缘图与影响分析 | [Explore data lineage](https://www.palantir.com/docs/foundry/data-lineage/explore-lineage/) 允许按资源展开上下游、公共祖先等；[列名搜索](https://www.palantir.com/docs/foundry/data-lineage/find-column/)不等于验证字段级来源。 | **部分**。现有 schema 图支持方向、缩放和分享。Explorer 的沙箱表级观测来自确有影响行的提交回执；财报 Evidence 的声明路径不代表生产逐边验证。 | 先接表级运行证据。区分代码声明、配置草稿和已经观察到的执行，不能用草稿绘成已提交的血缘。 |
-| 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有表级回执、通道历史、批量执行尝试和调度派发记录；未形成覆盖所有资产的 Build Timeline。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
+| 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。还未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；未实现事务级历史与列分布统计等。 | 先接运行记录；大表筛选保留查询预算，统计不随页面请求扫描业务表。 |
 | 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警。 | 验收通用 schema、逻辑数据规模、作业状态、数据字段新鲜度及更广的告警范围，不用财报日期冒充同步时间。 |
 | 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分 / 缺失**。有 Handler 编辑和 dry-run，不是可视化数据转换；没有通用事务快照、历史对比或二分查找。 | 先把运行结果、配置版本和事务标识绑定；之后再评估可视化转换与历史快照，不从当前 PostgreSQL 表伪造旧版本。 |
@@ -149,3 +149,9 @@
 - 保留现有 Automation 分钟评估，不增加派发或外部通知。当前有效的写入超期、已确认结构漂移和主堆越界才开启告警；同一资产、规则和持续故障不能在并发或重复评估中创建第二条。
 - 人工确认只记录已查看，不会关闭仍在发生的告警。检查未知、停滞或找不到可信证据，不代表恢复。只有同一有效规则重新确认通过才记为恢复；暂停或改版明确记为已替代，不伪造恢复。恢复后的新故障有新的告警 ID。
 - 管理员从精确沙箱资产的 Evidence 查看当前告警与有限历史。验收权限、版本、重复操作和确认过程中已恢复的竞态，保留可核对的时间和状态，不扫描业务行，不泄露连接或业务数据。
+
+### 资产运行时间线的验收口径
+
+- 参考 [Foundry Build Timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/)。管理员在现有 Explorer Evidence 查看精确沙箱目标表，分页区分已提交回执、可归属的执行尝试和相关触发详情。没有回执的尝试不报提交或行数；零行回执保留但不证明数据流动。
+- 版本及目标归属从写入或请求接受时的不可变记录取得。改计划、重建表或重新使用相同名称不迁移历史；缺少物理身份的旧回执只作历史，旧失败记录不能引用现版本反推归属。UTC 槽、上游父回执集合仅从真实关联查出，不能从 ID 格式或当前计划触发配置推断。
+- 验收同时间排序的有界翻页、跨表隔离、空回执与结果未知，以及物理替换后的证据标识。未确认归属的作业仍在 Automation 各自历史中，不伪造资产归属。

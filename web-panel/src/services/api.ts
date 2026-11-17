@@ -388,8 +388,26 @@ export const fetchTransferRunHistory = (planId: string, signal?: AbortSignal): P
 export const fetchTransferRunAttempts = (planId: string, signal?: AbortSignal): Promise<TransferRunAttempt[]> =>
   client.get(`/etl/transfer-plans/${encodeURIComponent(planId)}/attempts`, { signal }).then((r) => unwrap<TransferRunAttempt[]>(r.data));
 
-export const fetchExplorerTransferRuns = (schema: string, table: string, signal?: AbortSignal): Promise<TransferRunReceipt[]> =>
-  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/transfer-runs`, { signal }).then((r) => unwrap<TransferRunReceipt[]>(r.data));
+export type TransferTimelineEntry = {
+  id: string; kind: 'attempt' | 'receipt'; occurredAt: string; planId: string; planUpdatedAt: string | null;
+  status: string; receiptId: string | null; rowsAffected: number | null;
+  physicalScope: 'current' | 'historical' | 'unknown'; trigger: 'manual' | 'daily_utc' | 'upstream' | null;
+  sourceSchema: string | null; sourceTable: string | null; finishedAt: string | null; message: string | null;
+};
+export type TransferTimelineDetail = TransferTimelineEntry & {
+  job: { id: string; kind: 'daily_utc' | 'upstream'; dueAt: string | null; state: string;
+    parentEvents: { eventId: string; parentPlanId: string; parentReceiptId: string; eventRecordedAt: string }[];
+  } | null;
+};
+type TransferTimelinePage = { entries: TransferTimelineEntry[]; nextCursor: string | null; latestCurrentReceipt: TransferRunReceipt | null };
+const transferTimelinePath = (schema: string, table: string) =>
+  `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/transfer-timeline`;
+export const fetchTransferTimeline = (schema: string, table: string, cursor?: string, signal?: AbortSignal): Promise<TransferTimelinePage> =>
+  client.get(transferTimelinePath(schema, table), { params: { limit: 25, cursor }, signal }).then((r) => unwrap<TransferTimelinePage>(r.data));
+export const fetchTransferTimelineDetail = (
+  schema: string, table: string, kind: TransferTimelineEntry['kind'], id: string, signal?: AbortSignal,
+): Promise<TransferTimelineDetail> => client.get(`${transferTimelinePath(schema, table)}/${kind}/${encodeURIComponent(id)}`, { signal })
+  .then((r) => unwrap<TransferTimelineDetail>(r.data));
 
 export const runSandboxTransfer = (planId: string, request: { requestId: string; expectedUpdatedAt: string }): Promise<TransferRunReceipt> =>
   client.post(`/etl/transfer-plans/${encodeURIComponent(planId)}/runs`, request).then((r) => unwrap<TransferRunReceipt>(r.data));

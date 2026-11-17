@@ -22,6 +22,7 @@ from app.web.api.models.table_exports import (
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
     TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
 )
+from app.web.api.models.transfer_timeline import TimelineKind, TransferTimelineDetail, TransferTimelinePage
 from app.web.api.models.transfer_upstream import (
     UpstreamCandidate, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerJob, UpstreamTriggerSummary,
 )
@@ -60,6 +61,7 @@ from app.web.services.table_exports import (
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
     review_table_export, run_table_export, table_export_capabilities,
 )
+from app.web.services.transfer_timeline import list_transfer_timeline, read_transfer_timeline_entry
 from app.web.services.transfer_upstream import (
     change_upstream_trigger, list_upstream_candidates, list_upstream_jobs, list_upstream_triggers, read_upstream_trigger,
 )
@@ -291,6 +293,23 @@ async def get_table_transfer_runs(layer: str, table: TableName, session: Session
     if layer != SANDBOX:
         return []
     return await list_transfer_runs(session, table=table)
+
+
+@write.get("/{layer}/{table}/transfer-timeline")
+async def get_transfer_timeline(
+    layer: str, table: TableName, session: SessionDep,
+    limit: int = Query(25, ge=1, le=50), cursor: str | None = Query(None, min_length=1, max_length=512),
+) -> TransferTimelinePage:
+    """Read bounded runtime evidence persisted for an exact destination table."""
+    return await list_transfer_timeline(session, layer, table, limit, cursor)
+
+
+@write.get("/{layer}/{table}/transfer-timeline/{kind}/{entry_id}")
+async def get_transfer_timeline_entry(
+    layer: str, table: TableName, kind: TimelineKind, entry_id: UUID, session: SessionDep,
+) -> TransferTimelineDetail:
+    """Read scheduler provenance for an exact persisted attempt or receipt."""
+    return await read_transfer_timeline_entry(session, layer, table, kind, entry_id)
 
 
 @write.put("/transfer-plans/{plan_id}")

@@ -122,6 +122,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.incident_migration = import_module(
             "app.web.alembic.versions.f32194ec7a60_ontology_asset_quality_incidents",
         )
+        self.timeline_migration = import_module("app.web.alembic.versions.db42c1589a0e_ontology_transfer_timeline")
         async with self.pg.session() as session:
             for sql in (
                 "CREATE SCHEMA ts_rds", "CREATE SCHEMA ts_ods", "CREATE SCHEMA ts_meta",
@@ -145,6 +146,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.freshness_migration.upgrade)
             await self.migrate(session, self.quality_migration.upgrade)
             await self.migrate(session, self.incident_migration.upgrade)
+            await self.migrate(session, self.timeline_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -162,9 +164,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                                        "public.ontology_asset_quality_observations"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_freshness_transitions, "
                                        "public.ontology_asset_freshness_policies"))
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_attempts"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedule_jobs"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedules"))
-            await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_attempts"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_job_events, "
                                        "public.ontology_transfer_upstream_parents"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_jobs, "
@@ -558,6 +560,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.timeline_migration.downgrade)
             await self.migrate(session, self.incident_migration.downgrade)
             await self.migrate(session, self.quality_migration.downgrade)
             await self.migrate(session, self.freshness_migration.downgrade)
@@ -868,3 +871,101 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(job["operator"] == "OR" and len(job["events"]) == 1 for job in jobs[:2]))
                 self.assertEqual({job["events"][0]["parentReceiptId"] for job in jobs[:2]}, {a.json()["id"], d.json()["id"]})
                 self.assertEqual(await collect(), [])
+
+
+    async def test_exact_destination_timeline_pins_attempts_and_preserves_receipt_identity(self):
+        await self.pg.execute("CREATE SCHEMA ts_transfer_sandbox")
+        for table in ("timeline_source", "timeline_target", "timeline_other"):
+            await self.pg.execute(f"CREATE TABLE ts_transfer_sandbox.{table} (id integer PRIMARY KEY)")
+        await self.pg.execute("INSERT INTO ts_transfer_sandbox.timeline_source VALUES (1)")
+        route = "/etl/ts_transfer_sandbox/timeline_target/transfer-timeline"
+        async with api(True, self.session_provider) as client:
+            with (
+                patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+                patch.object(settings, "ENVIRONMENT", "local"),
+                patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            ):
+                proposed = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "sourceTable": "timeline_source",
+                            "targetSchema": "ts_transfer_sandbox", "targetTable": "timeline_target",
+                            "writeMode": "upsert", "trigger": "manual"}
+                resp = await client.post(RUNS, json=proposed)
+                self.assertEqual(resp.status_code, 201, resp.text)
+                plan = resp.json()
+                action = f"{RUNS}/{plan['id']}/runs"
+                request = {"requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"]}
+                sent = await client.post(action, json=request)
+                self.assertEqual(sent.status_code, 200, sent.text)
+                receipt = sent.json()
+                self.assertEqual((await client.post(action, json=request)).json(), receipt)
+                stale = await client.post(action, json={**request, "requestId": str(uuid4()),
+                                                        "expectedUpdatedAt": "2020-01-01T00:00:00Z"})
+                self.assertEqual(stale.status_code, 409)
+
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.timeline_source SELECT generate_series(2,101)")
+                oversized = await client.post(action, json={**request, "requestId": str(uuid4())})
+                self.assertEqual(oversized.status_code, 422, oversized.text)
+
+                encountered = []
+                cursor = None
+                while True:
+                    response = await client.get(route, params={"limit": 1, **({"cursor": cursor} if cursor else {})})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    body = response.json()
+                    self.assertEqual(body["latestCurrentReceipt"], receipt)
+                    encountered.extend(body["entries"])
+                    cursor = body["nextCursor"]
+                    if cursor is None:
+                        break
+                    wrong = await client.get("/etl/ts_transfer_sandbox/timeline_other/transfer-timeline",
+                                             params={"cursor": cursor})
+                    self.assertEqual(wrong.status_code, 422)
+                self.assertEqual([entry["status"] for entry in encountered],
+                                 ["rejected", "replayed", "committed", "committed"])
+                self.assertEqual([entry["kind"] for entry in encountered], ["attempt", "attempt", "receipt", "attempt"])
+                self.assertTrue(all(entry["physicalScope"] == "current" for entry in encountered))
+                self.assertTrue(all(entry["trigger"] == "manual" for entry in encountered))
+                self.assertEqual(encountered[2]["occurredAt"], receipt["recordedAt"])
+                self.assertIsNone(encountered[0]["receiptId"])
+                detail = (await client.get(f"{route}/attempt/{encountered[0]['id']}")).json()
+                self.assertIsNone(detail["job"])
+                self.assertGreaterEqual(detail["finishedAt"], detail["occurredAt"])
+                self.assertEqual((await client.get(
+                    f"/etl/ts_transfer_sandbox/timeline_source/transfer-timeline/receipt/{receipt['id']}",
+                )).status_code, 404)
+                self.assertEqual((await client.get("/etl/ts_ods/ods_financial_fact/transfer-timeline")).status_code, 404)
+
+                # Kind is a distinct tie-breaker even if a legacy importer
+                # gave an attempt and receipt identical identities/timestamps.
+                async with self.pg.session() as session:
+                    await session.execute(text(
+                        "UPDATE ontology_transfer_attempts SET id = :receipt, started_at = :stamp WHERE id = :attempt",
+                    ), {"receipt": receipt["id"], "stamp": datetime.fromisoformat(receipt["recordedAt"]),
+                        "attempt": encountered[3]["id"]})
+                first_page = (await client.get(route, params={"limit": 3})).json()
+                last_page = (await client.get(route, params={"cursor": first_page["nextCursor"]})).json()
+                self.assertEqual(first_page["entries"][-1]["kind"], "receipt")
+                self.assertEqual([(row["kind"], row["id"]) for row in last_page["entries"]],
+                                 [("attempt", receipt["id"])])
+
+                # An imported impossible state does not become successful
+                # provenance in the destination view without an actual receipt.
+                async with self.pg.session() as session:
+                    await session.execute(text(
+                        "UPDATE ontology_transfer_attempts SET receipt_id = NULL WHERE id = :attempt",
+                    ), {"attempt": receipt["id"]})
+                damaged = (await client.get(f"{route}/attempt/{receipt['id']}")).json()
+                self.assertEqual(damaged["status"], "outcome_unknown")
+                self.assertIsNone(damaged["receiptId"])
+                manual_without_proof = (await client.get(f"{route}/receipt/{receipt['id']}")).json()
+                self.assertIsNone(manual_without_proof["trigger"])
+
+                changed = await client.put(f"{RUNS}/{plan['id']}", json={**proposed, "targetTable": "timeline_other"})
+                self.assertEqual(changed.status_code, 200, changed.text)
+                other = (await client.get("/etl/ts_transfer_sandbox/timeline_other/transfer-timeline")).json()
+                self.assertEqual(other["entries"], [])
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.timeline_target")
+                historical = (await client.get(route)).json()
+                self.assertIsNone(historical["latestCurrentReceipt"])
+                self.assertTrue(all(item["physicalScope"] == "historical" for item in historical["entries"]))
+        async with api(False, self.session_provider) as reader:
+            self.assertEqual((await reader.get(route)).status_code, 403)

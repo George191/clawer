@@ -155,6 +155,9 @@ class TransferRunRow(SQLModel, table=True):
         Index("ix_ontology_transfer_runs_plan", "plan_id", "recorded_at"),
         Index("ix_ontology_transfer_runs_source", "source_schema", "source_table", "recorded_at"),
         Index("ix_ontology_transfer_runs_target", "target_schema", "target_table", "recorded_at"),
+        Index("ix_ontology_transfer_timeline_receipts", "target_schema", "target_table", "recorded_at", "id"),
+        Index("ix_ontology_transfer_timeline_current", "target_schema", "target_table", "target_oid",
+              "target_filenode", "recorded_at", "id", postgresql_where=text("rows_affected > 0")),
         Index("uq_ontology_transfer_runs_append_route", "source_schema", "source_table", "target_schema",
               "target_table", unique=True, postgresql_where=text("write_mode = 'append' AND has_more IS NULL")),
     )
@@ -199,11 +202,30 @@ class TransferAttemptRow(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("status IN ('started', 'committed', 'replayed', 'rejected', 'outcome_unknown')",
                         name="ck_ontology_transfer_attempts_status"),
+        CheckConstraint("(target_table IS NULL) = (plan_updated_at IS NULL) "
+                        "AND (target_table IS NULL) = (source_table IS NULL) "
+                        "AND (target_table IS NULL) = (scope_trigger IS NULL) "
+                        "AND (target_oid IS NULL) = (target_filenode IS NULL) "
+                        "AND (target_table IS NOT NULL OR target_oid IS NULL) "
+                        "AND (scope_trigger IS NULL OR scope_trigger IN ('manual','daily_utc','upstream')) "
+                        "AND (scope_trigger IS DISTINCT FROM 'daily_utc' OR schedule_job_id IS NOT NULL)",
+                        name="ck_ontology_transfer_attempt_timeline_scope"),
         Index("ix_ontology_transfer_attempts_plan", "plan_id", "started_at"),
+        Index("ix_ontology_transfer_attempt_timeline", "target_table", "started_at", "id",
+              postgresql_where=text("target_table IS NOT NULL")),
+        Index("ix_ontology_transfer_attempt_manual_receipt", "receipt_id",
+              postgresql_where=text("scope_trigger = 'manual' AND status = 'committed' AND receipt_id IS NOT NULL")),
     )
 
     id: UUID = DbField(default_factory=uuid4, primary_key=True)
     upstream_job_id: UUID | None = DbField(default=None, foreign_key="ontology_transfer_upstream_jobs.id")
+    schedule_job_id: UUID | None = DbField(default=None, foreign_key="ontology_transfer_schedule_jobs.id")
+    plan_updated_at: datetime | None = DbField(default=None, sa_column=Column(DateTime(timezone=True)))
+    source_table: str | None = DbField(default=None, max_length=63)
+    target_table: str | None = DbField(default=None, max_length=63)
+    target_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    target_filenode: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    scope_trigger: str | None = DbField(default=None, max_length=9)
     plan_id: UUID = DbField(foreign_key="ontology_transfer_plans.id")
     request_id: UUID
     status: str = DbField(default="started", max_length=16)

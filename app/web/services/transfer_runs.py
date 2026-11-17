@@ -107,6 +107,55 @@ async def list_transfer_attempts(session: AsyncSession, plan_id: UUID) -> list[T
             for row in (await session.scalars(statement)).all()]
 
 
+async def transfer_target_identity(session: AsyncSession, target_table: str) -> tuple[int, int] | None:
+    """Read only the catalog identity of an ordinary sandbox heap."""
+    row = (await session.execute(text("""
+        SELECT c.oid, pg_catalog.pg_relation_filenode(c.oid)
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_catalog.pg_am a ON a.oid = c.relam AND a.amname = 'heap'
+        WHERE n.nspname = :schema AND c.relname = :target AND c.relkind = 'r' AND NOT c.relispartition
+    """), {"schema": SANDBOX, "target": target_table})).one_or_none()
+    return (row[0], row[1]) if row and row[1] is not None else None
+
+
+async def _pin_attempt_scope(
+    session: AsyncSession, plan: TransferPlanRow, request: TransferRunRequest,
+    *, scheduled_job_id: UUID | None, upstream_job_id: UUID | None,
+) -> dict:
+    # Save only the target of the exact admitted draft revision. Execution
+    # rechecks the revision and physical relation under its existing write locks.
+    if plan.updated_at != request.expectedUpdatedAt or plan.source_schema != SANDBOX or plan.target_schema != SANDBOX:
+        return {}
+    trigger, expected_mode = "manual", "manual"
+    if scheduled_job_id is not None:
+        job = await session.get(TransferScheduleJobRow, scheduled_job_id)
+        if (job is None or job.id != request.requestId or job.plan_id != plan.id
+            or job.plan_updated_at != request.expectedUpdatedAt):
+            return {}
+        trigger, expected_mode = "daily_utc", "scheduled"
+    elif upstream_job_id is not None:
+        job = await session.get(UpstreamTriggerJobRow, upstream_job_id)
+        if (job is None or job.id != request.requestId or job.plan_id != plan.id
+            or job.child_updated_at != request.expectedUpdatedAt):
+            return {}
+        trigger = expected_mode = "upstream"
+    if plan.trigger != expected_mode:
+        return {}
+
+    # A known replay is a new attempt at the same immutable receipt, never an
+    # apparent fresh attempt against a replacement heap with the same name.
+    prior = (await session.scalars(select(TransferRunRow).where(
+        TransferRunRow.plan_id == plan.id, TransferRunRow.request_id == request.requestId,
+        TransferRunRow.plan_updated_at == request.expectedUpdatedAt, TransferRunRow.target_schema == SANDBOX,
+        TransferRunRow.target_table == plan.target_table,
+    ))).one_or_none()
+    target = ((prior.target_oid, prior.target_filenode) if prior else
+              await transfer_target_identity(session, plan.target_table)) or (None, None)
+    return dict(plan_updated_at=plan.updated_at, source_table=plan.source_table, target_table=plan.target_table,
+                target_oid=target[0], target_filenode=target[1], scope_trigger=trigger, schedule_job_id=scheduled_job_id)
+
+
 async def _finish_attempt(session: AsyncSession, attempt_id: UUID, status: str, *,
                           receipt_id: UUID | None = None, message: str | None = None) -> None:
     await session.execute(update(TransferAttemptRow).where(
@@ -336,10 +385,13 @@ async def run_sandbox_transfer(
         raise HTTPException(403, "Upstream sandbox transfer execution is disabled")
     if upstream_job_id is None and scheduled_job_id is None and request.requestId.version != 4:
         raise HTTPException(422, "Manual sandbox runs require a UUIDv4 request ID")
-    if (await session.scalar(select(TransferPlanRow.id).where(TransferPlanRow.id == plan_id))) is None:
+    draft = await session.get(TransferPlanRow, plan_id, populate_existing=True)
+    if draft is None:
         raise HTTPException(404, "Transfer draft does not exist")
+    scope = await _pin_attempt_scope(session, draft, request, scheduled_job_id=scheduled_job_id,
+                                    upstream_job_id=upstream_job_id)
     attempt = TransferAttemptRow(plan_id=plan_id, request_id=request.requestId, started_at=datetime.now(timezone.utc),
-                                 upstream_job_id=upstream_job_id)
+                                 upstream_job_id=upstream_job_id, **scope)
     attempt_id = attempt.id
     session.add(attempt)
     await session.commit()
@@ -453,6 +505,11 @@ async def run_sandbox_transfer(
         if set(catalog) != names:
             raise HTTPException(422, unsupported)
 
+        admitted_target = catalog[plan.target_table]
+        if (scope.get("target_table") != plan.target_table
+            or (scope.get("target_oid"), scope.get("target_filenode")) !=
+               (admitted_target["table_oid"], admitted_target["table_node"])):
+            raise HTTPException(409, "The admitted transfer destination changed before execution")
         limit_params = {"limit": MAX_ROWS}
         selection = ""
         has_more = None

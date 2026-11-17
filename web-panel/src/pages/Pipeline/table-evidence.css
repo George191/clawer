@@ -67,3 +67,6 @@
 .flow-evidence-quality-warnings { display: grid; gap: 8px; min-width: 0; border-top: 1px solid var(--ontology-border); padding-top: 8px; }
 .flow-evidence-quality-warnings :is(h5, h6, p) { margin: 0; }
 .flow-evidence-quality-warnings .flow-evidence-receipts button { justify-self: start; }
+.flow-evidence-timeline > button, .flow-evidence-timeline .flow-evidence-receipts button { justify-self: start; }
+.flow-evidence-timeline .flow-evidence-receipts p { margin: 0; }
+.flow-evidence-timeline-detail { display: grid; gap: 8px; overflow-wrap: anywhere; }
