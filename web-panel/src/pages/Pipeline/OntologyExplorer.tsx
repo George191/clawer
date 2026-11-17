@@ -430,7 +430,7 @@ export default function OntologyExplorer({ refreshToken = 0 }: { refreshToken?: 
     updateQuery({ schema: null, table: null, tab: null }, true);
   };
   const openWorkspace = () => {
-    if (selectedId) navigate(`/ontology/layers?${new URLSearchParams({ schema: selectedSchema, table: selectedTable })}`);
+    if (selectedId) navigate(`/ontology/explorer?${new URLSearchParams({ schema: selectedSchema, table: selectedTable })}`);
   };
   const startNewObject = () => {
     const destination = source || selectedSchema;

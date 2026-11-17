@@ -122,7 +122,7 @@ const App: React.FC = () => {
             <Route path="/monitor" element={<Monitoring />} />
             <Route path="/logs" element={<LogExplorer />} />
             <Route path="/ontology" element={<Pipeline />} />
-            <Route path="/ontology/layers" element={<Pipeline />} />
+            <Route path="/ontology/explorer" element={<Pipeline />} />
             <Route path="/ontology/lineage" element={<Pipeline />} />
             <Route path="/ontology/transforms" element={<Pipeline />} />
             <Route path="/ontology/runtime" element={<Pipeline />} />
