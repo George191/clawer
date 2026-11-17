@@ -13,7 +13,7 @@
 | 运行历史 | [Build timeline](https://www.palantir.com/docs/foundry/data-lineage/build-timeline/) 展示资产相关构建与可钻取的作业/调度记录。 | **部分**。沙箱已有按精确目标表分页的运行时间线，分开展示不可变归属的尝试、提交回执、调度和父回执；历史/未核实物理标识不作为当前写入证据。还未覆盖所有资产。 | 把更多真实操作结果接入资产历史，覆盖取消、无新数据及可追溯的事务/位点，并区分提交和观测。 |
 | 数据集查看 | [Dataset Preview](https://www.palantir.com/docs/foundry/dataset-preview/overview/) 把预览、元数据、运行、健康等统一到资产上下文。 | **部分**。已有有界预览、筛选、Schema、Stream、Evidence；未实现事务级历史与列分布统计等。 | 先接运行记录；大表筛选保留查询预算，统计不随页面请求扫描业务表。 |
 | 质量与新鲜度 | [Health Checks](https://www.palantir.com/docs/foundry/health-checks/checks-reference/) 有 schema、行数、作业/调度与新鲜度等检查，结果可追溯。 | **部分**。Evidence 有结构计数和受预算约束的 SEC 日期观察；另有隔离沙箱的后台写入新鲜度、显式审核的有序 schema 基线、物理主堆字节阈值、独立结果历史和可确认的站内告警。 | 验收通用 schema、逻辑数据规模、作业状态、数据字段新鲜度及更广的告警范围，不用财报日期冒充同步时间。 |
-| 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；合成 CDC 可查看、比较真实提交快照；沙箱 Builder 能对已存版本执行有类型的筛选和列映射，并保存不改写的配置版本。 | 继续验收真实输出提交、通用图编排、生产资产快照、历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
+| 可视化管道与版本历史 | [Pipeline Builder](https://www.palantir.com/docs/foundry/pipeline-builder/overview/) 编辑输入、转换和输出并预览；[Time Travel](https://www.palantir.com/docs/foundry/dataset-preview/time-travel/)依赖已提交的版本。 | **部分**。有 Handler 编辑和 dry-run；合成 CDC 可查看、比较真实提交快照；沙箱 Builder 可对已存版本筛选、映射和保存不可变配置；另行启用后可明确提交到独立输出存储，获得可复查的结果和回执。 | 继续验收通用图编排、生产资产快照、历史回溯及二分查找，不从当前 PostgreSQL 表伪造旧版本。 |
 | 传输权限与标记 | [访问控制传播](https://www.palantir.com/docs/foundry/security/access-control-propagation/)和 [Exports](https://www.palantir.com/docs/foundry/data-connection/export-overview/)规定衍生数据、目的端及外发的限制。 | **部分**。已有超级管理员及语义对象/字段级授权；固定合成表导出另有默认拒绝的授权、撤销、代次绑定和范围内回执。 | 继续验收可配置资产标记、跨通道权限传播、接收端粒度和独立审计权限。 |
 
 ## 实现顺序
@@ -173,3 +173,9 @@
 - 参考 [Foundry Pipeline Builder workflow](https://www.palantir.com/docs/foundry/pipeline-builder/overview/#workflow) 对转换、预览和输出的区分。Ontology Transformations 保留原 Handler，新增明确开启的本地合成 Builder 路径。起点只能选择一条真实保存的 CDC 版本，配置受支持的类型化筛选、字段和列顺序，显示经过真实计算的预览。无任意 SQL、代码、外部连接或输出写入。
 - 预览和保存配置分别操作；保存产生不可变配置版本并引用精确输入版本，不产生数据集提交回执。过期基线不能覆盖最新配置，已保存版本的输入、规则及结果可重查而不读取实时表。
 - 验收空输出、有匹配和无匹配、bigint 字符串而非 JS 数值、精确列顺序和内容、旧输入版本稳定、权限与环境门槛及并发保存。此轮无实际发布数据、任意拓扑或生产转换。
+
+### Builder 已提交输出的验收口径
+
+- Builder 试算、配置保存和数据提交分别显示。只有本地合成范围、另行显式启用、管理员确认且绑定当前已审核配置版本及指纹，才写入专用的不可变输出存储。输入来自已保存快照，不读写实时业务表，不接受任意输出位置。
+- 结果行和输出回执同事务，读取从存储重现已提交版本；失败不得留下部分行或成功回执。以原请求重放返回同一结果，不再试算或新增版本。零行允许成为真实空结果，但不是写入行或观测数据流。
+- 验收普通预览/保存无输出、取消无提交、并发去重、失去回执后的原请求恢复、旧版本可读与失效审核拒绝新提交。此轮不部署、不恢复生产数据，也不宣称任意 Pipeline 发布。

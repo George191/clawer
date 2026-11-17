@@ -25,6 +25,9 @@ from app.web.api.models.cdc_sandbox_versions import (
 from app.web.api.models.pipeline_sandbox import (
     PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
 )
+from app.web.api.models.pipeline_sandbox_outputs import (
+    PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputDetail, PipelineSandboxOutputsPage,
+)
 from app.web.api.models.table_exports import (
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
     TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
@@ -69,6 +72,9 @@ from app.web.services.cdc_sandbox import (
 from app.web.services.cdc_sandbox_versions import compare_cdc_versions, list_cdc_versions, read_cdc_version
 from app.web.services.pipeline_sandbox import (
     list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
+)
+from app.web.services.pipeline_sandbox_outputs import (
+    commit_pipeline_output, list_pipeline_outputs, read_pipeline_output,
 )
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
@@ -164,6 +170,23 @@ async def get_local_pipeline_revision(
     session: SessionDep, generation: int = Path(ge=1, le=2147483647),
 ) -> PipelineSandboxRevision:
     return await read_pipeline_revision(session, generation)
+
+
+@write.get("/pipeline-sandbox/outputs")
+async def get_local_pipeline_outputs(session: SessionDep) -> PipelineSandboxOutputsPage:
+    return await list_pipeline_outputs(session)
+
+
+@write.post("/pipeline-sandbox/outputs", status_code=201)
+async def post_local_pipeline_output(
+    payload: PipelineSandboxCommit, session: SessionDep, current_user: CurrentActiveSuperuser,
+) -> PipelineSandboxOutput:
+    return await commit_pipeline_output(session, payload, current_user.id)
+
+
+@write.get("/pipeline-sandbox/outputs/{output_id}")
+async def get_local_pipeline_output(output_id: UUID, session: SessionDep) -> PipelineSandboxOutputDetail:
+    return await read_pipeline_output(session, output_id)
 
 
 @write.get("/asset-freshness/{schema}/{table}/candidates")

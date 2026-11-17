@@ -582,6 +582,20 @@ export const fetchSandboxPipelineRevisions = (signal?: AbortSignal): Promise<San
   client.get(`${sandboxPipelinePath}/revisions`, { signal }).then((r) => unwrap<SandboxPipelineRevision[]>(r.data));
 export const saveSandboxPipelineRevision = (config: SandboxPipelineConfig, expectedGeneration: number | null): Promise<SandboxPipelineRevision> =>
   client.post(`${sandboxPipelinePath}/revisions`, { expectedGeneration, config }).then((r) => unwrap<SandboxPipelineRevision>(r.data));
+export type SandboxPipelineOutput = {
+  id: string; requestId: string; reviewedGeneration: number; configHash: string; versionId: string;
+  columns: SandboxPipelineColumn[]; inputRows: number; outputRows: number; recordedAt: string; resultHash: string;
+};
+export type SandboxPipelineOutputList = { available: boolean; outputs: SandboxPipelineOutput[] };
+export type SandboxPipelineOutputDetail = SandboxPipelineOutput & { rows: string[][] };
+export type SandboxPipelineOutputRequest = { requestId: string; expectedGeneration: number; expectedConfigHash: string };
+const sandboxPipelineOutputPath = `${sandboxPipelinePath}/outputs`;
+export const fetchSandboxPipelineOutputs = (signal?: AbortSignal): Promise<SandboxPipelineOutputList> =>
+  client.get(sandboxPipelineOutputPath, { signal }).then((r) => unwrap<SandboxPipelineOutputList>(r.data));
+export const fetchSandboxPipelineOutput = (id: string, signal?: AbortSignal): Promise<SandboxPipelineOutputDetail> =>
+  client.get(`${sandboxPipelineOutputPath}/${encodeURIComponent(id)}`, { signal }).then((r) => unwrap<SandboxPipelineOutputDetail>(r.data));
+export const commitSandboxPipelineOutput = (request: SandboxPipelineOutputRequest): Promise<SandboxPipelineOutput> =>
+  client.post(sandboxPipelineOutputPath, request).then((r) => unwrap<SandboxPipelineOutput>(r.data));
 
 export const setTableOffset = (layer: string, table: string, partition: number, offset: number, topic?: string): Promise<{ restartRequired: boolean }> =>
   client.put(`/etl/${layer}/${table}/offset`, { partition, offset, topic, confirmation: 'SET OFFSET' }).then((r) => unwrap<{ restartRequired: boolean }>(r.data));

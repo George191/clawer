@@ -48,6 +48,7 @@ from .batch_syncs import BatchSyncPlanRow as BatchSyncPlanRow
 from .cdc_sandbox import CdcSandboxBindingRow as CdcSandboxBindingRow
 from .cdc_sandbox_versions import CdcSandboxVersionRow as CdcSandboxVersionRow
 from .pipeline_sandbox import PipelineSandboxRevisionRow as PipelineSandboxRevisionRow
+from .pipeline_sandbox_outputs import PipelineSandboxOutputRow as PipelineSandboxOutputRow
 from .batch_sync_schedules import BatchSyncScheduleRow as BatchSyncScheduleRow
 from .table_exports import TableExportPlanRow as TableExportPlanRow
 from .transfer_plans import TransferPlanRow as TransferPlanRow

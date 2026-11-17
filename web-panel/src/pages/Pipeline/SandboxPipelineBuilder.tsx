@@ -9,6 +9,7 @@ import type {
   SandboxCdcVersion, SandboxPipelineColumn, SandboxPipelineConfig, SandboxPipelineFilter, SandboxPipelinePreview,
   SandboxPipelineRevision,
 } from '../../services/api';
+import SandboxPipelineOutputs from './SandboxPipelineOutputs';
 import './sandbox-pipeline-builder.css';
 
 const fields: SandboxPipelineColumn[] = ['id', 'value'];
@@ -22,6 +23,15 @@ function validFilter(filter: SandboxPipelineFilter) {
   if (!/^(0|-?[1-9]\d{0,18})$/.test(filter.value)) return false;
   const value = BigInt(filter.value);
   return value >= -9223372036854775808n && value <= 9223372036854775807n;
+}
+
+function sameConfig(left: SandboxPipelineConfig, right: SandboxPipelineConfig) {
+  return left.versionId === right.versionId &&
+    left.projection.length === right.projection.length && left.projection.every((column, index) => column === right.projection[index]) &&
+    left.filters.length === right.filters.length && left.filters.every((filter, index) => {
+      const reviewed = right.filters[index];
+      return filter.field === reviewed.field && filter.operator === reviewed.operator && filter.value === reviewed.value;
+    });
 }
 
 function FilterRow({ filter, index, disabled, change, remove }: {
@@ -146,6 +156,7 @@ export default function SandboxPipelineBuilder() {
     revise({ ...config, projection: next });
   };
   const sourceListed = loaded?.versions.some(item => item.id === config.versionId);
+  const reviewed = saved.find(item => item.generation === generation && sameConfig(config, item.config));
   return <section className="flow-sandbox-builder flow-foundry-workbench" aria-label="Sandbox Pipeline Builder">
     <header><h1>Sandbox Pipeline Builder</h1><p>Transform a committed synthetic snapshot. Preview and save configuration only; no destination data is written.</p></header>
     {loadFailed ? <div role="alert">Builder could not be loaded. <Button size="small" onClick={() => setRefresh(value => value + 1)}>Retry builder</Button></div>
@@ -211,6 +222,7 @@ export default function SandboxPipelineBuilder() {
         <Button size="small" disabled={saving} onClick={() => revise(item.config)}>{`Load configuration revision ${item.generation}`}</Button>
       </li>)}</ol> : <p>No configuration revisions saved.</p>}
     </section>
+    <SandboxPipelineOutputs reviewed={saving ? undefined : reviewed} />
     </>}
   </section>;
 }

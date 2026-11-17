@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.storage.postgres_client import PostgresClient
 from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReview
 from app.web.api.models.pipeline_sandbox import PipelineSandboxConfig, PipelineSandboxSave
+from app.web.api.models.pipeline_sandbox_outputs import PipelineSandboxCommit
 from app.web.core.config import settings
 from app.web.tests.test_transfer_plans import api
 
@@ -24,6 +25,7 @@ _URL = os.getenv("ONTOLOGY_CDC_SANDBOX_TEST_URL")
 _DB = "ontology_cdc_regression"
 _ROUTE = "/etl/cdc-sandbox"
 _BUILDER = "/etl/pipeline-sandbox"
+_OUTPUTS = _BUILDER + "/outputs"
 _MARKER = uuid4()
 _REVIEW = {"expectedGeneration": None}
 
@@ -93,6 +95,22 @@ class CdcSandboxContract(unittest.IsolatedAsyncioTestCase):
             )).status_code, 403)
 
 
+    async def test_builder_output_opt_in_and_strict_commit_payload(self):
+        request = {"requestId": str(uuid4()), "expectedGeneration": 1, "expectedConfigHash": "a" * 64}
+        PipelineSandboxCommit.model_validate(request)
+        for invalid in ({"target": "arbitrary"}, {"expectedGeneration": "1"}, {"expectedConfigHash": "wrong"}):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                PipelineSandboxCommit.model_validate({**request, **invalid})
+        with patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED", False):
+            async with api(True) as client:
+                self.assertEqual((await client.get(_OUTPUTS)).json(), {"available": False, "outputs": []})
+                self.assertEqual((await client.post(_OUTPUTS, json=request)).status_code, 403)
+        async with api(False) as client:
+            self.assertEqual((await client.get(_OUTPUTS)).status_code, 403)
+            self.assertEqual((await client.get(_OUTPUTS + f"/{uuid4()}")).status_code, 403)
+            self.assertEqual((await client.post(_OUTPUTS, json=request)).status_code, 403)
+
+
 @unittest.skipUnless(_URL, "Requires an isolated ontology_cdc_regression PostgreSQL database")
 class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -105,7 +123,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.pg.fetch_one("SELECT current_database() AS name"))["name"], _DB)
         migrations = [import_module("app.web.alembic.versions." + name) for name in (
             "984b2ef31a6c_ontology_cdc_sandbox", "31d9685bf24a_ontology_cdc_sandbox_versions",
-            "f5b873c94d20_ontology_pipeline_sandbox",
+            "f5b873c94d20_ontology_pipeline_sandbox", "b46891e47c52_ontology_pipeline_sandbox_outputs",
         )]
 
         def upgrade(sync):
@@ -132,6 +150,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
             yield session
 
     async def drop_fixture(self):
+        await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_output_rows, ontology_pipeline_sandbox_outputs")
         await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_revisions")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_version_rows, ontology_cdc_sandbox_versions")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_receipts, ontology_cdc_sandbox_binding")
@@ -457,3 +476,120 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse((await client.get(_BUILDER)).json()["available"])
                     self.assertEqual((await client.get(_BUILDER+"/revisions/1")).status_code, 403)
                     self.assertEqual((await client.post(_BUILDER+"/preview", json=config)).status_code, 403)
+
+
+    async def test_builder_output_commits_exact_latest_review_and_preserves_sealed_old_and_empty_results(self):
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    await self.produce(session, 9223372036854775807, "last")
+                    await self.produce(session, -9223372036854775808, "first")
+                captured = await client.post(_ROUTE+"/runs", json=payload(0))
+                self.assertEqual(captured.status_code, 200, captured.text)
+                config = {"versionId": captured.json()["id"], "filters": [], "projection": ["value", "id"]}
+                draft = await client.post(_BUILDER+"/revisions", json={"expectedGeneration": None, "config": config})
+                self.assertEqual(draft.status_code, 201, draft.text)
+                request = {"requestId": str(uuid4()), "expectedGeneration": 1,
+                           "expectedConfigHash": draft.json()["configHash"]}
+                bad = await client.post(_OUTPUTS, json={**request, "expectedConfigHash": "a"*64})
+                self.assertEqual(bad.status_code, 409)
+
+                left, right = await asyncio.gather(client.post(_OUTPUTS, json=request), client.post(_OUTPUTS, json=request))
+                self.assertEqual((left.status_code, right.status_code), (201, 201), (left.text, right.text))
+                self.assertEqual(left.json(), right.json())
+                receipt = left.json()
+                self.assertEqual((receipt["inputRows"], receipt["outputRows"], receipt["versionId"]), (2, 2, config["versionId"]))
+                self.assertNotEqual(receipt["id"], receipt["versionId"])
+                detail = (await client.get(f"{_OUTPUTS}/{receipt['id']}")).json()
+                self.assertEqual(detail["rows"], [["first", "-9223372036854775808"], ["last", "9223372036854775807"]])
+                self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [receipt])
+
+                # Once a new reviewed generation exists, an original receipt
+                # reconciles but a new request carrying stale review cannot run.
+                empty_config = {**config, "filters": [{"field": "value", "operator": "eq", "value": "not found"}]}
+                draft_two = await client.post(_BUILDER+"/revisions",
+                                              json={"expectedGeneration": 1, "config": empty_config})
+                self.assertEqual(draft_two.status_code, 201, draft_two.text)
+                with patch("app.web.services.pipeline_sandbox_outputs._read_records",
+                           side_effect=AssertionError("Replay touched the archived input")):
+                    self.assertEqual((await client.post(_OUTPUTS, json=request)).json(), receipt)
+                    stale = await client.post(_OUTPUTS, json={**request, "requestId": str(uuid4())})
+                    self.assertEqual(stale.status_code, 409)
+                changed_request = await client.post(_OUTPUTS, json={**request, "expectedGeneration": 2})
+                self.assertEqual(changed_request.status_code, 409)
+                empty = await client.post(_OUTPUTS, json={"requestId": str(uuid4()), "expectedGeneration": 2,
+                                                         "expectedConfigHash": draft_two.json()["configHash"]})
+                self.assertEqual(empty.status_code, 201, empty.text)
+                self.assertEqual(empty.json()["outputRows"], 0)
+                self.assertEqual((await client.get(f"{_OUTPUTS}/{empty.json()['id']}")).json()["rows"], [])
+                self.assertEqual((await client.get(_ROUTE+"/runs")).json(), [captured.json()])
+                self.assertEqual((await self.pg.fetch_one("SELECT count(*) AS n FROM ts_cdc_sandbox.target_rows"))["n"], 2)
+
+                await self.pg.execute("TRUNCATE ts_cdc_sandbox.target_rows")
+                self.assertEqual((await client.get(f"{_OUTPUTS}/{receipt['id']}")).json(), detail)
+                with patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", uuid4()):
+                    self.assertFalse((await client.get(_OUTPUTS)).json()["available"])
+                    self.assertEqual((await client.get(f"{_OUTPUTS}/{receipt['id']}")).status_code, 403)
+
+    async def test_builder_output_row_failure_rolls_back_receipt_and_real_lost_ack_replays_once(self):
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                async with self.pg.session() as session:
+                    await self.produce(session, 1, "captured")
+                    await session.execute(text("""
+                        CREATE FUNCTION ts_cdc_sandbox.fail_output() RETURNS trigger LANGUAGE plpgsql AS $$
+                        BEGIN RAISE EXCEPTION 'fixture refused output'; END;
+                        $$
+                    """))
+                    await session.execute(text("""
+                        CREATE TRIGGER fail_output BEFORE INSERT ON ontology_pipeline_sandbox_output_rows
+                        FOR EACH ROW EXECUTE FUNCTION ts_cdc_sandbox.fail_output()
+                    """))
+                source = await client.post(_ROUTE+"/runs", json=payload(0))
+                self.assertEqual(source.status_code, 200, source.text)
+                config = {"versionId": source.json()["id"], "filters": [], "projection": ["id", "value"]}
+                draft = await client.post(_BUILDER+"/revisions", json={"expectedGeneration": None, "config": config})
+                self.assertEqual(draft.status_code, 201, draft.text)
+                request = {"requestId": str(uuid4()), "expectedGeneration": 1,
+                           "expectedConfigHash": draft.json()["configHash"]}
+                failed = await client.post(_OUTPUTS, json=request)
+                self.assertEqual(failed.status_code, 503, failed.text)
+                self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
+                self.assertEqual((await self.pg.fetch_one(
+                    "SELECT count(*) AS n FROM ontology_pipeline_sandbox_output_rows",
+                ))["n"], 0)
+                await self.pg.execute("DROP TRIGGER fail_output ON ontology_pipeline_sandbox_output_rows")
+
+                commit = AsyncSession.commit
+                lost = False
+
+                async def lose_ack(session):
+                    nonlocal lost
+                    await commit(session)
+                    if not lost:
+                        lost = True
+                        raise RuntimeError("fixture dropped successful output commit acknowledgement")
+
+                with patch.object(AsyncSession, "commit", lose_ack):
+                    unknown = await client.post(_OUTPUTS, json=request)
+                self.assertEqual(unknown.status_code, 503, unknown.text)
+                prior, = (await client.get(_OUTPUTS)).json()["outputs"]
+                self.assertEqual((await client.post(_OUTPUTS, json=request)).json(), prior)
+                self.assertEqual((await client.get(f"{_OUTPUTS}/{prior['id']}")).json()["rows"], [["1", "captured"]])
+                self.assertEqual((await client.get(_ROUTE+"/runs")).json(), [source.json()])

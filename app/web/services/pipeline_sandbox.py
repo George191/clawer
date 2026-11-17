@@ -111,14 +111,26 @@ def _matches(key: int, value: str, config: PipelineSandboxConfig) -> bool:
     return True
 
 
+def project_pipeline_records(records: dict[int, str], config: PipelineSandboxConfig) -> list[list[str]]:
+    """Project actual bounded snapshot rows in exact numeric ID order."""
+    return [[str(key) if column == "id" else value for column in config.projection]
+            for key, value in sorted(records.items()) if _matches(key, value, config)]
+
+
+async def lock_builder_writes(session: AsyncSession) -> None:
+    """Serialize saved review changes with outputs admitted against their exact head."""
+    await session.execute(text("SET LOCAL lock_timeout = '2s'"))
+    await session.execute(text("SET LOCAL statement_timeout = '5s'"))
+    await session.execute(text("SELECT pg_catalog.pg_advisory_xact_lock(1649157671, 275192983)"))
+
+
 async def preview_pipeline_sandbox(
     session: AsyncSession, config: PipelineSandboxConfig,
 ) -> PipelineSandboxPreview:
     """Filter and project the exact stored input; do not create a revision or output receipt."""
     binding = await _require_builder(session)
     records = await _read_records(session, await _version(session, binding, config.versionId))
-    rows = [[str(key) if column == "id" else value for column in config.projection]
-            for key, value in records.items() if _matches(key, value, config)]
+    rows = project_pipeline_records(records, config)
     return PipelineSandboxPreview(versionId=config.versionId, configHash=_hash(config), inputRows=len(records),
                                   matchedRows=len(rows), columns=config.projection, rows=rows)
 
@@ -129,22 +141,25 @@ async def save_pipeline_revision(
     """Append a new config revision only against the caller's reviewed generation."""
     binding = await _require_builder(session)
     await _version(session, binding, payload.config.versionId)
-    current = await _head(session, binding)
-    if current != payload.expectedGeneration:
-        raise HTTPException(409, "The saved Builder generation changed; reload before saving")
-    if current == 2147483647:
-        raise HTTPException(409, "The Builder generation limit has been reached")
-    row = PipelineSandboxRevisionRow(
-        generation=(current or 0) + 1, stream_marker=binding.stream_marker, physical_digest=binding.physical_digest,
-        input_version_id=payload.config.versionId, config_hash=_hash(payload.config),
-        config=payload.config.model_dump(mode="json"), recorded_at=datetime.now(timezone.utc), saved_by=actor_id,
-    )
     try:
-        await session.execute(text("SET LOCAL lock_timeout = '2s'"))
+        await lock_builder_writes(session)
+        current = await _head(session, binding)
+        if current != payload.expectedGeneration:
+            raise HTTPException(409, "The saved Builder generation changed; reload before saving")
+        if current == 2147483647:
+            raise HTTPException(409, "The Builder generation limit has been reached")
+        row = PipelineSandboxRevisionRow(
+            generation=(current or 0) + 1, stream_marker=binding.stream_marker, physical_digest=binding.physical_digest,
+            input_version_id=payload.config.versionId, config_hash=_hash(payload.config),
+            config=payload.config.model_dump(mode="json"), recorded_at=datetime.now(timezone.utc), saved_by=actor_id,
+        )
         session.add(row)
         result = _revision(row)
         await session.commit()
         return result
+    except HTTPException:
+        await session.rollback()
+        raise
     except IntegrityError as error:
         await session.rollback()
         if getattr(error.orig, "sqlstate", None) == "23505":

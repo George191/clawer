@@ -30,6 +30,10 @@
 .flow-sandbox-builder__table :is(th, td) { text-align: left; vertical-align: top; border-bottom: 1px solid var(--ontology-border); padding: 4px; }
 .flow-sandbox-builder__table code { white-space: pre-wrap; }
 .flow-sandbox-builder__history li { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 9px; }
+.flow-sandbox-builder ol.flow-sandbox-builder__output-list { list-style: none; padding-left: 0; }
+.flow-sandbox-builder__output-list > li, .flow-sandbox-builder__output-detail { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.flow-sandbox-builder__output-list > li { padding: 7px; border: 1px solid var(--ontology-border); border-radius: 4px; }
+.flow-sandbox-builder__output-list button, .flow-sandbox-builder__history > button { justify-self: start; }
 @media (max-width: 920px) {
   .flow-sandbox-builder__graph { grid-template-columns: minmax(0, 1fr); }
   .flow-sandbox-builder__arrow { justify-self: center; margin: 0; transform: rotate(90deg); }
