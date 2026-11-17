@@ -26,6 +26,7 @@ class PipelineSandboxOutput(SyntheticMarked):
     configHash: str
     resultHash: str
     versionId: UUID
+    matchVersionId: UUID | None = ApiField(default=None, exclude_if=lambda value: value is None)
     columns: list[BuilderColumn]
     inputRows: int
     outputRows: int
@@ -55,6 +56,9 @@ class PipelineSandboxOutputRow(SQLModel, table=True):
                         "AND (cardinality(columns) = 1 OR columns[1] <> columns[2])",
                         name="ck_ontology_pipeline_sandbox_output_projection"),
         CheckConstraint("marking_level IN (1, 2)", name="ck_ontology_builder_output_marking"),
+        CheckConstraint("match_version_id IS NULL OR (match_version_id <> input_version_id "
+                        "AND (marking_level IN (1, 2)) IS TRUE)",
+                        name="ck_ontology_builder_output_match"),
         Index("ix_ontology_pipeline_sandbox_outputs_scope", "stream_marker", "physical_digest", "recorded_at", "id"),
     )
 
@@ -65,6 +69,7 @@ class PipelineSandboxOutputRow(SQLModel, table=True):
     result_hash: str = Field(max_length=64)
     marking_level: int | None = Field(default=None, sa_column=Column(SmallInteger))
     input_version_id: UUID = Field(foreign_key="ontology_cdc_sandbox_versions.receipt_id")
+    match_version_id: UUID | None = Field(default=None, foreign_key="ontology_cdc_sandbox_versions.receipt_id")
     stream_marker: UUID
     physical_digest: str = Field(max_length=64)
     columns: list[str] = Field(sa_column=Column(ARRAY(Text), nullable=False))

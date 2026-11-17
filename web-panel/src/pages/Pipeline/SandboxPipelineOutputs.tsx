@@ -25,7 +25,8 @@ function ReceiptFacts({ item }: { item: SandboxPipelineOutput }) {
     <strong>Committed output receipt</strong>
     <span>Output rows: {item.outputRows.toLocaleString()}{item.outputRows === 0 ? ' · No observed movement' : ''}</span>
     <span>Input rows: {item.inputRows.toLocaleString()} · Reviewed configuration revision {item.reviewedGeneration}</span>
-    <span>Source snapshot receipt: <code>{item.versionId}</code></span>
+    <span>{item.matchVersionId ? 'Left version receipt' : 'Source snapshot receipt'}: <code>{item.versionId}</code></span>
+    {item.matchVersionId && <span>Matching version receipt: <code>{item.matchVersionId}</code></span>}
     <span>Output receipt ID: <code>{item.id}</code> · Original request ID: <code>{item.requestId}</code></span>
     <span>Recorded at: <time dateTime={item.recordedAt}>{timeText(item.recordedAt)}</time></span>
     <SandboxMarkings markings={item.markings} />
@@ -164,7 +165,8 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
       onCancel={() => { if (!busy) setConfirm(undefined); }} onOk={submit}>
       {confirm && ('previous' in confirm ? <p>Reuse request <code>{confirm.previous.requestId}</code> and exact revision {confirm.previous.expectedGeneration}.
         If already committed, this returns the original receipt.</p> : <>
-        <p>Write immutable sandbox output from saved configuration revision <strong>{confirm.revision.generation}</strong> and captured source receipt <code>{confirm.revision.config.versionId}</code>.</p>
+        <p>Write immutable sandbox output from saved configuration revision <strong>{confirm.revision.generation}</strong> and {confirm.revision.config.matchVersionId ? 'left version' : 'captured source'} receipt <code>{confirm.revision.config.versionId}</code>.</p>
+        {confirm.revision.config.matchVersionId && <p>Matching version receipt: <code>{confirm.revision.config.matchVersionId}</code>. Its IDs control membership; values come from the left.</p>}
         <p>Reviewed configuration hash: <code>{confirm.revision.configHash}</code>. No live source or arbitrary destination is used.</p>
         <SandboxMarkings markings={confirm.revision.markings} />
       </>)}

@@ -11,19 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.web.api.models.cdc_sandbox import CdcSandboxBindingRow
-from app.web.api.models.cdc_sandbox_versions import CdcSandboxVersionRow
 from app.web.api.models.pipeline_sandbox import PipelineSandboxRevisionRow
 from app.web.api.models.pipeline_sandbox_outputs import (
     PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputDetail, PipelineSandboxOutputRecordRow,
     PipelineSandboxOutputRow, PipelineSandboxOutputsPage,
 )
 from app.web.core.config import settings
-from app.web.services.cdc_sandbox_versions import _read_records, _version
+from app.web.services.cdc_sandbox_versions import _read_records
 from app.web.services.pipeline_sandbox import (
-    _builder_scope, _raw_revisions, _revision, lock_builder_writes, project_pipeline_records,
+    _builder_scope, _raw_revisions, _revision, _revisions, lock_builder_writes, project_pipeline_records,
+    read_match_ids, resolve_pipeline_inputs,
 )
 from app.web.services.synthetic_governance import (
-    BASE, allowed_level, builder_marking, marking_limit, markings, require_marking_access,
+    BASE, allowed_level, marking_limit, markings, require_marking_access,
 )
 
 MAX_OUTPUT_ROWS = 100
@@ -53,39 +53,37 @@ def _raw_outputs(binding: CdcSandboxBindingRow):
 
 
 def _outputs(binding: CdcSandboxBindingRow, limit: int | None):
-    output, revision, version = PipelineSandboxOutputRow, PipelineSandboxRevisionRow, CdcSandboxVersionRow
+    output, revision = PipelineSandboxOutputRow, PipelineSandboxRevisionRow
     query = _raw_outputs(binding).where(allowed_level(output.marking_level, limit))
-    if limit is None:
-        return query
-    return query.where(select(revision.generation).join(version, version.receipt_id == revision.input_version_id).where(
+    ancestry = _revisions(binding, limit).where(
         revision.generation == output.reviewed_generation,
         revision.input_version_id == output.input_version_id,
+        revision.match_version_id.is_not_distinct_from(output.match_version_id),
         revision.config_hash == output.config_hash,
-        revision.marking_level == output.marking_level,
-        revision.stream_marker == output.stream_marker,
-        revision.physical_digest == output.physical_digest,
-        version.stream_marker == output.stream_marker,
-        version.physical_digest == output.physical_digest,
-        version.marking_level == BASE,
-    ).exists())
+        revision.marking_level.is_not_distinct_from(output.marking_level),
+    ).with_only_columns(revision.generation).correlate(output).exists()
+    return query.where(ancestry)
 
 
 def _receipt(row: PipelineSandboxOutputRow) -> PipelineSandboxOutput:
     return PipelineSandboxOutput(
         id=row.id, requestId=row.request_id, reviewedGeneration=row.reviewed_generation, configHash=row.config_hash,
-        resultHash=row.result_hash, versionId=row.input_version_id, columns=row.columns,
+        resultHash=row.result_hash, versionId=row.input_version_id, matchVersionId=row.match_version_id,
+        columns=row.columns,
         inputRows=row.input_rows, outputRows=row.output_rows, recordedAt=row.recorded_at, markings=markings(row.marking_level),
     )
 
 
 def _seal(output: PipelineSandboxOutputRow, rows: list[list[str]]) -> str:
     data = {"columns": output.columns, "rows": rows}
-    if output.marking_level is not None:
+    if output.marking_level is not None or output.match_version_id is not None:
         data.update(
             markings=markings(output.marking_level), reviewedGeneration=output.reviewed_generation,
             configHash=output.config_hash, versionId=str(output.input_version_id),
             streamMarker=str(output.stream_marker), physicalDigest=output.physical_digest,
         )
+    if output.match_version_id is not None:
+        data.update(operator="match_by_id", matchVersionId=str(output.match_version_id))
     payload = json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return sha256(payload.encode("utf-8")).hexdigest()
 
@@ -156,7 +154,7 @@ async def commit_pipeline_output(
                 or prior.config_hash != request.expectedConfigHash):
                 raise HTTPException(409, "This request ID is bound to a different reviewed Builder configuration")
             await _stored_rows(session, prior)
-            return _receipt(prior)  # Reconcile from committed output storage before querying any config or input.
+            return _receipt(prior)  # Reconcile from the sealed result without reading either input snapshot.
         if limit == BASE:
             raise HTTPException(403, "Both synthetic markings are required to manage the shared Builder head")
         if prior is None and await session.scalar(_raw_outputs(binding).where(
@@ -176,18 +174,20 @@ async def commit_pipeline_output(
         ).with_only_columns(PipelineSandboxRevisionRow.generation).limit(1)):
             raise HTTPException(403, "The protected Builder head requires local governance access")
         config = _revision(revision).config
-        level = builder_marking(limit, config.additionalMarking)
+        left, right, level = await resolve_pipeline_inputs(session, binding, config, limit)
         if level != revision.marking_level:
             raise HTTPException(404, "No authorized synthetic revision exists for this request")
-        source = await _read_records(session, await _version(session, binding, config.versionId, limit))
-        rows = project_pipeline_records(source, config)
+        right_ids = await read_match_ids(session, right)
+        source = await _read_records(session, left)
+        rows = project_pipeline_records(source, config, right_ids)
         size = _byte_size(rows)
         if len(rows) > MAX_OUTPUT_ROWS or size > MAX_OUTPUT_BYTES:
             raise HTTPException(422, "The projected Builder output exceeds its row or UTF-8 byte budget; nothing was committed")
         output = PipelineSandboxOutputRow(
             request_id=request.requestId, reviewed_generation=revision.generation, config_hash=revision.config_hash,
             result_hash="", marking_level=level,
-            input_version_id=config.versionId, stream_marker=binding.stream_marker,
+            input_version_id=config.versionId, match_version_id=config.matchVersionId,
+            stream_marker=binding.stream_marker,
             physical_digest=binding.physical_digest, columns=config.projection, input_rows=len(source), output_rows=len(rows),
             output_bytes=size, recorded_at=datetime.now(timezone.utc), committed_by=actor_id,
         )

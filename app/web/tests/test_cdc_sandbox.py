@@ -125,7 +125,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
         migrations = [import_module("app.web.alembic.versions." + name) for name in (
             "984b2ef31a6c_ontology_cdc_sandbox", "31d9685bf24a_ontology_cdc_sandbox_versions",
             "f5b873c94d20_ontology_pipeline_sandbox", "b46891e47c52_ontology_pipeline_sandbox_outputs",
-            "8d659760c2b4_ontology_synthetic_markings",
+            "8d659760c2b4_ontology_synthetic_markings", "51b18bf851dd_ontology_pipeline_match",
         )]
 
         def upgrade(sync):
@@ -595,6 +595,121 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.post(_OUTPUTS, json=request)).json(), prior)
                 self.assertEqual((await client.get(f"{_OUTPUTS}/{prior['id']}")).json()["rows"], [["1", "captured"]])
                 self.assertEqual((await client.get(_ROUTE+"/runs")).json(), [source.json()])
+
+    async def test_match_by_id_preview_review_and_sealed_replay_respect_both_inputs(self):
+        base, restricted = "sandbox-synthetic", "sandbox-restricted"
+        minimum, maximum = -(2**63), 2**63 - 1
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_MATCH_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_OUTPUT_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base, restricted]}),
+        ):
+            async with api(True, self.sessions) as client:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+
+                async def capture(cursor, pairs):
+                    async with self.pg.session() as session:
+                        for identity, value in pairs:
+                            await self.produce(session, identity, value)
+                    applied = await client.post(_ROUTE + "/runs", json=payload(cursor))
+                    self.assertEqual(applied.status_code, 200, applied.text)
+                    return applied.json()["id"]
+
+                right = await capture(0, [(minimum, "right-min"), (maximum, "right-max")])
+                left = await capture(2, [(minimum, "left-min"), (maximum, "left-max"), (0, "only-left")])
+                config = {"versionId": left, "matchVersionId": right, "filters": [], "projection": ["value", "id"]}
+                self.assertTrue((await client.get(_BUILDER)).json()["matchEnabled"])
+                preview = await client.post(_BUILDER + "/preview", json=config)
+                self.assertEqual(preview.status_code, 200, preview.text)
+                expected = [["left-min", str(minimum)], ["left-max", str(maximum)]]
+                self.assertEqual(preview.json()["rows"], expected)
+                self.assertEqual((preview.json()["inputRows"], preview.json()["rightInputRows"]), (3, 2))
+                self.assertEqual(preview.json()["markings"], [base])
+                self.assertEqual((await client.post(_BUILDER + "/preview",
+                                                    json={**config, "matchVersionId": left})).status_code, 422)
+
+                with (
+                    patch("app.web.services.pipeline_sandbox._read_records",
+                          side_effect=AssertionError("read before both operands were authorized")) as left_read,
+                    patch("app.web.services.pipeline_sandbox.read_match_ids",
+                          side_effect=AssertionError("read before both operands were authorized")) as right_read,
+                ):
+                    for invalid_config in ({**config, "matchVersionId": str(uuid4())},
+                                           {**config, "versionId": str(uuid4())}):
+                        denied = await client.post(_BUILDER + "/preview", json=invalid_config)
+                        self.assertEqual(denied.status_code, 404, denied.text)
+                    left_read.assert_not_called()
+                    right_read.assert_not_called()
+
+                saved = await client.post(_BUILDER + "/revisions", json={"expectedGeneration": None, "config": config})
+                self.assertEqual(saved.status_code, 201, saved.text)
+                self.assertEqual(saved.json()["configHash"], preview.json()["configHash"])
+                request = {"requestId": str(uuid4()), "expectedGeneration": 1,
+                           "expectedConfigHash": saved.json()["configHash"]}
+                receipt = await client.post(_OUTPUTS, json=request)
+                self.assertEqual(receipt.status_code, 201, receipt.text)
+                receipt = receipt.json()
+                self.assertEqual(receipt["matchVersionId"], right)
+                self.assertEqual((await client.get(f"{_OUTPUTS}/{receipt['id']}")).json()["rows"], expected)
+
+                empty_config = {**config, "additionalMarking": restricted,
+                                "filters": [{"field": "id", "operator": "eq", "value": "0"}]}
+                saved = await client.post(_BUILDER + "/revisions", json={"expectedGeneration": 1, "config": empty_config})
+                self.assertEqual(saved.status_code, 201, saved.text)
+                empty_request = {"requestId": str(uuid4()), "expectedGeneration": 2,
+                                 "expectedConfigHash": saved.json()["configHash"]}
+                empty = await client.post(_OUTPUTS, json=empty_request)
+                self.assertEqual(empty.status_code, 201, empty.text)
+                empty = empty.json()
+                self.assertEqual(empty["outputRows"], 0)
+                self.assertEqual(empty["markings"], [base, restricted])
+
+                with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: [base]}):
+                    self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [receipt])
+                    self.assertEqual((await client.get(f"{_OUTPUTS}/{empty['id']}")).status_code, 404)
+
+                with (
+                    patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_MATCH_ENABLED", False),
+                    patch("app.web.services.pipeline_sandbox_outputs._read_records",
+                          side_effect=AssertionError("historical replay must not read input rows")) as output_read,
+                ):
+                    self.assertEqual((await client.post(_BUILDER + "/preview", json=config)).status_code, 403)
+                    self.assertEqual((await client.post(_OUTPUTS, json={**empty_request,
+                                                                       "requestId": str(uuid4())})).status_code, 403)
+                    self.assertEqual((await client.post(_OUTPUTS, json=request)).json(), receipt)
+                    self.assertEqual((await client.get(_BUILDER + "/revisions/1")).json()["config"], config)
+                    output_read.assert_not_called()
+
+                with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED", False):
+                    self.assertNotIn("matchEnabled", (await client.get(_BUILDER)).json())
+                    actual = await client.post(_OUTPUTS, json=request)
+                    random = await client.post(_OUTPUTS, json={**request, "requestId": str(uuid4())})
+                    self.assertEqual((actual.status_code, actual.json()), (403, random.json()))
+                    self.assertEqual(random.status_code, 403)
+
+                await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET marking_level=NULL "
+                                      "WHERE receipt_id=CAST(:right AS uuid)", {"right": right})
+                with patch("app.web.services.pipeline_sandbox._read_records",
+                           side_effect=AssertionError("read a row with an unmarked operand")) as read:
+                    bad = await client.post(_BUILDER + "/preview", json=config)
+                    self.assertEqual(bad.status_code, 404, bad.text)
+                    read.assert_not_called()
+                self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
+                await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET marking_level=1 "
+                                      "WHERE receipt_id=CAST(:right AS uuid)", {"right": right})
+
+                # A formerly valid right input rebinding to another ancestry cannot leak even a prior receipt.
+                await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET physical_digest=repeat('f',64) "
+                                      "WHERE receipt_id=CAST(:right AS uuid)", {"right": right})
+                self.assertEqual((await client.get(_OUTPUTS)).json()["outputs"], [])
+                self.assertEqual((await client.get(f"{_OUTPUTS}/{receipt['id']}")).status_code, 404)
+                self.assertEqual((await client.get(_BUILDER + "/revisions/1")).status_code, 404)
 
     async def test_governance_propagates_and_denies_before_access_then_stays_protected_on_disable(self):
         base, restricted = "sandbox-synthetic", "sandbox-restricted"

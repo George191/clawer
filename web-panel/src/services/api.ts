@@ -636,13 +636,14 @@ export type SandboxPipelineFilter =
   | { field: 'id'; operator: 'eq' | 'gte' | 'lte'; value: string }
   | { field: 'value'; operator: 'eq' | 'prefix'; value: string };
 export type SandboxPipelineConfig = {
-  versionId: string; filters: SandboxPipelineFilter[]; projection: SandboxPipelineColumn[]; additionalMarking?: 'sandbox-restricted' | null;
+  versionId: string; matchVersionId?: string; filters: SandboxPipelineFilter[]; projection: SandboxPipelineColumn[]; additionalMarking?: 'sandbox-restricted' | null;
 };
 export type SandboxPipelineStatus = {
-  available: boolean; latestGeneration: number | null; governanceEnabled?: boolean; allowedMarkings?: string[]; canSave?: boolean;
+  available: boolean; latestGeneration: number | null; governanceEnabled?: boolean; allowedMarkings?: string[]; canSave?: boolean; matchEnabled?: true;
 };
 export type SandboxPipelinePreview = {
-  versionId: string; configHash: string; inputRows: number; matchedRows: number; columns: SandboxPipelineColumn[]; rows: string[][]; markings?: string[];
+  versionId: string; matchVersionId?: string; configHash: string; inputRows: number; rightInputRows?: number;
+  matchedRows: number; columns: SandboxPipelineColumn[]; rows: string[][]; markings?: string[];
 };
 export type SandboxPipelineRevision = { generation: number; configHash: string; config: SandboxPipelineConfig; recordedAt: string; markings?: string[] };
 const sandboxPipelinePath = '/etl/pipeline-sandbox';
@@ -655,7 +656,7 @@ export const fetchSandboxPipelineRevisions = (signal?: AbortSignal): Promise<San
 export const saveSandboxPipelineRevision = (config: SandboxPipelineConfig, expectedGeneration: number | null): Promise<SandboxPipelineRevision> =>
   client.post(`${sandboxPipelinePath}/revisions`, { expectedGeneration, config }).then((r) => unwrap<SandboxPipelineRevision>(r.data));
 export type SandboxPipelineOutput = {
-  id: string; requestId: string; reviewedGeneration: number; configHash: string; versionId: string;
+  id: string; requestId: string; reviewedGeneration: number; configHash: string; versionId: string; matchVersionId?: string;
   columns: SandboxPipelineColumn[]; inputRows: number; outputRows: number; recordedAt: string; resultHash: string; markings?: string[];
 };
 export type SandboxPipelineOutputList = { available: boolean; outputs: SandboxPipelineOutput[] };

@@ -10,6 +10,8 @@
 .flow-sandbox-builder h2 { font-size: 14px; }
 .flow-sandbox-builder > header p { margin-top: 4px; color: var(--ontology-muted); }
 .flow-sandbox-builder__graph { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.25fr) auto minmax(0, 1.1fr); align-items: start; gap: 9px; }
+.flow-sandbox-builder__graph.is-matched { grid-template-columns: minmax(0, 1fr) auto minmax(0, .78fr) auto minmax(0, 1.2fr) auto minmax(0, 1.08fr); }
+.flow-sandbox-builder__matching-input { display: grid; gap: 5px; border-top: 1px solid var(--ontology-border); padding-top: 7px; }
 .flow-sandbox-builder__graph > section, .flow-sandbox-builder__history { display: grid; align-content: start; gap: 8px; min-width: 0; padding: 11px; border: 1px solid var(--ontology-border); border-radius: 5px; background: var(--ontology-bg); overflow-wrap: anywhere; }
 .flow-sandbox-builder__graph > section > header > span { color: var(--ontology-muted); font-size: 12px; }
 .flow-sandbox-builder__arrow { margin-top: 18px; color: var(--ontology-muted); }
@@ -35,6 +37,6 @@
 .flow-sandbox-builder__output-list > li { padding: 7px; border: 1px solid var(--ontology-border); border-radius: 4px; }
 .flow-sandbox-builder__output-list button, .flow-sandbox-builder__history > button { justify-self: start; }
 @media (max-width: 920px) {
-  .flow-sandbox-builder__graph { grid-template-columns: minmax(0, 1fr); }
+  .flow-sandbox-builder__graph, .flow-sandbox-builder__graph.is-matched { grid-template-columns: minmax(0, 1fr); }
   .flow-sandbox-builder__arrow { justify-self: center; margin: 0; transform: rotate(90deg); }
 }

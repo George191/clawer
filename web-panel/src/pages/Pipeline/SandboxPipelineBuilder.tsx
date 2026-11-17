@@ -27,7 +27,7 @@ function validFilter(filter: SandboxPipelineFilter) {
 }
 
 function sameConfig(left: SandboxPipelineConfig, right: SandboxPipelineConfig) {
-  return left.versionId === right.versionId &&
+  return left.versionId === right.versionId && (left.matchVersionId ?? null) === (right.matchVersionId ?? null) &&
     (left.additionalMarking ?? null) === (right.additionalMarking ?? null) &&
     left.projection.length === right.projection.length && left.projection.every((column, index) => column === right.projection[index]) &&
     left.filters.length === right.filters.length && left.filters.every((filter, index) => {
@@ -70,7 +70,7 @@ export default function SandboxPipelineBuilder() {
 function PipelineBuilderWorkspace() {
   const [allowed, setAllowed] = useState<boolean>();
   const [loaded, setLoaded] = useState<{
-    available: boolean; versions: SandboxCdcVersion[]; governanceEnabled: boolean; allowedMarkings: string[]; canSave: boolean;
+    available: boolean; versions: SandboxCdcVersion[]; governanceEnabled: boolean; allowedMarkings: string[]; canSave: boolean; matchEnabled: boolean;
   }>();
   const [saved, setSaved] = useState<SandboxPipelineRevision[]>([]);
   const [generation, setGeneration] = useState<number | null>(null);
@@ -100,7 +100,7 @@ function PipelineBuilderWorkspace() {
         if (!current()) return;
         setGeneration(status.latestGeneration);
         const governance = { governanceEnabled: status.governanceEnabled === true, allowedMarkings: status.allowedMarkings ?? [],
-          canSave: status.governanceEnabled !== true || status.canSave === true };
+          canSave: status.governanceEnabled !== true || status.canSave === true, matchEnabled: status.matchEnabled === true };
         if (!status.available) { setLoaded({ available: false, versions: [], ...governance }); return; }
         const [versions, revisions] = await Promise.all([
           fetchSandboxCdcVersions(controller.signal), fetchSandboxPipelineRevisions(controller.signal),
@@ -125,14 +125,21 @@ function PipelineBuilderWorkspace() {
     previewRequest.current?.abort(); previewRequest.current = undefined;
     setPreviewing(false); setPreview(undefined); setNotice(undefined); setConfig(next);
   };
-  const valid = Boolean(loaded?.available && config.versionId && config.filters.every(validFilter) && config.projection.length);
+  const isMatched = Boolean(config.matchVersionId);
+  const source = loaded?.versions.find(item => item.id === config.versionId);
+  const matchingSource = loaded?.versions.find(item => item.id === config.matchVersionId);
+  const knownPair = Boolean(source && matchingSource) || saved.some(item =>
+    item.config.versionId === config.versionId && item.config.matchVersionId === config.matchVersionId);
+  const matchAvailable = !isMatched || Boolean(loaded?.matchEnabled && config.matchVersionId !== config.versionId && knownPair);
+  const valid = Boolean(loaded?.available && config.versionId && matchAvailable && config.filters.every(validFilter) && config.projection.length);
   const runPreview = async () => {
     if (!valid || savePending.current || previewRequest.current) return;
     const controller = new AbortController();
     previewRequest.current = controller; setPreviewing(true); setPreview(undefined); setNotice(undefined);
     try {
       const result = await previewSandboxPipeline(config, controller.signal);
-      if (!controller.signal.aborted && result.versionId === config.versionId) setPreview(result);
+      if (!controller.signal.aborted && result.versionId === config.versionId &&
+        (result.matchVersionId ?? null) === (config.matchVersionId ?? null)) setPreview(result);
     } catch (failure) {
       if (!controller.signal.aborted) {
         if (loaded?.governanceEnabled && sandboxScopeDenied(failure)) { clearScope(); setLoadFailed(true); }
@@ -175,8 +182,7 @@ function PipelineBuilderWorkspace() {
     [next[index], next[target]] = [next[target], next[index]];
     revise({ ...config, projection: next });
   };
-  const source = loaded?.versions.find(item => item.id === config.versionId);
-  const reviewed = loaded?.canSave ? saved.find(item => item.generation === generation && sameConfig(config, item.config)) : undefined;
+  const reviewed = loaded?.canSave && matchAvailable ? saved.find(item => item.generation === generation && sameConfig(config, item.config)) : undefined;
   const scopeKey = loaded?.governanceEnabled ? `governed:${[...loaded.allowedMarkings].sort().join(',')}` : undefined;
   return <section className="flow-sandbox-builder flow-foundry-workbench" aria-label="Sandbox Pipeline Builder">
     <header><h1>Sandbox Pipeline Builder</h1><p>Transform a committed synthetic snapshot. Preview and save configuration only; no destination data is written.</p>
@@ -186,22 +192,50 @@ function PipelineBuilderWorkspace() {
       : allowed === false ? <p>Sandbox Pipeline Builder is available to administrators only.</p>
         : !loaded ? <p role="status">Loading pipeline builder…</p>
           : !loaded.available ? <p>Sandbox Pipeline Builder is disabled in this environment.</p> : <>
-    <div className="flow-sandbox-builder__graph" role="group" aria-label="Pipeline graph">
+    <div className={`flow-sandbox-builder__graph${isMatched ? ' is-matched' : ''}`} role="group" aria-label="Pipeline graph">
       <section aria-label="Source snapshot"><header><span>01 · Input</span><h2>Source snapshot</h2></header>
-        <label>Captured source version
-          <select aria-label="Captured source version" value={config.versionId} disabled={saving || (!loaded.versions.length && !config.versionId)}
+        <label>{loaded.matchEnabled || isMatched ? 'Left version' : 'Captured source version'}
+          <select aria-label={loaded.matchEnabled || isMatched ? 'Left version' : 'Captured source version'} value={config.versionId} disabled={saving || (!loaded.versions.length && !config.versionId)}
             onChange={event => revise({ ...config, versionId: event.target.value })}>
             <option value="">Select a captured version</option>
             {config.versionId && !source && <option value={config.versionId}>Source pinned in a configuration revision</option>}
-            {loaded.versions.map(version => <option key={version.id} value={version.id}>Checkpoint {version.appliedThrough} · {timeText(version.recordedAt)}</option>)}
+            {loaded.versions.map(version => <option key={version.id} value={version.id} disabled={version.id === config.matchVersionId}>Checkpoint {version.appliedThrough} · {timeText(version.recordedAt)}</option>)}
           </select>
         </label>
-        {config.versionId && <p>Source receipt: <code>{config.versionId}</code></p>}
-        <SandboxMarkings markings={source?.markings} label="Inherited source markings" />
+        {config.versionId && <p>{isMatched ? 'Left version receipt' : 'Source receipt'}: <code>{config.versionId}</code></p>}
+        <SandboxMarkings markings={source?.markings} label={isMatched ? 'Left source markings' : 'Inherited source markings'} />
+        {(loaded.matchEnabled || isMatched) && <div className="flow-sandbox-builder__matching-input">
+          <label>Matching version
+            <select aria-label="Matching version" value={config.matchVersionId ?? ''} disabled={saving || !loaded.matchEnabled}
+              onChange={event => {
+                const { matchVersionId: _previous, ...base } = config;
+                revise(event.target.value ? { ...base, matchVersionId: event.target.value } : base);
+              }}>
+              <option value="">No matching version · single input</option>
+              {config.matchVersionId && !matchingSource && <option value={config.matchVersionId}>Matching version pinned in a configuration revision</option>}
+              {loaded.versions.filter(version => version.id !== config.versionId).map(version =>
+                <option key={version.id} value={version.id}>Checkpoint {version.appliedThrough} · {timeText(version.recordedAt)}</option>)}
+            </select>
+          </label>
+          {config.matchVersionId && <p>Matching version receipt: <code>{config.matchVersionId}</code></p>}
+          <SandboxMarkings markings={matchingSource?.markings} label="Matching source markings" />
+          {loaded.matchEnabled && loaded.versions.length < 2 && <p>Matching requires two different authorized captured versions.</p>}
+          {isMatched && !loaded.matchEnabled && <p>Match by ID is unavailable for new runs. These are the saved historical inputs.</p>}
+          {isMatched && !loaded.matchEnabled && <Button size="small" disabled={saving} onClick={() => {
+            const { matchVersionId: _previous, ...base } = config;
+            revise(base);
+          }}>Switch to single input</Button>}
+        </div>}
         {!loaded.versions.length && <p>No captured source versions. Apply a reviewed sandbox CDC batch with capture enabled first.</p>}
       </section>
       <ArrowRightOutlined className="flow-sandbox-builder__arrow" aria-hidden="true" />
-      <section aria-label="Filter and projection"><header><span>02 · Transform</span><h2>Filter and projection</h2></header>
+      {isMatched && <>
+        <section aria-label="Match by ID"><header><span>02 · Match</span><h2>Match by ID</h2></header>
+          <p>Keep only left rows whose ID also appears in the matching version. The right version supplies membership only; values always come from the left.</p>
+        </section>
+        <ArrowRightOutlined className="flow-sandbox-builder__arrow" aria-hidden="true" />
+      </>}
+      <section aria-label="Filter and projection"><header><span>{isMatched ? '03' : '02'} · Transform</span><h2>Filter and projection</h2></header>
         <p>All filters must match (AND). Choose up to three.</p>
         {config.filters.length > 0 && <ol aria-label="Pipeline filters">{config.filters.map((filter, index) => <FilterRow key={index}
           filter={filter} index={index} disabled={saving} change={item => setFilter(index, item)} remove={() => setFilter(index)} />)}</ol>}
@@ -226,22 +260,25 @@ function PipelineBuilderWorkspace() {
             {loaded.allowedMarkings.includes('sandbox-restricted') && <option value="sandbox-restricted">Add sandbox-restricted</option>}
           </select>
         </label>}
-        {loaded.governanceEnabled && <p>Inherited source markings cannot be removed.</p>}
+        {loaded.governanceEnabled && <p>{isMatched ? 'Inherited markings from either input cannot be removed.' : 'Inherited source markings cannot be removed.'}</p>}
       </section>
       <ArrowRightOutlined className="flow-sandbox-builder__arrow" aria-hidden="true" />
-      <section aria-label="Output preview"><header><span>03 · Output</span><h2>Output preview</h2></header>
-        <p>Read-only preview of the reviewed source snapshot. No target is written.</p>
+      <section aria-label="Output preview"><header><span>{isMatched ? '04' : '03'} · Output</span><h2>Output preview</h2></header>
+        <p>{isMatched ? 'Read-only preview of two captured inputs. No target is written.' : 'Read-only preview of the reviewed source snapshot. No target is written.'}</p>
         <div className="flow-sandbox-builder__actions">
           <Button size="small" type="primary" disabled={!valid || saving} loading={previewing} onClick={runPreview}>Preview pipeline</Button>
           <Button size="small" disabled={!valid || !loaded.canSave || previewing} loading={saving} onClick={saveRevision}>Save configuration revision</Button>
         </div>
         {!loaded.canSave && <p>Saving and committing are unavailable under the current authorization.</p>}
+        {isMatched && loaded.matchEnabled && !knownPair && <p>Choose both inputs from the authorized versions before previewing or saving.</p>}
         {notice && <p role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
         {preview && <><dl className="flow-sandbox-builder__counts">
-          <div><dt>Input rows</dt><dd>{preview.inputRows}</dd></div>
+          <div><dt>{preview.matchVersionId ? 'Left input rows' : 'Input rows'}</dt><dd>{preview.inputRows}</dd></div>
+          {preview.matchVersionId && preview.rightInputRows != null && <div><dt>Matching input rows</dt><dd>{preview.rightInputRows}</dd></div>}
           <div><dt>Matched rows</dt><dd>{preview.matchedRows}</dd></div>
           <div><dt>Sample rows</dt><dd>{preview.rows.length}</dd></div>
         </dl><p>No data written.</p><SandboxMarkings markings={preview.markings} />
+          {preview.matchVersionId && preview.markings?.length ? <p>Effective markings are evaluated across both exact input versions.</p> : null}
           {preview.rows.length ? <div className="flow-sandbox-builder__table"><table aria-label="Pipeline preview rows">
             <thead><tr>{preview.columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead>
             <tbody>{preview.rows.map((row, index) => <tr key={index}>{row.map((value, position) =>
@@ -254,7 +291,8 @@ function PipelineBuilderWorkspace() {
       <h2>Configuration revision history</h2><p>Up to 25 saved configurations. These are not committed dataset versions.</p>
       {saved.length ? <ol aria-label="Saved configuration revisions">{saved.map(item => <li key={item.generation}>
         <strong>Revision {item.generation}</strong><time dateTime={item.recordedAt}>{timeText(item.recordedAt)}</time>
-        <span>Source receipt: <code>{item.config.versionId}</code></span>
+        <span>{item.config.matchVersionId ? 'Left version receipt' : 'Source receipt'}: <code>{item.config.versionId}</code></span>
+        {item.config.matchVersionId && <span>Matching version receipt: <code>{item.config.matchVersionId}</code></span>}
         <SandboxMarkings markings={item.markings} />
         <Button size="small" disabled={saving} onClick={() => revise(item.config)}>{`Load configuration revision ${item.generation}`}</Button>
       </li>)}</ol> : <p>No configuration revisions saved.</p>}
