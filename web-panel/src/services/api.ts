@@ -449,7 +449,7 @@ export const fetchExplorerTableEvidence = (schema: string, table: string, signal
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/evidence`, { signal }).then((r) => unwrap<ExplorerTableEvidenceSnapshot>(r.data));
 
 export type SandboxIndexPreviewQuery = {
-  mode: 'explain' | 'preview'; idEquals?: string; idFrom?: string; idTo?: string; limit: number;
+  mode: 'explain' | 'preview'; idEquals?: string; idFrom?: string; idTo?: string; limit: number; cursor?: string;
 };
 export type SandboxIndexPreviewResult = {
   status: 'allowed' | 'blocked';
@@ -459,10 +459,12 @@ export type SandboxIndexPreviewResult = {
   plan: { scan: 'index' | 'index_only'; key: 'id'; order: 'ascending' } | null;
   rows: { id: string; label: string }[] | null;
   hasMore: boolean | null;
+  page?: number; nextCursor?: string; paginationStatus?: 'more' | 'end' | 'capped';
 };
 const indexPreviewSandboxPath = '/etl/index-preview-sandbox';
-export const fetchIndexPreviewSandbox = (signal?: AbortSignal): Promise<{ available: boolean }> =>
-  client.get(indexPreviewSandboxPath, { signal }).then((r) => unwrap<{ available: boolean }>(r.data));
+type SandboxIndexPreviewCapability = { available: boolean; rangePagination?: true };
+export const fetchIndexPreviewSandbox = (signal?: AbortSignal): Promise<SandboxIndexPreviewCapability> =>
+  client.get(indexPreviewSandboxPath, { signal }).then((r) => unwrap<SandboxIndexPreviewCapability>(r.data));
 export const queryIndexPreviewSandbox = (request: SandboxIndexPreviewQuery, signal?: AbortSignal): Promise<SandboxIndexPreviewResult> =>
   client.post(indexPreviewSandboxPath, request, { signal }).then((r) => unwrap<SandboxIndexPreviewResult>(r.data));
 

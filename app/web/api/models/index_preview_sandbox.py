@@ -17,6 +17,7 @@ class IndexSandboxQuery(BaseModel):
     idFrom: BigInt | None = None
     idTo: BigInt | None = None
     limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 25
+    cursor: str | None = Field(default=None, max_length=512)
 
     @field_validator("idEquals", "idFrom", "idTo")
     @classmethod
@@ -30,6 +31,8 @@ class IndexSandboxQuery(BaseModel):
         ranged = self.idFrom is not None or self.idTo is not None
         if ranged == (self.idEquals is not None):
             raise ValueError("Use either exact ID or at least one inclusive ID range bound")
+        if self.cursor is not None and (not ranged or self.mode != "preview"):
+            raise ValueError("A continuation cursor is only valid for a range preview")
         if self.idFrom is not None and self.idTo is not None and int(self.idFrom) > int(self.idTo):
             raise ValueError("The lower ID must not exceed the upper ID")
         return self
@@ -37,6 +40,7 @@ class IndexSandboxQuery(BaseModel):
 
 class IndexSandboxCapability(BaseModel):
     available: bool
+    rangePagination: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class IndexSandboxPlan(BaseModel):
@@ -58,3 +62,8 @@ class IndexSandboxPreview(BaseModel):
     plan: IndexSandboxPlan | None = None
     rows: list[IndexSandboxRow] | None = None
     hasMore: bool | None = None
+    page: int | None = Field(default=None, exclude_if=lambda value: value is None)
+    nextCursor: str | None = Field(default=None, exclude_if=lambda value: value is None)
+    paginationStatus: Literal["more", "end", "capped"] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )

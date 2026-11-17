@@ -1,6 +1,11 @@
 """Bounded EXPLAIN-first PostgreSQL preview of the exact synthetic Explorer fixture."""
 
+import asyncio
+from collections.abc import Coroutine
 from typing import Any
+from uuid import UUID
+
+from anyio import CancelScope, move_on_after
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -11,12 +16,13 @@ from app.web.api.models.index_preview_sandbox import (
     IndexSandboxPlan, IndexSandboxPreview, IndexSandboxQuery, IndexSandboxRow, Reason,
 )
 from app.web.core.config import settings
+from app.web.services import index_preview_cursor as cursors
 
 INDEX_SANDBOX_SCHEMA = "ts_index_preview_sandbox"
 INDEX_SANDBOX_TABLE = "records"
 
 _RELATION = text("""
-    SELECT c.oid FROM pg_class c
+    SELECT c.oid::bigint, pg_catalog.pg_relation_filenode(c.oid)::bigint FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     JOIN pg_am am ON am.oid = c.relam
     WHERE n.nspname = 'ts_index_preview_sandbox' AND c.relname = 'records'
@@ -31,7 +37,7 @@ _RELATION = text("""
 """)
 
 _PRIMARY = text("""
-    SELECT ic.relname FROM pg_index i
+    SELECT ic.relname, ic.oid::bigint, pg_catalog.pg_relation_filenode(ic.oid)::bigint FROM pg_index i
     JOIN pg_class ic ON ic.oid = i.indexrelid
     JOIN pg_am am ON am.oid = ic.relam
     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attname = 'id'
@@ -57,11 +63,11 @@ def index_sandbox_available() -> bool:
             and settings.ENVIRONMENT == "local" and "ENVIRONMENT" in settings.model_fields_set)
 
 
-def _query(request: IndexSandboxQuery) -> tuple[str, dict[str, int]]:
+def _query(request: IndexSandboxQuery, after: str | None = None) -> tuple[str, dict[str, int]]:
     predicates: list[str] = []
     values = {"take": request.limit + 1}
     for param, operator, value in (
-        ("exact", "=", request.idEquals), ("lo", ">=", request.idFrom), ("hi", "<=", request.idTo),
+        ("exact", "=", request.idEquals), ("lo", ">=", request.idFrom), ("hi", "<=", request.idTo), ("after", ">", after),
     ):
         if value is not None:
             predicates.append(f"r.id {operator} CAST(:{param} AS pg_catalog.int8)")
@@ -101,42 +107,115 @@ def _blocked(query: IndexSandboxQuery, reason: Reason) -> IndexSandboxPreview:
     return IndexSandboxPreview(status="blocked", reason=reason, guidance=_GUIDANCE[reason], mode=query.mode)
 
 
-async def run_index_preview(session: AsyncSession, request: IndexSandboxQuery) -> IndexSandboxPreview:
+def index_range_pagination_available() -> bool:
+    return index_sandbox_available() and cursors.cursor_key() is not None
+
+
+async def _release_preview_transaction(session: AsyncSession) -> None:
+    """A disconnected requester must not leave a transaction or its relation lock pooled."""
+    if not session.in_transaction():
+        return
+    with move_on_after(0.75, shield=True):
+        try:
+            await session.rollback()
+            return
+        except Exception:
+            pass  # A cancelled driver connection is not safe to return to the pool as healthy.
+    with move_on_after(0.75, shield=True):
+        await session.invalidate()
+
+
+async def run_index_preview(session: AsyncSession, request: IndexSandboxQuery, actor: UUID) -> IndexSandboxPreview:
     """Prove the fixed path before fetching zero or at most 101 synthetic records."""
     if not index_sandbox_available():
         raise HTTPException(404, "Synthetic index preview is disabled")
-    sql, params = _query(request)
+    key = cursors.cursor_key() if request.mode == "preview" and request.idEquals is None else None
+    continuation = cursors.read_cursor(key, actor, request) if request.cursor is not None else None
+    sql, params = _query(request, continuation.last_id if continuation else None)
     try:
-        async with session.begin():
-            await session.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY"))
-            await session.execute(text("SET LOCAL statement_timeout = '400ms'"))
-            await session.execute(text("SET LOCAL lock_timeout = '100ms'"))
-            await session.execute(text("SET LOCAL search_path = pg_catalog"))
-            # Give both executions the same bound-specific planning, independent of asyncpg's statement cache.
-            await session.execute(text("SET LOCAL plan_cache_mode = force_custom_plan"))
-            relation = await session.scalar(_RELATION)
-            if relation is None:
-                return _blocked(request, "table_unavailable")
-            # Exclude DDL/index maintenance/ANALYZE across both plans; ordinary row writes remain permitted.
-            await session.execute(text(
-                'LOCK TABLE ONLY "ts_index_preview_sandbox"."records" IN SHARE UPDATE EXCLUSIVE MODE NOWAIT',
-            ))
-            if relation != await session.scalar(_RELATION):
-                return _blocked(request, "table_unavailable")
-            index = await session.scalar(_PRIMARY, {"relation": relation})
-            if index is None:
-                return _blocked(request, "primary_index_required")
-            raw = await session.scalar(text("EXPLAIN (FORMAT JSON, VERBOSE TRUE, ANALYZE FALSE) " + sql), params)
-            plan = _approved_plan(raw, index)
-            if plan is None:
-                return _blocked(request, "unsupported_plan")
-            result = IndexSandboxPreview(
-                status="allowed", reason="index_path", guidance=_GUIDANCE["index_path"], mode=request.mode, plan=plan,
-            )
-            if request.mode == "preview":
-                rows = (await session.execute(text(sql), params)).all()
-                result.hasMore = len(rows) > request.limit
-                result.rows = [IndexSandboxRow(id=str(key), label=label) for key, label in rows[:request.limit]]
-            return result
+        await session.begin()
+        await session.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY"))
+        await session.execute(text("SET LOCAL statement_timeout = '400ms'"))
+        await session.execute(text("SET LOCAL lock_timeout = '100ms'"))
+        await session.execute(text("SET LOCAL search_path = pg_catalog"))
+        # Give both executions the same bound-specific planning, independent of asyncpg's statement cache.
+        await session.execute(text("SET LOCAL plan_cache_mode = force_custom_plan"))
+        relation = (await session.execute(_RELATION)).one_or_none()
+        if relation is None:
+            if continuation:
+                raise cursors.invalid_cursor()
+            return _blocked(request, "table_unavailable")
+        # Exclude DDL/index maintenance/ANALYZE across both plans; ordinary row writes remain permitted.
+        await session.execute(text(
+            'LOCK TABLE ONLY "ts_index_preview_sandbox"."records" IN SHARE UPDATE EXCLUSIVE MODE NOWAIT',
+        ))
+        if relation != (await session.execute(_RELATION)).one_or_none():
+            if continuation:
+                raise cursors.invalid_cursor()
+            return _blocked(request, "table_unavailable")
+        index = (await session.execute(_PRIMARY, {"relation": relation[0]})).one_or_none()
+        if index is None:
+            if continuation:
+                raise cursors.invalid_cursor()
+            return _blocked(request, "primary_index_required")
+        scope = cursors.physical_scope(key, (*relation, index[1], index[2])) if key and relation[1] and index[2] else None
+        if continuation and (continuation.scope != scope or continuation.expires <= cursors.epoch_seconds()):
+            raise cursors.invalid_cursor()
+
+        raw = await session.scalar(text("EXPLAIN (FORMAT JSON, VERBOSE TRUE, ANALYZE FALSE) " + sql), params)
+        plan = _approved_plan(raw, index[0])
+        if plan is None:
+            return _blocked(request, "unsupported_plan")
+        result = IndexSandboxPreview(
+            status="allowed", reason="index_path", guidance=_GUIDANCE["index_path"], mode=request.mode, plan=plan,
+        )
+        if request.mode == "preview":
+            if continuation and continuation.expires <= cursors.epoch_seconds():
+                raise cursors.invalid_cursor()
+            rows = (await session.execute(text(sql), params)).all()
+            result.hasMore = len(rows) > request.limit
+            result.rows = [IndexSandboxRow(id=str(identity), label=label) for identity, label in rows[:request.limit]]
+            if scope is not None and key is not None:
+                page = continuation.page if continuation else 1
+                result.page = page
+                if not result.hasMore:
+                    result.paginationStatus = "end"
+                elif page == cursors.MAX_PAGES:
+                    result.paginationStatus = "capped"
+                else:
+                    result.paginationStatus = "more"
+                    deadline = continuation.expires if continuation else cursors.epoch_seconds() + cursors.CURSOR_LIFETIME
+                    result.nextCursor = cursors.next_cursor(key, actor, request, cursors.IndexCursor(
+                        page + 1, deadline, result.rows[-1].id, scope,
+                    ))
+        return result
     except DBAPIError:
         return _blocked(request, "query_unavailable")
+    finally:
+        await _release_preview_transaction(session)
+
+
+async def run_index_preview_until_disconnect(
+    session: AsyncSession, request: IndexSandboxQuery, actor: UUID,
+    disconnect: Coroutine[Any, Any, None],
+) -> IndexSandboxPreview:
+    """Watch this request only; issue one driver task cancellation, never repeated level cancellation."""
+    query = asyncio.create_task(run_index_preview(session, request, actor))
+    watcher = asyncio.create_task(disconnect)
+    tasks = (query, watcher)
+    try:
+        done, _ = await asyncio.wait(tasks, timeout=2, return_when=asyncio.FIRST_COMPLETED)
+        if query in done:
+            return query.result()
+        if watcher in done:
+            watcher.result()
+            raise HTTPException(499, "Synthetic index preview was cancelled")
+        return _blocked(request, "query_unavailable")
+    finally:
+        # asyncpg/SQLAlchemy must be allowed to finish cancellation and pool
+        # recovery. An AnyIO level-cancelled query would interrupt that cleanup.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        with CancelScope(shield=True):
+            await asyncio.shield(asyncio.gather(*tasks, return_exceptions=True))

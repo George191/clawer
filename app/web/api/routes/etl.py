@@ -73,7 +73,9 @@ from app.web.services.asset_freshness import (
     acknowledge_quality_incident, capture_schema_baseline, get_asset_freshness, get_asset_freshness_candidates,
     preview_schema_baseline, put_asset_freshness,
 )
-from app.web.services.index_preview_sandbox import index_sandbox_available, run_index_preview
+from app.web.services.index_preview_sandbox import (
+    index_range_pagination_available, index_sandbox_available, run_index_preview_until_disconnect,
+)
 from app.web.services.asset_job_quality import acknowledge_daily_job, read_job_quality, review_job_quality
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_lineage import list_batch_lineage, read_batch_lineage
@@ -169,15 +171,24 @@ async def run_push_apply(
 
 @write.get("/index-preview-sandbox")
 async def get_local_index_preview() -> IndexSandboxCapability:
-    return IndexSandboxCapability(available=index_sandbox_available())
+    return IndexSandboxCapability(
+        available=index_sandbox_available(), rangePagination=True if index_range_pagination_available() else None,
+    )
 
 
 @write.post("/index-preview-sandbox")
 async def post_local_index_preview(
-    payload: IndexSandboxQuery, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    payload: IndexSandboxQuery, request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
 ) -> IndexSandboxPreview:
-    # Authentication already queried in its own session; the sandbox must start its own read-only transaction.
-    return await run_index_preview(session, payload)
+    response.headers["Cache-Control"] = "no-store"
+    # FastAPI has consumed/validated the request body. Watch only disconnects
+    # for this route's own read-only transaction, never a caller-supplied job.
+    async def wait_for_disconnect() -> None:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    return await run_index_preview_until_disconnect(session, payload, current_user.id, wait_for_disconnect())
 
 
 @write.get("/cdc-sandbox")
