@@ -88,3 +88,15 @@
 .flow-lineage-managed__entry{margin-top:8px}
 .flow-lineage-managed__entry dl{margin:4px 0}
 @media(max-width:700px){.flow-lineage-managed.is-selected{display:grid;gap:0;max-height:min(63vh,490px);overflow:auto;align-content:start}.flow-lineage-managed.is-selected .flow-lineage-managed__graph{padding:7px 0}.flow-lineage-managed .flow-lineage-managed__inspector{width:100%;max-width:none;max-height:none;overflow:visible;border:1px solid var(--ui-border);box-shadow:none}}
+.flow-lineage-table-references{margin-top:12px;display:grid;gap:9px;min-width:0}
+.flow-lineage-table-references :is(h3,h4,p){margin:0}
+.flow-lineage-table-references h3{font-size:13px}
+.flow-lineage-table-references h4{font-size:12px}
+.flow-lineage-table-references p{color:var(--ui-muted)}
+.flow-lineage-table-references__list{display:grid;gap:6px;list-style:none;margin:0;padding:0}
+.flow-lineage-table-references__list li{display:grid;gap:5px;padding:7px;border:1px solid var(--ui-border);min-width:0;border-radius:2px}
+.flow-lineage-table-references__list li button{justify-self:start;white-space:normal;overflow-wrap:anywhere}
+.flow-lineage-table-references__list li button[aria-pressed=true]{border-color:var(--ui-primary);color:var(--ui-text)}
+.flow-lineage-table-references__route{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.flow-lineage-table-references__expansion{display:grid;gap:7px;margin-top:6px;padding-top:9px;border-top:1px solid var(--ui-border)}
+.flow-lineage-table-references__expansion > button{justify-self:start}

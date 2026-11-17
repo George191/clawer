@@ -9,6 +9,7 @@ import { schemaColor } from './OntologyExplorer';
 import LineageTransferPlans from './LineageTransferPlans';
 import ManagedBatchLineage, { MANAGED_BATCH_ASSET } from './ManagedBatchLineage';
 import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence';
+import TableLineageReferences from './TableLineageReferences';
 import './ontology-lineage.css';
 
 // Current ETL processor contracts: TsOds, TsTask, TsDim, TsDwd and TsDws.
@@ -31,6 +32,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const managedReceipt = params.get('batchReceipt');
   const selected = managedSelected ? '' : params.get('schema') || '';
   const selectedTable = params.get('table') || '';
+  const ordinaryTableLink = params.get('tableLineage') === '1' && !!selectedTable;
   const selectedSchedule = params.get('transferPlan') || undefined;
   const selectedUpstream = params.get('scheduleKind') === 'upstream';
   const paused = params.get('motion') === 'off';
@@ -72,7 +74,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   }, [version, refreshToken]);
   useEffect(() => {
     if (!loading && !error && selected && !schemas.some((schema) => schema.key === selected)) {
-      setParams((current) => { const next = new URLSearchParams(current); next.delete('schema'); next.delete('table'); next.delete('transferPlan'); next.delete('scheduleKind'); return next; }, { replace: true });
+      setParams((current) => { const next = new URLSearchParams(current); next.delete('schema'); next.delete('table'); next.delete('tableLineage'); next.delete('transferPlan'); next.delete('scheduleKind'); return next; }, { replace: true });
     }
   }, [schemas, loading, error, selected, setParams]);
   useEffect(() => {
@@ -122,7 +124,8 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
   const transferAsset = Boolean(asset && transferSchemas.includes(asset.key));
   const activePanel = panel === 'transfers' && (!canPlanTransfers || !transferAsset) ? 'details' : panel;
   const isExportSchema = canPlanTransfers && asset?.key === TABLE_EXPORT_SOURCE.schema;
-  const showExportTable = isExportSchema && selectedTable === TABLE_EXPORT_SOURCE.table && activePanel === 'details';
+  const showExportTable = !ordinaryTableLink && isExportSchema && selectedTable === TABLE_EXPORT_SOURCE.table && activePanel === 'details';
+  const showOrdinaryTable = Boolean(asset && ordinaryTableLink && activePanel === 'details' && !selectedSchedule);
   const measuredOutputs = new Set(links.filter(link => link.from.metricsAvailable && link.from.rateOut > 0).map(link => link.source)).size;
   const directionLinks = links.filter((link) => !link.from.metricsAvailable).length;
   const selectedNode = nodes.find((node) => node.key === selected);
@@ -150,19 +153,19 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     if (selected && selectedSchedule) {
       setPanel('transfers');
       setInspectorOpen(true);
-    } else if (selected === TABLE_EXPORT_SOURCE.schema && selectedTable === TABLE_EXPORT_SOURCE.table) {
+    } else if ((ordinaryTableLink && selected) || (selected === TABLE_EXPORT_SOURCE.schema && selectedTable === TABLE_EXPORT_SOURCE.table)) {
       setPanel('details');
       setInspectorOpen(true);
     }
-  }, [selected, selectedSchedule, selectedTable]);
+  }, [selected, selectedSchedule, selectedTable, ordinaryTableLink]);
   useEffect(() => setCopyStatus(''), [params]);
   const selectNode = (key: string) => {
     setInspectorOpen(true);
-    updateQuery({ schema: key, managedAsset: null, batchReceipt: null, ...(selected === key ? {} : { transferPlan: null, scheduleKind: null, table: null }), ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
+    updateQuery({ schema: key, managedAsset: null, batchReceipt: null, tableLineage: null, ...(selected === key && !ordinaryTableLink ? {} : { transferPlan: null, scheduleKind: null, table: null }), ...(nodes.some((node) => node.key === key) ? {} : { q: null }) });
   };
   const closeInspector = () => {
     setInspectorOpen(false);
-    updateQuery({ schema: null, transferPlan: null, scheduleKind: null, table: null }, true);
+    updateQuery({ schema: null, transferPlan: null, scheduleKind: null, table: null, tableLineage: null }, true);
     requestAnimationFrame(() => nodeRefs.current[selected]?.focus());
   };
   const changeZoom = (value: number) => {
@@ -205,11 +208,11 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
     setPanel(next);
     setInspectorOpen(true);
     if ((next !== 'transfers' && selectedSchedule) || (next !== 'details' && selectedTable)) {
-      updateQuery({ ...(next !== 'transfers' ? { transferPlan: null, scheduleKind: null } : {}), ...(next !== 'details' ? { table: null } : {}) }, true);
+      updateQuery({ ...(next !== 'transfers' ? { transferPlan: null, scheduleKind: null } : {}), ...(next !== 'details' ? { table: null, tableLineage: null } : {}) }, true);
     }
   };
   const openWorkspace = () => asset && navigate(`/ontology/explorer?${new URLSearchParams({ schema: asset.key,
-    ...(showExportTable ? { table: TABLE_EXPORT_SOURCE.table, view: 'evidence' } : {}) })}`);
+    ...(showExportTable || showOrdinaryTable ? { table: selectedTable, view: 'evidence' } : {}) })}`);
   const copyLink = async () => {
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(window.location.href);
@@ -244,7 +247,7 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
       <span className="flow-lineage-notice" title="Relationships are predefined ETL processor contracts, not discovered data lineage.">Relationships predefined</span>
     </div>
     {canPlanTransfers && <ManagedBatchLineage selected={managedSelected} exactReceipt={managedReceipt} version={version + refreshToken}
-      onSelect={() => { if (!managedSelected) updateQuery({ managedAsset: MANAGED_BATCH_ASSET, batchReceipt: null, schema: null, table: null, transferPlan: null, scheduleKind: null }); }}
+      onSelect={() => { if (!managedSelected) updateQuery({ managedAsset: MANAGED_BATCH_ASSET, batchReceipt: null, schema: null, table: null, tableLineage: null, transferPlan: null, scheduleKind: null }); }}
       onClose={() => updateQuery({ managedAsset: null, batchReceipt: null }, true)} />}
     {error ? <div className="flow-lineage-state" role="alert">Unable to load lineage assets.<button type="button" className="flow-lineage-action" onClick={() => setVersion(value => value + 1)}>Retry</button></div>
       : loading ? <div className="flow-lineage-state"><Spin /></div>
@@ -282,8 +285,12 @@ export default function OntologyLineage({ refreshToken = 0 }: { refreshToken?: n
               <div className="flow-lineage-canvas-tools" aria-label="Lineage canvas tools"><button type="button" aria-label="Fit to view" title="Fit to view (Home)" onClick={fitGraph}><FullscreenOutlined /></button><button type="button" aria-label="Zoom in" title="Zoom in (+)" disabled={zoom >= 1.75} onClick={() => changeZoom(zoom + .1)}><PlusOutlined /></button><button type="button" aria-label="Zoom out" title="Zoom out (-)" disabled={zoom <= .25} onClick={() => changeZoom(zoom - .1)}><MinusOutlined /></button><button type="button" aria-label="Reset view" title="Reset to 100%" onClick={() => { setAutoFit(false); setManualZoom(1); viewportRef.current?.scrollTo({ left: 0, top: 0 }); }}><ReloadOutlined /></button><span className="flow-lineage-zoom-label" aria-live="polite">{Math.round(zoom * 100)}%</span></div>
               <div className="flow-lineage-dock" role="toolbar" aria-label="Selected schema panels">{([{ key: 'details', label: 'Details', icon: <BarsOutlined /> }, { key: 'upstream', label: 'Upstream', icon: <ArrowUpOutlined /> }, { key: 'downstream', label: 'Downstream', icon: <ArrowDownOutlined /> }, { key: 'transfers', label: 'Transfer plans', icon: <BranchesOutlined /> }] as const).filter(item => item.key !== 'transfers' || canPlanTransfers).map(item => <button key={item.key} type="button" disabled={!asset || item.key === 'transfers' && !transferAsset} title={item.key === 'transfers' && !transferAsset ? 'Select a warehouse schema to manage transfer plans' : undefined} aria-pressed={Boolean(asset && inspectorOpen && activePanel === item.key)} onClick={() => openPanel(item.key)}>{item.icon}<span>{item.label}</span></button>)}</div>
               <div className="flow-lineage-status"><span>{nodes.length} schemas · {links.length} predefined relationships</span><small data-testid="ontology-lineage-motion-status">{motionStatus}</small></div>
-              {asset && inspectorOpen && <aside className={`flow-lineage-inspector${activePanel === 'transfers' || showExportTable ? ' flow-lineage-inspector--transfers' : ''}`} aria-label="Node details"><header><span>{showExportTable ? 'SELECTED TABLE' : 'SELECTED SCHEMA'}</span><button type="button" aria-label="Close node details" onClick={closeInspector}><CloseOutlined /></button></header><h2>{showExportTable ? TABLE_EXPORT_SOURCE.table : asset.alias || asset.label}</h2><code>{showExportTable ? `${asset.key}.${TABLE_EXPORT_SOURCE.table}` : asset.key}</code>
-                {showExportTable ? <>
+              {asset && inspectorOpen && <aside className={`flow-lineage-inspector${activePanel === 'transfers' || showExportTable || showOrdinaryTable ? ' flow-lineage-inspector--transfers' : ''}`} aria-label="Node details"><header><span>{showExportTable || showOrdinaryTable ? 'SELECTED TABLE' : 'SELECTED SCHEMA'}</span><button type="button" aria-label="Close node details" onClick={closeInspector}><CloseOutlined /></button></header><h2>{showExportTable || showOrdinaryTable ? selectedTable : asset.alias || asset.label}</h2><code>{showExportTable || showOrdinaryTable ? `${asset.key}.${selectedTable}` : asset.key}</code>
+                {showOrdinaryTable ? <>
+                  <TableLineageReferences schema={asset.key} table={selectedTable} version={version + refreshToken} />
+                  <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open table Evidence in Explorer <ArrowRightOutlined /></button>
+                  <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={() => updateQuery({ table: null, tableLineage: null })}>Back to schema details</button>
+                </> : showExportTable ? <>
                   <TableExportEvidence mode="lineage" version={version} />
                   <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={openWorkspace}>Open table Evidence in Explorer <ArrowRightOutlined /></button>
                   <button type="button" className="flow-lineage-action flow-lineage-open-workspace" onClick={() => updateQuery({ table: null })}>Back to schema details</button>

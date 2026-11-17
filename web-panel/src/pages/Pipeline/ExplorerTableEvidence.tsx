@@ -8,6 +8,7 @@ import ExplorerAssetFreshness from './ExplorerAssetFreshness';
 import ExplorerDailyJobQuality from './ExplorerDailyJobQuality';
 import ExplorerAssetStatistics from './ExplorerAssetStatistics';
 import ExplorerTransferTimeline from './ExplorerTransferTimeline';
+import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 import './table-evidence.css';
 
 export default function ExplorerTableEvidence({ schema, table, canManage }: { schema: string; table: string; canManage: boolean }) {
@@ -17,6 +18,8 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
     const [latestCurrentReceipt, setLatestCurrentReceipt] = useState<TransferRunReceipt | null>(null);
     const showReceipts = canManage && schema === 'ts_transfer_sandbox';
     const showExport = canManage && schema === TABLE_EXPORT_SOURCE.schema && table === TABLE_EXPORT_SOURCE.table;
+    const ordinaryLineage = schema !== 'ts_transfer_sandbox' && !schema.endsWith('_hist') && !table.endsWith('_hist') &&
+        (schema !== INDEX_PREVIEW_SCHEMA || table !== INDEX_PREVIEW_TABLE);
     const refresh = () => {
         setSnapshot(undefined);
         setFailed(false);
@@ -97,7 +100,9 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                                 <p>The migration code writes directly from MongoDB to each destination. This is not an observed RDS-to-ODS flow and does not verify a specific run or downstream consumer.</p>
                             </> : <><strong>No verified data flow</strong><p>No upstream or downstream flow is available as evidence for this table. This does not imply the table is disconnected.</p></>}
                             {schema.startsWith('ts_') && schema !== 'ts_meta' &&
-                                <Link className="flow-evidence-lineage-link" to={`/ontology/lineage?${new URLSearchParams({ schema })}`}>Open schema in Lineage</Link>}
+                                <Link className="flow-evidence-lineage-link" to={`/ontology/lineage?${new URLSearchParams({
+                                    schema, ...(ordinaryLineage ? { table, tableLineage: '1' } : {}),
+                                })}`}>{ordinaryLineage ? 'Open table in Lineage' : 'Open schema in Lineage'}</Link>}
                         </section>
                         </>}
                     </div>}

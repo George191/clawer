@@ -1114,3 +1114,12 @@ export type CollectedAssetStatistics = {
 export const fetchCollectedAssetStatistics = (schema: string, table: string, signal?: AbortSignal): Promise<CollectedAssetStatistics> =>
   client.get(`/etl/asset-freshness/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/collected-stats`, { signal })
     .then(r => unwrap<CollectedAssetStatistics>(r.data));
+
+export type TableLineageDirection = 'incoming' | 'outgoing';
+export type TableLineageReferenceKind = 'object_relation' | 'foreign_key';
+export type TableLineageIdentity = { schema: string; table: string };
+export type TableLineageNeighbor = TableLineageIdentity & { kinds: TableLineageReferenceKind[] };
+export type TableLineageNeighborhood = { direction: TableLineageDirection; neighbors: TableLineageNeighbor[]; truncated: boolean };
+export const fetchTableLineageNeighbors = (schema: string, table: string, direction: TableLineageDirection, signal?: AbortSignal): Promise<TableLineageNeighborhood> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/lineage-neighbors`, { params: { direction }, signal })
+    .then(r => unwrap<TableLineageNeighborhood>(r.data));

@@ -22,6 +22,7 @@ from app.etl.schema.object_relations import (
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
 from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
+from app.web.api.models.lineage_neighbors import LineageDirection, LineageNeighbors
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TARGET
 from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
@@ -331,6 +332,78 @@ class EtlLayers:
         return {"items": [_object_summary(row) for row in rows], "total": total,
                 "limit": limit, "offset": offset, "schemaCounts": schema_counts,
                 "groupCounts": group_counts, "groupSchemaCounts": group_schema_counts}
+
+    async def lineage_neighbors(self, schema: str, table: str, direction: LineageDirection) -> LineageNeighbors:
+        # A stored declaration, URL and Explorer object must all use the exact catalog name.
+        if not re.fullmatch(r"ts_[a-z0-9_]{1,60}", schema) or not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", table):
+            raise HTTPException(404, "Table does not exist in this schema")
+        ordinary_visible = f"""{_OBJECT_TABLE_SQL} AND COALESCE(o.visibility, 'normal') <> 'hidden'
+            AND right(n.nspname::text, 5) <> '_hist'
+            AND NOT (n.nspname = :index_schema AND c.relname = :index_table)"""
+        root_end, peer_end, fk_root, fk_peer = (
+            ("source", "target", "conrelid", "confrelid") if direction == "outgoing"
+            else ("target", "source", "confrelid", "conrelid")
+        )
+        limit = 12
+        params = {"schema": schema, "table": table, "limit": limit + 1,
+                  "index_schema": INDEX_SANDBOX_SCHEMA, "index_table": INDEX_SANDBOX_TABLE}
+        async with self.session(repeatable_read=True) as session:
+            await session.execute(text("SET LOCAL statement_timeout = '1000ms'"))
+            root_oid = await session.scalar(text(f"""
+                SELECT c.oid FROM pg_catalog.pg_namespace n
+                JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid
+                {_OBJECT_METADATA_JOIN}
+                WHERE n.nspname = :schema AND c.relname = :table AND {ordinary_visible}
+            """), params)
+            if root_oid is None:
+                raise HTTPException(404, "Table does not exist in this schema")
+
+            # Filter each peer before grouping/limiting. Neither hidden peers nor multiple
+            # declarations/FKs to the same peer can make the visible result appear truncated.
+            registry_present = await session.scalar(text(
+                "SELECT pg_catalog.to_regclass('public.ontology_object_relations') IS NOT NULL"
+            ))
+            declared_neighbors = f"""
+                SELECT n.nspname AS schema, c.relname AS "table", 'object_relation' AS kind
+                FROM public.ontology_object_relations r
+                JOIN pg_catalog.pg_namespace n ON n.nspname = r.{peer_end}_schema
+                JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid AND c.relname = r.{peer_end}_table
+                {_OBJECT_METADATA_JOIN}
+                WHERE r.enabled AND r.{root_end}_schema = :schema AND r.{root_end}_table = :table
+                  AND {ordinary_visible} AND c.oid <> CAST(:oid AS oid)
+                  AND cardinality(r.{root_end}_fields) > 0
+                  AND cardinality(r.{root_end}_fields) = cardinality(r.{peer_end}_fields)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM unnest(r.{root_end}_fields) f(name) WHERE NOT EXISTS (
+                          SELECT 1 FROM pg_catalog.pg_attribute a
+                          WHERE a.attrelid = CAST(:oid AS oid) AND a.attname = f.name
+                            AND a.attnum > 0 AND NOT a.attisdropped))
+                  AND NOT EXISTS (
+                      SELECT 1 FROM unnest(r.{peer_end}_fields) f(name) WHERE NOT EXISTS (
+                          SELECT 1 FROM pg_catalog.pg_attribute a
+                          WHERE a.attrelid = c.oid AND a.attname = f.name
+                            AND a.attnum > 0 AND NOT a.attisdropped))
+                UNION ALL
+            """ if registry_present else ""
+            result = await session.execute(text(f"""
+                WITH neighbors(schema, "table", kind) AS (
+                    {declared_neighbors}
+                    SELECT n.nspname, c.relname, 'foreign_key'
+                    FROM pg_catalog.pg_constraint f
+                    JOIN pg_catalog.pg_class c ON c.oid = f.{fk_peer}
+                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                    {_OBJECT_METADATA_JOIN}
+                    WHERE f.contype = 'f' AND f.conparentid = 0 AND f.{fk_root} = CAST(:oid AS oid)
+                      AND {ordinary_visible} AND c.oid <> CAST(:oid AS oid)
+                )
+                SELECT schema, "table", array_agg(DISTINCT kind ORDER BY kind) AS kinds
+                FROM neighbors GROUP BY schema, "table"
+                ORDER BY schema COLLATE "C", "table" COLLATE "C"
+                LIMIT :limit
+            """), {**params, "oid": root_oid})
+            rows = result.mappings().all()
+        return LineageNeighbors(direction=direction, neighbors=[dict(row) for row in rows[:limit]],
+                                truncated=len(rows) > limit)
 
     async def preview(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
         schema = _object_schema(layer)

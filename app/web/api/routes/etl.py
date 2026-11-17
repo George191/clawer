@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
+from app.web.api.models.lineage_neighbors import LineageDirection, LineageNeighbors
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
 from app.web.api.models.asset_collected_stats import AssetCollectedStats
 from app.web.api.models.asset_freshness import (
@@ -801,6 +802,14 @@ async def object_preview(layer: str, table: str, includeHidden: bool = False,
     if includeHidden:
         return await get_etl_layers().preview(layer, table, include_hidden=True)
     return await get_etl_layers().preview(layer, table)
+
+
+@read.get("/{layer}/{table}/lineage-neighbors")
+async def table_lineage_neighbors(
+    layer: str, table: str, direction: LineageDirection, response: Response,
+) -> LineageNeighbors:
+    response.headers["Cache-Control"] = "no-store"
+    return await get_etl_layers().lineage_neighbors(layer, table, direction)
 
 
 @read.get("/{layer}/{table}/columns")
