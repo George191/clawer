@@ -18,12 +18,16 @@ class ExplorerRecordLinks(unittest.IsolatedAsyncioTestCase):
         await creation.OntologyCreationIntegration.asyncSetUp(self)
         self.addAsyncCleanup(self.pg.close)
         for sql in (
-            "CREATE TABLE ts_creation.parents (tenant text, id bigint, amount numeric, PRIMARY KEY(tenant,id))",
+            "CREATE TABLE ts_creation.parents (tenant text, id bigint, amount numeric, area jsonb, PRIMARY KEY(tenant,id))",
             """CREATE TABLE ts_creation.children (
                 id int PRIMARY KEY, tenant text, parent_id bigint,
                 CONSTRAINT child_parent FOREIGN KEY(tenant,parent_id) REFERENCES ts_creation.parents(tenant,id))""",
             "CREATE TABLE ts_creation.standalone (id int PRIMARY KEY, tenant text, parent_id bigint)",
-            "INSERT INTO ts_creation.parents VALUES ('a',9007199254740993,3.141592653589793238),('b',9007199254740993,1)",
+            """INSERT INTO ts_creation.parents VALUES
+                ('a',9007199254740993,3.141592653589793238,
+                    jsonb_build_object('type','Point','coordinates',jsonb_build_array(0.1,0.2),
+                        'nested',jsonb_build_object('exact',9007199254740993,'count',1))),
+                ('b',9007199254740993,1,NULL)""",
             "INSERT INTO ts_creation.children SELECT i,'a',9007199254740993 FROM generate_series(1,12) i",
             "INSERT INTO ts_creation.children VALUES (13,'b',9007199254740993),(14,NULL,NULL)",
             "INSERT INTO ts_creation.standalone VALUES (1,'a',9007199254740993)",
@@ -50,6 +54,10 @@ class ExplorerRecordLinks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(item["identity"], self.parent)
         self.assertEqual(item["row"]["id"], self.parent["id"])
         self.assertEqual(item["row"]["amount"], "3.141592653589793238")
+        self.assertEqual(item["row"]["area"], {
+            "type": "Point", "coordinates": [0.1, 0.2],
+            "nested": {"exact": "9007199254740993", "count": 1},
+        })
         self.assertNotIn("rowVersion", item)
         self.actor.is_superuser = True
         admin = (await self.post("parents", "row-by-key", self.parent)).json()

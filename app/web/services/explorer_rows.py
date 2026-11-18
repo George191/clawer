@@ -3,6 +3,7 @@
 import hashlib
 import json
 from decimal import Decimal
+from math import isfinite
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -118,6 +119,11 @@ def _lossless_number(token):
     return value if abs(value) <= 2**53 - 1 else token
 
 
+def _json_float(token):
+    value = float(token)
+    return value if isfinite(value) else token
+
+
 async def _source(session, asset, key, projection):
     if not asset["primary"]:
         raise HTTPException(409, "This table has no primary key for a stable record address")
@@ -145,8 +151,16 @@ async def row_by_key(layer, table, key, *, editable):
         if editable:
             projection += ", " + ROW_VERSION_SQL
         record = await _source(session, asset, key, projection)
-        # Preserve decimal scale and bigint precision at the JavaScript boundary.
+        # Preserve SQL decimal scale and bigint precision at the JavaScript boundary.
         row = json.loads(record[0], parse_float=str, parse_int=_lossless_number)
+        json_fields = [
+            name for name, column in asset["columns"].items()
+            if column["type"] in ("json", "jsonb", "json[]", "jsonb[]") and row[name] is not None
+        ]
+        if json_fields:
+            # JSON documents retain finite JSON numbers, including geometry coordinates.
+            document = json.loads(record[0], parse_float=_json_float, parse_int=_lossless_number)
+            row.update((name, document[name]) for name in json_fields)
         for name, column in asset["columns"].items():
             if column["type"] in ("real", "double precision") and row[name] is not None:
                 native = Decimal(str(row[name]))
