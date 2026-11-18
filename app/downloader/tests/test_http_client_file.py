@@ -92,6 +92,50 @@ class FileDownloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.headers["content-length"], "6")
         self.sessions[0].close.assert_awaited_once()
 
+    async def test_status_zero_retries_original_transport_error_before_first_response(self):
+        for code in (5, 35, 56):
+            with self.subTest(curl_code=code):
+                self.path = self.path.with_name(f"initial-{code}.part")
+                failure = TransferError(status=0)
+                failure.code = code
+                failure.response.raise_for_status = Mock(side_effect=DownloadError(URL, 0, "OK"))
+                self.requests.clear()
+                self.outcomes[:] = [
+                    failure,
+                    Response([b"whole"], headers={"Content-Length": "5", "ETag": ETAG}),
+                ]
+                result = await self.fetch()
+                self.assertEqual((result.size, self.path.read_bytes()), (5, b"whole"))
+                self.assertEqual(len(self.requests), 2)
+                self.assertTrue(all("Range" not in request["headers"] for request in self.requests))
+                failure.response.raise_for_status.assert_not_called()
+
+    async def test_status_zero_preserves_validated_partial_and_resume_headers(self):
+        for code in (5, 35, 56):
+            with self.subTest(curl_code=code):
+                self.path = self.path.with_name(f"partial-{code}.part")
+                failure = TransferError(status=0)
+                failure.code = code
+                failure.response.raise_for_status = Mock(side_effect=DownloadError(URL, 0, "OK"))
+                self.requests.clear()
+                self.outcomes[:] = [
+                    Response([b"abc"], headers={"Content-Length": "6", "ETag": ETAG},
+                             error=TransferError()),
+                    failure,
+                    Response([b"def"], status=206, headers={
+                        "Content-Length": "3", "Content-Range": "bytes 3-5/6", "ETag": ETAG,
+                    }),
+                ]
+                result = await self.fetch()
+                self.assertEqual((result.size, self.path.read_bytes()), (6, b"abcdef"))
+                self.assertEqual(result.headers["content-length"], "6")
+                self.assertEqual(len(self.requests), 3)
+                for request in self.requests[1:]:
+                    self.assertEqual(request["headers"]["Range"], "bytes=3-")
+                    self.assertEqual(request["headers"]["If-Range"], ETAG)
+                self.assertEqual(self.requests[1]["headers"], self.requests[2]["headers"])
+                failure.response.raise_for_status.assert_not_called()
+
     async def test_ignored_range_truncates_old_partial_before_restart(self):
         self.outcomes[:] = [
             Response([b"old-partial"], headers={"Content-Length": "20", "ETag": ETAG},

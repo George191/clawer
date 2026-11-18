@@ -964,7 +964,8 @@ class HttpClient:
             except Exception as error:
                 if write_error is not None:
                     raise write_error from error
-                if segment is None or getattr(error, "response", None) is None:
+                if (segment is None or getattr(error, "response", None) is None
+                        or error.response.status_code not in (200, 206)):
                     raise
                 response, transfer_error = error.response, error
             transfer = getattr(response, "astream_task", None)
