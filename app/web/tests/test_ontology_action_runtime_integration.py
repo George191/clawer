@@ -1,6 +1,7 @@
 """Exercise action commits and membership revocation in an isolated PostgreSQL schema."""
 
 import os
+from copy import deepcopy
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -15,13 +16,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.web.api.dependencies.session import get_db
 from app.web.api.models import Team, TeamUserJoin, Tenant, User
-from app.web.api.models.ontology_registry import OntologyDefinitionRow
+from app.web.api.models.ontology_graph import OntologyLink, OntologyLinkType, SetQuery
+from app.web.api.models.ontology_registry import Definition, OntologyDefinitionRow
 from app.web.api.models.ontology_runtime import OntologyActionEvent, OntologyRuntimeRecord
 from app.web.api.models.user import InviteCodes
 from app.web.api.routes.team import router as team_router
 from app.web.api.utils.models import StatusTypes
 from app.web.core.security import ALGORITHM, JWTTokenGenerator
-from app.web.services.ontology_action_runtime import ActionPayload, record_history, submit_action
+from app.web.services.ontology_action_runtime import (
+    ActionPayload,
+    get_record,
+    list_records,
+    record_history,
+    submit_action,
+)
+from app.web.services.ontology_graph_sets import evaluate
+from app.web.services.ontology_record_policy import validate_record_policy_refs
 
 
 @pytest_asyncio.fixture
@@ -50,7 +60,10 @@ async def runtime():
                         "team_user_join",
                         "ontology_registry_definitions",
                         "ontology_runtime_records",
+                        "ontology_transactions",
                         "ontology_action_events",
+                        "ontology_link_types",
+                        "ontology_links",
                     )
                 ],
             )
@@ -187,6 +200,47 @@ async def test_create_waits_for_membership_revocation_then_denies_the_actor(runt
 
 
 @pytest.mark.asyncio
+async def test_read_holds_policy_version_until_projection_finishes(runtime):
+    engine, actor, definition_id, _ = runtime
+    async with AsyncSession(engine) as reader, AsyncSession(engine) as editor:
+        receipt = await submit_action(
+            reader, actor, definition_id, "create", ActionPayload(values={"key": "old"})
+        )
+        assert (await get_record(reader, actor, definition_id, receipt.id)).id == receipt.id
+        old = await editor.scalar(
+            select(OntologyDefinitionRow.published_definition).where(
+                OntologyDefinitionRow.id == definition_id
+            )
+        )
+        changed = deepcopy(old)
+        changed["security"]["recordRules"] = [
+            {
+                "kind": "property",
+                "field": "key",
+                "match": "equals",
+                "value": "new",
+                "readers": changed["security"]["objectReaders"],
+            }
+        ]
+        revision = (
+            update(OntologyDefinitionRow)
+            .where(OntologyDefinitionRow.id == definition_id)
+            .values(published_definition=changed)
+        )
+        await editor.execute(text("SET LOCAL lock_timeout = '500ms'"))
+        with pytest.raises(DBAPIError) as blocked:
+            await editor.execute(revision)
+        assert blocked.value.orig.sqlstate == "55P03"
+        await editor.rollback()
+        await reader.commit()
+        await editor.execute(revision)
+        await editor.commit()
+        with pytest.raises(HTTPException) as revoked:
+            await get_record(reader, actor, definition_id, receipt.id)
+        assert revoked.value.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_deleted_record_history_is_ordered_scoped_and_rechecks_access(runtime):
     engine, actor, definition_id, membership_id = runtime
     async with AsyncSession(engine) as session:
@@ -223,7 +277,17 @@ async def test_deleted_record_history_is_ordered_scoped_and_rechecks_access(runt
             ("modify", 2),
             ("create", 1),
         ]
-        assert all(set(event.model_dump()) == {"revision", "kind", "createdAt"} for event in events)
+        assert all(
+            set(event.model_dump()) == {"revision", "kind", "createdAt", "changes", "canUndo"}
+            for event in events
+        )
+        assert events[0].canUndo and not events[1].canUndo
+        assert events[1].changes == {"note": {"after": "private-note"}}
+        tombstones = await list_records(
+            session, actor, definition_id, limit=5, offset=0, deleted=True
+        )
+        assert [item.id for item in tombstones.items] == [create.id]
+        assert tombstones.actions == []
         with pytest.raises(HTTPException) as missing:
             await history(definition_id, uuid4())
         assert missing.value.status_code == 404
@@ -253,3 +317,153 @@ async def test_deleted_record_history_is_ordered_scoped_and_rechecks_access(runt
         with pytest.raises(HTTPException) as revoked:
             await history(definition_id, create.id)
         assert revoked.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_record_rules_guard_pages_histories_and_both_sides_of_edits(runtime):
+    engine, actor, definition_id, membership_id = runtime
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+
+        async def create(key):
+            return await submit_action(
+                session, actor, definition_id, "create", ActionPayload(values={"key": key})
+            )
+
+        ids = {
+            key: (await create(key)).id
+            for key in ["hidden", "shown", str(actor.id), "anchor", "via-link"]
+        }
+        row = await session.get(OntologyDefinitionRow, definition_id)
+        group = row.published_definition["security"]["objectReaders"]
+        rules = [
+            {
+                "kind": "property",
+                "field": "note",
+                "match": "equals",
+                "value": "shared",
+                "readers": group,
+            },
+            {"kind": "property", "field": "key", "match": "currentUser", "readers": group},
+            {
+                "kind": "related",
+                "direction": "outgoing",
+                "linkType": "assigned",
+                "relatedRecordId": str(ids["anchor"]),
+                "readers": group,
+            },
+            {
+                "kind": "property",
+                "field": "key",
+                "match": "equals",
+                "value": "create-allowed",
+                "readers": group,
+            },
+        ]
+        await submit_action(
+            session,
+            actor,
+            definition_id,
+            "modify",
+            ActionPayload(recordId=ids["shown"], expectedRevision=1, values={"note": "shared"}),
+        )
+        link_type = OntologyLinkType(
+            project_id=row.project_id,
+            key="assigned",
+            name="Assigned",
+            cardinality="many_to_many",
+            source_definition_id=row.id,
+            target_definition_id=row.id,
+        )
+        session.add(link_type)
+        await session.flush()
+        link = OntologyLink(
+            link_type_id=link_type.id,
+            source_record_id=ids["via-link"],
+            target_record_id=ids["anchor"],
+        )
+        session.add(link)
+        await session.commit()
+
+        new_definition = deepcopy(row.published_definition)
+        new_definition["security"]["recordRules"] = rules
+        defn = Definition.model_validate(new_definition)
+        assert not await validate_record_policy_refs(session, row.id, defn)
+        wrong_scope = defn.model_copy(update={"projectId": uuid4()})
+        assert await validate_record_policy_refs(session, row.id, wrong_scope)
+        row.published_definition = new_definition
+        await session.commit()
+        visible = sorted([ids["shown"], ids["via-link"], ids[str(actor.id)]])
+        for offset in range(3):
+            page = await list_records(session, actor, definition_id, limit=1, offset=offset)
+            assert [r.id for r in page.items] == visible[offset : offset + 1]
+            assert page.hasMore == (offset < 2)
+        search = SetQuery.model_validate(
+            {"filters": [{"field": "key", "op": "contains", "value": "i"}], "groupBy": "key"}
+        )
+        # hidden and via-link both satisfy the literal filter; the hidden row must not affect totals or groups.
+        filtered = await evaluate(session, actor, definition_id, search, 1, 0, 0)
+        assert [item.id for item in filtered["items"]] == [ids["via-link"]]
+        assert filtered["count"] == 1 and not filtered["hasMore"]
+        assert [item["value"] for item in filtered["groups"]] == ["via-link"]
+        for request in [
+            get_record(session, actor, definition_id, ids["hidden"]),
+            record_history(session, actor, definition_id, ids["hidden"], limit=5, offset=0),
+            submit_action(
+                session,
+                actor,
+                definition_id,
+                "delete",
+                ActionPayload(recordId=ids["hidden"], expectedRevision=99),
+            ),
+        ]:
+            with pytest.raises(HTTPException) as denied:
+                await request
+            assert denied.value.status_code == 404
+        with pytest.raises(HTTPException) as changed_scope:
+            await submit_action(
+                session,
+                actor,
+                definition_id,
+                "modify",
+                ActionPayload(
+                    recordId=ids["shown"], expectedRevision=2, values={"note": "no longer shared"}
+                ),
+            )
+        assert changed_scope.value.status_code == 403
+        with pytest.raises(HTTPException) as denied_create:
+            await create("unmatched")
+        assert denied_create.value.status_code == 403
+        allowed = await create("create-allowed")
+        assert (await get_record(session, actor, definition_id, allowed.id)).id == allowed.id
+        audit = await record_history(session, actor, definition_id, ids["shown"], limit=5, offset=0)
+        assert all(event.changes is None for event in audit.items)
+        with pytest.raises(HTTPException, match="Remove relationships") as linked_delete:
+            await submit_action(
+                session,
+                actor,
+                definition_id,
+                "delete",
+                ActionPayload(recordId=ids["via-link"], expectedRevision=1),
+            )
+        assert linked_delete.value.status_code == 409
+        await session.delete(link)
+        await session.commit()
+        with pytest.raises(HTTPException) as revoked_link:
+            await get_record(session, actor, definition_id, ids["via-link"])
+        assert revoked_link.value.status_code == 404
+        unrestricted = deepcopy(new_definition)
+        unrestricted["security"]["recordRules"] = []
+        row.published_definition = unrestricted
+        await session.commit()
+        assert (
+            await record_history(session, actor, definition_id, allowed.id, limit=5, offset=0)
+        ).items[0].changes is None
+        await session.execute(
+            update(TeamUserJoin)
+            .where(TeamUserJoin.id == membership_id)
+            .values(status=StatusTypes.DISABLE)
+        )
+        await session.commit()
+        with pytest.raises(HTTPException) as revoked_member:
+            await get_record(session, actor, definition_id, allowed.id)
+        assert revoked_member.value.status_code == 404

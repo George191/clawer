@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -69,12 +70,15 @@ def check_revision(row: OntologyDefinitionRow, revision: int):
         raise HTTPException(409, "This draft changed. Reload it before continuing.")
 
 
-async def get_published(session: AsyncSession, user: User, definition_id: UUID) -> OntologyDefinitionRow:
+async def get_published(session: AsyncSession, user: User, definition_id: UUID, *, lock: bool = False) -> OntologyDefinitionRow:
     accessible = projects_statement(user).with_only_columns(Team.id)
-    row = await session.scalar(select(OntologyDefinitionRow).where(
+    statement = select(OntologyDefinitionRow).where(
         OntologyDefinitionRow.id == definition_id, OntologyDefinitionRow.published_at.is_not(None),
         OntologyDefinitionRow.project_id.in_(accessible),
-    ))
+    )
+    if lock:
+        statement = statement.with_for_update(read=True).execution_options(populate_existing=True)
+    row = await session.scalar(statement)
     if row is None:
         raise HTTPException(404, "Object type not found")
     source = Definition.model_validate(row.published_definition).source
@@ -135,6 +139,7 @@ def catalog_definition(user: User, row: OntologyDefinitionRow, tenant_id: UUID) 
     payload["actions"] = []
     payload["security"]["objectReaders"] = []
     payload["security"]["fieldReaders"] = {}
+    payload["security"].pop("recordRules", None)
     return payload
 
 
@@ -156,10 +161,15 @@ class WarehouseTable:
 def assess_definition(
     definition: Definition, source: WarehouseTable | None = None, *, eligible=None,
 ) -> ValidationResult:
+    from app.web.services.ontology_record_policy import record_policy_errors
+
     result = ValidationResult()
 
     def error(path: str, message: str):
         result.errors.append(DefinitionIssue(path=path, message=message))
+
+    for message in record_policy_errors(definition):
+        error("security.recordRules", message)
 
     if not IDENTIFIER.fullmatch(definition.id):
         error("id", "Use a lowercase identifier beginning with a letter")
@@ -304,7 +314,7 @@ def ensure_source_identity(row: OntologyDefinitionRow, definition: Definition, t
         raise HTTPException(409, "The bound warehouse source key is no longer valid")
 
 
-async def read_bound_records(row: OntologyDefinitionRow, columns: list[str], limit: int, offset: int) -> dict:
+async def read_bound_records(row: OntologyDefinitionRow, columns: list[str], limit: int, offset: int, *, context=None) -> dict:
     definition = Definition.model_validate(row.published_definition)
     assert definition.source.mode == "existing"
     source = definition.source
@@ -332,9 +342,30 @@ async def read_bound_records(row: OntologyDefinitionRow, columns: list[str], lim
             quote_identifier(prop.sourceColumn) + ' AS "' + prop.id + '"' for prop in props
         )
         order = ", ".join(f'bound.{quote_identifier(key)}' for key in row.source_signature["primaryKey"])
+        params = {"limit": limit + 1, "offset": offset}
+        where = ""
+        if definition.security.recordRules:
+            from app.web.services.ontology_record_policy import property_operand
+            from app.web.services.ontology_registry_policy import PropertyRecordRule
+
+            comparisons = []
+            mappings = {prop.id: prop.sourceColumn for prop in definition.properties}
+            for index, rule in enumerate(definition.security.recordRules):
+                if not isinstance(rule, PropertyRecordRule):
+                    raise HTTPException(409, "Invalid record policy for warehouse source")
+                if context is None or not context.source_access or not context.project_access or not context.principals.intersection(rule.readers):
+                    continue
+                operand = property_operand(rule, context)
+                if operand is None:
+                    continue
+                column = quote_identifier(mappings[rule.field])
+                key = f"record_value_{index}"
+                comparisons.append(f"to_jsonb(bound.{column}) = CAST(:{key} AS jsonb)")
+                params[key] = json.dumps(operand, allow_nan=False)
+            where = "WHERE " + (" OR ".join(comparisons) if comparisons else "FALSE")
         result = await session.execute(text(
             f"SELECT to_jsonb(source_row) FROM (SELECT {fields} FROM {relation} AS bound "
-            f"ORDER BY {order} LIMIT :limit OFFSET :offset) AS source_row"
-        ), {"limit": limit + 1, "offset": offset})
+            f"{where} ORDER BY {order} LIMIT :limit OFFSET :offset) AS source_row"
+        ), params)
         records = result.scalars().all()
     return {"items": records[:limit], "hasMore": len(records) > limit}

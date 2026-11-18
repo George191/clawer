@@ -1,0 +1,35 @@
+.flow-ontology-revisions {
+  margin: 12px;
+  max-height: min(70vh, 720px);
+  overflow: auto;
+}
+
+.flow-ontology-revision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 10px;
+}
+
+.flow-ontology-revision-diff {
+  overflow: auto;
+}
+
+.flow-ontology-revision-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.flow-ontology-revision-table th,
+.flow-ontology-revision-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--ontology-border);
+  vertical-align: top;
+}
+
+.flow-ontology-revision-table pre {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

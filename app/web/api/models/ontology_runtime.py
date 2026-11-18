@@ -28,7 +28,7 @@ class OntologyRuntimeRecord(SQLModel, table=True):
 
 
 class OntologyActionEvent(SQLModel, table=True):
-    """Audit metadata without a copy of restricted record values."""
+    """An immutable edit. Values are projected under the current history policy."""
 
     __tablename__ = "ontology_action_events"
     __table_args__ = (
@@ -44,7 +44,32 @@ class OntologyActionEvent(SQLModel, table=True):
     actor_id: UUID
     kind: str = Field(max_length=6)
     revision: int
+    changes: dict | None = Field(default=None, sa_column=Column(JSONB(none_as_null=True)))
+    restricted_history: bool = Field(default=False)
+    transaction_id: UUID | None = Field(default=None, foreign_key="ontology_transactions.id")
     occurred_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False),
     )
+
+
+class OntologyTransaction(SQLModel, table=True):
+    """A replayable receipt. Steps point to exact edits, never to mutable business keys."""
+
+    __tablename__ = "ontology_transactions"
+    __table_args__ = (
+        UniqueConstraint("project_id", "actor_id", "request_id", name="uq_ontology_tx_request"),
+        Index("ix_ontology_tx_history", "project_id", "actor_id", "created_at", "id"),
+    )
+
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    project_id: UUID = Field(foreign_key="team.id")
+    actor_id: UUID = Field(foreign_key="user.id")
+    request_id: UUID
+    request_hash: str = Field(max_length=64)
+    name: str = Field(max_length=120)
+    steps: list[dict] = Field(sa_column=Column(JSONB, nullable=False))
+    created_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    )
+    undone_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))

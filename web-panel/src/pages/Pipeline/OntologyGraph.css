@@ -1,0 +1,36 @@
+.ontology-graph {
+  padding: 12px 16px;
+  border-top: 1px solid var(--ui-border, #ddd);
+}
+.ontology-graph h3 {
+  margin: 12px 0 8px;
+  font-size: 1rem;
+}
+.ontology-graph label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 8px 4px 0;
+}
+.ontology-graph select,
+.ontology-graph input,
+.ontology-graph button {
+  font: inherit;
+  max-width: 100%;
+  padding: 3px 7px;
+}
+.ontology-graph button {
+  margin: 3px;
+  cursor: pointer;
+}
+.ontology-graph ul {
+  padding-left: 1.3rem;
+}
+.ontology-graph th,
+.ontology-graph td {
+  padding: 3px 10px;
+  text-align: left;
+}
+.ontology-graph [role='alert'] {
+  color: var(--ui-danger, #b32a23);
+}

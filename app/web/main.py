@@ -9,7 +9,10 @@ from starlette.middleware.cors import CORSMiddleware
 from app.web.api.routes import api_router
 from app.web.api.routes.health import health as health_check
 from app.web.api.routes.ontology_action_runtime import router as ontology_action_runtime_router
+from app.web.api.routes.ontology_graph import router as ontology_graph_router
 from app.web.api.routes.ontology_registry import router as ontology_registry_router
+from app.web.api.routes.ontology_revisions import router as ontology_revisions_router
+from app.web.api.routes.ontology_transactions import router as ontology_transactions_router
 from app.web.api.routes.task_socket import router as task_socket_router
 from app.web.core.config import settings
 from app.web.core.exceptions import register_exception_handlers
@@ -51,6 +54,9 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(task_socket_router)
 app.include_router(ontology_registry_router)
 app.include_router(ontology_action_runtime_router, prefix='/api')
+app.include_router(ontology_graph_router, prefix='/api')
+app.include_router(ontology_revisions_router)
+app.include_router(ontology_transactions_router)
 # Keep the deployment health-check contract compatible with the existing
 # Docker and README references while the business API uses /api/v1.
 app.add_api_route(

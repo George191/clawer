@@ -6,12 +6,12 @@
 
 以下核对从用户发布类型和操作实例的入口出发。开发者可在 `app/web/api/routes/ontology_registry.py` 和 `ontology_action_runtime.py` 查看对应 HTTP 契约。下节的 11 项继续用于评估数据管理。
 
-| 能力 | 当前可用路径 | 与 Foundry 的差距 |
+| 能力 | 当前实现 | 适用范围 |
 | --- | --- | --- |
-| 对象类型、属性、发布 | 项目管理员保存私有草稿，按修订校验、发布。可绑定现有 ODS/DWD 表或创建由动作维护的类型。数据源绑定会核对物理表身份和键。 | 发布后缺少类型变更提案、审阅合并、已发布结构的版本升级和回退。接口、共享属性及可复用的自定义值类型也缺少语义定义入口。[Ontology branching](https://www.palantir.com/docs/foundry/ontologies/branching-ontology/) · [Ontology building](https://www.palantir.com/docs/foundry/ontology/overview/) |
-| 关系与对象集 | 物理表支持外键、声明关系与列映射。已发布目录按用户权限搜索和翻页，选择类型可浏览实例。 | 缺少项目级语义 Link Type、从某个实例沿关系遍历、保存动态对象集及在集合上聚合的发布 API。目录搜索仅针对类型元数据。[Link types](https://www.palantir.com/docs/foundry/object-link-types/link-types-overview/) · [Core concepts](https://www.palantir.com/docs/foundry/ontology/core-concepts/) |
-| 动作与历史 | 无源对象支持有权限的创建、修改、软删除，使用修订控制并发，数据和审计同事务提交。详情的 History 展示动作、修订和时间。持有记录 ID 的授权读者也可通过 API 核对删除事件。 | 现有记录未保存字段前后值。缺少跨对象/关系的事务动作、函数动作、业务副作用和通用撤销。已有数据源绑定只读。[Action types](https://www.palantir.com/docs/foundry/action-types/overview/) · [User edit history](https://www.palantir.com/docs/foundry/object-edits/user-edit-history/) |
-| 数据权限与消费 | 基于有效项目成员、对象读者、字段读者和动作提交者授权。目录和详情均过滤不可见资源。源表绑定还要求平台管理员权限。 | 一个无源类型的记录共享读策略。按记录属性或具体关系授权、通用标记传播和生成类型化 Ontology SDK 仍缺少项目级实现。[Object permissioning](https://www.palantir.com/docs/foundry/object-permissioning/overview/) · [Ontology building](https://www.palantir.com/docs/foundry/ontology/overview/) |
+| 对象模型变更 | 发布时保存初始快照。提案展示差异，另一名有权限的成员批准后才能合并。回退复用同样的评审及数据兼容检查，产生新修订。 | 身份、业务主键与源绑定保持稳定，涉及存量值的破坏性变更会被拒绝。[Foundry 分支与评审](https://www.palantir.com/docs/foundry/ontologies/branching-ontology/) |
+| 关系及对象集 | 发布类型可定义有方向及基数的关系，增删关系实例并沿两个方向浏览。个人动态对象集可保存筛选、执行、分组、计数、求和。 | 管理式对象使用稳定记录 ID。查询和聚合在类型、字段与记录权限过滤后执行。[Foundry 核心概念](https://www.palantir.com/docs/foundry/ontology/core-concepts/) |
+| 跨对象动作 | 一次事务可以创建、修改、删除多个对象以及增删关系。步骤可引用同一事务内新建的对象。请求重放使用原回执。撤销反序执行并复查当前权限、修订及边身份。 | 数据和审计同事务提交。无源对象可写，已有业务表只读。早于字段审计迁移的事件仅保留原有元数据。[Foundry 动作](https://www.palantir.com/docs/foundry/action-types/overview/) |
+| 记录级授权 | 可限定读者的字段值、当前用户身份或已建立的具体语义关系。列表、详情、动作、关系、统计及历史查询使用记录规则，并复查有效成员资格。 | 源表支持标量比较。关系规则适用于有稳定记录 ID 的管理式对象。启用记录策略期间产生的事件仅向历史接口提供元数据。[Foundry 对象权限](https://www.palantir.com/docs/foundry/object-permissioning/overview/) |
 
 语义工作流回归使用已迁移至当前 head 的一次性回环数据库 `ontology_workflow_regression`。设置 `ONTOLOGY_WORKFLOW_TEST_DATABASE_URL` 后运行 `python -m unittest app.web.tests.test_ontology_published_workflow`，会经过实际登录、草稿校验、发布、字段权限、动作冲突、历史和成员撤权。测试写入位于可回滚事务中。
 

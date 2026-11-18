@@ -11,6 +11,7 @@ import {
   type SemanticDefinition, type SemanticProperty, type SemanticAction, type SemanticSource, type Principal, type PublishedOntologyType,
 } from '../../services/ontology';
 import SemanticPropertiesWorkbench from './SemanticPropertiesWorkbench';
+import OntologyRecordPolicyEditor from './OntologyRecordPolicyEditor';
 import './ontology-create.css';
 
 const steps = ['Datasource', 'Metadata', 'Properties', 'Actions', 'Save location', 'Security'] as const;
@@ -372,6 +373,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
             {definition.security.mode === 'explicit' && <label className="flow-create-field"><span>Object readers</span><Select {...selectStyle} aria-label="Object readers" mode="multiple" options={principalOptions} loading={principals.loading} value={definition.security.objectReaders.map(principalKey)} onChange={(keys: string[]) => set({ security: { ...definition.security, objectReaders: principalList(keys) } })} placeholder="Choose who can read objects" /></label>}
           </div>
           {principals.error && <p className="flow-create-error" role="alert">{principals.error}<Button size="small" onClick={retries}>Retry</Button></p>}
+          <OntologyRecordPolicyEditor definition={definition} principals={principals.data || []} onChange={security => set({security})} />
           <div className="flow-semantic-saved">
             <div className="flow-create-property-heading"><strong>Property policies</strong><Select {...selectStyle} aria-label="Add a property policy" value={undefined} placeholder="Add restriction" options={propertyOptions.filter(item => !Object.prototype.hasOwnProperty.call(definition.security.fieldReaders, item.value))} onChange={(id: string) => set({ security: { ...definition.security, fieldReaders: { ...definition.security.fieldReaders, [id]: [] } } })} /></div>
             {Object.entries(definition.security.fieldReaders).map(([id, readers]) => <div key={id} className="flow-semantic-config">
@@ -382,7 +384,10 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
           <div className="flow-semantic-saved">
             <h4>Test access as a project user</h4>
             <div className="flow-create-grid"><Select {...selectStyle} aria-label="Test policy user" showSearch options={userOptions} value={testPrincipal || undefined} onChange={(id: string) => { setTestPrincipal(id); setPolicyResult(undefined); }} placeholder="Select a project user" /><Button loading={busy} disabled={!testPrincipal} onClick={test}>Test policy</Button></div>
-            {policyResult && <p className="flow-create-notice" role="status">{policyResult.visible ? 'Object visible. Visible properties: ' + (policyResult.visibleFields.join(', ') || 'none') + '.' : 'Object hidden for this user.'}</p>}
+            {policyResult && <p className="flow-create-notice" role="status">{policyResult.visible
+              ? 'Object type visible. Eligible properties: ' + (policyResult.visibleFields.join(', ') || 'none') + '.' +
+                (definition.security.recordRules?.length ? ' Each record is checked separately against this user’s identity, its property values and its relationships.' : '')
+              : 'Object type hidden for this user.'}</p>}
           </div>
         </section>}
         {stage === 'review' && <section className="flow-create-section">

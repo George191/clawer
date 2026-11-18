@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    model_validator,
+)
 
 
 class Principal(BaseModel):
@@ -36,6 +45,33 @@ class ActionDefinition(BaseModel):
         return self
 
 
+class RecordRule(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    readers: list[Principal] = Field(max_length=100)
+
+
+class PropertyRecordRule(RecordRule):
+    kind: Literal["property"]
+    field: str = Field(min_length=1, max_length=63)
+    match: Literal["equals", "currentUser"]
+    value: StrictStr | StrictInt | StrictFloat | StrictBool | None = None
+
+    @model_validator(mode="after")
+    def check_operand(self):
+        if (self.match == "equals") != (self.value is not None):
+            raise ValueError(
+                "Literal comparisons require a value; current-user comparisons use the authenticated user"
+            )
+        return self
+
+
+class RelatedRecordRule(RecordRule):
+    kind: Literal["related"]
+    linkType: str = Field(min_length=1, max_length=63)
+    direction: Literal["outgoing", "incoming"]
+    relatedRecordId: UUID
+
+
 class ObjectSecurity(BaseModel):
     """Object readers and optional additional per-field restrictions."""
 
@@ -44,10 +80,17 @@ class ObjectSecurity(BaseModel):
     mode: Literal["inherit", "explicit"]
     objectReaders: list[Principal] = Field(default_factory=list, max_length=100)
     fieldReaders: dict[str, list[Principal]] = Field(default_factory=dict, max_length=200)
+    recordRules: list[
+        Annotated[PropertyRecordRule | RelatedRecordRule, Field(discriminator="kind")]
+    ] = Field(default_factory=list, max_length=32)
 
     @model_validator(mode="after")
     def validate_shape(self) -> ObjectSecurity:
-        lists = [self.objectReaders, *self.fieldReaders.values()]
+        lists = [
+            self.objectReaders,
+            *self.fieldReaders.values(),
+            *(rule.readers for rule in self.recordRules),
+        ]
         if any(len(items) > 100 or len(set(items)) != len(items) for items in lists):
             raise ValueError("Reader lists must contain at most 100 distinct principals")
         return self
@@ -100,6 +143,8 @@ def definition_principals(
     values = set(security.objectReaders)
     for readers in security.fieldReaders.values():
         values.update(readers)
+    for rule in security.recordRules:
+        values.update(rule.readers)
     for action in actions:
         values.update(action.submitters)
     return values

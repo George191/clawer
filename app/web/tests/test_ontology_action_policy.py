@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 
+from app.web.services.ontology_record_policy import record_policy_errors
 from app.web.services.ontology_registry_policy import (
     AccessContext,
     ActionDefinition,
@@ -119,6 +120,50 @@ def sample_definition():
             SimpleNamespace(id="note", type="json", required=False),
         ],
     )
+
+
+def test_record_rules_reject_inexact_literals_unusable_fields_and_source_links():
+    definition = sample_definition()
+    definition.source = SimpleNamespace(mode="existing")
+    comparisons = [
+        ("numeric", "equals", 2**53),
+        ("numeric", "equals", float(2**54)),
+        ("numeric", "equals", True),
+        ("time", "currentUser", None),
+        ("numeric", "currentUser", None),
+    ]
+    definition.security = ObjectSecurity(
+        mode="inherit",
+        recordRules=[
+            *[
+                {
+                    "kind": "property",
+                    "field": field,
+                    "match": match,
+                    "value": value,
+                    "readers": [GROUP],
+                }
+                for field, match, value in comparisons
+            ],
+            {
+                "kind": "related",
+                "linkType": "staff",
+                "direction": "outgoing",
+                "relatedRecordId": MEMBER.id,
+                "readers": [],
+            },
+        ],
+    )
+    errors = record_policy_errors(definition)
+    assert sum("exact browser integer range" in error for error in errors) == 2
+    for description in (
+        "valid number",
+        "declared string",
+        "Current-user",
+        "stable object identifiers",
+        "at least one reader",
+    ):
+        assert any(description in error for error in errors)
 
 
 def test_equivalent_numeric_and_utc_keys_have_identical_digests():

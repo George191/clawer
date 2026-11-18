@@ -2,22 +2,31 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.web.api.models import User
+from app.web.api.models.ontology_graph import OntologyLink
 from app.web.api.models.ontology_registry import Definition
 from app.web.api.models.ontology_runtime import OntologyActionEvent, OntologyRuntimeRecord
 from app.web.services import ontology_registry
+from app.web.services.ontology_record_policy import authorize_record_values, record_read_predicate
 from app.web.services.ontology_registry_identity import project_access_context
-from app.web.services.ontology_registry_policy import AccessContext, action_permission, visibility
+from app.web.services.ontology_registry_policy import (
+    AccessContext,
+    PropertyRecordRule,
+    action_permission,
+    visibility,
+)
 from app.web.services.ontology_runtime_values import check_record_json, normalize_fields, record_key
 
 ActionKind = Literal["create", "modify", "delete"]
@@ -68,6 +77,8 @@ class RecordHistoryEvent(BaseModel):
     kind: ActionKind
     revision: int
     createdAt: datetime
+    changes: dict[str, dict[str, Any]] | None
+    canUndo: bool
 
 
 class RecordHistoryPage(BaseModel):
@@ -100,9 +111,10 @@ async def _definition_access(
     user: User,
     definition_id: UUID,
     *,
-    lock_membership: bool = False,
+    lock_membership: bool = True,
 ) -> tuple[Any, Definition, AccessContext, list[str]]:
-    row = await ontology_registry.get_published(session, user, definition_id)
+    # Hold the policy version and membership stable while later statements fetch record values.
+    row = await ontology_registry.get_published(session, user, definition_id, lock=lock_membership)
     definition = Definition.model_validate(row.published_definition)
     context = await project_access_context(
         session,
@@ -128,10 +140,19 @@ def _available_actions(
         return []
     visible = set(fields)
     all_fields = {prop.id for prop in definition.properties}
+    rules = definition.security.recordRules
+    eligible_rules = [rule for rule in rules if context.principals.intersection(rule.readers)]
     return [
         RuntimeAction(kind=action.kind, fields=action.fields)
         for action in definition.actions
         if action_permission(action, context, visible)
+        and (
+            not rules
+            or any(
+                action.kind != "create" or isinstance(rule, PropertyRecordRule)
+                for rule in eligible_rules
+            )
+        )
         and (action.kind != "delete" or all_fields.issubset(visible))
     ]
 
@@ -143,13 +164,18 @@ async def list_records(
     *,
     limit: int,
     offset: int,
+    deleted: bool = False,
 ) -> RuntimePage:
     """Check access first, then read only a bounded page and mask all projections."""
     row, definition, context, fields = await _definition_access(session, user, definition_id)
     if not fields:
         return RuntimePage(items=[], actions=[], hasMore=False)
     if definition.source.mode == "existing":
-        source = await ontology_registry.read_bound_records(row, fields, limit, offset)
+        if deleted:
+            raise HTTPException(422, "Deleted records are available only for editable object types")
+        source = await ontology_registry.read_bound_records(
+            row, fields, limit, offset, context=context
+        )
         return RuntimePage(
             items=[_project_record(definition, fields, item) for item in source["items"]],
             actions=[],
@@ -160,7 +186,8 @@ async def list_records(
             select(OntologyRuntimeRecord)
             .where(
                 OntologyRuntimeRecord.definition_id == definition_id,
-                OntologyRuntimeRecord.deleted.is_(False),
+                OntologyRuntimeRecord.deleted.is_(deleted),
+                record_read_predicate(definition, context),
             )
             .order_by(OntologyRuntimeRecord.id)
             .offset(offset)
@@ -172,36 +199,84 @@ async def list_records(
             _project_record(definition, fields, record.values, record.id, record.revision)
             for record in records[:limit]
         ],
-        actions=_available_actions(definition, context, fields),
+        actions=[] if deleted else _available_actions(definition, context, fields),
         hasMore=len(records) > limit,
     )
 
 
+async def get_record(session, user, definition_id: UUID, record_id: UUID) -> RuntimeRecord:
+    _, definition, context, fields = await _definition_access(session, user, definition_id)
+    record = await session.scalar(
+        select(OntologyRuntimeRecord).where(
+            OntologyRuntimeRecord.definition_id == definition_id,
+            OntologyRuntimeRecord.id == record_id,
+            OntologyRuntimeRecord.deleted.is_(False),
+            record_read_predicate(definition, context),
+        )
+    )
+    if record is None or definition.source.mode != "none":
+        raise HTTPException(404, "Record not found")
+    return _project_record(definition, fields, record.values, record.id, record.revision)
+
+
 async def record_history(
-    session: AsyncSession, user: User, definition_id: UUID, record_id: UUID, *, limit: int, offset: int
+    session: AsyncSession,
+    user: User,
+    definition_id: UUID,
+    record_id: UUID,
+    *,
+    limit: int,
+    offset: int,
 ) -> RecordHistoryPage:
     """Read committed event metadata under the current object's access policy."""
-    _, definition, _, _ = await _definition_access(session, user, definition_id)
-    if definition.source.mode != "none" or await session.scalar(
-        select(OntologyRuntimeRecord.id).where(
-            OntologyRuntimeRecord.definition_id == definition_id, OntologyRuntimeRecord.id == record_id
+    _, definition, context, fields = await _definition_access(session, user, definition_id)
+    revision = await session.scalar(
+        select(OntologyRuntimeRecord.revision).where(
+            OntologyRuntimeRecord.definition_id == definition_id,
+            OntologyRuntimeRecord.id == record_id,
+            record_read_predicate(definition, context),
         )
-    ) is None:
+    )
+    if definition.source.mode != "none" or revision is None:
         raise HTTPException(404, "Record not found")
-    events = (await session.execute(
-        select(OntologyActionEvent.kind, OntologyActionEvent.revision, OntologyActionEvent.occurred_at)
-        .where(OntologyActionEvent.record_id == record_id)
-        .order_by(OntologyActionEvent.revision.desc())
-        .offset(offset).limit(limit + 1)
-    )).all()
+    events = (
+        await session.scalars(
+            select(OntologyActionEvent)
+            .where(
+                OntologyActionEvent.record_id == record_id, OntologyActionEvent.revision <= revision
+            )
+            .order_by(OntologyActionEvent.revision.desc())
+            .offset(offset)
+            .limit(limit + 1)
+        )
+    ).all()
     return RecordHistoryPage(
-        items=[RecordHistoryEvent(kind=kind, revision=revision, createdAt=when)
-               for kind, revision, when in events[:limit]],
+        items=[
+            RecordHistoryEvent(
+                kind=event.kind,
+                revision=event.revision,
+                createdAt=event.occurred_at,
+                changes=(
+                    {key: value for key, value in event.changes.items() if key in fields}
+                    if event.changes is not None
+                    and not event.restricted_history
+                    and not definition.security.recordRules
+                    else None
+                ),
+                canUndo=(
+                    event.actor_id == user.id
+                    and revision == event.revision
+                    and event.changes is not None
+                    and event.transaction_id is None
+                ),
+            )
+            for event in events[:limit]
+        ],
         hasMore=len(events) > limit,
     )
 
 
-async def submit_action(
+async def apply_action_step(
     session: AsyncSession,
     user: User,
     definition_id: UUID,
@@ -221,61 +296,115 @@ async def submit_action(
     if payload.values.keys() - set(action.fields):
         _bad("Action contains fields it is not allowed to write")
     values = normalize_fields(definition, payload.values)
-    try:
-        if kind == "create":
-            if payload.recordId is not None or payload.expectedRevision is not None:
-                _bad("Create does not accept an existing record or revision")
-            if any(values.get(prop.id) is None for prop in definition.properties if prop.required):
-                _bad("Supply all required properties")
-            record = OntologyRuntimeRecord(
-                definition_id=definition_id,
-                values=values,
-                key_digest=record_key(definition, values),
-            )
-        else:
-            if payload.recordId is None or payload.expectedRevision is None:
-                _bad("Record and expected revision are required")
-            if kind == "modify" and not values:
-                _bad("Supply at least one value to modify")
-            record = await session.scalar(
-                select(OntologyRuntimeRecord)
-                .where(
-                    OntologyRuntimeRecord.definition_id == definition_id,
-                    OntologyRuntimeRecord.id == payload.recordId,
-                    OntologyRuntimeRecord.deleted.is_(False),
-                )
-                .with_for_update()
-            )
-            if record is None:
-                raise HTTPException(404, "Record not found")
-            if record.revision != payload.expectedRevision:
-                raise HTTPException(409, "Record changed. Refresh, review and try again.")
-            if kind == "modify":
-                merged = {**record.values, **values}
-                check_record_json(merged)
-                record.values = merged
-            else:
-                record.deleted = True
-            record.revision += 1
-        session.add(record)
-        await session.flush()
-        session.add(
-            OntologyActionEvent(
-                record_id=record.id,
-                actor_id=user.id,
-                kind=kind,
-                revision=record.revision,
-            )
+    before = {}
+    if kind == "create":
+        if payload.recordId is not None or payload.expectedRevision is not None:
+            _bad("Create does not accept an existing record or revision")
+        if any(values.get(prop.id) is None for prop in definition.properties if prop.required):
+            _bad("Supply all required properties")
+        record = OntologyRuntimeRecord(
+            definition_id=definition_id,
+            values=values,
+            key_digest=record_key(definition, values),
         )
-        result = ActionReceipt(id=record.id, revision=record.revision, deleted=record.deleted)
+        if not await authorize_record_values(
+            session, definition_id, definition, context, record.id, values
+        ):
+            raise HTTPException(403, "Record policy does not permit these values")
+    else:
+        if payload.recordId is None or payload.expectedRevision is None:
+            _bad("Record and expected revision are required")
+        if kind == "modify" and not values:
+            _bad("Supply at least one value to modify")
+        record = await session.scalar(
+            select(OntologyRuntimeRecord)
+            .where(
+                OntologyRuntimeRecord.definition_id == definition_id,
+                OntologyRuntimeRecord.id == payload.recordId,
+                OntologyRuntimeRecord.deleted.is_(False),
+                record_read_predicate(definition, context),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        # A relationship may have been revoked while this statement waited for its endpoint lock.
+        if record is None or not await authorize_record_values(
+            session, definition_id, definition, context, record.id, record.values
+        ):
+            raise HTTPException(404, "Record not found")
+        if record.revision != payload.expectedRevision:
+            raise HTTPException(409, "Record changed. Refresh, review and try again.")
+        before = record.values
+        if kind == "modify":
+            merged = {**record.values, **values}
+            check_record_json(merged)
+            if not await authorize_record_values(
+                session, definition_id, definition, context, record.id, merged
+            ):
+                raise HTTPException(403, "Record policy does not permit these values")
+            record.values = merged
+        else:
+            if await session.scalar(
+                select(OntologyLink.id)
+                .where(
+                    or_(
+                        OntologyLink.source_record_id == record.id,
+                        OntologyLink.target_record_id == record.id,
+                    )
+                )
+                .limit(1)
+            ):
+                raise HTTPException(409, "Remove relationships before deleting this record")
+            record.deleted = True
+        record.revision += 1
+    session.add(record)
+    await session.flush()
+    session.add(
+        OntologyActionEvent(
+            record_id=record.id,
+            actor_id=user.id,
+            kind=kind,
+            revision=record.revision,
+            changes=record_changes(before, {} if record.deleted else record.values),
+            restricted_history=bool(definition.security.recordRules),
+        )
+    )
+    await session.flush()
+    return ActionReceipt(id=record.id, revision=record.revision, deleted=record.deleted)
+
+
+def record_changes(before, after):
+    changes = {}
+    for key in before.keys() | after.keys():
+        if key not in after:
+            changes[key] = {"before": before[key]}
+        elif key not in before:
+            changes[key] = {"after": after[key]}
+        elif json.dumps(before[key], sort_keys=True) != json.dumps(after[key], sort_keys=True):
+            changes[key] = {"before": before[key], "after": after[key]}
+    return changes
+
+
+def raise_action_integrity_error(exc: IntegrityError) -> None:
+    original = exc.orig
+    if getattr(original, "sqlstate", None) == "23505" and (
+        getattr(original.__cause__, "constraint_name", None) == "uq_ontology_runtime_record_key"
+    ):
+        raise HTTPException(409, "Record identity already exists") from exc
+    raise exc
+
+
+async def submit_action(
+    session: AsyncSession,
+    user: User,
+    definition_id: UUID,
+    kind: ActionKind,
+    payload: ActionPayload,
+) -> ActionReceipt:
+    try:
+        result = await apply_action_step(session, user, definition_id, kind, payload)
         await session.commit()
         return result
     except IntegrityError as exc:
         await session.rollback()
-        original = exc.orig
-        sqlstate = getattr(original, "sqlstate", None)
-        if kind == "create" and sqlstate == "23505" and (
-            getattr(original.__cause__, "constraint_name", None) == "uq_ontology_runtime_record_key"
-        ):
-            raise HTTPException(409, "Record identity already exists") from exc
-        raise
+        raise_action_integrity_error(exc)

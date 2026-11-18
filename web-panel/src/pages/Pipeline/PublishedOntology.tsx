@@ -4,9 +4,13 @@ import { Button, Checkbox, Input, Modal, Table } from '@/components/ui';
 import { ArrowLeftOutlined, BarsOutlined, CloseOutlined, DatabaseOutlined, ReloadOutlined, SearchOutlined } from '@/components/ui/icons';
 import { getSessionState } from '../../services/session';
 import {
-  fetchPublishedOntologyType, listPublishedOntologyTypes, listOntologyRecords, listOntologyRecordHistory, submitOntologyAction,
+  fetchPublishedOntologyType, listPublishedOntologyTypes, listOntologyRecords, listOntologyRecordHistory, ontologyError as describe, submitOntologyAction, undoOntologyEdit,
   type PublishedOntologyType, type PublishedOntologyPage, type SemanticAction, type OntologyRecord, type OntologyRecordPage, type OntologyRecordHistoryPage,
 } from '../../services/ontology';
+import OntologyGraph from './OntologyGraph';
+import OntologyRevisions from './OntologyRevisions';
+import OntologyTransactions from './OntologyTransactions';
+import { parsePropertyValue } from './ontologyPropertyValue';
 import SemanticTypeGlyph from './SemanticTypeGlyph';
 import './ontology-create.css';
 import './published-results.css';
@@ -20,32 +24,12 @@ function show(value: unknown): string {
   if (value == null) return '—';
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
-function describe(error: unknown, fallback: string) {
-  const detail = (error as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
-  return typeof detail === 'string' ? detail : fallback;
-}
-function parse(value: string, type: string) {
-  if (type === 'integer') {
-    if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error('Enter a whole number within the safe integer range.');
-    return Number(value);
-  }
-  if (type === 'number') {
-    if (!value.trim() || !Number.isFinite(Number(value))) throw new Error('Enter a finite number.');
-    return Number(value);
-  }
-  if (type === 'boolean') {
-    if (value !== 'true' && value !== 'false') throw new Error('Enter true or false.');
-    return value === 'true';
-  }
-  if (type === 'json') { try { return JSON.parse(value); } catch { throw new Error('Enter valid JSON.'); } }
-  return value;
-}
-
-function RecordHistory({ objectType, recordId }: { objectType: string; recordId: string }) {
+function RecordHistory({ objectType, recordId, onChanged }: { objectType: string; recordId: string; onChanged: () => void }) {
   const [offset, setOffset] = useState(0);
   const [page, setPage] = useState<OntologyRecordHistoryPage>();
   const [error, setError] = useState('');
   const [version, setVersion] = useState(0);
+  const [undoing, setUndoing] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     const identity = getSessionState().identity;
@@ -63,7 +47,16 @@ function RecordHistory({ objectType, recordId }: { objectType: string; recordId:
         : <>
           {page.items.length ? <dl>{page.items.map(event => <div key={event.revision}>
             <dt>{{ create: 'Created', modify: 'Modified', delete: 'Deleted' }[event.kind]} · Revision {event.revision}</dt>
-            <dd><time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time></dd>
+            <dd><time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
+              {event.changes && <ul>{Object.entries(event.changes).map(([field,delta]) => <li key={field}>
+                {field}: {Object.prototype.hasOwnProperty.call(delta,'before') ? JSON.stringify(delta.before) : 'Absent'} → {Object.prototype.hasOwnProperty.call(delta,'after') ? JSON.stringify(delta.after) : 'Absent'}
+              </li>)}</ul>}
+              {event.canUndo && <Button disabled={undoing} size="small" onClick={async () => {
+                setUndoing(true);
+                try {await undoOntologyEdit(objectType,recordId,event.revision);onChanged();}
+                catch (e) {setError(describe(e,'Unable to undo this edit.'));}
+                finally {setUndoing(false);}
+              }}>Undo edit</Button>}</dd>
           </div>)}</dl> : <p>No action history on this page.</p>}
           {(offset > 0 || page.hasMore) && <footer className="flow-published-results-pagination" aria-label="Action history pagination"><div>
             <Button size="small" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - pageSize))}>Previous page</Button>
@@ -81,6 +74,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   const catalogOffset = Number.isInteger(requestedOffset) && requestedOffset >= 0 && requestedOffset <= maxOffset ? requestedOffset : 0;
   const [catalogPage, setCatalogPage] = useState<PublishedOntologyPage>();
   const [object, setObject] = useState<PublishedOntologyType>();
+  const [deleted, setDeleted] = useState(false);
   const [records, setRecords] = useState<OntologyRecordPage>();
   const [selectedRow, setSelectedRow] = useState<number>();
   const recordTitles = useRef<Record<number, HTMLButtonElement | null>>({});
@@ -89,6 +83,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
+  const [tool, setTool] = useState('');
   const [operation, setOperation] = useState<Operation>();
   const [inputs, setInputs] = useState<ActionInputs>({});
   const [actionPending, setActionPending] = useState(false);
@@ -125,13 +120,13 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
       fetchPublishedOntologyType(selection).then(async data => {
         if (!alive || !current()) return;
         setObject(data);
-        const page = await listOntologyRecords(selection, pageSize, offset);
+        const page = await listOntologyRecords(selection, pageSize, offset, deleted && data.definition.source.mode === 'none');
         if (alive && current()) setRecords(page);
       }).catch(failure => { if (alive && current()) setError(describe(failure, 'Unable to load this published object type or its permitted records.')); })
         .finally(() => { if (alive && current()) setLoading(false); });
     }
     return () => { alive = false; };
-  }, [selection, offset, catalogOffset, keyword, version, identity]);
+  }, [selection, offset, catalogOffset, keyword, version, identity, deleted]);
 
   const startAction = (kind: SemanticAction['kind'], fields: string[], record?: OntologyRecord) => {
     setActionError('');
@@ -156,7 +151,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
         if (!input) { if (operation.kind === 'create' && item.required) throw new Error(item.name + ' is required.'); continue; }
         const initial = operation.initialInputs[id];
         if (initial && input.text === initial.text && input.isNull === initial.isNull) continue;
-        try { values[id] = input.isNull ? null : parse(input.text, item.type); }
+        try { values[id] = input.isNull ? null : parsePropertyValue(input.text, item.type); }
         catch (failure) { throw new Error(item.name + ': ' + (failure instanceof Error ? failure.message : 'invalid value')); }
       }
       const record = operation.record;
@@ -189,6 +184,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
     setSelectedRow(undefined);
   };
   const recordActions = selectedRecord?.id ? available.filter(action => action.kind !== 'create') : [];
+  useEffect(() => {setTool('');setDeleted(false);}, [selection]);
   const returnToTypes = () => { if (!actionLocked.current) { setOffset(0); setSelectedRow(undefined); onSelect(''); } };
   return <>
     <main className={`flow-ontology__published flow-foundry-workbench${selection ? ' flow-ontology__published--results' : ''}`} data-testid="published-ontology" aria-label={selection ? 'Published object results' : 'Published object types'} aria-busy={loading}>
@@ -216,13 +212,23 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
           </>}
           {object && records && <div className="flow-published-results">
             <div className="flow-published-results-toolbar">
-              <h3><BarsOutlined /> Results</h3>
+              <h3><BarsOutlined /> {deleted ? 'Deleted objects' : 'Results'}</h3>
+              {object.definition.source.mode === 'none' && <Button size="small" onClick={() => {setOffset(0);setDeleted(!deleted);}}>{deleted ? 'Show active objects' : 'Show deleted objects'}</Button>}
               {selectedRecord && <Button size="small" icon={<CloseOutlined />} onClick={closePreview}>1 selected</Button>}
               <div className="flow-published-results-toolbar-end">
                 <span title={object.definition.description || undefined}>{object.definition.source.mode === 'existing' ? `${object.definition.source.schema}.${object.definition.source.table} · Read only` : 'Object-managed records'} · Revision {object.revision}</span>
                 {createAction && <Button size="small" type="primary" onClick={() => startAction('create', createAction.fields)}>Create object</Button>}
               </div>
             </div>
+            <nav className="flow-ontology-tools" aria-label="Object type tools">
+              {(object.definition.source.mode === 'none' ? ['Relationships and sets','Transactions','Model revisions'] : ['Model revisions']).map(label =>
+                <Button key={label} size="small" aria-pressed={tool === label} onClick={() => {if(tool === label){setTool('');reload();}else setTool(label);}}>{label}</Button>)}
+            </nav>
+            {tool && <div className="flow-ontology-tool-content">
+              {tool === 'Relationships and sets' && <OntologyGraph key={object.id} objectType={object} recordId={selectedRecord?.id || undefined} />}
+              {tool === 'Transactions' && <OntologyTransactions key={object.id} objectType={object} />}
+              {tool === 'Model revisions' && <OntologyRevisions key={object.id} definitionId={object.id} onMerged={reload} />}
+            </div>}
             <div className={`flow-published-results-body${selectedRecord ? ' has-selection' : ''}`}>
               <div className="flow-published-record-pane">
                 <div className="flow-published-record-scroll" tabIndex={0} role="region" aria-label="Object results table">
@@ -258,7 +264,7 @@ export default function PublishedOntology({ selection, onSelect }: Props) {
                     {selectedRecord.id && object.definition.source.mode === 'none' && <button type="button" aria-pressed={previewTab === 'history'} onClick={() => setPreviewTab('history')}>History</button>}
                   </nav>
                   {previewTab === 'overview' && !!summaryProperties.length && <dl className="flow-published-selection-summary">{summaryProperties.map(prop => <div key={prop.id}><dt>{prop.name}</dt><dd>{show(selectedRecord.properties[prop.id])}</dd></div>)}</dl>}
-                  {previewTab === 'history' && selectedRecord.id ? <RecordHistory key={selectedRecord.id} objectType={selection} recordId={selectedRecord.id} /> : <section className="flow-published-selection-properties">
+                  {previewTab === 'history' && selectedRecord.id ? <RecordHistory key={selectedRecord.id} objectType={selection} recordId={selectedRecord.id} onChanged={reload} /> : <section className="flow-published-selection-properties">
                     <h4><DatabaseOutlined />{previewTab === 'overview' ? 'Key properties' : 'Properties'}</h4>
                     <dl>{(previewTab === 'overview' ? visibleSelectedProperties.slice(0, 8) : visibleSelectedProperties).map(prop => <div key={prop.id}><dt>{prop.name}</dt><dd>{selectedRecord.properties[prop.id] == null ? <i>No value</i> : show(selectedRecord.properties[prop.id])}</dd></div>)}</dl>
                     {!visibleSelectedProperties.length && <p>No properties are available for this record.</p>}

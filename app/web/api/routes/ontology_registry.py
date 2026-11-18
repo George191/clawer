@@ -179,6 +179,10 @@ async def evaluate(session, user, row):
         session, row.project_id, definition_principals(definition.actions, definition.security),
     )
     result = assess_definition(definition, source, eligible=eligible)
+    from app.web.services.ontology_record_policy import validate_record_policy_refs
+
+    for message in await validate_record_policy_refs(session, row.id, definition):
+        result.errors.append(DefinitionIssue(path="security.recordRules", message=message))
     conflicting = await session.scalar(select(OntologyDefinitionRow.id).where(
         OntologyDefinitionRow.project_id == row.project_id,
         OntologyDefinitionRow.semantic_id == definition.id,
@@ -227,8 +231,12 @@ async def published_types(
     session: SessionDep, user: CurrentUser,
     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0, le=100_000),
     q: str = Query("", max_length=200),
+    projectId: UUID | None = None,
 ):
-    result = await session.execute(published_catalog_statement(user, q.strip()).limit(limit + 1).offset(offset))
+    statement = published_catalog_statement(user, q.strip())
+    if projectId is not None:
+        statement = statement.where(OntologyDefinitionRow.project_id == projectId)
+    result = await session.execute(statement.limit(limit + 1).offset(offset))
     rows = result.all()
     items = [{"id": row.id, "revision": row.revision, "definition": catalog_definition(user, row, tenant_id)}
              for row, tenant_id in rows[:limit]]

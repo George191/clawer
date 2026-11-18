@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from app.web.api.routes.ontology_registry import published_type, published_types
 from app.web.api.models.ontology_registry import Definition, OntologyDefinitionRow
 from app.web.services import ontology_registry as registry
+from app.web.services.ontology_registry_policy import AccessContext, Principal
 
 
 @pytest.fixture
@@ -58,6 +59,16 @@ async def test_bound_record_page_orders_by_the_physical_key_when_an_alias_matche
         assert await registry.read_bound_records(row, ["id", "key"], 1, 0) == {
             "items": [{"key": 1, "id": "Zulu"}], "hasMore": True,
         }
+        reader = Principal(kind="user", id=uuid4())
+        row.published_definition["security"]["recordRules"] = [{
+            "kind":"property", "field":"id", "match":"equals", "value":"Alpha",
+            "readers":[reader.model_dump(mode="json")],
+        }]
+        allowed = AccessContext(frozenset({reader}), True, True)
+        assert await registry.read_bound_records(row, ["key"], 1, 0, context=allowed) == {
+            "items": [{"key": 2}], "hasMore": False,
+        }
+        assert await registry.read_bound_records(row, ["key"], 1, 0) == {"items": [], "hasMore": False}
 
 
 @pytest.mark.asyncio
@@ -95,7 +106,9 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
                 "properties": [{"id": name, "name": name, "type": "string"} for name in ("key", "secret")],
                 "primaryKey": ["key"], "titleKey": "secret",
                 "security": {"mode": "explicit", "objectReaders": [{"kind": kind, "id": str(reader)}],
-                             "fieldReaders": {"secret": [{"kind": "user", "id": str(outsider)}]}},
+                             "fieldReaders": {"secret": [{"kind": "user", "id": str(outsider)}]},
+                             "recordRules": [{"kind": "property", "field": "secret", "match": "equals",
+                                              "value": "private filter", "readers": [{"kind": kind, "id": str(reader)}]}]},
             }
             await session.execute(text("INSERT INTO ontology_registry_definitions VALUES "
                 "(:id,:p,1,now() - CAST(:position AS int) * interval '1 minute',CAST(:data AS jsonb))"),
@@ -110,6 +123,7 @@ async def test_published_catalog_pages_visible_matches_and_projects_fields(db):
         assert item == page["items"][0]
         assert [prop["id"] for prop in item["definition"]["properties"]] == ["key"]
         assert item["definition"]["titleKey"] == ""
+        assert item["definition"]["security"] == {"mode": "explicit", "objectReaders": [], "fieldReaders": {}}
         with pytest.raises(HTTPException) as hidden:
             await published_type(row_ids["hidden"], session, actor)
         assert hidden.value.status_code == 404

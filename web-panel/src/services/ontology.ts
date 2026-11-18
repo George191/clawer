@@ -4,7 +4,10 @@ export type SemanticSource = { mode: 'existing' | 'none'; schema?: string; table
 export type SemanticProperty = { id: string; name: string; type: string; sourceColumn?: string; required: boolean };
 export type Principal = { kind: 'user' | 'group' | 'organization'; id: string };
 export type SemanticAction = { kind: 'create' | 'modify' | 'delete'; submitters: Principal[]; fields: string[] };
-export type SemanticSecurity = { mode: 'inherit' | 'explicit'; objectReaders: Principal[]; fieldReaders: Record<string, Principal[]> };
+export type RecordRule =
+  | { kind: 'property'; readers: Principal[]; field: string; match: 'equals' | 'currentUser'; value?: string | boolean | number | null }
+  | { kind: 'related'; readers: Principal[]; linkType: string; direction: 'incoming' | 'outgoing'; relatedRecordId: string };
+export type SemanticSecurity = { mode: 'inherit' | 'explicit'; objectReaders: Principal[]; fieldReaders: Record<string, Principal[]>; recordRules?: RecordRule[] };
 export type SemanticDefinition = {
   id: string; name: string; pluralName: string; description: string; icon: string; color: string; groups: string[];
   projectId: string; source: SemanticSource; properties: SemanticProperty[]; primaryKey: string[]; titleKey: string;
@@ -20,6 +23,24 @@ const config = { baseURL: '/api/ontology/v1' };
 const data = <T,>(body: T | { code: number; data: T }): T => body && typeof body === 'object' && 'code' in body && 'data' in body ? body.data : body as T;
 const draftPath = (id: string) => '/drafts/' + encodeURIComponent(id);
 
+export function ontologyError(error: unknown, fallback: string): string {
+  const body = (error as { response?: { data?: { errors?: unknown; detail?: unknown } } })?.response?.data;
+  const detail = body?.errors ?? body?.detail;
+  if (typeof detail === 'string' && detail) return detail;
+  const issues = detail && typeof detail === 'object' && 'errors' in detail ? detail.errors : detail;
+  if (Array.isArray(issues)) {
+    const messages = issues.flatMap(item => {
+      if (typeof item === 'string') return [item];
+      if (!item || typeof item !== 'object') return [];
+      if (typeof item.message === 'string') return [typeof item.path === 'string' && item.path ? `${item.path} · ${item.message}` : item.message];
+      if (typeof item.msg === 'string') return [item.msg];
+      return Object.entries(item).flatMap(([field, message]) => typeof message === 'string' ? [`${field} · ${message}`] : []);
+    }).filter(Boolean);
+    if (messages.length) return messages.join('\n');
+  }
+  return !body && error instanceof Error && error.message ? error.message : fallback;
+}
+
 export const listOntologyProjects = () => client.get<{items: OntologyProject[]}>('/projects', config).then(r => data(r.data).items);
 export const createOntologyProject = (teamId: string, name: string) =>
   client.post<OntologyProject>('/projects', { teamId, name }, config).then(r => data(r.data));
@@ -32,18 +53,34 @@ export const validateOntologyDraft = (id: string, revision: number) => client.po
 export const publishOntologyDraft = (id: string, revision: number) => client.post<{ id: string; revision: number; objectType: SemanticDefinition }>(draftPath(id) + '/publish', { revision }, config).then(r => data(r.data));
 export const testOntologyPolicy = (definition: SemanticDefinition, userId: string) => client.post<{ visible: boolean; visibleFields: string[] }>('/security/preview', { projectId: definition.projectId, userId, sourceMode: definition.source.mode, properties: definition.properties.map(item => item.id), security: definition.security }, config).then(r => data(r.data));
 export type PublishedOntologyPage = { items: PublishedOntologyType[]; hasMore: boolean };
-export const listPublishedOntologyTypes = (limit: number, offset: number, q: string) =>
-  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q } }).then(r => data(r.data));
+export const listPublishedOntologyTypes = (limit: number, offset: number, q: string, projectId?: string) =>
+  client.get<PublishedOntologyPage>('/object-types', { ...config, params: { limit, offset, q, projectId } }).then(r => data(r.data));
 export const fetchPublishedOntologyType = (id: string) => client.get<PublishedOntologyType>('/object-types/' + encodeURIComponent(id), config).then(r => data(r.data));
 
 
 export type OntologyRecord = { id: string | null; revision: number | null; properties: Record<string, unknown>; title: unknown };
 export type OntologyRecordPage = { items: OntologyRecord[]; hasMore: boolean; actions?: Array<{ kind: SemanticAction['kind']; fields: string[] }> };
 type ActionInput = { values: Record<string, unknown> } | { recordId: string; expectedRevision: number; values?: Record<string, unknown> };
-export const listOntologyRecords = (id: string, limit: number, offset: number) =>
-  client.get<OntologyRecordPage>('/object-types/' + encodeURIComponent(id) + '/records', { ...config, params: { limit, offset } }).then(r => data(r.data));
-export type OntologyRecordHistoryPage = { items: Array<{ kind: SemanticAction['kind']; revision: number; createdAt: string }>; hasMore: boolean };
+export const listOntologyRecords = (id: string, limit: number, offset: number, deleted = false) =>
+  client.get<OntologyRecordPage>('/object-types/' + encodeURIComponent(id) + '/records', { ...config, params: { limit, offset, deleted } }).then(r => data(r.data));
+export type OntologyRecordHistoryPage = { items: Array<{ kind: SemanticAction['kind']; revision: number; createdAt: string;
+  changes?: Record<string, { before?: unknown; after?: unknown }> | null; canUndo: boolean }>; hasMore: boolean };
 export const listOntologyRecordHistory = (id: string, recordId: string, limit: number, offset: number, signal: AbortSignal) =>
   client.get<OntologyRecordHistoryPage>('/object-types/' + encodeURIComponent(id) + '/records/' + encodeURIComponent(recordId) + '/history', { ...config, params: { limit, offset }, signal }).then(r => data(r.data));
 export const submitOntologyAction = (id: string, kind: SemanticAction['kind'], body: ActionInput) =>
   client.post<{ id: string; revision: number; deleted: boolean }>('/object-types/' + encodeURIComponent(id) + '/actions/' + kind, body, config).then(r => data(r.data));
+
+export type TransactionStep =
+  | { kind: 'create'; definitionId: string; values: Record<string, unknown>; alias: string }
+  | { kind: 'modify' | 'delete'; definitionId: string; recordId: string; expectedRevision: number; values: Record<string, unknown> }
+  | { kind: 'link' | 'unlink'; linkTypeId: string; source: string; target: string };
+export type TransactionReceipt = {id: string; name: string; stepCount: number; createdAt: string; undoneAt: string | null};
+const txPath = (project: string) => '/projects/' + encodeURIComponent(project) + '/transactions';
+export const listTransactions = (project: string, offset: number) =>
+  client.get<{items: TransactionReceipt[]; hasMore: boolean}>(txPath(project), {...config, params: {offset}}).then(r => data(r.data));
+export const applyTransaction = (project: string, name: string, requestId: string, steps: TransactionStep[]) =>
+  client.post<TransactionReceipt>(txPath(project), {name, requestId, steps}, config).then(r => data(r.data));
+export const undoTransaction = (project: string, id: string) =>
+  client.post<TransactionReceipt>(txPath(project) + '/' + encodeURIComponent(id) + '/undo', {}, config).then(r => data(r.data));
+export const undoOntologyEdit = (type: string, record: string, revision: number) =>
+  client.post('/object-types/' + encodeURIComponent(type) + '/records/' + encodeURIComponent(record) + '/history/' + revision + '/undo', {}, config);
