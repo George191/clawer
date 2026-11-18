@@ -114,7 +114,6 @@ class TransferPlanTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get("/etl/ts_transfer_sandbox/from_rows/transfer-runs")).status_code, 403)
 
 
-@unittest.skipUnless(TRANSFERS_URL, "Requires an isolated ontology_transfers_regression PostgreSQL database")
 def test_schema_drift_order_only_and_non_inferred_renames():
     from app.web.api.models.asset_freshness import AssetSchemaColumn, AssetSchemaPreview
     from app.web.services.asset_quality import _diff_schema
@@ -132,6 +131,7 @@ def test_schema_drift_order_only_and_non_inferred_renames():
     assert [(entry.kind, entry.column) for entry in renamed.changes] == [("removed", "a"), ("added", "r")]
 
 
+@unittest.skipUnless(TRANSFERS_URL, "Requires an isolated ontology_transfers_regression PostgreSQL database")
 class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         fixture = make_url(TRANSFERS_URL)
