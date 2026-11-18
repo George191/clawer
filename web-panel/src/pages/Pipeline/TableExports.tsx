@@ -15,6 +15,7 @@ import { useSandboxIdentity } from './SandboxMarkings';
 import { exportMode, exportModeDescription, exportModeLabel } from './tableExportWriteModes';
 
 import TableExportSnapshotComparison from './TableExportSnapshotComparison';
+import TableExportSnapshotDelivery from './TableExportSnapshotDelivery';
 
 type RunRequest = { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number; writeMode?: TableExportWriteMode };
 type DraftReview = { name: string; expectedUpdatedAt: string | null; writeMode: TableExportWriteMode };
@@ -72,6 +73,7 @@ export default function TableExports({ openFromLink, onLinkClose }: { openFromLi
     {open && identity && <>
       <ReceiverSelection key={identity} working={working} onWorkingChange={setWorking} />
       <TableExportSnapshotComparison key={`snapshot:${identity}`} identity={identity} />
+      <TableExportSnapshotDelivery key={`delivery:${identity}`} identity={identity} />
     </>}
   </section>;
 }

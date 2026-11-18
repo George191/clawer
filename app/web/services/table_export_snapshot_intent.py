@@ -56,7 +56,9 @@ async def _lock_scope(session: AsyncSession, schema: str, names: tuple[str, ...]
     await session.execute(text(f"LOCK TABLE {qualifier} IN {mode} MODE NOWAIT"))
 
 
-async def _prove_locked_scope(session: AsyncSession, schema: str, names: tuple[str, ...]) -> str:
+async def _prove_locked_scope(
+    session: AsyncSession, schema: str, names: tuple[str, ...], *, read_only: bool = False,
+) -> str:
     rows = (await session.execute(text("""
         SELECT n.oid::bigint, c.relname::text, c.oid::bigint, pg_catalog.pg_relation_filenode(c.oid)::bigint,
                COALESCE((SELECT jsonb_agg(jsonb_build_array(
@@ -101,7 +103,7 @@ async def _prove_locked_scope(session: AsyncSession, schema: str, names: tuple[s
                        AND l.mode=:mode)
         ORDER BY c.relname COLLATE "C"
     """), {"schema": schema, "names": list(names), "private": _PRIVATE, "intents": f"{_PRIVATE}.intents",
-            "mode": "ShareRowExclusiveLock" if schema == _PRIVATE else "ShareUpdateExclusiveLock"})).all()
+            "mode": "AccessShareLock" if read_only else "ShareRowExclusiveLock" if schema == _PRIVATE else "ShareUpdateExclusiveLock"})).all()
     if tuple(row[1] for row in rows) != names or any(row[3] is None for row in rows):
         raise _unavailable()
     canonical = json.dumps((schema, [tuple(row) for row in rows]), separators=(",", ":"), ensure_ascii=False)

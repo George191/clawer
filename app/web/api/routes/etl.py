@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from anyio import fail_after
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import AwareDatetime
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +55,9 @@ from app.web.api.models.pipeline_sandbox_outputs import (
     PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputCompareRequest, PipelineSandboxOutputComparison,
     PipelineSandboxOutputDetail, PipelineSandboxOutputsPage,
     PipelineSandboxRecordHistory, PipelineSandboxRecordHistoryRequest,
+)
+from app.web.api.models.snapshot_delivery_evidence import (
+    SnapshotDeliveryEvidence, SnapshotDeliveryEvidenceCapability, SnapshotDeliveryEvidenceRequest,
 )
 from app.web.api.models.table_exports import (
     ExportDestination,
@@ -133,6 +137,9 @@ from app.web.services.pipeline_sandbox_outputs import (
 from app.web.services.push_inbox import change_push_intake, read_push_status
 from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
 from app.web.services.table_export_snapshot import compare_table_export_snapshots, read_snapshot_preview_capability
+from app.web.services.table_export_snapshot_delivery_evidence import (
+    read_snapshot_delivery_evidence, read_snapshot_delivery_evidence_capability, SnapshotDeliveryEvidenceUnavailable,
+)
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
@@ -961,6 +968,57 @@ async def post_table_export_snapshot_preview(
         raise HTTPException(exc.status_code, exc.detail, headers=headers) from None
     except (DBAPIError, TimeoutError, OSError):
         raise HTTPException(503, "Synthetic snapshot comparison is temporarily unavailable", headers=headers) from None
+
+
+def _unique_delivery_evidence_keys(pairs):
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise ValueError("Duplicate JSON key")
+    return result
+
+
+@write.get("/table-export-sandbox/snapshot-delivery-evidence", response_model_exclude_none=True)
+async def get_table_export_snapshot_delivery_evidence(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotDeliveryEvidenceCapability:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        return SnapshotDeliveryEvidenceCapability(available=False)
+    return await read_snapshot_delivery_evidence_capability(session, current_user.id)
+
+
+@write.post(
+    "/table-export-sandbox/snapshot-delivery-evidence",
+    response_model=SnapshotDeliveryEvidence,
+    response_model_exclude_none=True,
+)
+async def post_table_export_snapshot_delivery_evidence(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotDeliveryEvidence | JSONResponse:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    denied = JSONResponse({"detail": "Recorded snapshot delivery evidence unavailable"}, status_code=404, headers=headers)
+    if request.query_params or request.headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
+        return denied
+    try:
+        body = bytearray()
+        with fail_after(2):
+            async for chunk in request.stream():
+                if len(chunk) > 1024 - len(body):
+                    raise ValueError("Invalid lookup")
+                body.extend(chunk)
+        payload = SnapshotDeliveryEvidenceRequest.model_validate(
+            json.loads(body.decode("utf-8"), object_pairs_hook=_unique_delivery_evidence_keys)
+        )
+    except Exception:
+        return denied
+    try:
+        return await read_snapshot_delivery_evidence(session, current_user.id, payload)
+    except SnapshotDeliveryEvidenceUnavailable:
+        return denied
 
 
 @write.get("/table-export/capabilities")

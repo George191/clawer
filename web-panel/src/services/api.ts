@@ -845,6 +845,18 @@ export const fetchTableExportSnapshotCapability = (signal?: AbortSignal): Promis
   client.get(tableExportSnapshotPreviewPath, { signal }).then(r => unwrap<TableExportSnapshotCapability>(r.data));
 export const previewTableExportSnapshot = (expectedConfigRevision: string, signal?: AbortSignal): Promise<TableExportSnapshotResult> =>
   client.post(tableExportSnapshotPreviewPath, { expectedConfigRevision }, { signal }).then(r => unwrap<TableExportSnapshotResult>(r.data));
+const snapshotDeliveryEvidencePath = '/etl/table-export-sandbox/snapshot-delivery-evidence';
+export type SnapshotDeliveryCapability = { available: boolean; configRevision?: string };
+export type SnapshotDeliveryEvidence = {
+  state: 'not_admitted' | 'unconfirmed' | 'confirmed_recorded_receipt';
+  generation?: number; rowCount?: number; recordedAt?: string;
+};
+export const fetchSnapshotDeliveryCapability = (signal?: AbortSignal): Promise<SnapshotDeliveryCapability> =>
+  client.get(snapshotDeliveryEvidencePath, { signal }).then(r => unwrap<SnapshotDeliveryCapability>(r.data));
+export const checkSnapshotDeliveryEvidence = (request: {
+  intentId: string; requestId: string; expectedConfigRevision: string;
+}, signal?: AbortSignal): Promise<SnapshotDeliveryEvidence> =>
+  client.post(snapshotDeliveryEvidencePath, request, { signal }).then(r => unwrap<SnapshotDeliveryEvidence>(r.data));
 export type TableExportDestination = 'primary' | 'secondary';
 export type TableExportDestinationOption = { id: TableExportDestination; label: string };
 export type TableExportWriteMode = 'upsert' | 'append';

@@ -28,3 +28,17 @@ class SnapshotDeliveryGrant(BaseModel):
     scopeDigest: Proof
     deliveryProofSha256: Proof
     configRevision: UUID
+
+
+class SnapshotDeliveryEvidenceGrant(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    intentId: UUID
+    requestId: UUID
+    ownerActorId: UUID
+    expectedPreviousGeneration: Annotated[int, Field(strict=True, ge=0, le=15)]
+    privateMarker: UUID
+    privateProofSha256: Proof
+    scopeDigest: Proof
+    executionDigest: Proof
+    deliveryProofSha256: Proof
+    configRevision: UUID
