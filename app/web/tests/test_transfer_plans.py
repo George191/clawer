@@ -115,6 +115,23 @@ class TransferPlanTests(unittest.IsolatedAsyncioTestCase):
 
 
 @unittest.skipUnless(TRANSFERS_URL, "Requires an isolated ontology_transfers_regression PostgreSQL database")
+def test_schema_drift_order_only_and_non_inferred_renames():
+    from app.web.api.models.asset_freshness import AssetSchemaColumn, AssetSchemaPreview
+    from app.web.services.asset_quality import _diff_schema
+
+    def schema(*names):
+        return AssetSchemaPreview(fingerprint="0" * 64, columns=[
+            AssetSchemaColumn(name=name, type="integer", nullable=True, typmod=-1) for name in names
+        ])
+
+    reorder = _diff_schema(schema("a", "b"), schema("b", "a"))
+    assert reorder.relativeOrderChanged
+    assert reorder.changes == []
+    renamed = _diff_schema(schema("a", "b"), schema("r", "b"))
+    assert not renamed.relativeOrderChanged
+    assert [(entry.kind, entry.column) for entry in renamed.changes] == [("removed", "a"), ("added", "r")]
+
+
 class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         fixture = make_url(TRANSFERS_URL)
@@ -139,6 +156,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.min_rows_migration = import_module("app.web.alembic.versions.b0be6e75c221_ontology_asset_min_rows")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
+        self.schema_drift_migration = import_module(
+            "app.web.alembic.versions.3370c8e9bae1_ontology_schema_drift_diagnostics",
+        )
         self.incident_migration = import_module(
             "app.web.alembic.versions.f32194ec7a60_ontology_asset_quality_incidents",
         )
@@ -184,6 +204,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.weekly_migration.upgrade)
             await self.migrate(session, self.scheduled_observed_migration.upgrade)
             await self.migrate(session, self.monthly_migration.upgrade)
+            await self.migrate(session, self.schema_drift_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -518,6 +539,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_quality_checks_capture_reviewed_schema_and_measure_only_main_heap(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.schema_drift_migration.downgrade)
+            await self.migrate(session, self.schema_drift_migration.upgrade)
+        async with self.pg.session() as session:
             for sql in (
                 "CREATE SCHEMA ts_transfer_sandbox",
                 "CREATE TABLE ts_transfer_sandbox.quality_source (id int PRIMARY KEY)",
@@ -589,10 +613,87 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(states["heapSize"]["reason"], "above_maximum")
                     self.assertEqual(states["heapSize"]["heapBytes"], str(size["bytes"]))
                     self.assertEqual(len(states["schema"]["history"]), 2)
-                with patch("app.web.services.asset_freshness._utc_now", return_value=late + timedelta(minutes=4)):
+                    drift = states["schema"]["schemaDrift"]
+                    self.assertFalse(drift["relativeOrderChanged"])
+                    self.assertFalse(drift["truncated"])
+                    before = {"name": "extra", "type": "integer", "typmod": -1,
+                              "nullable": True, "primaryKeyPosition": None}
+                    self.assertEqual(drift["changes"], [{
+                        "kind": "changed", "column": "extra", "before": before,
+                        "after": {**before, "nullable": False},
+                    }])
+                    await self.pg.execute("ALTER TABLE ts_transfer_sandbox.quality_target ADD COLUMN unevaluated int")
+                    self.assertEqual((await client.get(route)).json()["checks"]["schema"]["schemaDrift"], drift)
+                    await self.pg.execute("""
+                        INSERT INTO public.ontology_objects VALUES ('ts_transfer_sandbox','quality_target',true,'hidden')
+                    """)
+                    self.assertNotIn("schemaDrift", (await client.get(route)).json()["checks"]["schema"])
+                    await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='quality_target'")
+                    await self.pg.execute("ALTER TABLE public.ontology_objects RENAME TO ontology_objects_missing")
+                    try:
+                        without_registry = (await client.get(route)).json()["checks"]["schema"]
+                        self.assertEqual(without_registry["reason"], "schema_drift")
+                        self.assertNotIn("schemaDrift", without_registry)
+                    finally:
+                        await self.pg.execute("ALTER TABLE public.ontology_objects_missing RENAME TO ontology_objects")
+                next_tick = late + timedelta(minutes=1)
+                await self.pg.execute("""
+                    ALTER TABLE ts_transfer_sandbox.quality_target DROP COLUMN unevaluated,
+                        ALTER COLUMN extra DROP NOT NULL
+                """)
+                self.assertEqual((await check(next_tick))["checked"], 1)
+                with patch("app.web.services.asset_freshness._utc_now", return_value=next_tick):
+                    healthy = (await client.get(route)).json()["checks"]["schema"]
+                    self.assertEqual(healthy["state"], "healthy")
+                    self.assertNotIn("schemaDrift", healthy)
+                persisted = await self.pg.fetch_one("""
+                    SELECT schema_drift FROM public.ontology_asset_quality_observations
+                    WHERE target_table='quality_target' AND kind='schema'
+                """)
+                self.assertIsNone(persisted["schema_drift"])
+                with patch("app.web.services.asset_freshness._utc_now", return_value=next_tick + timedelta(minutes=4)):
                     states = (await client.get(route)).json()["checks"]
                     self.assertEqual(states["schema"]["reason"], "evaluation_stale")
                     self.assertIsNone(states["heapSize"]["heapBytes"])
+                more_columns = ", ".join(f"ADD COLUMN added_{n:02d} int" for n in range(22))
+                await self.pg.execute(f"ALTER TABLE ts_transfer_sandbox.quality_target {more_columns}, DROP COLUMN description")
+                truncated_tick = next_tick + timedelta(minutes=5)
+                self.assertEqual((await check(truncated_tick))["checked"], 1)
+                with patch("app.web.services.asset_freshness._utc_now", return_value=truncated_tick):
+                    detail = (await client.get(route)).json()["checks"]["schema"]["schemaDrift"]
+                    self.assertTrue(detail["truncated"])
+                    self.assertEqual(len(detail["changes"]), 20)
+                    self.assertEqual(detail["changes"][0]["column"], "added_00")
+                    self.assertEqual(detail["changes"][-1]["column"], "added_19")
+                    async with self.pg.session() as session:
+                        with self.assertRaisesRegex(DBAPIError, "Cannot downgrade with recorded schema drift diagnostics"):
+                            await self.migrate(session, self.schema_drift_migration.downgrade)
+                        await session.rollback()
+                    self.assertEqual((await client.get(route)).json()["checks"]["schema"]["schemaDrift"], detail)
+                    self.assertTrue(all(item["kind"] == "added" and "before" not in item for item in detail["changes"]))
+                    await self.pg.execute("""
+                        UPDATE public.ontology_asset_quality_observations
+                        SET schema_drift = jsonb_set(schema_drift, '{diagnostics,truncated}', '"invalid"')
+                        WHERE target_table='quality_target' AND kind='schema'
+                    """)
+                    invalid = (await client.get(route)).json()["checks"]["schema"]
+                    self.assertEqual(invalid["reason"], "schema_drift")
+                    self.assertNotIn("schemaDrift", invalid)
+                await self.pg.execute("CREATE TYPE ts_transfer_sandbox.unavailable_enum AS ENUM ('value')")
+                await self.pg.execute(
+                    "ALTER TABLE ts_transfer_sandbox.quality_target ADD COLUMN unavailable ts_transfer_sandbox.unavailable_enum",
+                )
+                unknown_tick = truncated_tick + timedelta(minutes=1)
+                self.assertEqual((await check(unknown_tick))["checked"], 1)
+                with patch("app.web.services.asset_freshness._utc_now", return_value=unknown_tick):
+                    unknown = (await client.get(route)).json()["checks"]["schema"]
+                    self.assertEqual(unknown["reason"], "schema_unavailable")
+                    self.assertNotIn("schemaDrift", unknown)
+                persisted = await self.pg.fetch_one("""
+                    SELECT schema_drift FROM public.ontology_asset_quality_observations
+                    WHERE target_table='quality_target' AND kind='schema'
+                """)
+                self.assertIsNone(persisted["schema_drift"])
                 ordinary = {k: v for k, v in binding.items() if k not in ("schemaCheckEnabled", "heapSize")}
                 saved = await client.put(route, json={**ordinary, "expectedGeneration": 2, "thresholdMinutes": 6})
                 self.assertEqual(saved.status_code, 200, saved.text)

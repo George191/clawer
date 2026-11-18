@@ -518,7 +518,12 @@ export type AssetQualityResult = {
   validUntil: string | null;
   heapBytes: string | null;
 };
+export type AssetSchemaDrift = {
+  changes: { kind: 'added' | 'removed' | 'changed'; column: string; before?: AssetSchemaColumn; after?: AssetSchemaColumn }[];
+  relativeOrderChanged: boolean; truncated: boolean;
+};
 export type AssetQualityCheck = AssetQualityResult & {
+  schemaDrift?: AssetSchemaDrift;
   history: (Omit<AssetQualityResult, 'validUntil'> & { id: string; generation: number })[];
 };
 export type AssetQualityIncident = {

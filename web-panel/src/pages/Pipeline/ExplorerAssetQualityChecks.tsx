@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Input } from '@/components/ui';
-import type { AssetFreshness, AssetHeapBounds, AssetQualityCheck, AssetSchemaColumn } from '../../services/api';
+import type { AssetFreshness, AssetHeapBounds, AssetQualityCheck, AssetSchemaColumn, AssetSchemaDrift } from '../../services/api';
 
 const resultLabels: Record<AssetQualityCheck['state'], string> = {
   not_configured: 'Not configured', not_checked: 'Not checked', healthy: 'Pass', unhealthy: 'Fail',
@@ -53,7 +53,35 @@ export function AssetSchemaColumns({ columns }: { columns: AssetSchemaColumn[] }
   </div>;
 }
 
-function CheckResult({ kind, check }: { kind: 'schema' | 'heap'; check: AssetQualityCheck }) {
+const driftLabels = { added: 'Added', removed: 'Removed', changed: 'Changed' } as const;
+
+function SchemaShape({ column }: { column?: AssetSchemaColumn }) {
+  if (!column) return <>Not present</>;
+  return <><code>{column.type}</code> · Type modifier {column.typmod} · {column.nullable ? 'Nullable' : 'Not nullable'}
+    {' · '}{column.primaryKeyPosition == null ? 'Not in primary key' : `Primary key position ${column.primaryKeyPosition}`}</>;
+}
+
+function SchemaDriftDetails({ drift }: { drift: AssetSchemaDrift }) {
+  if (!Array.isArray(drift.changes) || drift.changes.length > 20 || typeof drift.relativeOrderChanged !== 'boolean' ||
+      typeof drift.truncated !== 'boolean' || (!drift.changes.length && !drift.relativeOrderChanged && !drift.truncated)) return null;
+  return <details>
+    <summary>Recorded schema drift details</summary>
+    <p>Compared the reviewed baseline with the catalog observed by this evaluation. This is not a live scan; additions and removals do not imply renames.</p>
+    <p>Relative order of retained columns: <strong>{drift.relativeOrderChanged ? 'Changed' : 'Unchanged'}</strong>.</p>
+    {drift.truncated && <p>Only the first {drift.changes.length} recorded field changes are shown. Additional changes were omitted.</p>}
+    {drift.changes.length > 0 && <div className="flow-evidence-quality-columns">
+      <table><caption>Recorded schema changes</caption>
+        <thead><tr><th scope="col">Column</th><th scope="col">Change</th><th scope="col">Reviewed baseline</th><th scope="col">Observed catalog</th></tr></thead>
+        <tbody>{drift.changes.map(change => <tr key={change.column}>
+          <th scope="row"><code>{change.column}</code></th><td>{driftLabels[change.kind]}</td>
+          <td><SchemaShape column={change.before} /></td><td><SchemaShape column={change.after} /></td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
+  </details>;
+}
+
+function CheckResult({ kind, check, allowDrift = false }: { kind: 'schema' | 'heap'; check: AssetQualityCheck; allowDrift?: boolean }) {
   const [expired, setExpired] = useState<AssetQualityCheck>();
   const evaluated = check.state === 'healthy' || check.state === 'unhealthy';
   const until = check.validUntil ? Date.parse(check.validUntil) : NaN;
@@ -77,6 +105,8 @@ function CheckResult({ kind, check }: { kind: 'schema' | 'heap'; check: AssetQua
       {check.checkedAt && <span>Last evaluation: <time dateTime={check.checkedAt}>{dateText(check.checkedAt)}</time></span>}
     </div>
     {reason && <p>{resultReasons[reason] ?? reason}</p>}
+    {kind === 'schema' && allowDrift && !stale && check.state === 'unhealthy' && check.reason === 'schema_drift' &&
+      check.schemaDrift && <SchemaDriftDetails key={check.checkedAt ?? ''} drift={check.schemaDrift} />}
     {kind === 'heap' && <p>Latest evaluated heap size: <strong>{byteText(stale ? null : check.heapBytes)}</strong></p>}
     <details>
       <summary>{kind === 'schema' ? 'Schema history' : 'Heap size history'}</summary>
@@ -103,7 +133,7 @@ export default function ExplorerAssetQualityChecks({ snapshot, draft, onDraft, o
     <section aria-label="Schema check">
       <h5>Schema check</h5>
       <p>Compare catalog columns, types, nullability and primary key order with an explicitly reviewed baseline.</p>
-      <CheckResult kind="schema" check={snapshot.checks.schema} />
+      <CheckResult kind="schema" check={snapshot.checks.schema} allowDrift={Boolean(snapshot.available && snapshot.policy?.enabled && snapshot.policy.schemaCheckEnabled && baseline)} />
       <label className="flow-evidence-quality-toggle"><input type="checkbox" checked={draft.schema} disabled={formDisabled}
         onChange={event => onDraft({ ...draft, schema: event.target.checked })} />Enable schema check</label>
       {baseline && <details><summary>Reviewed schema baseline</summary>

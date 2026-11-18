@@ -39,6 +39,50 @@ class AssetSchemaColumn(BaseModel):
     primaryKeyPosition: int | None = None
 
 
+class AssetSchemaDriftColumn(AssetSchemaColumn):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str = Field(min_length=1, max_length=63)
+    type: str = Field(min_length=1, max_length=128)
+    typmod: int = Field(ge=-1, le=2**31 - 1)
+    primaryKeyPosition: int | None = Field(default=None, ge=1, le=128)
+
+
+class AssetSchemaDriftChange(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["added", "removed", "changed"]
+    column: str = Field(min_length=1, max_length=63)
+    before: AssetSchemaDriftColumn | None = Field(default=None, exclude_if=lambda value: value is None)
+    after: AssetSchemaDriftColumn | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def exact_change(self):
+        if ((self.before is None) != (self.kind == "added")
+                or (self.after is None) != (self.kind == "removed")
+                or (self.before and self.before.name != self.column)
+                or (self.after and self.after.name != self.column)
+                or self.before == self.after):
+            raise ValueError("Invalid schema change")
+        return self
+
+
+class AssetSchemaDrift(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    changes: list[AssetSchemaDriftChange] = Field(max_length=20)
+    relativeOrderChanged: bool
+    truncated: bool
+
+    @model_validator(mode="after")
+    def bounded_changes(self):
+        names = [change.column for change in self.changes]
+        if (names != sorted(set(names)) or (self.truncated and len(names) != 20)
+                or not (names or self.relativeOrderChanged)):
+            raise ValueError("Invalid schema drift")
+        return self
+
+
 class AssetSchemaPreview(BaseModel):
     fingerprint: _FINGERPRINT
     columns: list[AssetSchemaColumn]
@@ -74,6 +118,7 @@ class AssetQualityAssessment(BaseModel):
     validUntil: datetime | None = None
     heapBytes: DecimalBytes | None = None
     history: list[AssetQualityTransition] = Field(default_factory=list)
+    schemaDrift: AssetSchemaDrift | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class AssetQualityChecks(BaseModel):
@@ -224,6 +269,9 @@ class AssetQualityObservationRow(SQLModel, table=True):
         CheckConstraint("kind IN ('schema','heap_size') AND state IN ('healthy','unhealthy','unknown') "
                         "AND generation > 0 AND (heap_bytes IS NULL OR (kind = 'heap_size' AND heap_bytes >= 0))",
                         name="ck_ontology_asset_quality_observation"),
+        CheckConstraint("schema_drift IS NULL OR (kind = 'schema' AND state = 'unhealthy' "
+                        "AND reason = 'schema_drift' AND jsonb_typeof(schema_drift) = 'object') IS TRUE",
+                        name="ck_ontology_asset_quality_schema_drift"),
     )
 
     target_table: str = DbField(foreign_key="ontology_asset_freshness_policies.target_table", primary_key=True)
@@ -232,6 +280,7 @@ class AssetQualityObservationRow(SQLModel, table=True):
     state: str = DbField(max_length=15)
     reason: str | None = DbField(default=None, max_length=40)
     checked_at: datetime = DbField(sa_column=Column(DateTime(timezone=True), nullable=False))
+    schema_drift: dict | None = DbField(default=None, sa_column=Column(JSONB(none_as_null=True)))
     heap_bytes: int | None = DbField(default=None, sa_column=Column(BigInteger))
 
 
