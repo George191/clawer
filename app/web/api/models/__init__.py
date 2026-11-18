@@ -43,6 +43,7 @@ from .embedding import (
 )
 
 from .ontology_registry import OntologyDefinitionRow as OntologyDefinitionRow
+from .explorer_layouts import ExplorerResultLayout as ExplorerResultLayout
 from .asset_collected_stats import AssetCollectedStatRow as AssetCollectedStatRow
 from .asset_field_freshness import AssetFieldFreshnessRow as AssetFieldFreshnessRow
 from .asset_min_rows import AssetMinRowsRow as AssetMinRowsRow

@@ -105,7 +105,7 @@ export function getFriendlyErrorMessage(error: AxiosError): string {
 // 后端使用统一格式: { code: 0, data: ..., message: "...", timestamp: "..." }
 // 此处提取 data 字段；旧格式直接透传
 
-function unwrap<T>(body: unknown): T {
+export function unwrap<T>(body: unknown): T {
   if (
     body &&
     typeof body === 'object' &&
@@ -477,6 +477,25 @@ export type ExplorerTableEvidenceSnapshot = {
 
 export const fetchExplorerTableEvidence = (schema: string, table: string, signal?: AbortSignal): Promise<ExplorerTableEvidenceSnapshot> =>
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/evidence`, { signal }).then((r) => unwrap<ExplorerTableEvidenceSnapshot>(r.data));
+
+export type ExplorerRecordDetails = {
+  row: Record<string, unknown>; identity: Record<string, string>; primaryKey: string[];
+  columnTypes: Record<string, string>; rowVersion?: string; rowActions?: {edit: boolean; delete: boolean};
+};
+
+export const fetchExplorerRowByKey = (schema: string, table: string, key: Record<string, unknown>, signal?: AbortSignal) =>
+  client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-by-key`, { key }, { signal })
+    .then(r => unwrap<ExplorerRecordDetails>(r.data));
+
+export type ExplorerRowLinkPage = {
+  relations: {id: string; name: string; direction: 'outgoing'|'incoming'; kind: 'foreign_key'|'logical';
+    schema: string; table: string; fields: string[]; targetFields: string[]}[];
+  selected: string | null; identities: Record<string,string>[]; hasMore: boolean; offset: number; reason?: string;
+};
+
+export const fetchExplorerRowLinks = (schema: string, table: string, key: Record<string,unknown>, relation: string | null, offset: number, signal: AbortSignal) =>
+  client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-links`, { key, relation, offset, limit: 10 }, { signal })
+    .then(r => unwrap<ExplorerRowLinkPage>(r.data));
 
 export type CdcTableCapture = ({
   state: 'observed'; topic: string; partition: number; offset: number; operation: string;
@@ -1017,6 +1036,7 @@ export const setDataSourcePaused = (id: string, request: { paused: boolean; expe
 export const deleteDataSource = (id: string): Promise<void> =>
   client.delete(`/etl/data-connections/${id}`).then(() => undefined);
 export interface EtlDataQuery {
+  withIdentity?: boolean;
   forEditing?: boolean;
   limit: number; offset: number; partition?: string; search?: string;
   filters: Array<{ id: string; field: string; operator: string; value: string; active: boolean; join: string }>;

@@ -7,6 +7,7 @@ import re
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from decimal import Decimal
 from time import perf_counter
 from typing import Any
 
@@ -44,6 +45,18 @@ ROW_VERSION_SQL = "encode(sha256(pg_catalog.record_send(t)), 'hex')"
 
 def allows_physical_delete(schema: str) -> bool:
     return etl_settings.etl_output_mode != "debezium" or schema not in cdc_schemas()
+
+
+def row_identity_sql(primary_key: list[str]) -> str:
+    # Preserve numeric and composite keys exactly across the JavaScript JSON boundary.
+    fields = ", ".join(f"'{name}', CAST(t.{quote_identifier(name)} AS text)" for name in primary_key)
+    return f"jsonb_build_object({fields})"
+
+
+def browser_scalar(value):
+    if isinstance(value, Decimal) or isinstance(value, int) and abs(value) > 2**53 - 1:
+        return str(value)
+    return value
 
 
 RESERVED_BATCH_RANGE_TARGET = (BATCH_TARGET_SCHEMA, BATCH_RANGE_TARGET)
@@ -677,6 +690,52 @@ class EtlLayers:
                     pending.append((peer, row["oid"], depth + 1))
         return seen, truncated or bool(pending)
 
+    @staticmethod
+    async def declared_relations(session, schema, table, oid):
+        result = await session.execute(text("""
+            SELECT con.conname AS name, sn.nspname AS source_schema, sc.relname AS source_table,
+                   tn.nspname AS target_schema, tc.relname AS target_table,
+                   ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(attnum, position)
+                         JOIN pg_attribute a ON a.attrelid = sc.oid AND a.attnum = k.attnum
+                         ORDER BY k.position) AS columns,
+                    so.data_type AS source_data_type, target_object.data_type AS target_data_type,
+                    COALESCE(so.visibility, 'normal') AS source_visibility, COALESCE(target_object.visibility, 'normal') AS target_visibility,
+                   ARRAY(SELECT a.attname FROM unnest(con.confkey) WITH ORDINALITY k(attnum, position)
+                         JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum
+                         ORDER BY k.position) AS referenced_columns
+            FROM pg_constraint con
+            JOIN pg_class sc ON sc.oid = con.conrelid
+            JOIN pg_namespace sn ON sn.oid = sc.relnamespace
+            JOIN pg_class tc ON tc.oid = con.confrelid
+            JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+            LEFT JOIN public.ontology_objects so ON so.schema_name = sn.nspname
+                AND so.table_name = sc.relname AND so.is_active
+            LEFT JOIN public.ontology_objects target_object ON target_object.schema_name = tn.nspname
+                AND target_object.table_name = tc.relname AND target_object.is_active
+            WHERE con.contype = 'f' AND con.conparentid = 0
+              AND (sc.oid = CAST(:oid AS oid) OR tc.oid = CAST(:oid AS oid))
+              AND sn.nspname ~ '^ts_[a-z0-9_]+$' AND sn.nspname <> 'ts_meta'
+              AND sn.nspname <> 'ts_meta_hist' AND sn.nspname NOT IN (:restricted, :push_schema)
+              AND tn.nspname ~ '^ts_[a-z0-9_]+$' AND tn.nspname <> 'ts_meta'
+              AND tn.nspname <> 'ts_meta_hist' AND tn.nspname NOT IN (:restricted, :push_schema)
+              AND NOT (sn.nspname = :batch_schema AND sc.relname IN (:batch_target, :batch_range_target))
+              AND NOT (tn.nspname = :batch_schema AND tc.relname IN (:batch_target, :batch_range_target))
+              AND sc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
+              AND tc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
+              AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
+              AND NOT sc.relispartition AND NOT tc.relispartition
+              AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = sc.oid)
+              AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = tc.oid)
+            ORDER BY sn.nspname, sc.relname, con.conname, con.oid
+        """), {"oid": oid, "restricted": PROTECTED_SYNTHETIC_SCHEMA, "push_schema": PUSH_APPLY_SCHEMA,
+                "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET})
+        foreign_keys = [dict(item) for item in result.mappings()]
+        try:
+            logical = await read_object_relations(session, schema, table)
+        except ObjectRelationsNotInitialized as exc:
+            raise HTTPException(503, str(exc)) from exc
+        return foreign_keys, logical
+
     async def preview(self, layer: str, table: str, *, include_hidden: bool = False) -> dict[str, Any]:
         schema = _object_schema(layer)
         require_ordinary_table(schema, table)
@@ -690,48 +749,7 @@ class EtlLayers:
             if not rows:
                 raise HTTPException(404, "Table does not exist in this schema")
             row = rows[0]
-            result = await session.execute(text("""
-                SELECT con.conname AS name, sn.nspname AS source_schema, sc.relname AS source_table,
-                       tn.nspname AS target_schema, tc.relname AS target_table,
-                       ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(attnum, position)
-                             JOIN pg_attribute a ON a.attrelid = sc.oid AND a.attnum = k.attnum
-                             ORDER BY k.position) AS columns,
-                        so.data_type AS source_data_type, target_object.data_type AS target_data_type,
-                        COALESCE(so.visibility, 'normal') AS source_visibility, COALESCE(target_object.visibility, 'normal') AS target_visibility,
-                       ARRAY(SELECT a.attname FROM unnest(con.confkey) WITH ORDINALITY k(attnum, position)
-                             JOIN pg_attribute a ON a.attrelid = tc.oid AND a.attnum = k.attnum
-                             ORDER BY k.position) AS referenced_columns
-                FROM pg_constraint con
-                JOIN pg_class sc ON sc.oid = con.conrelid
-                JOIN pg_namespace sn ON sn.oid = sc.relnamespace
-                JOIN pg_class tc ON tc.oid = con.confrelid
-                JOIN pg_namespace tn ON tn.oid = tc.relnamespace
-                LEFT JOIN public.ontology_objects so ON so.schema_name = sn.nspname
-                    AND so.table_name = sc.relname AND so.is_active
-                LEFT JOIN public.ontology_objects target_object ON target_object.schema_name = tn.nspname
-                    AND target_object.table_name = tc.relname AND target_object.is_active
-                WHERE con.contype = 'f' AND con.conparentid = 0
-                  AND (sc.oid = CAST(:oid AS oid) OR tc.oid = CAST(:oid AS oid))
-                  AND sn.nspname ~ '^ts_[a-z0-9_]+$' AND sn.nspname <> 'ts_meta'
-                  AND sn.nspname <> 'ts_meta_hist' AND sn.nspname NOT IN (:restricted, :push_schema)
-                  AND tn.nspname ~ '^ts_[a-z0-9_]+$' AND tn.nspname <> 'ts_meta'
-                  AND tn.nspname <> 'ts_meta_hist' AND tn.nspname NOT IN (:restricted, :push_schema)
-                  AND NOT (sn.nspname = :batch_schema AND sc.relname IN (:batch_target, :batch_range_target))
-                  AND NOT (tn.nspname = :batch_schema AND tc.relname IN (:batch_target, :batch_range_target))
-                  AND sc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
-                  AND tc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
-                  AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
-                  AND NOT sc.relispartition AND NOT tc.relispartition
-                  AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = sc.oid)
-                  AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = tc.oid)
-                ORDER BY sn.nspname, sc.relname, con.conname, con.oid
-            """), {"oid": row["oid"], "restricted": PROTECTED_SYNTHETIC_SCHEMA, "push_schema": PUSH_APPLY_SCHEMA,
-                    "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET})
-            foreign_keys = [dict(item) for item in result.mappings()]
-            try:
-                logical = await read_object_relations(session, schema, table)
-            except ObjectRelationsNotInitialized as exc:
-                raise HTTPException(503, str(exc)) from exc
+            foreign_keys, logical = await self.declared_relations(session, schema, table, row["oid"])
             if row.get("object_id") is not None:
                 result = await session.execute(text("""
                     SELECT p.name, p.sql_type AS type, p.comment, p.is_nullable AS nullable,
@@ -1116,17 +1134,26 @@ class EtlLayers:
                     if isinstance(plan, str):
                         plan = json.loads(plan)
                     total = max(total, int(plan[0]["Plan"]["Plan Rows"]))
-            projection = f"t.*, {ROW_VERSION_SQL}" if editable else "t.*"
+            extras = {}
+            if primary_key and scope is None and payload.get("withIdentity"):
+                extras["rowIdentities"] = row_identity_sql(primary_key)
+            if editable:
+                extras["rowVersions"] = ROW_VERSION_SQL
+            projection = ", ".join(["t.*", *extras.values()])
             result = await session.execute(text(f"SELECT {projection} FROM {target} t{predicate}{ordering} LIMIT :limit OFFSET :offset"), params)
             edit_metadata = {}
-            if editable:
-                fields = list(result.keys())[:-1]
+            if extras:
+                fields = list(result.keys())[:-len(extras)]
                 records = result.all()
-                rows = [dict(zip(fields, record[:-1])) for record in records]
-                edit_metadata = {"rowVersions": [record[-1] for record in records[:limit]],
-                                 "rowActions": {"edit": True, "delete": allows_physical_delete(schema)}}
+                rows = [dict(zip(fields, record)) for record in records]
+                for index, name in enumerate(extras, start=len(fields)):
+                    edit_metadata[name] = [record[index] for record in records[:limit]]
+                if editable:
+                    edit_metadata["rowActions"] = {"edit": True, "delete": allows_physical_delete(schema)}
             else:
                 rows = [dict(row) for row in result.mappings()]
+            if scope is None and payload.get("withIdentity"):
+                rows = [{field: browser_scalar(value) for field, value in row.items()} for row in rows]
         page = {}
         if paged:
             has_more = len(rows) > limit

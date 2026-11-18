@@ -1,0 +1,12 @@
+.explorer-geometry { margin: 0; }
+.explorer-geometry svg { display: block; width: 100%; max-height: 250px; background: var(--ontology-surface); border: 1px solid var(--ontology-border); }
+.explorer-geometry .geo-grid { fill: none; stroke: var(--ontology-border); stroke-width: .6; }
+.explorer-geometry .geo-land { fill: color-mix(in srgb,var(--ontology-muted) 27%,var(--ontology-surface)); stroke: var(--ontology-muted); stroke-width: .55; vector-effect: non-scaling-stroke; }
+.explorer-geometry circle { fill: var(--ontology-primary); }
+.explorer-geometry .line, .explorer-geometry .polygon { stroke: var(--ontology-primary); stroke-width: 1.5; }
+.explorer-geometry .line { fill: none; }
+.explorer-geometry .polygon { fill: color-mix(in srgb,var(--ontology-primary) 20%,transparent); }
+.explorer-geometry figcaption { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:5px; padding-top:5px; font-size:11px; }
+.explorer-property-image, .explorer-full-record video, .flow-explorer-selection video { display:block; max-width:100%; max-height:320px; object-fit:contain; }
+.explorer-property-chart { min-width:0; }
+.explorer-property-chart details { overflow:auto; max-height:170px; }

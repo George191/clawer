@@ -20,6 +20,7 @@ const DataLake = lazy(() => import('@/pages/DataLake'));
 const DataExplorer = lazy(() => import('@/pages/DataExplorer'));
 const Monitoring = lazy(() => import('@/pages/Monitoring'));
 const Pipeline = lazy(() => import('@/pages/Pipeline'));
+const ExplorerRecordPage = lazy(() => import('@/pages/Pipeline/ExplorerRecordPage'));
 const AICollect = lazy(() => import('@/pages/AICollect'));
 const AICollectGovernance = lazy(() => import('@/pages/AICollectGovernance'));
 const LogExplorer = lazy(() => import('@/pages/LogExplorer'));
@@ -125,6 +126,7 @@ const App: React.FC = () => {
             <Route path="/logs" element={<LogExplorer />} />
             <Route path="/ontology" element={<Pipeline />} />
             <Route path="/ontology/explorer" element={<Pipeline />} />
+            <Route path="/ontology/explorer/record" element={<ExplorerRecordPage />} />
             <Route path="/ontology/connections" element={<Pipeline />} />
             <Route path="/ontology/lineage" element={<Pipeline />} />
             <Route path="/ontology/transforms" element={<Pipeline />} />

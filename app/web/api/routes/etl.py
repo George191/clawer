@@ -97,6 +97,8 @@ from app.web.api.models.etl import (
     PreviewIndexCoverage,
     PreviewIndexCoverageInput,
     PreviewRowsQuery,
+    ExplorerRowKey,
+    ExplorerRowLinksQuery,
     SqlQuery,
 )
 from app.web.api.models.data_connections import (
@@ -1893,6 +1895,23 @@ async def table_preview_rows(layer: str, table: str, payload: PreviewRowsQuery, 
     if payload.forEditing:
         get_current_active_superuser(current_user)
     return await get_etl_layers().data(layer, table, payload.model_dump(), preview_rows=True)
+
+
+@read.post("/{layer}/{table}/row-by-key")
+async def explorer_row_by_key(layer: str, table: str, payload: ExplorerRowKey, response: Response,
+                              current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    from app.web.services.explorer_rows import row_by_key
+
+    response.headers["Cache-Control"] = "no-store"
+    return await row_by_key(layer, table, payload.key, editable=current_user.is_superuser)
+
+
+@read.post("/{layer}/{table}/row-links")
+async def explorer_row_links(layer: str, table: str, payload: ExplorerRowLinksQuery, response: Response) -> dict[str, Any]:
+    from app.web.services.explorer_rows import row_links
+
+    response.headers["Cache-Control"] = "no-store"
+    return await row_links(layer, table, payload)
 
 
 @write.patch("/{layer}/{table}/rows")

@@ -1,6 +1,7 @@
+import { editorValue, rowChanges } from './explorerRowEditing';
 import  React,  {  useEffect,  useLayoutEffect,  useRef,  useState  }  from  'react';
 import  {  Link,  matchPath,  useLocation,  useNavigate  }  from  'react-router-dom';
-import  {  Button,  Checkbox,  ConfigProvider,  Drawer,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
+import  {  Button,  Checkbox,  ConfigProvider,  Dropdown,  Input,  InputNumber,  Modal,  Select,  Space,  Spin,  Table,  Tag,  Upload,  message  }  from  '@/components/ui';
 import  enUS  from  '@/components/ui/locale';
 import  {  AlertOutlined,  ArrowDownOutlined,  ArrowUpOutlined,  CheckOutlined,  CloseOutlined,  CodeOutlined,  DatabaseOutlined,  DeleteOutlined,  DownOutlined,  DownloadOutlined,  EditOutlined,  PlusOutlined,  ReloadOutlined,  RightOutlined,  SearchOutlined,  SettingOutlined,  TableOutlined,  UploadOutlined  }  from  '@/components/ui/icons';
 import  '../ProductWorkspace/workspace.css';
@@ -13,8 +14,13 @@ import './ontology-frame.css';
 import './foundry-workbench-tokens.css';
 import './ontology-workspace.css';
 import ExplorerCatalog from './ExplorerCatalog';
+import ExplorerSelection, { type ExplorerPreviewRow } from './ExplorerSelection';
+import ExplorerRecordLink from './ExplorerRecordLink';
+import ExplorerRowLinks from './ExplorerRowLinks';
 import NewObjectType from './NewObjectType';
 import ExplorerTableSchema from './ExplorerTableSchema';
+import { LayoutHeader, LayoutToolbar, useResultLayout } from './ExplorerResultLayout';
+import { ExplorerSeriesCell } from './ExplorerSeriesCell';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import ExplorerStreamPositions, { topicRate } from './ExplorerStreamPositions';
 import SandboxPipelineBuilder from './SandboxPipelineBuilder';
@@ -32,6 +38,9 @@ import type { RowPreviewMode, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywor
 import  type  {  LayerNode,  LayerTable,  QueryResult,  ExplorerPreviewResult,  EtlPartition,  EtlStreamState  }  from  '../../services/types';
 
 type  FilterCheckboxChange  =  {  target:  {  checked:  boolean  }  };
+type RowSnapshot = { data: QueryResult; row: Record<string, unknown>; version: string };
+const emptyPreviewRows: Record<string, unknown>[] = [];
+const emptyPreviewColumns: string[] = [];
 const  FilterCheckbox:  React.FC<{  checked:  boolean;  onChange:  (event:  FilterCheckboxChange)  =>  void;  mode?:  'single'  |  'multiple'  }>  =  ({  checked,  onChange,  mode = 'multiple'  })  =>  <span  className={`flow-filter-custom-checkbox  ${checked  ?  'is-checked'  :  ''}`}  data-mode={mode}  role="checkbox"  aria-checked={checked}  tabIndex={0}  onClick={()  =>  onChange({  target:  {  checked:  !checked  }  })}  onKeyDown={(event)  =>  {  if  (event.key  ===  'Enter'  ||  event.key  ===  ' ')  {  event.preventDefault();  onChange({  target:  {  checked:  !checked  }  });  }  }}><svg  viewBox="0 0 12 12"  aria-hidden="true"><rect  x=".5"  y=".5"  width="11"  height="11"  rx="2"  fill={checked  ?  'currentColor'  :  'none'}  opacity={checked  ?  1  :  0}  /><path  d="m3.1 6.1 1.8 1.8 4-4"  fill="none"  stroke="#151a21"  strokeWidth="1.6"  strokeLinecap="round"  strokeLinejoin="round"  opacity={checked  ?  1  :  0}  /></svg></span>;
 const  FilterAddIcon:  React.FC  =  ()  =>  <svg  className="flow-filter-mini-icon"  viewBox="0  0  18  14"  aria-hidden="true"><rect  x=".75"  y=".75"  width="16.5"  height="12.5"  rx="1"  fill="none"  stroke="currentColor"  strokeWidth="1"  /><path  d="M9  4.8v4.4M6.8  7h4.4"  fill="none"  stroke="currentColor"  strokeWidth="1"  strokeLinecap="round"  /></svg>;
 const  SortDirectionIcon:  React.FC<{  direction:  'asc'  |  'desc'  }>  =  ({  direction  })  =>  <svg  className="flow-filter-sort-direction-icon"  viewBox="0  0  16  16"  aria-hidden="true"><path  d={direction  ===  'asc'  ?  'M4 12V4m0 0L2 6m2-2 2 2M8 5h6M8 8h4M8 11h2'  :  'M4 4v8m0 0-2-2m2 2 2-2M8 5h2M8 8h4M8 11h6'}  fill="none"  stroke="currentColor"  strokeWidth="1.25"  strokeLinecap="round"  strokeLinejoin="round"  /></svg>;
@@ -298,12 +307,12 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const  [tableSearch,  setTableSearch]  =  useState('');
     const  [closedTables,  setClosedTables]  =  useState<Set<string>>(new  Set());
     const  [editingRowKey,  setEditingRowKey]  =  useState<string>();
-    const  [editingDraft,  setEditingDraft]  =  useState<Record<string,  unknown>  |  null>(null);
+    const [editingDraft, setEditingDraft] = useState<Record<string, string | null> | null>(null);
     const  [jsonRow,  setJsonRow]  =  useState<Record<string,  unknown>  |  null>(null);
-    const [rowDetails, setRowDetails] = useState<{ row: Record<string, unknown>; scope: string; version?: string }>();
-    const [rowDetailsView, setRowDetailsView] = useState<'properties' | 'json' | 'delete'>('properties');
+    const [deleteSnapshot, setDeleteSnapshot] = useState<RowSnapshot>();
+    const [conflictedRows, setConflictedRows] = useState<Set<Record<string, unknown>>>(() => new Set());
     const [rowDetailsError, setRowDetailsError] = useState('');
-    const editSnapshot = useRef<{ data: QueryResult; version: string }>();
+    const editSnapshot = useRef<RowSnapshot>();
     const  tableTabsRef  =  useRef<HTMLDivElement>(null);
     const  [filterOpen,  setFilterOpen]  =  useState(false);
     const  [filterText,  setFilterText]  =  useState('');
@@ -469,9 +478,12 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         if (showPreview) return;
         editSnapshot.current = undefined;
         setData(undefined); setPreviewPage(undefined); setEditingRowKey(undefined); setEditingDraft(null);
-        setJsonRow(null); setRowDetails(undefined); setAnalysisOpen(false); setPreviewError(''); setPreviewUnavailable(false);
+        setJsonRow(null); setDeleteSnapshot(undefined); setAnalysisOpen(false); setPreviewError(''); setPreviewUnavailable(false);
     }, [policyKey, showPreview]);
     useEffect(() => {
+        setDeleteSnapshot(undefined);
+        setConflictedRows(current => current.size ? new Set() : current);
+        setRowDetailsError('');
         if (editSnapshot.current && editSnapshot.current.data !== data) {
             editSnapshot.current = undefined;
             setEditingRowKey(undefined); setEditingDraft(null);
@@ -481,108 +493,82 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const fieldCount = data?.columns.length ?? 0;
     const filterFields = data?.columns.length ? data.columns : repairFields;
     const tableDescription = `${selectedSchema}.${table.name || 'No table selected'}`;
-    const dataRows = data?.rows ?? [];
-    const rowKey = (row: Record<string, unknown>, index?: number) => data?.primaryKey?.length ? JSON.stringify(data.primaryKey.map((key) => row[key])) : `${index ?? ''}:${JSON.stringify((data?.columns || []).map((key) => row[key]))}`;
-    const primaryKey = (row: Record<string, unknown>) => Object.fromEntries((data?.primaryKey || []).map((key) => [key, row[key]]));
+    const dataRows = data?.rows ?? emptyPreviewRows;
+    const primaryKey = (row: Record<string, unknown>, index = dataRows.indexOf(row)) => {
+        const fields = data?.primaryKey ?? [];
+        const exact = data?.rowIdentities?.[index];
+        const values = fields.map(field => exact ? exact[field] : row[field]);
+        if (values.some(value => typeof value !== 'string' && typeof value !== 'boolean' &&
+            !(typeof value === 'number' && Number.isSafeInteger(value)))) return {};
+        return Object.fromEntries(fields.map((field, position) => [field, values[position]]));
+    };
+    const rowKey = (row: Record<string, unknown>, index = dataRows.indexOf(row)) => {
+        const identity = primaryKey(row, index);
+        return Object.keys(identity).length ? JSON.stringify(identity) : 'row:' + index;
+    };
     const formatCell = (value: unknown) => value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-    const editCell = (key: string, value: unknown): string | null => value == null ? null : /^(jsonb?)(?:\s|$)|\[\]$/.test(data?.columnTypes?.[key]?.toLowerCase() || '') ? JSON.stringify(value) : typeof value === 'object' ? JSON.stringify(value) : String(value);
-    const activeRowDetails = isSchemas && showPreview && rowDetails?.scope === policyKey && dataRows.includes(rowDetails.row) ? rowDetails : undefined;
+    const editCell = (key: string, value: unknown) => editorValue(data?.columnTypes?.[key], value);
+    const exactEditorRow = (row: Record<string, unknown>) => {
+        const precise = Object.entries(primaryKey(row)).filter(([key]) => typeof row[key] === 'number' && !Number.isSafeInteger(row[key]));
+        return precise.length ? { ...row, ...Object.fromEntries(precise) } : row;
+    };
     const canEditRows = canManage && data?.rowActions?.edit === true && !!data.primaryKey?.length;
     const canDeleteRows = canManage && data?.rowActions?.delete === true && !!data.primaryKey?.length;
     const rowVersion = (row: Record<string, unknown>) => {
         const version = data?.rowVersions?.[dataRows.indexOf(row)];
-        return typeof version === 'string' && version ? version : undefined;
+        return typeof version === 'string' && version && !conflictedRows.has(row) && Object.keys(primaryKey(row)).length ? version : undefined;
     };
-    const openRowDetails = (row: Record<string, unknown>, trigger: HTMLTableRowElement) => {
-        if (!showPreview || loading || mutationPending.current) return;
-        trigger.focus();
-        setRowDetails({ row, scope: policyKey, version: rowVersion(row) });
-        setRowDetailsView('properties');
-        setRowDetailsError('');
-    };
-    const startRowEdit = (key: string) => {
+    const startRowEdit = (key: string, preview?: ExplorerPreviewRow) => {
         if (!showPreview || !canEditRows || !data || !selectedTableAvailable || loading || mutationPending.current) return;
-        const row = dataRows.find((item) => rowKey(item) === key);
-        if (!row) return;
-        const version = isSchemas ? (activeRowDetails?.row === row ? activeRowDetails.version : undefined) : rowVersion(row);
-        if (!version) return;
-        if (data.primaryKey?.some((column) => typeof row[column] === 'number' && Number.isInteger(row[column]) && !Number.isSafeInteger(row[column]))) { message.error('Primary key exceeds safe numeric precision'); return; }
+        const row = preview?.record ?? dataRows.find((item) => rowKey(item) === key);
+        if (!row || !dataRows.includes(row)) return;
+        const version = isSchemas ? preview?.version : rowVersion(row);
+        if (!version || version !== rowVersion(row)) return;
         if (editingRowKey && editingRowKey !== key) { message.warning('Save or cancel the current row edit first'); return; }
         setRowDetailsError('');
-        editSnapshot.current = { data, version };
-        setEditingRowKey(key); setEditingDraft(Object.fromEntries(Object.entries(row).map(([column, value]) => [column, editCell(column, value)])));
+        editSnapshot.current = { data, row, version };
+        setEditingRowKey(key); setEditingDraft(Object.fromEntries(Object.entries(exactEditorRow(row)).map(([column, value]) => [column, editCell(column, value)])));
     };
     const cancelRowEdit = () => {
         if (!mutationPending.current) { editSnapshot.current = undefined; setEditingRowKey(undefined); setEditingDraft(null); setRowDetailsError(''); }
-    };
-    const closeRowDetails = () => {
-        if (mutationPending.current) return;
-        cancelRowEdit();
-        setRowDetails(undefined);
     };
     const rowEditor = (key: string) => <Input size="small" aria-label={`Edit ${key}`} disabled={mutationLoading}
         value={String(editingDraft?.[key] ?? '')} placeholder={editingDraft?.[key] === null ? 'SQL NULL' : undefined}
         onKeyDown={(event) => { if (!isSchemas && event.key === 'Escape') { event.preventDefault(); cancelRowEdit(); } }}
         addonAfter={<button type="button" disabled={mutationLoading} aria-label={`Set ${key} to null`} title="Set SQL NULL" onClick={() => setEditingDraft((current) => current ? { ...current, [key]: null } : current)}>NULL</button>}
         onChange={(event) => setEditingDraft((current) => current ? { ...current, [key]: event.target.value } : current)} />;
-    const rowMutationError = (error: unknown) => {
+    const rowMutationError = (error: unknown, row: Record<string, unknown>) => {
         const response = (error as { response?: { status?: number; data?: { detail?: { code?: string }; errors?: { code?: string } } } })?.response;
         if (response?.status !== 409 || (response.data?.errors?.code ?? response.data?.detail?.code) !== 'row_version_conflict') return errorText(error);
-        setRowDetails(current => current ? { ...current, version: undefined } : current);
-        return isSchemas ? 'This row changed. Close the details, refresh the catalog, and open the row again.'
+        setConflictedRows(current => new Set([...current, row]));
+        return isSchemas ? 'This row changed. Cancel, refresh the catalog, and select the row again.'
             : 'This row changed. Cancel the edit and refresh the workspace before trying again.';
     };
     const saveRowEdit = async () => {
         const snapshot = editSnapshot.current;
         if (!showPreview || loading || !canEditRows || !selectedTableAvailable || !editingDraft || !snapshot || snapshot.data !== data ||
-            (isSchemas && activeRowDetails?.version !== snapshot.version) || !beginMutation()) return;
+            rowVersion(snapshot.row) !== snapshot.version || !beginMutation()) return;
         setRowDetailsError('');
         const target = selection.current;
-        const original = dataRows.find((item) => rowKey(item) === editingRowKey);
+        const original = snapshot.row;
         try {
-            if (!original) return;
-            const values = Object.fromEntries(Object.entries(editingDraft).filter(([key, value]) => value !== editCell(key, original[key])).map(([key, value]) => {
-                const type = data?.columnTypes?.[key]?.toLowerCase() || '';
-                if (value === null) return [key, null];
-                const text = String(value);
-                if (/^jsonb?(?:\s|$)|\[\]$/.test(type) || original[key] !== null && typeof original[key] === 'object') {
-                    let parsed: unknown;
-                    try { parsed = JSON.parse(text); } catch { throw new Error(`${key} must be valid JSON`); }
-                    if (/\[\]$/.test(type) && !Array.isArray(parsed)) throw new Error(`${key} must be a JSON array`);
-                    return [key, parsed];
-                }
-                if (typeof original[key] === 'boolean' || type === 'boolean') {
-                    if (text !== 'true' && text !== 'false') throw new Error(`${key} must be true or false`);
-                    return [key, text === 'true'];
-                }
-                if (/^(smallint|integer|bigint)$/.test(type)) {
-                    if (!/^[+-]?\d+$/.test(text)) throw new Error(`${key} must be an integer`);
-                    const parsed = Number(text); return [key, Number.isSafeInteger(parsed) ? parsed : text];
-                }
-                if (typeof original[key] === 'number' || /^(numeric|decimal|real|double precision)(?:\(|$)/.test(type)) {
-                    const parsed = Number(text);
-                    if (!text.trim() || !Number.isFinite(parsed)) throw new Error(`${key} must be a number`);
-                    return [key, /^(numeric|decimal)/.test(type) ? text : parsed];
-                }
-                return [key, value];
-            }));
+            const values = rowChanges(editingDraft, exactEditorRow(original), data?.columnTypes ?? {});
             if (Object.keys(values).length) await updateEtlRow(selectedSchema, table.name, primaryKey(original), values, snapshot.version);
             if (selection.current === target) {
                 editSnapshot.current = undefined;
                 setEditingRowKey(undefined); setEditingDraft(null);
-                if (Object.keys(values).length) { setRowDetails(undefined); setRefreshVersion((value) => value + 1); }
+                if (Object.keys(values).length) setRefreshVersion((value) => value + 1);
             }
             if (Object.keys(values).length) message.success('Row saved');
         } catch (error) {
-            const detail = rowMutationError(error);
+            const detail = rowMutationError(error, original);
             if (isSchemas) setRowDetailsError(detail); else message.error(detail);
         } finally { endMutation(); }
     };
     const removeRow = (row: Record<string, unknown>) => {
         if (!showPreview || !canDeleteRows || !data || !selectedTableAvailable || loading || mutationPending.current) return;
-        const version = isSchemas ? (activeRowDetails?.row === row ? activeRowDetails.version : undefined) : rowVersion(row);
-        if (!version) return;
-        if (data.primaryKey?.some((key) => typeof row[key] === 'number' && Number.isInteger(row[key]) && !Number.isSafeInteger(row[key]))) { message.error('Primary key exceeds safe numeric precision'); return; }
+        const version = isSchemas ? (deleteSnapshot?.data === data && deleteSnapshot.row === row ? deleteSnapshot.version : undefined) : rowVersion(row);
+        if (!version || version !== rowVersion(row)) return;
         const target = selection.current;
         const reviewedScope = policyKey;
         const key = primaryKey(row);
@@ -591,15 +577,47 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             setRowDetailsError('');
             try {
                 await deleteEtlRow(selectedSchema, table.name, key, version);
-                if (selection.current === target) { setRowDetails(undefined); setRefreshVersion((value) => value + 1); }
+                if (selection.current === target) { setDeleteSnapshot(undefined); setRefreshVersion((value) => value + 1); }
             } catch (error) {
-                const detail = rowMutationError(error);
+                const detail = rowMutationError(error, row);
                 if (isSchemas) setRowDetailsError(detail);
                 else { message.error(detail); throw error; }
             } finally { endMutation(); }
         };
-        if (isSchemas) { if (rowDetailsView === 'delete') void commit(); }
+        if (isSchemas) void commit();
         else Modal.confirm({ className: 'flow-surface-modal', title: 'Delete this row?', content: JSON.stringify(key), onOk: commit });
+    };
+    const rowActions = (row: ExplorerPreviewRow) => row.version && (canEditRows || canDeleteRows) ? (
+        <div className="flow-explorer-row-tools" aria-label="Record actions" role="group">
+            {canEditRows && <Button size="small" disabled={loading} icon={<EditOutlined />} onClick={() => startRowEdit(row.key, row)}>Edit row</Button>}
+            {canDeleteRows && <Button size="small" disabled={loading} danger icon={<DeleteOutlined />} onClick={() => {
+                if (!data || !row.version || !dataRows.includes(row.record) || mutationPending.current) return;
+                setRowDetailsError('');
+                setDeleteSnapshot({ data, row: row.record, version: row.version });
+            }}>Delete row</Button>}
+        </div>
+    ) : null;
+    const rowMutation = (row: ExplorerPreviewRow) => {
+        const deleting = deleteSnapshot?.data === data && deleteSnapshot?.row === row.record;
+        const editing = editingDraft && editSnapshot.current?.data === data && editSnapshot.current?.row === row.record;
+        if (!editing && !deleting) return null;
+        return <section className="flow-explorer-row-mutation" aria-label={deleting ? 'Confirm row deletion' : 'Edit selected row'}>
+            {rowDetailsError && <p role="alert" className="flow-explorer-row-error">{rowDetailsError}</p>}
+            {editing ? <form onSubmit={event => { event.preventDefault(); void saveRowEdit(); }}>
+                <div className="flow-explorer-row-fields">{data?.columns.map(key => <div key={key} className="flow-explorer-row-field"><span>{key}</span>{rowEditor(key)}</div>)}</div>
+                <div className="flow-explorer-row-tools">
+                    <Button htmlType="submit" type="primary" loading={mutationLoading} disabled={loading || !canEditRows || !row.version}>Save row</Button>
+                    <Button disabled={mutationLoading} onClick={cancelRowEdit}>Cancel edit</Button>
+                </div>
+            </form> : <>
+                <p>Delete this row from <strong>{tableDescription}</strong>?</p>
+                <code className="flow-explorer-row-key">{JSON.stringify(row.identity)}</code>
+                <div className="flow-explorer-row-tools">
+                    <Button danger type="primary" loading={mutationLoading} disabled={loading || !canDeleteRows || !row.version} onClick={() => removeRow(row.record)}>Confirm delete</Button>
+                    <Button disabled={mutationLoading} onClick={() => { setDeleteSnapshot(undefined); setRowDetailsError(''); }}>Cancel deletion</Button>
+                </div>
+            </>}
+        </section>;
     };
     const appliedSort = appliedQuery.sorts[0];
     const toggleHeaderSort = (field: string) => {
@@ -613,7 +631,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         setPageNumber(1);
     };
     const canChangePreview = () => {
-        if (editingRowKey || mutationPending.current) {
+        if (editingRowKey || deleteSnapshot || mutationPending.current) {
             message.warning('Save or cancel the current row edit first'); return false;
         }
         return selectedTableAvailable && showPreview && !loading;
@@ -665,6 +683,9 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     };
     const setHeaderSort = (field: string, direction: 'asc' | 'desc') => {
         if (!requireAppliedSortDraft()) return;
+        if (appliedQuery.sorts.length >= 20 && !appliedQuery.sorts.some(sort => sort.field === field)) {
+            message.warning('Remove a sort before adding another. The table supports 20 sorts.'); return;
+        }
         updateExplorerSorts([{ field, direction }, ...appliedQuery.sorts.filter((sort) => sort.field !== field)]);
     };
     const describeTerm = (term: (typeof appliedTerms)[number]): string => {
@@ -684,21 +705,35 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         queryChip('root-expression', 'filter group', describeExpression(appliedTerms), () => removeFilterChip(0, appliedQuery.filters.length - 1)),
     ] : appliedTerms.map((term) => queryChip(appliedQuery.filters[term.start].id, term.children ? 'filter group' : 'filter', describeTerm(term), () => removeFilterChip(term.start, term.end)));
 
-    const dataColumns: any[] = (data?.columns || []).map((key) => {
+    const resultLayout = useResultLayout(isSchemas && selectedTableAvailable && showPreview ? previewIdentity : '',
+        selectedSchema, table.name, data?.columns || [], appliedQuery.sorts, updateExplorerSorts);
+    const displayedColumns = isSchemas ? resultLayout.columns.filter(col => col.visible)
+        : (data?.columns || []).map(field => ({ field, width: 180, presentation: 'value' as const }));
+    const dataColumns: any[] = displayedColumns.map(({ field: key, width, presentation }) => {
         const sort = appliedQuery.sorts.find((item) => item.field === key);
         return {
-            title: isSchemas ? <Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
+            title: isSchemas ? <LayoutHeader field={key} width={width} controls={resultLayout}><Dropdown overlayClassName="flow-menu-popup flow-explorer-menu" trigger={['click']} menu={{
                 items: [
                     { key: 'asc', label: 'Sort ascending', icon: <ArrowUpOutlined /> },
                     { key: 'desc', label: 'Sort descending', icon: <ArrowDownOutlined /> },
                     { key: 'filter', label: 'Add filter', icon: <PlusOutlined /> },
+                    { key: 'hide', label: 'Hide this column', disabled: !resultLayout.ready || resultLayout.saving },
+                    { key: 'clear', label: 'Clear all sorts', disabled: !appliedQuery.sorts.length },
                 ],
                 selectedKeys: sort ? [sort.direction] : [],
-                onClick: ({ key: action }) => action === 'filter' ? addColumnFilter(key) : setHeaderSort(key, action === 'desc' ? 'desc' : 'asc'),
-            }}><button type="button" className={`flow-column-menu${sort ? ' is-sorted' : ''}`} aria-label={`Column actions for ${key}`} title={key}><span>{key}</span>{sort ? <SortDirectionIcon direction={sort.direction} /> : <DownOutlined />}</button></Dropdown> : <span className="flow-col-head"><span className="flow-col-head-label" title={key}>{isSchemas ? key : key.toUpperCase()}</span><button type="button" className={`flow-col-sort-btn${appliedSort?.field === key ? ` is-active is-${appliedSort.direction}` : ''}`} aria-label={`Sort by ${key}`} title="Sort" onClick={(event) => { event.stopPropagation(); toggleHeaderSort(key); }}><SortDirectionIcon direction={appliedSort?.field === key ? appliedSort.direction : 'asc'} /></button></span>,
+                onClick: ({ key: action }) => {
+                    if (action === 'filter') addColumnFilter(key);
+                    else if (action === 'hide') resultLayout.column(key, { visible: false });
+                    else if (action === 'clear') { if (requireAppliedSortDraft()) updateExplorerSorts([]); }
+                    else setHeaderSort(key, action === 'desc' ? 'desc' : 'asc');
+                },
+            }}><button type="button" className={`flow-column-menu${sort ? ' is-sorted' : ''}`} aria-label={`Column actions for ${key}`} title={key}><span>{key}</span>{sort ? <><SortDirectionIcon direction={sort.direction} />{appliedQuery.sorts.indexOf(sort) + 1}</> : <DownOutlined />}</button></Dropdown></LayoutHeader> : <span className="flow-col-head"><span className="flow-col-head-label" title={key}>{isSchemas ? key : key.toUpperCase()}</span><button type="button" className={`flow-col-sort-btn${appliedSort?.field === key ? ` is-active is-${appliedSort.direction}` : ''}`} aria-label={`Sort by ${key}`} title="Sort" onClick={(event) => { event.stopPropagation(); toggleHeaderSort(key); }}><SortDirectionIcon direction={appliedSort?.field === key ? appliedSort.direction : 'asc'} /></button></span>,
             dataIndex: key, key,
+            ...(isSchemas && { width, className: resultLayout.layout.wrap ? 'result-cell-wrap' : 'result-cell-clip',
+                onCell: () => ({ style: { width, minWidth: width, maxWidth: width } }) }),
             render: (value: unknown, row: Record<string, unknown>) => {
                 if (!isSchemas && editingRowKey === rowKey(row) && editingDraft) return rowEditor(key);
+                if (isSchemas && presentation === 'timeSeries') return <ExplorerSeriesCell value={value} />;
                 const shown = formatCell(value);
                 const scalar = isSchemas ? exactCellValue(value, data?.columnTypes?.[key]) : undefined;
                 if (scalar === undefined) return shown;
@@ -818,7 +853,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         setLoading(true); setPreviewError(''); setPreviewUnavailable(false);
         const controller = new AbortController();
         const offset = (pageNumber - 1) * pageSize;
-        const query = { ...appliedQuery, limit: pageSize, offset, partition, forEditing: canManage };
+        const query = { ...appliedQuery, limit: pageSize, offset, partition, forEditing: canManage, withIdentity: true };
         const current = () => {
             const session = getSessionState();
             return version === dataRequest.current && !controller.signal.aborted && classicPreviewScope.current === policyKey &&
@@ -1103,6 +1138,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             {!isSchemas && <button type="button" className={`flow-tool ${scriptOpen ? 'is-active' : ''}`} onClick={() => activateTool('script')}>Layer script</button>}
                             {isSchemas && <>
                                 {partitions.length > 0 && <button type="button" className={`flow-tool ${partitionOpen || partition ? 'is-active' : ''}`} aria-expanded={partitionOpen} onClick={() => activateTool('partition')}>{partition ? `Partition: ${partition}` : 'Partitions'}</button>}
+                                <LayoutToolbar controls={resultLayout} admin={canManage} types={data?.columnTypes} />
                                 <span className="flow-schema-preview-summary" role="status">{loading ? 'Loading preview…' : data ? `${dataRows.length.toLocaleString('en-US')} shown · ${fieldCount.toLocaleString('en-US')} columns` : 'Preview unavailable'}</span>
                             </>}
                         </div>}
@@ -1158,23 +1194,17 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                             </div>}
                             {isSchemas && resourceView === 'api' && (canManage ? apiPanel : <div className="flow-schema-state" role="status">Published APIs are available to administrators only.</div>)}
                             {showPreview && partitionOpen &&  <div  className="flow-partition-tags">{partitions.map((item)  =>  <Tag.CheckableTag  key={item.name}  checked={partition  ===  item.name}  onChange={() => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPartition(partition === item.name ? undefined : item.name); setPageNumber(1); }}>{item.name.replace('p2026_',  '')}</Tag.CheckableTag>)}</div>}
-                            {showPreview && !previewError && (isSchemas ? <>
-                                <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={false} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({
-                                    className: 'flow-explorer-result-row',
-                                    tabIndex: loading ? -1 : 0,
-                                    'aria-haspopup': 'dialog',
-                                    onClick: (event: React.MouseEvent<HTMLTableRowElement>) => {
-                                        if (!(event.target instanceof Element) || event.target.closest('button')) return;
-                                        openRowDetails(row, event.currentTarget);
-                                    },
-                                    onKeyDown: (event: React.KeyboardEvent<HTMLTableRowElement>) => {
-                                        if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
-                                            event.preventDefault();
-                                            openRowDetails(row, event.currentTarget);
-                                        }
-                                    },
-                                })} /></ConfigProvider>
-                                {previewPage && <footer className="flow-preview-pager">
+                            {showPreview && !previewError && (isSchemas ?
+                                <ExplorerSelection schema={selectedSchema} table={table.name} rows={dataRows} columns={data?.columns ?? emptyPreviewColumns}
+                                    columnTypes={data?.columnTypes} dataColumns={dataColumns} rowKey={rowKey} rowIdentity={primaryKey} rowVersion={rowVersion}
+                                    presentations={Object.fromEntries(resultLayout.columns.map(column => [column.field, column.presentation ?? 'value']))}
+                                    loading={loading} locked={!!editingRowKey || !!deleteSnapshot || mutationLoading}
+                                    renderTitleLink={row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity}>{row.title}</ExplorerRecordLink>}
+                                    renderFullDetails={row => <ExplorerRecordLink schema={selectedSchema} table={table.name} identity={row.identity} />}
+                                    renderRelationships={row => <ExplorerRowLinks schema={selectedSchema} table={table.name} primaryKey={row.identity} />}
+                                    renderActions={rowActions} renderMutation={rowMutation}
+                                    renderJson={row => <div className="flow-json-tree"><JsonTreeValue name="" value={row.record} depth={0} comma={false} /></div>}
+                                    footer={previewPage && <footer className="flow-preview-pager">
                                     {(!previewPage.result.stableOrder || previewPage.result.hasMore && !previewPage.result.canPageFurther) && <div className="flow-preview-pager-notices" role="status">
                                         {!previewPage.result.stableOrder && <span>No stable primary key. Rows may repeat or be skipped when paging.</span>}
                                         {previewPage.result.hasMore && !previewPage.result.canPageFurther && <span>Interactive preview limit reached. Narrow filters or choose a partition to continue.</span>}
@@ -1192,8 +1222,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                                             <Button size="small" disabled={loading || previewPage.offset !== (pageNumber - 1) * pageSize || previewPage.limit !== pageSize || !previewPage.result.canPageFurther} onClick={() => { if (canChangePreview()) setPageNumber(pageNumber + 1); }}>Next</Button>
                                         </div>
                                     </nav>
-                                </footer>}
-                            </> : <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>)}
+                                </footer>} /> : <ConfigProvider locale={enUS}><Table className="flow-data-table" size="small" loading={loading} pagination={{ current: pageNumber, pageSize, total: data?.total ?? data?.rowCount ?? 0, size: 'small', showTotal: (total: number, range: [number, number]) => `${range[0]}–${range[1]} / ${data?.totalEstimated ? '~' : ''}${total.toLocaleString('en-US')} rows${data?.totalEstimated ? ' (estimated)' : ''} · ${table.size} · ${fieldCount} fields`, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (page, size) => { if (editingRowKey) { message.warning('Save or cancel the current row edit first'); return; } setPageNumber(size !== pageSize ? 1 : page); setPageSize(size); } }} rowKey={rowKey} scroll={{ x: 'max-content' }} dataSource={dataRows} columns={dataColumns} onRow={(row) => ({ onDoubleClick: () => startRowEdit(rowKey(row)), className: editingRowKey === rowKey(row) ? 'flow-row-editing' : undefined })} /></ConfigProvider>)}
                     </div>
                     <Modal  className="flow-surface-modal flow-script-modal"  title="Layer  script"  open={scriptOpen} onCancel={closeScript} keyboard={!mutationLoading} maskClosable={!mutationLoading}  footer={null}  width={720}>
                         <div  className="flow-script-editor">
@@ -1244,41 +1273,6 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             </div>
         </Modal>
         <Modal className="flow-surface-modal"  title="Data  analysis"  open={showPreview && analysisOpen}  onCancel={()  =>  setAnalysisOpen(false)}  footer={<Button  onClick={()  =>  setAnalysisOpen(false)}>Close</Button>}><div  className="flow-analysis-grid"><div><span>Visible  rows</span><strong>{dataRows.length}</strong></div><div><span>Partitions</span><strong>{new  Set(dataRows.map((row)  =>  row.partition)).size}</strong></div><div><span>Ready</span><strong>{dataRows.filter((row)  =>  row.status  ===  'ready').length}</strong></div></div></Modal>
-        {activeRowDetails && <Drawer open title="Row details" onClose={closeRowDetails} width="min(480px, 100vw)"
-            rootClassName="flow-surface-modal flow-explorer-row-details" keyboard={!mutationLoading} closable={!mutationLoading} maskClosable={!mutationLoading}>
-            <p className="flow-explorer-row-table"><code>{tableDescription}</code></p>
-            {rowDetailsError && <p role="alert" className="flow-explorer-row-error">{rowDetailsError}</p>}
-            {editingDraft && editingRowKey ?
-                <form onSubmit={event => { event.preventDefault(); void saveRowEdit(); }}>
-                    <div className="flow-explorer-row-fields">{data?.columns.map(key => <div key={key} className="flow-explorer-row-field"><span>{key}</span>{rowEditor(key)}</div>)}</div>
-                    <div className="flow-explorer-row-tools">
-                        <Button htmlType="submit" type="primary" loading={mutationLoading} disabled={loading || !canEditRows || !activeRowDetails.version}>Save row</Button>
-                        <Button disabled={mutationLoading} onClick={cancelRowEdit}>Cancel edit</Button>
-                    </div>
-                </form>
-            : rowDetailsView === 'delete' ? <section aria-label="Confirm row deletion">
-                <p>Delete this row from <strong>{tableDescription}</strong>?</p>
-                <code className="flow-explorer-row-key">{JSON.stringify(primaryKey(activeRowDetails.row))}</code>
-                <div className="flow-explorer-row-tools">
-                    <Button danger type="primary" loading={mutationLoading} disabled={loading || !canDeleteRows || !activeRowDetails.version} onClick={() => removeRow(activeRowDetails.row)}>Confirm delete</Button>
-                    <Button disabled={mutationLoading} onClick={() => { setRowDetailsView('properties'); setRowDetailsError(''); }}>Cancel deletion</Button>
-                </div>
-            </section> : <>
-                <div className="flow-explorer-row-tools">
-                    <Button aria-pressed={rowDetailsView === 'json'} icon={<CodeOutlined />} onClick={() => setRowDetailsView(rowDetailsView === 'json' ? 'properties' : 'json')}>JSON preview</Button>
-                    {canEditRows && activeRowDetails.version && <Button disabled={loading} icon={<EditOutlined />} onClick={() => {
-                        setRowDetailsView('properties');
-                        startRowEdit(rowKey(activeRowDetails.row));
-                    }}>Edit row</Button>}
-                    {canDeleteRows && activeRowDetails.version && <Button disabled={loading} danger icon={<DeleteOutlined />} onClick={() => setRowDetailsView('delete')}>Delete row</Button>}
-                </div>
-                {rowDetailsView === 'json'
-                    ? <div className="flow-json-tree" aria-label="Row JSON" role="region"><JsonTreeValue name="" value={activeRowDetails.row} depth={0} comma={false} /></div>
-                    : <dl className="flow-explorer-row-fields">{data?.columns.map(key => <div key={key} className="flow-explorer-row-field">
-                        <dt>{key}</dt><dd>{formatCell(activeRowDetails.row[key])}</dd>
-                    </div>)}</dl>}
-            </>}
-        </Drawer>}
         <Modal  className="flow-surface-modal flow-json-preview-modal"  title={jsonRow  ?  `Row  JSON  ·  ${table.name}`  :  'Row  JSON'}  open={!isSchemas && showPreview && !!jsonRow}  onCancel={()  =>  setJsonRow(null)}  footer={<Button  onClick={()  =>  setJsonRow(null)}>Close</Button>}  width={720}>
             <div  className="flow-json-tree">{jsonRow  ?  <JsonTreeValue  name=""  value={jsonRow}  depth={0}  comma={false}  />  :  null}</div>
         </Modal>

@@ -44,8 +44,9 @@ class PreviewPolicyPostgreSQLTests(unittest.IsolatedAsyncioTestCase):
         schema = "ts_explorer_version_test"
         async with pg.session() as session:
             await session.execute(text(f"CREATE SCHEMA {schema}"))
-            await session.execute(text(f"CREATE TABLE {schema}.assets (id int PRIMARY KEY, encode text)"))
+            await session.execute(text(f"CREATE TABLE {schema}.assets (id bigint PRIMARY KEY, encode text)"))
             await session.execute(text(f"INSERT INTO {schema}.assets VALUES (1, 'original'), (2, NULL)"))
+            await session.execute(text(f"INSERT INTO {schema}.assets VALUES (9007199254740993, 'exact')"))
         self.addAsyncCleanup(pg.execute, f"DROP SCHEMA {schema} CASCADE")
         layers = object.__new__(EtlLayers)
         layers._pg = pg
@@ -57,6 +58,10 @@ class PreviewPolicyPostgreSQLTests(unittest.IsolatedAsyncioTestCase):
             async with api(False) as reader:
                 self.assertEqual((await reader.post(endpoint+"/preview-rows", json={"forEditing": True})).status_code, 403)
                 self.assertNotIn("rowVersions", (await reader.post(endpoint+"/preview-rows", json={})).json())
+                exact = (await reader.post(endpoint+"/preview-rows", json={"withIdentity": True, "offset": 2})).json()
+                self.assertEqual(exact["rowIdentities"], [{"id": "9007199254740993"}])
+                self.assertEqual(exact["rows"][0]["id"], "9007199254740993")
+                self.assertNotIn("rowVersions", exact)
             async with api(True) as admin:
                 preview = (await admin.post(endpoint+"/preview-rows", json={"limit": 1, "forEditing": True})).json()
                 self.assertEqual(preview["rows"], [{"id": 1, "encode": "original"}])

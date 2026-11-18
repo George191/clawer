@@ -1,0 +1,9 @@
+.explorer-row-links { min-width: 0; }
+.explorer-row-links select { max-width: 100%; }
+.explorer-row-links ul { margin: 0; padding: 0; list-style: none; }
+.explorer-row-links li { padding: .5rem 0; border-bottom: 1px solid var(--ui-border); }
+.explorer-row-links li > a { margin-right: .75rem; overflow-wrap: anywhere; }
+.explorer-row-links nav { display: flex; align-items: center; gap: .5rem; margin-top: .75rem; }
+.explorer-linked-properties { margin: .5rem 0; padding: .5rem; max-height: 18rem; overflow: auto; }
+.explorer-linked-properties div { display: grid; grid-template-columns: minmax(4rem, 1fr) minmax(0, 2fr); gap: .5rem; padding: .2rem; }
+.explorer-linked-properties dt, .explorer-linked-properties dd { margin: 0; overflow-wrap: anywhere; }

@@ -231,6 +231,7 @@ export interface EtlTableColumn {
 }
 
 export interface QueryResult {
+  rowIdentities?: Record<string, string>[];
   rowVersions?: string[];
   rowActions?: { edit: boolean; delete: boolean };
   primaryKey?: string[];

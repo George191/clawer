@@ -381,10 +381,9 @@
 .flow-console--ontology .flow-schema-workbench .flow-data-table .flow-column-menu.is-sorted { color: var(--ontology-link); }
 .flow-explorer-result-row { cursor: pointer; }
 .flow-explorer-result-row:focus-visible { outline: 2px solid var(--ontology-primary); outline-offset: -2px; }
-.flow-explorer-row-details .ui-drawer-content { background: var(--ontology-panel); }
-.flow-explorer-row-table { margin: 0 0 16px; color: var(--ontology-muted); overflow-wrap: anywhere; }
+.flow-explorer-row-mutation { margin-block: 10px; }
 .flow-explorer-row-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 12px; }
-.flow-explorer-row-tools button[aria-pressed="true"] { border-color: var(--ontology-primary); color: var(--ontology-link); }
+.flow-explorer-selection__view > .flow-explorer-row-tools { margin: 0 0 4px; }
 .flow-explorer-row-fields { display: grid; margin: 0; }
 .flow-explorer-row-field {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 10px; align-items: start;

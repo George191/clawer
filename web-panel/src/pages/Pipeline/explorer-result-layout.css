@@ -1,0 +1,20 @@
+.result-column-header { display: flex; align-items: center; gap: 3px; position: relative; width: 100%; min-width: 0; padding-right: 8px; }
+.result-column-header .flow-column-menu { min-width: 0; }
+.result-column-header .result-grip, .result-column-config .result-grip { cursor: grab; color: var(--ontology-muted); user-select: none; }
+.result-resizer { cursor: col-resize; touch-action: none; align-self: stretch; position: absolute; right: -7px; width: 9px; top: -7px; bottom: -7px; z-index: 1; }
+.result-resizer:hover, .result-resizer:focus-visible { border-right: 2px solid var(--ontology-link, #2684c5); }
+.flow-console--ontology .flow-data-table th:has(.result-column-header) .ui-table-heading { display: flex; width: 100%; }
+.flow-console--ontology .flow-data-table td.result-cell-clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flow-console--ontology .flow-data-table td.result-cell-wrap,
+.flow-console--ontology .flow-data-table td.result-cell-wrap .flow-explorer-value > span:first-child {
+  white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; text-overflow: clip;
+}
+.result-column-config, .result-column-config > label:has(input[type=search]) { display: grid; gap: 10px; }
+.result-column-config input[type=search] { border: 1px solid var(--ontology-control-border, #737e88); border-radius: 4px; padding: 6px; background: transparent; color: inherit; }
+.result-column-config ul { padding: 0; margin: 0; max-height: 36vh; overflow: auto; list-style: none; }
+.result-column-config li, .result-layout-actions, .result-column-config label { display: flex; gap: 8px; align-items: center; }
+.result-column-config li { padding: 5px 0; border-bottom: 1px solid var(--ontology-border, #737e8844); }
+.result-column-config li label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.result-column-config li button { background: transparent; border: 0; color: inherit; cursor: pointer; text-decoration: underline; }
+.result-column-config li button:disabled { opacity: .45; }
+.result-layout-actions { flex-wrap: wrap; }

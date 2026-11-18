@@ -895,7 +895,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         <nav className="ontology-workspace-navigation" aria-label="Ontology Foundry workspace">
           {projectConfigs['etl-pipeline'].sections[0].children.map((item) => (
             <React.Fragment key={item.key}>
-              <Link to={item.key} aria-current={matchPath(item.key, location.pathname) ? 'page' : undefined}>{item.icon}<span>{item.label}</span></Link>
+              <Link to={item.key} aria-current={matchPath({ path: item.key, end: item.key !== '/ontology/explorer' }, location.pathname) ? 'page' : undefined}>{item.icon}<span>{item.label}</span></Link>
               {item.key === '/ontology/explorer' && currentUserContext?.user.is_superuser && (
                 <Link to="/ontology/connections" aria-current={matchPath('/ontology/connections', location.pathname) ? 'page' : undefined}><DatabaseOutlined /><span>Data Connections</span></Link>
               )}

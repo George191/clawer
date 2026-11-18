@@ -15,12 +15,30 @@ class RowPreviewPolicy(BaseModel):
     mode: Literal["classic", "indexed_id_required", "indexed_projection_required"]
 
 
+class ExplorerRowKey(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    key: dict[str, str | int | bool | float] = Field(min_length=1, max_length=32)
+
+    @model_validator(mode="after")
+    def bounded(self):
+        if any(len(k) > 63 or len(str(v)) > 4096 for k, v in self.key.items()):
+            raise ValueError("Primary key is too large")
+        return self
+
+
+class ExplorerRowLinksQuery(ExplorerRowKey):
+    relation: str | None = Field(default=None, min_length=1, max_length=64)
+    offset: int = Field(default=0, ge=0, le=500)
+    limit: int = Field(default=10, ge=1, le=25)
+
+
 class DataQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     limit: int = Field(default=50, ge=1, le=500)
     offset: int = Field(default=0, ge=0, le=1_000_000)
     partition: str | None = None
     forEditing: bool = False
+    withIdentity: bool = False
     search: str = Field(default="", max_length=1000)
     filters: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
     sorts: list[dict[str, str]] = Field(default_factory=list, max_length=20)
