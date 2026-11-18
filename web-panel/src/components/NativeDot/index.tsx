@@ -2,8 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './style.css';
 
 export const DOT_ACTIVITIES = {
-  Sleep: { label: '休息', detail: '原生困倦眼睑与休息姿态' },
-  None: { label: '空闲 / 睡眠', detail: '原生待机与休息动作' },
+  None: { label: '空闲', detail: '原生待机与休息动作' },
   Working: { label: '工作', detail: '原版全息终端与操作动作' },
   Searching: { label: '搜索', detail: '原版搜索道具与动作' },
   Creating: { label: '创建', detail: '原版笔记与编辑动作' },
@@ -11,7 +10,7 @@ export const DOT_ACTIVITIES = {
   Thinking: { label: '思考', detail: '原版思考动作与灯泡' },
   NeedsInput: { label: '等待输入', detail: '原版等待输入提示' },
   Ready: { label: '完成', detail: '原版完成反馈' },
-  Paused: { label: '暂停', detail: '原版暂停状态' },
+  Paused: { label: '暂停 / 睡眠', detail: '原版休息与 ZZZ 动画' },
   Error: { label: '错误', detail: '原版异常反馈' },
 } as const;
 export type DotActivity = keyof typeof DOT_ACTIVITIES;

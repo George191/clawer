@@ -24,10 +24,8 @@ on the login screen, retains the iframe across route/activity changes, and forwa
 page pointer coordinates to the native pointer/gaze APIs. `preload` prepares the first
 frame offscreen, then suspends offscreen rendering.
 
-The collection page maps no task to `Sleep`: native None activity with native
-`sleepy_lids` eyes (ID `sleepy_lids`) and no eyewear. Starting a task restores
-the configured eyes and eyewear in the same engine instance. This is a rest
-appearance, not a separate native sleep timeline or ZZZ effect.
+The collection page maps no task to native `Paused`, including its original ZZZ
+sleep animation. Task activity changes do not modify the configured appearance.
 
 All props are optional: `activity` defaults to `None`, `paused` to `false`, and
 `dark` to `true`. `DotActivity`, `NativeDotProps`, and `DOT_ACTIVITIES` are public
