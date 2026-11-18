@@ -1362,7 +1362,7 @@ export const checkPreviewIndexCoverage = (
     'terms' in request ? { terms: request.terms.map(({ field, operator }) => ({ field, operator })) } :
       { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
 
-export type RowPreviewMode = 'classic' | 'indexed_id_required';
+export type RowPreviewMode = 'classic' | 'indexed_id_required' | 'indexed_projection_required';
 export const fetchRowPreviewPolicy = (schema: string, table: string, signal?: AbortSignal): Promise<{ mode: RowPreviewMode }> =>
   client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-preview-policy`, { signal })
     .then(r => unwrap<{ mode: RowPreviewMode }>(r.data));
@@ -1380,6 +1380,15 @@ export const fetchIndexedIdSample = (schema: string, table: string, signal?: Abo
 export const queryIndexedIdSample = (schema: string, table: string, predicate: IndexedIdSamplePredicate, signal?: AbortSignal): Promise<IndexedIdSampleResult> =>
   client.post(indexedIdSamplePath(schema, table), predicate, { signal }).then(r => unwrap<IndexedIdSampleResult>(r.data));
 
+export type IndexedProjectionField = { name: string; type: 'bigint' | 'boolean' | 'varchar(32)' };
+export type IndexedProjectionCapability = { available: boolean; limit: 20; fields?: IndexedProjectionField[]; projectionRevision?: string };
+export type IndexedProjectionResult = Omit<IndexedIdSampleResult, 'ids'> & { rows: (string | boolean | null)[][]; fields?: IndexedProjectionField[]; projectionRevision?: string };
+const indexedProjectionPath = (schema: string, table: string) =>
+  `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/indexed-projection-preview`;
+export const fetchIndexedProjectionCapability = (schema: string, table: string, signal?: AbortSignal): Promise<IndexedProjectionCapability> =>
+  client.get(indexedProjectionPath(schema, table), { signal }).then(r => unwrap<IndexedProjectionCapability>(r.data));
+export const queryIndexedProjection = (schema: string, table: string, predicate: IndexedIdSamplePredicate, expectedProjectionRevision: string, signal?: AbortSignal): Promise<IndexedProjectionResult> =>
+  client.post(indexedProjectionPath(schema, table), { ...predicate, expectedProjectionRevision }, { signal }).then(r => unwrap<IndexedProjectionResult>(r.data));
 export type IndexedCompoundSamplePredicate = { tenantId: string; groupId: string; idFrom: string; idTo: string };
 const indexedCompoundSamplePath = (schema: string, table: string) =>
   `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/indexed-compound-id-sample`;

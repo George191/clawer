@@ -1,6 +1,7 @@
 """Strict contracts for the ordinary Explorer ID-only sample."""
 
 from typing import Annotated, Literal, Self
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -64,3 +65,27 @@ class IndexedSampleResult(BaseModel):
     reason: SampleReason
     ids: list[str] = Field(default_factory=list)
     hasMore: bool = False
+
+class IndexedProjectionRequest(IndexedSampleRequest):
+    expectedProjectionRevision: UUID
+
+
+class IndexedProjectionField(BaseModel):
+    name: str
+    type: Literal["bigint", "boolean", "varchar(32)"]
+
+
+class IndexedProjectionCapability(BaseModel):
+    available: bool
+    limit: Literal[20] = 20
+    fields: list[IndexedProjectionField] | None = Field(default=None, exclude_if=lambda value: value is None)
+    projectionRevision: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class IndexedProjectionResult(BaseModel):
+    state: Literal["sampled", "blocked"]
+    reason: SampleReason
+    rows: list[list[str | bool | None]] = Field(default_factory=list)
+    hasMore: bool = False
+    fields: list[IndexedProjectionField] | None = Field(default=None, exclude_if=lambda value: value is None)
+    projectionRevision: UUID | None = Field(default=None, exclude_if=lambda value: value is None)

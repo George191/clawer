@@ -114,3 +114,134 @@ class PreviewPolicyPostgreSQLTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((await client.get(f"/etl/{_SCHEMA}/{protected}/row-preview-policy")).json(),
                                      {"mode": "indexed_id_required"})
         self.assertTrue(any("pg_catalog.pg_inherits" in query for query in log))
+
+    async def test_projection_requires_current_review_and_exact_index_only_plan(self):
+        from uuid import uuid4
+
+        from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedProjectionScope, IndexedSampleScope
+
+        url = make_url(_URL)
+        if url.database != "ontology_creation_regression" or url.host not in {"127.0.0.1", "::1"} or url.query:
+            self.fail("Only the exact disposable Explorer database may be used")
+        pg = PostgresClient(_URL)
+        await pg.connect(max_retries=1)
+        self.addAsyncCleanup(pg.close)
+        schema, table = "ts_projection_probe", "sampled"
+        marker = uuid4()
+        async with pg.session() as session:
+            for statement in ontology.ONTOLOGY_DDL_STATEMENTS:
+                await session.execute(text(statement))
+            for sql in (
+                f"CREATE SCHEMA {schema}",
+                "CREATE TABLE public.ontology_explorer_indexed_sample_identity(marker uuid PRIMARY KEY)",
+                f"CREATE TABLE {schema}.{table} (id bigint, flag boolean, short varchar(32), private text, "
+                "PRIMARY KEY(id) INCLUDE(flag,short))",
+                f"INSERT INTO {schema}.{table} SELECT g,CASE WHEN g % 2 = 0 THEN true END,"
+                "'甲',repeat('never-visible',8) FROM generate_series(1,110000) g",
+                f"ANALYZE {schema}.{table}",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("INSERT INTO public.ontology_explorer_indexed_sample_identity VALUES(:marker)"),
+                                  {"marker": marker})
+            pins = (await session.execute(text("""
+                SELECT i.indrelid::bigint, pg_relation_filenode(i.indrelid)::bigint, i.indexrelid::bigint,
+                    pg_relation_filenode(i.indexrelid)::bigint
+                FROM pg_index i WHERE i.indrelid=to_regclass(:relation) AND i.indisprimary
+            """), {"relation": f"{schema}.{table}"})).one()
+        self.addAsyncCleanup(pg.execute, f"DROP SCHEMA {schema} CASCADE")
+        self.addAsyncCleanup(pg.execute, "DROP TABLE public.ontology_explorer_indexed_sample_identity")
+        binding = dict(database=url.database, schema=schema, table=table, heapOid=pins[0], heapFilenode=pins[1],
+                       indexOid=pins[2], indexFilenode=pins[3])
+        profile = IndexedProjectionScope(**binding, keyColumn="id", marker=marker, include=[
+            {"name": "flag", "type": "boolean"}, {"name": "short", "type": "varchar(32)"},
+        ])
+        layers = object.__new__(EtlLayers)
+        layers._pg = pg
+        statements = []
+        execute, scalar = AsyncSession.execute, AsyncSession.scalar
+
+        def record(query, params):
+            sql = " ".join(str(query).split())
+            if f'FROM ONLY "{schema}"."{table}"' in sql and sql.startswith(("SELECT r.", "EXPLAIN ")):
+                statements.append((sql, params))
+
+        async def capture(session, query, params=None, **kwargs):
+            record(query, params)
+            return await execute(session, query, params, **kwargs)
+
+        async def capture_scalar(session, query, params=None, **kwargs):
+            record(query, params)
+            return await scalar(session, query, params, **kwargs)
+
+        async def sessions():
+            async with pg.session() as session:
+                yield session
+
+        base = f"/etl/{schema}/{table}"
+        route = base + "/indexed-projection-preview"
+        with (
+            patch.multiple(settings, ENVIRONMENT="local", ONTOLOGY_EXPLORER_INDEXED_PROJECTION_ENABLED=True,
+                           ONTOLOGY_EXPLORER_INDEXED_PROJECTION_PROFILE=profile,
+                           ONTOLOGY_EXPLORER_REQUIRED_INDEXED_PREVIEW_TABLES=(RequiredIndexedPreviewTable(
+                               schema=schema, table=table, mode="indexed_projection_required",
+                           ),),
+                           ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ENABLED=True,
+                           ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER=marker,
+                           ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ALLOWLIST=[IndexedSampleScope(**binding, keyColumn="id")],
+                           ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_ENABLED=True,
+                           ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_PROFILE=IndexedCompoundSampleScope(**binding)),
+            patch("app.web.api.routes.etl.get_etl_layers", return_value=layers),
+            patch.object(AsyncSession, "execute", capture),
+            patch.object(AsyncSession, "scalar", capture_scalar),
+        ):
+            async with api(True, sessions) as client:
+                mode = await client.get(base + "/row-preview-policy")
+                self.assertEqual(mode.json(), {"mode": "indexed_projection_required"})
+                cap = await client.get(route)
+                self.assertTrue(cap.json().get("available"), cap.text)
+                fields = [{"name": "id", "type": "bigint"}, {"name": "flag", "type": "boolean"},
+                          {"name": "short", "type": "varchar(32)"}]
+                self.assertEqual(cap.json()["fields"], fields)
+                self.assertEqual(cap.headers["cache-control"], "private, no-store")
+                revision = cap.json()["projectionRevision"]
+                for old in ("/indexed-id-sample", "/indexed-compound-id-sample"):
+                    self.assertFalse((await client.get(base + old)).json()["available"])
+                    bounds = {"idFrom": "1", "idTo": "29"}
+                    if old.startswith("/indexed-compound"):
+                        bounds.update(tenantId="1", groupId="1")
+                    self.assertEqual((await client.post(base + old, json=bounds)).json()["reason"], "scope_unavailable")
+                self.assertEqual((await client.get(base + "/data")).status_code, 409)
+                self.assertEqual((await client.post(base + "/preview-rows", json={})).status_code, 409)
+                with patch.object(settings, "ONTOLOGY_EXPLORER_INDEXED_PROJECTION_ENABLED", False):
+                    self.assertEqual((await client.get(base + "/row-preview-policy")).json(),
+                                     {"mode": "indexed_projection_required"})
+                    self.assertEqual((await client.get(route)).json(), {"available": False, "limit": 20})
+                    self.assertFalse((await client.get(base + "/indexed-id-sample")).json()["available"])
+                stale = await client.post(route, json={"idEquals": "42", "expectedProjectionRevision": str(uuid4())})
+                self.assertEqual(stale.json()["reason"], "scope_unavailable")
+                invalid = await client.post(route, json={"idEquals": "42", "expectedProjectionRevision": revision,
+                                                          "fields": ["private"]})
+                self.assertEqual(invalid.status_code, 422)
+                self.assertEqual(statements, [])
+                body = {"expectedProjectionRevision": revision, "idFrom": "1", "idTo": "29"}
+                sampled = await client.post(route, json=body)
+                self.assertEqual(sampled.json()["state"], "sampled", sampled.text)
+                self.assertEqual(sampled.headers["cache-control"], "private, no-store")
+                self.assertEqual(sampled.json()["rows"][:2], [["1", None, "甲"], ["2", True, "甲"]])
+                self.assertEqual((len(sampled.json()["rows"]), sampled.json()["hasMore"]), (20, True))
+                self.assertEqual((sampled.json()["fields"], sampled.json()["projectionRevision"]), (fields, revision))
+                self.assertEqual(len(statements), 2)
+                self.assertEqual(statements[0][0].split(") ", 1)[1], statements[1][0])
+                self.assertEqual(statements[0][1], statements[1][1])
+                self.assertNotIn("private", str(statements))
+                with patch("app.web.services.indexed_projection_preview._verified", return_value=False):
+                    self.assertEqual((await client.post(route, json=body)).json()["reason"], "unsupported_plan")
+                self.assertEqual(len(statements), 3)
+                exact = await client.post(route, json={"expectedProjectionRevision": revision, "idEquals": "42"})
+                self.assertEqual(exact.json()["rows"], [["42", True, "甲"]], exact.text)
+                async with pg.session() as concurrent:
+                    await concurrent.execute(text(f"LOCK TABLE ONLY {schema}.{table} IN ROW EXCLUSIVE MODE"))
+                    self.assertEqual((await client.post(route, json=body)).json()["state"], "blocked")
+                await pg.execute(f"REINDEX INDEX {schema}.{table}_pkey")
+                self.assertEqual((await client.post(route, json=body)).json()["reason"], "scope_unavailable")
+                self.assertEqual((await client.get(route)).json(), {"available": False, "limit": 20})

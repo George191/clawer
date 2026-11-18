@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.web.api.models.indexed_id_sample import IndexedCompoundSampleRequest, IndexedSampleCapability, IndexedSampleResult
 from app.web.core.config import settings
 from app.web.core.config.indexed_sample import IndexedCompoundSampleScope
-from app.web.services.etl_layers import _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL
+from app.web.services.etl_layers import (
+    _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL, requires_indexed_projection,
+)
 from app.web.services.index_preview_sandbox import _approved_plan, _release_preview_transaction
 from app.web.services.indexed_id_sample import _limits, _qualified, _reviewed_database
 
@@ -56,7 +58,8 @@ _ATOM = re.compile(
 
 def _allowed(schema: str, table: str) -> IndexedCompoundSampleScope | None:
     scope = settings.ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_PROFILE
-    if (not settings.ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_ENABLED or settings.ENVIRONMENT != "local"
+    if (requires_indexed_projection(schema, table) or not settings.ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_ENABLED
+        or settings.ENVIRONMENT != "local"
         or "ENVIRONMENT" not in settings.model_fields_set
         or settings.ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER is None
         or scope is None or (scope.schema_name, scope.table) != (schema, table)):

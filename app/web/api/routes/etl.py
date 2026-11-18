@@ -21,7 +21,10 @@ from app.web.api.models.lineage_neighbors import (
     LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
     LineagePathTargets, ObservedLineage,
 )
-from app.web.api.models.indexed_id_sample import IndexedCompoundSampleRequest, IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult
+from app.web.api.models.indexed_id_sample import (
+    IndexedCompoundSampleRequest, IndexedProjectionCapability, IndexedProjectionRequest, IndexedProjectionResult,
+    IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult,
+)
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
 from app.web.api.models.asset_collected_stats import AssetCollectedStats
 from app.web.api.models.asset_freshness import (
@@ -186,6 +189,7 @@ from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
 from app.web.services.indexed_compound_id_sample import indexed_compound_sample_capability, sample_indexed_compound_ids
 from app.web.services.indexed_id_sample import indexed_sample_capability, sample_indexed_ids
+from app.web.services.indexed_projection_preview import indexed_projection_capability, preview_indexed_projection
 from app.web.services.column_planner_statistic import ColumnPlannerStatisticUnavailable, read_column_planner_statistic
 from app.web.services.lineage_column_mapping_paths import ColumnMappingRootUnavailable, read_column_mapping_paths
 from app.web.services.lineage_column_references import read_lineage_column_references
@@ -1606,6 +1610,44 @@ async def post_indexed_compound_id_sample(
         sample_indexed_compound_ids(session, schema, table, payload), wait_for_disconnect(),
         IndexedSampleResult(state="blocked", reason="query_unavailable"),
         cancelled_message="Indexed compound ID sample was cancelled",
+    )
+
+
+@write.get("/{schema}/{table}/indexed-projection-preview", response_model=IndexedProjectionCapability)
+async def get_indexed_projection_preview(
+    schema: WarehouseSchema, table: TableName, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexedProjectionCapability | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    if request.query_params:
+        return JSONResponse({"detail": "Invalid projection preview request"}, status_code=422,
+                            headers={"Cache-Control": "private, no-store"})
+    return await indexed_projection_capability(session, schema, table)
+
+
+@write.post("/{schema}/{table}/indexed-projection-preview", response_model=IndexedProjectionResult)
+async def post_indexed_projection_preview(
+    schema: WarehouseSchema, table: TableName, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexedProjectionResult | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        data = await _parse_snapshot_intent_json(request)
+        payload = IndexedProjectionRequest.model_validate(data)
+        if data["expectedProjectionRevision"] != str(payload.expectedProjectionRevision):
+            raise ValueError("Invalid revision")
+    except (ValueError, TimeoutError, RecursionError):
+        return JSONResponse({"detail": "Invalid projection preview request"}, status_code=422,
+                            headers={"Cache-Control": "private, no-store"})
+
+    async def wait_for_disconnect() -> None:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    return await run_bounded_index_query(
+        preview_indexed_projection(session, schema, table, payload), wait_for_disconnect(),
+        IndexedProjectionResult(state="blocked", reason="query_unavailable"),
+        cancelled_message="Indexed projection preview was cancelled",
     )
 
 

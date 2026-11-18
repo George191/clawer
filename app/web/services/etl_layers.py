@@ -162,10 +162,16 @@ def _required_indexed_preview_tables() -> frozenset[tuple[str, str]]:
     return frozenset((asset.schema_name, asset.table) for asset in settings.ONTOLOGY_EXPLORER_REQUIRED_INDEXED_PREVIEW_TABLES)
 
 
-def _indexed_preview_required() -> HTTPException:
+def requires_indexed_projection(schema: str, table: str) -> bool:
+    return any(asset.mode == "indexed_projection_required" and (asset.schema_name, asset.table) == (schema, table)
+               for asset in settings.ONTOLOGY_EXPLORER_REQUIRED_INDEXED_PREVIEW_TABLES)
+
+
+def _indexed_preview_required(*, projection: bool = False) -> HTTPException:
     return HTTPException(409, {
         "code": "indexed_preview_required",
-        "message": "This Explorer table requires a verified indexed ID preview",
+        "message": ("This Explorer table requires a verified indexed projection preview" if projection
+                    else "This Explorer table requires a verified indexed ID preview"),
     })
 
 
@@ -981,6 +987,8 @@ class EtlLayers:
             if visible is not True:
                 raise HTTPException(404, "Table does not exist in this schema")
             required = await _required_preview_family(session, schema, table, enrolled)
+        if requires_indexed_projection(schema, table):
+            return RowPreviewPolicy(mode="indexed_projection_required")
         return RowPreviewPolicy(mode="indexed_id_required" if required else "classic")
 
     async def data(self, layer: str, table: str, payload: dict[str, Any] | None = None,
@@ -992,7 +1000,7 @@ class EtlLayers:
         quote_identifier(table)
         enrolled = _required_indexed_preview_tables()
         if (schema, table) in enrolled:
-            raise _indexed_preview_required()
+            raise _indexed_preview_required(projection=requires_indexed_projection(schema, table))
         if (schema, table) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
             raise HTTPException(403, "Use the dedicated index-checked preview for this synthetic table")
         columns = await self.columns(schema, table)
@@ -1014,7 +1022,7 @@ class EtlLayers:
                 raise HTTPException(400, "Partition does not belong to this table")
             target_schema, target_table = part["schema"], part["name"]
             if (target_schema, target_table) in enrolled:
-                raise _indexed_preview_required()
+                raise _indexed_preview_required(projection=requires_indexed_projection(target_schema, target_table))
             target = f'{quote_identifier(target_schema)}.{quote_identifier(target_table)}'
         try:
             limit = int(payload.get("limit", 50))

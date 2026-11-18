@@ -12,7 +12,7 @@ PREVIEW_ROWS_MAX_OFFSET = 2000
 
 
 class RowPreviewPolicy(BaseModel):
-    mode: Literal["classic", "indexed_id_required"]
+    mode: Literal["classic", "indexed_id_required", "indexed_projection_required"]
 
 
 class DataQuery(BaseModel):

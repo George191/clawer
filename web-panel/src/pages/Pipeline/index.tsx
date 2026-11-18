@@ -18,6 +18,7 @@ import ExplorerTableSchema from './ExplorerTableSchema';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import SandboxPipelineBuilder from './SandboxPipelineBuilder';
 import ExplorerIndexCoverage from './ExplorerIndexCoverage';
+import ExplorerIndexedProjection from './ExplorerIndexedProjection';
 import ExplorerIndexedIdSample from './ExplorerIndexedIdSample';
 import { useSandboxIdentity } from './SandboxMarkings';
 import { getSessionState } from '../../services/session';
@@ -455,7 +456,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
             return !read.signal.aborted && session.authenticated && !session.locked && session.identity === previewIdentity;
         };
         void fetchRowPreviewPolicy(selectedSchema, table.name, read.signal).then(value => {
-            if (current()) setPolicy({ key: policyKey, mode: value?.mode === 'classic' || value?.mode === 'indexed_id_required' ? value.mode : 'unavailable' });
+            if (current()) setPolicy({ key: policyKey, mode: value?.mode === 'classic' || value?.mode === 'indexed_id_required' || value?.mode === 'indexed_projection_required' ? value.mode : 'unavailable' });
         }).catch(() => { if (current()) setPolicy({ key: policyKey, mode: 'unavailable' }); });
         return () => read.abort();
     }, [policyKey]);
@@ -1006,8 +1007,15 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                     <div className="flow-inspector-body" ref={previewViewport}>
                         {showIndexPreview && (canManage ? <SandboxIndexPreview /> :
                             <div className="flow-schema-state" role="status">Index-aware sandbox preview is available to administrators only.</div>)}
-                        {previewRequested && !showPreview && (policyMode === 'indexed_id_required'
-                            ? <section className="flow-schema-details" aria-label="Verified-index-only preview">
+                        {previewRequested && !showPreview && (policyMode === 'indexed_projection_required'
+                            ? <section className="flow-schema-details" aria-label="Verified indexed projection preview">
+                                <header><h3>Verified indexed projection preview</h3></header>
+                                <p>This table requires a verified covering index path. Only an explicitly reviewed, read-only preview of approved fields is available.</p>
+                                {canManage && adminPreviewIdentity.current === previewIdentity ? <ExplorerIndexedProjection key={policyKey}
+                                    schema={selectedSchema} table={table.name} identity={previewIdentity} /> :
+                                    <p role="status">Verified indexed projection is unavailable. No preview query was run.</p>}
+                            </section>
+                            : policyMode === 'indexed_id_required' ? <section className="flow-schema-details" aria-label="Verified-index-only preview">
                                 <header><h3>Verified-index-only preview</h3></header>
                                 <p>This table requires a verified index path. Review one key equality or inclusive range to request up to 20 IDs. No rows, edits, or fallback query are available here.</p>
                                 {canManage && adminPreviewIdentity.current === previewIdentity ? <ExplorerIndexedIdSample key={policyKey} schema={selectedSchema} table={table.name}

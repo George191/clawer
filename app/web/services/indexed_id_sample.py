@@ -11,7 +11,7 @@ from app.web.api.models.indexed_id_sample import (
 from app.web.core.config import settings
 from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope
 from app.web.services.etl_layers import (
-    _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL, quote_identifier,
+    _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL, quote_identifier, requires_indexed_projection,
 )
 from app.web.services.index_preview_sandbox import _approved_plan, _release_preview_transaction
 
@@ -68,7 +68,8 @@ _SCOPE = text(f"""
 
 
 def _allowed(schema: str, table: str) -> IndexedSampleScope | None:
-    if (not settings.ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ENABLED or settings.ENVIRONMENT != "local"
+    if (requires_indexed_projection(schema, table) or not settings.ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ENABLED
+        or settings.ENVIRONMENT != "local"
         or "ENVIRONMENT" not in settings.model_fields_set
         or settings.ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER is None):
         return None
@@ -77,8 +78,8 @@ def _allowed(schema: str, table: str) -> IndexedSampleScope | None:
     return matches[0] if len(matches) == 1 else None
 
 
-async def _reviewed_database(session: AsyncSession, scope: IndexedCompoundSampleScope) -> bool:
-    expected = settings.ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER
+async def _reviewed_database(session: AsyncSession, scope: IndexedCompoundSampleScope, *, marker=None) -> bool:
+    expected = marker if marker is not None else settings.ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER
     params = {"database": scope.database}
     oid = await session.scalar(_MARKER_CATALOG, params)
     if oid is None or expected is None:
