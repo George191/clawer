@@ -906,6 +906,18 @@ export const checkSnapshotDeliveryEvidence = (request: {
   intentId: string; requestId: string; expectedConfigRevision: string;
 }, signal?: AbortSignal): Promise<SnapshotDeliveryEvidence> =>
   client.post(snapshotDeliveryEvidencePath, request, { signal }).then(r => unwrap<SnapshotDeliveryEvidence>(r.data));
+const snapshotDeliveryPath = '/etl/table-export-sandbox/snapshot-delivery';
+export type FrozenDeliveryIds = { intentId: string; requestId: string };
+export type FrozenDeliveryReview = { rowCount: number; expectedPreviousGeneration: number; webRevision: string };
+export type FrozenDeliveryReceipt = FrozenDeliveryIds & { generation: number; rowCount: number; recordedAt: string };
+export const fetchFrozenDeliveryCapability = (signal?: AbortSignal): Promise<{ available: boolean }> =>
+  client.get(snapshotDeliveryPath, { signal }).then(r => unwrap<{ available: boolean }>(r.data));
+export const reviewFrozenDelivery = (request: FrozenDeliveryIds, signal?: AbortSignal): Promise<FrozenDeliveryReview> =>
+  client.post(`${snapshotDeliveryPath}/review`, request, { signal }).then(r => unwrap<FrozenDeliveryReview>(r.data));
+export const executeFrozenDelivery = (request: FrozenDeliveryIds & { expectedWebRevision: string }, signal?: AbortSignal): Promise<FrozenDeliveryReceipt> =>
+  client.post(snapshotDeliveryPath, request,
+    { signal, _noAutomaticAuthReplay: true } as AxiosRequestConfig & { _noAutomaticAuthReplay: true })
+    .then(r => unwrap<FrozenDeliveryReceipt>(r.data));
 const snapshotIntentPath = '/etl/table-export-sandbox/snapshot-intent';
 export type SnapshotIntentRequest = { requestId: string; expectedConfigRevision: string; expectedPreviousGeneration: number };
 export type SnapshotIntentHead = { generation: number };

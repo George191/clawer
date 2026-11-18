@@ -84,20 +84,20 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
                         service.SnapshotPublicationRow(id="9223372036854775807", caption=None),
                     ]
 
-                    async def run_publish(request, previous, payload, deployed, revision=None):
+                    async def run_publish(request, previous, payload, deployed, revision=None, **extra):
                         return await service.publish_snapshot(
                             request, previous, payload,
                             expected_config_revision=revision or deployed.config_revision, sender_port=port+1,
                             sender_database="test_other_sender", sender_username="test_other_sender",
-                            sender_marker=uuid4(),
+                            sender_marker=uuid4(), **extra,
                         )
 
-                    async def publish(request, previous, payload=rows, *, deployed=profile, revision=None):
+                    async def publish(request, previous, payload=rows, *, deployed=profile, revision=None, **extra):
                         with (
                             patch.object(service, "configured_snapshot_publication_profile", return_value=deployed),
                             patch.object(provider, "configured_snapshot_publication_profile", return_value=deployed),
                         ):
-                            return await run_publish(request, previous, payload, deployed, revision)
+                            return await run_publish(request, previous, payload, deployed, revision, **extra)
 
                     async def reconcile(request, previous, payload=rows, *, deployed=profile,
                                         revision=None, digest=None):
@@ -125,6 +125,22 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
 
                     self.assertEqual((await head()).model_dump(),
                                      {"generation": 0, "row_count": None, "recorded_at": None})
+
+                    for revoke_at in (1, 2, 3):
+                        checkpoint = 0
+
+                        def grant_revoked():
+                            nonlocal checkpoint
+                            checkpoint += 1
+                            if checkpoint == revoke_at:
+                                raise RuntimeError("isolated fixture revoked web approval")
+
+                        with self.assertRaises(service.SnapshotPublicationUnavailable):
+                            await publish(uuid4(), 0, web_approval=grant_revoked)
+                        self.assertEqual(checkpoint, revoke_at)
+                        self.assertEqual(await data.fetchval(f"SELECT current_generation FROM {_SCHEMA}.state"), 0)
+                        self.assertEqual(await data.fetchval(f"SELECT count(*) FROM {_SCHEMA}.generations"), 0)
+                        self.assertEqual(await data.fetchval(f"SELECT count(*) FROM {_SCHEMA}.records"), 0)
                     with self.assertRaises(service.SnapshotPublicationUnavailable):
                         await head(revision=uuid4())
                     await data.execute(f"INSERT INTO {_SCHEMA}.records VALUES (1,1,NULL)")
@@ -185,6 +201,8 @@ class SnapshotPublicationPGTests(unittest.IsolatedAsyncioTestCase):
                     first = committed[0]
                     self.assertTrue(all(result == first or isinstance(result, service.SnapshotPublicationUnavailable)
                                         for result in attempts), attempts)
+                    with self.assertRaises(service.SnapshotPublicationUnavailable):
+                        await publish(request, 0, web_approval=lambda: None)
                     self.assertEqual(await publish(request, 0), first)
                     self.assertEqual(await data.fetchval(f"SELECT count(*) FROM {_SCHEMA}.generations"), 1)
                     self.assertEqual((first.generation, first.previous_generation, first.row_count), (1, 0, 2))

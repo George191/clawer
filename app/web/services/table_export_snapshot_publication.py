@@ -1,9 +1,10 @@
 """Internal writer for complete, immutable snapshots in the local publication fixture.
 
-No application route invokes this service. The preview receiver is not a publication authority.
+The preview receiver is not a publication authority.
 """
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime
 from hashlib import sha256
 import hmac
@@ -134,6 +135,7 @@ async def _verify_sealed_snapshot(connection, *, generation: int, count: int, di
 async def publish_snapshot(
     request_id: UUID, expected_previous_generation: int, rows: Iterable[SnapshotPublicationRow], *,
     expected_config_revision: UUID, sender_port: int, sender_database: str, sender_username: str, sender_marker: UUID,
+    web_approval: Callable[[], None] | None = None,
 ) -> SnapshotPublicationResult:
     """Advance only the dedicated fixture pointer; no sender reads or prior-generation writes."""
     if (not isinstance(request_id, UUID) or request_id.version != 4
@@ -146,6 +148,8 @@ async def publish_snapshot(
         raise _unavailable()
     try:
         async with asyncio.timeout(5):
+            if web_approval is not None:
+                web_approval()
             async with snapshot_publication_connection(
                 profile, sender_port=sender_port, sender_database=sender_database,
                 sender_username=sender_username, sender_marker=sender_marker,
@@ -167,6 +171,8 @@ async def publish_snapshot(
                         FROM ONLY {_SCOPE}.generations WHERE request_id=$1
                     """, request_id)
                     if prior is not None:
+                        if web_approval is not None:
+                            raise _unavailable()
                         if prior["generation"] > head:
                             raise _unavailable()
                         return await _replay(connection, prior, request_id=request_id,
@@ -179,6 +185,8 @@ async def publish_snapshot(
                     if (persisted_head if persisted_head is not None else 0) != head:
                         raise _unavailable()
                     generation = head + 1
+                    if web_approval is not None:
+                        web_approval()
                     recorded = await connection.fetchval(f"""
                         INSERT INTO {_SCOPE}.generations
                             (generation,previous_generation,request_id,payload_hash,row_count,recorded_at)
@@ -192,6 +200,8 @@ async def publish_snapshot(
                         WHERE singleton IS TRUE AND current_generation=$2
                     """, generation, head) != "UPDATE 1":
                         raise _unavailable()
+                    if web_approval is not None:
+                        web_approval()
                     result = SnapshotPublicationResult(request_id=request_id, generation=generation,
                                                        previous_generation=head, row_count=len(canonical),
                                                        recorded_at=recorded)

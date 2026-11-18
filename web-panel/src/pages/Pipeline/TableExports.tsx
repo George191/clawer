@@ -17,6 +17,7 @@ import { exportMode, exportModeDescription, exportModeLabel } from './tableExpor
 import TableExportSnapshotComparison from './TableExportSnapshotComparison';
 import TableExportSnapshotDelivery from './TableExportSnapshotDelivery';
 import TableExportSnapshotPrepare from './TableExportSnapshotPrepare';
+import TableExportFrozenDelivery from './TableExportFrozenDelivery';
 
 type RunRequest = { requestId: string; expectedUpdatedAt: string; expectedGrantGeneration: number; writeMode?: TableExportWriteMode };
 type DraftReview = { name: string; expectedUpdatedAt: string | null; writeMode: TableExportWriteMode };
@@ -75,6 +76,7 @@ export default function TableExports({ openFromLink, onLinkClose }: { openFromLi
       <ReceiverSelection key={identity} working={working} onWorkingChange={setWorking} />
       <TableExportSnapshotComparison key={`snapshot:${identity}`} identity={identity} />
       <TableExportSnapshotPrepare key={`prepare:${identity}`} identity={identity} />
+      <TableExportFrozenDelivery key={`frozen-delivery:${identity}`} identity={identity} />
       <TableExportSnapshotDelivery key={`delivery:${identity}`} identity={identity} />
     </>}
   </section>;

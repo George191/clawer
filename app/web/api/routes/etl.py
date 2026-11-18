@@ -65,6 +65,10 @@ from app.web.api.models.snapshot_intent_web import (
     SnapshotIntentWebCapability, SnapshotIntentWebHead, SnapshotIntentWebHeadRequest, SnapshotIntentWebPrepareRequest,
     SnapshotIntentWebPrepared,
 )
+from app.web.api.models.snapshot_delivery_web import (
+    SnapshotDeliveryWebCapability, SnapshotDeliveryWebLookup, SnapshotDeliveryWebReceipt, SnapshotDeliveryWebReview,
+    SnapshotDeliveryWebRun,
+)
 from app.web.api.models.snapshot_delivery_evidence import (
     SnapshotDeliveryEvidence, SnapshotDeliveryEvidenceCapability, SnapshotDeliveryEvidenceRequest,
 )
@@ -157,6 +161,11 @@ from app.web.services.table_export_snapshot_intent import (
 )
 from app.web.services.table_export_snapshot_intent_web import (
     snapshot_intent_web_capability, snapshot_intent_web_head, snapshot_intent_web_prepare,
+)
+from app.web.services.table_export_snapshot_delivery import SnapshotDeliveryUnavailable
+from app.web.services.table_export_snapshot_delivery_web import (
+    SnapshotWebDeliveryUnavailable, snapshot_delivery_web_capability, snapshot_delivery_web_review,
+    snapshot_delivery_web_run,
 )
 from app.web.services.table_export_snapshot_delivery_evidence import (
     read_snapshot_delivery_evidence, read_snapshot_delivery_evidence_capability, SnapshotDeliveryEvidenceUnavailable,
@@ -1137,6 +1146,59 @@ async def _parse_snapshot_intent_json(request: Request):
                 raise ValueError("Invalid request")
             body.extend(chunk)
     return json.loads(body.decode("utf-8"), object_pairs_hook=_unique_delivery_evidence_keys)
+
+
+def _snapshot_delivery_web_denied() -> JSONResponse:
+    return JSONResponse({"detail": "Synthetic snapshot delivery review unavailable"}, status_code=404,
+                        headers={"Cache-Control": "private, no-store"})
+
+
+async def _parse_snapshot_delivery_web(request: Request, model):
+    data = await _parse_snapshot_intent_json(request)
+    payload = model.model_validate(data)
+    if any(data[key] != str(getattr(payload, key)) for key in model.model_fields):
+        raise ValueError("Invalid request")
+    return payload
+
+
+@write.get("/table-export-sandbox/snapshot-delivery", response_model=SnapshotDeliveryWebCapability)
+async def get_snapshot_delivery_web(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotDeliveryWebCapability | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    if request.query_params:
+        return _snapshot_delivery_web_denied()
+    return await snapshot_delivery_web_capability(session, current_user.id)
+
+
+@write.post("/table-export-sandbox/snapshot-delivery/review", response_model=SnapshotDeliveryWebReview)
+async def post_snapshot_delivery_web_review(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotDeliveryWebReview | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        payload = await _parse_snapshot_delivery_web(request, SnapshotDeliveryWebLookup)
+        return await snapshot_delivery_web_review(session, current_user.id, payload)
+    except (ValueError, TimeoutError, RecursionError, SnapshotWebDeliveryUnavailable):
+        return _snapshot_delivery_web_denied()
+
+
+@write.post("/table-export-sandbox/snapshot-delivery", response_model=SnapshotDeliveryWebReceipt)
+async def post_snapshot_delivery_web(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotDeliveryWebReceipt | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        payload = await _parse_snapshot_delivery_web(request, SnapshotDeliveryWebRun)
+        return await snapshot_delivery_web_run(session, current_user.id, payload)
+    except (ValueError, TimeoutError, RecursionError, SnapshotWebDeliveryUnavailable):
+        return _snapshot_delivery_web_denied()
+    except SnapshotDeliveryUnavailable:
+        return JSONResponse({"detail": "Synthetic snapshot delivery unconfirmed; do not resend"}, status_code=503,
+                            headers={"Cache-Control": "private, no-store"})
 
 
 def _snapshot_intent_web_denied() -> JSONResponse:

@@ -250,9 +250,54 @@ class SnapshotIntentPGTests(unittest.IsolatedAsyncioTestCase):
             publish_once.assert_not_awaited()
             patches.enter_context(patch.object(intent.settings, "TABLE_EXPORT_SNAPSHOT_DELIVERY_ENABLED", True))
             patches.enter_context(patch.object(intent.settings, "TABLE_EXPORT_SNAPSHOT_DELIVERY_GRANTS", {actor: execute_grant}))
-            for _ in range(2):
-                with self.assertRaises(delivery.SnapshotDeliveryUnavailable):
-                    await deliver()
+            web_delivery_path = "/etl/table-export-sandbox/snapshot-delivery"
+            known = {"intentId": str(completed.id), "requestId": str(request_id)}
+            async with api(True, web_session) as client:
+                self.assertEqual((await client.get(web_delivery_path)).json(), {"available": False})
+                off = await client.post(web_delivery_path + "/review", json=known)
+                self.assertEqual((off.status_code, off.headers["cache-control"]), (404, "private, no-store"))
+                with patch.object(intent.settings, "TABLE_EXPORT_SNAPSHOT_DELIVERY_WEB_ENABLED", True):
+                    self.assertEqual((await client.get(web_delivery_path)).json(), {"available": True})
+                    reviewed = await client.post(web_delivery_path + "/review", json=known)
+                    self.assertEqual(reviewed.status_code, 200, reviewed.text)
+                    self.assertEqual(reviewed.headers["cache-control"], "private, no-store")
+                    self.assertEqual(set(reviewed.json()), {"rowCount", "expectedPreviousGeneration", "webRevision"})
+                    self.assertEqual((reviewed.json()["rowCount"], reviewed.json()["expectedPreviousGeneration"]), (1, 0))
+                    proof = {**known, "expectedWebRevision": reviewed.json()["webRevision"]}
+                    for denied in (
+                        await client.post(web_delivery_path + "?unexpected=true", json=proof),
+                        await client.post(web_delivery_path, json={**proof, "expectedWebRevision": str(uuid4())}),
+                        await client.post(web_delivery_path + "/review", json={**known, "intentId": str(uuid4())}),
+                    ):
+                        self.assertEqual((denied.status_code, denied.json()), (404, off.json()))
+                    original_seal_reader = delivery._verify_frozen
+
+                    async def lose_approval(*args, **kwargs):
+                        rows = await original_seal_reader(*args, **kwargs)
+                        intent.settings.TABLE_EXPORT_SNAPSHOT_DELIVERY_WEB_ENABLED = False
+                        return rows
+
+                    # The native checkpoint after seal verification must see revocation before admission.
+                    with patch.object(delivery, "_verify_frozen", new=lose_approval):
+                        rejected = await client.post(web_delivery_path, json=proof)
+                        self.assertEqual(rejected.status_code, 503)
+                    intent.settings.TABLE_EXPORT_SNAPSHOT_DELIVERY_WEB_ENABLED = True
+                    async with engine.connect() as db:
+                        self.assertIsNone(await db.scalar(text(f"SELECT 1 FROM {_SCOPE}.deliveries LIMIT 1")))
+                    publish_once.assert_not_awaited()
+                    reconcile.assert_not_awaited()
+                    # The one permitted local admission is COMMITTED before the transport fault.
+                    unconfirmed = await client.post(web_delivery_path, json=proof)
+                    self.assertEqual((unconfirmed.status_code, unconfirmed.headers["cache-control"]), (503, "private, no-store"))
+                    self.assertIn("do not resend", unconfirmed.json()["detail"])
+                    self.assertEqual((await client.get(web_delivery_path)).json(), {"available": False})
+                    for path, data in ((web_delivery_path + "/review", known), (web_delivery_path, proof)):
+                        replay = await client.post(path, json=data)
+                        self.assertEqual((replay.status_code, replay.json()), (404, off.json()))
+                    publish_once.assert_awaited_once()
+                    reconcile.assert_not_awaited()
+            with self.assertRaises(delivery.SnapshotDeliveryUnavailable):
+                await deliver()
             publish_once.assert_awaited_once()
             reconcile.assert_awaited_once()
             reconcile.side_effect = confirm
