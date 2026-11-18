@@ -755,6 +755,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
             patch("app.web.services.batch_syncs.local_batch_sync_scope", return_value="incremental-test-scope"),
             patch("app.web.services.batch_source_identity.get_data_connections", return_value=connections),
             patch("app.web.services.batch_syncs.get_data_connections", return_value=connections),
+            patch("app.web.services.batch_incremental_preflight.get_data_connections", return_value=connections),
         ):
             async with api(True, self.provider) as client:
                 self.assertEqual((await client.get(timeline)).json()["lineage"]["state"], "unreviewed")
@@ -772,6 +773,43 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(two.status_code, 201, two.text)
                 second = two.json()
                 self.assertEqual(first["appliedThrough"], "0")
+                verify_next = f"{RUNS}/{first['id']}/incremental-preflight"
+                preflight_body = {"expectedUpdatedAt": first["updatedAt"], "expectedSourceUpdatedAt": first["sourceUpdatedAt"]}
+                self.assertNotIn("incrementalPreflight", (await client.get(f"{RUNS}/capabilities")).json())
+                self.assertEqual((await client.post(verify_next, json=preflight_body)).status_code, 403)
+                with patch.object(settings, "BATCH_SYNC_INCREMENTAL_PREFLIGHT_ENABLED", True):
+                    self.assertTrue((await client.get(f"{RUNS}/capabilities")).json()["incrementalPreflight"])
+                    async with api(False, self.provider) as reader:
+                        self.assertEqual((await reader.post(verify_next, json=preflight_body)).status_code, 403)
+                    for bad in (
+                        {**preflight_body, "expectedSourceUpdatedAt": 1},
+                        {**preflight_body, "unknown": "not authorized"},
+                        {**preflight_body, "expectedSourceUpdatedAt": "2026-11-17T00:00:00"},
+                    ):
+                        self.assertEqual((await client.post(verify_next, json=bad)).status_code, 422)
+                    self.assertEqual((await client.post(verify_next + "?debug=1", json=preflight_body)).status_code, 422)
+                    empty_check = await client.post(verify_next, json=preflight_body)
+                    self.assertEqual(empty_check.status_code, 200, empty_check.text)
+                    self.assertEqual(empty_check.headers["cache-control"], "private, no-store")
+                    self.assertEqual({key: value for key, value in empty_check.json().items() if key != "observedAt"}, {
+                        "status": "no_new_data", "observedAppliedThrough": "0", "sourcePublishedThrough": "0",
+                    })
+                    self.assertEqual((await client.get(f"{RUNS}/{first['id']}/attempts")).json(), [])
+                    self.assertEqual((await client.get(f"{RUNS}/{first['id']}/runs")).json(), [])
+                    self.assertEqual(await self.pg.fetch_all("SELECT * FROM ts_batch_sync_sandbox.committed_batch_fixture"), [])
+                    connections._credentials.reset_mock()
+                    stale = await client.post(verify_next, json={**preflight_body, "expectedUpdatedAt": "2020-01-01T00:00:00Z"})
+                    self.assertEqual(stale.status_code, 409, stale.text)
+                    self.assertEqual(stale.json()["detail"]["code"], "plan_changed")
+                    await self.pg.execute("UPDATE ontology_data_connections SET paused_at=pg_catalog.clock_timestamp(),tested_at=NULL")
+                    try:
+                        paused = await client.post(verify_next, json=preflight_body)
+                        self.assertEqual(paused.status_code, 409, paused.text)
+                        self.assertEqual(paused.json()["detail"]["code"], "source_paused")
+                        connections._credentials.assert_not_awaited()
+                    finally:
+                        await self.pg.execute("UPDATE ontology_data_connections SET paused_at=NULL,tested_at=pg_catalog.clock_timestamp()")
+
                 self.assertEqual((await client.get(timeline)).json()["lineage"]["state"], "reviewed")
                 empty_id = uuid4()
                 empty = await request(client, first, empty_id)
@@ -783,6 +821,31 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(await publish('[{"id":"9223372036854775807","value":"first"}]'), 1)
                 self.assertEqual(await publish('[{"id":"9223372036854775807","value":"second"}]'), 2)
+                with patch.object(settings, "BATCH_SYNC_INCREMENTAL_PREFLIGHT_ENABLED", True):
+                    matched = await client.post(verify_next, json=preflight_body)
+                    self.assertEqual(matched.status_code, 200, matched.text)
+                    self.assertEqual({key: value for key, value in matched.json().items() if key != "observedAt"}, {
+                        "status": "matched", "observedAppliedThrough": "0", "sourcePublishedThrough": "2",
+                        "nextOrdinal": "1", "nextRowCount": 1,
+                    })
+                    from app.web.services.batch_incremental_preflight import read_committed_batch
+
+                    async def move_registry_after_source(*args, **kwargs):
+                        observed = await read_committed_batch(*args, **kwargs)
+                        await self.pg.execute("UPDATE ontology_data_connections SET config=config || jsonb_build_object('tls', true)")
+                        return observed
+
+                    try:
+                        with patch("app.web.services.batch_incremental_preflight.read_committed_batch",
+                                   new=move_registry_after_source):
+                            changed = await client.post(verify_next, json=preflight_body)
+                            self.assertEqual(changed.status_code, 409, changed.text)
+                            self.assertEqual(changed.json()["detail"]["code"], "incremental_preflight_unverified")
+                    finally:
+                        await self.pg.execute("UPDATE ontology_data_connections SET config=config-'tls'")
+                    self.assertEqual((await self.pg.fetch_one(cursor_sql))["through"], 0)
+                    self.assertEqual(await self.pg.fetch_all("SELECT * FROM ts_batch_sync_sandbox.committed_batch_fixture"), [])
+
                 positive = await request(client, second)
                 self.assertEqual(positive.status_code, 200, positive.text)
                 self.assertEqual((positive.json()["throughInclusive"], positive.json()["sourceHighWater"]), ("1", "2"))
@@ -906,6 +969,12 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 with patch.object(settings, "BATCH_SYNC_SOURCE_IDENTITY_MARKER", uuid4()):
                     self.assertEqual((await client.get(timeline)).json()["lineage"]["state"], "observed")
                 await self.pg.execute("TRUNCATE ts_batch_sync_sandbox.committed_batch_fixture")
+                with patch.object(settings, "BATCH_SYNC_INCREMENTAL_PREFLIGHT_ENABLED", True):
+                    connections._credentials.reset_mock()
+                    denied = await client.post(verify_next, json=preflight_body)
+                    self.assertEqual(denied.status_code, 409, denied.text)
+                    self.assertEqual(denied.json()["detail"]["code"], "incremental_preflight_unverified")
+                    connections._credentials.assert_not_awaited()
                 failed_after_rewrite = await request(client, first)
                 self.assertEqual(failed_after_rewrite.status_code, 409, failed_after_rewrite.text)
                 archived = await client.get(timeline)

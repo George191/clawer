@@ -34,6 +34,7 @@ from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJob
 from app.web.api.models.batch_lineage import BatchLineageDetail, BatchLineageKind, BatchLineagePage
 from app.web.api.models.batch_source_identity import BatchSourceIdentityReview, BatchSourceIdentityStatus
 from app.web.api.models.batch_syncs import (
+    BatchSyncIncrementalPreflight, BatchSyncIncrementalPreflightRequest,
     BatchSyncAttempt, BatchSyncCapabilities, BatchSyncPayload, BatchSyncPlan, BatchSyncReceipt, BatchSyncRunRequest,
 )
 from app.web.api.models.batch_sync_schedules import (
@@ -120,6 +121,7 @@ from app.web.services.asset_weekly_job_quality import (
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_lineage import list_batch_lineage, read_batch_lineage
 from app.web.services.batch_source_identity import read_source_identity, verify_source_identity
+from app.web.services.batch_incremental_preflight import preflight_incremental_batch
 from app.web.services.batch_syncs import (
     batch_sync_capabilities, list_batch_sync_attempts, list_batch_sync_runs, list_batch_syncs, run_batch_sync, save_batch_sync,
 )
@@ -1214,6 +1216,28 @@ async def create_batch_sync(payload: BatchSyncPayload, session: SessionDep) -> B
 @write.put("/batch-syncs/{plan_id}")
 async def update_batch_sync(plan_id: UUID, payload: BatchSyncPayload, session: SessionDep) -> BatchSyncPlan:
     return await save_batch_sync(session, payload, plan_id)
+
+
+@write.post(
+    "/batch-syncs/{plan_id}/incremental-preflight", response_model=BatchSyncIncrementalPreflight,
+    response_model_exclude_none=True, openapi_extra={"requestBody": {"required": True, "content": {
+        "application/json": {"schema": BatchSyncIncrementalPreflightRequest.model_json_schema()},
+    }}},
+)
+async def post_incremental_batch_preflight(
+    plan_id: UUID, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> BatchSyncIncrementalPreflight | JSONResponse:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    try:
+        payload = BatchSyncIncrementalPreflightRequest.model_validate(await _parse_snapshot_intent_json(request))
+    except Exception:
+        return JSONResponse({"detail": "Specify the exact saved plan and source revisions"}, status_code=422, headers=headers)
+    try:
+        return await preflight_incremental_batch(session, plan_id, payload)
+    except HTTPException as error:
+        return JSONResponse({"detail": error.detail}, status_code=error.status_code, headers=headers)
 
 
 @write.get("/batch-syncs/{plan_id}/runs")

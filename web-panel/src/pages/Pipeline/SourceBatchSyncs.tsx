@@ -10,6 +10,7 @@ import {
 import type { BatchSourceIdentity, BatchSyncAttempt, BatchSyncCapabilities, BatchSyncInput, BatchSyncPlan, BatchSyncReceipt, BatchSyncSchedule, DataSource, DataSourceColumns, BatchSyncScheduleJob } from '../../services/api';
 import type { EtlTableColumn } from '../../services/types';
 import { getSessionState } from '../../services/session';
+import BatchIncrementalPreflight from './BatchIncrementalPreflight';
 import { sameSourceRevision } from './SourceIdentity';
 import { MANAGED_BATCH_ASSET } from './ManagedBatchLineage';
 import { nextLocalTimeForUtcClock } from '../../services/scheduleTime';
@@ -498,6 +499,11 @@ export default function SourceBatchSyncs({ source, sourceProof, selection, selec
         {plan.keyRange && <p><RangeFacts range={plan.keyRange} /></p>}
         {plan.mode === 'incremental' && <p>Committed through: <code>{plan.appliedThrough ?? 'Not recorded'}</code>. This is the saved target checkpoint, not the latest source head.</p>}
         {plan.mode === 'incremental' && !committedModeAvailable && <p>New committed batch runs and schedule arming are unavailable for this saved source.</p>}
+        {capability?.incrementalPreflight === true && plan.mode === 'incremental' && plan.sourceIdentityReviewed &&
+          plansForProof === proofVersion && !sourceReviewNeeded(plan) && sameRevision(plan.sourceUpdatedAt, source.updatedAt) &&
+          <BatchIncrementalPreflight key={JSON.stringify([identity, source.id, source.updatedAt, plan.id, plan.updatedAt, plan.appliedThrough, proofVersion])}
+            identity={identity} planId={plan.id} expectedUpdatedAt={plan.updatedAt} expectedSourceUpdatedAt={source.updatedAt} />}
+
         <div className="ontology-source-sync__route"><code>{plan.sourceSchema}.{plan.sourceTable}</code><ArrowRightOutlined /><code>{capability?.targetSchema}.{plan.targetTable}</code></div>
         {capability?.sourceIdentityRequired && proofCurrent && plansForProof === proofVersion && !plan.sourceIdentityReviewed && <p>Requires review. Review and save this sync again to bind it to the verified source identity.</p>}
         {!sameRevision(plan.sourceUpdatedAt, source.updatedAt) && <p>This source has changed. Review and save the mapping before running.</p>}

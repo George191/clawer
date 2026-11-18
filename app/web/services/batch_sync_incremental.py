@@ -17,6 +17,10 @@ def incremental_batch_enabled() -> bool:
     return settings.BATCH_SYNC_INCREMENTAL_ENABLED and identity_required() and expected_fingerprint() is not None
 
 
+def incremental_preflight_enabled() -> bool:
+    return bool(settings.BATCH_SYNC_INCREMENTAL_PREFLIGHT_ENABLED and incremental_batch_enabled())
+
+
 def range_snapshot_enabled() -> bool:
     return settings.BATCH_SYNC_RANGE_SNAPSHOT_ENABLED and identity_required() and expected_fingerprint() is not None
 

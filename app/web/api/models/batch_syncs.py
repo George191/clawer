@@ -1,10 +1,11 @@
 """Saved sandbox batch sync plans and durable target transaction receipts."""
 
 from datetime import datetime
+import re
 from typing import Annotated, Literal, Self
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as DbField, SQLModel
@@ -115,6 +116,34 @@ class BatchSyncRunRequest(BaseModel):
     expectedUpdatedAt: AwareDatetime
 
 
+class BatchSyncIncrementalPreflightRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expectedUpdatedAt: AwareDatetime
+    expectedSourceUpdatedAt: AwareDatetime
+
+
+    @field_validator("expectedUpdatedAt", "expectedSourceUpdatedAt", mode="before")
+    @classmethod
+    def exact_datetime_shape(cls, value):
+        # Numeric Unix inputs are not reviewed revision tokens.
+        if not isinstance(value, datetime) and (
+            not isinstance(value, str) or re.fullmatch(
+                r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})",
+                value, re.ASCII,
+            ) is None
+        ):
+            raise ValueError("Use the exact timezone-aware saved revision")
+        return value
+
+class BatchSyncIncrementalPreflight(BaseModel):
+    status: Literal["matched", "no_new_data"]
+    observedAppliedThrough: str = Field(pattern=r"^(?:0|[1-9][0-9]{0,18})$")
+    sourcePublishedThrough: str = Field(pattern=r"^(?:0|[1-9][0-9]{0,18})$")
+    nextOrdinal: str | None = Field(default=None, pattern=r"^[1-9][0-9]{0,18}$")
+    nextRowCount: int | None = Field(default=None, ge=1, le=50)
+    observedAt: datetime
+
+
 class BatchSyncReceipt(BaseModel):
     id: UUID
     sourceIdentityVerified: Literal[True] | None = Field(default=None, exclude_if=lambda v: v is None)
@@ -155,6 +184,7 @@ class BatchSyncCapabilities(BaseModel):
     scheduledBatchSync: bool = False
     rangeSnapshot: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalLineage: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
+    incrementalPreflight: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalBatchSync: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalMaxRows: int | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalMaxBytes: int | None = Field(default=None, exclude_if=lambda value: value is None)

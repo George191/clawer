@@ -815,7 +815,7 @@ export const fetchBatchSourceIdentity = (id: string, signal?: AbortSignal): Prom
   client.get(batchSourceIdentityPath(id), { signal }).then(r => unwrap<BatchSourceIdentity>(r.data));
 export const verifyBatchSourceIdentity = (id: string, expectedSourceUpdatedAt: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
   client.post(batchSourceIdentityPath(id), { expectedSourceUpdatedAt }, { signal, timeout: 45000 }).then(r => unwrap<BatchSourceIdentity>(r.data));
-export type BatchSyncCapabilities = { rangeSnapshot?: true; incrementalLineage?: true; incrementalBatchSync?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
+export type BatchSyncCapabilities = { rangeSnapshot?: true; incrementalLineage?: true; incrementalBatchSync?: true; incrementalPreflight?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
 export type BatchSyncMapping = { sourceColumn: string; targetColumn: string };
 export type BatchSyncInput = {
   name: string; connectionId: string; sourceSchema: string; sourceTable: string; sourceKeyColumn: string; targetTable: string;
@@ -836,6 +836,15 @@ const batchSyncPath = '/etl/batch-syncs';
 const batchSyncItemPath = (id: string) => `${batchSyncPath}/${encodeURIComponent(id)}`;
 export const fetchBatchSyncCapabilities = (signal?: AbortSignal): Promise<BatchSyncCapabilities> =>
   client.get(`${batchSyncPath}/capabilities`, { signal }).then((r) => unwrap<BatchSyncCapabilities>(r.data));
+export type BatchIncrementalPreflight = {
+  status: 'matched' | 'no_new_data'; observedAppliedThrough: string; sourcePublishedThrough: string;
+  nextOrdinal?: string; nextRowCount?: number; observedAt: string;
+};
+export const verifyNextCommittedBatch = (planId: string, review: {
+  expectedUpdatedAt: string; expectedSourceUpdatedAt: string;
+}, signal?: AbortSignal): Promise<BatchIncrementalPreflight> =>
+  client.post(`${batchSyncItemPath(planId)}/incremental-preflight`, review, { signal })
+    .then(r => unwrap<BatchIncrementalPreflight>(r.data));
 export const fetchBatchSyncs = (connectionId: string, signal?: AbortSignal, planId?: string): Promise<BatchSyncPlan[]> =>
   client.get(batchSyncPath, { params: { connectionId, planId }, signal }).then((r) => unwrap<BatchSyncPlan[]>(r.data));
 export const saveBatchSync = (payload: BatchSyncInput, id?: string): Promise<BatchSyncPlan> =>
