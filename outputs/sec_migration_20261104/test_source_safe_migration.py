@@ -342,6 +342,37 @@ class SafeMigrationTests(unittest.IsolatedAsyncioTestCase):
         again = await migration.recover_pending(connection, self.root, self.plan, 0, recovered)
         self.assertEqual(again["processed"], 1)
 
+    async def test_larger_lost_ack_batches_recover_after_runtime_returns_to_300(self):
+        for count in (300, 600, 1000):
+            with self.subTest(rows=count):
+                root = self.root / str(count)
+                migration.pg.atomic(root / "plan.json", self.plan)
+                plan_bytes = (root / "plan.json").read_bytes()
+                migration.pg.atomic(root / "layout.json", {"workers": 6, "page_size": 3000,
+                                                         "plan_sha256": self.plan["plan_sha256"], "sql_batch_size": 300})
+                connection = Connection([(layer, self.row(number, "google_patent", layer))
+                                         for layer in ("rds", "ods") for number in range(count)])
+                connection.lose_commit = True
+                with self.assertRaises(OSError):
+                    await migration.apply_chunk(connection, root, self.plan, 0, self.state,
+                                                [self.document(number) for number in range(count)])
+                pending = migration.pg.read(root / "worker-0.json")
+                prepared = root / pending["pending"]
+                prepared_bytes = prepared.read_bytes()
+                self.assertEqual(migration.runtime_layout(root, self.plan)["sql_batch_size"], 300)
+                if count > 300:
+                    with self.assertRaisesRegex(RuntimeError, "pending receipt binding differs"):
+                        await migration.recover_pending(connection, root, {**self.plan, "kind": "facts"}, 0, pending)
+                recovered = await migration.recover_pending(connection, root, self.plan, 0, pending)
+                self.assertEqual((recovered["processed"], recovered["cursor"], recovered["pending"]),
+                                 (count, str(self.document(count - 1)["_id"]), None))
+                self.assertEqual(await migration.recover_pending(connection, root, self.plan, 0, recovered),
+                                 recovered)
+                self.assertEqual(len(list((root / "transactions").glob("*.committed.json"))), 1)
+                self.assertEqual((root / "plan.json").read_bytes(), plan_bytes)
+                self.assertEqual(prepared.read_bytes(), prepared_bytes)
+                self.assertEqual(len(connection.rows), count * 2)
+
     async def test_unknown_commit_status_or_changed_afterimage_keeps_pending(self):
         for changed in (False, True):
             with self.subTest(changed=changed):
@@ -470,6 +501,46 @@ class PlanValidationTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(RuntimeError):
                 migration.validate_plan(self.sign(plan))
 
+    def test_runtime_batches_are_bound_to_the_original_immutable_plan(self):
+        plan = self.plan()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            migration.pg.atomic(root / "plan.json", plan)
+            original = (root / "plan.json").read_bytes()
+            self.assertEqual(migration.runtime_layout(root, plan)["sql_batch_size"], 300)
+            for count in (600, 1000, 3000):
+                migration.pg.atomic(root / "layout.json", {"workers": 6, "page_size": 3000, "sql_batch_size": count,
+                                                         "plan_sha256": plan["plan_sha256"]})
+                self.assertEqual(migration.runtime_layout(root, plan)["sql_batch_size"], count)
+                migration.validate_plan(plan)
+            for invalid in ({"sql_batch_size": 0}, {"sql_batch_size": 3001}, {"sql_batch_size": True},
+                            {"sql_batch_size": "600"}, {"workers": 8}, {"page_size": 5000},
+                            {"plan_sha256": "b" * 64}):
+                with self.subTest(layout=invalid):
+                    migration.pg.atomic(root / "layout.json", {"workers": 6, "page_size": 3000,
+                        "sql_batch_size": 600, "plan_sha256": plan["plan_sha256"], **invalid})
+                    with self.assertRaisesRegex(RuntimeError, "runtime layout"):
+                        migration.runtime_layout(root, plan)
+            for missing in ("workers", "page_size", "sql_batch_size", "plan_sha256"):
+                with self.subTest(missing=missing):
+                    layout = {"workers": 6, "page_size": 3000, "sql_batch_size": 600,
+                              "plan_sha256": plan["plan_sha256"]}
+                    del layout[missing]
+                    migration.pg.atomic(root / "layout.json", layout)
+                    with self.assertRaisesRegex(RuntimeError, "runtime layout"):
+                        migration.runtime_layout(root, plan)
+            self.assertEqual((root / "plan.json").read_bytes(), original)
+
+    def test_completed_bounded_facts_cleanup_cannot_use_larger_runtime_batches(self):
+        plan = {**self.plan(), "kind": "facts"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(migration.runtime_layout(root, plan)["sql_batch_size"], 300)
+            migration.pg.atomic(root / "layout.json", {"workers": 6, "page_size": 3000,
+                "sql_batch_size": 600, "plan_sha256": plan["plan_sha256"]})
+            with self.assertRaisesRegex(RuntimeError, "bounded facts cleanup"):
+                migration.runtime_layout(root, plan)
+
     def test_real_facts_manifest_has_exactly_78600_bound_records(self):
         path = Path(__file__).with_name("facts-burst-manifest-20261116.json")
         manifest = migration.pg.read(path)
@@ -560,6 +631,34 @@ class WorkerControlTests(unittest.IsolatedAsyncioTestCase):
         state = {**state, "processed": state["processed"] + len(docs), "cursor": str(docs[-1]["_id"])}
         migration.pg.atomic(root / f"worker-{worker}.json", state)
         return state
+
+    async def test_larger_batches_resume_committed_cursor_and_report_actual_layout(self):
+        self.documents.extend([{"_id": ObjectId(f"{number + 1:024x}"), "_meta": {
+            "record_id": str(number), "template": "patent_google", "data_source": "patent_google", "data_type": "patent"}}
+            for number in range(800, 1000)])
+        original = (self.root / "plan.json").read_bytes()
+        for count, expected in ((600, [600, 100]), (1000, [700])):
+            with self.subTest(sql_batch_size=count):
+                before = {"plan_sha256": self.plan["plan_sha256"], "worker": 0, "processed": 300,
+                          "cursor": str(self.documents[299]["_id"]), "pending": None, "done": False,
+                          "last_error": None}
+                migration.pg.atomic(self.root / "worker-0.json", before)
+                migration.pg.atomic(self.root / "layout.json", {"workers": 6, "page_size": 3000, "sql_batch_size": count,
+                                                              "plan_sha256": self.plan["plan_sha256"]})
+                apply, read = AsyncMock(side_effect=self.apply), MagicMock(side_effect=self.read)
+                with patch.object(migration.facts, "mongo_client", return_value=MagicMock()), \
+                     patch.object(migration, "validate_namespace", return_value=MagicMock()), \
+                     patch.object(migration.pg, "owned_connection", AsyncMock(return_value=self.connection)), \
+                     patch.object(migration.patent, "read_batch", read), \
+                     patch.object(migration, "apply_chunk", apply):
+                    await migration.worker_run(self.root, 0)
+                self.assertEqual([len(call.args[-1]) for call in apply.await_args_list], expected)
+                self.assertEqual(read.call_args_list[0].args[1]["_id"]["$gt"], self.documents[299]["_id"])
+                checkpoint = migration.pg.read(self.root / "worker-0.json")
+                self.assertEqual((checkpoint["processed"], checkpoint["cursor"], checkpoint["done"]),
+                                 (1000, str(self.documents[-1]["_id"]), True))
+                self.assertEqual(migration.write_state(self.root, self.plan, False)["sql_batch_size"], count)
+                self.assertEqual((self.root / "plan.json").read_bytes(), original)
 
     async def test_canary_then_full_reuses_the_same_plan_and_committed_cursor(self):
         read = MagicMock(side_effect=self.read)

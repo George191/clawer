@@ -1,4 +1,4 @@
-"""Six 3000-key readers with bounded 300-row source-rename transactions."""
+"""Six 3000-key readers with bounded source-rename transactions."""
 from __future__ import annotations
 
 import argparse
@@ -367,7 +367,7 @@ def runtime_layout(root, plan):
              'sql_batch_size': int(layout.get('sql_batch_size', BATCH)),
              'plan_sha256': layout.get('plan_sha256', plan['plan_sha256'])}
     if (value['workers'] != WORKERS or value['page_size'] != PAGE_SIZE
-            or not 1 <= value['sql_batch_size'] <= BATCH or value['plan_sha256'] != plan['plan_sha256']):
+            or not 1 <= value['sql_batch_size'] <= MAX_ROWS or value['plan_sha256'] != plan['plan_sha256']):
         raise RuntimeError('Expected the authorized 6-worker/3000-key layout with SQL batches at most 300')
     scope = read(root / 'scope.json', {})
     if scope.get('protocol') == 'source_safe_facts_full_alias_tail_v1':

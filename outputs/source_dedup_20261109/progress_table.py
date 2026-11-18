@@ -54,7 +54,7 @@ def read_committed_worker(root,plan,number,part,expected=None):
   need(receipt['committed'] is True and receipt['protocol']==plan['protocol'] and receipt['plan_sha256']==sha
     and receipt['mongo_uuid']==plan['mongo_uuid'] and receipt['worker']==number and receipt['part']==part
     and receipt['receipt']==cp['last_receipt'] and receipt['last_id']==cursor
-    and type(receipt['rows']) is int and 0<receipt['rows']<=300
+    and type(receipt['rows']) is int and 0<receipt['rows']<=(300 if plan['kind']=='facts' else 3000)
     and type(receipt['previous_processed']) is int and receipt['previous_processed']>=0
     and receipt['previous_processed']+receipt['rows']==count
     and len(ids)==len(set(ids))==receipt['rows'])
@@ -95,7 +95,7 @@ def read_migration(kind):
   plan_kind='facts_full' if kind=='facts' else 'patent'
   owner=json.loads((base/'source-safe-current-owners.json').read_bytes())[kind]
   need(owner['root']=='/data/clawer/output/sec_migration_20261104/'+root.name
-    and owner['workers']==6 and owner['page_size']==3000 and owner['sql_batch_size']==300
+    and owner['workers']==6 and owner['page_size']==3000
     and owner['mongo_cdc_replay'] is False and fingerprint(owner['source_sha256'])
     and owner['container'].startswith(('source-safe-facts-full-20261116' if kind=='facts' else 'source-safe-patent-20261116'))
     and isinstance(owner['image'],str))
@@ -109,10 +109,19 @@ def read_migration(kind):
     and plan['workers']==6 and plan['page_size']==3000 and plan['sql_batch_size']==300
     and len(plan['parts'])==6 and [p['worker'] for p in plan['parts']]==list(range(6)))
   if kind=='facts':need(plan.get('manifest_path') is None and plan.get('manifest_sha256') is None)
+  layout_path=root/'layout.json'
+  layout=json.loads(layout_path.read_bytes()) if layout_path.exists() else {
+   'plan_sha256':sha,'workers':6,'page_size':3000,'sql_batch_size':300}
+  batch=layout['sql_batch_size']
+  need(layout['plan_sha256']==sha and type(layout['workers']) is int and layout['workers']==6
+    and type(layout['page_size']) is int and layout['page_size']==3000
+    and type(batch) is int and 1<=batch<=3000
+    and type(owner['sql_batch_size']) is int and owner['sql_batch_size']==batch)
   summary=json.loads((root/'state.json').read_bytes())
   need(summary['protocol']==plan['protocol'] and summary['kind']==plan_kind and summary['plan_sha256']==sha
     and summary['mongo_uuid']==plan['mongo_uuid'] and summary['cdc_replay'] is False
-    and summary['workers']==6 and summary['page_size']==3000 and summary['sql_batch_size']==300
+    and summary['workers']==6 and summary['page_size']==3000
+    and type(summary['sql_batch_size']) is int and summary['sql_batch_size']==batch
     and summary['stage'] in ('running','complete','failed','paused','canary_complete','pg_alias_tail','mongo_coverage_complete'))
   states=[read_committed_worker(root,plan,n,p) for n,p in enumerate(plan['parts'])]
   count=sum(s['processed'] for s in states);done=sum(s['done'] for s in states)
@@ -145,7 +154,8 @@ def read_migration(kind):
     'mongo_uuid':plan['mongo_uuid'],'processed':count,'total':None,'workers_done':done,
     'worker_processed':[s['processed'] for s in states],'pending':sum(bool(s.get('pending')) for s in states),
     'errors':list(dict.fromkeys([s['last_error'] for s in states if s.get('last_error')]+([summary['last_error']] if summary.get('last_error') else []))),
-    'stage':summary['stage'],'cdc_replay':False,'tail':tail}
+    'stage':summary['stage'],'sql_batch_size':300 if summary['stage']=='pg_alias_tail' else batch,
+    'cdc_replay':False,'tail':tail}
  except Exception as error:
   return {'verified':False,'kind':kind,'sampled_at':sampled,'error_class':type(error).__name__}
 
@@ -227,14 +237,14 @@ def summarize_migration(raw, previous, sampled_at):
 
 def migration_report(values, markdown_format=False, facts_repair=None):
     lines = ['', 'facts / 专利 RDS+ODS 迁移（同批双层验证的 record_id 只计一次）']
-    headers = ('范围', '阶段', '双层已验证 ID / 目标', '本轮新增', 'ID/分钟', 'PG 会话', '待确认事务', '错误')
+    headers = ('范围', '阶段', '双层已验证 ID / 目标', '本轮新增', 'ID/分钟', 'PG 会话', 'SQL 子批', '待确认事务', '错误')
     rows = []
     names = {'running': '迁移中', 'complete': '完成', 'failed': '错误', 'paused': '暂停',
              'canary_complete': '小批完成', 'pg_alias_tail': 'PG 旧源尾扫', 'mongo_coverage_complete': '待旧源尾扫', 'stopped': '进程已退出'}
     for kind in ('facts', 'patent'):
         value = values[kind];label = kind + '/RDS+ODS'
         if not value.get('verified'):
-            rows.append((label, '未验证', '—', '—', '—', '未验证', '—', value.get('error_class') or 'UnknownError'))
+            rows.append((label, '未验证', '—', '—', '—', '未验证', '—', '—', value.get('error_class') or 'UnknownError'))
             continue
         total = f"{value['total']:,}" if value['total'] is not None else '未核定'
         delta = f"{value['delta']:,}" if value['delta'] is not None else '—'
@@ -245,7 +255,7 @@ def migration_report(values, markdown_format=False, facts_repair=None):
         if value.get('note'):errors += '; ' + value['note']
         stage = names.get(value['stage'], value['stage'])
         rows.append((label, stage, f"{value['processed']:,}/{total}",
-                     delta, rate, workers, str(value['pending']), errors))
+                     delta, rate, workers, f"{value['sql_batch_size']:,}", str(value['pending']), errors))
         if value.get('tail'):
             tail = value['tail']
             label = 'facts' if kind == 'facts' else '专利'

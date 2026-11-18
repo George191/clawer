@@ -44,7 +44,7 @@ def migration(kind='patent', **changes):
     return {'verified': True, 'sampled_at': SAMPLED, 'kind': kind, 'plan_sha256': 'a' * 64,
             'worker_processed': [100] * 6, 'processed': 600, 'total': None,
             'stage': 'running', 'pg_workers': list(range(6)), 'pending': 0, 'errors': [],
-            'tail': None, 'cdc_replay': False, **changes}
+            'tail': None, 'cdc_replay': False, 'sql_batch_size': 300, **changes}
 
 
 def reader_fixture(kind='patent', complete=False, bounded=False):
@@ -129,6 +129,29 @@ def reader_fixture(kind='patent', complete=False, bounded=False):
 def mutate(files, path, **values):
     value = json.loads(files[path]); value.update(values); files[path] = encoded(value)
     return value
+
+
+def set_runtime_batch(files, root, plan, batch):
+    files[root + '/layout.json'] = encoded({'plan_sha256': plan['plan_sha256'],
+        'workers': 6, 'page_size': 3000, 'sql_batch_size': batch})
+    owner_path = BASE + '/source-safe-current-owners.json'
+    owners = json.loads(files[owner_path])
+    for owner in owners.values():
+        owner['sql_batch_size'] = batch
+    files[owner_path] = encoded(owners)
+    mutate(files, root + '/state.json', sql_batch_size=batch)
+
+
+def set_receipt_rows(files, root, plan, rows):
+    checkpoint_path = root + '/worker-0.json'
+    checkpoint = json.loads(files[checkpoint_path])
+    count = max(checkpoint['processed'], rows)
+    cursor = f'{int(plan["parts"][0]["lower"], 16) + count - 1:024x}'
+    ids = [f'private-large-batch-{n}' for n in range(rows)]
+    mutate(files, root + '/' + checkpoint['last_receipt'], rows=rows, record_ids=ids,
+        previous_processed=count - rows, last_id=cursor,
+        after_sha256={layer: {rid: 'b' * 64 for rid in ids} for layer in ('rds', 'ods')})
+    mutate(files, checkpoint_path, processed=count, cursor=cursor)
 
 
 def add_tail(files, root, parent_plan, complete=False):
@@ -489,6 +512,81 @@ class ProgressTests(unittest.TestCase):
         mutate(files, root + '/worker-0.json', pending='transactions/future.prepared.json')
         raw = probe(); self.assertTrue(raw['verified'], raw)
         self.assertEqual((raw['processed'], raw['pending']), (12, 1))
+
+    def test_large_runtime_batches_keep_immutable_plan_and_verify_both_layer_receipts(self):
+        for kind in ('facts', 'patent'):
+            for batch in (600, 1000, 3000):
+                with self.subTest(kind=kind, batch=batch):
+                    probe, files, root, plan = reader_fixture(kind)
+                    original_plan = files[root + '/plan.json']
+                    set_runtime_batch(files, root, plan, batch)
+                    set_receipt_rows(files, root, plan, batch)
+                    before = dict(files)
+                    value = probe()
+                    self.assertTrue(value['verified'], value)
+                    self.assertEqual((value['processed'], value['sql_batch_size']), (batch + 10, batch))
+                    self.assertEqual(files[root + '/plan.json'], original_plan)
+                    self.assertEqual(files, before)
+                    current = progress.summarize_migration(value, None, value['sampled_at'])
+                    current['pg_workers'] = list(range(6))
+                    for markdown in (False, True):
+                        report = progress.migration_report({'facts': current, 'patent': current}, markdown)
+                        self.assertIn('SQL 子批', report)
+                        self.assertIn(f'{batch:,}', report)
+                    receipt_path = root + '/transactions/worker-0.committed.json'
+                    receipt = json.loads(files[receipt_path]); del receipt['after_sha256']['ods'][receipt['record_ids'][-1]]
+                    files[receipt_path] = encoded(receipt)
+                    self.assertFalse(probe()['verified'])
+
+    def test_runtime_batch_requires_matching_layout_owner_summary_and_original_plan(self):
+        cases = ('owner', 'summary', 'plan_sha256', 'workers', 'page_size', 'zero', 'too_large', 'boolean', 'missing')
+        for case in cases:
+            with self.subTest(case=case):
+                probe, files, root, plan = reader_fixture()
+                set_runtime_batch(files, root, plan, 600)
+                layout_path = root + '/layout.json'
+                if case == 'owner':
+                    owner_path = BASE + '/source-safe-current-owners.json'; owners = json.loads(files[owner_path])
+                    owners['patent']['sql_batch_size'] = 300; files[owner_path] = encoded(owners)
+                elif case == 'summary':
+                    mutate(files, root + '/state.json', sql_batch_size=300)
+                elif case == 'missing':
+                    layout = json.loads(files[layout_path]); del layout['workers']; files[layout_path] = encoded(layout)
+                else:
+                    key, value = {'plan_sha256': ('plan_sha256', 'f' * 64), 'workers': ('workers', 8),
+                        'page_size': ('page_size', 5000), 'zero': ('sql_batch_size', 0),
+                        'too_large': ('sql_batch_size', 3001), 'boolean': ('sql_batch_size', True)}[case]
+                    mutate(files, layout_path, **{key: value})
+                value = probe()
+                self.assertFalse(value['verified'], value)
+                self.assertNotIn('processed', value)
+
+    def test_reduced_runtime_batch_still_accepts_committed_larger_batch(self):
+        probe, files, root, plan = reader_fixture()
+        set_receipt_rows(files, root, plan, 1000)
+        set_runtime_batch(files, root, plan, 300)
+        value = probe()
+        self.assertTrue(value['verified'], value)
+        self.assertEqual((value['processed'], value['sql_batch_size']), (1010, 300))
+        del files[root + '/layout.json']
+        self.assertTrue(probe()['verified'])
+        set_receipt_rows(files, root, plan, 3001)
+        self.assertFalse(probe()['verified'])
+
+    def test_bounded_facts_history_still_rejects_large_receipts(self):
+        probe, files, root, plan = reader_fixture('facts', complete=True, bounded=True)
+        set_receipt_rows(files, root, plan, 600)
+        value = probe()
+        self.assertFalse(value['verified'], value)
+        self.assertNotIn('processed', value)
+
+    def test_alias_tail_reports_its_unchanged_300_row_batch(self):
+        probe, files, root, plan = reader_fixture()
+        add_tail(files, root, plan)
+        set_runtime_batch(files, root, plan, 600)
+        value = probe()
+        self.assertTrue(value['verified'], value)
+        self.assertEqual(value['sql_batch_size'], 300)
 
     def test_probe_verifies_conflict_archive_hash_before_reusing_receipt(self):
         probe, files, root, _ = reader_fixture()

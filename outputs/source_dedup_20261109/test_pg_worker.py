@@ -793,8 +793,12 @@ class BoundsTests(unittest.TestCase):
             root = Path(directory); plan = {'plan_sha256': 'a' * 64}
             self.assertEqual(subject.runtime_layout(root, plan), {
                 'workers': 6, 'page_size': 3000, 'sql_batch_size': 300, **plan})
+            for batch in (600, 1000, 3000):
+                subject.atomic(root / 'layout.json', {'workers': 6, 'page_size': 3000,
+                    'sql_batch_size': batch, **plan})
+                self.assertEqual(subject.runtime_layout(root, plan)['sql_batch_size'], batch)
             for workers, page_size, batch in ((8, 5000, 300), (8, 3000, 300),
-                                              (6, 5000, 300), (6, 3000, 301), (6, 3000, 0)):
+                                              (6, 5000, 300), (6, 3000, 3001), (6, 3000, 0)):
                 with self.subTest(workers=workers, page_size=page_size, sql_batch_size=batch):
                     subject.atomic(root / 'layout.json', {'workers': workers, 'page_size': page_size,
                         'sql_batch_size': batch, **plan})

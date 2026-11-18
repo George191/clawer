@@ -106,6 +106,19 @@ def validate_checkpoint(state, plan, worker, expected):
                 "checkpoint differs from approved facts records")
 
 
+def runtime_layout(root, plan):
+    layout = pg.read(root / "layout.json", {"workers": WORKERS, "page_size": PAGE_SIZE,
+                                          "sql_batch_size": SQL_BATCH, "plan_sha256": plan["plan_sha256"]})
+    value = {key: layout.get(key) for key in ("workers", "page_size", "sql_batch_size", "plan_sha256")}
+    require(all(type(value[key]) is int for key in ("workers", "page_size", "sql_batch_size"))
+            and value["workers"] == WORKERS and value["page_size"] == PAGE_SIZE
+            and 1 <= value["sql_batch_size"] <= PAGE_SIZE and value["plan_sha256"] == plan["plan_sha256"],
+            "runtime layout requires six workers, 3000-key pages and SQL batches at most 3000")
+    require(plan["kind"] != "facts" or value["sql_batch_size"] == SQL_BATCH,
+            "bounded facts cleanup requires 300-row SQL batches")
+    return value
+
+
 async def locked_rows(connection, table, ids, sources, kind):
     keys = [{"record_id": rid, "data_source": source, "data_type": kind}
             for rid in sorted(ids) for source in sorted(sources)]
@@ -203,7 +216,8 @@ async def recover_pending(connection, root, plan, worker, state):
             and receipt["worker"] == worker and receipt["mongo_uuid"] == plan["mongo_uuid"]
             and receipt["part"] == plan["parts"][worker]
             and receipt["previous_cursor"] == state["cursor"] and receipt["previous_processed"] == state["processed"]
-            and type(receipt["rows"]) is int and 0 < receipt["rows"] <= SQL_BATCH
+            and type(receipt["rows"]) is int
+            and 0 < receipt["rows"] <= (SQL_BATCH if plan["kind"] == "facts" else PAGE_SIZE)
             and len(receipt["record_ids"]) == len(set(receipt["record_ids"])) == receipt["rows"],
             "pending receipt binding differs")
     if receipt.get("archive"):
@@ -222,7 +236,7 @@ async def recover_pending(connection, root, plan, worker, state):
 
 
 async def apply_chunk(connection, root, plan, worker, state, docs):
-    require(0 < len(docs) <= SQL_BATCH, "SQL chunk exceeds 300")
+    require(0 < len(docs) <= PAGE_SIZE, "SQL chunk exceeds 3000")
     ids = document_ids(docs, plan)
     baseline = SCOPES[plan["kind"]][0]
     token = uuid.uuid4().hex
@@ -377,6 +391,7 @@ def validate_namespace(client, plan):
 async def worker_run(root, worker, canary=False):
     plan = pg.read(root / "plan.json")
     validate_plan(plan)
+    layout = runtime_layout(root, plan)
     part = plan["parts"][worker]
     expected = manifest_records(plan, worker)
     state_path = root / f"worker-{worker}.json"
@@ -425,10 +440,10 @@ async def worker_run(root, worker, canary=False):
                     return
                 if limit is not None:
                     docs = docs[:limit - state["processed"]]
-                for start in range(0, len(docs), SQL_BATCH):
+                for start in range(0, len(docs), layout["sql_batch_size"]):
                     if (root / "STOP").exists():
                         return
-                    chunk = docs[start:start + SQL_BATCH]
+                    chunk = docs[start:start + layout["sql_batch_size"]]
                     ids = document_ids(chunk, plan)
                     require(all((state["cursor"] is None or doc["_id"] > ObjectId(state["cursor"]))
                                 and doc["_id"] >= ObjectId(part["lower"])
@@ -470,6 +485,7 @@ def worker_entry(root, worker, canary=False):
 
 
 def write_state(root, plan, canary, *, failed=False, last_error=None):
+    layout = runtime_layout(root, plan)
     states = [pg.read(root / f"worker-{worker}.json", {}) for worker in range(WORKERS)]
     processed = sum(s.get("processed", 0) for s in states)
     all_done = all(s.get("done") is True for s in states)
@@ -481,7 +497,7 @@ def write_state(root, plan, canary, *, failed=False, last_error=None):
              else "paused" if (root / "STOP").exists() else "running")
     value = {"protocol": PROTOCOL, "kind": plan["kind"], "stage": stage, "plan_sha256": plan["plan_sha256"],
              "mongo_uuid": plan["mongo_uuid"], "processed": processed, "workers_done": sum(s.get("done") is True for s in states),
-             "workers": WORKERS, "page_size": PAGE_SIZE, "sql_batch_size": SQL_BATCH,
+             "workers": WORKERS, "page_size": PAGE_SIZE, "sql_batch_size": layout["sql_batch_size"],
              "pg_only_alias_sweep_complete": False, "cdc_replay": False,
              "last_error": last_error or next((s.get("last_error") for s in states if s.get("last_error")), None)}
     pg.atomic(root / "state.json", value)
@@ -596,6 +612,7 @@ def main():
     require((root / "plan.json").is_file(), "prepare an immutable plan before running")
     plan = pg.read(root / "plan.json")
     validate_plan(plan)
+    runtime_layout(root, plan)
     if args.worker is not None:
         require(0 <= args.worker < WORKERS, "worker must be 0 through 5")
         worker_entry(str(root), args.worker, args.canary)
