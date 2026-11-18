@@ -248,10 +248,8 @@ async def apply_chunk(connection, root, plan, worker, state, docs):
         await connection.execute("SET LOCAL TIME ZONE 'UTC'")
         await connection.execute("SET LOCAL lock_timeout='15s'")
         await connection.execute("SET LOCAL statement_timeout='120s'")
-        locks = sorted("|".join(("ts_" + layer, layer + "_" + plan["data_type"], plan["collection"], plan["data_type"], rid))
-                       for layer in ("rds", "ods") for rid in ids)
-        await connection.execute("""WITH k AS MATERIALIZED(SELECT value FROM unnest($1::text[]) x(value) ORDER BY value)
-            SELECT pg_advisory_xact_lock(hashtextextended(value,0)) FROM k""", locks)
+        # Owned, disjoint Mongo ranges and unique record_id already isolate these workers.
+        # Existing rows remain protected by FOR UPDATE, CAS and unique constraints below.
         retained = {}
         inserted = {}
         for layer in ("rds", "ods"):
