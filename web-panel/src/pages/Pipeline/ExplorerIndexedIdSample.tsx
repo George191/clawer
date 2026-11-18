@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Modal } from '@/components/ui';
+import { Button, Input, Modal } from '@/components/ui';
 import { fetchIndexedIdSample, queryIndexedIdSample } from '../../services/api';
 import type { IndexedIdSampleCapability, IndexedIdSamplePredicate, IndexedIdSampleResult } from '../../services/api';
+import { getSessionState } from '../../services/session';
 import type { ExplorerFilter } from './explorerFilters';
 
 const int64 = (value: string) => /^(0|-?[1-9]\d{0,18})$/.test(value) &&
@@ -18,8 +19,8 @@ function predicateFor(candidate?: Candidate): IndexedIdSamplePredicate | undefin
   }
 }
 
-export default function ExplorerIndexedIdSample({ schema, table, candidate }: {
-  schema: string; table: string; candidate?: Candidate;
+export default function ExplorerIndexedIdSample({ schema, table, candidate, required = false, identity }: {
+  schema: string; table: string; candidate?: Candidate; required?: boolean; identity?: string;
 }) {
   const [capability, setCapability] = useState<IndexedIdSampleCapability>();
   useEffect(() => {
@@ -29,12 +30,33 @@ export default function ExplorerIndexedIdSample({ schema, table, candidate }: {
     }).catch(() => { if (!read.signal.aborted) setCapability(undefined); });
     return () => read.abort();
   }, [schema, table]);
-  if (!capability?.available || !capability.keyColumn) return null;
+  if (!capability?.available || !capability.keyColumn) return required
+    ? <p role="status">Verified-index ID sampling is unavailable. No preview query was run.</p> : null;
+  if (required && identity) return <RequiredSample schema={schema} table={table} field={capability.keyColumn} identity={identity} />;
   return <SampleAction key={JSON.stringify(candidate ?? null)} schema={schema} table={table} field={capability.keyColumn}
     predicate={candidate?.field === capability.keyColumn ? predicateFor(candidate) : undefined} />;
 }
 
-function SampleAction({ schema, table, field, predicate }: { schema: string; table: string; field: string; predicate?: IndexedIdSamplePredicate }) {
+function RequiredSample({ schema, table, field, identity }: { schema: string; table: string; field: string; identity: string }) {
+  const [operator, setOperator] = useState<'=' | '介于'>('=');
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const candidate = { field, operator, value: operator === '=' ? start : `${start},${end}` };
+  return <>
+    <p>Reviewed key: <code>{field}</code>. Enter signed 64-bit integers without leading zeros.</p>
+    <label>Comparison <select aria-label="Comparison" value={operator} onChange={event => setOperator(event.target.value === '介于' ? '介于' : '=')}>
+      <option value="=">Equals</option><option value="介于">Inclusive range</option>
+    </select></label>
+    <label>{operator === '=' ? 'Key value' : 'From key'} <Input aria-label={operator === '=' ? 'Key value' : 'From key'} value={start}
+      maxLength={64} onChange={event => setStart(event.target.value)} /></label>
+    {operator === '介于' && <label>Through key <Input aria-label="Through key" value={end} maxLength={64}
+      onChange={event => setEnd(event.target.value)} /></label>}
+    <SampleAction key={JSON.stringify([operator, start, end])} schema={schema} table={table} field={field}
+      predicate={predicateFor(candidate)} identity={identity} />
+  </>;
+}
+
+function SampleAction({ schema, table, field, predicate, identity }: { schema: string; table: string; field: string; predicate?: IndexedIdSamplePredicate; identity?: string }) {
   const request = useRef<AbortController>();
   const [review, setReview] = useState<IndexedIdSamplePredicate>();
   const [sample, setSample] = useState<IndexedIdSampleResult>();
@@ -42,14 +64,19 @@ function SampleAction({ schema, table, field, predicate }: { schema: string; tab
   const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
   useEffect(() => () => request.current?.abort(), []);
+  const current = () => {
+    if (!identity) return true;
+    const session = getSessionState();
+    return session.authenticated && !session.locked && session.identity === identity;
+  };
   const run = async () => {
-    if (!review || request.current || denied) return;
+    if (!review || request.current || denied || !current()) return;
     const confirmed = review;
     setReview(undefined); setSample(undefined); setNotice(''); setBusy(true);
     const read = new AbortController(); request.current = read;
     try {
       const result = await queryIndexedIdSample(schema, table, confirmed, read.signal);
-      if (read.signal.aborted) return;
+      if (read.signal.aborted || !current()) return;
       if (result.state === 'sampled' && result.reason === 'index_path' && result.ids.length <= 20 && result.ids.every(int64)) setSample(result);
       else {
         if (result.reason === 'scope_unavailable') setDenied(true);
@@ -57,7 +84,7 @@ function SampleAction({ schema, table, field, predicate }: { schema: string; tab
           : 'No verified ID sample is available. No alternative query was used.');
       }
     } catch (failure) {
-      if (!read.signal.aborted) {
+      if (!read.signal.aborted && current()) {
         const status = (failure as { response?: { status?: number } })?.response?.status;
         if (status === 401 || status === 403 || status === 404) setDenied(true);
         setNotice('No verified ID sample is available. No alternative query was used.');

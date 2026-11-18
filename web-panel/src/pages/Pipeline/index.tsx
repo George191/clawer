@@ -18,12 +18,15 @@ import ExplorerTableSchema from './ExplorerTableSchema';
 import ExplorerTableEvidence from './ExplorerTableEvidence';
 import SandboxPipelineBuilder from './SandboxPipelineBuilder';
 import ExplorerIndexCoverage from './ExplorerIndexCoverage';
+import ExplorerIndexedIdSample from './ExplorerIndexedIdSample';
+import { useSandboxIdentity } from './SandboxMarkings';
+import { getSessionState } from '../../services/session';
 import SandboxIndexPreview, { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 import { appendAndFilters, blankExplorerFilter, cellFilterRows, countFilterTerms, exactCellValue, explorerFilterTerms, hasOr } from './explorerFilters';
 import type { ExplorerFilter } from './explorerFilters';
 import  {  TemplateGlyph,  inferSiteKind  }  from  '../AICollect/WorkspaceDock';
-import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, queryExplorerPreview, fetchEtlTableColumns, fetchTablePartitions, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
-import type { EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
+import { fetchCurrentUserContext, fetchLayers, fetchLayerTables, fetchTableData, fetchHandlerCode, queryEtlTable, queryExplorerPreview, fetchRowPreviewPolicy, fetchEtlTableColumns, fetchTablePartitions, fetchTableStream, fetchLayerScript, setTableOffset, validateHandlerCode, saveHandlerCode, updateEtlRow, deleteEtlRow, fetchEtlApis, createEtlApi, updateEtlApi, deleteEtlApi, fetchVulnerabilityKeywords, uploadVulnerabilityKeywords, activateVulnerabilityKeywordVersion, downloadVulnerabilityKeywordVersion, downloadCurrentVulnerabilityKeywords } from '../../services/api';
+import type { RowPreviewMode, EtlDataQuery, EtlPublishedApi, VulnerabilityKeywordConfig } from '../../services/api';
 import  type  {  LayerNode,  LayerTable,  QueryResult,  ExplorerPreviewResult,  EtlPartition,  EtlStreamState  }  from  '../../services/types';
 
 type  FilterCheckboxChange  =  {  target:  {  checked:  boolean  }  };
@@ -185,6 +188,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const requestedView = new URLSearchParams(search).get('view');
     const  navigate  =  useNavigate();
     const [canManage, setCanManage] = useState(false);
+    const adminPreviewIdentity = useRef('');
     const managePermission = useRef(false);
     managePermission.current = canManage;
     const [catalogLoaded, setCatalogLoaded] = useState(false);
@@ -243,9 +247,11 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const endMutation = () => { mutationPending.current = false; if (workspaceActive.current) setMutationLoading(false); };
     const refreshCatalog = async () => {
         const version = ++catalogRequest.current;
+        const identity = getSessionState().identity;
         try {
             const [layers, context] = await Promise.all([fetchLayers(), fetchCurrentUserContext()]);
-            if (version !== catalogRequest.current || !workspaceActive.current) return;
+            if (version !== catalogRequest.current || !workspaceActive.current || getSessionState().identity !== identity) return;
+            adminPreviewIdentity.current = context.user.is_superuser === true ? identity : '';
             setCanManage(context.user.is_superuser === true);
             const visibleLayers = layers.map((item) => ({ ...item, key: item.schemaName || (item.key.startsWith('ts_') ? item.key : `ts_${item.key}`) })).filter((item) => item.key !== 'ts_meta');
             setSchemas(visibleLayers);
@@ -430,8 +436,34 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const filterCount = countFilterTerms(appliedTerms) + Number(Boolean(appliedQuery.search?.trim()));
     const sortCount = appliedQuery.sorts.length;
     const indexPreviewAsset = selectedSchema === INDEX_PREVIEW_SCHEMA && table.name === INDEX_PREVIEW_TABLE;
+    const previewIdentity = useSandboxIdentity();
+    const [policyRetry, setPolicyRetry] = useState(0);
+    const [policy, setPolicy] = useState<{ key: string; mode: RowPreviewMode | 'unavailable' }>();
+    const previewRequested = (!isSchemas || resourceView === 'preview') && !indexPreviewAsset;
+    const policyKey = previewIdentity && selectedTableAvailable && previewRequested ?
+        JSON.stringify([previewIdentity, pathname, selectedSchema, table.name, refreshVersion, policyRetry]) : '';
+    const policyMode = policyKey && policy?.key === policyKey ? policy.mode : undefined;
     const showIndexPreview = isSchemas && resourceView === 'preview' && indexPreviewAsset;
-    const showPreview = (!isSchemas || resourceView === 'preview') && !indexPreviewAsset;
+    const showPreview = policyMode === 'classic';
+    const classicPreviewScope = useRef('');
+    classicPreviewScope.current = showPreview ? policyKey : '';
+    useEffect(() => {
+        if (!policyKey) { setPolicy(undefined); return; }
+        const read = new AbortController();
+        const current = () => {
+            const session = getSessionState();
+            return !read.signal.aborted && session.authenticated && !session.locked && session.identity === previewIdentity;
+        };
+        void fetchRowPreviewPolicy(selectedSchema, table.name, read.signal).then(value => {
+            if (current()) setPolicy({ key: policyKey, mode: value?.mode === 'classic' || value?.mode === 'indexed_id_required' ? value.mode : 'unavailable' });
+        }).catch(() => { if (current()) setPolicy({ key: policyKey, mode: 'unavailable' }); });
+        return () => read.abort();
+    }, [policyKey]);
+    useEffect(() => {
+        if (showPreview) return;
+        setData(undefined); setPreviewPage(undefined); setEditingRowKey(undefined); setEditingDraft(null);
+        setJsonRow(null); setAnalysisOpen(false); setPreviewError(''); setPreviewUnavailable(false);
+    }, [policyKey, showPreview]);
     const showStream = !isSchemas || resourceView === 'stream';
     const fieldCount = data?.columns.length ?? 0;
     const filterFields = data?.columns.length ? data.columns : repairFields;
@@ -442,7 +474,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     const formatCell = (value: unknown) => value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value);
     const editCell = (key: string, value: unknown): string | null => value == null ? null : /^(jsonb?)(?:\s|$)|\[\]$/.test(data?.columnTypes?.[key]?.toLowerCase() || '') ? JSON.stringify(value) : typeof value === 'object' ? JSON.stringify(value) : String(value);
     const startRowEdit = (key: string) => {
-        if (!canManage || !selectedTableAvailable || loading || mutationPending.current) return;
+        if (!showPreview || !canManage || !selectedTableAvailable || loading || mutationPending.current) return;
         if (!data?.primaryKey?.length) { message.warning('This table has no primary key and cannot be edited safely'); return; }
         const row = dataRows.find((item) => rowKey(item) === key);
         if (!row) return;
@@ -452,7 +484,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
     };
     const cancelRowEdit = () => { if (!mutationPending.current) { setEditingRowKey(undefined); setEditingDraft(null); } };
     const saveRowEdit = async () => {
-        if (!selectedTableAvailable || !editingDraft || !data?.primaryKey?.length || !beginMutation()) return;
+        if (!showPreview || !selectedTableAvailable || !editingDraft || !data?.primaryKey?.length || !beginMutation()) return;
         const target = selection.current;
         const original = dataRows.find((item) => rowKey(item) === editingRowKey);
         try {
@@ -488,11 +520,12 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         } catch (error) { message.error(errorText(error)); } finally { endMutation(); }
     };
     const removeRow = (row: Record<string, unknown>) => {
-        if (!canManage || !selectedTableAvailable || !data?.primaryKey?.length || mutationPending.current) return;
+        if (!showPreview || !canManage || !selectedTableAvailable || !data?.primaryKey?.length || mutationPending.current) return;
         if (data.primaryKey.some((key) => typeof row[key] === 'number' && Number.isInteger(row[key]) && !Number.isSafeInteger(row[key]))) { message.error('Primary key exceeds safe numeric precision'); return; }
         const target = selection.current;
+        const reviewedScope = policyKey;
         Modal.confirm({ className: 'flow-surface-modal', title: 'Delete this row?', content: JSON.stringify(primaryKey(row)), onOk: async () => {
-            if (selection.current !== target || !beginMutation()) return;
+            if (selection.current !== target || classicPreviewScope.current !== reviewedScope || !beginMutation()) return;
             try { await deleteEtlRow(selectedSchema, table.name, primaryKey(row)); if (selection.current === target) setRefreshVersion((value) => value + 1); }
             catch (error) { message.error(errorText(error)); throw error; } finally { endMutation(); }
         } });
@@ -512,7 +545,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         if (editingRowKey || mutationPending.current) {
             message.warning('Save or cancel the current row edit first'); return false;
         }
-        return selectedTableAvailable && !loading;
+        return selectedTableAvailable && showPreview && !loading;
     };
     const filterDraft = (rows: ExplorerFilter[]) => rows.filter((rule) => rule.field || /^group-(open|close)-/.test(rule.id));
     const hasFilterDraft = () => JSON.stringify(filterDraft(filterRules)) !== JSON.stringify(filterDraft(appliedQuery.filters));
@@ -684,7 +717,7 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         setEditingRowKey(undefined); setEditingDraft(null); setPartition(undefined); setPageNumber(1); setData(undefined); setPartitions([]); setScript(''); setSavedScript(''); setScriptLoaded(false); setScriptNote('Loading script…'); setOpenApis([]); setInputTopics([]); setActiveTopicIndex(0); setStream(undefined); setOffsets([]); setStreamError(''); setOffsetPartition(undefined); setOffset(undefined); setOffsetOpen(false);
         setFilterText(''); setFilterRules([{ id: 'rule-1', field: '', operator: '=', value: '', active: true, join: 'and' }]); setSortField(''); setSortConditions([]); setAppliedQuery({ filters: [], sorts: [], search: '' });
         setPreviewError(''); setPreviewUnavailable(false); setPreviewPage(undefined); setRepairFields([]);
-    }, [selectedSchema, table.name, selectedTableAvailable]);
+    }, [selectedSchema, table.name, selectedTableAvailable, previewIdentity]);
     useEffect(() => {
         if (!selectedTableAvailable || !showPreview) return;
         let active = true;
@@ -724,32 +757,43 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
         const controller = new AbortController();
         const offset = (pageNumber - 1) * pageSize;
         const query = { ...appliedQuery, limit: pageSize, offset, partition };
+        const current = () => {
+            const session = getSessionState();
+            return version === dataRequest.current && !controller.signal.aborted && classicPreviewScope.current === policyKey &&
+                session.authenticated && !session.locked && session.identity === previewIdentity;
+        };
         const timer = window.setTimeout(async () => {
             try {
+                if (!current()) return;
                 if (isSchemas) {
                     const result = await queryExplorerPreview(selectedSchema, table.name, query, controller.signal);
-                    if (version !== dataRequest.current) return;
+                    if (!current()) return;
                     setData(result); setPreviewPage({ offset, limit: pageSize, result });
                 } else {
                     const result = await queryEtlTable(selectedSchema, table.name, query, controller.signal);
-                    if (version !== dataRequest.current) return;
+                    if (!current()) return;
                     if (!result.rows.length && pageNumber > 1) {
                         setPageNumber(result.totalEstimated ? 1 : Math.max(1, Math.min(pageNumber - 1, Math.ceil((result.total ?? 0) / pageSize))));
                     } else setData(result);
                 }
             } catch (error) {
-                if (version !== dataRequest.current || controller.signal.aborted) return;
+                if (!current()) return;
+                const response = (error as { response?: { status?: number; data?: { detail?: { code?: string }; errors?: { code?: string } } } })?.response;
+                if (response?.status === 409 && (response.data?.errors?.code ?? response.data?.detail?.code) === 'indexed_preview_required') {
+                    setPolicy({ key: policyKey, mode: 'unavailable' }); setData(undefined); setPreviewPage(undefined);
+                    return;
+                }
                 if (isSchemas) {
                     setData((current) => current ? { ...current, rows: [], rowCount: 0 } : undefined);
                     setPreviewUnavailable((error as { response?: { status?: number } }).response?.status === 503);
                 } else setData(undefined);
                 setPreviewPage(undefined); setPreviewError(errorText(error));
             } finally {
-                if (version === dataRequest.current) setLoading(false);
+                if (current()) setLoading(false);
             }
         }, 100);
         return () => { window.clearTimeout(timer); controller.abort(); dataRequest.current++; };
-    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion, previewRevision, selectedTableAvailable, showPreview, isSchemas]);
+    }, [selectedSchema, table.name, partition, appliedQuery, pageNumber, pageSize, refreshVersion, previewRevision, selectedTableAvailable, showPreview, isSchemas, policyKey]);
     useEffect(() => {
         if (!isSchemas || !showPreview || !selectedTableAvailable || !previewError || filterFields.length) return;
         const controller = new AbortController();
@@ -962,6 +1006,17 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                     <div className="flow-inspector-body" ref={previewViewport}>
                         {showIndexPreview && (canManage ? <SandboxIndexPreview /> :
                             <div className="flow-schema-state" role="status">Index-aware sandbox preview is available to administrators only.</div>)}
+                        {previewRequested && !showPreview && (policyMode === 'indexed_id_required'
+                            ? <section className="flow-schema-details" aria-label="Verified-index-only preview">
+                                <header><h3>Verified-index-only preview</h3></header>
+                                <p>This table requires a verified index path. Review one key equality or inclusive range to request up to 20 IDs. No rows, edits, or fallback query are available here.</p>
+                                {canManage && adminPreviewIdentity.current === previewIdentity ? <ExplorerIndexedIdSample key={policyKey} schema={selectedSchema} table={table.name}
+                                    identity={previewIdentity} required /> : <p role="status">Verified-index ID sampling is unavailable. No preview query was run.</p>}
+                            </section>
+                            : <div className="flow-schema-state" role="status">Preview policy unavailable.
+                                {policyMode === 'unavailable' ? <> <Button size="small" onClick={() => setPolicyRetry(value => value + 1)}>Retry preview policy</Button></>
+                                    : ' Checking the selected table.'}
+                            </div>)}
                         {showPreview && <div className="flow-navicat-toolbar">
                             <button type="button" className={`flow-tool ${filterOpen ? 'is-active' : ''}`} aria-expanded={filterOpen} onClick={() => activateTool('filter')}>
                                 {isSchemas && <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="M2 3h12L9 8.5v4l-2 1v-5L2 3Z" strokeLinejoin="round" /></svg>}
@@ -1098,8 +1153,8 @@ const  DataLayersWorkspace:  React.FC  =  ()  =>  {
                 <div  className="flow-offset-modal-warn"><AlertOutlined  />  Changes  apply  after  the  worker  restarts.  The  consumer  group  will  resume  from  the  new  position.</div>
             </div>
         </Modal>
-        <Modal className="flow-surface-modal"  title="Data  analysis"  open={analysisOpen}  onCancel={()  =>  setAnalysisOpen(false)}  footer={<Button  onClick={()  =>  setAnalysisOpen(false)}>Close</Button>}><div  className="flow-analysis-grid"><div><span>Visible  rows</span><strong>{dataRows.length}</strong></div><div><span>Partitions</span><strong>{new  Set(dataRows.map((row)  =>  row.partition)).size}</strong></div><div><span>Ready</span><strong>{dataRows.filter((row)  =>  row.status  ===  'ready').length}</strong></div></div></Modal>
-        <Modal  className="flow-surface-modal flow-json-preview-modal"  title={jsonRow  ?  `Row  JSON  ·  ${table.name}`  :  'Row  JSON'}  open={!!jsonRow}  onCancel={()  =>  setJsonRow(null)}  footer={<Button  onClick={()  =>  setJsonRow(null)}>Close</Button>}  width={720}>
+        <Modal className="flow-surface-modal"  title="Data  analysis"  open={showPreview && analysisOpen}  onCancel={()  =>  setAnalysisOpen(false)}  footer={<Button  onClick={()  =>  setAnalysisOpen(false)}>Close</Button>}><div  className="flow-analysis-grid"><div><span>Visible  rows</span><strong>{dataRows.length}</strong></div><div><span>Partitions</span><strong>{new  Set(dataRows.map((row)  =>  row.partition)).size}</strong></div><div><span>Ready</span><strong>{dataRows.filter((row)  =>  row.status  ===  'ready').length}</strong></div></div></Modal>
+        <Modal  className="flow-surface-modal flow-json-preview-modal"  title={jsonRow  ?  `Row  JSON  ·  ${table.name}`  :  'Row  JSON'}  open={showPreview && !!jsonRow}  onCancel={()  =>  setJsonRow(null)}  footer={<Button  onClick={()  =>  setJsonRow(null)}>Close</Button>}  width={720}>
             <div  className="flow-json-tree">{jsonRow  ?  <JsonTreeValue  name=""  value={jsonRow}  depth={0}  comma={false}  />  :  null}</div>
         </Modal>
     </div>;

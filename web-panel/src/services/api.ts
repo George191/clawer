@@ -1327,6 +1327,11 @@ export const checkPreviewIndexCoverage = (
     'terms' in request ? { terms: request.terms.map(({ field, operator }) => ({ field, operator })) } :
       { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
 
+export type RowPreviewMode = 'classic' | 'indexed_id_required';
+export const fetchRowPreviewPolicy = (schema: string, table: string, signal?: AbortSignal): Promise<{ mode: RowPreviewMode }> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/row-preview-policy`, { signal })
+    .then(r => unwrap<{ mode: RowPreviewMode }>(r.data));
+
 export type IndexedIdSamplePredicate = { idEquals: string } | { idFrom: string; idTo: string };
 export type IndexedIdSampleCapability = { available: boolean; keyColumn?: string; limit: 20 };
 export type IndexedIdSampleResult = {

@@ -21,3 +21,12 @@ class IndexedCompoundSampleScope(BaseModel):
 
 class IndexedSampleScope(IndexedCompoundSampleScope):
     keyColumn: _Canonical
+
+
+class RequiredIndexedPreviewTable(BaseModel):
+    """Canonical asset identity, independent of sampler flags and physical pins."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_name: Annotated[str, Field(alias="schema", strict=True, pattern=r"^ts_[a-z0-9_]{1,60}$")]
+    table: _Canonical

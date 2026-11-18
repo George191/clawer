@@ -11,6 +11,10 @@ PREVIEW_ROWS_MAX_LIMIT = 100
 PREVIEW_ROWS_MAX_OFFSET = 2000
 
 
+class RowPreviewPolicy(BaseModel):
+    mode: Literal["classic", "indexed_id_required"]
+
+
 class DataQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     limit: int = Field(default=50, ge=1, le=500)

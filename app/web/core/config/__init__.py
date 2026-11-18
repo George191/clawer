@@ -19,7 +19,7 @@ from sqlalchemy.engine import make_url
 from typing_extensions import Self
 
 from app.storage.postgres_client import _resolved_pg_url
-from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope
+from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope, RequiredIndexedPreviewTable
 from app.web.core.config.sandbox_handoff import HandoffClearance, HandoffCopyGrant, HandoffSinkGrant
 from app.web.core.config.snapshot_intent import SnapshotDeliveryEvidenceGrant, SnapshotDeliveryGrant, SnapshotIntentGrant
 
@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     ONTOLOGY_INDEX_PREVIEW_SANDBOX_ENABLED: bool = False
     ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_ENABLED: bool = False
     ONTOLOGY_EXPLORER_INDEXED_COMPOUND_SAMPLE_PROFILE: IndexedCompoundSampleScope | None = None
+    ONTOLOGY_EXPLORER_REQUIRED_INDEXED_PREVIEW_TABLES: Annotated[
+        tuple[RequiredIndexedPreviewTable, ...], Field(max_length=16),
+    ] = ()
     ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ENABLED: bool = False
     ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER: UUID | None = None
     ONTOLOGY_EXPLORER_INDEXED_SAMPLE_ALLOWLIST: Annotated[list[IndexedSampleScope], Field(max_length=3)] = []

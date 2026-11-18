@@ -22,7 +22,8 @@ from app.etl.schema.object_relations import (
 )
 from app.storage.postgres_client import get_pg_client
 from app.web.api.models.batch_syncs import INCREMENTAL_TARGET, TARGET_SCHEMA as BATCH_TARGET_SCHEMA
-from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET
+from app.web.api.models.etl import PREVIEW_ROWS_MAX_LIMIT, PREVIEW_ROWS_MAX_OFFSET, RowPreviewPolicy
+from app.web.core.config import settings
 from app.web.api.models.lineage_neighbors import (
     LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageEndpoint, LineageNeighborKind, LineageNeighbors,
     LineagePath, LineagePathEdge, LineagePathTargets,
@@ -155,6 +156,64 @@ def resolve_schema(layer: str, table_role: str = "current") -> str:
         schema += "_hist"
     quote_identifier(schema)
     return schema
+
+
+def _required_indexed_preview_tables() -> frozenset[tuple[str, str]]:
+    return frozenset((asset.schema_name, asset.table) for asset in settings.ONTOLOGY_EXPLORER_REQUIRED_INDEXED_PREVIEW_TABLES)
+
+
+def _indexed_preview_required() -> HTTPException:
+    return HTTPException(409, {
+        "code": "indexed_preview_required",
+        "message": "This Explorer table requires a verified indexed ID preview",
+    })
+
+
+_INDEXED_POLICY_FAMILY_LIMIT = 128
+_INDEXED_POLICY_FAMILY = text("""
+    WITH RECURSIVE selected AS (
+        SELECT c.oid FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname=:schema AND c.relname=:table AND c.relkind IN ('r','p')
+    ), enrolled AS MATERIALIZED (
+        SELECT c.oid FROM ROWS FROM (
+            pg_catalog.unnest(CAST(:enrolled_schemas AS text[])),
+            pg_catalog.unnest(CAST(:enrolled_tables AS text[]))
+        ) names(schema_name, table_name)
+        JOIN pg_catalog.pg_namespace n ON n.nspname=names.schema_name
+        JOIN pg_catalog.pg_class c ON c.relnamespace=n.oid AND c.relname=names.table_name
+        WHERE c.relkind IN ('r','p')
+    ), ancestry(oid, from_request) AS (
+        (SELECT oid,true FROM selected UNION ALL SELECT oid,false FROM enrolled)
+        UNION
+        SELECT i.inhparent, ancestry.from_request FROM ancestry
+        JOIN pg_catalog.pg_inherits i ON i.inhrelid=ancestry.oid
+    ), inspected AS MATERIALIZED (
+        SELECT oid,from_request FROM ancestry LIMIT 129
+    )
+    SELECT EXISTS(SELECT 1 FROM selected) AS known,
+           (SELECT count(*) FROM inspected) AS inspected_count,
+           EXISTS(
+               SELECT 1 FROM inspected
+               WHERE (from_request AND oid IN (SELECT oid FROM enrolled))
+                  OR (NOT from_request AND oid IN (SELECT oid FROM selected))
+           ) AS required
+""")
+
+
+async def _required_preview_family(session, schema, table, enrolled) -> bool:
+    if (schema, table) in enrolled:
+        return True
+    if not enrolled:
+        return False
+    ordered = sorted(enrolled)
+    row = (await session.execute(_INDEXED_POLICY_FAMILY, {
+        "schema": schema, "table": table, "enrolled_schemas": [item[0] for item in ordered],
+        "enrolled_tables": [item[1] for item in ordered],
+    })).one()
+    if not row.known or row.inspected_count > _INDEXED_POLICY_FAMILY_LIMIT:
+        raise HTTPException(503, "Explorer row preview policy could not be verified")
+    return row.required is True
 
 
 def _object_schema(layer: str) -> str:
@@ -901,12 +960,39 @@ class EtlLayers:
             """), {"qualified": f'{quote_identifier(schema)}.{quote_identifier(table)}'})
             return [dict(row) for row in result.mappings()]
 
+    async def row_preview_policy(self, layer: str, table: str) -> RowPreviewPolicy:
+        schema = _object_schema(layer)
+        require_ordinary_table(schema, table)
+        quote_identifier(table)
+        enrolled = _required_indexed_preview_tables()
+        async with self.session(repeatable_read=True) as session:
+            await session.execute(text("SET LOCAL statement_timeout='750ms'"))
+            visible = await session.scalar(text(f"""
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_class c
+                    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+                    {_LINEAGE_METADATA_JOIN}
+                    WHERE n.nspname=:schema AND c.relname=:table AND c.relkind IN ('r','p')
+                      AND COALESCE(o.is_active,true) AND COALESCE(o.visibility,'normal') <> 'hidden'
+                      AND pg_catalog.has_schema_privilege(n.oid,'USAGE')
+                      AND pg_catalog.has_table_privilege(c.oid,'SELECT')
+                )
+            """), {"schema": schema, "table": table})
+            if visible is not True:
+                raise HTTPException(404, "Table does not exist in this schema")
+            required = await _required_preview_family(session, schema, table, enrolled)
+        return RowPreviewPolicy(mode="indexed_id_required" if required else "classic")
+
     async def data(self, layer: str, table: str, payload: dict[str, Any] | None = None,
                    scope: dict[str, Any] | None = None, *, preview_rows: bool = False) -> dict[str, Any]:
         started = perf_counter()
         payload = payload or {}
         schema = resolve_schema(layer)
         require_ordinary_table(schema, table)
+        quote_identifier(table)
+        enrolled = _required_indexed_preview_tables()
+        if (schema, table) in enrolled:
+            raise _indexed_preview_required()
         if (schema, table) == (INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE):
             raise HTTPException(403, "Use the dedicated index-checked preview for this synthetic table")
         columns = await self.columns(schema, table)
@@ -915,6 +1001,7 @@ class EtlLayers:
         names = {column["name"] for column in columns}
         qualified = f'{quote_identifier(schema)}.{quote_identifier(table)}'
         target = qualified
+        target_schema, target_table = schema, table
         # Published partitions are an additional restriction, never replaceable by callers.
         selected_partitions = {item for item in (payload.get("partition"), (scope or {}).get("partition")) if item}
         if len(selected_partitions) > 1:
@@ -925,7 +1012,10 @@ class EtlLayers:
             part = next((item for item in parts if item["name"] == selected), None)
             if part is None:
                 raise HTTPException(400, "Partition does not belong to this table")
-            target = f'{quote_identifier(part["schema"])}.{quote_identifier(part["name"])}'
+            target_schema, target_table = part["schema"], part["name"]
+            if (target_schema, target_table) in enrolled:
+                raise _indexed_preview_required()
+            target = f'{quote_identifier(target_schema)}.{quote_identifier(target_table)}'
         try:
             limit = int(payload.get("limit", 50))
             offset = int(payload.get("offset", 0))
@@ -970,7 +1060,17 @@ class EtlLayers:
             order.extend(f't.{quote_identifier(field)} asc' for field in primary_key if field not in sorted_fields)
         predicate = " WHERE " + " AND ".join(f"({item})" for item in where) if where else ""
         ordering = " ORDER BY " + ", ".join(order) if order else ""
-        async with self.session() as session:
+        async with (self.session(repeatable_read=True) if enrolled else self.session()) as session:
+            if enrolled:
+                # The app-level safeguard checks the actual selected relation
+                # (plus its stable catalog family) in the business transaction.
+                await session.execute(text("SET LOCAL statement_timeout='750ms'"))
+                await session.execute(text(f"LOCK TABLE ONLY {target} IN ACCESS SHARE MODE NOWAIT"))
+                if (await _required_preview_family(session, schema, table, enrolled)
+                    or ((target_schema, target_table) != (schema, table)
+                        and await _required_preview_family(session, target_schema, target_table, enrolled))):
+                    raise _indexed_preview_required()
+                await session.execute(text("SET LOCAL statement_timeout='10s'"))
             if not preview_rows:
                 total = (await session.execute(text(f"SELECT count(*) FROM (SELECT 1 FROM {target} t{predicate} LIMIT 10001) flow_count"), params)).scalar_one() if where else 0
                 estimated = not where or total > 10000

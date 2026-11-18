@@ -75,6 +75,7 @@ from app.web.api.models.transfer_timeline import TimelineKind, TimelineView, Tra
 from app.web.api.models.transfer_upstream import (
     UpstreamCandidate, UpstreamMixedSlot, UpstreamTrigger, UpstreamTriggerChange, UpstreamTriggerJob, UpstreamTriggerSummary,
 )
+from app.web.api.models.etl import RowPreviewPolicy
 from app.web.api.models.etl import (
     CodePayload,
     DataQuery,
@@ -1414,6 +1415,20 @@ async def tables(layer: str, tableRole: str = "current") -> list[dict[str, Any]]
 @write.post("/{layer}/tables")
 async def create_table(layer: str, payload: dict[str, Any]) -> dict[str, Any]:
     return await get_etl_workspace().create_table(layer, payload)
+
+
+@read.get("/{layer}/{table}/row-preview-policy", response_model=RowPreviewPolicy)
+async def get_row_preview_policy(
+    layer: str, table: str, request: Request, response: Response,
+) -> RowPreviewPolicy | JSONResponse:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        return JSONResponse({"detail": "Row preview policy accepts no query parameters"}, status_code=422, headers=headers)
+    try:
+        return await get_etl_layers().row_preview_policy(layer, table)
+    except HTTPException as error:
+        return JSONResponse({"detail": error.detail}, status_code=error.status_code, headers=headers)
 
 
 @read.get("/{layer}/{table}/data")
