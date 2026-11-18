@@ -13,7 +13,7 @@ export type SemanticDefinition = {
 export type OntologyDraft = { id: string; revision: number; definition: SemanticDefinition };
 export type OntologyIssue = { path: string; message: string };
 export type OntologyValidation = { errors: OntologyIssue[]; warnings: OntologyIssue[] };
-export type OntologyProject = { id: string; name: string };
+export type OntologyProject = { id: string; name: string; teamName: string; tenantId: string; ownerId: string | null; canName: boolean };
 export type OntologyPrincipal = Principal & { name: string };
 export type PublishedOntologyType = { id: string; revision: number; definition: SemanticDefinition };
 const config = { baseURL: '/api/ontology/v1' };
@@ -21,6 +21,8 @@ const data = <T,>(body: T | { code: number; data: T }): T => body && typeof body
 const draftPath = (id: string) => '/drafts/' + encodeURIComponent(id);
 
 export const listOntologyProjects = () => client.get<{items: OntologyProject[]}>('/projects', config).then(r => data(r.data).items);
+export const createOntologyProject = (teamId: string, name: string) =>
+  client.post<OntologyProject>('/projects', { teamId, name }, config).then(r => data(r.data));
 export const listOntologyPrincipals = (projectId: string) => client.get<{items: OntologyPrincipal[]}>('/projects/' + encodeURIComponent(projectId) + '/principals', config).then(r => data(r.data).items);
 export const listOntologyDrafts = () => client.get<{items: OntologyDraft[]}>('/drafts', config).then(r => data(r.data).items);
 export const fetchOntologyDraft = (id: string) => client.get<OntologyDraft>(draftPath(id), config).then(r => data(r.data));

@@ -1,6 +1,7 @@
 from typing import Any
 import uuid
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 from fastapi import HTTPException
 
 from fastapi import APIRouter
@@ -10,12 +11,16 @@ from app.web.api.dependencies import (
     ValidateCreateInTeam, ValidateUpdateOnTeam, CurrentUser, InstanceStatementTeam
 )
 from app.web.api.models import (
+    InviteCodes,
     Message,
+    RoleTypes,
     Team,
     TeamCreate,
     TeamOut,
     TeamUpdate,
+    TeamUserJoin,
 )
+from app.web.api.utils.models import StatusTypes
 from fastapi_pagination.ext.sqlmodel import apaginate
 from fastapi_pagination.links import Page
 
@@ -62,11 +67,19 @@ async def create_team(
     """
     Create new team and it's team leader
     """
-    team = Team.model_validate(team_in, update={
-        "tenant_id": tenant_id,
-    })
-
-    session.add(team)
+    team = await session.scalar(
+        insert(Team).values(**team_in.model_dump(), tenant_id=tenant_id)
+        .on_conflict_do_nothing(index_elements=[Team.name]).returning(Team)
+    )
+    if team is None:
+        raise HTTPException(409, "Team name already exists")
+    invite = InviteCodes(code=uuid.uuid4().hex, status=StatusTypes.DISABLE)
+    session.add(invite)
+    await session.flush()
+    session.add(TeamUserJoin(
+        team_id=team.id, user_id=current_user.id, role=RoleTypes.OWNER,
+        invite_by=current_user.id, invite_code=invite.id,
+    ))
     await session.commit()
     await session.refresh(team)
     return team

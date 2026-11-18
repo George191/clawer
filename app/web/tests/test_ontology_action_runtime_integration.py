@@ -4,19 +4,23 @@ import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
+import httpx
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from app.web.api.dependencies.session import get_db
 from app.web.api.models import Team, TeamUserJoin, Tenant, User
 from app.web.api.models.ontology_registry import OntologyDefinitionRow
 from app.web.api.models.ontology_runtime import OntologyActionEvent, OntologyRuntimeRecord
 from app.web.api.models.user import InviteCodes
+from app.web.api.routes.team import router as team_router
 from app.web.api.utils.models import StatusTypes
+from app.web.core.security import ALGORITHM, JWTTokenGenerator
 from app.web.services.ontology_action_runtime import ActionPayload, record_history, submit_action
 
 
@@ -98,6 +102,41 @@ async def runtime():
                 await connection.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
         finally:
             await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_team_creation_rolls_back_when_the_creator_cannot_be_added(runtime):
+    engine, user, _, _ = runtime
+    async with AsyncSession(engine) as session:
+        await session.execute(update(User).where(User.id == user.id).values(is_superuser=True))
+        await session.execute(
+            text("CREATE UNIQUE INDEX inject_membership_conflict ON team_user_join (user_id)")
+        )
+        tenant_id = await session.scalar(select(Tenant.id))
+        await session.commit()
+
+    async def sessions():
+        async with AsyncSession(engine) as session:
+            yield session
+
+    app = FastAPI()
+    app.include_router(team_router)
+    app.dependency_overrides[get_db] = sessions
+    token = JWTTokenGenerator({"sub": str(user.id)}, ALGORITHM).access_token
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with pytest.raises(IntegrityError) as failure:
+            await client.post(
+                "/team/",
+                params={"tenant_id": str(tenant_id)},
+                headers={"Authorization": f"Bearer {token}"},
+                json={"name": "Research and Development"},
+            )
+        assert failure.value.orig.__cause__.constraint_name == "inject_membership_conflict"
+    async with AsyncSession(engine) as session:
+        assert await session.scalar(select(func.count()).select_from(Team)) == 1
+        assert await session.scalar(select(func.count()).select_from(InviteCodes)) == 1
+        assert await session.scalar(select(func.count()).select_from(TeamUserJoin)) == 1
 
 
 @pytest.mark.asyncio

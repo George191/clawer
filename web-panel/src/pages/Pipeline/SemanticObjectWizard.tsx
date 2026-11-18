@@ -5,7 +5,7 @@ import { fetchEtlObjectPreview, fetchLayerTables } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import type { EtlObjectPreview, LayerNode, LayerTable } from '../../services/types';
 import {
-  createOntologyDraft, fetchOntologyDraft, listOntologyDrafts, listOntologyPrincipals, listOntologyProjects,
+  createOntologyDraft, createOntologyProject, fetchOntologyDraft, listOntologyDrafts, listOntologyPrincipals, listOntologyProjects,
   publishOntologyDraft, testOntologyPolicy, updateOntologyDraft, validateOntologyDraft,
   type OntologyDraft, type OntologyIssue, type OntologyPrincipal, type OntologyProject, type OntologyValidation,
   type SemanticDefinition, type SemanticProperty, type SemanticAction, type SemanticSource, type Principal, type PublishedOntologyType,
@@ -73,6 +73,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const panel = useRef<HTMLDivElement>(null);
   const first = useRef(true);
   const [projects, setProjects] = useState<Load<OntologyProject[]>>({ loading: true });
+  const [projectName, setProjectName] = useState('');
   const [principals, setPrincipals] = useState<Load<OntologyPrincipal[]>>({});
   const [drafts, setDrafts] = useState<Load<OntologyDraft[]>>({ loading: true });
   const [retry, setRetry] = useState(0);
@@ -86,6 +87,7 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
   const sourceKey = existing && definition.source.schema && definition.source.table ? path(definition.source.schema, definition.source.table) : '';
   const preview = sourceKey && sourcePreview.key === sourceKey ? sourcePreview.data : undefined;
   const dirty = JSON.stringify(saved?.definition ?? initial.current) !== JSON.stringify(definition);
+  const selectedProject = projects.data?.find(item => item.id === definition.projectId);
   const structuralReady = !!definition.name.trim() && !definition.actions.some(item => !item.submitters.length || (item.kind !== 'delete' && !item.fields.length)) && (definition.security.mode !== 'explicit' || !!definition.security.objectReaders.length);
   const canPublish = !!saved && !dirty && checkedRevision === saved.revision && !!validation && validation.errors.length === 0;
   const set = (values: Partial<SemanticDefinition>) => {
@@ -152,13 +154,30 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     const item = await fetchOntologyDraft(id);
     if (!current()) return;
     setSaved(item); setDefinition(item.definition); setValidation(undefined); setCheckedRevision(undefined);
-    setPolicyResult(undefined); setTestPrincipal(''); setStep(0); setStage('wizard'); setStatus('Draft revision ' + item.revision + ' loaded.');
+    setPolicyResult(undefined); setTestPrincipal(''); setProjectName(''); setStep(0); setStage('wizard'); setStatus('Draft revision ' + item.revision + ' loaded.');
   }));
   const sourceChange = (source: SemanticSource) => set({ source, properties: [], primaryKey: [], titleKey: '', actions: [], security: { mode: source.mode === 'existing' ? 'inherit' : 'explicit', objectReaders: [], fieldReaders: {} } });
   const projectChange = (projectId: string) => {
     setTestPrincipal('');
+    setProjectName('');
     set({ projectId, actions: definition.actions.map(action => ({ ...action, submitters: [] })), security: { mode: definition.security.mode, objectReaders: [], fieldReaders: {} } });
   };
+  const nameProject = () => void run(async () => {
+    if (!selectedProject?.canName || !projectName.trim()) return;
+    try {
+      const named = await createOntologyProject(selectedProject.id, projectName.trim());
+      if (current()) {
+        setProjects(previous => ({ ...previous, data: previous.data?.map(project => project.id === named.id ? named : project) }));
+        setProjectName('');
+        setStatus('Project name saved.');
+      }
+    } catch (failure) {
+      if (current()) {
+        setError(problem(failure, 'Unable to save the project name.'));
+        if (fromError(failure) === 409) setRetry(value => value + 1);
+      }
+    }
+  });
   const updateProperty = (position: number, value: Partial<SemanticProperty>) => {
     const previous = definition.properties[position];
     const nextId = value.id ?? previous.id;
@@ -246,13 +265,21 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
     const fields = kind === 'create' ? definition.properties.filter(item => item.required).map(item => item.id) : [];
     set({ actions: checked ? [...definition.actions, { kind, submitters: [], fields }] : definition.actions.filter(action => action.kind !== kind) });
   };
-  const projectOptions = (projects.data || []).map(item => ({ value: item.id, label: item.name }));
+  const projectOptions = (projects.data || []).map(item => ({ value: item.id, label: item.ownerId === null ? `${item.teamName} · Unnamed project` : `${item.name} · Team ${item.teamName}` }));
   const principalOptions = (principals.data || []).map(principal => ({ value: principalKey(principal), label: principal.name + ' · ' + principal.kind }));
   const principalList = (keys: string[]) => (principals.data || []).filter(principal => keys.includes(principalKey(principal))).map(({kind, id}) => ({kind, id}));
   const userOptions = (principals.data || []).filter(principal => principal.kind === 'user').map(principal => ({ value: principal.id, label: principal.name }));
   const schemaOptions = schemas.filter(schema => warehouseSchemas.has(schema.schemaName || schema.key)).map(schema => ({ value: schema.schemaName || schema.key, label: schema.alias ? schema.alias + ' · ' + (schema.schemaName || schema.key) : schema.schemaName || schema.key }));
-  const projectInput = <label className="flow-create-field"><span>Project</span><Select {...selectStyle} aria-label="Destination project" showSearch options={projectOptions} value={definition.projectId || undefined} loading={projects.loading} disabled={busy || projects.loading} placeholder="Select a project" onChange={projectChange} /></label>;
   const retries = () => setRetry(value => value + 1);
+  const projectInput = <div>
+    <label className="flow-create-field"><span>Ontology project</span><Select {...selectStyle} aria-label="Destination project" showSearch options={projectOptions} value={definition.projectId || undefined} loading={projects.loading} disabled={busy || projects.loading} placeholder="Select a project" onChange={projectChange} /></label>
+    {projects.error && <p className="flow-create-error" role="alert">{projects.error}<Button size="small" onClick={retries}>Retry</Button></p>}
+    {selectedProject?.canName && <div className="flow-semantic-config">
+      <label className="flow-create-field"><span>New project name</span><Input size="small" value={projectName} maxLength={64} disabled={busy} onChange={event => setProjectName(event.target.value)} /></label>
+      <p className="flow-create-help">Saving the name records you as the project owner.</p>
+      <Button size="small" disabled={busy || !projectName.trim()} onClick={nameProject}>Save project name</Button>
+    </div>}
+  </div>;
   return <Modal open centered className="flow-surface-modal flow-create-modal flow-create-object" title={stage === 'wizard' ? 'Create a new object type' : 'Review object type changes'} width={1160} onCancel={() => guards(onCancel)} maskClosable={!busy} closable={!busy} keyboard={!busy} footer={<>
     <Button disabled={busy} onClick={() => guards(onCancel)}>Close</Button>
     {stage === 'wizard' ? <>
@@ -336,7 +363,6 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
         {stage === 'wizard' && step === 4 && <section className="flow-create-section">
           <Heading title="Choose where to save" detail="The chosen project owns the definition. The source table stays where it is." />
           <div className="flow-create-grid">{projectInput}<div className="flow-create-field"><span>Resource</span><div className="flow-create-value">{definition.id || 'Object type'}</div></div></div>
-          {projects.error && <p className="flow-create-error" role="alert">{projects.error}<Button size="small" onClick={retries}>Retry</Button></p>}
           <p className="flow-create-help">Saving a draft does not publish a resource or alter its data source.</p>
         </section>}
         {stage === 'wizard' && step === 5 && <section className="flow-create-section">
@@ -365,7 +391,8 @@ export default function SemanticObjectWizard({ allowedSource, schemas, initialSc
           {canPublish && <p className="flow-create-notice" role="status">Validation passed for revision {saved?.revision}. Review any warnings before publishing.</p>}
           {validation && <><IssueList title="Blocking errors" issues={validation.errors} /><IssueList title="Warnings" issues={validation.warnings} /></>}
           <dl className="flow-create-summary">
-            <dt>Object type</dt><dd>{definition.name} · {definition.id}</dd><dt>Project</dt><dd>{projects.data?.find(item => item.id === definition.projectId)?.name || definition.projectId}</dd>
+            <dt>Object type</dt><dd>{definition.name} · {definition.id}</dd><dt>Ontology project</dt><dd>{selectedProject?.name || definition.projectId}</dd>
+            {selectedProject && <><dt>Team</dt><dd>{selectedProject.teamName}</dd></>}
             <dt>Datasource</dt><dd>{existing ? sourceKey : 'Unbacked object type'}</dd><dt>Primary key</dt><dd>{definition.primaryKey.join(', ')}</dd>
             <dt>Title property</dt><dd>{definition.titleKey}</dd><dt>Actions</dt><dd>{definition.actions.map(action => action.kind).join(', ') || 'None'}</dd>
             <dt>Access policy</dt><dd>{definition.security.mode === 'inherit' ? 'Inherit source access' : 'Explicit readers'} · {Object.keys(definition.security.fieldReaders).length} property restrictions</dd>

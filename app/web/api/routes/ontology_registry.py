@@ -6,18 +6,22 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Response
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from app.web.api.dependencies import CurrentUser, SessionDep
-from app.web.api.models import Team
+from app.web.api.models import Team, TeamUserJoin
 from app.web.api.models.ontology_registry import (
     Definition,
     DefinitionIssue,
     OntologyDefinitionRow,
+    OntologyProjectProfile,
+    ProjectCreate,
     Revision,
     UpdateDraft,
 )
+from app.web.api.utils.models import StatusTypes
 from app.web.services.ontology_registry import (
     assess_definition,
     catalog_definition,
@@ -45,8 +49,45 @@ def draft_view(row: OntologyDefinitionRow):
 
 @router.get("/projects")
 async def list_projects(session: SessionDep, user: CurrentUser):
-    result = await session.scalars(projects_statement(user, manage=True).order_by(Team.name, Team.id))
-    return {"items": [{"id": team.id, "name": team.name, "tenantId": team.tenant_id} for team in result]}
+    member = select(TeamUserJoin.id).where(
+        TeamUserJoin.team_id == Team.id, TeamUserJoin.user_id == user.id,
+        TeamUserJoin.status == StatusTypes.ENABLE,
+    ).correlate(Team).exists()
+    rows = await session.execute(
+        projects_statement(user, manage=True).add_columns(OntologyProjectProfile, member)
+        .outerjoin(OntologyProjectProfile, OntologyProjectProfile.team_id == Team.id)
+        .order_by(Team.name, Team.id)
+    )
+    return {"items": [
+        {"id": team.id, "name": profile.name if profile else team.name, "tenantId": team.tenant_id,
+         "teamName": team.name, "ownerId": profile.owner_id if profile else None,
+         "canName": profile is None and joined}
+        for team, profile, joined in rows
+    ]}
+
+
+@router.post("/projects", status_code=201)
+async def create_project(payload: ProjectCreate, session: SessionDep, user: CurrentUser):
+    """Give the team's ontology project a display name and record its accountable owner."""
+    scope = projects_statement(user, manage=True)
+    if user.is_superuser:
+        scope = scope.join(TeamUserJoin, TeamUserJoin.team_id == Team.id).where(
+            TeamUserJoin.user_id == user.id, TeamUserJoin.status == StatusTypes.ENABLE,
+        )
+    team = await session.scalar(scope.where(Team.id == payload.teamId).with_for_update(read=True))
+    if team is None:
+        raise HTTPException(404, "Team not found or not accessible")
+    project_id = await session.scalar(
+        insert(OntologyProjectProfile).values(team_id=team.id, name=payload.name, owner_id=user.id)
+        .on_conflict_do_nothing(index_elements=[OntologyProjectProfile.team_id])
+        .returning(OntologyProjectProfile.team_id)
+    )
+    if project_id is None:
+        raise HTTPException(409, "This team already has a named ontology project")
+    view = {"id": team.id, "name": payload.name, "tenantId": team.tenant_id,
+            "teamName": team.name, "ownerId": user.id, "canName": False}
+    await session.commit()
+    return view
 
 
 async def owned_draft(session, user, draft_id: UUID, *, locked=False) -> OntologyDefinitionRow:

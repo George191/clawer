@@ -1,22 +1,29 @@
 import uuid
+from typing import Annotated
 
+from pydantic import StringConstraints
 from sqlmodel import Field
 from app.web.api.utils.models import BaseModel
 
 
+TeamName = Annotated[str, StringConstraints(
+    max_length=64, pattern=r"^[a-zA-Z0-9_-]+( [a-zA-Z0-9_-]+)*$"
+)]
+
+
 class TeamBase(BaseModel):
-    name: str = Field(regex=r"^[a-zA-Z0-9_-]{1,64}$")
+    name: str
     description: str | None = None
     # 增加team的图标
     icon: str | None = None
 
 
 class TeamCreate(TeamBase):
-    pass
+    name: TeamName
 
 
 class TeamUpdate(TeamBase):
-    name: str | None = Field(regex=r"^[a-zA-Z0-9_-]{1,64}$", default=None)  # type: ignore[assignment]
+    name: TeamName | None = None  # type: ignore[assignment]
     remark: str | None = None
 
 
@@ -27,7 +34,7 @@ class Team(TeamBase, table=True):
         index=True,
         nullable=False,
     )
-    name: str = Field(regex=r"^[a-zA-Z0-9_-]{1,64}$", unique=True)
+    name: str = Field(unique=True)
     tenant_id: uuid.UUID = Field(foreign_key="tenant.id", nullable=True)
 
 

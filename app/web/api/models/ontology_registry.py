@@ -21,6 +21,21 @@ class Payload(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
 
+class ProjectCreate(Payload):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[\w][\w .-]*$")
+    teamId: UUID
+
+
+class OntologyProjectProfile(SQLModel, table=True):
+    """A named ontology project uses its existing team as the access boundary."""
+
+    __tablename__ = "ontology_project_profiles"
+
+    team_id: UUID = DBField(foreign_key="team.id", primary_key=True)
+    name: str = DBField(max_length=64, nullable=False)
+    owner_id: UUID = DBField(foreign_key="user.id", nullable=False)
+
+
 class Source(Payload):
     mode: Literal["existing", "none"]
     schema_name: Identifier | None = Field(default=None, alias="schema")
