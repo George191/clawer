@@ -208,7 +208,7 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_table_and_metadata_commit_or_rollback_together(self):
         await self.migration.migrate(self.pg, apply=True)
-        payload = {"name": "created_people", "description": "People's : catalog", "fields": [
+        payload = {"name": "created_people", "dataType": "people", "description": "People's : catalog", "fields": [
             {"name": "id", "type": "BIGINT", "primary": True},
             {"name": "title", "type": "VARCHAR", "length": 60, "comment": "A person's label"},
         ]}
@@ -218,8 +218,9 @@ class OntologyMigrationIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["name"] for row in preview["properties"]], ["id", "title"])
         self.assertEqual(preview["description"], "People's : catalog")
         self.assertEqual(preview["primaryKey"], ["id"])
-        registered = await self.pg.fetch_one("SELECT ddl_sql,version,checksum FROM public.ontology_objects WHERE table_name='created_people'")
+        registered = await self.pg.fetch_one("SELECT ddl_sql,version,checksum,data_type FROM public.ontology_objects WHERE table_name='created_people'")
         self.assertIn('CREATE TABLE "ts_custom"."created_people"', registered["ddl_sql"])
+        self.assertEqual(registered["data_type"], "people")
         self.assertEqual(registered["version"], 1)
         self.assertTrue(registered["checksum"])
         from fastapi import HTTPException
