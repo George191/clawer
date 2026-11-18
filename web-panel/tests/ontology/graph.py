@@ -79,8 +79,8 @@ def main():
             view.get_by_label("Relationship name", exact=True).fill(label)
             view.get_by_label("Relationship key", exact=True).fill(key)
             view.get_by_label("Find target type", exact=True).fill(target["name"])
-            view.get_by_label("Target type", exact=True).select_option(target["id"])
-            view.get_by_label("Cardinality").select_option("many_to_one")
+            view.get_by_role("combobox", name="Target type").select_option(target["id"])
+            view.get_by_role("combobox", name="Cardinality").select_option("many_to_one")
             with owner.expect_response(
                 lambda r: r.request.method == "POST" and r.url.endswith("/link-types")
             ) as action:
@@ -90,9 +90,9 @@ def main():
             typ = typ.get("data", typ)
             rel = typ["id"]
             checks.append("create and cancel relationship type")
-            selector = view.get_by_label("Relationship and direction", exact=True)
+            selector = view.get_by_role("combobox", name="Relationship and direction")
             selector.select_option(rel + ":outgoing")
-            view.get_by_label("Record to link").select_option(right["id"])
+            view.get_by_role("combobox", name="Record to link").select_option(right["id"])
             view.get_by_role("button", name="Add link", exact=True).click()
             neighbor = view.get_by_role("button", name=right["title"], exact=True)
             expect(neighbor).to_be_visible()
@@ -113,15 +113,15 @@ def main():
             matches = [r for r in records if r[field] == value]
             expected_count = len(matches)
             expected_sum = sum(r[numeric] for r in matches)
-            view.get_by_label("Filter property").select_option(field)
-            view.get_by_label("Operator", exact=True).select_option("eq")
+            view.get_by_role("combobox", name="Filter property").select_option(field)
+            view.get_by_role("combobox", name="Operator").select_option("eq")
             view.get_by_label("Filter value").fill(str(value))
             view.get_by_role("button", name="Add filter").click()
             view.get_by_role("button", name="Remove filter 1").click()
             view.get_by_label("Filter value").fill(str(value))
             view.get_by_role("button", name="Add filter").click()
-            view.get_by_label("Group by").select_option(group)
-            view.get_by_label("Sum property").select_option(numeric)
+            view.get_by_role("combobox", name="Group by").select_option(group)
+            view.get_by_role("combobox", name="Sum property").select_option(numeric)
             view.get_by_role("button", name="Preview set", exact=True).click()
             expect(
                 view.get_by_text(
@@ -140,7 +140,7 @@ def main():
             assert action.value.status == 201
             saved = action.value.json()
             saved = saved.get("data", saved)["id"]
-            view.get_by_label("Saved set", exact=True).select_option(saved)
+            view.get_by_role("combobox", name="Saved set").select_option(saved)
             view.get_by_role("button", name="Run saved set").click()
             expect(
                 view.get_by_text(
@@ -151,7 +151,9 @@ def main():
             checks.append("add/remove filter, group, count, sum, save and evaluate set")
             member_context, member = launch_context(browser, fixture, fixture["reader"])
             member_view = open_graph(member, base, target, right)
-            member_view.get_by_label("Relationship and direction").select_option(rel + ":incoming")
+            member_view.get_by_role("combobox", name="Relationship and direction").select_option(
+                rel + ":incoming"
+            )
             expect(
                 member_view.get_by_role("button", name=left["title"], exact=True)
             ).to_be_visible()
@@ -170,7 +172,7 @@ def main():
                 item["id"] for item in private_page.get("data", private_page)["items"]
             }
             expect(
-                member_view.get_by_label("Saved set", exact=True).locator(
+                member_view.get_by_role("combobox", name="Saved set").locator(
                     'option[value="' + saved + '"]'
                 )
             ).to_have_count(0)
@@ -178,12 +180,16 @@ def main():
                 "reader traverses without edit controls and cannot load owner's private set"
             )
             member_context.close()
-            view.get_by_label("Saved set", exact=True).select_option(saved)
+            view.get_by_role("combobox", name="Saved set").select_option(saved)
             view.get_by_role("button", name="Delete saved set", exact=True).click()
             expect(
-                view.get_by_label("Saved set", exact=True).locator('option[value="' + saved + '"]')
+                view.get_by_role("combobox", name="Saved set").locator(
+                    'option[value="' + saved + '"]'
+                )
             ).to_have_count(0)
-            view.get_by_label("Relationship and direction").select_option(rel + ":outgoing")
+            view.get_by_role("combobox", name="Relationship and direction").select_option(
+                rel + ":outgoing"
+            )
             view.get_by_role("button", name="Remove link to " + right["title"]).click()
             expect(view.get_by_text("No linked records.", exact=True)).to_be_visible()
             checks.append("delete saved set and remove original link")

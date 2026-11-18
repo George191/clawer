@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui';
-import client from '../../services/api';
+import { graphRequest, type LinkType, type Page } from '../../services/ontology_graph';
 import { applyTransaction, listOntologyRecords, listPublishedOntologyTypes, listTransactions, ontologyError, undoTransaction,
   type OntologyRecordPage, type PublishedOntologyType, type TransactionReceipt, type TransactionStep } from '../../services/ontology';
 import { parsePropertyValue } from './ontologyPropertyValue';
 
 type Kind = TransactionStep['kind'];
-type LinkType = {id: string; name: string; sourceDefinitionId: string; targetDefinitionId: string};
 type Entry = {label: string; step: TransactionStep};
 const emptyRecords: OntologyRecordPage = {items: [], hasMore: false, actions: []};
 const description = (error: unknown) => ontologyError(error, 'The transaction request failed.');
@@ -36,7 +35,7 @@ function RecordPicker({type, label, value, aliases = [], change, version}: {
   }, [type, offset, version, retry]);
   const records = page.items.filter(r => r.id);
   const pageTo = (next: number) => {change(''); setLoading(true); setOffset(next);};
-  return <div><label>{label}<select value={value} disabled={!aliases.length && (loading || !!error || !records.length)} onChange={e => {
+  return <div><label>{label}<select aria-label={label} value={value} disabled={!aliases.length && (loading || !!error || !records.length)} onChange={e => {
     const id = e.target.value; const record = page.items.find(r => r.id === id);
     change(id, record?.revision ?? undefined, record ? String(record.title ?? record.id) : id);
   }}><option value="">{aliases.length || records.length ? 'Select record' : loading ? 'Loading records…' : error ? 'Records unavailable' : 'No visible records'}</option>{aliases.map(ref => <option key={ref}>{ref}</option>)}
@@ -101,10 +100,10 @@ export default function OntologyTransactions({objectType}: {objectType: Publishe
     if (!edge) {setLinksLoading(false); return;}
     let active = true;
     setLinksLoading(true);
-    client.get<{items:LinkType[];hasMore:boolean}>('/object-types/' + typeId + '/link-types',
-      {baseURL:'/api/ontology/v1',params:{limit:50,offset:linkOffset}}).then(r => {if (active) {
-        setLinks(prev => Array.from(new Map([...(linkOffset ? prev : []), ...r.data.items].map(item => [item.id, item])).values()));
-        setMoreLinks(r.data.hasMore);
+    graphRequest<Page<LinkType>>('get', '/object-types/' + typeId + '/link-types',
+      {params:{limit:50,offset:linkOffset}}).then(page => {if (active) {
+        setLinks(prev => Array.from(new Map([...(linkOffset ? prev : []), ...page.items].map(item => [item.id, item])).values()));
+        setMoreLinks(page.hasMore);
       }}, e => {if (active) {setMoreLinks(false);setError(description(e));}}).finally(() => {if (active) setLinksLoading(false);});
     return () => {active = false;};
   }, [edge, typeId, linkOffset, version]);
@@ -168,12 +167,12 @@ export default function OntologyTransactions({objectType}: {objectType: Publishe
   return <section aria-label="Transaction workbench" className="ontology-transaction">
     <h3>Cross-object transaction</h3>
     <fieldset disabled={pending}><label>Transaction name<input maxLength={120} value={name} onChange={e => setName(e.target.value)} /></label>
-      <div className="ontology-tx-fields"><label>Step operation<select value={kind} onChange={e => {setKind(e.target.value as Kind);if (!edge) resetLinks();resetStep();}}>
+      <div className="ontology-tx-fields"><label>Step operation<select aria-label="Step operation" value={kind} onChange={e => {if (e.target.value === kind) return;setKind(e.target.value as Kind);if (!edge) resetLinks();resetStep();}}>
         {(['create','modify','delete','link','unlink'] as const).map(k => <option key={k} value={k}>{k}</option>)}</select></label>
-      <label>Step object type<select value={typeId} onChange={e => {setTypeId(e.target.value);setActions([]);resetLinks();resetStep();}}>
+      <label>Step object type<select aria-label="Step object type" value={typeId} onChange={e => {if (e.target.value === typeId) return;setTypeId(e.target.value);setActions([]);resetLinks();resetStep();}}>
         {types.map(t => <option key={t.id} value={t.id}>{t.definition.name}</option>)}</select></label></div>
       {moreTypes && <Button disabled={typesLoading || typeOffset + 50 > 100_000} onClick={() => {setTypesLoading(true);setTypeOffset(typeOffset+50);}}>Load more object types</Button>}
-      {edge ? <><label>Step relationship<select value={linkId} onChange={e => {setLinkId(e.target.value);setSource('');setTarget('');}}>
+      {edge ? <><label>Step relationship<select aria-label="Step relationship" value={linkId} onChange={e => {setLinkId(e.target.value);setSource('');setTarget('');}}>
         <option value="">{links.length ? 'Select relationship' : linksLoading ? 'Loading relationships…' : 'No visible relationships'}</option>{links.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select></label>
         {moreLinks && <Button disabled={linksLoading || linkOffset + 50 > 100_000} onClick={() => {setLinksLoading(true);setLinkOffset(linkOffset+50);}}>Load more relationships</Button>}
         {link && <div className="ontology-tx-fields"><RecordPicker key={'source'+link.id} type={link.sourceDefinitionId} version={version}
