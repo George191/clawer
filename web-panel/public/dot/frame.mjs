@@ -108,7 +108,7 @@ function pointer(event, phase) {
   if (phase === PointerPhase.Move && activity === ActivityKind.Ready) character.setReadyGaze(x, y, elapsed);
   schedule();
 }
-canvas.addEventListener('pointerdown', event => { canvas.setPointerCapture(event.pointerId); pointer(event, PointerPhase.Down); }, { signal: events.signal });
+canvas.addEventListener('pointerdown', event => { send('interacted'); canvas.setPointerCapture(event.pointerId); pointer(event, PointerPhase.Down); }, { signal: events.signal });
 canvas.addEventListener('pointermove', event => pointer(event, PointerPhase.Move), { signal: events.signal });
 canvas.addEventListener('pointerup', event => { pointer(event, PointerPhase.Up); if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); }, { signal: events.signal });
 canvas.addEventListener('pointercancel', event => pointer(event, PointerPhase.Cancel), { signal: events.signal });
