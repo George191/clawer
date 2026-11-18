@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
-import { commitSandboxPipelineOutput, fetchSandboxPipelineOutput, fetchSandboxPipelineOutputs } from '../../services/api';
+import { fetchSandboxHandoffCapability, commitSandboxPipelineOutput, fetchSandboxPipelineOutput, fetchSandboxPipelineOutputs } from '../../services/api';
 import type {
-  SandboxPipelineOutput, SandboxPipelineOutputDetail, SandboxPipelineOutputList, SandboxPipelineOutputRequest, SandboxPipelineRevision,
+  SandboxHandoffCapability, SandboxPipelineOutput, SandboxPipelineOutputDetail, SandboxPipelineOutputList, SandboxPipelineOutputRequest, SandboxPipelineRevision,
 } from '../../services/api';
 import { getSessionState } from '../../services/session';
 import { SandboxMarkings, sandboxScopeDenied } from './SandboxMarkings';
 import SandboxPipelineOutputComparison from './SandboxPipelineOutputComparison';
+import SandboxPipelineRecordHistory from './SandboxPipelineRecordHistory';
+import SandboxPipelineHandoff from './SandboxPipelineHandoff';
 
 type Confirmation = { revision: SandboxPipelineRevision } | { previous: SandboxPipelineOutputRequest };
 const timeText = (value: string) => new Date(value).toLocaleString();
@@ -52,6 +54,10 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const [detail, setDetail] = useState<SandboxPipelineOutputDetail>();
   const [detailFailed, setDetailFailed] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const [recordHistoryOpen, setRecordHistoryOpen] = useState(false);
+  const [handoff, setHandoff] = useState<SandboxHandoffCapability>();
+  const handoffSink = handoff?.sink;
+  const [handoffOutput, setHandoffOutput] = useState<SandboxPipelineOutput>();
   const live = (signal?: AbortSignal) => {
     const session = getSessionState();
     return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
@@ -59,14 +65,14 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   const invalidate = () => {
     setList(undefined); setLoadFailed(true); setInspecting(undefined); setDetail(undefined);
     setConfirm(undefined); setPendingRequest(undefined); setNotice(undefined);
-    setComparisonOpen(false);
+    setComparisonOpen(false); setRecordHistoryOpen(false); setHandoffOutput(undefined); setHandoff(undefined);
     onScopeDenied?.();
   };
 
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController();
-    setList(undefined); setLoadFailed(false); setComparisonOpen(false);
+    setList(undefined); setLoadFailed(false); setComparisonOpen(false); setRecordHistoryOpen(false);
     void fetchSandboxPipelineOutputs(controller.signal).then(value => {
       if (!live(controller.signal)) return;
       setList(value);
@@ -80,6 +86,17 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
     }).catch(() => { if (live(controller.signal)) setLoadFailed(true); });
     return () => controller.abort();
   }, [identity, refresh]);
+
+  useEffect(() => {
+    const read = new AbortController();
+    setHandoffOutput(undefined); setHandoff(undefined);
+    if (scopeKey && list?.available && list.outputs.length) {
+      void fetchSandboxHandoffCapability(read.signal).then(value => {
+        if (live(read.signal) && value.available && value.sink?.id === 'synthetic-review-sink') setHandoff(value);
+      }).catch(() => { if (live(read.signal)) setHandoff(undefined); });
+    }
+    return () => read.abort();
+  }, [scopeKey, list]);
 
   useEffect(() => {
     if (!inspecting) return;
@@ -143,8 +160,9 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
   return <section className="flow-sandbox-builder__history" aria-label="Committed sandbox outputs">
     <h2>Committed sandbox outputs</h2>
     <p>Only an explicit commit writes immutable sandbox output rows and a receipt. Previewing or saving a configuration does not write output data.</p>
-    <div className="flow-sandbox-builder__actions"><Button size="small" disabled={busy} onClick={() => { setComparisonOpen(false); setRefresh(value => value + 1); }}>Refresh output history</Button>
+    <div className="flow-sandbox-builder__actions"><Button size="small" disabled={busy} onClick={() => { setComparisonOpen(false); setRecordHistoryOpen(false); setRefresh(value => value + 1); }}>Refresh output history</Button>
       {list?.available && list.outputs.length >= 2 && <Button size="small" disabled={busy} onClick={() => setComparisonOpen(true)}>Compare committed outputs</Button>}
+      {list?.available && list.outputs.length >= 2 && <Button size="small" disabled={busy} onClick={() => setRecordHistoryOpen(true)}>Record history</Button>}
     </div>
     {notice && <p role={notice.error ? 'alert' : 'status'}>{notice.text}</p>}
     {loadFailed ? <p role="alert">Sandbox output status could not be loaded.</p>
@@ -160,12 +178,17 @@ export default function SandboxPipelineOutputs({ reviewed, scopeKey, onScopeDeni
             {list.outputs.length ? <ol aria-label="Committed output receipts" className="flow-sandbox-builder__output-list">
               {list.outputs.map(item => <li key={item.id}>
                 <ReceiptFacts item={item} />
+                {handoffSink && <Button size="small" onClick={() => setHandoffOutput(item)}>Check handoff eligibility</Button>}
                 <Button size="small" onClick={() => { setDetail(undefined); setDetailFailed(false); setInspecting(item); }}>Inspect committed output</Button>
               </li>)}
             </ol> : <p>No committed sandbox output receipts.</p>}
           </>}
+    {handoffOutput && handoffSink && list?.available && <SandboxPipelineHandoff key={`${handoffOutput.id}:${handoffSink.generation}`}
+      output={handoffOutput} sink={handoffSink} copyAvailable={handoff?.copyAvailable === true} scopeKey={scopeKey} onClose={() => setHandoffOutput(undefined)} onScopeDenied={invalidate} />}
     {comparisonOpen && list?.available && <SandboxPipelineOutputComparison outputs={list.outputs}
       onClose={() => setComparisonOpen(false)} onScopeDenied={invalidate} />}
+    {recordHistoryOpen && list?.available && <SandboxPipelineRecordHistory key={JSON.stringify([identity, scopeKey, refresh])} outputs={list.outputs}
+      onClose={() => setRecordHistoryOpen(false)} onScopeDenied={invalidate} />}
     <Modal open={Boolean(confirm)} destroyOnHidden className="flow-surface-modal" confirmLoading={busy}
       title={confirm && 'previous' in confirm ? 'Retry original output request?' : 'Commit reviewed sandbox output?'}
       okText={confirm && 'previous' in confirm ? 'Confirm original retry' : 'Confirm output commit'}

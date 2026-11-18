@@ -9,7 +9,7 @@ from app.web.api.models.indexed_id_sample import (
     IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult,
 )
 from app.web.core.config import settings
-from app.web.core.config.indexed_sample import IndexedSampleScope
+from app.web.core.config.indexed_sample import IndexedCompoundSampleScope, IndexedSampleScope
 from app.web.services.etl_layers import (
     _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL, quote_identifier,
 )
@@ -77,7 +77,7 @@ def _allowed(schema: str, table: str) -> IndexedSampleScope | None:
     return matches[0] if len(matches) == 1 else None
 
 
-async def _reviewed_database(session: AsyncSession, scope: IndexedSampleScope) -> bool:
+async def _reviewed_database(session: AsyncSession, scope: IndexedCompoundSampleScope) -> bool:
     expected = settings.ONTOLOGY_EXPLORER_INDEXED_SAMPLE_DATABASE_MARKER
     params = {"database": scope.database}
     oid = await session.scalar(_MARKER_CATALOG, params)
@@ -123,7 +123,7 @@ async def indexed_sample_capability(session: AsyncSession, schema: str, table: s
     return IndexedSampleCapability(available=False)
 
 
-def _qualified(scope: IndexedSampleScope) -> str:
+def _qualified(scope: IndexedCompoundSampleScope) -> str:
     return f"{quote_identifier(scope.schema_name)}.{quote_identifier(scope.table)}"
 
 

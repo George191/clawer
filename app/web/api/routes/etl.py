@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Annotated, Any
+from datetime import datetime
+import json
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from anyio import fail_after
 from fastapi import APIRouter, Depends, File, HTTPException, Path, Query, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import AwareDatetime
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +19,7 @@ from app.web.api.models.lineage_neighbors import (
     LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
     LineagePathTargets, ObservedLineage,
 )
-from app.web.api.models.indexed_id_sample import IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult
+from app.web.api.models.indexed_id_sample import IndexedCompoundSampleRequest, IndexedSampleCapability, IndexedSampleRequest, IndexedSampleResult
 from app.web.api.models.index_preview_sandbox import IndexSandboxCapability, IndexSandboxPreview, IndexSandboxQuery
 from app.web.api.models.asset_collected_stats import AssetCollectedStats
 from app.web.api.models.asset_freshness import (
@@ -25,7 +27,8 @@ from app.web.api.models.asset_freshness import (
     AssetSchemaCaptureRequest, AssetSchemaPreview, AssetSchemaPreviewRequest,
 )
 from app.web.api.models.asset_field_freshness import AssetFieldFreshnessReview, AssetFieldFreshnessStatus
-from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJobQualityStatus
+from app.web.api.models.asset_min_rows import AssetMinRowsReview, AssetMinRowsStatus
+from app.web.api.models.asset_job_quality import AssetJobQualityReview, AssetJobQualityStatus, WeeklyJobEvidence, WeeklyJobQualityStatus
 from app.web.api.models.batch_lineage import BatchLineageDetail, BatchLineageKind, BatchLineagePage
 from app.web.api.models.batch_source_identity import BatchSourceIdentityReview, BatchSourceIdentityStatus
 from app.web.api.models.batch_syncs import (
@@ -38,19 +41,33 @@ from app.web.api.models.cdc_sandbox import CdcSandboxApply, CdcSandboxReceipt, C
 from app.web.api.models.cdc_sandbox_versions import (
     CdcSandboxComparison, CdcSandboxVersionDetail, CdcSandboxVersionsPage,
 )
-from app.web.api.models.push_inbox import PushInboxStatus
+from app.web.api.models.push_inbox import PushInboxIntakeChange, PushInboxStatus
 from app.web.api.models.push_inbox_apply import PushApplyRequest, PushApplyResult, PushApplyReview, PushApplyStatus
+from app.web.api.models.pipeline_handoff import (
+    PipelineHandoffCapability, PipelineHandoffCopyReceipt, PipelineHandoffCopyRequest, PipelineHandoffEligibility,
+    PipelineHandoffRecipientCapability, PipelineHandoffRecipientProof, PipelineHandoffRecipientRequest,
+    PipelineHandoffRequest,
+)
 from app.web.api.models.pipeline_sandbox import (
     PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
 )
 from app.web.api.models.pipeline_sandbox_outputs import (
     PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputCompareRequest, PipelineSandboxOutputComparison,
     PipelineSandboxOutputDetail, PipelineSandboxOutputsPage,
+    PipelineSandboxRecordHistory, PipelineSandboxRecordHistoryRequest,
+)
+from app.web.api.models.snapshot_intent_web import (
+    SnapshotIntentWebCapability, SnapshotIntentWebHead, SnapshotIntentWebHeadRequest, SnapshotIntentWebPrepareRequest,
+    SnapshotIntentWebPrepared,
+)
+from app.web.api.models.snapshot_delivery_evidence import (
+    SnapshotDeliveryEvidence, SnapshotDeliveryEvidenceCapability, SnapshotDeliveryEvidenceRequest,
 )
 from app.web.api.models.table_exports import (
     ExportDestination,
     TableExportAttempt, TableExportCapabilities, TableExportGrant, TableExportGrantChange, TableExportGrantEvent,
     TableExportLineage, TableExportPlan, TableExportReceipt, TableExportReview, TableExportRunRequest,
+    TableExportSnapshotPreview, TableExportSnapshotPreviewCapability, TableExportSnapshotPreviewRequest,
 )
 from app.web.api.models.transfer_timeline import TimelineKind, TimelineView, TransferTimelineDetail, TransferTimelinePage
 from app.web.api.models.transfer_upstream import (
@@ -65,11 +82,13 @@ from app.web.api.models.etl import (
     OffsetUpdate,
     ObjectVisibility,
     PreviewIndexCoverage,
-    PreviewIndexCoverageRequest,
+    PreviewIndexCoverageInput,
     PreviewRowsQuery,
     SqlQuery,
 )
-from app.web.api.models.data_connections import DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns
+from app.web.api.models.data_connections import (
+    DataConnectionDraftPayload, DataConnectionPauseChange, DataConnectionPayload, SourceCatalog, SourceColumns, SourceReferenceDirection, SourceReferences,
+)
 from app.web.api.models.transfer_plans import (
     TableName, TransferAttempt, TransferPlan, TransferPlanPayload, TransferPreflight, TransferRun, TransferRunCapabilities,
     TransferRunRequest, WarehouseSchema,
@@ -88,7 +107,12 @@ from app.web.services.index_preview_sandbox import (
 from app.web.services.asset_field_freshness import (
     acknowledge_field_freshness, read_field_freshness, review_field_freshness,
 )
+from app.web.services.asset_min_rows import acknowledge_min_rows, read_min_rows, review_min_rows
 from app.web.services.asset_job_quality import acknowledge_daily_job, read_job_quality, review_job_quality
+from app.web.services.asset_weekly_job_quality import (
+    acknowledge_weekly_job, read_weekly_job_evidence, read_weekly_job_quality, review_weekly_job_quality,
+    weekly_evidence_unavailable,
+)
 from app.web.services.data_connections import connector_types, get_data_connections
 from app.web.services.batch_lineage import list_batch_lineage, read_batch_lineage
 from app.web.services.batch_source_identity import read_source_identity, verify_source_identity
@@ -102,14 +126,30 @@ from app.web.services.cdc_sandbox import (
     apply_cdc_sandbox, list_cdc_sandbox_receipts, read_cdc_sandbox, review_cdc_sandbox,
 )
 from app.web.services.cdc_sandbox_versions import compare_cdc_versions, list_cdc_versions, read_cdc_version
+from app.web.services.pipeline_handoff_copy import copy_handoff
+from app.web.services.pipeline_handoff_recipient import (
+    read_recipient_proof, recipient_proof_capability, recipient_proof_unavailable,
+)
+from app.web.services.pipeline_handoff import handoff_capability, handoff_eligibility
 from app.web.services.pipeline_sandbox import (
     list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
 )
 from app.web.services.pipeline_sandbox_outputs import (
-    commit_pipeline_output, compare_pipeline_outputs, list_pipeline_outputs, read_pipeline_output,
+    commit_pipeline_output, compare_pipeline_outputs, encode_record_history, list_pipeline_outputs,
+    read_pipeline_output, trace_pipeline_output_record,
 )
-from app.web.services.push_inbox import read_push_status
+from app.web.services.push_inbox import change_push_intake, read_push_status
 from app.web.services.push_inbox_apply import apply_push_range, read_push_apply, review_push_apply
+from app.web.services.table_export_snapshot import compare_table_export_snapshots, read_snapshot_preview_capability
+from app.web.services.table_export_snapshot_intent import (
+    SnapshotPublicationIntentPredecessorChanged, SnapshotPublicationIntentUnavailable,
+)
+from app.web.services.table_export_snapshot_intent_web import (
+    snapshot_intent_web_capability, snapshot_intent_web_head, snapshot_intent_web_prepare,
+)
+from app.web.services.table_export_snapshot_delivery_evidence import (
+    read_snapshot_delivery_evidence, read_snapshot_delivery_evidence_capability, SnapshotDeliveryEvidenceUnavailable,
+)
 from app.web.services.table_exports import (
     change_table_export_grant, get_table_export, get_table_export_grant, get_table_export_lineage,
     list_table_export_attempts, list_table_export_grant_history, list_table_export_receipts,
@@ -124,6 +164,7 @@ from app.web.services import etl_runtime
 from app.web.services import vulnerability_keywords as keyword_files
 from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
+from app.web.services.indexed_compound_id_sample import indexed_compound_sample_capability, sample_indexed_compound_ids
 from app.web.services.indexed_id_sample import indexed_sample_capability, sample_indexed_ids
 from app.web.services.lineage_column_references import read_lineage_column_references
 from app.web.services.preview_index_coverage import preview_index_coverage
@@ -141,7 +182,7 @@ read = APIRouter(dependencies=[Depends(get_current_user)])
 write = APIRouter(dependencies=[Depends(get_current_active_superuser)])
 
 
-@write.get("/push-inbox-sandbox")
+@write.get("/push-inbox-sandbox", response_model_exclude_none=True)
 async def get_local_push_inbox(
     response: Response, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
 ) -> PushInboxStatus:
@@ -150,6 +191,18 @@ async def get_local_push_inbox(
         return await read_push_status(session)
     except DBAPIError:
         raise HTTPException(503, "Synthetic inbox status is unavailable") from None
+
+
+@write.put("/push-inbox-sandbox/intake", response_model_exclude_none=True)
+async def put_push_inbox_intake(
+    payload: PushInboxIntakeChange, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PushInboxStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await change_push_intake(session, payload)
+    except DBAPIError:
+        raise HTTPException(503, "Synthetic inbox intake change could not be confirmed; reload current state") from None
 
 
 @write.get("/push-inbox-sandbox/apply")
@@ -279,6 +332,83 @@ async def get_local_pipeline_revision(
     return await read_pipeline_revision(session, generation, current_user.id)
 
 
+@write.get("/pipeline-sandbox/handoff")
+async def get_pipeline_handoff(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffCapability:
+    if request.query_params:
+        raise HTTPException(422, "This handoff review uses one fixed synthetic sink")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with fail_after(3):
+            return await handoff_capability(session, current_user.id)
+    except (DBAPIError, TimeoutError):
+        raise HTTPException(503, "Synthetic handoff eligibility is temporarily unavailable") from None
+
+
+@write.post("/pipeline-sandbox/handoff/eligibility")
+async def post_pipeline_handoff_eligibility(
+    payload: PipelineHandoffRequest, request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffEligibility:
+    if request.query_params:
+        raise HTTPException(422, "This handoff review uses one fixed synthetic sink")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with fail_after(3):
+            return await handoff_eligibility(session, current_user.id, payload)
+    except (DBAPIError, TimeoutError):
+        raise HTTPException(503, "Synthetic handoff eligibility is temporarily unavailable") from None
+
+
+@write.get("/pipeline-sandbox/handoff/recipient-proof")
+async def get_pipeline_handoff_recipient_proof(
+    current_user: CurrentActiveSuperuser, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffRecipientCapability:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        raise HTTPException(422, "Recipient proof uses one fixed synthetic sink", headers=headers)
+    try:
+        with fail_after(3):
+            return await recipient_proof_capability(session, current_user.id)
+    except (DBAPIError, TimeoutError, OSError):
+        return PipelineHandoffRecipientCapability(available=False)
+
+
+@write.post("/pipeline-sandbox/handoff/recipient-proof")
+async def post_pipeline_handoff_recipient_proof(
+    payload: PipelineHandoffRecipientRequest, current_user: CurrentActiveSuperuser, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffRecipientProof:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        raise HTTPException(422, "Recipient proof uses only the supplied receipt and generation", headers=headers)
+    try:
+        with fail_after(3):
+            return await read_recipient_proof(session, current_user.id, payload)
+    except (DBAPIError, TimeoutError, OSError):
+        raise recipient_proof_unavailable() from None
+
+
+@write.post("/pipeline-sandbox/handoff/copies", status_code=201)
+async def post_pipeline_handoff_copy(
+    payload: PipelineHandoffCopyRequest, request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineHandoffCopyReceipt:
+    if request.query_params:
+        raise HTTPException(422, "This handoff uses one fixed private synthetic sink")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with fail_after(4):
+            return await copy_handoff(session, current_user.id, payload)
+    except (DBAPIError, TimeoutError):
+        raise HTTPException(503, "Synthetic handoff could not settle; retry the same request ID") from None
+
+
 @write.get("/pipeline-sandbox/outputs")
 async def get_local_pipeline_outputs(session: SessionDep, current_user: CurrentActiveSuperuser) -> PipelineSandboxOutputsPage:
     return await list_pipeline_outputs(session, current_user.id)
@@ -301,6 +431,24 @@ async def compare_local_pipeline_outputs(
         return await compare_pipeline_outputs(session, payload, current_user.id)
     except DBAPIError:
         raise HTTPException(503, "Sealed Builder output comparison is temporarily unavailable") from None
+
+
+@write.post("/pipeline-sandbox/outputs/record-history", response_model=PipelineSandboxRecordHistory)
+async def trace_local_pipeline_output_record(
+    payload: PipelineSandboxRecordHistoryRequest, current_user: CurrentActiveSuperuser, request: Request,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> Response:
+    headers = {"Cache-Control": "private, no-store"}
+    if request.query_params:
+        raise HTTPException(422, "Record history accepts only the selected outputs and ID in the body", headers=headers)
+    try:
+        with fail_after(5):
+            history = await trace_pipeline_output_record(session, payload, current_user.id)
+            return Response(encode_record_history(history), media_type="application/json", headers=headers)
+    except HTTPException as exc:
+        raise HTTPException(exc.status_code, exc.detail, headers=headers) from None
+    except (DBAPIError, TimeoutError):
+        raise HTTPException(503, "Sealed Builder record history is temporarily unavailable", headers=headers) from None
 
 
 @write.get("/pipeline-sandbox/outputs/{output_id}")
@@ -342,6 +490,67 @@ async def acknowledge_daily_quality_incident(
         raise HTTPException(503, "Daily UTC acknowledgement could not be confirmed") from None
 
 
+@write.get("/asset-freshness/{schema}/{table}/weekly-job-quality")
+async def get_weekly_job_quality(
+    schema: WarehouseSchema, table: TableName, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> WeeklyJobQualityStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await read_weekly_job_quality(session, schema, table)
+    except DBAPIError:
+        raise HTTPException(503, "Recorded Weekly UTC status is temporarily unavailable") from None
+
+
+@write.get("/asset-freshness/{schema}/{table}/weekly-job-quality/evidence")
+async def get_weekly_job_evidence(
+    schema: WarehouseSchema, table: TableName, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    expectedGeneration: str = Query(..., pattern=r"^[1-9][0-9]{0,9}$"),
+    expectedSlot: str = Query(..., max_length=35, pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"),
+) -> WeeklyJobEvidence:
+    response.headers["Cache-Control"] = "private, no-store"
+    if set(request.query_params) != {"expectedGeneration", "expectedSlot"} or len(request.query_params.multi_items()) != 2:
+        raise HTTPException(422, "Use one exact review generation and UTC slot")
+    generation = int(expectedGeneration)
+    try:
+        slot = datetime.fromisoformat(expectedSlot)
+        if generation > 2_147_483_647:
+            raise ValueError("generation outside the supported range")
+    except ValueError:
+        raise HTTPException(422, "Invalid review generation or UTC slot") from None
+    try:
+        with fail_after(3):
+            return await read_weekly_job_evidence(session, schema, table, generation, slot)
+    except (DBAPIError, TimeoutError):
+        raise weekly_evidence_unavailable() from None
+
+
+@write.put("/asset-freshness/{schema}/{table}/weekly-job-quality")
+async def put_weekly_job_quality(
+    schema: WarehouseSchema, table: TableName, payload: AssetJobQualityReview, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> WeeklyJobQualityStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await review_weekly_job_quality(session, schema, table, payload)
+    except DBAPIError:
+        raise HTTPException(503, "The Weekly UTC review could not be confirmed") from None
+
+
+@write.post("/asset-freshness/{schema}/{table}/weekly-job-quality/incidents/{incident_id}/acknowledge")
+async def acknowledge_weekly_quality_incident(
+    schema: WarehouseSchema, table: TableName, incident_id: UUID, payload: AssetQualityIncidentAck,
+    current_user: CurrentActiveSuperuser, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetQualityIncident:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await acknowledge_weekly_job(session, schema, table, incident_id, payload.expectedGeneration, current_user.id)
+    except DBAPIError:
+        raise HTTPException(503, "Weekly UTC acknowledgement could not be confirmed") from None
+
+
 @write.get("/asset-freshness/{schema}/{table}/field-freshness")
 async def get_field_freshness(
     schema: WarehouseSchema, table: TableName, response: Response,
@@ -374,6 +583,40 @@ async def acknowledge_field_time_incident(
         return await acknowledge_field_freshness(session, schema, table, incident_id, payload.expectedGeneration, current_user.id)
     except DBAPIError:
         raise HTTPException(503, "The field-time acknowledgement could not be confirmed") from None
+
+
+@write.get("/asset-freshness/{schema}/{table}/min-rows")
+async def get_min_rows_status(
+    schema: WarehouseSchema, table: TableName, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetMinRowsStatus:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await read_min_rows(session, schema, table)
+    except DBAPIError:
+        raise HTTPException(503, "Recorded minimum-row evidence is temporarily unavailable") from None
+
+
+@write.put("/asset-freshness/{schema}/{table}/min-rows")
+async def put_min_rows_review(
+    schema: WarehouseSchema, table: TableName, payload: AssetMinRowsReview,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetMinRowsStatus:
+    try:
+        return await review_min_rows(session, schema, table, payload)
+    except DBAPIError:
+        raise HTTPException(503, "The minimum-row review could not be confirmed") from None
+
+
+@write.post("/asset-freshness/{schema}/{table}/min-rows/incidents/{incident_id}/acknowledge")
+async def acknowledge_minimum_row_incident(
+    schema: WarehouseSchema, table: TableName, incident_id: UUID, payload: AssetQualityIncidentAck,
+    current_user: CurrentActiveSuperuser, session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> AssetQualityIncident:
+    try:
+        return await acknowledge_min_rows(session, schema, table, incident_id, payload.expectedGeneration, current_user.id)
+    except DBAPIError:
+        raise HTTPException(503, "The minimum-row acknowledgement could not be confirmed") from None
 
 
 @write.get("/asset-freshness/{schema}/{table}/collected-stats")
@@ -634,10 +877,25 @@ async def get_transfer_timeline(
 
 @write.get("/{layer}/{table}/transfer-timeline/{kind}/{entry_id}")
 async def get_transfer_timeline_entry(
-    layer: str, table: TableName, kind: TimelineKind, entry_id: UUID, session: SessionDep,
+    layer: str, table: TableName, kind: TimelineKind, entry_id: UUID, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+    require_visible: Literal["true"] | None = Query(None, alias="requireVisible"),
 ) -> TransferTimelineDetail:
     """Read scheduler provenance for an exact persisted attempt or receipt."""
-    return await read_transfer_timeline_entry(session, layer, table, kind, entry_id)
+    if require_visible is None:
+        return await read_transfer_timeline_entry(session, layer, table, kind, entry_id)
+    if kind != "receipt" or list(request.query_params.multi_items()) != [("requireVisible", "true")]:
+        raise HTTPException(422, "The exact visibility option is supported only for receipt links")
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        with fail_after(3):
+            return await read_transfer_timeline_entry(session, layer, table, kind, entry_id, require_visible=True)
+    except DBAPIError as error:
+        if getattr(error.orig, "sqlstate", None) in {"42P01", "3F000", "42809"}:
+            raise HTTPException(404, "Transfer timeline entry is not present for this destination") from None
+        raise HTTPException(503, "Visible transfer receipt is temporarily unavailable") from None
+    except TimeoutError:
+        raise HTTPException(503, "Visible transfer receipt is temporarily unavailable") from None
 
 
 @write.put("/transfer-plans/{plan_id}")
@@ -686,6 +944,155 @@ def export_destination(request: Request, destination: ExportDestination = "prima
 
 
 ExportDestinationDep = Annotated[ExportDestination, Depends(export_destination)]
+
+
+@write.get("/table-export-sandbox/snapshot-preview")
+async def get_table_export_snapshot_preview(
+    request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> TableExportSnapshotPreviewCapability:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        raise HTTPException(422, "This comparison uses one fixed snapshot profile", headers=headers)
+    try:
+        with fail_after(3):
+            return await read_snapshot_preview_capability(session)
+    except (DBAPIError, TimeoutError, OSError):
+        return TableExportSnapshotPreviewCapability(available=False)
+
+
+@write.post("/table-export-sandbox/snapshot-preview")
+async def post_table_export_snapshot_preview(
+    payload: TableExportSnapshotPreviewRequest, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> TableExportSnapshotPreview:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        raise HTTPException(422, "This comparison uses one fixed snapshot profile", headers=headers)
+    try:
+        with fail_after(7):
+            return await compare_table_export_snapshots(session, payload)
+    except HTTPException as exc:
+        raise HTTPException(exc.status_code, exc.detail, headers=headers) from None
+    except (DBAPIError, TimeoutError, OSError):
+        raise HTTPException(503, "Synthetic snapshot comparison is temporarily unavailable", headers=headers) from None
+
+
+def _unique_delivery_evidence_keys(pairs):
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise ValueError("Duplicate JSON key")
+    return result
+
+
+@write.get("/table-export-sandbox/snapshot-delivery-evidence", response_model_exclude_none=True)
+async def get_table_export_snapshot_delivery_evidence(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotDeliveryEvidenceCapability:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    if request.query_params:
+        return SnapshotDeliveryEvidenceCapability(available=False)
+    return await read_snapshot_delivery_evidence_capability(session, current_user.id)
+
+
+@write.post(
+    "/table-export-sandbox/snapshot-delivery-evidence",
+    response_model=SnapshotDeliveryEvidence,
+    response_model_exclude_none=True,
+)
+async def post_table_export_snapshot_delivery_evidence(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotDeliveryEvidence | JSONResponse:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    denied = JSONResponse({"detail": "Recorded snapshot delivery evidence unavailable"}, status_code=404, headers=headers)
+    if request.query_params or request.headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
+        return denied
+    try:
+        body = bytearray()
+        with fail_after(2):
+            async for chunk in request.stream():
+                if len(chunk) > 1024 - len(body):
+                    raise ValueError("Invalid lookup")
+                body.extend(chunk)
+        payload = SnapshotDeliveryEvidenceRequest.model_validate(
+            json.loads(body.decode("utf-8"), object_pairs_hook=_unique_delivery_evidence_keys)
+        )
+    except Exception:
+        return denied
+    try:
+        return await read_snapshot_delivery_evidence(session, current_user.id, payload)
+    except SnapshotDeliveryEvidenceUnavailable:
+        return denied
+
+
+async def _parse_snapshot_intent_json(request: Request):
+    if request.query_params or request.headers.get("content-type", "").split(";", 1)[0].lower() != "application/json":
+        raise ValueError("Invalid request")
+    body = bytearray()
+    with fail_after(2):
+        async for chunk in request.stream():
+            if len(chunk) > 1024 - len(body):
+                raise ValueError("Invalid request")
+            body.extend(chunk)
+    return json.loads(body.decode("utf-8"), object_pairs_hook=_unique_delivery_evidence_keys)
+
+
+def _snapshot_intent_web_denied() -> JSONResponse:
+    return JSONResponse({"detail": "Snapshot preparation unavailable"}, status_code=404,
+                        headers={"Cache-Control": "private, no-store"})
+
+
+@write.get("/table-export-sandbox/snapshot-intent", response_model_exclude_none=True)
+async def get_snapshot_intent_web(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotIntentWebCapability:
+    response.headers["Cache-Control"] = "private, no-store"
+    if request.query_params:
+        return SnapshotIntentWebCapability(available=False)
+    return await snapshot_intent_web_capability(session, current_user.id)
+
+
+@write.post("/table-export-sandbox/snapshot-intent/head", response_model=SnapshotIntentWebHead,
+            response_model_exclude_none=True)
+async def post_snapshot_intent_web_head(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotIntentWebHead | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        payload = SnapshotIntentWebHeadRequest.model_validate(await _parse_snapshot_intent_json(request))
+    except Exception:
+        return _snapshot_intent_web_denied()
+    try:
+        return await snapshot_intent_web_head(session, current_user.id, payload)
+    except SnapshotPublicationIntentUnavailable:
+        return _snapshot_intent_web_denied()
+
+
+@write.post("/table-export-sandbox/snapshot-intent", response_model=SnapshotIntentWebPrepared)
+async def post_snapshot_intent_web_prepare(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> SnapshotIntentWebPrepared | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    try:
+        payload = SnapshotIntentWebPrepareRequest.model_validate(await _parse_snapshot_intent_json(request))
+    except Exception:
+        return _snapshot_intent_web_denied()
+    try:
+        return await snapshot_intent_web_prepare(session, current_user.id, payload)
+    except SnapshotPublicationIntentPredecessorChanged:
+        return JSONResponse({"detail": {"code": "predecessor_changed", "message": "Reviewed predecessor changed"}},
+                            status_code=409, headers={"Cache-Control": "private, no-store"})
+    except SnapshotPublicationIntentUnavailable:
+        return _snapshot_intent_web_denied()
 
 
 @write.get("/table-export/capabilities")
@@ -803,9 +1210,51 @@ async def data_connections() -> list[dict[str, Any]]:
     return await get_data_connections().list()
 
 
-@write.post("/data-connections/test")
-async def test_data_connection(payload: DataConnectionPayload, connectionId: UUID | None = None) -> dict[str, Any]:
-    return await get_data_connections().test(payload, str(connectionId) if connectionId else None)
+def _data_connection_draft_openapi() -> dict[str, Any]:
+    # The route parses explicitly to redact validation failures; retain the
+    # documented body schema without adding unresolved local JSON-schema refs.
+    schema = DataConnectionDraftPayload.model_json_schema()
+    definitions = schema.pop("$defs", {})
+
+    def inline(value):
+        if isinstance(value, list):
+            return [inline(item) for item in value]
+        if isinstance(value, dict):
+            reference = value.get("$ref")
+            if reference is not None:
+                value = {**definitions[reference.rsplit("/", 1)[-1]], **{k: v for k, v in value.items() if k != "$ref"}}
+            return {key: inline(item) for key, item in value.items()}
+        return value
+
+    return {"requestBody": {"required": True, "content": {"application/json": {"schema": inline(schema)}}}}
+
+
+async def _data_connection_draft_body(request: Request, *, saved: bool) -> DataConnectionPayload:
+    # Pydantic validation errors may reflect attacker-controlled credential field paths.
+    # Parse only these draft routes and return one stable error without payload/location echo.
+    media = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if media and not (media == "application/json" or (media.startswith("application/") and media.endswith("+json"))):
+        raise HTTPException(422, "Invalid data source configuration or credentials")
+    try:
+        body = bytearray()
+        with fail_after(3):
+            async for chunk in request.stream():
+                if len(chunk) > 128 * 1024 - len(body):
+                    raise ValueError("Invalid connector draft")
+                body.extend(chunk)
+        model = DataConnectionDraftPayload if saved else DataConnectionPayload
+        return model.model_validate(json.loads(body.decode("utf-8"), object_pairs_hook=_unique_delivery_evidence_keys))
+    except Exception:
+        raise HTTPException(422, "Invalid data source configuration or credentials") from None
+
+
+@write.post("/data-connections/test", openapi_extra=_data_connection_draft_openapi())
+async def test_data_connection(request: Request, connectionId: UUID | None = None) -> dict[str, Any]:
+    if len(request.query_params.getlist("connectionId")) > 1:
+        raise HTTPException(422, "Invalid data source configuration or credentials")
+    payload = await _data_connection_draft_body(request, saved=connectionId is not None)
+    expected = payload.expectedUpdatedAt if isinstance(payload, DataConnectionDraftPayload) else None
+    return await get_data_connections().test(payload, str(connectionId) if connectionId else None, expected_updated_at=expected)
 
 
 @write.post("/data-connections")
@@ -845,7 +1294,7 @@ async def browse_data_connection_catalog(
     return await get_data_connections().catalog(str(connection_id), schema=schema, search=search, limit=limit, offset=offset)
 
 
-@write.get("/data-connections/{connection_id}/catalog/columns")
+@write.get("/data-connections/{connection_id}/catalog/columns", response_model_exclude_none=True)
 async def browse_data_connection_columns(
     connection_id: UUID, schema: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
     table: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
@@ -853,10 +1302,29 @@ async def browse_data_connection_columns(
     return await get_data_connections().catalog_columns(str(connection_id), schema=schema, table=table)
 
 
-@write.put("/data-connections/{connection_id}")
-async def update_data_connection(connection_id: UUID, payload: DataConnectionPayload,
+@write.get("/data-connections/{connection_id}/catalog/references")
+async def browse_data_connection_references(
+    connection_id: UUID, request: Request, response: Response,
+    schema: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
+    table: str = Query(..., min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$"),
+    direction: SourceReferenceDirection = Query(...), expectedUpdatedAt: AwareDatetime = Query(...),
+) -> SourceReferences:
+    if set(request.query_params) != {"schema", "table", "direction", "expectedUpdatedAt"} or len(request.query_params.multi_items()) != 4:
+        raise HTTPException(422, "Use one exact schema, table, direction and saved source revision")
+    response.headers["Cache-Control"] = "private, no-store"
+    return await get_data_connections().catalog_references(
+        str(connection_id), schema=schema, table=table, direction=direction, expected_updated_at=expectedUpdatedAt,
+    )
+
+
+@write.put("/data-connections/{connection_id}", openapi_extra=_data_connection_draft_openapi())
+async def update_data_connection(connection_id: UUID, request: Request,
                                  current_user: Any = Depends(get_current_active_superuser)) -> dict[str, Any]:
-    return await get_data_connections().save(payload, str(current_user.id), str(connection_id))
+    payload = await _data_connection_draft_body(request, saved=True)
+    assert isinstance(payload, DataConnectionDraftPayload)
+    return await get_data_connections().save(
+        payload, str(current_user.id), str(connection_id), expected_updated_at=payload.expectedUpdatedAt,
+    )
 
 
 @write.delete("/data-connections/{connection_id}")
@@ -916,6 +1384,37 @@ async def object_preview(layer: str, table: str, includeHidden: bool = False,
     return await get_etl_layers().preview(layer, table)
 
 
+@write.get("/{schema}/{table}/indexed-compound-id-sample")
+async def get_indexed_compound_id_sample(
+    schema: WarehouseSchema, table: TableName, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexedSampleCapability:
+    if request.query_params:
+        raise HTTPException(422, "Indexed compound ID sample capability accepts no query parameters")
+    response.headers["Cache-Control"] = "private, no-store"
+    return await indexed_compound_sample_capability(session, schema, table)
+
+
+@write.post("/{schema}/{table}/indexed-compound-id-sample")
+async def post_indexed_compound_id_sample(
+    schema: WarehouseSchema, table: TableName, payload: IndexedCompoundSampleRequest, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> IndexedSampleResult:
+    if request.query_params:
+        raise HTTPException(422, "Indexed compound ID sample accepts only its fixed predicate body")
+    response.headers["Cache-Control"] = "private, no-store"
+
+    async def wait_for_disconnect() -> None:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    return await run_bounded_index_query(
+        sample_indexed_compound_ids(session, schema, table, payload), wait_for_disconnect(),
+        IndexedSampleResult(state="blocked", reason="query_unavailable"),
+        cancelled_message="Indexed compound ID sample was cancelled",
+    )
+
+
 @write.get("/{schema}/{table}/indexed-id-sample")
 async def get_indexed_id_sample(
     schema: WarehouseSchema, table: TableName, request: Request, response: Response,
@@ -949,11 +1448,11 @@ async def post_indexed_id_sample(
 
 @read.post("/{schema}/{table}/preview-index-coverage")
 async def get_preview_index_coverage(
-    schema: WarehouseSchema, table: TableName, payload: PreviewIndexCoverageRequest, request: Request, response: Response,
+    schema: WarehouseSchema, table: TableName, payload: PreviewIndexCoverageInput, request: Request, response: Response,
     session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
 ) -> PreviewIndexCoverage:
     if request.query_params:
-        raise HTTPException(422, "Index coverage accepts only the field and operator body")
+        raise HTTPException(422, "Index coverage accepts only a filter shape in the body")
     response.headers["Cache-Control"] = "no-store"
     return await preview_index_coverage(session, schema, table, payload)
 

@@ -18,6 +18,7 @@ import httpx
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 
 from app.storage.postgres_client import PostgresClient
 from app.web.api.dependencies.common import get_current_user
@@ -135,6 +136,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         self.mixed_migration = import_module("app.web.alembic.versions.67bd926fa4d1_ontology_mixed_upstream")
         self.cancel_migration = import_module("app.web.alembic.versions.21fe23589f8d_ontology_daily_job_cancel")
         self.field_freshness_migration = import_module("app.web.alembic.versions.68ff119daf40_ontology_field_freshness")
+        self.min_rows_migration = import_module("app.web.alembic.versions.b0be6e75c221_ontology_asset_min_rows")
         self.freshness_migration = import_module("app.web.alembic.versions.d91a24c73f60_ontology_asset_freshness")
         self.quality_migration = import_module("app.web.alembic.versions.e66ab7c415f2_ontology_asset_quality_metadata")
         self.incident_migration = import_module(
@@ -142,6 +144,10 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         )
         self.job_quality_migration = import_module("app.web.alembic.versions.7ba3f09ec526_ontology_daily_job_quality")
         self.stats_migration = import_module("app.web.alembic.versions.ab4e962c7d10_ontology_asset_collected_stats")
+        self.weekly_migration = import_module("app.web.alembic.versions.deb2f8719046_ontology_transfer_weekly")
+        self.scheduled_observed_migration = import_module(
+            "app.web.alembic.versions.c81fb5290a74_ontology_scheduled_observed_lineage",
+        )
         self.timeline_migration = import_module("app.web.alembic.versions.db42c1589a0e_ontology_transfer_timeline")
         async with self.pg.session() as session:
             for sql in (
@@ -173,6 +179,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             await self.migrate(session, self.mixed_migration.upgrade)
             await self.migrate(session, self.cancel_migration.upgrade)
             await self.migrate(session, self.field_freshness_migration.upgrade)
+            await self.migrate(session, self.min_rows_migration.upgrade)
+            await self.migrate(session, self.weekly_migration.upgrade)
+            await self.migrate(session, self.scheduled_observed_migration.upgrade)
         self.addAsyncCleanup(self.drop_fixtures)
         self.layers = object.__new__(EtlLayers)
         self.layers._pg = self.pg
@@ -187,6 +196,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
         async with self.pg.session() as session:
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_daily_job_quality, "
                                        "public.ontology_transfer_schedule_target_rejections"))
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_min_rows"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_field_freshness"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_collected_stats"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_asset_quality_incidents"))
@@ -196,6 +206,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                                        "public.ontology_asset_freshness_policies"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_attempts"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedule_jobs"))
+            await session.execute(text("DROP FUNCTION IF EXISTS public.ontology_transfer_keep_clock_kind()"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_schedules"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_mixed_slots"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_upstream_job_events, "
@@ -204,11 +215,107 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                                        "public.ontology_transfer_upstream_triggers, public.ontology_transfer_commit_events"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_checkpoints"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_runs"))
+            await session.execute(text("DROP FUNCTION IF EXISTS public.ontology_transfer_keep_scheduled_source()"))
             await session.execute(text("DROP TABLE IF EXISTS public.ontology_transfer_plans"))
             await session.execute(text("DROP TABLE public.ontology_objects, public.ontology_object_properties"))
             for schema in ("ts_rds", "ts_ods", "ts_meta"):
                 await session.execute(text(f"DROP SCHEMA {schema} CASCADE"))
             await session.execute(text("DROP SCHEMA IF EXISTS ts_transfer_sandbox CASCADE"))
+
+    async def test_min_rows_uses_only_exact_prefix_and_opens_then_recovers_on_new_receipt(self):
+        from app.web.services.asset_min_rows import _verified_plan as verify_prefix
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.minimum_source (id bigint PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.field_freshness_fixture (id bigint PRIMARY KEY)",
+                "INSERT INTO ts_transfer_sandbox.minimum_source VALUES (1)",
+            ):
+                await session.execute(text(sql))
+            await self.migrate(session, self.min_rows_migration.downgrade)
+            await self.migrate(session, self.min_rows_migration.upgrade)
+        route = "/etl/asset-freshness/ts_transfer_sandbox/field_freshness_fixture"
+        path = route + "/min-rows"
+        config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                  "sourceTable": "minimum_source", "targetTable": "field_freshness_fixture", "writeMode": "upsert"}
+        tick = datetime.now(timezone.utc) + timedelta(minutes=1)
+
+        async def check():
+            nonlocal tick
+            async with self.pg.session() as session:
+                await evaluate_due_asset_freshness(session, now=tick)
+            tick += timedelta(minutes=1)
+
+        with (patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+              patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+              patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+              patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+              patch.object(settings, "TRANSFER_SANDBOX_MIN_ROWS_ENABLED", True),
+              patch.object(settings, "ENVIRONMENT", "local")):
+            async with api(True, self.session_provider) as client:
+                created = await client.post(RUNS, json=config)
+                self.assertEqual(created.status_code, 201, created.text)
+                plan = created.json()
+                payload = {"planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"],
+                           "expectedGeneration": None, "thresholdMinutes": 5, "enabled": True}
+                self.assertEqual((await client.put(route, json=payload)).status_code, 200)
+
+                async def transfer():
+                    response = await client.post(f"{RUNS}/{plan['id']}/runs", json={
+                        "requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"],
+                    })
+                    self.assertEqual(response.status_code, 200, response.text)
+                    return response.json()
+
+                first = await transfer()
+                self.assertEqual(first["rowsAffected"], 1)
+                review = {"expectedGeneration": 0, "policyGeneration": 1, "minimumRows": 3}
+                for bad in (0, 101, True, "3"):
+                    self.assertEqual((await client.put(path, json={**review, "minimumRows": bad})).status_code, 422)
+                status = await client.put(path, json=review)
+                self.assertEqual(status.status_code, 200, status.text)
+                self.assertEqual(status.json()["reason"], "no_verified_receipt")
+                with patch("app.web.services.asset_min_rows._verified_plan", side_effect=AssertionError("old receipt qualified")) as proof:
+                    await check()
+                    proof.assert_not_called()
+
+                await transfer()
+                with patch("app.web.services.asset_min_rows._verified_plan", wraps=verify_prefix) as proof:
+                    await check()
+                    self.assertTrue(proof.called)
+                low = (await client.get(path)).json()
+                self.assertEqual((low["state"], low["minimumRows"], low["incident"]["status"]),
+                                 ("below_minimum", 3, "open"), low)
+                self.assertEqual((low["incident"]["kind"], low["incident"]["reason"]), ("minimum_rows", "row_threshold"))
+                self.assertFalse({"rowCount", "rows", "ids", "rowsAffected"} & set(low))
+                with patch("app.web.services.asset_min_rows._verified_plan", side_effect=AssertionError("duplicate measurement")) as proof:
+                    await check()
+                    proof.assert_not_called()
+                self.assertEqual((await client.get(path)).json()["checkedAt"], low["checkedAt"])
+                ack = await client.post(path + f"/incidents/{low['incident']['id']}/acknowledge", json={"expectedGeneration": 1})
+                self.assertEqual(ack.status_code, 200, ack.text)
+                self.assertEqual(ack.json()["status"], "acknowledged")
+
+                await self.pg.execute("INSERT INTO ts_transfer_sandbox.minimum_source VALUES (2),(3)")
+                await transfer()
+                async with self.pg.session() as writer:
+                    await writer.execute(text("LOCK TABLE ONLY ts_transfer_sandbox.field_freshness_fixture IN ROW EXCLUSIVE MODE"))
+                    with patch("app.web.services.asset_min_rows._verified_plan", side_effect=AssertionError("busy plan")) as proof:
+                        await check()
+                        proof.assert_not_called()
+                unknown = (await client.get(path)).json()
+                self.assertEqual((unknown["state"], unknown["incident"]["status"]), ("unknown", "acknowledged"))
+                await check()
+                recovered = (await client.get(path)).json()
+                self.assertEqual((recovered["state"], recovered["incident"]["status"]), ("healthy", "recovered"), recovered)
+                self.assertEqual(recovered["incident"]["id"], low["incident"]["id"])
+                await self.pg.execute("REINDEX INDEX ts_transfer_sandbox.field_freshness_fixture_pkey")
+                self.assertEqual((await client.get(path)).json()["state"], "superseded")
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot remove reviewed minimum-row"):
+            async with self.pg.session() as session:
+                await self.migrate(session, self.min_rows_migration.downgrade)
 
     async def test_indexed_field_time_uses_new_exact_receipts_and_tied_times_are_neutral(self):
         async with self.pg.session() as session:
@@ -220,8 +327,10 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 await session.execute(text(sql))
             # Empty post-migrate downgrade is reversible; a real review below must block it.
+            await self.migrate(session, self.min_rows_migration.downgrade)
             await self.migrate(session, self.field_freshness_migration.downgrade)
             await self.migrate(session, self.field_freshness_migration.upgrade)
+            await self.migrate(session, self.min_rows_migration.upgrade)
         route = "/etl/asset-freshness/ts_transfer_sandbox/field_freshness_fixture"
         field = route + "/field-freshness"
         config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
@@ -295,6 +404,7 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "Cannot remove reviewed field freshness"):
             async with self.pg.session() as session:
+                await self.migrate(session, self.min_rows_migration.downgrade)
                 await self.migrate(session, self.field_freshness_migration.downgrade)
 
     async def test_freshness_confirms_exact_physical_receipts_and_handles_stale_checks(self):
@@ -678,6 +788,9 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def test_downgrade_only_removes_transfer_configuration_table(self):
         async with self.pg.session() as session:
+            await self.migrate(session, self.scheduled_observed_migration.downgrade)
+            await self.migrate(session, self.weekly_migration.downgrade)
+            await self.migrate(session, self.min_rows_migration.downgrade)
             await self.migrate(session, self.field_freshness_migration.downgrade)
             await self.migrate(session, self.cancel_migration.downgrade)
             await self.migrate(session, self.mixed_migration.downgrade)
@@ -739,6 +852,269 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(paused.json()["enabled"])
                 async with self.pg.session() as session:
                     self.assertEqual(await collect_due_transfer_jobs(session, now=due + timedelta(days=1)), [])
+
+    async def test_weekly_utc_slot_preserves_durable_cadence_and_never_executes_disabled(self):
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.weekly_source (id int PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.weekly_target (id int PRIMARY KEY)",
+                "INSERT INTO ts_transfer_sandbox.weekly_source VALUES (1)",
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE', 'DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id,'ENABLE',true)"""), {"id": TEST_ACTOR})
+
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+        sunday = datetime(2031, 1, 5, 23, 59, tzinfo=timezone.utc)
+        before = sunday - timedelta(days=6)
+        payload = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                   "sourceTable": "weekly_source", "targetTable": "weekly_target", "writeMode": "upsert",
+                   "trigger": "weekly", "scheduleTime": "23:59", "scheduleWeekdayUtc": 7}
+
+        async def collect(when):
+            async with self.pg.session() as session:
+                return await collect_due_transfer_jobs(session, now=when)
+
+        async def settle(identity, when):
+            async with self.pg.session() as session:
+                return await execute_transfer_schedule_job(session, identity, now=when)
+
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_schedules._utc_now", return_value=before),
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_JOB_CANCEL_ENABLED", True),
+        ):
+            async with api(True, self.session_provider) as client:
+                self.assertNotIn("weeklyUpsert", (await client.get(RUNS + "/run-capabilities")).json())
+                self.assertEqual((await client.post(RUNS, json=payload)).status_code, 403)
+                with patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", True):
+                    self.assertTrue((await client.get(RUNS + "/run-capabilities")).json()["weeklyUpsert"])
+                    for invalid in (
+                        {"scheduleWeekdayUtc": None}, {"scheduleWeekdayUtc": True},
+                        {"scheduleWeekdayUtc": "7"}, {"scheduleWeekdayUtc": 8}, {"trigger": "scheduled"},
+                        {"writeMode": "append"}, {"sourceSchema": "ts_ods"},
+                    ):
+                        self.assertEqual((await client.post(RUNS, json={**payload, **invalid})).status_code, 422)
+                    created = await client.post(RUNS, json=payload)
+                    self.assertEqual(created.status_code, 201, created.text)
+                    plan = created.json()
+                    cfg = f"{RUNS}/{plan['id']}/schedule"
+                    review = {"expectedUpdatedAt": plan["updatedAt"], "enabled": True}
+                    armed = await client.put(cfg, json=review)
+                    self.assertEqual(armed.status_code, 200, armed.text)
+                    self.assertEqual(armed.json()["plannedWeekdayUtc"], 7)
+                    self.assertNotIn("jobCancelAvailable", armed.json())
+                    self.assertEqual(await collect(sunday - timedelta(days=1)), [])
+                    # Monday's collector still evaluates Sunday's actual UTC slot within its five-minute window.
+                    when = sunday + timedelta(minutes=2)
+                    identity, = await collect(when)
+                    self.assertEqual(await collect(when), [])
+                    history = (await client.get(cfg + "/jobs")).json()
+                    self.assertEqual((history[0]["scheduleWeekdayUtc"], history[0]["state"]), (7, "pending"))
+                    denied = await client.put(cfg + f"/jobs/{identity}/cancel",
+                        json={"expectedGeneration": 1, "expectedSlot": sunday.isoformat()})
+                    self.assertEqual(denied.status_code, 404)
+                    with patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", False):
+                        state = (await client.get(cfg)).json()
+                        self.assertEqual((state["available"], state["enabled"]), (False, True))
+                        self.assertEqual(await collect(when + timedelta(seconds=46)), [])
+                        self.assertEqual(await settle(identity, when), "disabled")
+                        self.assertEqual(await self.pg.fetch_all("SELECT * FROM ts_transfer_sandbox.weekly_target"), [])
+                        self.assertEqual(await self.pg.fetch_all("SELECT id FROM ontology_transfer_attempts"), [])
+                        self.assertEqual((await client.put(cfg, json=review)).status_code, 403)
+
+                    self.assertEqual(await settle(identity, when), "committed")
+                    self.assertEqual(await settle(identity, when), "committed")
+                    self.assertEqual(len(await self.pg.fetch_all("SELECT id FROM ts_transfer_sandbox.weekly_target")), 1)
+                    proof = await self.pg.fetch_all("SELECT scope_trigger, schedule_job_id FROM ontology_transfer_attempts")
+                    self.assertEqual([(row["scope_trigger"], row["schedule_job_id"]) for row in proof], [("week_utc", identity)])
+                    # A missed week is not backfilled, and pausing remains authorized when execution is disabled.
+                    self.assertEqual(await collect(sunday + timedelta(days=7, minutes=5)), [])
+                    with patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", False):
+                        paused = await client.put(cfg, json={**review, "enabled": False})
+                        self.assertFalse(paused.json()["enabled"])
+                    self.assertEqual(await collect(sunday + timedelta(days=14)), [])
+                    self.assertEqual((await client.get(cfg + "/jobs")).json()[0]["state"], "committed")
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot discard reviewed Weekly UTC"):
+            async with self.pg.session() as session:
+                await self.migrate(session, self.weekly_migration.downgrade)
+        self.assertEqual((await self.pg.fetch_one(
+            "SELECT schedule_weekday_utc FROM ontology_transfer_schedule_jobs WHERE id=:id", {"id": identity},
+        ))["schedule_weekday_utc"], 7)
+
+    async def test_clock_writer_mints_source_proof_only_on_new_positive_scheduled_commits(self):
+        from app.web.api.models.transfer_plans import TransferRunRequest
+        from app.web.services import transfer_runs
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.clock_source (id int PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.clock_daily (id int PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.clock_weekly (id int PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.clock_manual (id int PRIMARY KEY)",
+                "INSERT INTO ts_transfer_sandbox.clock_source VALUES (4)",
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE', 'DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id,'ENABLE',true)"""), {"id": TEST_ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+
+        first = datetime(2031, 1, 5, 23, 58, tzinfo=timezone.utc)
+        when = first + timedelta(seconds=30)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return when.astimezone(tz) if tz else when.replace(tzinfo=None)
+
+        payload = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                   "sourceTable": "clock_source", "targetTable": "clock_daily", "writeMode": "upsert",
+                   "trigger": "scheduled", "scheduleTime": "23:58"}
+
+        async def collect(slot):
+            async with self.pg.session() as session:
+                (identity,) = await collect_due_transfer_jobs(session, now=slot)
+                return identity
+
+        async def run_job(identity):
+            async with self.pg.session() as session:
+                return await execute_transfer_schedule_job(session, identity, now=when)
+
+        async def receipt_for(identity):
+            return await self.pg.fetch_one("SELECT * FROM ontology_transfer_runs WHERE request_id=:id", {"id": identity})
+
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.datetime", Clock),
+            patch("app.web.services.transfer_schedules._utc_now", return_value=first - timedelta(days=6)),
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", True),
+        ):
+            async with api(True, self.session_provider) as client:
+                async def create(fields):
+                    response = await client.post(RUNS, json=fields)
+                    self.assertEqual(response.status_code, 201, response.text)
+                    plan = response.json()
+                    if fields["trigger"] != "manual":
+                        armed = await client.put(f"{RUNS}/{plan['id']}/schedule",
+                            json={"expectedUpdatedAt": plan["updatedAt"], "enabled": True})
+                        self.assertEqual(armed.status_code, 200, armed.text)
+                    return plan
+
+                daily = await create(payload)
+                await create({**payload, "targetTable": "clock_weekly", "trigger": "weekly",
+                              "scheduleTime": "23:59", "scheduleWeekdayUtc": 7})
+                with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", False):
+                    prior = await collect(when)
+                    self.assertEqual(await run_job(prior), "committed")
+                self.assertIsNone((await receipt_for(prior))["scheduled_source_oid"])
+                with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", True):
+                    async with self.pg.session() as session:
+                        replayed = await transfer_runs.run_sandbox_transfer(
+                            session, UUID(daily["id"]), TransferRunRequest(
+                                requestId=prior, expectedUpdatedAt=datetime.fromisoformat(daily["updatedAt"]),
+                            ), TEST_ACTOR, scheduled_job_id=prior, scheduled_now=when,
+                        )
+                    self.assertEqual(replayed.id, (await receipt_for(prior))["id"])
+                    self.assertIsNone((await receipt_for(prior))["scheduled_source_filenode"])
+                    when = first + timedelta(minutes=2, seconds=30)
+                    weekly = await collect(when)
+                    self.assertEqual(await run_job(weekly), "committed")
+                    exact = await self.pg.fetch_one("""
+                        SELECT c.oid AS oid, pg_catalog.pg_relation_filenode(c.oid) AS node
+                        FROM pg_catalog.pg_class c WHERE c.oid = 'ts_transfer_sandbox.clock_source'::regclass
+                    """)
+                    from_weekly = await receipt_for(weekly)
+                    with self.assertRaisesRegex(DBAPIError, "A committed scheduled source cannot change"):
+                        await self.pg.execute(
+                            "UPDATE ontology_transfer_runs SET scheduled_source_oid=:oid, "
+                            "scheduled_source_filenode=:node WHERE request_id=:id",
+                            {"oid": exact["oid"], "node": exact["node"], "id": prior},
+                        )
+                    with self.assertRaisesRegex(DBAPIError, "A committed scheduled source cannot change"):
+                        await self.pg.execute(
+                            "UPDATE ontology_transfer_runs SET scheduled_source_oid=NULL, "
+                            "scheduled_source_filenode=NULL WHERE request_id=:id", {"id": weekly},
+                        )
+                    self.assertEqual((from_weekly["scheduled_source_oid"], from_weekly["scheduled_source_filenode"]),
+                                     (exact["oid"], exact["node"]))
+                    when = first + timedelta(days=1, seconds=30)
+                    next_daily = await collect(when)
+                    self.assertEqual(await run_job(next_daily), "committed")
+                    self.assertEqual((await receipt_for(next_daily))["scheduled_source_oid"], exact["oid"])
+                    manual = await create({**payload, "trigger": "manual", "targetTable": "clock_manual",
+                                           "scheduleTime": None})
+                    request = uuid4()
+                    result = await client.post(f"{RUNS}/{manual['id']}/runs", json={
+                        "requestId": str(request), "expectedUpdatedAt": manual["updatedAt"],
+                    })
+                    self.assertEqual(result.status_code, 200, result.text)
+                    self.assertNotIn("scheduledSourceOid", result.json())
+                    self.assertIsNone((await receipt_for(request))["scheduled_source_oid"])
+
+                    await self.pg.execute("INSERT INTO ts_transfer_sandbox.clock_source VALUES (9)")
+                    when += timedelta(days=1)
+                    fails = await collect(when)
+                    original = transfer_runs._finish_attempt
+
+                    async def fail_settlement(session, attempt_id, status, **options):
+                        if status == "committed":
+                            return 0
+                        return await original(session, attempt_id, status, **options)
+
+                    with patch.object(transfer_runs, "_finish_attempt", side_effect=fail_settlement):
+                        self.assertEqual(await run_job(fails), "rejected")
+                    self.assertIsNone(await receipt_for(fails))
+                    target = await self.pg.fetch_all("SELECT id FROM ts_transfer_sandbox.clock_daily ORDER BY id")
+                    self.assertEqual([row["id"] for row in target], [4])
+
+                    await self.pg.execute("DELETE FROM ts_transfer_sandbox.clock_source")
+                    when += timedelta(days=1)
+                    empty = await collect(when)
+                    self.assertEqual(await run_job(empty), "committed")
+                    empty_receipt = await receipt_for(empty)
+                    self.assertEqual(empty_receipt["rows_affected"], 0)
+                    self.assertIsNone(empty_receipt["scheduled_source_oid"])
+                    self.assertIsNone(empty_receipt["scheduled_source_filenode"])
+                    # Legacy Daily execution is unchanged, but a job that was not
+                    # admitted by the clock collector cannot mint observed proof.
+                    await self.pg.execute("INSERT INTO ts_transfer_sandbox.clock_source VALUES (11)")
+                    when += timedelta(days=1)
+                    not_a_clock_id = uuid4()
+                    clock_slot = when.replace(second=0)
+                    await self.pg.execute("""
+                        INSERT INTO ontology_transfer_schedule_jobs
+                            (id, plan_id, generation, slot, expires_at, dispatch_after, plan_updated_at, armed_by, state)
+                        SELECT :id, plan_id, generation, :slot, :expiry, :slot, plan_updated_at, armed_by, 'pending'
+                        FROM ontology_transfer_schedule_jobs WHERE id=:template
+                    """, {"id": not_a_clock_id, "slot": clock_slot, "expiry": clock_slot + timedelta(minutes=5),
+                          "template": empty})
+                    self.assertEqual(await run_job(not_a_clock_id), "committed")
+                    unproven = await receipt_for(not_a_clock_id)
+                    self.assertEqual(unproven["rows_affected"], 1)
+                    self.assertIsNone(unproven["scheduled_source_oid"])
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot discard committed Daily or Weekly UTC"):
+            async with self.pg.session() as session:
+                await self.migrate(session, self.scheduled_observed_migration.downgrade)
 
     async def test_incremental_append_drains_in_order_and_a_failed_batch_does_not_advance(self):
         first = 9007199254740993
@@ -911,6 +1287,133 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await incoming(), [])
                 self.assertEqual((await client.get(source_path, params=params)).json()["neighbors"], [])
 
+    async def test_scheduled_observed_graph_and_protected_link_require_exact_physical_proof(self):
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.clock_src (id integer PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.daily_dst (id integer PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.weekly_dst (id integer PRIMARY KEY)",
+                "CREATE TABLE ts_transfer_sandbox.legacy_dst (id integer PRIMARY KEY)",
+                "INSERT INTO ts_transfer_sandbox.clock_src VALUES (1)",
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+        slot = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+        arm_at = slot - timedelta(minutes=1)
+
+        class ReviewedClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return arm_at.astimezone(tz) if tz is not None else arm_at.replace(tzinfo=None)
+
+        root = "/etl/ts_transfer_sandbox"
+        graph = root + "/clock_src/lineage-observed"
+        config = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                  "sourceTable": "clock_src", "writeMode": "upsert", "scheduleTime": slot.strftime("%H:%M")}
+
+        with (
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_UPSTREAM_ENABLED", True),
+        ):
+            async with api(True, self.session_provider) as client:
+                async def draft(table, trigger, **extra):
+                    body = {**config, "targetTable": table, "trigger": trigger, **extra}
+                    with (patch("app.web.services.transfer_plans.datetime", ReviewedClock),
+                          patch("app.web.services.transfer_schedules._utc_now", return_value=arm_at)):
+                        created = await client.post(RUNS, json=body)
+                        self.assertEqual(created.status_code, 201, created.text)
+                        plan = created.json()
+                        schedule = f"{RUNS}/{plan['id']}/schedule"
+                        armed = await client.put(schedule, json={"enabled": True, "expectedUpdatedAt": plan["updatedAt"]})
+                        self.assertEqual(armed.status_code, 200, armed.text)
+                    return body, plan, schedule
+
+                async def neighbors(path=graph, direction="outgoing"):
+                    response = await client.get(path, params={"direction": direction})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    return {row["table"]: row for row in response.json()["neighbors"]}
+
+                async def link(table, identity):
+                    return await client.get(f"{root}/{table}/transfer-timeline/receipt/{identity}",
+                                            params={"requireVisible": "true"})
+
+                _, daily, daily_cfg = await draft("daily_dst", "scheduled")
+                weekly_body, weekly, _ = await draft("weekly_dst", "weekly", scheduleWeekdayUtc=slot.isoweekday())
+                _, legacy, _ = await draft("legacy_dst", "scheduled")
+                async with self.pg.session() as session:
+                    due = await collect_due_transfer_jobs(session, now=datetime.now(timezone.utc))
+                self.assertEqual(len(due), 3)
+                jobs = {str(row["plan_id"]): row["id"] for row in await self.pg.fetch_all(
+                    "SELECT id, plan_id FROM ontology_transfer_schedule_jobs",
+                )}
+                for plan in (daily, weekly, legacy):
+                    with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", plan != legacy):
+                        async with self.pg.session() as session:
+                            self.assertEqual(await execute_transfer_schedule_job(session, jobs[plan["id"]]), "committed")
+
+                rows = await self.pg.fetch_all("SELECT id, target_table FROM ontology_transfer_runs")
+                receipts = {row["target_table"]: row["id"] for row in rows}
+                evidence = await neighbors()
+                self.assertEqual({table: row["trigger"] for table, row in evidence.items()},
+                                 {"daily_dst": "daily_utc", "weekly_dst": "weekly_utc"})
+                self.assertEqual(evidence["daily_dst"]["receiptId"], str(receipts["daily_dst"]))
+                self.assertEqual((await neighbors(root + "/weekly_dst/lineage-observed", "incoming"))
+                                 ["clock_src"]["trigger"], "weekly_utc")
+                self.assertEqual((await link("legacy_dst", receipts["legacy_dst"])).status_code, 404)
+                self.assertEqual((await link("weekly_dst", receipts["daily_dst"])).status_code, 404)
+                self.assertEqual(await self.pg.fetch_all("SELECT id FROM ontology_transfer_commit_events"), [])
+
+                with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", False):
+                    self.assertEqual(await neighbors(), evidence)
+                    direct = await link("weekly_dst", receipts["weekly_dst"])
+                    self.assertEqual(direct.status_code, 200, direct.text)
+                    self.assertEqual((direct.json()["trigger"], direct.json()["physicalScope"], direct.json()["job"]["kind"]),
+                                     ("weekly_utc", "current", "weekly_utc"))
+                # The broker can lack an acknowledgement; an impossible finished time is different.
+                await self.pg.execute("UPDATE ontology_transfer_schedule_jobs SET dispatched_at=NULL WHERE id=:id",
+                                      {"id": jobs[daily["id"]]})
+                self.assertIn("daily_dst", await neighbors())
+                now = (await self.pg.fetch_one("SELECT finished_at FROM ontology_transfer_schedule_jobs WHERE id=:id",
+                                               {"id": jobs[daily["id"]]}))["finished_at"]
+                await self.pg.execute("UPDATE ontology_transfer_schedule_jobs SET finished_at=slot WHERE id=:id",
+                                      {"id": jobs[daily["id"]]})
+                self.assertNotIn("daily_dst", await neighbors())
+                self.assertEqual((await link("daily_dst", receipts["daily_dst"])).status_code, 404)
+                await self.pg.execute("UPDATE ontology_transfer_schedule_jobs SET finished_at=:now WHERE id=:id",
+                                      {"id": jobs[daily["id"]], "now": now})
+
+                pause = await client.put(daily_cfg, json={"enabled": False, "expectedUpdatedAt": daily["updatedAt"]})
+                self.assertEqual(pause.status_code, 200)
+                self.assertIn("daily_dst", await neighbors())
+                edited = await client.put(f"{RUNS}/{weekly['id']}", json={**weekly_body, "name": "Different draft"})
+                self.assertEqual(edited.status_code, 200, edited.text)
+                self.assertNotIn("weekly_dst", await neighbors())
+                self.assertEqual((await link("weekly_dst", receipts["weekly_dst"])).status_code, 200)
+
+                await self.pg.execute("INSERT INTO public.ontology_objects VALUES "
+                                      "('ts_transfer_sandbox','clock_src',true,'hidden')")
+                self.assertEqual((await link("weekly_dst", receipts["weekly_dst"])).status_code, 404)
+                self.assertEqual(await neighbors(root + "/daily_dst/lineage-observed", "incoming"), {})
+                await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='clock_src'")
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.clock_src")
+                self.assertEqual(await neighbors(), {})
+                archived = await link("daily_dst", receipts["daily_dst"])
+                self.assertEqual((archived.json()["physicalScope"], archived.json()["trigger"]), ("historical", "daily_utc"))
+
     async def test_upstream_commit_events_and_compound_bindings_execute_only_reviewed_sets(self):
         async with self.pg.session() as session:
             for sql in (
@@ -1076,6 +1579,8 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
                 patch.object(settings, "ENVIRONMENT", "local"),
                 patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+                patch.object(settings, "TRANSFER_SANDBOX_UPSTREAM_ENABLED", True),
+                patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", True),
             ):
                 proposed = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "sourceTable": "timeline_source",
                             "targetSchema": "ts_transfer_sandbox", "targetTable": "timeline_target",
@@ -1088,6 +1593,39 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 sent = await client.post(action, json=request)
                 self.assertEqual(sent.status_code, 200, sent.text)
                 receipt = sent.json()
+                link = f"{route}/receipt/{receipt['id']}"
+                protected = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(protected.status_code, 200, protected.text)
+                self.assertEqual(protected.headers["cache-control"], "no-store")
+                self.assertEqual(protected.json(), (await client.get(link)).json())
+                self.assertEqual(protected.json()["physicalScope"], "current")
+                for query in ("?requireVisible=false", "?requireVisible=TRUE", "?requireVisible=true&requireVisible=true",
+                              "?requireVisible=true&ignored=1"):
+                    self.assertEqual((await client.get(link + query)).status_code, 422)
+                await self.pg.execute("""INSERT INTO public.ontology_objects
+                    VALUES ('ts_transfer_sandbox','timeline_target',true,'hidden')""")
+                hidden = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(hidden.status_code, 404, hidden.text)
+                self.assertEqual((await client.get(link)).status_code, 200)
+                for asset, receipt_id in (("timeline_other", receipt["id"]), ("timeline_target", str(uuid4())),
+                                          ("unknown_target", receipt["id"])):
+                    nope = await client.get(f"/etl/ts_transfer_sandbox/{asset}/transfer-timeline/receipt/{receipt_id}",
+                                            params={"requireVisible": "true"})
+                    self.assertEqual((nope.status_code, nope.json()), (404, hidden.json()))
+                await self.pg.execute("""UPDATE public.ontology_objects SET is_active=false,visibility='normal'
+                    WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_target'""")
+                self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
+                await self.pg.execute("""DELETE FROM public.ontology_objects
+                    WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_target'""")
+                await self.pg.execute("""INSERT INTO public.ontology_objects
+                    VALUES ('ts_transfer_sandbox','timeline_source',true,'hidden')""")
+                self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
+                self.assertEqual((await client.get(link)).status_code, 200)
+                await self.pg.execute("""DELETE FROM public.ontology_objects
+                    WHERE schema_name='ts_transfer_sandbox' AND table_name='timeline_source'""")
+                with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
+                    self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
+                    self.assertEqual((await client.get(link)).status_code, 200)
                 self.assertEqual((await client.post(action, json=request)).json(), receipt)
                 stale = await client.post(action, json={**request, "requestId": str(uuid4()),
                                                         "expectedUpdatedAt": "2020-01-01T00:00:00Z"})
@@ -1212,6 +1750,16 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(no_rows["entries"], [])
                 self.assertEqual(no_rows["latestCurrentReceipt"], receipt)
 
+                # An archived focus is not a substitute for missing manual commit proof.
+                self.assertEqual((await client.get(link, params={"requireVisible": "true"})).status_code, 404)
+                await self.pg.execute("UPDATE ontology_transfer_attempts SET receipt_id=id WHERE id=CAST(:id AS uuid)",
+                                      {"id": receipt["id"]})
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.timeline_source")
+                source_replaced = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(source_replaced.status_code, 200, source_replaced.text)
+                self.assertEqual(source_replaced.json()["physicalScope"], "historical")
+                self.assertEqual((await client.get(link)).json()["physicalScope"], "current")
+
                 changed = await client.put(f"{RUNS}/{plan['id']}", json={**proposed, "targetTable": "timeline_other"})
                 self.assertEqual(changed.status_code, 200, changed.text)
                 other = (await client.get("/etl/ts_transfer_sandbox/timeline_other/transfer-timeline")).json()
@@ -1220,8 +1768,33 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 historical = (await client.get(route)).json()
                 self.assertIsNone(historical["latestCurrentReceipt"])
                 self.assertTrue(all(item["physicalScope"] == "historical" for item in historical["entries"]))
+                archived_link = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(archived_link.status_code, 200, archived_link.text)
+                self.assertEqual((archived_link.json()["id"], archived_link.json()["physicalScope"]),
+                                 (receipt["id"], "historical"))
+                self.assertEqual((await client.get(f"{route}/attempt/{receipt['id']}?requireVisible=true")).status_code, 422)
+                # The focused exact link is not limited to the current edge's 7-day coverage.
+                async with self.pg.session() as session:
+                    for update in (
+                        "UPDATE ontology_transfer_runs SET recorded_at=recorded_at-interval '8 days', "
+                        "plan_updated_at=plan_updated_at-interval '8 days' WHERE id=:id",
+                        "UPDATE ontology_transfer_attempts SET started_at=started_at-interval '8 days', "
+                        "finished_at=finished_at-interval '8 days', plan_updated_at=plan_updated_at-interval '8 days' "
+                        "WHERE id=:id",
+                        "UPDATE ontology_transfer_commit_events SET recorded_at=recorded_at-interval '8 days', "
+                        "parent_updated_at=parent_updated_at-interval '8 days' WHERE parent_receipt_id=:id",
+                    ):
+                        await session.execute(text(update), {"id": UUID(receipt["id"])})
+                aged_link = await client.get(link, params={"requireVisible": "true"})
+                self.assertEqual(aged_link.status_code, 200, aged_link.text)
+                self.assertEqual(aged_link.json()["physicalScope"], "historical")
+                await self.pg.execute("DELETE FROM ontology_transfer_commit_events WHERE parent_receipt_id=:id",
+                                      {"id": UUID(receipt["id"])})
+                self.assertEqual((await client.get(link, params={"requireVisible": "true"})).json(), hidden.json())
+                self.assertEqual((await client.get(link)).status_code, 200)
         async with api(False, self.session_provider) as reader:
             self.assertEqual((await reader.get(route)).status_code, 403)
+            self.assertEqual((await reader.get(link, params={"requireVisible": "true"})).status_code, 403)
 
     async def test_cancel_exact_waiting_daily_job_preserves_next_schedule_and_never_starts_worker(self):
         from app.web.api.models.transfer_plans import TransferRunRequest
@@ -1794,6 +2367,259 @@ class TransferPlanIntegration(unittest.IsolatedAsyncioTestCase):
                 after_peer_reset = (await client.get(second_route)).json()
                 self.assertEqual(after_peer_reset["state"], "current", after_peer_reset)
                 self.assertEqual(after_peer_reset["current"]["lastAnalyzedAt"], before_peer_reset["lastAnalyzedAt"])
+
+    async def test_weekly_quality_evidence_reproves_the_exact_latest_scoped_outcome(self):
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+        migration = import_module("app.web.alembic.versions.af834982b6d1_ontology_weekly_job_quality")
+
+        async with self.pg.session() as session:
+            await self.migrate(session, migration.upgrade)
+            for sql in (
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.evid_source (id int PRIMARY KEY, value text NOT NULL)",
+                "INSERT INTO ts_transfer_sandbox.evid_source VALUES (1,'collision')",
+                "CREATE TABLE ts_transfer_sandbox.evid_good (id int PRIMARY KEY, value text NOT NULL UNIQUE)",
+                "CREATE TABLE ts_transfer_sandbox.evid_bad (id int PRIMARY KEY, value text NOT NULL UNIQUE)",
+                "CREATE TABLE ts_transfer_sandbox.evid_legacy (id int PRIMARY KEY, value text NOT NULL UNIQUE)",
+                "INSERT INTO ts_transfer_sandbox.evid_bad VALUES (2,'collision')",
+            ):
+                await session.execute(text(sql))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
+        self.addAsyncCleanup(self.pg.execute, "DROP TABLE public.ontology_asset_weekly_job_quality")
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+        slot = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+        review_at = slot - timedelta(hours=1)
+        now = review_at
+
+        class DraftClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return review_at.astimezone(tz) if tz is not None else review_at.replace(tzinfo=None)
+
+        root = "/etl/asset-freshness/ts_transfer_sandbox"
+        query = {"expectedGeneration": "1", "expectedSlot": slot.isoformat()}
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_FRESHNESS_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", True),
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_schedules._utc_now", return_value=review_at),
+            patch("app.web.services.asset_freshness._utc_now", side_effect=lambda: now),
+            patch("app.web.services.asset_weekly_job_quality._utc_now", side_effect=lambda: now),
+        ):
+            async with api(True, self.session_provider) as client:
+                plans = {}
+                for table in ("evid_good", "evid_bad", "evid_legacy"):
+                    with patch("app.web.services.transfer_plans.datetime", DraftClock):
+                        created = await client.post(RUNS, json={
+                            **PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                            "sourceTable": "evid_source", "targetTable": table, "writeMode": "upsert", "trigger": "weekly",
+                            "scheduleTime": slot.strftime("%H:%M"), "scheduleWeekdayUtc": slot.isoweekday(),
+                        })
+                    self.assertEqual(created.status_code, 201, created.text)
+                    plan = created.json()
+                    plans[table] = plan
+                    armed = await client.put(f"{RUNS}/{plan['id']}/schedule", json={
+                        "enabled": True, "expectedUpdatedAt": plan["updatedAt"],
+                    })
+                    self.assertEqual(armed.status_code, 200, armed.text)
+                    policy = await client.put(f"{root}/{table}", json={
+                        "planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"], "expectedGeneration": None,
+                        "thresholdMinutes": 30, "enabled": True,
+                    })
+                    self.assertEqual(policy.status_code, 200, policy.text)
+                    reviewed = await client.put(f"{root}/{table}/weekly-job-quality", json={
+                        "planId": plan["id"], "expectedPlanUpdatedAt": plan["updatedAt"], "expectedGeneration": None,
+                        "expectedFreshnessGeneration": 1, "expectedScheduleGeneration": 1,
+                    })
+                    self.assertEqual(reviewed.status_code, 200, reviewed.text)
+
+                async def evidence(table, params=query):
+                    return await client.get(f"{root}/{table}/weekly-job-quality/evidence", params=params)
+
+                missing = await evidence("evid_good")
+                self.assertEqual(missing.status_code, 404)
+                now = datetime.now(timezone.utc)
+                async with self.pg.session() as session:
+                    self.assertEqual(len(await collect_due_transfer_jobs(session, now=now)), 3)
+                jobs = {str(row["plan_id"]): row["id"] for row in await self.pg.fetch_all(
+                    "SELECT plan_id,id FROM ontology_transfer_schedule_jobs",
+                )}
+                for table, plan in plans.items():
+                    with patch.object(settings, "TRANSFER_SANDBOX_SCHEDULED_OBSERVED_LINEAGE_ENABLED", table != "evid_legacy"):
+                        async with self.pg.session() as session:
+                            state = await execute_transfer_schedule_job(session, jobs[plan["id"]])
+                            self.assertEqual(state, "rejected" if table == "evid_bad" else "committed")
+                now = datetime.now(timezone.utc)
+                async with self.pg.session() as session:
+                    self.assertEqual((await evaluate_due_asset_freshness(session, now=now))["checked"], 3)
+
+                good = await evidence("evid_good")
+                self.assertEqual(good.status_code, 200, good.text)
+                self.assertEqual(good.headers["cache-control"], "private, no-store")
+                self.assertEqual(set(good.json()), {"kind", "jobId", "slot", "finishedAt", "receiptId", "recordedAt", "rowsAffected"})
+                self.assertEqual((good.json()["kind"], good.json()["rowsAffected"]), ("receipt", 1))
+                self.assertEqual(good.json()["jobId"], str(jobs[plans["evid_good"]["id"]]))
+                bad = await evidence("evid_bad")
+                self.assertEqual(bad.status_code, 200, bad.text)
+                self.assertEqual(set(bad.json()), {"kind", "jobId", "slot", "finishedAt", "attemptId", "startedAt", "attemptFinishedAt"})
+                self.assertEqual(bad.json()["kind"], "target_constraint")
+                self.assertEqual((await evidence("evid_legacy")).json(), missing.json())
+                self.assertEqual((await evidence("evid_good", {**query, "expectedGeneration": "2"})).json(), missing.json())
+                self.assertEqual((await evidence("evid_good", {**query, "expectedSlot": (slot - timedelta(days=7)).isoformat()})).json(),
+                                 missing.json())
+                self.assertEqual((await evidence("evid_good", {**query, "runId": good.json()["receiptId"]})).status_code, 422)
+                self.assertEqual((await evidence("evid_good", {**query, "expectedSlot": "1234"})).status_code, 422)
+                self.assertEqual((await evidence("evid_good", [*query.items(), ("expectedGeneration", "1")])).status_code, 422)
+                offset_slot = slot.astimezone(timezone(timedelta(hours=8))).isoformat()
+                self.assertEqual((await evidence("evid_good", {**query, "expectedSlot": offset_slot})).json(), good.json())
+                async with api(False, self.session_provider) as reader:
+                    self.assertEqual((await reader.get(f"{root}/evid_good/weekly-job-quality/evidence",
+                                                       params=query)).status_code, 403)
+                with patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED", False):
+                    self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                with patch.object(settings, "TRANSFER_SANDBOX_OBSERVED_LINEAGE_ENABLED", False):
+                    self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                    self.assertEqual((await evidence("evid_bad")).json(), bad.json())
+                snapshot = now
+                now += timedelta(minutes=3)
+                self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                now = snapshot
+                await self.pg.execute("INSERT INTO public.ontology_objects VALUES "
+                                      "('ts_transfer_sandbox','evid_source',true,'hidden')")
+                self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                self.assertEqual((await evidence("evid_bad")).json(), missing.json())
+                await self.pg.execute("DELETE FROM public.ontology_objects WHERE table_name='evid_source'")
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.evid_good")
+                self.assertEqual((await evidence("evid_good")).json(), missing.json())
+                await self.pg.execute("TRUNCATE ts_transfer_sandbox.evid_bad")
+                self.assertEqual((await evidence("evid_bad")).json(), missing.json())
+
+    async def test_weekly_target_constraint_proof_is_genuine_atomic_and_separately_gated(self):
+        from app.web.services.transfer_schedules import execute_transfer_schedule_job
+
+        async with self.pg.session() as session:
+            for sql in (
+                "CREATE TYPE public.statustypes AS ENUM ('ENABLE','DISABLE')",
+                'CREATE TABLE public."user" (id uuid PRIMARY KEY, status public.statustypes, is_superuser bool)',
+                "CREATE SCHEMA ts_transfer_sandbox",
+                "CREATE TABLE ts_transfer_sandbox.week_src (id int PRIMARY KEY, value text NOT NULL)",
+                "CREATE TABLE ts_transfer_sandbox.week_large (id int PRIMARY KEY, value text NOT NULL)",
+                "INSERT INTO ts_transfer_sandbox.week_src VALUES (1,'would write'), (2,'collision')",
+                "INSERT INTO ts_transfer_sandbox.week_large SELECT id, 'row' FROM generate_series(1,101) id",
+            ):
+                await session.execute(text(sql))
+            for table in ("week_proven", "week_disabled", "week_unproven", "week_audit_fail", "daily_disabled"):
+                await session.execute(text(f"CREATE TABLE ts_transfer_sandbox.{table} "
+                                           "(id int PRIMARY KEY, value text NOT NULL UNIQUE)"))
+                await session.execute(text(f"INSERT INTO ts_transfer_sandbox.{table} VALUES (3,'collision')"))
+            await session.execute(text("""INSERT INTO public."user" VALUES (:id, 'ENABLE', true)"""), {"id": TEST_ACTOR})
+            await session.execute(text("""
+                CREATE FUNCTION ts_transfer_sandbox.reject_week_proof() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM public.ontology_transfer_attempts
+                               WHERE id=NEW.attempt_id AND target_table='week_audit_fail') THEN
+                        RAISE EXCEPTION 'isolated proof ledger fault';
+                    END IF;
+                    RETURN NEW;
+                END $$
+            """))
+            await session.execute(text("""
+                CREATE TRIGGER reject_week_proof BEFORE INSERT ON public.ontology_transfer_schedule_target_rejections
+                FOR EACH ROW EXECUTE FUNCTION ts_transfer_sandbox.reject_week_proof()
+            """))
+        self.addAsyncCleanup(self.pg.execute, "DROP TYPE public.statustypes")
+        self.addAsyncCleanup(self.pg.execute, 'DROP TABLE public."user"')
+
+        slot = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=1)
+        arm_at = slot - timedelta(minutes=1)
+        utc = datetime.now(timezone.utc)
+
+        class ReviewClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return arm_at.astimezone(tz) if tz is not None else arm_at.replace(tzinfo=None)
+
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "TRANSFER_SANDBOX_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_SCHEDULER_ENABLED", True),
+            patch.object(settings, "TRANSFER_SANDBOX_JOB_QUALITY_ENABLED", False),
+            patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED", True),
+            patch("app.web.services.transfer_plans.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_runs.get_etl_layers", return_value=self.layers),
+            patch("app.web.services.transfer_schedules._utc_now", return_value=arm_at),
+        ):
+            async with api(True, self.session_provider) as client:
+                plans = {}
+                for target in ("week_proven", "week_disabled", "week_unproven", "week_audit_fail", "daily_disabled"):
+                    daily = target == "daily_disabled"
+                    payload = {**PAYLOAD, "sourceSchema": "ts_transfer_sandbox", "targetSchema": "ts_transfer_sandbox",
+                               "sourceTable": "week_large" if target == "week_unproven" else "week_src",
+                               "targetTable": target, "writeMode": "upsert", "trigger": "scheduled" if daily else "weekly",
+                               "scheduleTime": slot.strftime("%H:%M"),
+                               **({} if daily else {"scheduleWeekdayUtc": slot.isoweekday()})}
+                    with patch("app.web.services.transfer_plans.datetime", ReviewClock):
+                        saved = await client.post(RUNS, json=payload)
+                    self.assertEqual(saved.status_code, 201, saved.text)
+                    plan = saved.json()
+                    plans[target] = plan
+                    armed = await client.put(f"{RUNS}/{plan['id']}/schedule", json={
+                        "enabled": True, "expectedUpdatedAt": plan["updatedAt"],
+                    })
+                    self.assertEqual(armed.status_code, 200, armed.text)
+
+                async with self.pg.session() as session:
+                    due = await collect_due_transfer_jobs(session, now=utc)
+                self.assertEqual(len(due), 5)
+                jobs = {str(row["plan_id"]): row["id"] for row in await self.pg.fetch_all(
+                    "SELECT id, plan_id FROM ontology_transfer_schedule_jobs",
+                )}
+
+                async def execute(target):
+                    async with self.pg.session() as session:
+                        return await execute_transfer_schedule_job(session, jobs[plans[target]["id"]])
+
+                self.assertEqual(await asyncio.gather(execute("week_proven"), execute("week_proven")),
+                                 ["rejected", "rejected"])
+                self.assertEqual(await execute("week_unproven"), "rejected")
+                self.assertEqual(await execute("week_audit_fail"), "outcome_unknown")
+                self.assertEqual(await execute("daily_disabled"), "rejected")
+                with patch.object(settings, "TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED", False):
+                    self.assertEqual(await execute("week_disabled"), "rejected")
+
+                proof, = await self.pg.fetch_all("""
+                    SELECT proof.code, proof.target_oid, proof.target_filenode, a.scope_trigger, a.status,
+                        a.plan_updated_at, a.request_id, a.schedule_job_id, a.target_table,
+                        j.id AS job_id, j.state, a.finished_at AS attempted, j.finished_at AS finished,
+                        pg_catalog.pg_relation_filenode(proof.target_oid::oid)::bigint AS actual_target
+                    FROM ontology_transfer_schedule_target_rejections proof
+                    JOIN ontology_transfer_attempts a ON a.id=proof.attempt_id
+                    JOIN ontology_transfer_schedule_jobs j ON j.id=proof.job_id
+                """)
+                self.assertEqual((proof["code"], proof["scope_trigger"], proof["target_table"]),
+                                 ("target_constraint", "week_utc", "week_proven"))
+                self.assertEqual(proof["request_id"], proof["schedule_job_id"])
+                self.assertEqual(proof["job_id"], jobs[plans["week_proven"]["id"]])
+                self.assertEqual(proof["plan_updated_at"], datetime.fromisoformat(plans["week_proven"]["updatedAt"]))
+                self.assertEqual(proof["target_filenode"], proof["actual_target"])
+                self.assertEqual((proof["status"], proof["state"]), ("rejected", "rejected"))
+                self.assertEqual(proof["attempted"], proof["finished"])
+                self.assertTrue(slot <= proof["finished"] < slot + timedelta(minutes=5))
+                self.assertEqual(await self.pg.fetch_all("SELECT id FROM ontology_transfer_runs"), [])
+                for table in plans:
+                    rows = await self.pg.fetch_all(f"SELECT id FROM ts_transfer_sandbox.{table}")
+                    self.assertEqual([row["id"] for row in rows], [3])
 
     async def test_daily_job_quality_requires_real_target_proof_and_never_recovers_from_neutral_slots(self):
         from app.web.services.transfer_schedules import collect_due_transfer_jobs, execute_transfer_schedule_job

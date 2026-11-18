@@ -14,9 +14,12 @@ from fastapi import HTTPException
 from app.web.api.models.data_connections import DataConnectionPayload
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA
 from app.web.services.data_connections import DataConnections, _CATALOG_RELATION_SCOPE, _driver
+from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA
+from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA
+from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEMA
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
 
-_RESERVED_SOURCE_SCHEMAS = (PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, "batch_sync_identity", "batch_sync_stream")
+_RESERVED_SOURCE_SCHEMAS = (PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA, "batch_sync_identity", "batch_sync_stream")
 
 _MAX_ROWS = 100
 _MAX_COLUMNS = 32

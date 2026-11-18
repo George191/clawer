@@ -1,4 +1,4 @@
-"""Catalog-only advisory for a single ordinary Explorer filter, not a query plan."""
+"""Catalog-only advisory for ordinary Explorer AND filters, not a query plan."""
 
 from anyio import fail_after
 from fastapi import HTTPException
@@ -6,10 +6,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.web.api.models.etl import PreviewIndexCoverage, PreviewIndexCoverageRequest
+from app.web.api.models.etl import PreviewCompositeIndexCoverageRequest, PreviewIndexCoverage, PreviewIndexCoverageInput
 from app.web.services.etl_layers import _LINEAGE_METADATA_JOIN, _LINEAGE_SCOPE, _LINEAGE_VISIBLE_SQL
-
-_STRATEGIES = {"lt": [1], "lte": [2], "eq": [3], "gte": [4], "gt": [5], "between": [2, 4]}
 
 # Only names authorized by ordinary physical Explorer scope are considered.
 # One statement checks field permission ahead of its exact built-in type, then
@@ -22,42 +20,63 @@ _COVERAGE = text(f"""
         {_LINEAGE_METADATA_JOIN}
         WHERE n.nspname = :schema AND c.relname = :table AND {_LINEAGE_VISIBLE_SQL}
           AND c.relkind = 'r' AND c.relpersistence = 'p' AND heap.amname = 'heap'
+          AND pg_catalog.has_schema_privilege(n.oid, 'USAGE')
           AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhparent = c.oid)
-    ), field AS MATERIALIZED (
-        SELECT a.attrelid, a.attnum, a.atttypid FROM asset
-        JOIN pg_catalog.pg_attribute a ON a.attrelid = asset.oid AND a.attname = :field
+    ), requested AS MATERIALIZED (
+        SELECT q.field, q.operator,
+               CASE q.operator
+                   WHEN 'lt' THEN ARRAY[1] WHEN 'lte' THEN ARRAY[2] WHEN 'eq' THEN ARRAY[3]
+                   WHEN 'gte' THEN ARRAY[4] WHEN 'gt' THEN ARRAY[5] WHEN 'between' THEN ARRAY[2, 4]
+               END AS strategies
+        FROM ROWS FROM (
+            pg_catalog.unnest(CAST(:fields AS text[])),
+            pg_catalog.unnest(CAST(:operators AS text[]))
+        ) AS q(field, operator)
+    ), fields AS MATERIALIZED (
+        SELECT a.attnum, a.atttypid, q.operator, q.strategies
+        FROM asset
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = asset.oid
+        JOIN requested q ON a.attname = q.field
         WHERE a.attnum > 0 AND NOT a.attisdropped
           AND pg_catalog.has_column_privilege(asset.oid, a.attnum, 'SELECT')
     )
     SELECT CASE
         WHEN NOT EXISTS (SELECT 1 FROM asset) THEN 'missing'
-        WHEN NOT EXISTS (SELECT 1 FROM field) THEN 'unavailable'
-        WHEN NOT EXISTS (
-            SELECT 1 FROM field WHERE atttypid IN (
+        WHEN (SELECT pg_catalog.count(*) FROM fields) <> :size THEN 'unavailable'
+        WHEN EXISTS (
+            SELECT 1 FROM fields WHERE atttypid NOT IN (
                 'pg_catalog.int2'::pg_catalog.regtype, 'pg_catalog.int4'::pg_catalog.regtype,
                 'pg_catalog.int8'::pg_catalog.regtype, 'pg_catalog.date'::pg_catalog.regtype,
                 'pg_catalog.timestamptz'::pg_catalog.regtype
             )
         ) THEN 'unsupported'
         WHEN EXISTS (
-            SELECT 1 FROM field
-            JOIN pg_catalog.pg_index i ON i.indrelid = field.attrelid AND i.indkey[0] = field.attnum
+            SELECT 1 FROM asset
+            JOIN pg_catalog.pg_index i ON i.indrelid = asset.oid
             JOIN pg_catalog.pg_class x ON x.oid = i.indexrelid AND x.relkind = 'i'
             JOIN pg_catalog.pg_am btree ON btree.oid = x.relam AND btree.oid = 403
-            JOIN pg_catalog.pg_opclass k ON k.oid = i.indclass[0] AND k.opcmethod = btree.oid
             WHERE i.indisvalid AND i.indisready AND i.indislive AND NOT i.indcheckxmin
-              AND i.indnkeyatts > 0 AND i.indpred IS NULL AND i.indexprs IS NULL
-              AND k.opcdefault AND k.opcintype = field.atttypid
-              AND k.opcnamespace = 'pg_catalog'::pg_catalog.regnamespace
+              AND i.indnkeyatts >= :size AND i.indpred IS NULL AND i.indexprs IS NULL
               AND NOT EXISTS (
-                  SELECT 1 FROM pg_catalog.unnest(CAST(:strategies AS smallint[])) strategy(number)
+                  SELECT 1 FROM fields f
                   WHERE NOT EXISTS (
-                      SELECT 1 FROM pg_catalog.pg_amop o
-                      JOIN pg_catalog.pg_operator op ON op.oid = o.amopopr
-                      WHERE o.amopfamily = k.opcfamily AND o.amopmethod = btree.oid
-                        AND o.amoplefttype = field.atttypid AND o.amoprighttype = field.atttypid
-                        AND o.amoppurpose = 's' AND o.amopstrategy = strategy.number
-                        AND op.oprnamespace = 'pg_catalog'::pg_catalog.regnamespace
+                      SELECT 1 FROM pg_catalog.generate_series(0, CAST(:size AS integer) - 1) AS prefix(pos)
+                      JOIN pg_catalog.pg_opclass k ON k.oid = i.indclass[prefix.pos] AND k.opcmethod = btree.oid
+                      WHERE i.indkey[prefix.pos] = f.attnum
+                        AND (f.operator = 'eq' OR prefix.pos = :size - 1)
+                        AND k.opcdefault AND k.opcintype = f.atttypid
+                        AND k.opcnamespace = 'pg_catalog'::pg_catalog.regnamespace
+                        AND NOT EXISTS (
+                            SELECT 1 FROM pg_catalog.unnest(f.strategies) strategy(number)
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM pg_catalog.pg_amop o
+                                JOIN pg_catalog.pg_operator op ON op.oid = o.amopopr
+                                WHERE o.amopfamily = k.opcfamily AND o.amopmethod = btree.oid
+                                  AND o.amoplefttype = f.atttypid AND o.amoprighttype = f.atttypid
+                                  AND o.amoppurpose = 's' AND o.amopstrategy = strategy.number
+                                  AND op.oprnamespace = 'pg_catalog'::pg_catalog.regnamespace
+                            )
+                        )
                   )
               )
         ) THEN 'candidate'
@@ -67,15 +86,16 @@ _COVERAGE = text(f"""
 
 
 async def preview_index_coverage(
-    session: AsyncSession, schema: str, table: str, payload: PreviewIndexCoverageRequest,
+    session: AsyncSession, schema: str, table: str, payload: PreviewIndexCoverageInput,
 ) -> PreviewIndexCoverage:
+    terms = payload.terms if isinstance(payload, PreviewCompositeIndexCoverageRequest) else [payload]
     try:
         with fail_after(2):
             await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"))
             await session.execute(text("SET LOCAL statement_timeout='750ms'"))
             state = await session.scalar(_COVERAGE, {
-                **_LINEAGE_SCOPE, "schema": schema, "table": table, "field": payload.field,
-                "strategies": _STRATEGIES[payload.operator],
+                **_LINEAGE_SCOPE, "schema": schema, "table": table, "size": len(terms),
+                "fields": [term.field for term in terms], "operators": [term.operator for term in terms],
             })
     except (TimeoutError, DBAPIError):
         await session.rollback()

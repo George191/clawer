@@ -29,10 +29,16 @@ from app.web.api.models.lineage_neighbors import (
 )
 from app.web.api.models.push_inbox_apply import PUSH_APPLY_SCHEMA, PUSH_APPLY_TARGET
 from app.web.services.index_preview_sandbox import INDEX_SANDBOX_SCHEMA, INDEX_SANDBOX_TABLE
+from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
+from app.web.services.pipeline_handoff_scope import HANDOFF_PRIVATE_SCHEMA, HANDOFF_PROTECTED_REGCLASSES
+from app.web.services.snapshot_intent_scope import SNAPSHOT_INTENT_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PROTECTED_REGCLASSES
 from app.web.services.synthetic_governance import PROTECTED_SYNTHETIC_SCHEMA
 
 RESERVED_BATCH_TARGET = (BATCH_TARGET_SCHEMA, INCREMENTAL_TARGET)
+RESERVED_BATCH_RANGE_TARGET = (BATCH_TARGET_SCHEMA, BATCH_RANGE_TARGET)
 _RESERVED_BATCH_REGCLASS = ".".join(RESERVED_BATCH_TARGET)
+_RESERVED_BATCH_RANGE_REGCLASS = ".".join(RESERVED_BATCH_RANGE_TARGET)
+_BATCH_RECEIPTS_REGCLASS = "public.ontology_batch_sync_receipts"
 _PUSH_INBOX_RECEIPTS = "public.ontology_push_inbox_receipts"
 _PUSH_INBOX_MARKER = "public.ontology_push_inbox_state"
 _PUSH_APPLY_REGCLASS = f"{PUSH_APPLY_SCHEMA}.{PUSH_APPLY_TARGET}"
@@ -41,13 +47,15 @@ _PUSH_APPLY_RECEIPTS = "public.ontology_push_inbox_apply_receipts"
 
 
 def require_ordinary_table(schema: str, table: str) -> None:
-    if schema == PUSH_APPLY_SCHEMA or (schema, table) == RESERVED_BATCH_TARGET:
+    if (schema in (PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA)
+        or (schema, table) in (RESERVED_BATCH_TARGET, RESERVED_BATCH_RANGE_TARGET)):
         raise HTTPException(404, "Table does not exist in this schema")
 
 
 async def reserved_batch_target_exists(session) -> bool:
-    return bool(await session.scalar(text("SELECT pg_catalog.to_regclass(:name) IS NOT NULL"),
-                                     {"name": _RESERVED_BATCH_REGCLASS}))
+    return bool(await session.scalar(text("""SELECT pg_catalog.to_regclass(:name) IS NOT NULL
+                                                OR pg_catalog.to_regclass(:range_name) IS NOT NULL"""),
+                                     {"name": _RESERVED_BATCH_REGCLASS, "range_name": _RESERVED_BATCH_RANGE_REGCLASS}))
 
 
 LAYERS = ("rds", "ods", "task", "dwd", "dws", "dim", "ads")
@@ -58,7 +66,7 @@ _OBJECT_METADATA_JOIN = """LEFT JOIN public.ontology_objects o
 _OBJECT_DESCRIPTION_SQL = "COALESCE(NULLIF(obj_description(c.oid, 'pg_class'), ''), o.description, '')"
 _OBJECT_TABLE_SQL = f"""n.nspname ~ '^ts_[a-z0-9_]+$' AND n.nspname <> 'ts_meta'
     AND n.nspname <> 'ts_meta_hist' AND n.nspname NOT IN ('{PROTECTED_SYNTHETIC_SCHEMA}', '{PUSH_APPLY_SCHEMA}')
-    AND NOT (n.nspname = '{BATCH_TARGET_SCHEMA}' AND c.relname = '{INCREMENTAL_TARGET}')
+    AND NOT (n.nspname = '{BATCH_TARGET_SCHEMA}' AND c.relname IN ('{INCREMENTAL_TARGET}', '{BATCH_RANGE_TARGET}'))
     AND c.relname ~ '^[a-z_][a-z0-9_]{{0,62}}$' AND c.relkind IN ('r','p')
     AND NOT c.relispartition
     AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = c.oid)"""
@@ -137,6 +145,8 @@ def quote_identifier(name: str) -> str:
 def resolve_schema(layer: str, table_role: str = "current") -> str:
     if table_role not in {"current", "history"}:
         raise HTTPException(400, "Unsupported table role")
+    if layer in (HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA, BATCH_RANGE_SOURCE_SCHEMA):
+        raise HTTPException(404, "Schema not found")
     schema = layer if layer.startswith("ts_") else f"ts_{layer}"
     quote_identifier(schema)
     if schema in (PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA):
@@ -202,11 +212,11 @@ class EtlLayers:
                 FROM pg_namespace n LEFT JOIN pg_class c
                   ON c.relnamespace = n.oid AND c.relkind IN ('r','p')
                      AND NOT c.relispartition
-                     AND NOT (n.nspname = :batch_schema AND c.relname = :batch_target)
+                     AND NOT (n.nspname = :batch_schema AND c.relname IN (:batch_target, :batch_range_target))
                 WHERE n.nspname LIKE 'ts\_%' ESCAPE '\' AND n.nspname NOT IN (:restricted, :push_schema)
                 GROUP BY n.oid, n.nspname ORDER BY n.nspname
             """), {"restricted": PROTECTED_SYNTHETIC_SCHEMA, "push_schema": PUSH_APPLY_SCHEMA,
-                    "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET})
+                    "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET})
             found = {row["schema"]: dict(row) for row in result.mappings()}
         schemas = list(dict.fromkeys([*(f"ts_{layer}" for layer in LAYERS), *found]))
         return [{
@@ -243,9 +253,9 @@ class EtlLayers:
                 ) storage
                 WHERE n.nspname = :schema AND c.relkind IN ('r','p')
                   AND NOT c.relispartition
-                  AND NOT (n.nspname = :batch_schema AND c.relname = :batch_target)
+                  AND NOT (n.nspname = :batch_schema AND c.relname IN (:batch_target, :batch_range_target))
                 ORDER BY c.relname
-            """), {"schema": schema, "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET})
+            """), {"schema": schema, "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET})
             rows = result.mappings().all()
         return [{"name": row["name"], "schemaName": schema, "dataType": row["data_type"] or "",
                  "tableRole": "history" if schema.endswith("_hist") else "current",
@@ -631,8 +641,8 @@ class EtlLayers:
                   AND sn.nspname <> 'ts_meta_hist' AND sn.nspname NOT IN (:restricted, :push_schema)
                   AND tn.nspname ~ '^ts_[a-z0-9_]+$' AND tn.nspname <> 'ts_meta'
                   AND tn.nspname <> 'ts_meta_hist' AND tn.nspname NOT IN (:restricted, :push_schema)
-                  AND NOT (sn.nspname = :batch_schema AND sc.relname = :batch_target)
-                  AND NOT (tn.nspname = :batch_schema AND tc.relname = :batch_target)
+                  AND NOT (sn.nspname = :batch_schema AND sc.relname IN (:batch_target, :batch_range_target))
+                  AND NOT (tn.nspname = :batch_schema AND tc.relname IN (:batch_target, :batch_range_target))
                   AND sc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
                   AND tc.relname ~ '^[a-z_][a-z0-9_]{0,62}$'
                   AND sc.relkind IN ('r','p') AND tc.relkind IN ('r','p')
@@ -641,7 +651,7 @@ class EtlLayers:
                   AND NOT EXISTS (SELECT 1 FROM pg_inherits child WHERE child.inhrelid = tc.oid)
                 ORDER BY sn.nspname, sc.relname, con.conname, con.oid
             """), {"oid": row["oid"], "restricted": PROTECTED_SYNTHETIC_SCHEMA, "push_schema": PUSH_APPLY_SCHEMA,
-                    "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET})
+                    "batch_schema": BATCH_TARGET_SCHEMA, "batch_target": INCREMENTAL_TARGET, "batch_range_target": BATCH_RANGE_TARGET})
             foreign_keys = [dict(item) for item in result.mappings()]
             try:
                 logical = await read_object_relations(session, schema, table)
@@ -683,8 +693,8 @@ class EtlLayers:
                 ("relationships", merge_object_relations(foreign_keys, logical))):
             for relation in relations:
                 if any(not relation[f"{side}_schema"].startswith("ts_") or
-                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA} or
-                       (relation[f"{side}_schema"], relation[f"{side}_table"]) == RESERVED_BATCH_TARGET
+                       relation[f"{side}_schema"] in {"ts_meta", "ts_meta_hist", PROTECTED_SYNTHETIC_SCHEMA, PUSH_APPLY_SCHEMA, HANDOFF_PRIVATE_SCHEMA, SNAPSHOT_INTENT_PRIVATE_SCHEMA} or
+                       (relation[f"{side}_schema"], relation[f"{side}_table"]) in (RESERVED_BATCH_TARGET, RESERVED_BATCH_RANGE_TARGET)
                        for side in ("source", "target")):
                     continue
                 for direction, side, peer in (("outgoing", "source", "target"), ("incoming", "target", "source")):
@@ -997,10 +1007,12 @@ class EtlLayers:
         async with self.session(repeatable_read=True) as session:
             # Raw SQL is not a relation sandbox: views and database functions can hide references.
             # Migration-only empty metadata must not disable the ordinary workspace.
-            fixture, marked_history_column, push_marker, push_receipts, push_binding, push_apply_receipts = (
+            fixture, marked_history_column, push_marker, push_receipts, push_binding, push_apply_receipts, batch_receipts = (
                 await session.execute(text("""
                 SELECT (pg_catalog.to_regnamespace(:fixture) IS NOT NULL
                         OR pg_catalog.to_regclass(:batch_target) IS NOT NULL
+                        OR pg_catalog.to_regclass(:batch_range_target) IS NOT NULL
+                        OR pg_catalog.to_regnamespace(:batch_range_source) IS NOT NULL
                         OR pg_catalog.to_regclass(:push_sink) IS NOT NULL),
                        EXISTS (
                            SELECT 1 FROM pg_catalog.pg_attribute
@@ -1010,8 +1022,15 @@ class EtlLayers:
                        pg_catalog.to_regclass(:push_marker) IS NOT NULL,
                        pg_catalog.to_regclass(:push_receipts) IS NOT NULL,
                        pg_catalog.to_regclass(:push_binding) IS NOT NULL,
-                       pg_catalog.to_regclass(:push_apply_receipts) IS NOT NULL
+                       pg_catalog.to_regclass(:push_apply_receipts) IS NOT NULL,
+                       EXISTS (
+                           SELECT 1 FROM pg_catalog.pg_attribute
+                           WHERE attrelid = pg_catalog.to_regclass(:batch_receipts)
+                             AND attname = 'range_min' AND attnum > 0 AND NOT attisdropped
+                       )
             """), {"fixture": PROTECTED_SYNTHETIC_SCHEMA, "batch_target": _RESERVED_BATCH_REGCLASS,
+                    "batch_range_target": _RESERVED_BATCH_RANGE_REGCLASS, "batch_range_source": BATCH_RANGE_SOURCE_SCHEMA,
+                    "batch_receipts": _BATCH_RECEIPTS_REGCLASS,
                     "push_marker": _PUSH_INBOX_MARKER, "push_receipts": _PUSH_INBOX_RECEIPTS,
                     "push_sink": _PUSH_APPLY_REGCLASS, "push_binding": _PUSH_APPLY_BINDING,
                     "push_apply_receipts": _PUSH_APPLY_RECEIPTS})
@@ -1026,7 +1045,25 @@ class EtlLayers:
                 or push_binding and await session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_APPLY_BINDING})"))
                 or push_apply_receipts and await session.scalar(text(f"SELECT EXISTS (SELECT 1 FROM {_PUSH_APPLY_RECEIPTS})"))
             )
-            if protected_push or (marked_history_column and await session.scalar(text("""
+            # Only fixed internal identifiers may appear in these SQL strings.
+            # Existence and data checks use the caller's same read-only snapshot.
+            protected_relations = HANDOFF_PROTECTED_REGCLASSES + SNAPSHOT_INTENT_PROTECTED_REGCLASSES
+            existing_private_relations = (await session.execute(text("""
+                SELECT relation FROM unnest(CAST(:relations AS text[])) AS r(relation)
+                 WHERE pg_catalog.to_regclass(relation) IS NOT NULL
+            """), {"relations": list(protected_relations)})).scalars().all()
+            protected_private = False
+            for relation in protected_relations:
+                if relation in existing_private_relations and await session.scalar(
+                    text(f"SELECT EXISTS (SELECT 1 FROM ONLY {relation})")
+                ):
+                    protected_private = True
+                    break
+            protected_range = batch_receipts and await session.scalar(text(f"""
+                SELECT EXISTS (SELECT 1 FROM {_BATCH_RECEIPTS_REGCLASS}
+                               WHERE target_table = '{BATCH_RANGE_TARGET}' AND range_min IS NOT NULL)
+            """))
+            if protected_push or protected_private or protected_range or (marked_history_column and await session.scalar(text("""
                 SELECT EXISTS (SELECT 1 FROM public.ontology_cdc_sandbox_versions WHERE marking_level IS NOT NULL)
             """))):
                 raise HTTPException(403, "Free-form SQL is unavailable in the protected synthetic workspace")

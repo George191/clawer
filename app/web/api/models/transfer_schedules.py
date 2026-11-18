@@ -28,6 +28,7 @@ class TransferSchedule(BaseModel):
     enabled: bool
     generation: int | None = None
     plannedTimeUtc: str | None = None
+    plannedWeekdayUtc: int | None = ApiField(default=None, exclude_if=lambda value: value is None)
     armedForUpdatedAt: datetime | None = None
     updatedAt: datetime | None = None
 
@@ -42,6 +43,7 @@ class TransferScheduleSummary(TransferSchedule):
 class TransferScheduleJob(BaseModel):
     id: UUID
     slot: datetime
+    scheduleWeekdayUtc: int | None = ApiField(default=None, exclude_if=lambda value: value is None)
     state: Literal["pending", "dispatched", "committed", "rejected", "outcome_unknown", "expired", "canceled"]
     generation: int | None = ApiField(default=None, exclude_if=lambda value: value is None)
     canceledAt: datetime | None = ApiField(default=None, exclude_if=lambda value: value is None)
@@ -74,12 +76,16 @@ class TransferScheduleJobRow(SQLModel, table=True):
               AND finished_at = canceled_at AND canceled_at >= slot AND canceled_at < expires_at
               AND receipt_id IS NULL) OR (state <> 'canceled' AND canceled_by IS NULL AND canceled_at IS NULL)) IS TRUE""",
                         name="ck_transfer_schedule_job_cancel"),
+        CheckConstraint("schedule_weekday_utc IS NULL OR (schedule_weekday_utc BETWEEN 1 AND 7 "
+                        "AND schedule_weekday_utc = EXTRACT(ISODOW FROM slot AT TIME ZONE 'UTC') AND state <> 'canceled')",
+                        name="ck_transfer_schedule_job_weekday"),
         Index("ix_ontology_transfer_schedule_jobs_due", "state", "dispatch_after"),
         Index("ix_ontology_transfer_schedule_jobs_plan", "plan_id", "slot"),
     )
 
     id: UUID = Field(primary_key=True)
     plan_id: UUID = Field(foreign_key="ontology_transfer_schedules.plan_id")
+    schedule_weekday_utc: int | None = None
     generation: int
     slot: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))

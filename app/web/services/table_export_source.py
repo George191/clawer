@@ -49,6 +49,11 @@ _READ_SQL = f"""
     FROM ONLY {SOURCE_LABEL} ORDER BY id LIMIT {MAX_EXPORT_ROWS + 1}
 """
 
+_PREVIEW_SIZE_SQL = f"""
+    SELECT pg_catalog.octet_length(caption) AS caption_bytes
+    FROM ONLY {SOURCE_LABEL} ORDER BY id LIMIT {MAX_EXPORT_ROWS + 1}
+"""
+
 
 def _valid_primary_plan(explain: object, index_name: str) -> bool:
     if isinstance(explain, str):
@@ -101,7 +106,7 @@ async def require_export_sender_marker(session: AsyncSession, marker: UUID | Non
         raise _invalid_source() from None
 
 
-async def _read_source(session: AsyncSession, marker: UUID) -> list[tuple[int, str]]:
+async def _read_source(session: AsyncSession, marker: UUID, *, snapshot_preview: bool = False) -> list[tuple[int, str]]:
     # Only these fixed SQL statements can touch source tables. Verify both
     # relations before using them and verify the same OIDs after taking locks.
     if await session.scalar(text("SHOW server_encoding")) != "UTF8":
@@ -142,6 +147,16 @@ async def _read_source(session: AsyncSession, marker: UUID) -> list[tuple[int, s
     explain = await session.scalar(text("EXPLAIN (FORMAT JSON) " + _READ_SQL))
     if not _valid_primary_plan(explain, index_name):
         raise _invalid_source()
+    if snapshot_preview:
+        # The separate comparison budget limits bytes that leave PostgreSQL.
+        # Compute only bounded lengths in this same pinned repeatable-read snapshot.
+        size_check = await session.scalar(text("EXPLAIN (FORMAT JSON) " + _PREVIEW_SIZE_SQL))
+        if not _valid_primary_plan(size_check, index_name):
+            raise _invalid_source()
+        measured = (await session.scalars(text(_PREVIEW_SIZE_SQL))).all()
+        if (not 1 <= len(measured) <= MAX_EXPORT_ROWS or any(size is None or size > MAX_CAPTION_BYTES for size in measured)
+            or sum(size + 8 for size in measured) > 64 * 1024):
+            raise HTTPException(422, "The synthetic source is outside the approved comparison bounds")
     result = (await session.execute(text(_READ_SQL))).all()
     if len(result) > MAX_EXPORT_ROWS:
         raise HTTPException(422, "The synthetic source exceeds 100 rows; nothing was exported")

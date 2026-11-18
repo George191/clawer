@@ -6,6 +6,7 @@ the disposable ontology_creation_regression instance.
 
 import asyncio
 from importlib import import_module
+from datetime import datetime
 import json
 import os
 from types import SimpleNamespace
@@ -98,20 +99,133 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         fresh_cipher = sources.credential_cipher()
         self.assertEqual(json.loads(fresh_cipher.decrypt(ciphertext.encode())), PAYLOAD["credentials"])
         listed = await self.service.list()
-        self.assertEqual(listed, [saved])
+        self.assertEqual([{k: v for k, v in row.items() if k != "capabilities"} for row in listed], [saved])
+        self.assertNotIn("capabilities", saved)
         self.assertNotIn("credentials", saved)
         self.assertNotIn("credentials_ciphertext", saved)
-        renamed = await self.service.save(payload(name="Renamed source", credentials={}), "admin", saved["id"])
+        renamed = await self.service.save(payload(name="Renamed source", credentials={}), "admin", saved["id"],
+                                          expected_updated_at=datetime.fromisoformat(saved["updatedAt"]))
         self.assertEqual(renamed["name"], "Renamed source")
         self.assertEqual((await self.stored(saved["id"]))["credentials_ciphertext"], ciphertext)
         # A new service instance and cipher can decrypt after a process restart
         # because derivation uses the same explicitly configured stable secret.
         restarted = object.__new__(sources.DataConnections)
         restarted._pg = self.pg
-        self.assertTrue((await restarted.test(payload(credentials={}), saved["id"]))["ok"])
+        self.assertTrue((await restarted.test(payload(credentials={}), saved["id"],
+                                                   expected_updated_at=datetime.fromisoformat(renamed["updatedAt"])))["ok"])
         self.probe.assert_awaited()
         await self.service.delete(saved["id"])
         self.assertEqual(await self.service.list(), [])
+
+    async def test_list_capabilities_use_local_metadata_not_saved_source_or_secrets(self):
+        from app.web.services import batch_source_identity as identity
+
+        local = {**PAYLOAD["config"], "host": "127.0.0.1"}
+        saved = await self.service.save(payload(name="1 Reviewed source", config=local), "admin")
+        await self.service.save(payload(name="2 Hostname source", config={**local, "host": "localhost"}), "admin")
+        await self.service.save(payload(name="3 MySQL source", engine="mysql", config=local), "admin")
+        marker = uuid4()
+        configured = SimpleNamespace(
+            SECRET_KEY=SETTINGS.SECRET_KEY, ENVIRONMENT="local",
+            model_fields_set={"SECRET_KEY", "ENVIRONMENT"}, BATCH_SYNC_SANDBOX_ENABLED=True,
+            BATCH_SYNC_SOURCE_IDENTITY_ENABLED=False, BATCH_SYNC_SOURCE_IDENTITY_MARKER=marker,
+            BATCH_SYNC_INCREMENTAL_ENABLED=True, BATCH_SYNC_RANGE_SNAPSHOT_ENABLED=True,
+            ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED=True,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_current_active_superuser] = lambda: SimpleNamespace(id="admin", is_superuser=True)
+        allow = {"status": "available_to_try"}
+
+        def deny(reason):
+            return {"status": "unavailable", "reason": reason}
+
+        async def set_proof(*, revision: str, fingerprint: str, is_current: bool = True):
+            async with self.pg.session() as session:
+                await session.execute(text("""
+                    INSERT INTO public.ontology_batch_source_identities
+                        (connection_id, source_updated_at, fingerprint, is_current)
+                    VALUES (CAST(:id AS uuid), CAST(CAST(:revision AS text) AS timestamptz), :fingerprint, :is_current)
+                    ON CONFLICT (connection_id) DO UPDATE SET
+                        source_updated_at=EXCLUDED.source_updated_at, fingerprint=EXCLUDED.fingerprint,
+                        is_current=EXCLUDED.is_current
+                """), dict(id=saved["id"], revision=revision, fingerprint=fingerprint, is_current=is_current))
+
+        def import_driver(engine):
+            if engine == "mysql":
+                raise RuntimeError("optional module initialization failed")
+
+        async with self.pg.session() as session:
+            await session.execute(text("DROP TABLE IF EXISTS public.ontology_batch_source_identities"))
+
+        with (
+            patch.object(sources, "settings", configured), patch.object(identity, "settings", configured),
+            patch.object(sources, "credential_cipher", side_effect=AssertionError("secret read")),
+            patch.object(sources, "_probe", side_effect=AssertionError("source dial")),
+            patch("app.web.api.routes.etl.get_data_connections", return_value=self.service),
+            patch.object(sources, "_driver", side_effect=import_driver) as driver,
+        ):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                async def metadata():
+                    res = await client.get("/etl/data-connections")
+                    self.assertEqual(res.status_code, 200, res.text)
+                    for secret in (str(marker), "fingerprint", "is_current", "credentials_ciphertext",
+                                   PAYLOAD["credentials"]["password"]):
+                        self.assertNotIn(secret, res.text)
+                    return res.json()
+
+                rows = await metadata()
+                items = [r["capabilities"] for r in rows]
+                self.assertEqual(items[0]["snapshot"], deny("source_identity_registry_unavailable"))
+                self.assertEqual(items[0]["catalog"], allow)
+                self.assertTrue(rows[0]["catalogAvailable"])
+                self.assertEqual(items[1]["snapshot"], deny("numeric_loopback_required"))
+                self.assertEqual(items[2]["catalog"], deny("unsupported_engine"))
+                self.assertEqual(items[2]["connectionTest"], deny("driver_missing"))
+                self.assertEqual([call.args for call in driver.call_args_list], [("postgresql",), ("mysql",)])
+
+                try:
+                    async with self.pg.session() as session:
+                        await session.execute(text("""
+                            CREATE TABLE public.ontology_batch_source_identities (
+                                connection_id uuid PRIMARY KEY, source_updated_at timestamptz NOT NULL,
+                                fingerprint varchar(64) NOT NULL, is_current bool NOT NULL,
+                                verified_at timestamptz NOT NULL DEFAULT now())
+                        """))
+                    self.assertEqual((await metadata())[0]["capabilities"]["snapshot"], allow)
+                    configured.BATCH_SYNC_SOURCE_IDENTITY_ENABLED = True
+                    fingerprint = identity.expected_fingerprint()
+                    before = (await metadata())[0]["capabilities"]
+                    for name in ("snapshot", "committedBatch", "reviewedRange"):
+                        self.assertEqual(before[name], deny("source_identity_unverified"))
+                    for supplied, revision, current in (
+                        ("1" * 64, saved["updatedAt"], True),
+                        (fingerprint, "2020-01-01T00:00:00Z", True),
+                        (fingerprint, saved["updatedAt"], False),
+                    ):
+                        await set_proof(revision=revision, fingerprint=supplied, is_current=current)
+                        self.assertEqual((await metadata())[0]["capabilities"]["snapshot"], deny("source_identity_stale"))
+                    await set_proof(revision=saved["updatedAt"], fingerprint=fingerprint)
+                    self.assertTrue(all(capability == allow for capability in (await metadata())[0]["capabilities"].values()))
+                    configured.BATCH_SYNC_RANGE_SNAPSHOT_ENABLED = False
+                    self.assertEqual((await metadata())[0]["capabilities"]["reviewedRange"], deny("mode_disabled"))
+                    configured.BATCH_SYNC_SOURCE_IDENTITY_MARKER = None
+                    self.assertEqual((await metadata())[0]["capabilities"]["snapshot"], deny("source_identity_not_configured"))
+                    configured.BATCH_SYNC_SOURCE_IDENTITY_ENABLED = False
+                    sticky = (await metadata())[0]["capabilities"]
+                    self.assertEqual(sticky["connectionTest"], allow)
+                    self.assertEqual(sticky["catalog"], allow)
+                    self.assertEqual(sticky["snapshot"], deny("source_identity_policy_disabled"))
+                    await self.service.change_pause(saved["id"], DataConnectionPauseChange(
+                        paused=True, expectedUpdatedAt=saved["updatedAt"],
+                    ))
+                    configured.ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED = False
+                    paused = (await metadata())[0]
+                    self.assertFalse(paused["catalogAvailable"])
+                    self.assertTrue(all(cap == deny("source_paused") for cap in paused["capabilities"].values()))
+                finally:
+                    async with self.pg.session() as session:
+                        await session.execute(text("DROP TABLE IF EXISTS public.ontology_batch_source_identities"))
 
     async def test_real_postgresql_probe_authenticates_and_persists_in_isolated_database(self):
         url = make_url(URL)
@@ -226,6 +340,97 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         after = await self.stored(saved["id"])
         self.assertEqual(before, after)
 
+    async def test_source_catalog_references_prove_order_acl_and_visible_bound(self):
+        role = "source_fk_" + uuid4().hex[:12]
+        password = "isolated-catalog-fk-password"
+        async with self.pg.session() as session:
+            for sql in (
+                f"CREATE ROLE {role} LOGIN PASSWORD '{password}'",
+                "CREATE SCHEMA source_refs",
+                "CREATE SCHEMA source_refs_hidden",
+                "CREATE TABLE source_refs.parent (x bigint, y bigint, PRIMARY KEY (x,y))",
+                "CREATE TABLE source_refs.child (a bigint, b bigint, CONSTRAINT private_constraint "
+                "FOREIGN KEY (b,a) REFERENCES source_refs.parent (x,y), "
+                "FOREIGN KEY (b,a) REFERENCES source_refs.parent (x,y))",
+                "CREATE VIEW source_refs.child_view AS SELECT 1/0",
+                "CREATE TABLE source_refs.derived () INHERITS (source_refs.child)",
+                "CREATE TABLE source_refs.aaa_invalid (a bigint, b bigint)",
+                "ALTER TABLE source_refs.aaa_invalid ADD FOREIGN KEY (b,a) "
+                "REFERENCES source_refs.parent (x,y) NOT VALID",
+                "CREATE TABLE source_refs_hidden.hidden_schema (a bigint, b bigint, "
+                "FOREIGN KEY (b,a) REFERENCES source_refs.parent (x,y))",
+                f"GRANT USAGE ON SCHEMA source_refs TO {role}",
+                f"GRANT SELECT(x,y) ON source_refs.parent TO {role}",
+                f"GRANT SELECT(a,b) ON source_refs.child, source_refs.aaa_invalid, source_refs.derived TO {role}",
+                f"GRANT SELECT(a,b) ON source_refs_hidden.hidden_schema TO {role}",
+                f"GRANT SELECT ON source_refs.child_view TO {role}",
+            ):
+                await session.execute(text(sql))
+
+        # The ordinary child is initially an inheritance parent, not eligible. Remove the child.
+        async def drop_source():
+            async with self.pg.session() as session:
+                await session.execute(text("DROP SCHEMA source_refs_hidden, source_refs CASCADE"))
+                await session.execute(text(f"DROP ROLE {role}"))
+
+        self.addAsyncCleanup(self.pg.close)
+        self.addAsyncCleanup(drop_source)
+        url = make_url(URL)
+        body = DataConnectionPayload(name="FK fixture", engine="postgresql",
+            config={"host": url.host, "port": url.port or 5432, "database": DATABASE,
+                    "username": role, "tls": False}, credentials={"password": password})
+        saved = await self.service.save(body, "isolated-admin")
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_current_active_superuser] = lambda: SimpleNamespace(id="admin", is_superuser=True)
+        with patch("app.web.api.routes.etl.get_data_connections", return_value=self.service):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                path = f"/etl/data-connections/{saved['id']}/catalog"
+                params = dict(schema="source_refs", table="child", direction="outgoing",
+                              expectedUpdatedAt=saved["updatedAt"])
+                stale = {**params, "expectedUpdatedAt": "2025-01-01T00:00:00Z"}
+                with patch.object(self.service, "_credentials", side_effect=AssertionError("unexpected dial")):
+                    self.assertEqual((await client.get(path + "/references", params=stale)).json()["detail"]["code"],
+                                     "source_revision_changed")
+                    self.assertEqual((await client.get(path + "/references", params={**params, "extra": "no"})).status_code, 422)
+                for table in ("child", "derived", "child_view", "missing"):
+                    blocked = await client.get(path + "/references", params={**params, "table": table})
+                    self.assertEqual(blocked.status_code, 404)
+                    self.assertEqual(blocked.json(), {"detail": "Source relation is unavailable or not readable"})
+                async with self.pg.session() as session:
+                    await session.execute(text("DROP TABLE source_refs.derived"))
+                columns = await client.get(path + "/columns", params={"schema": "source_refs", "table": "child"})
+                self.assertIs(columns.json()["referencesAvailable"], True)
+                view = await client.get(path + "/columns", params={"schema": "source_refs", "table": "child_view"})
+                self.assertNotIn("referencesAvailable", view.json())
+                outgoing = await client.get(path + "/references", params=params)
+                self.assertEqual(outgoing.headers["cache-control"], "private, no-store")
+                pairs = [{"fromColumn": "b", "toColumn": "x"}, {"fromColumn": "a", "toColumn": "y"}]
+                self.assertEqual(outgoing.json(), {"direction": "outgoing", "references": [
+                    {"schema": "source_refs", "table": "parent", "pairs": pairs}], "hasMore": False})
+                for hidden in ("private_constraint", password):
+                    self.assertNotIn(hidden, outgoing.text)
+                incoming = await client.get(path + "/references", params={**params, "table": "parent", "direction": "incoming"})
+                self.assertEqual(incoming.json(), {"direction": "incoming", "references": [
+                    {"schema": "source_refs", "table": "child", "pairs": pairs}], "hasMore": False})
+                async with self.pg.session() as session:
+                    await session.execute(text(f"REVOKE SELECT(a) ON source_refs.child FROM {role}"))
+                    for index in range(13):
+                        name = f"visible_{index:02}"
+                        await session.execute(text(f"CREATE TABLE source_refs.{name} (a bigint, b bigint, "
+                                                   "FOREIGN KEY (b,a) REFERENCES source_refs.parent (x,y))"))
+                        await session.execute(text(f"GRANT SELECT(a,b) ON source_refs.{name} TO {role}"))
+                outgoing = await client.get(path + "/references", params=params)
+                self.assertEqual(outgoing.json(), {"direction": "outgoing", "references": [], "hasMore": False})
+                incoming = await client.get(path + "/references", params={**params, "table": "parent", "direction": "incoming"})
+                self.assertEqual([ref["table"] for ref in incoming.json()["references"]], [
+                    f"visible_{index:02}" for index in range(12)])
+                self.assertTrue(incoming.json()["hasMore"])
+                async with self.pg.session() as session:
+                    await session.execute(text(f"REVOKE SELECT(y) ON source_refs.parent FROM {role}"))
+                incoming = await client.get(path + "/references", params={**params, "table": "parent", "direction": "incoming"})
+                self.assertEqual(incoming.json(), {"direction": "incoming", "references": [], "hasMore": False})
+
     async def test_save_performs_its_own_probe_and_failed_probe_never_writes(self):
         self.probe.side_effect = RuntimeError("remote driver echoed " + PAYLOAD["credentials"]["password"])
         failed = await self.service.test(payload())
@@ -237,23 +442,85 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.probe.await_count, 2)
         self.assertEqual(await self.service.list(), [])
 
+    async def test_draft_http_cas_blocks_credential_and_probe_access_before_replacement(self):
+        saved = await self.service.save(payload(), "admin")
+        previous = datetime.fromisoformat(saved["updatedAt"])
+        rotated = await self.service.save(payload(name="Current test source"), "admin", saved["id"],
+                                          expected_updated_at=previous)
+        current = await self.stored(saved["id"])
+        # The framework's real validation handler would otherwise expose user-supplied locations.
+        app = FastAPI()
+        app.add_exception_handler(RequestValidationError, request_exception_handler)
+        app.include_router(router)
+        app.dependency_overrides[get_current_active_superuser] = lambda: SimpleNamespace(id=uuid4(), is_superuser=True)
+        original_credentials = self.service._credentials
+        with patch.object(sources, "get_data_connections", return_value=self.service), patch(
+            "app.web.api.routes.etl.get_data_connections", return_value=self.service,
+        ):
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://localfixture") as client:
+                test_url = f"/etl/data-connections/test?connectionId={saved['id']}"
+                put_url = f"/etl/data-connections/{saved['id']}"
+                for body in (PAYLOAD, {**PAYLOAD, "expectedUpdatedAt": saved["updatedAt"]}):
+                    with patch.object(self.service, "_credentials", side_effect=AssertionError("stale credentials reached")) as lookup:
+                        self.probe.reset_mock()
+                        for response in (await client.post(test_url, json=body), await client.put(put_url, json=body)):
+                            self.assertEqual(response.status_code, 409, response.text)
+                            self.assertEqual(response.json()["detail"]["code"], "source_revision_changed")
+                        lookup.assert_not_awaited()
+                        self.probe.assert_not_awaited()
+                self.assertEqual(await self.stored(saved["id"]), current)
+                secret_key = "fixture-unrecognized-key-never-return"
+                invalid = await client.put(put_url, json={**PAYLOAD, "credentials": {secret_key: "fixture-value-never-return"}})
+                self.assertEqual(invalid.status_code, 422)
+                self.assertNotIn(secret_key, invalid.text)
+                self.assertNotIn("fixture-value-never-return", invalid.text)
+                body = {**PAYLOAD, "expectedUpdatedAt": rotated["updatedAt"],
+                        "credentials": {"password": "fixture-new-draft-password"}}
+                self.probe.side_effect = RuntimeError("fixture-new-draft-password")
+                denied = await client.put(put_url, json=body)
+                self.assertEqual(denied.status_code, 422, denied.text)
+                self.assertNotIn("fixture-new-draft-password", denied.text)
+                self.assertEqual(await self.stored(saved["id"]), current)
+                self.probe.side_effect = None
+                self.assertTrue((await client.post(test_url, json=body)).json()["ok"])
+                self.assertEqual(await self.stored(saved["id"]), current)
+                changed = await client.put(put_url, json=body)
+                self.assertEqual(changed.status_code, 200, changed.text)
+                self.assertNotEqual(changed.json()["updatedAt"], rotated["updatedAt"])
+                self.assertNotIn("fixture-new-draft-password", changed.text)
+                stored = await self.stored(saved["id"])
+                self.assertEqual(stored["config"], current["config"])
+                self.assertNotEqual(stored["credentials_ciphertext"], current["credentials_ciphertext"])
+                self.assertEqual(await original_credentials(payload(credentials={}), stored), body["credentials"])
+                self.assertEqual((await client.post(test_url, json=body)).status_code, 409)
+                self.assertTrue((await client.post(f"/etl/data-connections/{saved['id']}/test")).json()["ok"])
+
     async def test_changed_secret_fails_explicitly_until_credentials_are_replaced(self):
         saved = await self.service.save(payload(), "admin")
         with patch.object(sources, "settings", SimpleNamespace(SECRET_KEY="a-different-explicitly-configured-secret", model_fields_set={"SECRET_KEY"})):
             with self.assertRaises(HTTPException) as failure:
-                await self.service.test(payload(credentials={}), saved["id"])
+                await self.service.test(payload(credentials={}), saved["id"],
+                                        expected_updated_at=datetime.fromisoformat(saved["updatedAt"]))
             self.assertEqual(failure.exception.status_code, 503)
             self.assertIn("cannot be decrypted", failure.exception.detail)
-            replaced = await self.service.save(payload(credentials={"password": "replacement-test-only-password"}), "admin", saved["id"])
+            replaced = await self.service.save(
+                payload(credentials={"password": "replacement-test-only-password"}), "admin", saved["id"],
+                expected_updated_at=datetime.fromisoformat(saved["updatedAt"]),
+            )
             self.assertEqual(replaced["id"], saved["id"])
-            self.assertTrue((await self.service.test(payload(credentials={}), saved["id"]))["ok"])
+            self.assertTrue((await self.service.test(payload(credentials={}), saved["id"],
+                                                       expected_updated_at=datetime.fromisoformat(replaced["updatedAt"])))["ok"])
 
     async def test_one_credential_snapshot_is_probed_and_concurrent_edits_are_serialized(self):
         saved = await self.service.save(payload(), "admin")
         original_stored = self.service._stored
         self.probe.reset_mock()
         with patch.object(self.service, "_stored", wraps=original_stored) as read:
-            await self.service.save(payload(name="Snapshot source", credentials={}), "admin", saved["id"])
+            snapshot = await self.service.save(
+                payload(name="Snapshot source", credentials={}), "admin", saved["id"],
+                expected_updated_at=datetime.fromisoformat(saved["updatedAt"]),
+            )
             self.assertEqual(read.await_count, 1)
         self.probe.assert_awaited_once()
         self.assertEqual(self.probe.call_args.args[1], PAYLOAD["credentials"])
@@ -270,7 +537,10 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cannot_edit.exception.orig.sqlstate, "55P03")
 
         self.probe.side_effect = edit_during_probe
-        result = await self.service.save(payload(name="Settled edit", credentials={}), "admin", saved["id"])
+        result = await self.service.save(
+            payload(name="Settled edit", credentials={}), "admin", saved["id"],
+            expected_updated_at=datetime.fromisoformat(snapshot["updatedAt"]),
+        )
         self.assertEqual(result["name"], "Settled edit")
 
     async def test_postgres_pause_waits_for_saved_probe_then_stays_effective_when_switch_is_off(self):
@@ -352,10 +622,10 @@ class DataConnectionsIntegration(unittest.IsolatedAsyncioTestCase):
 
         async with self.pg.session() as session:
             await session.run_sync(apply, migration.downgrade)
-        self.assertEqual((await self.service.list())[0], saved)
+        self.assertEqual({k: v for k, v in (await self.service.list())[0].items() if k != "capabilities"}, saved)
         self.assertFalse((await migrate(self.pg))["ready"])
         self.assertTrue((await migrate(self.pg, apply=True))["ready"])
-        self.assertEqual((await self.service.list())[0], saved)
+        self.assertEqual({k: v for k, v in (await self.service.list())[0].items() if k != "capabilities"}, saved)
         enabled = SimpleNamespace(SECRET_KEY=SETTINGS.SECRET_KEY, ENVIRONMENT="local",
                                   ONTOLOGY_POSTGRES_SOURCE_PAUSE_ENABLED=True,
                                   model_fields_set={"SECRET_KEY", "ENVIRONMENT"})

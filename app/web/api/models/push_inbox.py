@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field as ApiField
+from pydantic import BaseModel, ConfigDict, Field as ApiField
 from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime
 from sqlmodel import Field, SQLModel
 
@@ -12,6 +12,7 @@ TOTAL_LIMIT = 1000
 WINDOW_LIMIT = 20
 WINDOW_SECONDS = 60
 RECENT_LIMIT = 10
+MAX_INTAKE_GENERATION = 2_147_483_647
 
 
 class PushInboxAcceptance(BaseModel):
@@ -22,12 +23,23 @@ class PushInboxAcceptance(BaseModel):
 
 class PushInboxStatus(BaseModel):
     available: bool
-    state: Literal["disabled", "unconfigured", "ready", "full"]
+    state: Literal["disabled", "unconfigured", "ready", "full", "paused"]
     acceptedCount: int = 0
     totalLimit: int = TOTAL_LIMIT
     windowSeconds: int = WINDOW_SECONDS
     windowLimit: int = WINDOW_LIMIT
     recent: list[PushInboxAcceptance] = ApiField(default_factory=list)
+
+    intakeControlAvailable: Literal[True] | None = None
+    intakeGeneration: int | None = None
+    pausedAt: datetime | None = None
+    secondaryProducerAvailable: Literal[True] | None = None
+
+
+class PushInboxIntakeChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expectedGeneration: int = ApiField(strict=True, ge=0, le=MAX_INTAKE_GENERATION)
+    paused: bool = ApiField(strict=True)
 
 
 class PushInboxStateRow(SQLModel, table=True):

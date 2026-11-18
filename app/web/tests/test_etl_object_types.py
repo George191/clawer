@@ -517,6 +517,27 @@ class ObjectRouteTests(unittest.TestCase):
             self.assertEqual(self.client.post(path + "?column=extra", json={"idEquals": "1"}).status_code, 422)
             sample.assert_not_called()
 
+    def test_compound_sample_route_requires_four_canonical_bigint_strings(self):
+        url = "/api/v1/etl/ts_ods/objects/indexed-compound-id-sample"
+        allowed = {"tenantId": "-9223372036854775808", "groupId": "0", "idFrom": "-5", "idTo": "3"}
+        result = {"state": "sampled", "reason": "index_path", "ids": ["-5"], "hasMore": False}
+        self.app.dependency_overrides[etl.get_current_active_superuser] = lambda: None
+        from app.web.api.models.indexed_id_sample import IndexedSampleResult
+
+        with patch.object(etl, "sample_indexed_compound_ids", new=AsyncMock(return_value=IndexedSampleResult(**result))) as sample:
+            for invalid in (
+                {**allowed, "tenantId": 1}, {**allowed, "groupId": "01"},
+                {**allowed, "idFrom": "-0"}, {**allowed, "idFrom": "4"},
+                {**allowed, "idTo": "9223372036854775808"}, {**allowed, "idEquals": "1"},
+                {key: value for key, value in allowed.items() if key != "groupId"},
+            ):
+                self.assertEqual(self.client.post(url, json=invalid).status_code, 422)
+            self.assertEqual(self.client.post(url + "?tenantId=1", json=allowed).status_code, 422)
+            sample.assert_not_called()
+            actual = self.client.post(url, json=allowed)
+            self.assertEqual(actual.json(), result)
+            self.assertEqual(actual.headers["cache-control"], "private, no-store")
+
     def test_filter_index_coverage_request_never_accepts_values_or_sql(self):
         url = "/api/v1/etl/ts_ods/objects/preview-index-coverage"
         with patch.object(etl, "preview_index_coverage", new=AsyncMock(return_value={"state": "candidate"})) as advisory:
@@ -525,6 +546,14 @@ class ObjectRouteTests(unittest.TestCase):
                 {"field": "id", "operator": "in"},
                 {"field": "id OR TRUE", "operator": "eq"},
                 {"field": "id", "operator": "eq", "sort": "ASC"},
+                {"terms": [{"field": "id", "operator": "eq"}]},
+                {"terms": [{"field": field, "operator": "eq"} for field in ("a", "b", "c", "d")]},
+                {"terms": [{"field": "id", "operator": "eq"}, {"field": "id", "operator": "lt"}]},
+                {"terms": [{"field": "id", "operator": "lt"}, {"field": "day", "operator": "between"}]},
+                {"terms": [{"field": "id", "operator": "eq"}, {"field": "day", "operator": "eq", "value": "x"}]},
+                {"terms": [{"field": "id", "operator": "eq"}, {"terms": [{"field": "day", "operator": "eq"}]}]},
+                {"field": "id", "operator": "eq",
+                 "terms": [{"field": "id", "operator": "eq"}, {"field": "day", "operator": "eq"}]},
             ):
                 self.assertEqual(self.client.post(url, json=data).status_code, 422)
             self.assertEqual(self.client.post(url + "?value=3", json={"field": "id", "operator": "eq"}).status_code, 422)
@@ -533,6 +562,10 @@ class ObjectRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json(), {"state": "candidate"})
             self.assertEqual(response.headers["cache-control"], "no-store")
+            composite = self.client.post(url, json={
+                "terms": [{"field": "day", "operator": "between"}, {"field": "id", "operator": "eq"}],
+            })
+            self.assertEqual((composite.status_code, composite.json()), (200, {"state": "candidate"}))
 
     def test_column_lineage_query_requires_one_canonical_field_and_direction(self):
         url = "/api/v1/etl/ts_ods/objects/lineage-column-references"

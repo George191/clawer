@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
+import type { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 import { clearSession, getAccessToken, getRefreshToken, getSessionState, lockSession, updateAccessToken } from './session';
 import type {
   DashboardMetrics,
@@ -174,9 +174,10 @@ client.interceptors.response.use(
     return response;
   },
   async (error: AxiosError) => {
-    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean; _loadingCounted?: boolean; _sessionIdentity?: string }) | undefined;
+    const config = error.config as (InternalAxiosRequestConfig & { _authRetried?: boolean; _loadingCounted?: boolean; _sessionIdentity?: string; _noAutomaticAuthReplay?: boolean }) | undefined;
     if (config?._loadingCounted) { setLoading(false); config._loadingCounted = false; }
     if (axios.isCancel(error)) return Promise.reject(error);
+    if (config?._noAutomaticAuthReplay) return Promise.reject(error);
     if (isAuthenticationError(error) && config) {
       if (config._sessionIdentity !== getSessionState().identity) return Promise.reject(error);
       if (!getSessionState().authenticated) { requireLogin(); return Promise.reject(error); }
@@ -282,13 +283,14 @@ export type TransferPlanInput = {
   targetTable: string;
   writeMode: 'append' | 'upsert';
   incrementalCursor?: string | null;
-  trigger: 'manual' | 'scheduled' | 'upstream';
+  trigger: 'manual' | 'scheduled' | 'upstream' | 'weekly';
   scheduleTime: string | null;
+  scheduleWeekdayUtc?: number | null;
 };
 
 export type TransferPlan = TransferPlanInput & { id: string; status: 'draft'; updatedAt: string };
 
-export type TransferRunCapabilities = { enabled: boolean; sourceSchema: string; targetSchema: string; maxRows: number; incrementalAppend: boolean; scheduledUpsert: boolean; upstreamUpsert: boolean };
+export type TransferRunCapabilities = { enabled: boolean; sourceSchema: string; targetSchema: string; maxRows: number; incrementalAppend: boolean; scheduledUpsert: boolean; upstreamUpsert: boolean; weeklyUpsert?: true };
 export type TransferRunReceipt = {
   id: string;
   planId: string;
@@ -319,6 +321,7 @@ export type TransferSchedule = {
   enabled: boolean;
   generation: number | null;
   plannedTimeUtc: string | null;
+  plannedWeekdayUtc?: number | null;
   armedForUpdatedAt: string | null;
   updatedAt: string | null;
   jobCancelAvailable?: true;
@@ -335,6 +338,7 @@ export type TransferScheduleJob = {
   generation?: number;
   cancelable?: true;
   canceledAt?: string | null;
+  scheduleWeekdayUtc?: number | null;
 };
 
 export type TransferScheduleSummary = TransferSchedule & { planId: string; planName: string; sourceTable: string; targetTable: string };
@@ -406,11 +410,11 @@ export const fetchTransferRunAttempts = (planId: string, signal?: AbortSignal): 
 export type TransferTimelineEntry = {
   id: string; kind: 'attempt' | 'receipt'; occurredAt: string; planId: string; planUpdatedAt: string | null;
   status: string; receiptId: string | null; rowsAffected: number | null;
-  physicalScope: 'current' | 'historical' | 'unknown'; trigger: 'manual' | 'daily_utc' | 'upstream' | null;
+  physicalScope: 'current' | 'historical' | 'unknown'; trigger: 'manual' | 'daily_utc' | 'weekly_utc' | 'upstream' | null;
   sourceSchema: string | null; sourceTable: string | null; finishedAt: string | null; message: string | null;
 };
 export type TransferTimelineDetail = TransferTimelineEntry & {
-  job: Partial<TransferUpstreamRecordedRule> & { id: string; kind: 'daily_utc' | 'upstream'; dueAt: string | null; state: string;
+  job: Partial<TransferUpstreamRecordedRule> & { id: string; kind: 'daily_utc' | 'weekly_utc' | 'upstream'; dueAt: string | null; state: string; scheduleWeekdayUtc?: number | null;
     parentEvents: { eventId: string; parentPlanId: string; parentReceiptId: string; eventRecordedAt: string }[];
   } | null;
 };
@@ -421,8 +425,9 @@ export type TransferTimelineFilters = { view?: 'receipts' | 'rejected_attempts' 
 export const fetchTransferTimeline = (schema: string, table: string, cursor?: string, signal?: AbortSignal, filters?: TransferTimelineFilters): Promise<TransferTimelinePage> =>
   client.get(transferTimelinePath(schema, table), { params: { limit: 25, cursor, ...filters }, signal }).then((r) => unwrap<TransferTimelinePage>(r.data));
 export const fetchTransferTimelineDetail = (
-  schema: string, table: string, kind: TransferTimelineEntry['kind'], id: string, signal?: AbortSignal,
-): Promise<TransferTimelineDetail> => client.get(`${transferTimelinePath(schema, table)}/${kind}/${encodeURIComponent(id)}`, { signal })
+  schema: string, table: string, kind: TransferTimelineEntry['kind'], id: string, signal?: AbortSignal, requireVisible?: true,
+): Promise<TransferTimelineDetail> => client.get(`${transferTimelinePath(schema, table)}/${kind}/${encodeURIComponent(id)}`,
+  { signal, params: requireVisible ? { requireVisible: true } : undefined })
   .then((r) => unwrap<TransferTimelineDetail>(r.data));
 
 export const runSandboxTransfer = (planId: string, request: { requestId: string; expectedUpdatedAt: string }): Promise<TransferRunReceipt> =>
@@ -500,9 +505,9 @@ export type AssetQualityCheck = AssetQualityResult & {
   history: (Omit<AssetQualityResult, 'validUntil'> & { id: string; generation: number })[];
 };
 export type AssetQualityIncident = {
-  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job' | 'field_time';
+  id: string; generation: number; kind: 'freshness' | 'schema' | 'heap_size' | 'daily_job' | 'weekly_job' | 'field_time' | 'minimum_rows';
   status: 'open' | 'acknowledged' | 'recovered' | 'superseded';
-  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum' | 'target_rejected' | 'field_lag';
+  reason: 'write_overdue' | 'schema_drift' | 'below_minimum' | 'above_maximum' | 'target_rejected' | 'field_lag' | 'row_threshold';
   openedAt: string; lastConfirmedAt: string; acknowledgedAt: string | null; closedAt: string | null;
   closeReason: 'healthy' | 'policy_paused' | 'policy_reviewed' | 'schema_baseline_captured' | 'schedule_changed' | 'target_changed' | null;
 };
@@ -561,6 +566,29 @@ export const reviewDailyJobQuality = (schema: string, table: string, request: Da
 export const acknowledgeDailyJobQualityIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
   client.post(`${dailyJobQualityPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
 
+type WeeklyJobQualityCandidate = DailyJobQualityCandidate & { plannedWeekdayUtc: number };
+export type WeeklyJobQuality = Omit<DailyJobQuality, 'candidate' | 'binding'> & {
+  candidate: WeeklyJobQualityCandidate | null;
+  binding: (WeeklyJobQualityCandidate & { generation: number; reviewedAt: string }) | null;
+};
+const weeklyJobQualityPath = (schema: string, table: string) => `${assetFreshnessPath(schema, table)}/weekly-job-quality`;
+export const fetchWeeklyJobQuality = (schema: string, table: string, signal?: AbortSignal): Promise<WeeklyJobQuality> =>
+  client.get(weeklyJobQualityPath(schema, table), { signal }).then(r => unwrap<WeeklyJobQuality>(r.data));
+export const reviewWeeklyJobQuality = (schema: string, table: string, request: DailyJobQualityReview): Promise<WeeklyJobQuality> =>
+  client.put(weeklyJobQualityPath(schema, table), request).then(r => unwrap<WeeklyJobQuality>(r.data));
+export const acknowledgeWeeklyJobQualityIncident = (schema: string, table: string, id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${weeklyJobQualityPath(schema, table)}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
+
+export type WeeklyJobEvidence = { jobId: string; slot: string; finishedAt: string } & (
+  { kind: 'receipt'; receiptId: string; recordedAt: string; rowsAffected: number } |
+  { kind: 'target_constraint'; attemptId: string; startedAt: string; attemptFinishedAt: string }
+);
+export const fetchWeeklyJobEvidence = (
+  schema: string, table: string, expectedGeneration: number, expectedSlot: string, signal?: AbortSignal,
+): Promise<WeeklyJobEvidence> =>
+  client.get(`${weeklyJobQualityPath(schema, table)}/evidence`, { params: { expectedGeneration, expectedSlot }, signal })
+    .then(r => unwrap<WeeklyJobEvidence>(r.data));
+
 export const fetchTableData = (
   layer: string,
   table: string,
@@ -595,12 +623,18 @@ export type SandboxCdcReceipt = {
 };
 const sandboxCdcPath = '/etl/cdc-sandbox';
 export type SyntheticPushInboxStatus = {
-  available: boolean; state: 'disabled' | 'unconfigured' | 'ready' | 'full';
+  available: boolean; state: 'disabled' | 'unconfigured' | 'ready' | 'full' | 'paused';
+  intakeControlAvailable?: true; intakeGeneration?: number; pausedAt?: string; secondaryProducerAvailable?: true;
   acceptedCount: number; totalLimit: number; windowSeconds: number; windowLimit: number;
   recent: { id: string; ordinal: string; acceptedAt: string }[];
 };
 export const fetchSyntheticPushInbox = (signal?: AbortSignal): Promise<SyntheticPushInboxStatus> =>
   client.get('/etl/push-inbox-sandbox', { signal }).then(r => unwrap<SyntheticPushInboxStatus>(r.data));
+export const setSyntheticPushIntakePaused = (
+  expectedGeneration: number, paused: boolean, signal?: AbortSignal,
+): Promise<SyntheticPushInboxStatus> =>
+  client.put('/etl/push-inbox-sandbox/intake', { expectedGeneration, paused }, { signal })
+    .then(r => unwrap<SyntheticPushInboxStatus>(r.data));
 export type PushApplyResult = {
   status: 'applied' | 'no_new_data'; id: string | null; fromExclusive: string; throughInclusive: string;
   reviewedAcceptedThrough: string; eventsApplied: number; appliedAt: string | null; checkedAt: string | null; hasMoreReviewed: boolean;
@@ -692,6 +726,13 @@ export const fetchSandboxPipelineOutput = (id: string, signal?: AbortSignal): Pr
   client.get(`${sandboxPipelineOutputPath}/${encodeURIComponent(id)}`, { signal }).then((r) => unwrap<SandboxPipelineOutputDetail>(r.data));
 export const compareSandboxPipelineOutputs = (request: { fromOutputId: string; toOutputId: string }, signal?: AbortSignal): Promise<SandboxPipelineOutputComparison> =>
   client.post(`${sandboxPipelineOutputPath}/compare`, request, { signal }).then(r => unwrap<SandboxPipelineOutputComparison>(r.data));
+export type SandboxPipelineRecordHistory = {
+  recordId: string; projection: SandboxPipelineColumn[]; markings?: string[] | null;
+  steps: { outputId: string; recordedAt: string; kind: 'baseline' | 'added' | 'changed' | 'removed' | 'unchanged' | 'absent'; row: string[] | null }[];
+};
+export const readSandboxPipelineRecordHistory = (request: { outputIds: string[]; recordId: string }, signal?: AbortSignal): Promise<SandboxPipelineRecordHistory> =>
+  client.post(`${sandboxPipelineOutputPath}/record-history`, request, { signal })
+    .then(r => unwrap<SandboxPipelineRecordHistory>(r.data));
 export const commitSandboxPipelineOutput = (request: SandboxPipelineOutputRequest): Promise<SandboxPipelineOutput> =>
   client.post(sandboxPipelineOutputPath, request).then((r) => unwrap<SandboxPipelineOutput>(r.data));
 
@@ -713,16 +754,20 @@ export interface DataSourceConfig {
 }
 export interface DataSourcePayload {
   name: string; engine: DataConnectorEngine; config: DataSourceConfig;
+  expectedUpdatedAt?: string;
   credentials: { password?: string; apiKey?: string; token?: string };
 }
-export interface DataSource extends Omit<DataSourcePayload, 'credentials'> {
+export type DataSourceCapabilityKey = 'connectionTest' | 'catalog' | 'snapshot' | 'committedBatch' | 'reviewedRange';
+export type DataSourceCapability = { status: 'available_to_try' | 'unavailable'; reason?: string | null };
+export interface DataSource extends Omit<DataSourcePayload, 'credentials' | 'expectedUpdatedAt'> {
   id: string; credentialsConfigured: boolean; catalogAvailable: boolean; createdBy: string;
   createdAt: string; updatedAt: string; testedAt: string | null; pausedAt?: string | null; pauseAvailable?: boolean;
+  capabilities?: Partial<Record<DataSourceCapabilityKey, DataSourceCapability>>;
 }
 export interface DataSourceTest { ok: boolean; message: string; latencyMs: number; testedAt?: string; }
 export type DataSourceRelation = { name: string; kind: 'table' | 'partitioned_table' | 'view' | 'materialized_view' | 'foreign_table' };
 export type DataSourceCatalog = { schemas: string[]; schema: string | null; relations: DataSourceRelation[]; hasMore: boolean; schemaHasMore: boolean };
-export type DataSourceColumns = { schema: string; table: string; columns: { name: string; type: string; nullable: boolean; primaryKey: boolean; position: number }[]; hasMore: boolean };
+export type DataSourceColumns = { referencesAvailable?: true; schema: string; table: string; columns: { name: string; type: string; nullable: boolean; primaryKey: boolean; position: number }[]; hasMore: boolean };
 const dataSourceCatalogPath = (id: string) => `/etl/data-connections/${encodeURIComponent(id)}/catalog`;
 export const fetchDataSourceCatalog = (
   id: string, params: { schema?: string; search?: string; limit?: number; offset?: number } = {}, signal?: AbortSignal,
@@ -730,6 +775,14 @@ export const fetchDataSourceCatalog = (
   client.get(dataSourceCatalogPath(id), { params, signal }).then((r) => unwrap<DataSourceCatalog>(r.data));
 export const fetchDataSourceColumns = (id: string, schema: string, table: string, signal?: AbortSignal): Promise<DataSourceColumns> =>
   client.get(`${dataSourceCatalogPath(id)}/columns`, { params: { schema, table }, signal }).then((r) => unwrap<DataSourceColumns>(r.data));
+export type SourceReferenceDirection = 'incoming' | 'outgoing';
+export type DataSourceReferences = {
+  direction: SourceReferenceDirection;
+  references: { schema: string; table: string; pairs: { fromColumn: string; toColumn: string }[] }[];
+  hasMore: boolean;
+};
+export const fetchDataSourceReferences = (id: string, schema: string, table: string, direction: SourceReferenceDirection, expectedUpdatedAt: string, signal?: AbortSignal): Promise<DataSourceReferences> =>
+  client.get(`${dataSourceCatalogPath(id)}/references`, { params: { schema, table, direction, expectedUpdatedAt }, signal }).then(r => unwrap<DataSourceReferences>(r.data));
 export type BatchSourceIdentity = {
   state: 'disabled' | 'blocked' | 'paused' | 'unverified' | 'verified' | 'stale'; sourceUpdatedAt: string | null; verifiedAt: string | null;
 };
@@ -738,16 +791,16 @@ export const fetchBatchSourceIdentity = (id: string, signal?: AbortSignal): Prom
   client.get(batchSourceIdentityPath(id), { signal }).then(r => unwrap<BatchSourceIdentity>(r.data));
 export const verifyBatchSourceIdentity = (id: string, expectedSourceUpdatedAt: string, signal?: AbortSignal): Promise<BatchSourceIdentity> =>
   client.post(batchSourceIdentityPath(id), { expectedSourceUpdatedAt }, { signal, timeout: 45000 }).then(r => unwrap<BatchSourceIdentity>(r.data));
-export type BatchSyncCapabilities = { incrementalLineage?: true; incrementalBatchSync?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
+export type BatchSyncCapabilities = { rangeSnapshot?: true; incrementalLineage?: true; incrementalBatchSync?: true; incrementalMaxRows?: number; incrementalMaxBytes?: number; sourceIdentityRequired?: true; enabled: boolean; maxRows: number; maxBytes: number; targetSchema: string; scheduledBatchSync: boolean };
 export type BatchSyncMapping = { sourceColumn: string; targetColumn: string };
 export type BatchSyncInput = {
   name: string; connectionId: string; sourceSchema: string; sourceTable: string; sourceKeyColumn: string; targetTable: string;
-  mode?: 'incremental'; mapping: BatchSyncMapping[]; expectedSourceUpdatedAt: string;
+  mode?: 'incremental'; keyRange?: { min: string; max: string }; mapping: BatchSyncMapping[]; expectedSourceUpdatedAt: string;
 };
 export type BatchSyncPlan = Omit<BatchSyncInput, 'expectedSourceUpdatedAt'> & { id: string; updatedAt: string; sourceUpdatedAt: string; sourceIdentityReviewed?: true; appliedThrough?: string };
 export type BatchSyncReceipt = {
   id: string; planId: string; status: 'committed' | 'no_new_data'; rowsAffected: number; recordedAt: string; sourceUpdatedAt: string; targetTable: string;
-  sourceIdentityVerified?: true; fromExclusive?: string; throughInclusive?: string; sourceHighWater?: string; eventsRead?: number; manifestHash?: string | null;
+  sourceIdentityVerified?: true; keyRange?: { min: string; max: string }; fromExclusive?: string; throughInclusive?: string; sourceHighWater?: string; eventsRead?: number; manifestHash?: string | null;
 };
 export type BatchSyncAttempt = {
   id: string; planId: string; requestId: string; planUpdatedAt: string;
@@ -785,6 +838,37 @@ export const fetchBatchSyncScheduleJobs = (id: string, signal?: AbortSignal): Pr
   client.get(`${batchSyncSchedulePath(id)}/jobs`, { signal }).then((r) => unwrap<BatchSyncScheduleJob[]>(r.data));
 
 const tableExportPath = '/etl/table-export';
+const tableExportSnapshotPreviewPath = '/etl/table-export-sandbox/snapshot-preview';
+export type TableExportSnapshotCapability = { available: boolean; configRevision?: string };
+export type TableExportSnapshotResult = {
+  configRevision: string; sourceRows: number; targetRows: number; added: number; changed: number; unchanged: number; wouldRemove: number;
+};
+export const fetchTableExportSnapshotCapability = (signal?: AbortSignal): Promise<TableExportSnapshotCapability> =>
+  client.get(tableExportSnapshotPreviewPath, { signal }).then(r => unwrap<TableExportSnapshotCapability>(r.data));
+export const previewTableExportSnapshot = (expectedConfigRevision: string, signal?: AbortSignal): Promise<TableExportSnapshotResult> =>
+  client.post(tableExportSnapshotPreviewPath, { expectedConfigRevision }, { signal }).then(r => unwrap<TableExportSnapshotResult>(r.data));
+const snapshotDeliveryEvidencePath = '/etl/table-export-sandbox/snapshot-delivery-evidence';
+export type SnapshotDeliveryCapability = { available: boolean; configRevision?: string };
+export type SnapshotDeliveryEvidence = {
+  state: 'not_admitted' | 'unconfirmed' | 'confirmed_recorded_receipt';
+  generation?: number; rowCount?: number; recordedAt?: string;
+};
+export const fetchSnapshotDeliveryCapability = (signal?: AbortSignal): Promise<SnapshotDeliveryCapability> =>
+  client.get(snapshotDeliveryEvidencePath, { signal }).then(r => unwrap<SnapshotDeliveryCapability>(r.data));
+export const checkSnapshotDeliveryEvidence = (request: {
+  intentId: string; requestId: string; expectedConfigRevision: string;
+}, signal?: AbortSignal): Promise<SnapshotDeliveryEvidence> =>
+  client.post(snapshotDeliveryEvidencePath, request, { signal }).then(r => unwrap<SnapshotDeliveryEvidence>(r.data));
+const snapshotIntentPath = '/etl/table-export-sandbox/snapshot-intent';
+export type SnapshotIntentRequest = { requestId: string; expectedConfigRevision: string; expectedPreviousGeneration: number };
+export type SnapshotIntentHead = { generation: number };
+export type SnapshotIntentResult = { id: string; expectedPreviousGeneration: number; rowCount: number; createdAt: string };
+export const fetchSnapshotIntentCapability = (signal?: AbortSignal): Promise<SnapshotDeliveryCapability> =>
+  client.get(snapshotIntentPath, { signal }).then(r => unwrap<SnapshotDeliveryCapability>(r.data));
+export const checkSnapshotIntentHead = (expectedConfigRevision: string, signal?: AbortSignal): Promise<SnapshotIntentHead> =>
+  client.post(`${snapshotIntentPath}/head`, { expectedConfigRevision }, { signal }).then(r => unwrap<SnapshotIntentHead>(r.data));
+export const prepareSnapshotIntent = (request: SnapshotIntentRequest, signal?: AbortSignal): Promise<SnapshotIntentResult> =>
+  client.post(snapshotIntentPath, request, { signal, _noAutomaticAuthReplay: true } as AxiosRequestConfig & { _noAutomaticAuthReplay: true }).then(r => unwrap<SnapshotIntentResult>(r.data));
 export type TableExportDestination = 'primary' | 'secondary';
 export type TableExportDestinationOption = { id: TableExportDestination; label: string };
 export type TableExportWriteMode = 'upsert' | 'append';
@@ -848,8 +932,8 @@ export const runTableExport = (request: { requestId: string; expectedUpdatedAt: 
   client.post(`${tableExportPath}/runs`, request, { params: exportDestinationParams(destination) }).then((r) => unwrap<TableExportReceipt>(r.data));
 export const fetchDataConnectorTypes = (): Promise<DataConnectorType[]> =>
   client.get('/etl/connector-types').then((r) => unwrap<DataConnectorType[]>(r.data));
-export const fetchDataSources = (): Promise<DataSource[]> =>
-  client.get('/etl/data-connections').then((r) => unwrap<DataSource[]>(r.data));
+export const fetchDataSources = (signal?: AbortSignal): Promise<DataSource[]> =>
+  client.get('/etl/data-connections', { signal }).then((r) => unwrap<DataSource[]>(r.data));
 export const testDataSource = (payload: DataSourcePayload, connectionId?: string): Promise<DataSourceTest> =>
   client.post('/etl/data-connections/test', payload, { params: { connectionId }, timeout: 45000 }).then((r) => unwrap<DataSourceTest>(r.data));
 export const createDataSource = (payload: DataSourcePayload): Promise<DataSource> =>
@@ -1202,7 +1286,7 @@ export const acknowledgeFieldFreshnessIncident = (id: string, expectedGeneration
 
 export type ObservedTableLineage = {
   available: boolean; direction: TableLineageDirection; truncated: boolean;
-  neighbors: (TableLineageIdentity & { receiptId: string; receiptRecordedAt: string; rowsAffected: number })[];
+  neighbors: (TableLineageIdentity & { receiptId: string; receiptRecordedAt: string; rowsAffected: number; trigger?: 'daily_utc' | 'weekly_utc' })[];
 };
 export const fetchObservedTableLineage = (source: TableLineageIdentity, direction: TableLineageDirection, signal?: AbortSignal): Promise<ObservedTableLineage> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-observed`, { params: { direction }, signal })
@@ -1210,11 +1294,14 @@ export const fetchObservedTableLineage = (source: TableLineageIdentity, directio
 
 export type PreviewIndexCoverageOperator = 'eq' | 'lt' | 'lte' | 'gt' | 'gte' | 'between';
 export type PreviewIndexCoverageState = 'candidate' | 'no_candidate' | 'unsupported' | 'unavailable';
+export type PreviewIndexCoverageTerm = { field: string; operator: PreviewIndexCoverageOperator };
+export type PreviewIndexCoverageInput = PreviewIndexCoverageTerm | { terms: PreviewIndexCoverageTerm[] };
 export const checkPreviewIndexCoverage = (
-  schema: string, table: string, request: { field: string; operator: PreviewIndexCoverageOperator }, signal?: AbortSignal,
+  schema: string, table: string, request: PreviewIndexCoverageInput, signal?: AbortSignal,
 ): Promise<{ state: PreviewIndexCoverageState }> =>
   client.post(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/preview-index-coverage`,
-    { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
+    'terms' in request ? { terms: request.terms.map(({ field, operator }) => ({ field, operator })) } :
+      { field: request.field, operator: request.operator }, { signal }).then(r => unwrap<{ state: PreviewIndexCoverageState }>(r.data));
 
 export type IndexedIdSamplePredicate = { idEquals: string } | { idFrom: string; idTo: string };
 export type IndexedIdSampleCapability = { available: boolean; keyColumn?: string; limit: 20 };
@@ -1229,6 +1316,15 @@ export const fetchIndexedIdSample = (schema: string, table: string, signal?: Abo
 export const queryIndexedIdSample = (schema: string, table: string, predicate: IndexedIdSamplePredicate, signal?: AbortSignal): Promise<IndexedIdSampleResult> =>
   client.post(indexedIdSamplePath(schema, table), predicate, { signal }).then(r => unwrap<IndexedIdSampleResult>(r.data));
 
+export type IndexedCompoundSamplePredicate = { tenantId: string; groupId: string; idFrom: string; idTo: string };
+const indexedCompoundSamplePath = (schema: string, table: string) =>
+  `/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/indexed-compound-id-sample`;
+export const fetchIndexedCompoundSample = (schema: string, table: string, signal?: AbortSignal): Promise<IndexedIdSampleCapability> =>
+  client.get(indexedCompoundSamplePath(schema, table), { signal }).then(r => unwrap<IndexedIdSampleCapability>(r.data));
+export const queryIndexedCompoundSample = (schema: string, table: string, predicate: IndexedCompoundSamplePredicate, signal?: AbortSignal): Promise<IndexedIdSampleResult> =>
+  client.post(indexedCompoundSamplePath(schema, table), predicate, { signal }).then(r => unwrap<IndexedIdSampleResult>(r.data));
+
+
 export type TableLineageCommonDownstream = Omit<TableLineageCommonUpstream, 'ancestor'> & { descendant: TableLineageIdentity | null };
 export const fetchTableLineageCommonDownstream = (source: TableLineageIdentity, target: TableLineageIdentity, signal?: AbortSignal): Promise<TableLineageCommonDownstream> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-common-downstream`, {
@@ -1242,3 +1338,51 @@ export type ColumnLineageReferences = {
 export const fetchColumnLineageReferences = (source: TableLineageIdentity, column: string, direction: TableLineageDirection, signal?: AbortSignal): Promise<ColumnLineageReferences> =>
   client.get(`/etl/${encodeURIComponent(source.schema)}/${encodeURIComponent(source.table)}/lineage-column-references`,
     { params: { column, direction }, signal }).then(r => unwrap<ColumnLineageReferences>(r.data));
+
+export type MinimumRowHealth = {
+  enabled: boolean; generation: number; policyGeneration: number | null; minimumRows: number | null;
+  state: 'unconfigured' | 'unknown' | 'healthy' | 'below_minimum' | 'superseded'; reason: string | null;
+  receiptRecordedAt: string | null; checkedAt: string | null; validUntil: string | null; incident: AssetQualityIncident | null;
+};
+export type MinimumRowHealthReview = { expectedGeneration: number; policyGeneration: number; minimumRows: number };
+const minimumRowHealthPath = `${assetFreshnessPath('ts_transfer_sandbox', 'field_freshness_fixture')}/min-rows`;
+export const fetchMinimumRowHealth = (signal?: AbortSignal): Promise<MinimumRowHealth> =>
+  client.get(minimumRowHealthPath, { signal }).then(r => unwrap<MinimumRowHealth>(r.data));
+export const reviewMinimumRowHealth = (request: MinimumRowHealthReview): Promise<MinimumRowHealth> =>
+  client.put(minimumRowHealthPath, request).then(r => unwrap<MinimumRowHealth>(r.data));
+export const acknowledgeMinimumRowHealthIncident = (id: string, expectedGeneration: number): Promise<AssetQualityIncident> =>
+  client.post(`${minimumRowHealthPath}/incidents/${encodeURIComponent(id)}/acknowledge`, { expectedGeneration }).then(r => unwrap<AssetQualityIncident>(r.data));
+
+export type SandboxHandoffSink = { id: 'synthetic-review-sink'; label: string; generation: string };
+export type SandboxHandoffCapability = { available: boolean; sink?: SandboxHandoffSink; copyAvailable?: true };
+export type SandboxHandoffEligibility = {
+  outputId: string; sink: SandboxHandoffSink; eligible: boolean; reason: 'eligible_for_review' | 'clearance_mismatch'; markings: string[];
+};
+export const fetchSandboxHandoffCapability = (signal?: AbortSignal): Promise<SandboxHandoffCapability> =>
+  client.get(`${sandboxPipelinePath}/handoff`, { signal }).then(r => unwrap<SandboxHandoffCapability>(r.data));
+export const checkSandboxHandoffEligibility = (review: {
+  outputId: string; expectedConfigHash: string; expectedResultHash: string; expectedSinkGeneration: string;
+}, signal?: AbortSignal): Promise<SandboxHandoffEligibility> =>
+  client.post(`${sandboxPipelinePath}/handoff/eligibility`, review, { signal }).then(r => unwrap<SandboxHandoffEligibility>(r.data));
+
+const sandboxHandoffRecipientProofPath = `${sandboxPipelinePath}/handoff/recipient-proof`;
+export type SandboxHandoffRecipientCapability = { available: boolean; sink?: SandboxHandoffSink };
+export type SandboxHandoffRecipientEvidence = {
+  id: string; sink: SandboxHandoffSink; markings: string[]; rowsRecorded: number; recordedAt: string;
+};
+export const fetchSandboxHandoffRecipientCapability = (signal?: AbortSignal): Promise<SandboxHandoffRecipientCapability> =>
+  client.get(sandboxHandoffRecipientProofPath, { signal }).then(r => unwrap<SandboxHandoffRecipientCapability>(r.data));
+export const verifySandboxHandoffRecipientReceipt = (
+  receiptId: string, expectedSinkGeneration: string, signal?: AbortSignal,
+): Promise<SandboxHandoffRecipientEvidence> =>
+  client.post(sandboxHandoffRecipientProofPath, { receiptId, expectedSinkGeneration }, { signal })
+    .then(r => unwrap<SandboxHandoffRecipientEvidence>(r.data));
+
+export type SandboxHandoffCopyRequest = {
+  requestId: string; outputId: string; expectedConfigHash: string; expectedResultHash: string; expectedSinkGeneration: string;
+};
+export type SandboxHandoffCopyReceipt = {
+  id: string; requestId: string; outputId: string; sink: SandboxHandoffSink; markings: string[]; rowsCopied: number; recordedAt: string;
+};
+export const copySandboxHandoff = (request: SandboxHandoffCopyRequest, signal?: AbortSignal): Promise<SandboxHandoffCopyReceipt> =>
+  client.post(`${sandboxPipelinePath}/handoff/copies`, request, { signal }).then(r => unwrap<SandboxHandoffCopyReceipt>(r.data));

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field as ApiField, UUID4, model_validator
+from pydantic import BaseModel, ConfigDict, Field as ApiField, UUID4, field_validator, model_validator
 from sqlalchemy import ARRAY, CheckConstraint, Column, DateTime, Index, SmallInteger, Text
 from sqlmodel import Field, SQLModel
 
@@ -73,6 +73,40 @@ class PipelineSandboxOutputComparison(SyntheticMarked):
     unchanged: int
     changes: list[PipelineSandboxOutputChange]
     truncated: bool
+
+
+class PipelineSandboxRecordHistoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outputIds: list[UUID] = ApiField(strict=True, min_length=2, max_length=5)
+    recordId: str = ApiField(strict=True, pattern=r"^(?:0|-?[1-9][0-9]{0,18})$")
+
+    @field_validator("recordId")
+    @classmethod
+    def canonical_bigint(cls, value: str) -> str:
+        if not -(2**63) <= int(value) < 2**63:
+            raise ValueError("Record ID exceeds PostgreSQL bigint")
+        return value
+
+    @field_validator("outputIds")
+    @classmethod
+    def distinct_outputs(cls, value: list[UUID]) -> list[UUID]:
+        if len(set(value)) != len(value):
+            raise ValueError("Choose distinct sealed Builder outputs")
+        return value
+
+
+class PipelineSandboxRecordHistoryStep(BaseModel):
+    outputId: UUID
+    recordedAt: datetime
+    kind: Literal["baseline", "added", "changed", "removed", "unchanged", "absent"]
+    row: list[str] | None
+
+
+class PipelineSandboxRecordHistory(SyntheticMarked):
+    recordId: str
+    projection: list[BuilderColumn]
+    steps: list[PipelineSandboxRecordHistoryStep]
 
 
 class PipelineSandboxOutputRow(SQLModel, table=True):

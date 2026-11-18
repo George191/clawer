@@ -78,11 +78,36 @@ class DataConnectionPayload(BaseModel):
         return self
 
 
+class DataConnectionDraftPayload(DataConnectionPayload):
+    expectedUpdatedAt: AwareDatetime | None = None
+
+
 class DataConnectionPauseChange(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     paused: bool = Field(strict=True)
     expectedUpdatedAt: AwareDatetime
+
+
+SavedSourceCapabilityReason = Literal[
+    "source_paused", "driver_missing", "unsupported_engine", "explicit_local_required",
+    "mode_disabled", "numeric_loopback_required", "source_identity_not_configured",
+    "source_identity_unverified", "source_identity_stale", "source_identity_policy_disabled",
+    "source_identity_registry_unavailable",
+]
+
+
+class SavedSourceCapability(BaseModel):
+    status: Literal["available_to_try", "unavailable"]
+    reason: SavedSourceCapabilityReason | None = None
+
+
+class SavedSourceCapabilities(BaseModel):
+    connectionTest: SavedSourceCapability
+    catalog: SavedSourceCapability
+    snapshot: SavedSourceCapability
+    committedBatch: SavedSourceCapability
+    reviewedRange: SavedSourceCapability
 
 
 class SourceRelation(BaseModel):
@@ -110,4 +135,25 @@ class SourceColumns(BaseModel):
     schema_name: str = Field(alias="schema")
     table: str
     columns: list[SourceColumn]
+    hasMore: bool
+    referencesAvailable: Literal[True] | None = None
+
+
+SourceReferenceDirection = Literal["incoming", "outgoing"]
+
+
+class SourceReferencePair(BaseModel):
+    fromColumn: str
+    toColumn: str
+
+
+class SourceReference(BaseModel):
+    schema_name: str = Field(alias="schema")
+    table: str
+    pairs: list[SourceReferencePair]
+
+
+class SourceReferences(BaseModel):
+    direction: SourceReferenceDirection
+    references: list[SourceReference]
     hasMore: bool

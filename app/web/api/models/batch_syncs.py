@@ -9,6 +9,8 @@ from sqlalchemy import BigInteger, CheckConstraint, Column, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as DbField, SQLModel
 
+from app.web.services.batch_snapshot_range_scope import BATCH_RANGE_SOURCE_SCHEMA, BATCH_RANGE_TARGET
+
 TARGET_SCHEMA = "ts_batch_sync_sandbox"
 INCREMENTAL_TARGET = "committed_batch_fixture"
 INCREMENTAL_SOURCE_SCHEMA = "batch_sync_stream"
@@ -20,6 +22,18 @@ BATCH_BYTES = 1_048_576
 MAX_MAPPINGS = 32
 SourceName = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$")]
 TargetName = Annotated[str, Field(pattern=r"^[a-z_][a-z0-9_]{0,62}$")]
+
+
+class BatchSyncKeyRange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    min: Annotated[str, Field(strict=True, pattern=r"^(?:0|-?[1-9][0-9]{0,18})$")]
+    max: Annotated[str, Field(strict=True, pattern=r"^(?:0|-?[1-9][0-9]{0,18})$")]
+
+    @model_validator(mode="after")
+    def ordered_bigints(self) -> Self:
+        if not -(2**63) <= int(self.min) <= int(self.max) < 2**63:
+            raise ValueError("Use ordered inclusive PostgreSQL bigint bounds")
+        return self
 
 
 class BatchSyncMapping(BaseModel):
@@ -38,6 +52,7 @@ class BatchSyncDefinition(BaseModel):
     sourceKeyColumn: SourceName
     targetTable: TargetName
     mode: BatchSyncMode = Field(default="snapshot", exclude_if=lambda value: value == "snapshot")
+    keyRange: BatchSyncKeyRange | None = Field(default=None, exclude_if=lambda value: value is None)
     mapping: list[BatchSyncMapping] = Field(min_length=1, max_length=MAX_MAPPINGS)
 
     @model_validator(mode="after")
@@ -60,6 +75,11 @@ class BatchSyncPayload(BatchSyncDefinition):
 
     @model_validator(mode="after")
     def validate_managed_scope(self) -> Self:
+        if self.keyRange is not None:
+            if not range_snapshot_scope(self):
+                raise ValueError("Use the fixed synthetic bounded snapshot route and ID/value mapping")
+        elif self.targetTable == BATCH_RANGE_TARGET or self.sourceSchema == BATCH_RANGE_SOURCE_SCHEMA:
+            raise ValueError("Range fixture requires explicit reviewed bigint bounds")
         if self.mode == "incremental":
             if not managed_batch_scope(self):
                 raise ValueError("Incremental mode requires the fixed synthetic stream and ID/value target mapping")
@@ -71,6 +91,13 @@ class BatchSyncPayload(BatchSyncDefinition):
 def managed_batch_scope(plan: BatchSyncDefinition) -> bool:
     return (plan.sourceSchema == INCREMENTAL_SOURCE_SCHEMA and plan.sourceTable == INCREMENTAL_SOURCE_TABLE
             and plan.sourceKeyColumn == "id" and plan.targetTable == INCREMENTAL_TARGET
+            and {(item.sourceColumn, item.targetColumn) for item in plan.mapping} == {("id", "id"), ("value", "value")})
+
+
+def range_snapshot_scope(plan: BatchSyncDefinition) -> bool:
+    return (plan.mode == "snapshot" and plan.keyRange is not None
+            and (plan.sourceSchema, plan.sourceTable, plan.sourceKeyColumn, plan.targetTable)
+                == (BATCH_RANGE_SOURCE_SCHEMA, "records", "id", BATCH_RANGE_TARGET)
             and {(item.sourceColumn, item.targetColumn) for item in plan.mapping} == {("id", "id"), ("value", "value")})
 
 
@@ -93,6 +120,7 @@ class BatchSyncReceipt(BaseModel):
     sourceIdentityVerified: Literal[True] | None = Field(default=None, exclude_if=lambda v: v is None)
     planId: UUID
     status: BatchSyncOutcome = "committed"
+    keyRange: BatchSyncKeyRange | None = Field(default=None, exclude_if=lambda value: value is None)
     mode: Literal["incremental"] | None = Field(default=None, exclude_if=lambda value: value is None)
     fromExclusive: str | None = Field(default=None, exclude_if=lambda value: value is None)
     throughInclusive: str | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -125,6 +153,7 @@ class BatchSyncCapabilities(BaseModel):
     maxRows: int = BATCH_ROWS
     maxBytes: int = BATCH_BYTES
     scheduledBatchSync: bool = False
+    rangeSnapshot: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalLineage: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalBatchSync: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
     incrementalMaxRows: int | None = Field(default=None, exclude_if=lambda value: value is None)
@@ -147,6 +176,15 @@ class BatchSyncPlanRow(SQLModel, table=True):
                     AND source_key_column = 'id' AND target_table = 'committed_batch_fixture')) IS TRUE""",
             name="ck_ontology_batch_sync_mode_pin",
         ),
+        CheckConstraint(
+            """((range_min IS NULL AND range_max IS NULL AND range_index_oid IS NULL AND range_index_node IS NULL)
+            OR (range_min IS NOT NULL AND range_max IS NOT NULL AND range_min <= range_max
+                AND range_index_oid > 0 AND range_index_node > 0 AND source_oid > 0 AND source_file_node > 0
+                AND mode='snapshot' AND source_identity_fingerprint IS NOT NULL
+                AND source_schema='batch_sync_range_fixture' AND source_table='records'
+                AND source_key_column='id' AND target_table='range_fixture')) IS TRUE""",
+            name="ck_batch_sync_range_pin",
+        ),
         Index("ix_ontology_batch_sync_plans_connection", "connection_id", "updated_at"),
     )
 
@@ -158,6 +196,10 @@ class BatchSyncPlanRow(SQLModel, table=True):
     source_key_column: str = DbField(max_length=128)
     target_table: str = DbField(max_length=63)
     mode: str = DbField(default="snapshot", max_length=16)
+    range_min: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    range_max: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    range_index_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    range_index_node: int | None = DbField(default=None, sa_column=Column(BigInteger))
     source_stream_digest: str | None = DbField(default=None, max_length=64)
     source_identity_fingerprint: str | None = DbField(default=None, max_length=64)
     source_oid: int | None = DbField(default=None, sa_column=Column(BigInteger))
@@ -175,7 +217,8 @@ class BatchSyncReceiptRow(SQLModel, table=True):
         UniqueConstraint("plan_id", "request_id", name="uq_ontology_batch_sync_request"),
         CheckConstraint("rows_affected BETWEEN 0 AND 100", name="ck_ontology_batch_sync_rows"),
         CheckConstraint(
-            """((from_exclusive IS NULL AND through_inclusive IS NULL AND source_high_water IS NULL
+            """((range_min IS NULL AND range_max IS NULL AND
+               ((from_exclusive IS NULL AND through_inclusive IS NULL AND source_high_water IS NULL
                  AND events_read IS NULL AND manifest_hash IS NULL AND outcome = 'committed')
                OR (from_exclusive >= 0 AND through_inclusive >= from_exclusive
                    AND source_high_water >= through_inclusive AND source_identity_verified IS TRUE
@@ -183,9 +226,15 @@ class BatchSyncReceiptRow(SQLModel, table=True):
                    AND ((outcome = 'no_new_data' AND rows_affected = 0 AND events_read = 0 AND manifest_hash IS NULL
                          AND through_inclusive = from_exclusive AND source_high_water = from_exclusive)
                         OR (outcome = 'committed' AND events_read = rows_affected AND rows_affected BETWEEN 1 AND 50
-                            AND through_inclusive - from_exclusive = 1 AND manifest_hash ~ '^[0-9a-f]{64}$')))) IS TRUE""",
+                            AND through_inclusive - from_exclusive = 1 AND manifest_hash ~ '^[0-9a-f]{64}$')))) IS TRUE)
+               OR (range_min IS NOT NULL AND range_max IS NOT NULL AND range_min <= range_max
+                   AND source_identity_verified IS TRUE AND source_schema='batch_sync_range_fixture' AND source_table='records'
+                   AND target_table='range_fixture' AND from_exclusive IS NULL AND through_inclusive IS NULL
+                   AND source_high_water IS NULL AND events_read IS NULL AND manifest_hash IS NULL
+                   AND ((outcome='no_new_data' AND rows_affected=0) OR (outcome='committed' AND rows_affected>0)))) IS TRUE""",
             name="ck_ontology_batch_sync_receipt_window",
         ),
+        Index("ix_batch_receipt_range_private", "id", postgresql_where=text("target_table='range_fixture'")),
         Index("ix_ontology_batch_sync_receipts_plan", "plan_id", "recorded_at"),
         Index("ix_batch_receipt_incremental_timeline", "connection_id", "recorded_at", "id",
               postgresql_where=text("from_exclusive IS NOT NULL AND source_identity_verified IS TRUE "
@@ -213,6 +262,8 @@ class BatchSyncReceiptRow(SQLModel, table=True):
     rows_affected: int
     source_identity_verified: bool | None = None
     outcome: str = DbField(default="committed", max_length=16)
+    range_min: int | None = DbField(default=None, sa_column=Column(BigInteger))
+    range_max: int | None = DbField(default=None, sa_column=Column(BigInteger))
     from_exclusive: int | None = DbField(default=None, sa_column=Column(BigInteger))
     through_inclusive: int | None = DbField(default=None, sa_column=Column(BigInteger))
     source_high_water: int | None = DbField(default=None, sa_column=Column(BigInteger))

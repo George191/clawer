@@ -38,7 +38,7 @@ export function getSessionState() {
   // Missing activity state must never turn an existing token into an unlocked session.
   const lastActivity = typeof storedActivity === 'number' && Number.isFinite(storedActivity) && storedActivity > 0 ? storedActivity : 0;
   const idleAt = lastActivity + IDLE_LOCK_MS;
-  return { authenticated, expiresAt, idleAt, locked: authenticated && (stored?.locked === true || Date.now() >= idleAt), identity: value ? `${value.sub}:${value.session_exp}` : '' };
+  return { authenticated, expiresAt, idleAt, locked: authenticated && (stored?.locked === true || Date.now() >= idleAt), identity: value ? `${value.sub}:${value.session_exp}` : '', subject: authenticated ? value?.sub : undefined };
 }
 
 const changed = () => window.dispatchEvent(new Event(SESSION_CHANGED_EVENT));

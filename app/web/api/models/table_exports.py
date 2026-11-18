@@ -99,6 +99,27 @@ class TableExportCapabilities(BaseModel):
     appendAvailable: Literal[True] | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
+class TableExportSnapshotPreviewCapability(BaseModel):
+    available: bool
+    configRevision: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
+class TableExportSnapshotPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expectedConfigRevision: UUID
+
+
+class TableExportSnapshotPreview(BaseModel):
+    configRevision: UUID
+    sourceRows: int = Field(ge=1, le=100)
+    targetRows: int = Field(ge=0, le=100)
+    added: int = Field(ge=0, le=100)
+    changed: int = Field(ge=0, le=100)
+    unchanged: int = Field(ge=0, le=100)
+    wouldRemove: int = Field(ge=0, le=100)
+
+
 class TableExportReceipt(BaseModel):
     id: UUID
     requestId: UUID

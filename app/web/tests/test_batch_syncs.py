@@ -102,6 +102,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
         self.schedules_migration = import_module("app.web.alembic.versions.a83a40b7dc19_ontology_batch_sync_schedules")
         identity_migration = import_module("app.web.alembic.versions.0e653c2f6a91_ontology_batch_source_identity")
         incremental_migration = import_module("app.web.alembic.versions.b8e42d47136f_ontology_batch_sync_incremental")
+        self.range_migration = import_module("app.web.alembic.versions.b86d2b1d4e98_ontology_batch_snapshot_range")
         lineage_migration = import_module("app.web.alembic.versions.d2fb47b91a6e_ontology_committed_batch_timeline")
         await migrate(self.pg, apply=True)
         async with self.pg.session() as session:
@@ -113,6 +114,7 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                     identity_migration.upgrade()
                     incremental_migration.upgrade()
                     lineage_migration.upgrade()
+                    self.range_migration.upgrade()
 
             await session.run_sync(upgrade)
             await session.execute(text("CREATE SCHEMA ts_batch_sync_sandbox"))
@@ -575,6 +577,114 @@ class BatchSyncIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.pg.fetch_one(
                     "SELECT caption FROM ts_batch_sync_sandbox.accounts WHERE id=1",
                 ))["caption"], "origin 1")
+
+    @unittest.skipUnless(IDENTITY_ORIGINS[0], "Requires an isolated loopback PostgreSQL source")
+    async def test_exact_range_snapshot_preserves_outside_keys_and_replays_empty_after_disable(self):
+        import asyncpg
+
+        origin = make_url(IDENTITY_ORIGINS[0])
+        if origin.host != "127.0.0.1" or origin.database != "ontology_batch_origin_a" or origin.query:
+            self.fail("Refusing any non-fixture source database")
+        admin = await asyncpg.connect(host=origin.host, port=origin.port, user=origin.username,
+                                      password=origin.password, database=origin.database)
+        self.addAsyncCleanup(admin.close)
+        def migrate_range(sync, action):
+            with Operations.context(MigrationContext.configure(sync.connection())):
+                action()
+
+        async with self.pg.session() as session:
+            await session.run_sync(migrate_range, self.range_migration.downgrade)
+            await session.run_sync(migrate_range, self.range_migration.upgrade)
+        marker = uuid4()
+        await admin.execute("""
+            DO $$BEGIN CREATE ROLE batch_identity_fixture_reader LOGIN;
+            EXCEPTION WHEN duplicate_object THEN NULL; END$$;
+            CREATE SCHEMA batch_sync_identity;
+            CREATE TABLE batch_sync_identity.source_identity(marker uuid PRIMARY KEY);
+            CREATE SCHEMA batch_sync_range_fixture;
+            CREATE TABLE batch_sync_range_fixture.records(id bigint PRIMARY KEY, value text NOT NULL);
+            GRANT USAGE ON SCHEMA batch_sync_identity, batch_sync_range_fixture TO batch_identity_fixture_reader;
+            GRANT SELECT ON batch_sync_identity.source_identity TO batch_identity_fixture_reader;
+            GRANT SELECT, MAINTAIN ON batch_sync_range_fixture.records TO batch_identity_fixture_reader;
+            INSERT INTO batch_sync_range_fixture.records SELECT k,'batch' FROM generate_series(1,10000) k;
+            INSERT INTO batch_sync_range_fixture.records VALUES (-9223372036854775808,'first'),(-2,'second');
+            ANALYZE batch_sync_range_fixture.records;
+        """)
+        self.addAsyncCleanup(admin.execute, "DROP SCHEMA batch_sync_identity, batch_sync_range_fixture CASCADE")
+        await admin.execute("INSERT INTO batch_sync_identity.source_identity VALUES($1)", marker)
+        await self.pg.execute("""
+            CREATE TABLE ts_batch_sync_sandbox.range_fixture(id bigint PRIMARY KEY,value text NOT NULL);
+        """)
+        await self.pg.execute("INSERT INTO ts_batch_sync_sandbox.range_fixture VALUES(77,'unused')")
+        revision = datetime.fromisoformat(PAYLOAD["expectedSourceUpdatedAt"])
+        config = {"host": origin.host, "port": origin.port, "database": origin.database,
+                  "username": "batch_identity_fixture_reader", "auth": "password", "tls": False}
+        connections = SimpleNamespace(_stored=AsyncMock(return_value={
+            "name": "Range source", "engine": "postgresql", "updated_at": revision, "config": config,
+        }), _credentials=AsyncMock(return_value={"password": "isolated-test-value"}))
+        definition = {**PAYLOAD, "sourceSchema": "batch_sync_range_fixture", "sourceTable": "records",
+                      "sourceKeyColumn": "id", "targetTable": "range_fixture",
+                      "mapping": [{"sourceColumn": name, "targetColumn": name} for name in ("id", "value")],
+                      "keyRange": {"min": "-9223372036854775808", "max": "-1"}}
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "BATCH_SYNC_SANDBOX_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_SOURCE_IDENTITY_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_RANGE_SNAPSHOT_ENABLED", True),
+            patch.object(settings, "BATCH_SYNC_SOURCE_IDENTITY_MARKER", marker),
+            patch("app.web.services.batch_source_identity.get_data_connections", return_value=connections),
+            patch("app.web.services.batch_syncs.get_data_connections", return_value=connections),
+        ):
+            async with api(True, self.provider) as client:
+                verify = await client.post(f"/etl/data-connections/{PAYLOAD['connectionId']}/batch-source-identity",
+                                          json={"expectedSourceUpdatedAt": PAYLOAD["expectedSourceUpdatedAt"]})
+                self.assertEqual(verify.status_code, 200, verify.text)
+                created = await client.post(RUNS, json=definition)
+                self.assertEqual(created.status_code, 201, created.text)
+                plan = created.json()
+                self.assertEqual(plan["keyRange"], definition["keyRange"])
+                run = f"{RUNS}/{plan['id']}/runs"
+                request = {"requestId": str(uuid4()), "expectedUpdatedAt": plan["updatedAt"]}
+                actual = await client.post(run, json=request)
+                self.assertEqual(actual.status_code, 200, actual.text)
+                self.assertEqual((actual.json()["rowsAffected"], actual.json()["keyRange"]), (2, definition["keyRange"]))
+                rows = await self.pg.fetch_all("SELECT id,value FROM ts_batch_sync_sandbox.range_fixture ORDER BY id")
+                self.assertEqual([tuple(row.values()) for row in rows], [
+                    (-9223372036854775808, "first"), (-2, "second"), (77, "unused"),
+                ])
+                with patch.object(settings, "BATCH_SYNC_RANGE_SNAPSHOT_ENABLED", False), patch(
+                    "app.web.services.batch_syncs.read_range_snapshot", side_effect=AssertionError("disabled read"),
+                ) as read:
+                    replay = await client.post(run, json=request)
+                    self.assertEqual(replay.json(), actual.json())
+                    self.assertEqual((await client.post(run, json={**request, "requestId": str(uuid4())})).status_code, 403)
+                    read.assert_not_called()
+
+                blocked_scope = await client.put(f"{RUNS}/{plan['id']}", json=PAYLOAD)
+                self.assertEqual(blocked_scope.status_code, 409, blocked_scope.text)
+                excess = await client.post(RUNS, json={**definition, "keyRange": {"min": "1", "max": "101"}})
+                self.assertEqual(excess.status_code, 201, excess.text)
+                excess_plan = excess.json()
+                oversized = await client.post(f"{RUNS}/{excess_plan['id']}/runs", json={
+                    "requestId": str(uuid4()), "expectedUpdatedAt": excess_plan["updatedAt"],
+                })
+                self.assertEqual((oversized.status_code, oversized.json()["detail"]["code"]), (422, "source_limit"))
+                self.assertEqual(await self.pg.fetch_all("SELECT id,value FROM ts_batch_sync_sandbox.range_fixture ORDER BY id"), rows)
+
+                empty_bound = {"min": "-100", "max": "-50"}
+                modified = await client.put(f"{RUNS}/{plan['id']}", json={**definition, "keyRange": empty_bound})
+                self.assertEqual(modified.status_code, 200, modified.text)
+                empty = await client.post(run, json={"requestId": str(uuid4()), "expectedUpdatedAt": modified.json()["updatedAt"]})
+                self.assertEqual(empty.status_code, 200, empty.text)
+                self.assertEqual((empty.json()["status"], empty.json()["keyRange"], empty.json()["rowsAffected"]),
+                                 ("no_new_data", empty_bound, 0))
+                await admin.execute("REINDEX INDEX batch_sync_range_fixture.records_pkey")
+                drift = await client.post(run, json={"requestId": str(uuid4()), "expectedUpdatedAt": modified.json()["updatedAt"]})
+                self.assertEqual((drift.status_code, drift.json()["detail"]["code"]), (409, "source_identity_mismatch"))
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot remove reviewed range snapshots"):
+            async with self.pg.session() as session:
+                await session.run_sync(migrate_range, self.range_migration.downgrade)
 
     @unittest.skipUnless(IDENTITY_ORIGINS[0], "requires the isolated committed PostgreSQL source")
     async def test_incremental_real_publications_shared_cursor_atomic_failure_and_schedule_no_data(self):

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { exactTransferReceiptFocus } from './transferReceiptFocus';
 import { Button, Modal } from '@/components/ui';
 import { fetchTransferTimeline, fetchTransferTimelineDetail } from '../../services/api';
 import type { TransferRunReceipt, TransferTimelineDetail, TransferTimelineEntry, TransferTimelineFilters } from '../../services/api';
+import { isoWeekdayName } from '../../services/scheduleTime';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 import { recordedUpstreamRule } from './upstreamRules';
 
@@ -11,7 +14,7 @@ const physicalLabels: Record<TransferTimelineEntry['physicalScope'], string> = {
   unknown: 'Physical identity unverified',
 };
 const triggerLabels: Record<NonNullable<TransferTimelineEntry['trigger']>, string> = {
-  manual: 'Manual', daily_utc: 'Daily UTC', upstream: 'Upstream commit',
+  manual: 'Manual', daily_utc: 'Daily UTC', weekly_utc: 'Weekly UTC', upstream: 'Upstream commit',
 };
 const statusLabels: Record<string, string> = {
   started: 'Request recorded', rejected: 'Rejected', outcome_unknown: 'Outcome unknown',
@@ -50,6 +53,12 @@ export default function ExplorerTransferTimeline(props: Props) {
 }
 
 function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
+  const [params, setParams] = useSearchParams();
+  const focusId = exactTransferReceiptFocus(params, schema, table);
+  const [focused, setFocused] = useState<TransferTimelineDetail>();
+  const [focusError, setFocusError] = useState<string>();
+  const [focusLoading, setFocusLoading] = useState<string>();
+  const focusRequest = useRef<AbortController>();
   const [entries, setEntries] = useState<TransferTimelineEntry[]>();
   const [cursor, setCursor] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -74,8 +83,17 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
     return () => onLatestCurrentReceipt(null);
   }, [onLatestCurrentReceipt]);
 
+  const closeFocus = () => {
+    focusRequest.current?.abort(); setFocused(undefined); setFocusError(undefined); setFocusLoading(undefined);
+    if (focusId) setParams(current => {
+      const next = new URLSearchParams(current);
+      next.delete('transferReceipt');
+      return next;
+    }, { replace: true });
+  };
   const clearScoped = () => {
-    firstRequest.current?.abort(); olderRequest.current?.abort(); detailRequest.current?.abort();
+    firstRequest.current?.abort(); olderRequest.current?.abort(); detailRequest.current?.abort(); focusRequest.current?.abort();
+    setFocused(undefined); setFocusLoading(undefined);
     firstRequest.current = undefined; olderRequest.current = undefined; detailRequest.current = undefined;
     setEntries(undefined); setCursor(null); setSelected(undefined); setDetail(undefined);
     setLoadingMore(false); setMoreFailed(false); setDetailFailed(false); setFailed(false);
@@ -86,11 +104,11 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
     if ((from || before) && (!Number.isFinite(start) || !Number.isFinite(end) || start >= end || end - start > 31 * 86_400_000)) {
       setFilterError('Choose both UTC times, with To after From and no more than 31 days apart.'); return;
     }
-    clearScoped(); setFilterError('');
+    clearScoped(); closeFocus(); setFilterError('');
     setFilters({ ...(view ? { view } : {}), ...(from && before ? { from: new Date(start).toISOString(), before: new Date(end).toISOString() } : {}) });
   };
   const reset = () => {
-    clearScoped(); setView(''); setFrom(''); setBefore(''); setFilterError(''); setFilters({});
+    clearScoped(); closeFocus(); setView(''); setFrom(''); setBefore(''); setFilterError(''); setFilters({});
   };
 
   useEffect(() => {
@@ -103,7 +121,10 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
       onLatestCurrentReceipt(page.latestCurrentReceipt);
     }).catch(failure => {
       if (!controller.signal.aborted) {
-        if (sandboxScopeDenied(failure)) onLatestCurrentReceipt(null);
+        if (sandboxScopeDenied(failure)) {
+          clearScoped();
+          onLatestCurrentReceipt(null);
+        }
         setFailed(true);
       }
     });
@@ -132,6 +153,26 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
     return () => controller.abort();
   }, [schema, table, selected]);
 
+  useEffect(() => {
+    setFocused(undefined); setFocusError(undefined); setFocusLoading(undefined);
+    setSelected(undefined); setDetail(undefined);
+    if (!focusId) return;
+    const read = new AbortController(); focusRequest.current = read;
+    setFocusLoading(focusId);
+    void fetchTransferTimelineDetail(schema, table, 'receipt', focusId, read.signal, true).then(value => {
+      if (read.signal.aborted) return;
+      if (value.kind === 'receipt' && value.id === focusId && value.receiptId === focusId) setFocused(value);
+      else setFocusError(focusId);
+    }).catch(failure => {
+      if (read.signal.aborted) return;
+      if (sandboxScopeDenied(failure)) {
+        clearScoped(); onLatestCurrentReceipt(null); setFailed(true);
+      }
+      setFocusError(focusId);
+    }).finally(() => { if (!read.signal.aborted) setFocusLoading(undefined); });
+    return () => read.abort();
+  }, [schema, table, focusId, onLatestCurrentReceipt]);
+
   const loadOlder = async () => {
     if (!cursor || olderRequest.current) return;
     const controller = new AbortController();
@@ -154,6 +195,9 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
     }
   };
 
+  const exactDetail = focused?.id === focusId ? focused : undefined;
+  const showSelected = !focusId && Boolean(selected);
+  const shownDetail = showSelected ? detail : exactDetail;
   return <section className="flow-evidence-card flow-evidence-timeline" aria-label="Transfer timeline">
     <header><h4>Transfer timeline</h4><span>Sandbox destination · newest first</span></header>
     <p>Attempts and dispatches do not prove a write. Receipts record committed transfers and identify whether the physical destination matches this table.</p>
@@ -172,34 +216,38 @@ function TimelineWorkspace({ schema, table, onLatestCurrentReceipt }: Props) {
       </div>
       {filtered && <p role="status">Showing filtered timeline entries.</p>}
     </form>
+    {focusId && focusLoading === focusId && <p role="status">Verifying the requested receipt…</p>}
+    {focusId && focusError === focusId && <p role="status">The requested receipt is unavailable. <Button size="small" onClick={closeFocus}>Dismiss receipt focus</Button></p>}
     {failed ? <><p role="alert">Transfer timeline unavailable.</p><Button size="small" onClick={() => setRevision(value => value + 1)}>Retry timeline</Button></>
       : !entries ? <p role="status">Loading transfer timeline…</p> : entries.length ? <>
         <ol className="flow-evidence-receipts" aria-label="Transfer timeline entries">
           {entries.map(entry => <li key={keyFor(entry)}>
             <TimelineEntryFacts entry={entry} />
-            <Button size="small" onClick={() => { setDetail(undefined); setDetailFailed(false); setSelected(entry); }}>Inspect timeline entry</Button>
+            <Button size="small" disabled={Boolean(focusId)} onClick={() => { setDetail(undefined); setDetailFailed(false); setSelected(entry); }}>Inspect timeline entry</Button>
           </li>)}
         </ol>
         {moreFailed && <p role="alert">Older entries could not be loaded.</p>}
         {cursor && <Button size="small" loading={loadingMore} onClick={loadOlder}>{moreFailed ? 'Retry older entries' : 'Load older entries'}</Button>}
       </> : <p>{filtered ? 'No scoped transfer activity matches these filters.' : 'No scoped transfer activity recorded for this destination.'}</p>}
-    <Modal open={Boolean(selected)} destroyOnHidden className="flow-surface-modal" title="Transfer timeline detail"
-      onCancel={() => setSelected(undefined)} footer={null}>
-      {detailFailed ? <p role="alert">This scoped entry could not be verified. Close the detail and refresh Evidence.</p>
-        : !detail ? <p role="status">Loading timeline detail…</p> : <div className="flow-evidence-timeline-detail">
-          <TimelineEntryFacts entry={detail} />
-          <div><span>Plan ID</span> <code>{detail.planId}</code></div>
-          <div><span>Plan revision</span> {detail.planUpdatedAt ? <TimelineTime value={detail.planUpdatedAt} /> : 'Not verified'}</div>
-          {detail.job ? <section aria-label="Dispatch provenance">
+    <Modal open={Boolean(showSelected || exactDetail)} destroyOnHidden className="flow-surface-modal" title="Transfer timeline detail"
+      onCancel={() => { if (focusId) closeFocus(); else if (showSelected) setSelected(undefined); }} footer={null}>
+      {showSelected && detailFailed ? <p role="alert">This scoped entry could not be verified. Close the detail and refresh Evidence.</p>
+        : !shownDetail ? <p role="status">Loading timeline detail…</p> : <div className="flow-evidence-timeline-detail">
+          <TimelineEntryFacts entry={shownDetail} />
+          <div><span>Plan ID</span> <code>{shownDetail.planId}</code></div>
+          <div><span>Plan revision</span> {shownDetail.planUpdatedAt ? <TimelineTime value={shownDetail.planUpdatedAt} /> : 'Not verified'}</div>
+          {shownDetail.job ? <section aria-label="Dispatch provenance">
             <h5>Dispatch provenance</h5>
-            <p>{triggerLabels[detail.job.kind]} · {labelStatus(detail.job.state)}</p>
-            {detail.job.group && detail.job.operator && <p>Recorded condition: <strong>{recordedUpstreamRule({
-              operator: detail.job.operator, group: detail.job.group, ruleParentPlanIds: detail.job.ruleParentPlanIds,
+            <p>{triggerLabels[shownDetail.job.kind]} · {labelStatus(shownDetail.job.state)}</p>
+            {shownDetail.job.kind === 'weekly_utc' && isoWeekdayName(shownDetail.job.scheduleWeekdayUtc) &&
+              <p>Recorded weekday (UTC): {isoWeekdayName(shownDetail.job.scheduleWeekdayUtc)}</p>}
+            {shownDetail.job.group && shownDetail.job.operator && <p>Recorded condition: <strong>{recordedUpstreamRule({
+              operator: shownDetail.job.operator, group: shownDetail.job.group, ruleParentPlanIds: shownDetail.job.ruleParentPlanIds,
             }).expression}</strong></p>}
-            <p>Job ID: <code>{detail.job.id}</code></p>
-            {detail.job.dueAt && <p>{detail.job.kind === 'daily_utc' ? 'Scheduled for' : 'Event set ready at'}: <TimelineTime value={detail.job.dueAt} /></p>}
-            {detail.job.parentEvents.length > 0 && <ul className="flow-evidence-receipts" aria-label="Parent events">
-              {detail.job.parentEvents.map(event => <li key={event.eventId}>
+            <p>Job ID: <code>{shownDetail.job.id}</code></p>
+            {shownDetail.job.dueAt && <p>{shownDetail.job.kind !== 'upstream' ? 'Scheduled for' : 'Event set ready at'}: <TimelineTime value={shownDetail.job.dueAt} /></p>}
+            {shownDetail.job.parentEvents.length > 0 && <ul className="flow-evidence-receipts" aria-label="Parent events">
+              {shownDetail.job.parentEvents.map(event => <li key={event.eventId}>
                 <div><span>Parent receipt ID</span><code>{event.parentReceiptId}</code></div>
                 <div><span>Parent plan ID</span><code>{event.parentPlanId}</code></div>
                 <div><span>Parent event recorded</span><TimelineTime value={event.eventRecordedAt} /></div>

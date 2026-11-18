@@ -7,6 +7,7 @@ import TableExportEvidence, { TABLE_EXPORT_SOURCE } from './TableExportEvidence'
 import ExplorerAssetFreshness from './ExplorerAssetFreshness';
 import ExplorerDailyJobQuality from './ExplorerDailyJobQuality';
 import ExplorerFieldFreshness from './ExplorerFieldFreshness';
+import ExplorerMinimumRowHealth from './ExplorerMinimumRowHealth';
 import ExplorerAssetStatistics from './ExplorerAssetStatistics';
 import ExplorerTransferTimeline from './ExplorerTransferTimeline';
 import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
@@ -69,8 +70,13 @@ export default function ExplorerTableEvidence({ schema, table, canManage }: { sc
                             <dl><div><dt>Checked at</dt><dd><time dateTime={snapshot.observedAt}>{new Date(snapshot.observedAt).toLocaleString()}</time></dd></div></dl>
                             {showReceipts && <ExplorerAssetStatistics schema={schema} table={table} version={version} />}
                         </section>
-                        {showReceipts && table === 'field_freshness_fixture' && <ExplorerFieldFreshness version={version} />}
-                        {showReceipts && <ExplorerDailyJobQuality schema={schema} table={table} version={version} />}
+                        {showReceipts && table === 'field_freshness_fixture' && <>
+                            <ExplorerFieldFreshness version={version} /><ExplorerMinimumRowHealth version={version} />
+                        </>}
+                        {showReceipts && <>
+                            <ExplorerDailyJobQuality schema={schema} table={table} version={version} />
+                            <ExplorerDailyJobQuality schema={schema} table={table} version={version} cadence="weekly" />
+                        </>}
                         {showReceipts && <ExplorerAssetFreshness key={`${schema}.${table}`} schema={schema} table={table} version={version} />}
                         {showExport ? <TableExportEvidence mode="explorer" version={version} /> : <>
                         {showReceipts ? <ExplorerTransferTimeline key={`${schema}.${table}:${version}`} schema={schema} table={table} onLatestCurrentReceipt={setLatestCurrentReceipt} />

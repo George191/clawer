@@ -16,9 +16,10 @@ const messages = {
   loading: 'Loading identity status…',
 };
 
-export default function SourceIdentity({ source, identity, onIdentity, disabled }: {
+export default function SourceIdentity({ source, identity, onIdentity, onVerificationStarted, onVerificationSettled, disabled }: {
   source: DataSource; identity: BatchSourceIdentity | undefined;
-  onIdentity: (status: BatchSourceIdentity | undefined) => void; disabled: boolean;
+  onIdentity: (status: BatchSourceIdentity | undefined) => void; onVerificationStarted?: () => void | (() => void);
+  onVerificationSettled?: () => void; disabled: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -49,6 +50,8 @@ export default function SourceIdentity({ source, identity, onIdentity, disabled 
     const request = new AbortController();
     pending.current?.abort(); pending.current = request;
     setError(''); setBusy(true);
+    const release = onVerificationStarted?.();
+    if (release) request.signal.addEventListener('abort', release, { once: true });
     onIdentity({ state: 'unverified', sourceUpdatedAt: null, verifiedAt: null });
     void verifyBatchSourceIdentity(source.id, source.updatedAt, request.signal).then(value => {
       if (!request.signal.aborted) onIdentity(value);
@@ -61,7 +64,12 @@ export default function SourceIdentity({ source, identity, onIdentity, disabled 
       } else {
         setError('The verification did not establish this source’s identity. Retry or reload the saved source.');
       }
-    }).finally(() => { if (!request.signal.aborted) setBusy(false); });
+    }).finally(() => {
+      if (!request.signal.aborted) {
+        if (release) request.signal.removeEventListener('abort', release);
+        setBusy(false); onVerificationSettled?.();
+      }
+    });
   };
   return <section className="ontology-source-catalog ontology-source-sync" aria-label="Source identity" aria-busy={busy}>
     <header><div><h3>Source identity</h3><p>A connectivity test proves access, not the identity of the reviewed source.</p></div>

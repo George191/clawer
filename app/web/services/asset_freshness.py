@@ -323,6 +323,17 @@ async def _evaluate_one(session: AsyncSession, row: AssetFreshnessPolicyRow, now
                     await session.execute(text("SET LOCAL statement_timeout='3s'"))
             except Exception:
                 _log.warning("Optional Daily UTC quality check did not settle")
+    if settings.TRANSFER_SANDBOX_WEEKLY_JOB_QUALITY_ENABLED:
+        from app.web.services.asset_weekly_job_quality import evaluate_weekly_job_quality, weekly_job_quality_enabled
+
+        if weekly_job_quality_enabled():
+            try:
+                async with session.begin_nested():
+                    await session.execute(text("SET LOCAL statement_timeout='750ms'"))
+                    await evaluate_weekly_job_quality(session, row, identity, now)
+                    await session.execute(text("SET LOCAL statement_timeout='3s'"))
+            except Exception:
+                _log.warning("Optional Weekly UTC quality check did not settle")
     return state
 
 
@@ -342,19 +353,26 @@ async def evaluate_due_asset_freshness(session: AsyncSession, *, now: datetime |
         state = await _evaluate_one(session, row, now)
         counts["checked"] += 1
         counts[state] += 1
-    if settings.TRANSFER_SANDBOX_FIELD_FRESHNESS_ENABLED:
+    if settings.TRANSFER_SANDBOX_FIELD_FRESHNESS_ENABLED or settings.TRANSFER_SANDBOX_MIN_ROWS_ENABLED:
         from app.web.services.asset_field_freshness import TABLE, evaluate_field_freshness
+        from app.web.services.asset_min_rows import evaluate_min_rows
 
         if (field_policy := next((row for row in rows if row.target_table == TABLE), None)) is not None:
-            # Run last: a successful SHARE fence is retained through this bounded write/commit,
-            # never while probing other assets. Failure rolls the optional check back independently.
-            try:
-                async with session.begin_nested():
-                    await session.execute(text("SET LOCAL statement_timeout='750ms'"))
-                    await evaluate_field_freshness(session, field_policy)
-                    await session.execute(text("SET LOCAL statement_timeout='3s'"))
-            except Exception:
-                _log.warning("Optional field-time freshness check did not settle")
+            checks = []
+            if settings.TRANSFER_SANDBOX_FIELD_FRESHNESS_ENABLED:
+                checks.append(("field-time freshness", evaluate_field_freshness))
+            if settings.TRANSFER_SANDBOX_MIN_ROWS_ENABLED:
+                checks.append(("minimum-row", evaluate_min_rows))
+            # Run last: each successful SHARE fence is retained only through
+            # the bounded checks for this same fixture and outer commit.
+            for label, evaluate in checks:
+                try:
+                    async with session.begin_nested():
+                        await session.execute(text("SET LOCAL statement_timeout='750ms'"))
+                        await evaluate(session, field_policy)
+                        await session.execute(text("SET LOCAL statement_timeout='3s'"))
+                except Exception:
+                    _log.warning("Optional %s check did not settle", label)
     await session.commit()
     return counts
 

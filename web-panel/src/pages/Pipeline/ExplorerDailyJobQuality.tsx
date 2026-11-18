@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button, Modal } from '@/components/ui';
-import { acknowledgeDailyJobQualityIncident, fetchDailyJobQuality, reviewDailyJobQuality } from '../../services/api';
-import type { AssetQualityIncident, DailyJobQuality, DailyJobQualityCandidate, DailyJobQualityReview } from '../../services/api';
+import { acknowledgeDailyJobQualityIncident, fetchDailyJobQuality, reviewDailyJobQuality, acknowledgeWeeklyJobQualityIncident, fetchWeeklyJobQuality, reviewWeeklyJobQuality } from '../../services/api';
+import type { AssetQualityIncident, DailyJobQuality, DailyJobQualityCandidate, DailyJobQualityReview, WeeklyJobQuality } from '../../services/api';
+import { isoWeekdayName } from '../../services/scheduleTime';
 import { getSessionState } from '../../services/session';
+import ExplorerWeeklyRunEvidence from './ExplorerWeeklyRunEvidence';
 import ExplorerQualityWarnings from './ExplorerQualityWarnings';
 import { sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 
@@ -49,17 +51,27 @@ function Time({ value, empty }: { value?: string | null; empty: string }) {
     ? <time dateTime={value}>{new Date(value).toLocaleString(undefined, { timeZone: 'UTC', timeZoneName: 'short' })}</time> : <>{empty}</>;
 }
 
-type Props = { schema: string; table: string; version: number };
+type Props = { schema: string; table: string; version: number; cadence?: 'daily' | 'weekly' };
 export default function ExplorerDailyJobQuality(props: Props) {
   const identity = useSandboxIdentity();
   return identity && props.schema === 'ts_transfer_sandbox'
-    ? <DailyJobQualityCard key={`${identity}:${props.schema}:${props.table}:${props.version}`} {...props} identity={identity} />
+    ? <DailyJobQualityCard key={JSON.stringify([identity, props.schema, props.table, props.version, props.cadence])} {...props} identity={identity} />
     : null;
 }
 
-function DailyJobQualityCard({ schema, table, identity }: Props & { identity: string }) {
+function DailyJobQualityCard({ schema, table, identity, cadence = 'daily' }: Props & { identity: string }) {
+  const weekly = cadence === 'weekly';
   const title = useId();
-  const [snapshot, setSnapshot] = useState<DailyJobQuality>();
+  const fetchQuality = weekly ? fetchWeeklyJobQuality : fetchDailyJobQuality;
+  const reviewQuality = weekly ? reviewWeeklyJobQuality : reviewDailyJobQuality;
+  const acknowledgeWarning = weekly ? acknowledgeWeeklyJobQualityIncident : acknowledgeDailyJobQualityIncident;
+  const reviewLabel = weekly ? 'Review weekly outcome check' : 'Review scheduled outcome check';
+  const weekday = (config: DailyJobQualityCandidate) => 'plannedWeekdayUtc' in config && typeof config.plannedWeekdayUtc === 'number'
+    ? isoWeekdayName(config.plannedWeekdayUtc) : undefined;
+  const clock = (config: DailyJobQualityCandidate) => weekly
+    ? `${weekday(config) ?? 'Unverified weekday'} at ${config.plannedTimeUtc} UTC`
+    : `daily at ${config.plannedTimeUtc} UTC`;
+  const [snapshot, setSnapshot] = useState<DailyJobQuality | WeeklyJobQuality>();
   const [loading, setLoading] = useState(true);
   const [expiredAt, setExpiredAt] = useState<number>();
   const [error, setError] = useState('');
@@ -77,12 +89,12 @@ function DailyJobQualityCard({ schema, table, identity }: Props & { identity: st
   useEffect(() => {
     const read = new AbortController();
     setLoading(true);
-    void fetchDailyJobQuality(schema, table, read.signal).then(value => {
+    void fetchQuality(schema, table, read.signal).then(value => {
       if (live(read.signal)) setSnapshot(value);
     }).catch(() => { if (live(read.signal)) setSnapshot(undefined); })
       .finally(() => { if (live(read.signal)) setLoading(false); });
     return () => read.abort();
-  }, [schema, table, identity, revision]);
+  }, [schema, table, identity, revision, fetchQuality]);
   const expiry = snapshot?.validUntil ? Date.parse(snapshot.validUntil) : NaN;
   useEffect(() => {
     if (!Number.isFinite(expiry)) return;
@@ -93,15 +105,17 @@ function DailyJobQualityCard({ schema, table, identity }: Props & { identity: st
     return () => { window.clearTimeout(timer); document.removeEventListener('visibilitychange', update); };
   }, [expiry]);
 
-  if (!snapshot?.available || snapshot.state === 'disabled') return null;
+  if (!snapshot?.available || (snapshot.state === 'disabled' &&
+    (!weekly || (!snapshot.binding && !snapshot.observation && !snapshot.incidents.active.length && !snapshot.incidents.history.length)))) return null;
   const stale = Number.isFinite(expiry) ? expiry === expiredAt || Date.now() >= expiry :
     snapshot.state === 'healthy' || snapshot.state === 'unhealthy';
-  const state = stale ? 'unknown' : snapshot.state;
+  const state = snapshot.state === 'disabled' ? 'disabled' : stale || (weekly && loading) ? 'unknown' : snapshot.state;
   const { binding, candidate, observation } = snapshot;
   const alreadyReviewed = Boolean(binding && candidate && binding.planId === candidate.planId &&
     binding.planUpdatedAt === candidate.planUpdatedAt && binding.freshnessGeneration === candidate.freshnessGeneration
-    && binding.scheduleGeneration === candidate.scheduleGeneration && binding.plannedTimeUtc === candidate.plannedTimeUtc);
-  const canReview = Boolean(candidate && (!alreadyReviewed || snapshot.state === 'superseded') && !loading && !busy);
+    && binding.scheduleGeneration === candidate.scheduleGeneration && binding.plannedTimeUtc === candidate.plannedTimeUtc
+    && (!weekly || weekday(binding) === weekday(candidate)));
+  const canReview = Boolean(candidate && snapshot.state !== 'disabled' && (!weekly || weekday(candidate)) && (!alreadyReviewed || snapshot.state === 'superseded') && !loading && !busy);
   const offerReview = () => {
     if (!candidate || !canReview) return;
     setReview({ candidate, request: {
@@ -113,15 +127,16 @@ function DailyJobQualityCard({ schema, table, identity }: Props & { identity: st
     } });
   };
   const confirm = async () => {
-    if (!review || !live() || pending.current) return;
+    if (!review || !canReview || !live() || pending.current) return;
     pending.current = true; setBusy(true); setError('');
     try {
-      const value = await reviewDailyJobQuality(schema, table, review.request);
+      const value = await reviewQuality(schema, table, review.request);
       if (live()) setSnapshot(value);
     } catch (failure) {
       if (live()) {
         if (sandboxScopeDenied(failure)) setSnapshot(undefined);
         else setError('The outcome check could not be reviewed. Recheck the current schedule before retrying.');
+        if (weekly) setLoading(true);
         setRevision(value => value + 1);
       }
     } finally {
@@ -130,16 +145,18 @@ function DailyJobQualityCard({ schema, table, identity }: Props & { identity: st
     }
   };
   const acknowledge = async (incident: AssetQualityIncident) => {
-    if (!binding || incident.generation !== binding.freshnessGeneration || !live() || pending.current) return;
+    if (!binding || (weekly && (loading || snapshot.state === 'disabled' || snapshot.state === 'superseded' ||
+        !snapshot.incidents.active.some(item => item.id === incident.id && item.status === 'open'))) || incident.generation !== binding.freshnessGeneration || !live() || pending.current) return;
     pending.current = true; setBusy(true); setError('');
     try {
-      const result = await acknowledgeDailyJobQualityIncident(schema, table, incident.id, binding.generation);
+      const result = await acknowledgeWarning(schema, table, incident.id, binding.generation);
       if (live()) setSnapshot(value => value && { ...value, incidents: { ...value.incidents,
         active: value.incidents.active.map(item => item.id === result.id ? result : item) } });
     } catch (failure) {
       if (live()) {
         if (sandboxScopeDenied(failure)) setSnapshot(undefined);
         else setError('Acknowledgment could not be verified. Review the current warnings before retrying.');
+        if (weekly) setLoading(true);
         setRevision(value => value + 1);
       }
     } finally {
@@ -148,32 +165,37 @@ function DailyJobQualityCard({ schema, table, identity }: Props & { identity: st
     }
   };
 
-  const reason = stale ? reasons.evaluation_stale : snapshot.reason ? reasons[snapshot.reason] : undefined;
+  const reason = weekly && state === 'disabled' ? 'Weekly evaluation is inactive. Recorded history does not describe a current outcome.' : weekly && loading ? 'Rechecking the recorded outcome…' : stale ? reasons.evaluation_stale : snapshot.reason ? (weekly &&
+    (snapshot.reason === 'no_eligible_schedule' || snapshot.reason === 'schedule_changed') ?
+      reasons[snapshot.reason]?.replace('Daily UTC', 'Weekly UTC') : reasons[snapshot.reason]) : undefined;
   return <section className="flow-evidence-card flow-evidence-freshness" aria-labelledby={title} aria-busy={loading || busy}>
-    <header><h4 id={title}>Scheduled transfer health</h4><span>Reviewed Daily UTC schedule</span></header>
+    <header><h4 id={title}>{weekly ? 'Weekly UTC job health' : 'Scheduled transfer health'}</h4><span>Reviewed {weekly ? 'Weekly' : 'Daily'} UTC schedule</span></header>
     <p>Checks the outcome of a reviewed schedule slot for this exact table. It does not start, pause, or change the schedule.</p>
     {error && <p role="alert">{error}</p>}
     <strong role="status">{labels[state]}</strong>
     {reason && <p>{reason}</p>}
     <dl className="flow-evidence-freshness-facts">
-      <div><dt>Reviewed time (UTC)</dt><dd>{binding ? `Daily at ${binding.plannedTimeUtc} UTC` : 'Not reviewed'}</dd></div>
+      <div><dt>Reviewed time (UTC)</dt><dd>{binding ? weekly ? clock(binding) : `Daily at ${binding.plannedTimeUtc} UTC` : 'Not reviewed'}</dd></div>
       <div><dt>UTC slot</dt><dd><Time value={observation?.slot} empty="No slot observed" /></dd></div>
       <div><dt>Last checked (UTC)</dt><dd><Time value={snapshot.checkedAt} empty="Not evaluated" /></dd></div>
       {binding && <div><dt>Reviewed at (UTC)</dt><dd><Time value={binding.reviewedAt} empty="Not recorded" /></dd></div>}
       {observation && <>
-        <div><dt>{stale || state === 'superseded' ? 'Historical slot record' : 'Slot record'}</dt><dd>{slotStates[observation.state]}</dd></div>
+        <div><dt>{stale || state === 'superseded' || (weekly && (loading || state === 'disabled')) ? 'Historical slot record' : 'Slot record'}</dt><dd>{slotStates[observation.state]}</dd></div>
         <div><dt>Finished at (UTC)</dt><dd><Time value={observation.finishedAt} empty="Not recorded" /></dd></div>
         {observation.rowsAffected != null && <div><dt>Rows affected on receipt</dt><dd>{observation.rowsAffected.toLocaleString()}</dd></div>}
         {observation.receiptId && <div><dt>Receipt ID</dt><dd><code>{observation.receiptId}</code></dd></div>}
       </>}
     </dl>
-    {candidate && !alreadyReviewed && <p>Eligible schedule: daily at {candidate.plannedTimeUtc} UTC.</p>}
-    {canReview && <div className="flow-evidence-freshness-actions"><Button size="small" onClick={offerReview}>Review scheduled outcome check</Button></div>}
-    <ExplorerQualityWarnings incidents={snapshot.incidents} generation={binding?.freshnessGeneration} busy={busy || loading} onAcknowledge={acknowledge} />
-    <Modal open={Boolean(review)} destroyOnHidden className="flow-surface-modal" title="Review scheduled outcome check?"
+    {weekly && (state === 'healthy' || state === 'unhealthy') && !busy && binding && snapshot.validUntil && observation?.finishedAt &&
+      <ExplorerWeeklyRunEvidence schema={schema} table={table} identity={identity} generation={binding.generation}
+        validUntil={snapshot.validUntil} outcome={state} observation={observation} />}
+    {candidate && !alreadyReviewed && (!weekly || state !== 'disabled' && !loading) && <p>Eligible schedule: {clock(candidate)}.</p>}
+    {canReview && <div className="flow-evidence-freshness-actions"><Button size="small" onClick={offerReview}>{reviewLabel}</Button></div>}
+    <ExplorerQualityWarnings incidents={snapshot.incidents} generation={weekly && (snapshot.state === 'disabled' || snapshot.state === 'superseded') ? undefined : binding?.freshnessGeneration} busy={busy || loading} onAcknowledge={acknowledge} />
+    <Modal open={Boolean(review)} destroyOnHidden className="flow-surface-modal" title={`${reviewLabel}?`}
       onCancel={() => { if (!busy) setReview(undefined); }} onOk={confirm} confirmLoading={busy} okText="Confirm outcome check">
       {review && <>
-        <p>Bind this check to the existing daily {review.candidate.plannedTimeUtc} UTC schedule for <code>{schema}.{table}</code>. Only eligible slots after this review can count.</p>
+        <p>Bind this check to the existing {weekly ? `weekly on ${clock(review.candidate)}` : clock(review.candidate)} schedule for <code>{schema}.{table}</code>. Only eligible slots after this review can count.</p>
         <p>Transfer revision: <Time value={review.candidate.planUpdatedAt} empty="Not recorded" /> · Schedule generation {review.candidate.scheduleGeneration} · Freshness generation {review.candidate.freshnessGeneration}.</p>
         <p>This does not arm or run a transfer, change its schedule, or write to the table.</p>
       </>}
