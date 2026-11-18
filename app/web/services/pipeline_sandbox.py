@@ -1,5 +1,6 @@
 """Preview typed transformations of immutable synthetic snapshots, without output writes."""
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -16,10 +17,13 @@ from app.web.api.models.cdc_sandbox import CdcSandboxBindingRow, CdcSandboxRecei
 from app.web.api.models.cdc_sandbox_versions import CdcSandboxVersionRow
 from app.web.api.models.pipeline_sandbox import (
     PipelineIdFilter, PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision,
-    PipelineSandboxRevisionRow, PipelineSandboxSave, PipelineSandboxStatus,
+    PipelineSandboxRestore, PipelineSandboxRevisionRow, PipelineSandboxSave, PipelineSandboxStatus,
 )
 from app.web.core.config import settings
-from app.web.services.cdc_sandbox_versions import MAX_VERSION_BYTES, MAX_VERSION_ROWS, _read_records, _scope, _version
+from app.web.services.cdc_sandbox import _head as _cdc_native_head, _lock_fixture
+from app.web.services.cdc_sandbox_versions import (
+    MAX_VERSION_BYTES, MAX_VERSION_ROWS, _read_records, _scope, _version, _versions_marker,
+)
 from app.web.services.synthetic_governance import (
     BASE, RESTRICTED, allowed_level, builder_marking, marking_limit, markings, require_marking_access,
 )
@@ -122,6 +126,70 @@ def _revision(row: PipelineSandboxRevisionRow) -> PipelineSandboxRevision:
                                    recordedAt=row.recorded_at, markings=markings(row.marking_level))
 
 
+def _restore_enabled(limit: int | None) -> bool:
+    return limit == RESTRICTED and settings.ONTOLOGY_SANDBOX_PIPELINE_RESTORE_ENABLED
+
+
+async def _restore_header_levels(
+    session: AsyncSession, binding: CdcSandboxBindingRow, limit: int,
+    rows: Sequence[PipelineSandboxRevisionRow], *, lock: bool = False,
+) -> dict[UUID, int]:
+    # Only bounded immutable version metadata joined to original receipt;
+    # the snapshot's rows, target values and any sealed outputs are not read.
+    version = CdcSandboxVersionRow
+    ids = {key for row in rows for key in (row.input_version_id, row.match_version_id) if key is not None}
+    if not ids:
+        return {}
+    query = _match_version_query(binding, version.receipt_id, limit).where(
+        version.receipt_id.in_(ids), version.generation == binding.generation,
+        version.applied_through > 0, version.applied_through <= binding.applied_through,
+        version.rows_captured.between(0, MAX_VERSION_ROWS), version.bytes_captured.between(0, MAX_VERSION_BYTES),
+        func.isfinite(version.recorded_at), version.recorded_at <= func.statement_timestamp(),
+    ).order_by(version.receipt_id)
+    if lock:
+        query = query.with_for_update(read=True, of=(version, CdcSandboxReceiptRow))
+    headers = (await session.scalars(query)).all()
+    return {header.receipt_id: header.marking_level for header in headers if header.marking_level in (BASE, RESTRICTED)}
+
+
+def _verify_restore_revision(row: PipelineSandboxRevisionRow, header_levels: dict[UUID, int]) -> PipelineSandboxRevision:
+    view = _revision(row)
+    keys = (row.input_version_id,) if row.match_version_id is None else (row.input_version_id, row.match_version_id)
+    if (row.marking_level not in (BASE, RESTRICTED)
+        or view.config.model_dump(mode="json") != row.config
+        or any(key not in header_levels for key in keys)
+        or max([header_levels[key] for key in keys] + [RESTRICTED if view.config.additionalMarking else BASE]) != row.marking_level):
+        raise HTTPException(409, "The Builder recipe did not match its exact governed input receipts")
+    return view
+
+
+async def _restored_views(
+    session: AsyncSession, binding: CdcSandboxBindingRow, limit: int | None,
+    rows: Sequence[PipelineSandboxRevisionRow],
+) -> list[PipelineSandboxRevision]:
+    views = [_revision(row) for row in rows]
+    origin_ids = {row.restored_from_generation for row in rows if row.restored_from_generation is not None}
+    if limit not in (BASE, RESTRICTED) or not origin_ids:
+        return views
+    donors = {row.generation: row for row in (await session.scalars(_revisions(binding, limit).where(
+        PipelineSandboxRevisionRow.generation.in_(origin_ids),
+    ))).all()}
+    linked = [(row, view, donors.get(row.restored_from_generation)) for row, view in zip(rows, views)]
+    header_levels = await _restore_header_levels(session, binding, limit,
+        [item for row, _, donor in linked if donor is not None for item in (row, donor)])
+    for row, view, donor in linked:
+        if (donor is None or donor.generation >= row.generation or donor.marking_level != row.marking_level
+            or donor.config_hash != row.config_hash or donor.config != row.config):
+            continue
+        try:
+            _verify_restore_revision(row, header_levels)
+            _verify_restore_revision(donor, header_levels)
+        except HTTPException:
+            continue
+        view.restoredFromGeneration = donor.generation
+    return views
+
+
 async def read_pipeline_sandbox(session: AsyncSession, actor_id: UUID) -> PipelineSandboxStatus:
     """Return capability and the exact saved head, not a pipeline run."""
     limit = marking_limit(actor_id)
@@ -131,6 +199,7 @@ async def read_pipeline_sandbox(session: AsyncSession, actor_id: UUID) -> Pipeli
         matchEnabled=True if (
             available and limit in (BASE, RESTRICTED) and settings.ONTOLOGY_SANDBOX_PIPELINE_MATCH_ENABLED
         ) else None,
+        restoreEnabled=True if available and binding is not None and _restore_enabled(limit) else None,
         latestGeneration=await _head(session, binding, limit),
         governanceEnabled=True if limit is not None else None,
         allowedMarkings=(markings(limit) or []) if limit is not None else None,
@@ -147,7 +216,7 @@ async def list_pipeline_revisions(session: AsyncSession, actor_id: UUID) -> list
     rows = (await session.scalars(_revisions(binding, limit).order_by(
         PipelineSandboxRevisionRow.generation.desc(),
     ).limit(_HISTORY_LIMIT))).all()
-    return [_revision(row) for row in rows]
+    return await _restored_views(session, binding, limit, rows)
 
 
 async def read_pipeline_revision(session: AsyncSession, generation: int, actor_id: UUID) -> PipelineSandboxRevision:
@@ -159,7 +228,7 @@ async def read_pipeline_revision(session: AsyncSession, generation: int, actor_i
     ))) if binding else None
     if row is None:
         raise HTTPException(404, "No saved Builder revision exists for this reviewed scope")
-    return _revision(row)
+    return (await _restored_views(session, binding, limit, [row]))[0]
 
 
 def _matches(key: int, value: str, config: PipelineSandboxConfig) -> bool:
@@ -289,3 +358,82 @@ async def save_pipeline_revision(
     except DBAPIError:
         await session.rollback()
         raise HTTPException(503, "The Builder revision save was not confirmed; reload the saved history") from None
+
+
+
+async def restore_pipeline_revision(
+    session: AsyncSession, payload: PipelineSandboxRestore, actor_id: UUID,
+) -> PipelineSandboxRevision:
+    """Append the exact older recipe to the raw current governed head; never execute it."""
+    if not _restore_enabled(marking_limit(actor_id)):
+        raise HTTPException(403, "Builder restoration requires the full governed local Builder scope")
+    try:
+        await lock_builder_writes(session)
+        binding = await _require_builder(session, RESTRICTED)
+        marker = _versions_marker()
+        if binding is None or marker is None:
+            raise HTTPException(403, "Builder restoration requires the full governed local Builder scope")
+        # Keep the reviewed control row stable and prove the current physical scope.
+        binding = await session.scalar(select(CdcSandboxBindingRow).where(
+            CdcSandboxBindingRow.singleton.is_(True),
+        ).with_for_update(read=True).execution_options(populate_existing=True))
+        if (binding is None or binding.stream_marker != marker
+            or (await _lock_fixture(session, applying=False))[0] != binding.physical_digest):
+            raise HTTPException(409, "The reviewed synthetic Builder scope changed")
+        # Keep the one control row's marker stable even if a local producer
+        # is active. The restore never reads the source event or target rows.
+        await session.execute(text("LOCK TABLE ONLY ts_cdc_sandbox.stream_head IN SHARE MODE NOWAIT"))
+        native_head = await _cdc_native_head(session, marker)
+        if native_head is None or native_head < binding.applied_through:
+            raise HTTPException(409, "The reviewed synthetic Builder scope changed")
+        latest = await session.scalar(_raw_revisions(binding).order_by(PipelineSandboxRevisionRow.generation.desc()).limit(1))
+        if (latest is None or latest.generation != payload.expectedHeadGeneration
+            or latest.config_hash != payload.expectedHeadConfigHash):
+            raise HTTPException(409, "The saved Builder head changed; reload before restoring")
+        donor = await session.scalar(_raw_revisions(binding).where(
+            PipelineSandboxRevisionRow.generation == payload.sourceGeneration,
+        ).with_for_update(read=True))
+        if donor is None or donor.generation >= latest.generation or donor.config_hash != payload.expectedSourceConfigHash:
+            raise HTTPException(409, "The selected historical recipe changed; reload before restoring")
+        ancestry_levels = await _restore_header_levels(session, binding, RESTRICTED, [latest, donor], lock=True)
+        head_view = _verify_restore_revision(latest, ancestry_levels)
+        source_view = _verify_restore_revision(donor, ancestry_levels)
+        if donor.marking_level < latest.marking_level:
+            raise HTTPException(409, "Restoring this recipe would reduce the current Builder marking")
+        if ((head_view.config.matchVersionId or source_view.config.matchVersionId)
+            and not settings.ONTOLOGY_SANDBOX_PIPELINE_MATCH_ENABLED):
+            raise HTTPException(403, "Restoration of or over Match by ID requires current Match opt-in")
+        if latest.generation >= 2147483647:
+            raise HTTPException(409, "The Builder generation limit has been reached")
+        if (not _restore_enabled(marking_limit(actor_id)) or _versions_marker() != marker
+            or not settings.ONTOLOGY_SANDBOX_PIPELINE_ENABLED):
+            raise HTTPException(403, "Builder restoration authorization changed")
+        row = PipelineSandboxRevisionRow(
+            generation=latest.generation + 1, stream_marker=binding.stream_marker, physical_digest=binding.physical_digest,
+            input_version_id=donor.input_version_id, match_version_id=donor.match_version_id,
+            config_hash=donor.config_hash, marking_level=donor.marking_level,
+            config=source_view.config.model_dump(mode="json"), recorded_at=datetime.now(timezone.utc), saved_by=actor_id,
+            restored_from_generation=donor.generation,
+        )
+        session.add(row)
+        await session.flush()
+        if (not _restore_enabled(marking_limit(actor_id)) or _versions_marker() != marker
+            or not settings.ONTOLOGY_SANDBOX_PIPELINE_ENABLED
+            or ((head_view.config.matchVersionId or source_view.config.matchVersionId)
+                and not settings.ONTOLOGY_SANDBOX_PIPELINE_MATCH_ENABLED)):
+            raise HTTPException(403, "Builder restoration authorization changed")
+        response = _revision(row)
+        response.restoredFromGeneration = donor.generation
+        await session.commit()
+        return response
+    except HTTPException:
+        await session.rollback()
+        raise
+    except IntegrityError as error:
+        await session.rollback()
+        if getattr(error.orig, "sqlstate", None) == "23505":
+            raise HTTPException(409, "Another request saved this Builder generation; reload before restoring") from None
+        raise HTTPException(503, "The Builder restoration was not confirmed; reload the saved history") from None
+    except DBAPIError:
+        await session.rollback()
+        raise HTTPException(503, "The Builder restoration was not confirmed; reload the saved history") from None

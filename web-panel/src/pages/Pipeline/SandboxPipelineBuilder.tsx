@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, Input } from '@/components/ui';
+import { Button, Input, Modal } from '@/components/ui';
 import { ArrowRightOutlined } from '@/components/ui/icons';
 import {
   fetchCurrentUserContext, fetchSandboxCdcVersions, fetchSandboxPipelineRevisions, fetchSandboxPipelineStatus,
-  previewSandboxPipeline, saveSandboxPipelineRevision,
+  previewSandboxPipeline, restoreSandboxPipelineRevision, saveSandboxPipelineRevision,
 } from '../../services/api';
 import type {
   SandboxCdcVersion, SandboxPipelineColumn, SandboxPipelineConfig, SandboxPipelineFilter, SandboxPipelinePreview,
   SandboxPipelineRevision,
 } from '../../services/api';
+import { getSessionState } from '../../services/session';
 import SandboxPipelineOutputs from './SandboxPipelineOutputs';
 import { SandboxMarkings, sandboxScopeDenied, useSandboxIdentity } from './SandboxMarkings';
 import './sandbox-pipeline-builder.css';
@@ -64,13 +65,13 @@ function FilterRow({ filter, index, disabled, change, remove }: {
 
 export default function SandboxPipelineBuilder() {
   const identity = useSandboxIdentity();
-  return identity ? <PipelineBuilderWorkspace key={identity} /> : null;
+  return identity ? <PipelineBuilderWorkspace key={identity} identity={identity} /> : null;
 }
 
-function PipelineBuilderWorkspace() {
+function PipelineBuilderWorkspace({ identity }: { identity: string }) {
   const [allowed, setAllowed] = useState<boolean>();
   const [loaded, setLoaded] = useState<{
-    available: boolean; versions: SandboxCdcVersion[]; governanceEnabled: boolean; allowedMarkings: string[]; canSave: boolean; matchEnabled: boolean;
+    available: boolean; versions: SandboxCdcVersion[]; governanceEnabled: boolean; allowedMarkings: string[]; canSave: boolean; matchEnabled: boolean; restoreEnabled: boolean;
   }>();
   const [saved, setSaved] = useState<SandboxPipelineRevision[]>([]);
   const [generation, setGeneration] = useState<number | null>(null);
@@ -84,8 +85,15 @@ function PipelineBuilderWorkspace() {
   const active = useRef(false);
   const previewRequest = useRef<AbortController>();
   const savePending = useRef(false);
+  const restoreRequest = useRef<AbortController>();
+  const [restoreReview, setRestoreReview] = useState<{ source: SandboxPipelineRevision; head: SandboxPipelineRevision }>();
+  const [restoreNeedsRead, setRestoreNeedsRead] = useState(false);
+  const isLive = (signal?: AbortSignal) => {
+    const session = getSessionState();
+    return active.current && !signal?.aborted && session.authenticated && !session.locked && session.identity === identity;
+  };
 
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  useEffect(() => { active.current = true; return () => { active.current = false; restoreRequest.current?.abort(); }; }, []);
   useEffect(() => {
     const controller = new AbortController();
     const current = () => !controller.signal.aborted;
@@ -100,14 +108,14 @@ function PipelineBuilderWorkspace() {
         if (!current()) return;
         setGeneration(status.latestGeneration);
         const governance = { governanceEnabled: status.governanceEnabled === true, allowedMarkings: status.allowedMarkings ?? [],
-          canSave: status.governanceEnabled !== true || status.canSave === true, matchEnabled: status.matchEnabled === true };
+          canSave: status.governanceEnabled !== true || status.canSave === true, matchEnabled: status.matchEnabled === true, restoreEnabled: status.restoreEnabled === true };
         if (!status.available) { setLoaded({ available: false, versions: [], ...governance }); return; }
         const [versions, revisions] = await Promise.all([
           fetchSandboxCdcVersions(controller.signal), fetchSandboxPipelineRevisions(controller.signal),
         ]);
         if (!current()) return;
         setLoaded({ available: true, versions: versions.available ? versions.versions : [], ...governance });
-        setSaved(revisions);
+        setSaved(revisions); setRestoreNeedsRead(false);
       } catch {
         if (current()) setLoadFailed(true);
       }
@@ -117,6 +125,7 @@ function PipelineBuilderWorkspace() {
 
   const clearScope = () => {
     previewRequest.current?.abort(); previewRequest.current = undefined;
+    restoreRequest.current?.abort(); setRestoreReview(undefined);
     setPreviewing(false); setPreview(undefined); setNotice(undefined); setConfig(initialConfig);
     setLoaded(undefined); setSaved([]); setGeneration(null);
   };
@@ -150,7 +159,7 @@ function PipelineBuilderWorkspace() {
     }
   };
   const saveRevision = async () => {
-    if (!valid || !loaded?.canSave || savePending.current || previewRequest.current) return;
+    if (!valid || !loaded?.canSave || restoreNeedsRead || savePending.current || previewRequest.current) return;
     savePending.current = true; setSaving(true); setNotice(undefined);
     try {
       const revision = await saveSandboxPipelineRevision(config, generation);
@@ -172,6 +181,40 @@ function PipelineBuilderWorkspace() {
       if (active.current) setSaving(false);
     }
   };
+  const head = saved.find(item => item.generation === generation);
+  const canRestore = (source: SandboxPipelineRevision) => Boolean(loaded?.restoreEnabled && loaded.canSave && !restoreNeedsRead &&
+    head && source.generation < head.generation && (loaded.matchEnabled || (!source.config.matchVersionId && !head.config.matchVersionId)) &&
+    /^[0-9a-f]{64}$/.test(source.configHash) && /^[0-9a-f]{64}$/.test(head.configHash) &&
+    (head.markings ?? []).every(mark => source.markings?.includes(mark)));
+  const restore = async () => {
+    if (!restoreReview || !head || !isLive() || savePending.current || previewRequest.current || !canRestore(restoreReview.source)) return;
+    const { source, head: expected } = restoreReview;
+    if (head.generation !== expected.generation || head.configHash !== expected.configHash ||
+        !saved.some(item => item.generation === source.generation && item.configHash === source.configHash)) return;
+    const request = new AbortController(); restoreRequest.current = request;
+    savePending.current = true; setSaving(true); setRestoreReview(undefined); setNotice(undefined);
+    try {
+      const revision = await restoreSandboxPipelineRevision({ sourceGeneration: source.generation, expectedSourceConfigHash: source.configHash,
+        expectedHeadGeneration: expected.generation, expectedHeadConfigHash: expected.configHash }, request.signal);
+      if (!isLive(request.signal)) return;
+      if (revision.generation !== expected.generation + 1 || revision.restoredFromGeneration !== source.generation ||
+          revision.configHash !== source.configHash || !sameConfig(revision.config, source.config) ||
+          JSON.stringify(revision.markings ?? []) !== JSON.stringify(source.markings ?? [])) throw new Error('Unverified restore result');
+      setGeneration(revision.generation);
+      setSaved(items => [revision, ...items.filter(item => item.generation !== revision.generation)].slice(0, 25));
+      setNotice({ text: `Configuration revision ${revision.generation} restored from revision ${source.generation}. The current draft was not changed. No output was written.` });
+    } catch (failure) {
+      if (!isLive(request.signal)) return;
+      const status = (failure as { response?: { status?: number } })?.response?.status;
+      if (status === 401 || status === 403) { clearScope(); setLoadFailed(true); return; }
+      setRestoreNeedsRead(true);
+      setNotice({ text: 'Configuration restore was not confirmed. Refresh configuration history before acting again. The current draft has not changed.', error: true });
+    } finally {
+      if (restoreRequest.current === request) restoreRequest.current = undefined;
+      savePending.current = false;
+      if (isLive()) setSaving(false);
+    }
+  };
   const setFilter = (index: number, filter?: SandboxPipelineFilter) => revise({ ...config, filters: filter
     ? config.filters.map((item, position) => position === index ? filter : item)
     : config.filters.filter((_, position) => position !== index) });
@@ -182,7 +225,7 @@ function PipelineBuilderWorkspace() {
     [next[index], next[target]] = [next[target], next[index]];
     revise({ ...config, projection: next });
   };
-  const reviewed = loaded?.canSave && matchAvailable ? saved.find(item => item.generation === generation && sameConfig(config, item.config)) : undefined;
+  const reviewed = loaded?.canSave && !restoreNeedsRead && matchAvailable ? saved.find(item => item.generation === generation && sameConfig(config, item.config)) : undefined;
   const scopeKey = loaded?.governanceEnabled ? `governed:${[...loaded.allowedMarkings].sort().join(',')}` : undefined;
   return <section className="flow-sandbox-builder flow-foundry-workbench" aria-label="Sandbox Pipeline Builder">
     <header><h1>Sandbox Pipeline Builder</h1><p>Transform a committed synthetic snapshot. Preview and save configuration only; no destination data is written.</p>
@@ -267,7 +310,7 @@ function PipelineBuilderWorkspace() {
         <p>{isMatched ? 'Read-only preview of two captured inputs. No target is written.' : 'Read-only preview of the reviewed source snapshot. No target is written.'}</p>
         <div className="flow-sandbox-builder__actions">
           <Button size="small" type="primary" disabled={!valid || saving} loading={previewing} onClick={runPreview}>Preview pipeline</Button>
-          <Button size="small" disabled={!valid || !loaded.canSave || previewing} loading={saving} onClick={saveRevision}>Save configuration revision</Button>
+          <Button size="small" disabled={!valid || !loaded.canSave || restoreNeedsRead || previewing} loading={saving} onClick={saveRevision}>Save configuration revision</Button>
         </div>
         {!loaded.canSave && <p>Saving and committing are unavailable under the current authorization.</p>}
         {isMatched && loaded.matchEnabled && !knownPair && <p>Choose both inputs from the authorized versions before previewing or saving.</p>}
@@ -289,14 +332,27 @@ function PipelineBuilderWorkspace() {
     </div>
     <section className="flow-sandbox-builder__history" aria-label="Configuration revision history">
       <h2>Configuration revision history</h2><p>Up to 25 saved configurations. These are not committed dataset versions.</p>
+      {restoreNeedsRead && <Button size="small" onClick={() => setRefresh(value => value + 1)}>Refresh configuration history</Button>}
       {saved.length ? <ol aria-label="Saved configuration revisions">{saved.map(item => <li key={item.generation}>
-        <strong>Revision {item.generation}</strong><time dateTime={item.recordedAt}>{timeText(item.recordedAt)}</time>
+        <strong>Revision {item.generation}</strong>
+        {item.restoredFromGeneration != null && <span>Restored from revision {item.restoredFromGeneration}</span>}<time dateTime={item.recordedAt}>{timeText(item.recordedAt)}</time>
         <span>{item.config.matchVersionId ? 'Left version receipt' : 'Source receipt'}: <code>{item.config.versionId}</code></span>
         {item.config.matchVersionId && <span>Matching version receipt: <code>{item.config.matchVersionId}</code></span>}
         <SandboxMarkings markings={item.markings} />
         <Button size="small" disabled={saving} onClick={() => revise(item.config)}>{`Load configuration revision ${item.generation}`}</Button>
+        {canRestore(item) && head && <Button size="small" disabled={saving || previewing} onClick={() => setRestoreReview({ source: item, head })}>
+          Restore configuration revision {item.generation}
+        </Button>}
       </li>)}</ol> : <p>No configuration revisions saved.</p>}
     </section>
+    <Modal open={Boolean(restoreReview)} destroyOnHidden className="flow-surface-modal" title="Restore saved configuration?"
+      okText="Confirm configuration restore" onCancel={() => setRestoreReview(undefined)} onOk={() => void restore()}>
+      {restoreReview && <>
+        <p>Create one immutable configuration revision from revision <strong>{restoreReview.source.generation}</strong>, with revision
+          <strong> {restoreReview.head.generation}</strong> as the expected current head.</p>
+        <p>This does not replace your open draft or run, copy, or publish any output.</p>
+      </>}
+    </Modal>
     <SandboxPipelineOutputs key={scopeKey ?? 'legacy'} scopeKey={scopeKey} reviewed={saving ? undefined : reviewed}
       onScopeDenied={loaded.governanceEnabled ? () => { clearScope(); setLoadFailed(true); } : undefined} />
     </>}

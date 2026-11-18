@@ -1,6 +1,7 @@
 """Synthetic CDC fixture playback; an explicit isolated PostgreSQL URL enables writes."""
 
 import asyncio
+import json
 from importlib import import_module
 import os
 import unittest
@@ -127,6 +128,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
             "984b2ef31a6c_ontology_cdc_sandbox", "31d9685bf24a_ontology_cdc_sandbox_versions",
             "f5b873c94d20_ontology_pipeline_sandbox", "b46891e47c52_ontology_pipeline_sandbox_outputs",
             "8d659760c2b4_ontology_synthetic_markings", "51b18bf851dd_ontology_pipeline_match",
+            "f27ad8ce609b_ontology_pipeline_restore_provenance",
         )]
 
         def upgrade(sync):
@@ -155,6 +157,7 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
     async def drop_fixture(self):
         await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_output_rows, ontology_pipeline_sandbox_outputs")
         await self.pg.execute("DROP TABLE ontology_pipeline_sandbox_revisions")
+        await self.pg.execute("DROP FUNCTION IF EXISTS public.ontology_pipeline_keep_restore_provenance()")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_version_rows, ontology_cdc_sandbox_versions")
         await self.pg.execute("DROP TABLE ontology_cdc_sandbox_receipts, ontology_cdc_sandbox_binding")
         await self.pg.execute("DROP SCHEMA ts_cdc_sandbox CASCADE")
@@ -1072,6 +1075,109 @@ class CdcSandboxIntegration(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.post(_OUTPUTS, json=request)).json(), prior)
                 self.assertEqual((await client.get(f"{_OUTPUTS}/{prior['id']}")).json()["rows"], [["1", "captured"]])
                 self.assertEqual((await client.get(_ROUTE+"/runs")).json(), [source.json()])
+
+    async def test_governed_recipe_restore_appends_exact_provenance_without_rows(self):
+        base = "sandbox-synthetic"
+        restricted = "sandbox-restricted"
+        url = _BUILDER + "/revisions/restore"
+        async with self.pg.session() as session:
+            await self.produce(session, 1, "one")
+        execute = AsyncSession.execute
+
+        async def metadata_only(session, query, params=None, **kwargs):
+            sql = " ".join(str(query).lower().split())
+            self.assertNotIn("ontology_cdc_sandbox_version_rows", sql)
+            self.assertNotIn("ontology_pipeline_sandbox_output_rows", sql)
+            self.assertNotIn("from only ts_cdc_sandbox.event_log", sql)
+            self.assertNotIn("from only ts_cdc_sandbox.target_rows", sql)
+            return await execute(session, query, params, **kwargs)
+
+        def body(donor, head):
+            return {"sourceGeneration": donor["generation"], "expectedSourceConfigHash": donor["configHash"],
+                    "expectedHeadGeneration": head["generation"], "expectedHeadConfigHash": head["configHash"]}
+
+        with (
+            patch.object(settings, "ENVIRONMENT", "local"),
+            patch.object(settings, "CDC_SANDBOX_ENABLED", True),
+            patch.object(settings, "CDC_SANDBOX_STREAM_MARKER", _MARKER),
+            patch.object(settings, "CDC_SANDBOX_VERSIONS_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: (base, restricted)}),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_ENABLED", True),
+            patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_MATCH_ENABLED", True),
+        ):
+            async with api(True, self.sessions) as client, api(False, self.sessions) as reader:
+                self.assertEqual((await client.put(_ROUTE, json=_REVIEW)).status_code, 200)
+                started = await client.post(_ROUTE + "/runs", json=payload(0))
+                self.assertEqual(started.status_code, 200, started.text)
+                first = started.json()["id"]
+                async with self.pg.session() as session:
+                    await self.produce(session, 2, "two")
+                next_run = await client.post(_ROUTE + "/runs", json=payload(1))
+                self.assertEqual(next_run.status_code, 200, next_run.text)
+                second = next_run.json()["id"]
+                simple = {"versionId": first, "filters": [], "projection": ["id"]}
+                match = {**simple, "matchVersionId": second, "additionalMarking": restricted}
+                newest = {**simple, "projection": ["value"], "additionalMarking": restricted}
+
+                async def save(config, expected):
+                    response = await client.post(_BUILDER + "/revisions", json={"expectedGeneration": expected, "config": config})
+                    self.assertEqual(response.status_code, 201, response.text)
+                    return response.json()
+
+                low = await save(simple, None)
+                donor = await save(match, 1)
+                head = await save(newest, 2)
+                self.assertNotIn("restoreEnabled", (await client.get(_BUILDER)).json())
+                self.assertEqual((await client.post(url, json=body(donor, head))).status_code, 403)
+                with (
+                    patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_RESTORE_ENABLED", True),
+                    patch.object(AsyncSession, "execute", metadata_only),
+                ):
+                    self.assertTrue((await client.get(_BUILDER)).json()["restoreEnabled"])
+                    self.assertEqual((await reader.post(url, json=body(donor, head))).status_code, 403)
+                    self.assertEqual((await client.post(url, json=body(low, head))).status_code, 409)
+                    self.assertEqual((await client.post(url, json={**body(donor, head), "expectedHeadConfigHash": "a"*64})).status_code, 409)
+                    self.assertEqual((await client.post(url, json={**body(donor, head), "sourceGeneration": True})).status_code, 422)
+                    self.assertEqual((await client.post(url + "?x=1", json=body(donor, head))).status_code, 422)
+                    ambiguous = json.dumps(body(donor, head)).replace("{", '{"sourceGeneration":1,', 1)
+                    duplicate = await client.post(url, content=ambiguous, headers={"Content-Type": "application/json"})
+                    self.assertEqual((duplicate.status_code, duplicate.headers["cache-control"]), (422, "private, no-store"))
+                    with patch.object(settings, "ONTOLOGY_SYNTHETIC_GOVERNANCE_GRANTS", {TEST_ACTOR: (base,)}):
+                        self.assertNotIn("restoreEnabled", (await client.get(_BUILDER)).json())
+                        self.assertEqual((await client.post(url, json=body(donor, head))).status_code, 403)
+                    await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET recorded_at=recorded_at+interval '1 second' "
+                                          "WHERE receipt_id=:id", {"id": UUID(second)})
+                    self.assertEqual((await client.post(url, json=body(donor, head))).status_code, 409)
+                    await self.pg.execute("UPDATE ontology_cdc_sandbox_versions SET recorded_at=recorded_at-interval '1 second' "
+                                          "WHERE receipt_id=:id", {"id": UUID(second)})
+                    outcomes = await asyncio.gather(*(client.post(url, json=body(donor, head)) for _ in range(2)))
+                    self.assertEqual(sorted(response.status_code for response in outcomes), [201, 409],
+                                     [response.text for response in outcomes])
+                    result = next(response for response in outcomes if response.status_code == 201)
+                    self.assertEqual(result.headers["cache-control"], "private, no-store")
+                    restored = result.json()
+                    self.assertEqual((restored["generation"], restored["restoredFromGeneration"]), (4, 2))
+                    for key in ("configHash", "config", "markings"):
+                        self.assertEqual(restored[key], donor[key])
+                    self.assertEqual((await client.get(_BUILDER + "/revisions/2")).json(), donor)
+                self.assertNotIn("restoreEnabled", (await client.get(_BUILDER)).json())
+                self.assertEqual((await client.get(_BUILDER + "/revisions/4")).json(), restored)
+                self.assertEqual((await client.get(_BUILDER + "/revisions")).json()[0], restored)
+                await self.pg.execute("TRUNCATE ts_cdc_sandbox.target_rows")
+                with patch.object(settings, "ONTOLOGY_SANDBOX_PIPELINE_RESTORE_ENABLED", True):
+                    self.assertEqual((await client.post(url, json=body(head, restored))).status_code, 409)
+                self.assertEqual((await client.get(_BUILDER + "/revisions/4")).json(), restored)
+
+        migration = import_module("app.web.alembic.versions.f27ad8ce609b_ontology_pipeline_restore_provenance")
+
+        def downgrade(sync):
+            with Operations.context(MigrationContext.configure(sync.connection())):
+                migration.downgrade()
+
+        with self.assertRaisesRegex(RuntimeError, "Cannot discard durable Builder restore provenance"):
+            async with self.pg.session() as session:
+                await session.run_sync(downgrade)
 
     async def test_match_by_id_preview_review_and_sealed_replay_respect_both_inputs(self):
         base, restricted = "sandbox-synthetic", "sandbox-restricted"

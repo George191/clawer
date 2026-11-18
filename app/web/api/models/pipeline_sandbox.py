@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field as ApiField, field_validator, model_validator
-from sqlalchemy import CheckConstraint, Column, DateTime, Index, SmallInteger
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKeyConstraint, Index, SmallInteger, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -81,9 +81,25 @@ class PipelineSandboxSave(BaseModel):
     config: PipelineSandboxConfig
 
 
+class PipelineSandboxRestore(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sourceGeneration: int = ApiField(strict=True, ge=1, le=2147483647)
+    expectedSourceConfigHash: str = ApiField(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    expectedHeadGeneration: int = ApiField(strict=True, ge=1, le=2147483647)
+    expectedHeadConfigHash: str = ApiField(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def historical_source(self):
+        if self.sourceGeneration >= self.expectedHeadGeneration:
+            raise ValueError("A restored revision must come from an older generation")
+        return self
+
+
 class PipelineSandboxStatus(BaseModel):
     available: bool
     matchEnabled: Literal[True] | None = ApiField(default=None, exclude_if=lambda value: value is None)
+    restoreEnabled: Literal[True] | None = ApiField(default=None, exclude_if=lambda value: value is None)
     latestGeneration: int | None
     governanceEnabled: Literal[True] | None = ApiField(default=None, exclude_if=lambda value: value is None)
     allowedMarkings: list[SandboxMarking] | None = ApiField(default=None, exclude_if=lambda value: value is None)
@@ -106,6 +122,7 @@ class PipelineSandboxRevision(SyntheticMarked):
     configHash: str
     config: PipelineSandboxConfig
     recordedAt: datetime
+    restoredFromGeneration: int | None = ApiField(default=None, exclude_if=lambda value: value is None)
 
 
 class PipelineSandboxRevisionRow(SQLModel, table=True):
@@ -124,10 +141,21 @@ class PipelineSandboxRevisionRow(SQLModel, table=True):
                         "(marking_level IN (1, 2)) IS TRUE AND "
                         "(config->>'matchVersionId' = match_version_id::text) IS TRUE)",
                         name="ck_ontology_builder_revision_match"),
+        UniqueConstraint("generation", "stream_marker", "physical_digest", name="uq_pipeline_revision_generation_scope"),
+        ForeignKeyConstraint(
+            ["restored_from_generation", "stream_marker", "physical_digest"],
+            ["ontology_pipeline_sandbox_revisions.generation", "ontology_pipeline_sandbox_revisions.stream_marker",
+             "ontology_pipeline_sandbox_revisions.physical_digest"],
+            name="fk_pipeline_revision_restore_scope",
+        ),
+        CheckConstraint("restored_from_generation IS NULL OR (restored_from_generation > 0 "
+                        "AND restored_from_generation < generation AND marking_level IN (1, 2)) IS TRUE",
+                        name="ck_pipeline_revision_restored_donor"),
         Index("ix_ontology_pipeline_sandbox_history", "stream_marker", "physical_digest", "generation"),
     )
 
     generation: int = Field(primary_key=True)
+    restored_from_generation: int | None = None
     stream_marker: UUID
     physical_digest: str = Field(max_length=64)
     input_version_id: UUID = Field(foreign_key="ontology_cdc_sandbox_versions.receipt_id")

@@ -51,7 +51,7 @@ from app.web.api.models.pipeline_handoff import (
     PipelineHandoffRequest,
 )
 from app.web.api.models.pipeline_sandbox import (
-    PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
+    PipelineSandboxConfig, PipelineSandboxPreview, PipelineSandboxRestore, PipelineSandboxRevision, PipelineSandboxSave, PipelineSandboxStatus,
 )
 from app.web.api.models.pipeline_sandbox_outputs import (
     PipelineSandboxCommit, PipelineSandboxOutput, PipelineSandboxOutputCompareRequest, PipelineSandboxOutputComparison,
@@ -135,7 +135,8 @@ from app.web.services.pipeline_handoff_recipient import (
 )
 from app.web.services.pipeline_handoff import handoff_capability, handoff_eligibility
 from app.web.services.pipeline_sandbox import (
-    list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox, save_pipeline_revision,
+    list_pipeline_revisions, preview_pipeline_sandbox, read_pipeline_revision, read_pipeline_sandbox,
+    restore_pipeline_revision, save_pipeline_revision,
 )
 from app.web.services.pipeline_sandbox_outputs import (
     commit_pipeline_output, compare_pipeline_outputs, encode_record_history, list_pipeline_outputs,
@@ -329,6 +330,29 @@ async def post_local_pipeline_revision(
     payload: PipelineSandboxSave, session: SessionDep, current_user: CurrentActiveSuperuser,
 ) -> PipelineSandboxRevision:
     return await save_pipeline_revision(session, payload, current_user.id)
+
+
+@write.post(
+    "/pipeline-sandbox/revisions/restore", status_code=201, response_model=PipelineSandboxRevision,
+    openapi_extra={"requestBody": {"required": True, "content": {
+        "application/json": {"schema": PipelineSandboxRestore.model_json_schema()},
+    }}},
+)
+async def post_local_pipeline_restore(
+    request: Request, response: Response, current_user: CurrentActiveSuperuser,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> PipelineSandboxRevision | JSONResponse:
+    headers = {"Cache-Control": "private, no-store"}
+    response.headers.update(headers)
+    try:
+        payload = PipelineSandboxRestore.model_validate(await _parse_snapshot_intent_json(request))
+    except Exception:
+        return JSONResponse({"detail": "Builder restoration accepts only an exact reviewed recipe"},
+                            status_code=422, headers=headers)
+    try:
+        return await restore_pipeline_revision(session, payload, current_user.id)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
 
 
 @write.get("/pipeline-sandbox/revisions/{generation}")

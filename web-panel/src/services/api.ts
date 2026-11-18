@@ -707,13 +707,13 @@ export type SandboxPipelineConfig = {
   versionId: string; matchVersionId?: string; filters: SandboxPipelineFilter[]; projection: SandboxPipelineColumn[]; additionalMarking?: 'sandbox-restricted' | null;
 };
 export type SandboxPipelineStatus = {
-  available: boolean; latestGeneration: number | null; governanceEnabled?: boolean; allowedMarkings?: string[]; canSave?: boolean; matchEnabled?: true;
+  available: boolean; latestGeneration: number | null; governanceEnabled?: boolean; allowedMarkings?: string[]; canSave?: boolean; matchEnabled?: true; restoreEnabled?: true;
 };
 export type SandboxPipelinePreview = {
   versionId: string; matchVersionId?: string; configHash: string; inputRows: number; rightInputRows?: number;
   matchedRows: number; columns: SandboxPipelineColumn[]; rows: string[][]; markings?: string[];
 };
-export type SandboxPipelineRevision = { generation: number; configHash: string; config: SandboxPipelineConfig; recordedAt: string; markings?: string[] };
+export type SandboxPipelineRevision = { generation: number; configHash: string; config: SandboxPipelineConfig; recordedAt: string; markings?: string[]; restoredFromGeneration?: number };
 const sandboxPipelinePath = '/etl/pipeline-sandbox';
 export const fetchSandboxPipelineStatus = (signal?: AbortSignal): Promise<SandboxPipelineStatus> =>
   client.get(sandboxPipelinePath, { signal }).then((r) => unwrap<SandboxPipelineStatus>(r.data));
@@ -723,6 +723,13 @@ export const fetchSandboxPipelineRevisions = (signal?: AbortSignal): Promise<San
   client.get(`${sandboxPipelinePath}/revisions`, { signal }).then((r) => unwrap<SandboxPipelineRevision[]>(r.data));
 export const saveSandboxPipelineRevision = (config: SandboxPipelineConfig, expectedGeneration: number | null): Promise<SandboxPipelineRevision> =>
   client.post(`${sandboxPipelinePath}/revisions`, { expectedGeneration, config }).then((r) => unwrap<SandboxPipelineRevision>(r.data));
+export type SandboxPipelineRestoreRequest = {
+  sourceGeneration: number; expectedSourceConfigHash: string; expectedHeadGeneration: number; expectedHeadConfigHash: string;
+};
+export const restoreSandboxPipelineRevision = (request: SandboxPipelineRestoreRequest, signal?: AbortSignal): Promise<SandboxPipelineRevision> =>
+  client.post(`${sandboxPipelinePath}/revisions/restore`, request,
+    { signal, _noAutomaticAuthReplay: true } as AxiosRequestConfig & { _noAutomaticAuthReplay: true })
+    .then(r => unwrap<SandboxPipelineRevision>(r.data));
 export type SandboxPipelineOutput = {
   id: string; requestId: string; reviewedGeneration: number; configHash: string; versionId: string; matchVersionId?: string;
   columns: SandboxPipelineColumn[]; inputRows: number; outputRows: number; recordedAt: string; resultHash: string; markings?: string[];
