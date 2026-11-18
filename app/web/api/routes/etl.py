@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.etl.tasks.extractors.keyword_files import MAX_FILE_SIZE
 from app.web.api.dependencies.common import CurrentActiveSuperuser, SessionDep, get_current_active_superuser, get_current_user
 from app.web.api.dependencies.session import get_db
+from app.web.api.models.column_planner_statistic import ColumnPlannerStatistic
 from app.web.api.models.lineage_neighbors import (
     LineageColumnReferences, LineageCommonDownstream, LineageCommonUpstream, LineageDirection, LineageNeighbors, LineagePath,
     LineagePathTargets, ObservedLineage,
@@ -166,6 +167,7 @@ from app.web.services.etl_layers import get_etl_layers
 from app.web.services.etl_workspace import get_etl_workspace
 from app.web.services.indexed_compound_id_sample import indexed_compound_sample_capability, sample_indexed_compound_ids
 from app.web.services.indexed_id_sample import indexed_sample_capability, sample_indexed_ids
+from app.web.services.column_planner_statistic import ColumnPlannerStatisticUnavailable, read_column_planner_statistic
 from app.web.services.lineage_column_references import read_lineage_column_references
 from app.web.services.preview_index_coverage import preview_index_coverage
 from app.web.services.transfer_observed_lineage import observed_transfer_lineage
@@ -1466,6 +1468,24 @@ async def table_observed_transfer_lineage(
         raise HTTPException(422, "Specify exactly one observed transfer direction")
     response.headers["Cache-Control"] = "no-store"
     return await observed_transfer_lineage(session, schema, table, direction)
+
+
+@write.get(
+    "/{schema}/{table}/column-planner-statistic", response_model=ColumnPlannerStatistic, response_model_exclude_none=True,
+)
+async def table_column_planner_statistic(
+    schema: str, table: str, request: Request, response: Response,
+    session: Annotated[AsyncSession, Depends(get_db, use_cache=False)],
+) -> ColumnPlannerStatistic | JSONResponse:
+    response.headers["Cache-Control"] = "private, no-store"
+    denied = JSONResponse({"detail": "Column planner statistic unavailable"}, status_code=404,
+                          headers={"Cache-Control": "private, no-store"})
+    if len(request.query_params.multi_items()) != 1 or "column" not in request.query_params:
+        return denied
+    try:
+        return await read_column_planner_statistic(session, schema, table, request.query_params["column"])
+    except ColumnPlannerStatisticUnavailable:
+        return denied
 
 
 @read.get("/{schema}/{table}/lineage-column-references")

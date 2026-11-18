@@ -275,6 +275,12 @@ export const fetchLayerTables = (layer: string, tableRole = 'current'): Promise<
 export const fetchEtlTableColumns = (layer: string, table: string, signal?: AbortSignal): Promise<EtlTableColumn[]> =>
   client.get(`/etl/${encodeURIComponent(layer)}/${encodeURIComponent(table)}/columns`, { signal }).then((r) => unwrap<EtlTableColumn[]>(r.data));
 
+export type ColumnPlannerStatistic = { status: 'unavailable' } |
+  { status: 'observed'; nullFraction: number; observedAt: string };
+export const fetchColumnPlannerStatistic = (schema: string, table: string, column: string, signal?: AbortSignal): Promise<ColumnPlannerStatistic> =>
+  client.get(`/etl/${encodeURIComponent(schema)}/${encodeURIComponent(table)}/column-planner-statistic`, { params: { column }, signal })
+    .then(r => unwrap<ColumnPlannerStatistic>(r.data));
+
 export type TransferPlanInput = {
   name: string;
   sourceSchema: string;

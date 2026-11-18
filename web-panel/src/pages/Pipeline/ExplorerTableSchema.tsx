@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { canonColumn } from './ColumnLineageReferences';
+import ExplorerColumnPlannerStatistic from './ExplorerColumnPlannerStatistic';
+import { useSandboxIdentity } from './SandboxMarkings';
 import { INDEX_PREVIEW_SCHEMA, INDEX_PREVIEW_TABLE } from './SandboxIndexPreview';
 import { Button, Input } from '@/components/ui';
 import { SearchOutlined } from '@/components/ui/icons';
 import { fetchEtlTableColumns } from '../../services/api';
 import type { EtlTableColumn } from '../../services/types';
 
-type Props = { schema: string; table: string };
+type Props = { schema: string; table: string; canManage?: boolean };
 
-export default function ExplorerTableSchema({ schema, table }: Props) {
+export default function ExplorerTableSchema({ schema, table, canManage }: Props) {
+    const identity = useSandboxIdentity();
     const [columns, setColumns] = useState<EtlTableColumn[]>();
     const [search, setSearch] = useState('');
     const [error, setError] = useState('');
@@ -55,6 +58,9 @@ export default function ExplorerTableSchema({ schema, table }: Props) {
                         <td><code title={column.name}>{column.name}</code>{referenceEligible && canonColumn(column.name) && <>
                             {' '}<Link className="flow-evidence-lineage-link" aria-label={`Open column references: ${column.name}`}
                                 to={`/ontology/lineage?${new URLSearchParams({ schema, table, tableLineage: '1', column: column.name })}`}>Column references</Link>
+                        </>}{canManage && identity && referenceEligible && canonColumn(column.name) && <>{' '}
+                            <ExplorerColumnPlannerStatistic key={JSON.stringify([identity, schema, table, column.name])}
+                                identity={identity} schema={schema} table={table} column={column.name} />
                         </>}</td>
                         <td><code>{column.type}</code></td>
                         <td><div className="flow-schema-constraints">
